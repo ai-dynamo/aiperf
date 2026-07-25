@@ -15,9 +15,160 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::agentx::chains::{
+    chain_init_tokens, detect_agent_chains, is_aux_chain, is_reduction_chain, split_off_preamble,
+    worker_group_assignment, ChainReq,
+};
+use crate::agentx::config::{WekaConfig, TITLE_GEN_MAX_OUTPUT_TOKENS};
 use crate::agentx::loader::NormalReq;
 use crate::agentx::prepass::{compute_shared_prefix_cache_metrics, MetricRecord, SortKey};
-use crate::agentx::subagent::ChildPlan;
+use crate::agentx::subagent::{worker_suffix, ChildPlan};
+
+/// A detected flat worker-chain conversation plan (Python `_FlatChainPlan`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlatChainPlan {
+    /// Child session id (`{trace}::{suffix}`).
+    pub session_id: String,
+    /// Root trace id.
+    pub parent_trace_id: String,
+    /// Dense per-trace worker index (0-based).
+    pub chain_index: usize,
+    /// The chain's requests as `(outer_idx, request)`.
+    pub requests: Vec<(i64, NormalReq)>,
+    /// Turn-0 tools-prefix attribution.
+    pub init_tool_tokens: i64,
+    /// Turn-0 system-prefix attribution.
+    pub init_system_tokens: i64,
+    /// Phase-1 fork parent chain index (log/DAG only in v1).
+    pub fork_parent_chain: Option<usize>,
+    /// Blocks shared with the fork tail.
+    pub fork_depth: i64,
+    /// Trace block size.
+    pub block_size: i64,
+    /// True when an aux/reduction sidecar.
+    pub is_aux: bool,
+}
+
+fn to_chain_req(n: &NormalReq) -> ChainReq {
+    ChainReq {
+        t: n.t,
+        api_time: n.api_time,
+        model: n.model.clone(),
+        hash_ids: n.hash_ids.clone(),
+        input_length: n.input_length,
+        output_length: n.output_length,
+    }
+}
+
+/// Run LCP chain detection on a trace's retained top-level requests, splitting
+/// off detected flat worker chains (Python `_detect_and_split_flat_chains`).
+/// Returns the (possibly reduced) main-chain normals and the flat-chain plans.
+pub fn detect_and_split_flat_chains(
+    trace_id: &str,
+    normals: &[(i64, NormalReq)],
+    tool_tokens: i64,
+    system_tokens: i64,
+    block_size: i64,
+    cfg: &WekaConfig,
+) -> (Vec<(i64, NormalReq)>, Vec<FlatChainPlan>) {
+    let normals_by_outer: HashMap<i64, NormalReq> =
+        normals.iter().map(|(oi, r)| (*oi, r.clone())).collect();
+    let detect_input: Vec<(i64, ChainReq)> =
+        normals.iter().map(|(oi, r)| (*oi, to_chain_req(r))).collect();
+    let (preamble, detect_normals) = split_off_preamble(&detect_input, TITLE_GEN_MAX_OUTPUT_TOKENS);
+    let detection = detect_agent_chains(
+        detect_normals,
+        cfg.seam_max_gap_seconds,
+        cfg.seam_min_overlap_ratio,
+    );
+    if detection.worker_indices.is_empty() {
+        return (normals.to_vec(), Vec::new());
+    }
+
+    let main_chain = &detection.chains[detection.main_index];
+    let main_first_hash = main_chain
+        .requests
+        .iter()
+        .find(|(_, r)| !r.hash_ids.is_empty())
+        .map(|(_, r)| r.hash_ids.clone())
+        .unwrap_or_default();
+    let main_peak_isl = main_chain
+        .requests
+        .iter()
+        .map(|(_, r)| r.input_length)
+        .max()
+        .unwrap_or(0);
+    let main_model: Option<String> = main_chain.requests.first().map(|(_, r)| r.model.clone());
+    let wg_coords = worker_group_assignment(&detection, cfg.worker_group_min);
+
+    let mut flat_plans: Vec<FlatChainPlan> = Vec::new();
+    for (n, &ci) in detection.worker_indices.iter().enumerate() {
+        let chain = &detection.chains[ci];
+        let chain_reqs: Vec<ChainReq> = chain.requests.iter().map(|(_, r)| r.clone()).collect();
+        let (init_tool, init_system) = chain_init_tokens(
+            tool_tokens,
+            system_tokens,
+            block_size,
+            &main_first_hash,
+            &chain.requests[0].1.hash_ids,
+        );
+        let aux = is_aux_chain(
+            &chain_reqs,
+            main_peak_isl,
+            cfg.aux_max_requests,
+            cfg.aux_isl_ratio,
+            cfg.aux_isl_floor,
+            main_model.as_deref(),
+            cfg.aux_cross_model,
+        );
+        let reduction = !aux
+            && is_reduction_chain(
+                &chain_reqs,
+                cfg.aux_reduction_osl_max,
+                cfg.aux_reduction_ratio,
+                cfg.aux_isl_floor,
+            );
+        let wg_coord = if !aux && !reduction {
+            wg_coords.get(&ci).copied()
+        } else {
+            None
+        };
+        let suffix = worker_suffix(n, aux, reduction, wg_coord);
+        let requests: Vec<(i64, NormalReq)> = chain
+            .requests
+            .iter()
+            .map(|(oi, _)| (*oi, normals_by_outer[oi].clone()))
+            .collect();
+        flat_plans.push(FlatChainPlan {
+            session_id: format!("{trace_id}::{suffix}"),
+            parent_trace_id: trace_id.to_string(),
+            chain_index: n,
+            requests,
+            init_tool_tokens: init_tool,
+            init_system_tokens: init_system,
+            fork_parent_chain: chain.fork.as_ref().and_then(|f| f.parent_chain),
+            fork_depth: chain.fork.as_ref().map(|f| f.depth).unwrap_or(0),
+            block_size,
+            is_aux: aux || reduction,
+        });
+    }
+
+    let mut main_normals: Vec<(i64, NormalReq)> = main_chain
+        .requests
+        .iter()
+        .map(|(oi, _)| (*oi, normals_by_outer[oi].clone()))
+        .collect();
+    if !preamble.is_empty() {
+        let mut combined: Vec<(i64, NormalReq)> = preamble
+            .iter()
+            .map(|(oi, _)| (*oi, normals_by_outer[oi].clone()))
+            .collect();
+        combined.extend(main_normals);
+        combined.sort_by(|a, b| (a.1.t, a.0).partial_cmp(&(b.1.t, b.0)).unwrap());
+        main_normals = combined;
+    }
+    (main_normals, flat_plans)
+}
 
 /// A parent (root) conversation plan (Python `_ParentPlan`).
 #[derive(Debug, Clone)]
@@ -51,6 +202,7 @@ pub fn dropped_subagent_indices(plan: &ParentPlan) -> HashSet<usize> {
 pub fn build_shared_metric_values(
     parents: &[ParentPlan],
     children: &[ChildPlan],
+    flats: &[FlatChainPlan],
 ) -> HashMap<String, HashMap<(String, i64), (i64, i64)>> {
     let mut out: HashMap<String, HashMap<(String, i64), (i64, i64)>> = HashMap::new();
 
@@ -70,6 +222,23 @@ pub fn build_shared_metric_values(
                 k: k as i64,
                 hash_ids: req.hash_ids.clone(),
             });
+        }
+
+        // Flat worker chains: sort key (t, outer, 0, 0).
+        for fp in flats.iter().filter(|fp| fp.parent_trace_id == plan.trace_id) {
+            for (k, (outer_idx, req)) in fp.requests.iter().enumerate() {
+                records.push(MetricRecord {
+                    sort_key: SortKey {
+                        absolute_t: req.t,
+                        outer_idx: *outer_idx,
+                        stream_idx: 0,
+                        k: 0,
+                    },
+                    session_id: fp.session_id.clone(),
+                    k: k as i64,
+                    hash_ids: req.hash_ids.clone(),
+                });
+            }
         }
 
         let dropped = dropped_subagent_indices(plan);
@@ -131,6 +300,23 @@ mod tests {
     }
 
     #[test]
+    fn flat_split_extracts_worker_chain() {
+        // r1 diverges from [1,2]; r2 extends the longer state -> r1 spawns a
+        // flat worker conversation (::fa:000 / ::aux:000 depending on size).
+        let normals = vec![
+            (0, nreq(0.0, &[1, 2])),
+            (1, nreq(1.0, &[1, 9])),
+            (2, nreq(2.0, &[1, 2, 3])),
+        ];
+        let (main_normals, flats) =
+            detect_and_split_flat_chains("t", &normals, 0, 0, 4, &WekaConfig::default());
+        assert_eq!(flats.len(), 1);
+        assert!(flats[0].session_id.starts_with("t::"));
+        // The spawned request is pulled out of the main chain.
+        assert!(main_normals.iter().all(|(oi, _)| *oi != 1));
+    }
+
+    #[test]
     fn parent_child_share_prefix_cache_across_conversations() {
         // Parent turn sends [1,2,3]; the subagent child later re-sends [1,2] ->
         // 2 prefix hits under the shared local namespace.
@@ -153,7 +339,7 @@ mod tests {
             init_system_tokens: 0,
             is_aux: false,
         };
-        let m = build_shared_metric_values(&[plan], &[child]);
+        let m = build_shared_metric_values(&[plan], &[child], &[]);
         let trace = &m["t"];
         assert_eq!(trace[&("t".to_string(), 0)], (0, 3)); // parent turn 0: no prior
         assert_eq!(trace[&("t::sa:a".to_string(), 0)], (2, 2)); // child sees [1,2]

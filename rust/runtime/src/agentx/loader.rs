@@ -377,7 +377,10 @@ pub fn convert_trace_to_conversations(
     cfg: &crate::agentx::config::WekaConfig,
     opts: &MainReconstructOptions,
 ) -> Result<Vec<ReconstructedConversation>, PrefixTooTruncated> {
-    use crate::agentx::plan::{build_shared_metric_values, dropped_subagent_indices, ParentPlan};
+    use crate::agentx::plan::{
+        build_shared_metric_values, detect_and_split_flat_chains, dropped_subagent_indices,
+        ParentPlan,
+    };
     use crate::agentx::subagent::expand_subagent_to_child_plans;
     use crate::agentx::trace::WekaRequest;
 
@@ -402,14 +405,30 @@ pub fn convert_trace_to_conversations(
         }
     }
 
+    // Flat-chain splitting: partition the top-level requests into the main
+    // chain + detected flat worker chains (only when enabled and >1 normal).
+    let (main_normals, flat_plans) = if cfg.split_flattened_agents && normals.len() > 1 {
+        detect_and_split_flat_chains(
+            trace_id,
+            &normals,
+            trace.tool_tokens,
+            trace.system_tokens,
+            block_size,
+            cfg,
+        )
+    } else {
+        (normals.clone(), Vec::new())
+    };
+
     let parent = ParentPlan {
         trace_id: trace_id.to_string(),
-        normals: normals.clone(),
+        normals: main_normals.clone(),
         subagent_outer_indices,
         block_size,
     };
     let dropped = dropped_subagent_indices(&parent);
-    let metrics_by_trace = build_shared_metric_values(std::slice::from_ref(&parent), &children);
+    let metrics_by_trace =
+        build_shared_metric_values(std::slice::from_ref(&parent), &children, &flat_plans);
     let metric_values = metrics_by_trace
         .get(trace_id)
         .cloned()
@@ -426,12 +445,31 @@ pub fn convert_trace_to_conversations(
         block_size,
         trace.tool_tokens,
         trace.system_tokens,
-        &normals,
+        &main_normals,
         synth,
         model_map,
         &metric_values,
         opts,
     )?);
+
+    // Flat worker-chain conversations.
+    for fp in &flat_plans {
+        out.push(reconstruct_conversation(
+            &fp.session_id,
+            trace_id,
+            Some(trace_id),
+            trace_id,
+            "weka_flat",
+            fp.block_size,
+            fp.init_tool_tokens,
+            fp.init_system_tokens,
+            &fp.requests,
+            synth,
+            model_map,
+            &metric_values,
+            opts,
+        )?);
+    }
 
     // Active child conversations.
     for cp in &children {

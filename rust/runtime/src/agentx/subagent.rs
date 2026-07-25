@@ -96,7 +96,12 @@ fn to_chain_req(n: &NormalReq) -> ChainReq {
 }
 
 /// Session-id suffix for a detected worker chain (Python `_worker_suffix`).
-fn worker_suffix(n: usize, is_aux: bool, is_reduction: bool, wg_coord: Option<(i64, i64)>) -> String {
+pub fn worker_suffix(
+    n: usize,
+    is_aux: bool,
+    is_reduction: bool,
+    wg_coord: Option<(i64, i64)>,
+) -> String {
     if is_aux || is_reduction {
         return format!("aux:{n:03}");
     }
