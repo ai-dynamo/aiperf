@@ -71,6 +71,7 @@ impl NativeTransportExecution for HttpNativeExecution {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_graph_dispatcher(
         &self,
         clock: Rc<dyn crate::clock::Clock>,

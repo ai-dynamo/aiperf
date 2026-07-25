@@ -148,6 +148,7 @@ impl WorkerSink for GrpcTransportSink {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_grpc_sink(
     clock: Rc<dyn Clock>,
     start_ns: i64,
@@ -176,6 +177,7 @@ fn prepare_grpc_sink(
 /// Assemble a gRPC sink from a worker-local prepared endpoint table.
 ///
 /// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn grpc_sink_with_endpoints(
     clock: Rc<dyn Clock>,
     start_ns: i64,

@@ -39,6 +39,7 @@ impl NativeTransportExecution for GrpcNativeExecution {
         false
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_graph_dispatcher(
         &self,
         clock: Rc<dyn crate::clock::Clock>,

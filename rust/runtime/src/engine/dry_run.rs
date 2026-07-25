@@ -386,6 +386,7 @@ impl NativeTransportExecution for DryRunNativeExecution {
         self.params.clock == DryRunClock::Sim
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_graph_dispatcher(
         &self,
         clock: Rc<dyn Clock>,

@@ -261,6 +261,7 @@ pub trait NativeTransportExecution: Send + Sync {
     /// workload. The graph runtime dispatches over the returned
     /// `Rc<dyn Dispatcher>` and never matches on a transport kind — adding a
     /// transport is implementing this method, nothing else.
+    #[allow(clippy::too_many_arguments)]
     fn build_graph_dispatcher(
         &self,
         clock: std::rc::Rc<dyn crate::clock::Clock>,
