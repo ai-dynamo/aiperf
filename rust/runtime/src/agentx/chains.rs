@@ -788,6 +788,72 @@ pub fn compute_chain_prefix_blocks(
     prefixes
 }
 
+/// Pull leading throwaway requests (e.g. Claude Code title generation) off the
+/// front before chain detection (Python `_split_off_preamble`).
+///
+/// Only the single earliest request is eligible, and only if its hash list
+/// shares no common prefix (zero LCP) with any other retained request AND it is
+/// either small (`output <= title_gen_max`) or fully block-disjoint. Returns
+/// `(preamble, rest)` in original outer-index order.
+pub fn split_off_preamble(
+    normals: &[(i64, ChainReq)],
+    title_gen_max_output_tokens: i64,
+) -> (Vec<(i64, ChainReq)>, Vec<(i64, ChainReq)>) {
+    if normals.len() < 2 {
+        return (Vec::new(), normals.to_vec());
+    }
+    let mut ordered: Vec<(i64, ChainReq)> = normals.to_vec();
+    ordered.sort_by(|a, b| (a.1.t, a.0).partial_cmp(&(b.1.t, b.0)).unwrap());
+    let (outer_idx, req) = ordered[0].clone();
+    if req.hash_ids.is_empty() {
+        return (Vec::new(), normals.to_vec());
+    }
+    let rest = &ordered[1..];
+    let shares_prefix = rest
+        .iter()
+        .filter(|(_, o)| !o.hash_ids.is_empty())
+        .any(|(_, o)| np_lcp(&req.hash_ids, &o.hash_ids) > 0);
+    if shares_prefix {
+        return (Vec::new(), normals.to_vec());
+    }
+    if req.output_length > title_gen_max_output_tokens {
+        let mut other_blocks: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        for (_, o) in rest {
+            other_blocks.extend(o.hash_ids.iter().copied());
+        }
+        if req.hash_ids.iter().any(|h| other_blocks.contains(h)) {
+            return (Vec::new(), normals.to_vec());
+        }
+    }
+    let mut rest_sorted: Vec<(i64, ChainReq)> = rest.to_vec();
+    rest_sorted.sort_by_key(|(oi, _)| *oi);
+    (vec![(outer_idx, req)], rest_sorted)
+}
+
+/// `(tool_tokens, system_tokens)` for a derived chain's turn 0 (Python
+/// `_chain_init_tokens`). Declared counts apply only when the chain's first
+/// request provably starts with the same declared-prefix blocks as the base;
+/// otherwise `(0, 0)` (the system role is never fabricated).
+pub fn chain_init_tokens(
+    tool_tokens: i64,
+    system_tokens: i64,
+    block_size: i64,
+    base_first_hash: &[i64],
+    chain_first_hash: &[i64],
+) -> (i64, i64) {
+    let sum = tool_tokens + system_tokens;
+    let declared_blocks = if sum <= 0 { 0 } else { (sum + block_size - 1) / block_size };
+    let declared_covered = declared_blocks > 0
+        && chain_first_hash.len() as i64 >= declared_blocks
+        && base_first_hash.len() as i64 >= declared_blocks
+        && chain_first_hash[..declared_blocks as usize] == base_first_hash[..declared_blocks as usize];
+    if declared_covered {
+        (tool_tokens, system_tokens)
+    } else {
+        (0, 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

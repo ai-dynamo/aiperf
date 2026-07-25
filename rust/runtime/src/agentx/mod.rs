@@ -16,6 +16,7 @@
 //! Python counterpart's output over the in-repo `tests/fixtures/weka_traces*/`.
 
 pub mod chains;
+pub mod config;
 pub mod corpus;
 pub mod loader;
 pub mod prepass;
@@ -24,4 +25,5 @@ pub mod rng;
 pub mod synth;
 pub mod tool_shape;
 pub mod selection;
+pub mod subagent;
 pub mod trace;
