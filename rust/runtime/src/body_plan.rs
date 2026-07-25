@@ -432,6 +432,50 @@ mod tests {
     }
 
     #[test]
+    fn prebuilt_if_static_collapses_static_body_byte_identically() {
+        // An image-retrieval-shaped body: one wire array, no per-dispatch tail.
+        let images = [
+            Bytes::from_static(br#"{"type":"image_url","url":"data:image/png;base64,AA=="}"#),
+            Bytes::from_static(br#"{"type":"image_url","url":"data:image/png;base64,BB=="}"#),
+        ];
+        let plan = BodyPlan::new().wire_array("input", images);
+        let baseline = plan.materialize_standalone().unwrap();
+
+        // Non-streaming + no model/stream/max_tokens literal => collapses.
+        let collapsed = plan.prebuilt_if_static(false);
+        assert!(matches!(collapsed, BodyPlan::Prebuilt(_)));
+        // Dispatch (empty overrides) yields byte-identical bytes, now via clone.
+        assert_eq!(collapsed.materialize_standalone().unwrap(), baseline);
+    }
+
+    #[test]
+    fn prebuilt_if_static_leaves_per_dispatch_and_streaming_bodies_alone() {
+        // A chat-shaped body carrying a `model` literal must NOT collapse: the
+        // effective-request path rewrites it per dispatch.
+        let with_model = BodyPlan::new()
+            .wire_array(
+                "messages",
+                [Bytes::from_static(br#"{"role":"user","content":"hi"}"#)],
+            )
+            .literal("model", Value::String("m".into()));
+        assert!(matches!(
+            with_model.prebuilt_if_static(false),
+            BodyPlan::Fields(_)
+        ));
+
+        // A streaming-capable endpoint may toggle `stream` per dispatch, so even a
+        // literal-free body stays a live plan.
+        let streamable = BodyPlan::new().wire_array(
+            "input",
+            [Bytes::from_static(br#"{"type":"image_url","url":"x"}"#)],
+        );
+        assert!(matches!(
+            streamable.prebuilt_if_static(true),
+            BodyPlan::Fields(_)
+        ));
+    }
+
+    #[test]
     fn wire_array_splices_identically_to_stored_segments() {
         let mut pool = SegmentPool::new();
         let a = message(&mut pool, None, br#"{"role":"user","content":"one"}"#);
