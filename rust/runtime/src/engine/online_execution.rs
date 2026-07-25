@@ -370,9 +370,14 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
                 if weka_wants_legacy(workload.weka_semantics.as_deref())? {
                     #[cfg(feature = "agentx")]
                     {
-                        return crate::engine::legacy_agentx_execution::prepare_legacy_agentx_operation(
-                            run, context, workload, binding,
-                        );
+                        let plan = lower_legacy_agentic(
+                            run,
+                            context,
+                            workload,
+                            self.tokenizers.as_ref(),
+                            binding.clone(),
+                        )?;
+                        return prepare_native_operation(run, context, plan, binding);
                     }
                     #[cfg(not(feature = "agentx"))]
                     {
@@ -1249,6 +1254,149 @@ fn lower_graph(
         NativeDatasetPlan::Graph(Box::new(dataset)),
         tokenizer,
         &workload.phases,
+        NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
+        NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
+        workload.failure_policy,
+        Some(transport),
+    )
+}
+
+/// Lower a legacy-AgentX weka run into a scheduled `NativeRunSpec` driven by the
+/// `agentic_replay` timing mode. Reconstructs the WEKA trajectories with the
+/// byte-exact AgentX loader, composes them into a verbatim-replay linear dataset,
+/// translates the phases to `agentic_replay`, and reuses the shared scheduled
+/// execution (`prepare_native_operation`) for transport/metrics/records/report.
+#[cfg(feature = "agentx")]
+fn lower_legacy_agentic(
+    run: &AuthoredRunSpecV2,
+    context: &RunContext,
+    workload: &GraphWorkloadConfigV2,
+    tokenizers: &dyn OnlineTokenizerSourceResolver,
+    transport: Arc<dyn crate::engine::registry::NativeTransportExecution>,
+) -> Result<NativeRunSpec> {
+    use crate::agentx::config::WekaConfig;
+    use crate::agentx::corpus::CorpusTokenSynth;
+    use crate::agentx::hf_dataset::{load_hf_weka_traces, HfDatasetRef};
+    use crate::agentx::loader::{convert_traces_serial, MainReconstructOptions};
+    use crate::agentx::weka_dataset::{compose_weka_agentic_dataset, WekaComposeOptions};
+    use crate::rng::compat::python_random::PythonRandomGenerator;
+    use std::collections::HashMap;
+
+    let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
+    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+
+    // Decode the HuggingFace weka source from the authored dataset descriptor.
+    let dataset_json: serde_json::Value = serde_json::from_str(workload.dataset.get())
+        .context("decoding legacy weka dataset descriptor")?;
+    let source = dataset_json
+        .get("source")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let hf_name = source
+        .get("dataset")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("legacy weka requires a hugging_face dataset source"))?;
+    let subset = source
+        .get("subset")
+        .and_then(|v| v.as_str())
+        .filter(|s| *s != "default")
+        .map(str::to_string);
+    let split = source
+        .get("split")
+        .and_then(|v| v.as_str())
+        .unwrap_or("train")
+        .to_string();
+    let revision = source
+        .get("revision")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let entries = dataset_json
+        .get("entries")
+        .and_then(serde_json::Value::as_u64)
+        .map(|n| n as usize);
+
+    // Reconstruct: HF load (async) → agentx byte-exact reconstruction.
+    let root_seed = run.identity.random_seed.unwrap_or(0);
+    let hash_base_seed = PythonRandomGenerator::derive_child_seed(
+        root_seed,
+        crate::rng::namespace::DATASET_CODING_CONTENT_CORPUS,
+    );
+    let corpus = crate::dataset::coding::build_coding_corpus(tokenizer_impl.as_ref(), root_seed)
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let corpus = std::rc::Rc::new(corpus);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating legacy weka reconstruction runtime")?;
+    let local = tokio::task::LocalSet::new();
+    let (traces, _stats) = local
+        .block_on(
+            &rt,
+            load_hf_weka_traces(
+                HfDatasetRef {
+                    name: hf_name.to_string(),
+                    subset,
+                    split,
+                    revision,
+                    max_rows: entries,
+                },
+                entries,
+                None,
+                None,
+            ),
+        )
+        .map_err(|error| anyhow!(error))?;
+
+    let cfg = WekaConfig::default();
+    let opts = MainReconstructOptions::default();
+    let results = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
+        let tok = tokenizer_impl.clone();
+        CorpusTokenSynth::new((*corpus).clone(), bs, hash_base_seed, tid, move |t: &[u32]| {
+            tok.decode(t).unwrap_or_default()
+        })
+    });
+    let convs: Vec<_> = results.into_iter().filter_map(Result::ok).flatten().collect();
+    ensure!(
+        !convs.is_empty(),
+        "legacy weka reconstruction produced no conversations"
+    );
+
+    // Compose the verbatim-replay linear dataset.
+    let dataset = compose_weka_agentic_dataset(
+        &convs,
+        &WekaComposeOptions {
+            streaming: true,
+            ignore_eos: true,
+            benchmark_id: run.identity.benchmark_id.clone(),
+            cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
+        },
+    )?;
+    let prepared = crate::engine::dataset_input::PreparedDatasetInput {
+        dataset,
+        random_seed: run.identity.random_seed,
+        default_output_tokens: 1,
+    };
+
+    // Translate each authored phase to the agentic_replay timing mode.
+    let agentic_phases: Vec<PhaseSpec> = workload
+        .phases
+        .iter()
+        .map(|p| PhaseSpec::AgenticReplay {
+            common: p.common().clone(),
+            start_min_ratio: 0.0,
+            start_max_ratio: 1.0,
+            idle_gap_cap_seconds: Some(10.0),
+            burst_phase_starts: false,
+        })
+        .collect();
+
+    build_common_plan(
+        run,
+        workload.worker_count,
+        NativeDatasetPlan::PreparedLinear(prepared),
+        tokenizer,
+        &agentic_phases,
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
