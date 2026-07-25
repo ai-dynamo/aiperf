@@ -5,6 +5,15 @@ SPDX-License-Identifier: Apache-2.0
 
 # Global-hop worker routing strategies
 
+## Status
+
+BUILT. The `HopRouting {RoundRobin, Sticky, LeastLoaded}` router is applied at
+`ThreadPerCoreExecutor::execute_command` (`pick_worker`), resolved from
+`runtime.hop_routing` / `--hop-routing` (auto-`Sticky` under
+`StickyUserSessions`), and threaded through `build_native`. Per-session
+single-connection reuse is proven end-to-end by
+`rust/runtime/tests/global_hop_sticky_reuse_e2e.rs`.
+
 ## Purpose
 
 Make the worker-assignment policy of the `global-hop` single-dispatcher pluggable,
@@ -98,11 +107,22 @@ same `correlation_id` maps to the same worker across processes and runs — not
   each conversation reuses **one** connection across its turns (the
   `connection_reused` record field is set on turns after the first for each
   correlation), and that round-robin on the same config does not.
+  BUILT: `rust/runtime/tests/global_hop_sticky_reuse_e2e.rs`
+  (`sticky_global_hop_keeps_one_connection_per_session`,
+  `round_robin_global_hop_scatters_a_session_across_workers`). The executing
+  worker is observable at the record boundary because the hop worker stamps its
+  own `worker_id` into its drained `RecordIngest`s (`run_worker` in
+  `turn_execution.rs`); the sticky test asserts `worker_id` is constant per
+  correlation with `connection_reused` true after the first turn, and the
+  round-robin test asserts a session scatters across workers (the deterministic
+  core; `connection_reused` under round-robin is not asserted).
 
 ## Source anchors
 
 - Pick site: `rust/runtime/src/engine/turn_execution.rs`
-  (`ThreadPerCoreExecutor::execute_command`).
+  (`ThreadPerCoreExecutor::execute_command`, `pick_worker`); the same file's
+  `run_worker` stamps the executing `worker_id` into drained records.
+- E2e proof: `rust/runtime/tests/global_hop_sticky_reuse_e2e.rs`.
 - Sticky connection pool (worker-local, correlation-keyed):
   `rust/runtime/src/transport/http/client/pool.rs`,
   `rust/runtime/src/transport/grpc/models.rs` (`ConnectionReuseStrategy`).
