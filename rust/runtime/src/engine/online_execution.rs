@@ -1367,7 +1367,7 @@ fn lower_legacy_agentic(
     // to its t\*-relative dispatch offset. The `agentic_replay` workload then owns
     // only the cross-lane phase-start alignment + dispatch.
     let convs = crate::agentx::weka_dataset::slice_trajectories_at_tstar(
-        convs, root_seed, 0.0, 1.0,
+        convs, root_seed, 0.0, 1.0, Some(10_000.0),
     );
     ensure!(
         !convs.is_empty(),
@@ -1390,18 +1390,38 @@ fn lower_legacy_agentic(
         default_output_tokens: 1,
     };
 
-    // Translate each authored phase to the agentic_replay timing mode.
-    let agentic_phases: Vec<PhaseSpec> = workload
+    // Translate each authored phase to the agentic_replay timing mode, and
+    // prepend a WARMUP phase (Python runs warmup as a separate barrier before
+    // profiling) so the turn-(n-1) primes dispatch and drain first. The warmup
+    // phase excludes itself from results and carries no stop bound (it drains).
+    let profiling_common = workload
         .phases
-        .iter()
-        .map(|p| PhaseSpec::AgenticReplay {
-            common: p.common().clone(),
+        .first()
+        .map(|p| p.common().clone())
+        .ok_or_else(|| anyhow!("legacy weka run has no authored phase to profile"))?;
+    let mut warmup_common = profiling_common.clone();
+    warmup_common.name = "warmup".to_string();
+    warmup_common.kind = Some(crate::engine::protocol::PhaseRoleSpec::Warmup);
+    warmup_common.exclude_from_results = true;
+    warmup_common.requests = None;
+    warmup_common.sessions = None;
+    warmup_common.duration = None;
+    let agentic_replay_phase = |common: crate::engine::protocol::PhaseCommonSpec| {
+        PhaseSpec::AgenticReplay {
+            common,
             start_min_ratio: 0.0,
             start_max_ratio: 1.0,
             idle_gap_cap_seconds: Some(10.0),
             burst_phase_starts: false,
-        })
-        .collect();
+        }
+    };
+    let mut agentic_phases: Vec<PhaseSpec> = vec![agentic_replay_phase(warmup_common)];
+    agentic_phases.extend(
+        workload
+            .phases
+            .iter()
+            .map(|p| agentic_replay_phase(p.common().clone())),
+    );
 
     build_common_plan(
         run,

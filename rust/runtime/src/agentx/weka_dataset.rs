@@ -54,9 +54,11 @@ pub fn slice_trajectories_at_tstar(
     base_seed: u64,
     start_min_ratio: f64,
     start_max_ratio: f64,
+    idle_gap_cap_ms: Option<f64>,
 ) -> Vec<ReconstructedConversation> {
     use crate::agentx::trajectory_source::{
-        next_turn_index_at_or_after, seed_for_trace_lane, timestamped_t_star_ms,
+        capped_warmup_lead_ms, next_turn_index_at_or_after, seed_for_trace_lane,
+        timestamped_t_star_ms,
     };
     let mut out = Vec::with_capacity(convs.len());
     for (lane_index, conv) in convs.into_iter().enumerate() {
@@ -74,18 +76,42 @@ pub fn slice_trajectories_at_tstar(
         let Some(next_idx) = next_turn_index_at_or_after(&ts, t_star) else {
             continue; // no post-t* (profiling) turn on this lane
         };
-        let mut sliced = conv;
-        sliced.turns.drain(0..next_idx as usize); // exclude history
-        for turn in &mut sliced.turns {
-            // Rebase to t*-relative offset; the workload aligns across lanes.
+        let base_id = conv.session_id.clone();
+
+        // WARMUP slice: the last pre-t* turn (n-1), a single 1-token prime whose
+        // dispatch offset is its capped lead (t* − warm_ts). Shares the tree's
+        // root correlation (via parent id) so it reuses the same cache-bust marker.
+        if next_idx >= 1 {
+            let warm_i = (next_idx - 1) as usize;
+            let mut warm_turn = conv.turns[warm_i].clone();
+            let lead = capped_warmup_lead_ms(t_star - warm_turn.timestamp_ms.unwrap_or(t_star), idle_gap_cap_ms);
+            warm_turn.timestamp_ms = Some(lead.max(0.0));
+            warm_turn.max_tokens = 1; // Python `_WARMUP_MAX_TOKENS`
+            out.push(ReconstructedConversation {
+                session_id: format!("{base_id}{WARMUP_SUFFIX}"),
+                replay_scope_id: conv.replay_scope_id.clone(),
+                parent_conversation_id: Some(base_id.clone()),
+                turns: vec![warm_turn],
+            });
+        }
+
+        // PROFILING slice: turns from the resume point, rebased to t*-relative
+        // offsets (history excluded).
+        let mut prof = conv;
+        prof.turns.drain(0..next_idx as usize);
+        for turn in &mut prof.turns {
             turn.timestamp_ms = Some(turn.timestamp_ms.map_or(0.0, |ts| (ts - t_star).max(0.0)));
         }
-        if !sliced.turns.is_empty() {
-            out.push(sliced);
+        if !prof.turns.is_empty() {
+            out.push(prof);
         }
     }
     out
 }
+
+/// Session-id suffix marking a warmup-phase conversation (turn n-1 prime). The
+/// `agentic_replay` warmup phase dispatches only these; profiling skips them.
+pub const WARMUP_SUFFIX: &str = "::warmup";
 
 /// Compose reconstructed conversations into a verbatim-replay [`Dataset`].
 ///

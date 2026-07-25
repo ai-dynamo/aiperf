@@ -121,11 +121,18 @@ impl Workload for AgenticReplayWorkload {
         // ([`crate::agentx::weka_dataset::slice_trajectories_at_tstar`]) already
         // sampled t\*, excluded history, and rebased `timestamp_ms` to the offset
         // from t\* — so the lane's first turn's timestamp is its phase-start offset.
+        let want_warmup = cfg.phase == AgenticPhase::Warmup;
         let lanes: Vec<LaneDispatch> = {
             let source = self.source.borrow();
             source
                 .conversations()
                 .iter()
+                // Warmup convs carry the `::warmup` suffix; each phase dispatches
+                // only its own conversations (Python's separate warmup barrier).
+                .filter(|meta| {
+                    meta.conversation_id.ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX)
+                        == want_warmup
+                })
                 .map(|meta| {
                     let first_offset = meta
                         .turns
