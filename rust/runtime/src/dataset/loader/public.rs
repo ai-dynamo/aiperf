@@ -488,7 +488,8 @@ impl Composer for HfAutoComposer {
         let layout = infer_row_layout(&first.value, override_col.as_deref())
             .map_err(DatasetError::Validation)?;
 
-        // `output_len` accepts either a JSON number or a numeric string.
+        // Fixed per-request output length. `--hf-output-len` arrives as a JSON
+        // number; a `--dataset-filter output_len=N` arrives as a string. Accept both.
         let fixed_output = string_option(config, "output_len")
             .and_then(|s| s.parse::<u32>().ok())
             .or_else(|| {
@@ -501,101 +502,116 @@ impl Composer for HfAutoComposer {
         let max_prompt = usize_option(config, "max_prompt_tokens", 1024)?;
         let max_total = usize_option(config, "max_total_tokens", 2048)?;
 
+        // Output length used when a row has no reference completion (none pinned).
+        const DEFAULT_OUTPUT_TOKENS: u32 = 128;
+
+        // Extracting and tokenising each row's prompt/completion and applying the
+        // token-budget filter touch only the row's own JSON, not the shared segment
+        // pool or session-id generator - precompute per row in parallel (as the
+        // sibling public composers do), then intern the survivors serially.
+        let prepared: Vec<Option<(String, Vec<u32>, u32)>> = rows
+            .par_iter()
+            .map(|row| -> Result<Option<(String, Vec<u32>, u32)>> {
+                let Some(obj) = row.value.as_object() else {
+                    return Ok(None);
+                };
+                let (prompt, completion): (String, Option<String>) = match &layout {
+                    RowLayout::Prompt {
+                        prompt_field,
+                        completion_field,
+                    } => {
+                        let raw = obj.get(prompt_field.as_str());
+                        let prompt = if prompt_field == "turns" {
+                            raw.and_then(Value::as_array)
+                                .and_then(|a| a.first())
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string()
+                        } else {
+                            raw.and_then(Value::as_str).unwrap_or_default().to_string()
+                        };
+                        let completion = output_override
+                            .as_ref()
+                            .or(completion_field.as_ref())
+                            .and_then(|c| {
+                                obj.get(c.as_str()).and_then(|v| {
+                                    v.as_array()
+                                        .and_then(|a| a.first())
+                                        .and_then(Value::as_str)
+                                        .or_else(|| v.as_str())
+                                        .map(str::to_string)
+                                })
+                            });
+                        (prompt, completion)
+                    }
+                    RowLayout::Joined {
+                        fields,
+                        completion_field,
+                    } => {
+                        let parts: Vec<String> = fields
+                            .iter()
+                            .filter_map(|c| {
+                                obj.get(c.as_str())
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                            })
+                            .collect();
+                        if parts.is_empty() {
+                            return Ok(None);
+                        }
+                        let completion = output_override
+                            .as_ref()
+                            .or(completion_field.as_ref())
+                            .and_then(|c| {
+                                obj.get(c.as_str())
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                            });
+                        (parts.join("\n\n"), completion)
+                    }
+                    RowLayout::Messages(field) => {
+                        let msgs = obj
+                            .get(field.as_str())
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        match super::hf_detect::first_user_message(&msgs) {
+                            Some(p) => (p, super::hf_detect::first_assistant_message(&msgs)),
+                            None => return Ok(None),
+                        }
+                    }
+                };
+
+                if prompt.trim().is_empty() {
+                    return Ok(None);
+                }
+                let prompt_tokens = tokenizer.encode(&prompt)?;
+                if prompt_tokens.len() < min_length || prompt_tokens.len() > max_prompt {
+                    return Ok(None);
+                }
+                let output_tokens: u32 = if let Some(n) = fixed_output {
+                    n
+                } else if let Some(comp) = &completion {
+                    let c = tokenizer.encode(comp)?.len();
+                    if c == 0 {
+                        DEFAULT_OUTPUT_TOKENS
+                    } else {
+                        c as u32
+                    }
+                } else {
+                    DEFAULT_OUTPUT_TOKENS
+                };
+                if prompt_tokens.len() + output_tokens as usize > max_total {
+                    return Ok(None);
+                }
+                Ok(Some((prompt, prompt_tokens, output_tokens)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::new();
-
-        for row in &rows {
-            let Some(obj) = row.value.as_object() else {
-                continue;
-            };
-            let (prompt, completion): (String, Option<String>) = match &layout {
-                RowLayout::Prompt {
-                    prompt_field,
-                    completion_field,
-                } => {
-                    let raw = obj.get(prompt_field.as_str());
-                    let prompt = if prompt_field == "turns" {
-                        raw.and_then(Value::as_array)
-                            .and_then(|a| a.first())
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string()
-                    } else {
-                        raw.and_then(Value::as_str).unwrap_or_default().to_string()
-                    };
-                    let completion = output_override
-                        .as_ref()
-                        .or(completion_field.as_ref())
-                        .and_then(|c| {
-                            obj.get(c.as_str()).and_then(|v| {
-                                v.as_array()
-                                    .and_then(|a| a.first())
-                                    .and_then(Value::as_str)
-                                    .or_else(|| v.as_str())
-                                    .map(str::to_string)
-                            })
-                        });
-                    (prompt, completion)
-                }
-                RowLayout::Joined {
-                    fields,
-                    completion_field,
-                } => {
-                    let parts: Vec<String> = fields
-                        .iter()
-                        .filter_map(|c| {
-                            obj.get(c.as_str())
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        })
-                        .collect();
-                    if parts.is_empty() {
-                        continue;
-                    }
-                    let completion = output_override
-                        .as_ref()
-                        .or(completion_field.as_ref())
-                        .and_then(|c| {
-                            obj.get(c.as_str())
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        });
-                    (parts.join("\n\n"), completion)
-                }
-                RowLayout::Messages(field) => {
-                    let msgs = obj
-                        .get(field.as_str())
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    match super::hf_detect::first_user_message(&msgs) {
-                        Some(p) => (p, super::hf_detect::first_assistant_message(&msgs)),
-                        None => continue,
-                    }
-                }
-            };
-
-            if prompt.trim().is_empty() {
-                continue;
-            }
-            let prompt_tokens = tokenizer.encode(&prompt)?;
-            if prompt_tokens.len() < min_length || prompt_tokens.len() > max_prompt {
-                continue;
-            }
-
-            let output_tokens: u32 = if let Some(n) = fixed_output {
-                n
-            } else if let Some(comp) = &completion {
-                let c = tokenizer.encode(comp)?.len();
-                if c == 0 { 128 } else { c as u32 }
-            } else {
-                128
-            };
-            if prompt_tokens.len() + output_tokens as usize > max_total {
-                continue;
-            }
-
+        for (prompt, prompt_tokens, output_tokens) in prepared.into_iter().flatten() {
             let input_tokens = Some(prompt_tokens.len() as u64);
             let handle = segments.intern_text(
                 None,
