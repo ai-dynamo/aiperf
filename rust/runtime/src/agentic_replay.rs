@@ -24,6 +24,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::agentx::cache_bust::CacheBustTarget;
+use crate::agentx::handoff::AcceleratedObserver;
 use crate::agentx::session_tree::{PhaseKey, SessionTreeRegistry, SlotReleaser};
 use crate::agentx::trajectory_source::{
     profiling_dispatch_delays_ms, warmup_dispatch_offsets_ms,
@@ -376,6 +377,9 @@ impl Workload for AgenticReplayWorkload {
                 recycle.clone(),
                 gate.clone(),
                 defer_queue.clone(),
+                // Standard warmup/profiling path: no accelerated observer. The
+                // accelerated substage (a later task) is the sole arming caller.
+                None,
             );
         }
         Ok(())
@@ -431,6 +435,14 @@ pub fn take_ready<T>(
 /// `defer_queue` instead of issued, and re-dispatched from a child's terminal
 /// callback once [`TreeGate::is_waiting`] clears. A `None` gate (the no-tree
 /// degenerate case) never defers and recycles exactly as before.
+///
+/// `observer` is the accelerated cache-warmup return seam (Python
+/// `observe_credit_return`, lines 698-717): when `Some`, every credit return
+/// advances the replay barrier gate ([`ReplayGate::complete`]) and records the
+/// warmup-to-profile handoff, routing the return wall through the injected
+/// [`Clock`](crate::clock::Clock). `None` (every current caller — the standard
+/// warmup/profiling path) changes no runtime behavior; the accelerated substage
+/// (a later task) is the sole caller that arms it.
 #[allow(clippy::too_many_arguments)]
 fn schedule_agentic_turn(
     runtime: Rc<ScheduledRuntime>,
@@ -441,6 +453,7 @@ fn schedule_agentic_turn(
     recycle: Option<Rc<RecycleState>>,
     gate: Option<Rc<TreeGate>>,
     defer_queue: Rc<RefCell<Vec<PendingJoin>>>,
+    observer: Option<Rc<AcceleratedObserver>>,
 ) {
     // Defer a gated join turn until its awaited children terminate. The child
     // terminal callbacks (below) drain the queue and re-dispatch at `now_ns`.
@@ -464,12 +477,36 @@ fn schedule_agentic_turn(
             let source_c = source.clone();
             let gate_c = gate.clone();
             let defer_c = defer_queue.clone();
+            let observer_c = observer.clone();
             runtime.issue_turn(
                 turn,
                 target_ns,
                 None,
                 Box::new(move |credit, outcome| {
                     Box::pin(async move {
+                        // Accelerated cache-warmup return observation (Python
+                        // `observe_credit_return`): advance the replay barrier
+                        // gate, then record/pop the warmup-to-profile handoff.
+                        // Runs on BOTH final and non-final returns, before the
+                        // final/no-chain early returns below. `None` observer is
+                        // the standard path and is a no-op here.
+                        if let Some(obs) = &observer_c {
+                            let projection =
+                                crate::agentx::handoff::HandoffCredit::from_credit(&credit);
+                            let root_id = credit.turn.x_correlation_id.clone();
+                            let gate_key = crate::agentx::replay_dependencies::ReplayTurnKey {
+                                conversation_id: credit.turn.conversation_id.clone(),
+                                turn_index: credit.turn.turn_index as i64,
+                            };
+                            obs.gate.borrow_mut().complete(&root_id, gate_key);
+                            // Return wall via the injected Clock — never Instant::now.
+                            let wall_ns = runtime_c.now_ns();
+                            obs.recorder.borrow_mut().observe(
+                                projection,
+                                credit.is_final_turn(),
+                                wall_ns,
+                            );
+                        }
                         if credit.is_final_turn() {
                             // This conversation reached terminal. Release any
                             // parent join turn waiting on it (a child terminal
@@ -490,6 +527,7 @@ fn schedule_agentic_turn(
                                         recycle.clone(),
                                         gate_c.clone(),
                                         defer_c.clone(),
+                                        observer_c.clone(),
                                     );
                                 }
                             }
@@ -524,6 +562,7 @@ fn schedule_agentic_turn(
                                         Some(recycle.clone()),
                                         gate_c,
                                         defer_c,
+                                        observer_c,
                                     );
                                 }
                             }
@@ -549,7 +588,7 @@ fn schedule_agentic_turn(
                             .saturating_add((delay_ms.max(0.0) * NS_PER_MS) as i64);
                         schedule_agentic_turn(
                             runtime_c, source_c, next_turn, next_target, true, recycle, gate_c,
-                            defer_c,
+                            defer_c, observer_c,
                         );
                     })
                 }),
