@@ -91,6 +91,11 @@ pub fn slice_trajectories_at_tstar(
             let lead = capped_warmup_lead_ms(t_star - warm_turn.timestamp_ms.unwrap_or(t_star), idle_gap_cap_ms);
             warm_turn.timestamp_ms = Some(lead.max(0.0));
             warm_turn.max_tokens = 1; // Python `_WARMUP_MAX_TOKENS`
+            // The warmup prime is a standalone 1-token request; it is NOT a
+            // spawn/join point. Strip any inherited branch/join metadata so the
+            // warmup conversation is not misread as a Spawn parent by validate_dag.
+            warm_turn.spawn_branch = None;
+            warm_turn.join_prerequisite = None;
             out.push(ReconstructedConversation {
                 session_id: format!("{base_id}{WARMUP_SUFFIX}"),
                 replay_scope_id: conv.replay_scope_id.clone(),

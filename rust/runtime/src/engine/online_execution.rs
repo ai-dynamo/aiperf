@@ -1434,13 +1434,14 @@ fn lower_legacy_agentic(
             .map(|p| agentic_replay_phase(p.common().clone())),
     );
 
-    // Multiple workers are supported, but capped to the root-trajectory count so
-    // every shard owns at least one sampleable root and each whole tree stays on
-    // one worker (join gate + recycle are per-workload-instance). Cellular
-    // (`cells > 1`) and non-global admission are rejected at CLI resolution.
+    // Multiple workers are supported under global admission (which shares the
+    // conversation pool rather than statically sharding it). Cellular (`cells > 1`)
+    // and non-global admission (`--dispatch sharded`) are rejected at CLI
+    // resolution because they would split a trajectory tree across partitions.
+    let _ = num_root_trajectories;
     build_common_plan(
         run,
-        workload.worker_count.min(num_root_trajectories),
+        workload.worker_count,
         NativeDatasetPlan::PreparedLinear(prepared),
         tokenizer,
         &agentic_phases,
