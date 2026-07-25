@@ -167,7 +167,12 @@ fn per_conversation_table(a: &DatasetAnalysis) -> Option<String> {
         "NVIDIA AIPerf | Per-Conversation Lengths",
         &["conversation", "turns", "isl avg", "osl avg"],
         &rows,
-        &[Justify::Left, Justify::Right, Justify::Right, Justify::Right],
+        &[
+            Justify::Left,
+            Justify::Right,
+            Justify::Right,
+            Justify::Right,
+        ],
         WIDTH,
     ))
 }

@@ -236,14 +236,12 @@ impl TransportSink {
         // transfers correlate back to this request; external URLs and non-media
         // bodies are untouched. The parse is shared with image counting below.
         let (body, parsed) = match self.content_server_base.as_deref() {
-            Some(base) => {
-                super::tag_content_urls(
-                    body,
-                    base,
-                    &uuid.to_string(),
-                    crate::content_server::dispatch_wall_ns(),
-                )
-            }
+            Some(base) => super::tag_content_urls(
+                body,
+                base,
+                &uuid.to_string(),
+                crate::content_server::dispatch_wall_ns(),
+            ),
             None => (body, None),
         };
         // `num_images` is the only consumer of the parsed body here. When
@@ -263,9 +261,9 @@ impl TransportSink {
             num_images: known_image_count
                 .map(|count| count as usize)
                 .or_else(|| {
-                    payload
-                        .as_ref()
-                        .map(|payload| endpoint.extract_payload_inputs(payload).image_count as usize)
+                    payload.as_ref().map(|payload| {
+                        endpoint.extract_payload_inputs(payload).image_count as usize
+                    })
                 })
                 .filter(|count| *count > 0),
             ..ObservedEndpointMetrics::default()

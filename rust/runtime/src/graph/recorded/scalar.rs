@@ -31,8 +31,7 @@ pub(super) fn integer_labeled(
     source: &str,
     label: &str,
 ) -> Result<BigInt, RecordedTraceError> {
-    integer(value)
-        .ok_or_else(|| RecordedTraceError(format!("{source} {label} must be an integer")))
+    integer(value).ok_or_else(|| RecordedTraceError(format!("{source} {label} must be an integer")))
 }
 
 /// Parse a raw JSON number token (as emitted by a serde_json [`RawValue`]) into

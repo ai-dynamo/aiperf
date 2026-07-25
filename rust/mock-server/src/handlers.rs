@@ -440,9 +440,13 @@ fn record_streaming_fast(
         prefill: std::time::Duration::ZERO,
         decode: latency,
     };
-    state
-        .recorder
-        .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+    state.recorder.record_llm_success(
+        endpoint,
+        &ctx.model,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+    );
     state.recorder.record_llm_inflight_end(&ctx.model);
     state.recorder.record_request_end(endpoint);
     body
@@ -478,15 +482,10 @@ pub(crate) fn render_chat_completion_fast(
         let include_usage = req.include_usage();
         let total_tokens =
             ctx.tokenized.reasoning_content_tokens.len() + ctx.tokenized.tokens.len();
-        let body = record_streaming_fast(
-            state,
-            endpoint,
-            &ctx,
-            &labeled,
-            total_tokens,
-            start,
-            || render_chat_fast_body(&ctx, include_usage),
-        );
+        let body =
+            record_streaming_fast(state, endpoint, &ctx, &labeled, total_tokens, start, || {
+                render_chat_fast_body(&ctx, include_usage)
+            });
         return ("text/event-stream", body.to_vec());
     }
 
@@ -537,15 +536,10 @@ pub(crate) fn render_text_completion_fast(
     if req.stream {
         let include_usage = req.include_usage();
         let total_tokens = ctx.tokenized.tokens.len();
-        let body = record_streaming_fast(
-            state,
-            endpoint,
-            &ctx,
-            &labeled,
-            total_tokens,
-            start,
-            || render_text_fast_body(&ctx, include_usage),
-        );
+        let body =
+            record_streaming_fast(state, endpoint, &ctx, &labeled, total_tokens, start, || {
+                render_text_fast_body(&ctx, include_usage)
+            });
         return ("text/event-stream", body.to_vec());
     }
 
@@ -559,9 +553,13 @@ pub(crate) fn render_text_completion_fast(
         ctx.tokenized.text.len() as u64,
         json_body.len() as u64,
     );
-    state
-        .recorder
-        .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+    state.recorder.record_llm_success(
+        endpoint,
+        &ctx.model,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+    );
     state.recorder.record_llm_inflight_end(&ctx.model);
     state.recorder.record_request_end(endpoint);
     ("application/json", json_body)
@@ -828,19 +826,32 @@ mod chat_response_serialize_tests {
         // in every user-influenced field, so escaping parity is exercised.
         let content = vec![" he\"llo".to_string(), " wo\\rld\n".to_string()];
         let reasoning = vec!["think ".to_string(), "hard".to_string()];
-        let cases: Vec<(&str, Option<ToolCallSpec>, &[String])> = vec![
-            ("plain", None, &[]),
-            ("reasoning", None, &reasoning),
-        ];
+        let cases: Vec<(&str, Option<ToolCallSpec>, &[String])> =
+            vec![("plain", None, &[]), ("reasoning", None, &reasoning)];
         for (label, tc, rsn) in cases {
             let got = write_chat_response_bytes(
-                "chatcmpl-x\"1", "mo\"del", 1234567890, "stop", tc.as_ref(), &content, rsn, &usage,
+                "chatcmpl-x\"1",
+                "mo\"del",
+                1234567890,
+                "stop",
+                tc.as_ref(),
+                &content,
+                rsn,
+                &usage,
             );
             let exp = reference(
-                "chatcmpl-x\"1", "mo\"del", 1234567890, "stop", tc.as_ref(), &content, rsn, &usage,
+                "chatcmpl-x\"1",
+                "mo\"del",
+                1234567890,
+                "stop",
+                tc.as_ref(),
+                &content,
+                rsn,
+                &usage,
             );
             assert_eq!(
-                got, exp,
+                got,
+                exp,
                 "{label}:\n got={}\n exp={}",
                 String::from_utf8_lossy(&got),
                 String::from_utf8_lossy(&exp)
@@ -852,12 +863,12 @@ mod chat_response_serialize_tests {
             name: "get\"weather".to_string(),
             arguments: "{\"city\":\"x\"}".to_string(),
         };
-        let got = write_chat_response_bytes(
-            "id1", "m", 42, "stop", Some(&tc), &content, &[], &usage,
-        );
+        let got =
+            write_chat_response_bytes("id1", "m", 42, "stop", Some(&tc), &content, &[], &usage);
         let exp = reference("id1", "m", 42, "stop", Some(&tc), &content, &[], &usage);
         assert_eq!(
-            got, exp,
+            got,
+            exp,
             "tool_call:\n got={}\n exp={}",
             String::from_utf8_lossy(&got),
             String::from_utf8_lossy(&exp)

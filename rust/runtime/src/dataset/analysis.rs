@@ -486,7 +486,6 @@ pub struct ConversationSummary {
     pub lengths: LengthStats,
 }
 
-
 /// Options controlling dataset analysis.
 #[derive(Debug, Clone)]
 pub struct AnalysisOptions {
@@ -664,7 +663,9 @@ pub fn analyze(
         turns: turns_stats,
         cache,
         timeline,
-        conversations: opts.per_conversation.then(|| per_conversation_summaries(turns)),
+        conversations: opts
+            .per_conversation
+            .then(|| per_conversation_summaries(turns)),
     };
     sanitize_analysis(&mut analysis);
     analysis

@@ -12,7 +12,6 @@ use prost::Message;
 use serde_json::{Map, Number, Value};
 
 use crate::transport::grpc::proto::infer_parameter::ParameterChoice;
-use crate::transport::grpc::riva_codec::finite_number;
 use crate::transport::grpc::proto::model_infer_request::{
     InferInputTensor, InferRequestedOutputTensor,
 };
@@ -20,6 +19,7 @@ use crate::transport::grpc::proto::{
     InferParameter, InferTensorContents, ModelInferRequest, ModelInferResponse, ModelReadyRequest,
     ModelReadyResponse, ModelStreamInferResponse,
 };
+use crate::transport::grpc::riva_codec::finite_number;
 
 /// Canonical JSON/protobuf conversion failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -465,8 +465,14 @@ fn raw_scalar(bytes: &[u8], datatype: &str) -> Result<Value, CodecError> {
         "UINT32" => Value::Number(Number::from(u32::from_le_bytes(array(bytes)?))),
         "INT64" => Value::Number(Number::from(i64::from_le_bytes(array(bytes)?))),
         "UINT64" => Value::Number(Number::from(u64::from_le_bytes(array(bytes)?))),
-        "FP16" => finite_number(f64::from(f16::from_bits(u16::from_le_bytes(array(bytes)?))), "KServe tensor")?,
-        "FP32" => finite_number(f64::from(f32::from_le_bytes(array(bytes)?)), "KServe tensor")?,
+        "FP16" => finite_number(
+            f64::from(f16::from_bits(u16::from_le_bytes(array(bytes)?))),
+            "KServe tensor",
+        )?,
+        "FP32" => finite_number(
+            f64::from(f32::from_le_bytes(array(bytes)?)),
+            "KServe tensor",
+        )?,
         "FP64" => finite_number(f64::from_le_bytes(array(bytes)?), "KServe tensor")?,
         _ => Value::String(String::from_utf8_lossy(bytes).into_owned()),
     })
