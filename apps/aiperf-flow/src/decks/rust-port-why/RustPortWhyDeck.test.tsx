@@ -34,13 +34,13 @@ describe("RustPortWhyDeck (executive overview)", () => {
     expect(screen.getAllByText(/one process, not ten services/i).length).toBeGreaterThan(0);
   });
 
-  it("reports the RECENT, honest perf numbers (parity at real concurrency; ~3x at the ceiling)", () => {
+  it("reports the MEASURED, byte-exact perf numbers (parity at real concurrency; ~2x byte-exact ceiling)", () => {
     renderDeck();
     // Parity at server-bound 250 concurrency.
     expect(screen.getAllByText(/statistically indistinguishable/i).length).toBeGreaterThan(0);
-    // Ceiling throughput against a fast target.
-    expect(screen.getAllByText(/13,746/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/4,500/).length).toBeGreaterThan(0);
+    // Byte-exact ceiling (default global dispatch) and the opt-in sharded figure, both measured.
+    expect(screen.getAllByText(/~43,000 req\/s/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/~61,000 req\/s/).length).toBeGreaterThan(0);
   });
 
   it("keeps integrity: the client is NOT the bottleneck on normal LLM runs", () => {

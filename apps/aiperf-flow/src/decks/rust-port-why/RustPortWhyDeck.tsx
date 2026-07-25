@@ -80,11 +80,11 @@ const REASONS: ReadonlyArray<ChalkCardProps> = [
     diagram: (
       <Diagram>
         <MiniBars heights={[30, 30, 100]} />
-        <NodeChip accent>~3×</NodeChip>
+        <NodeChip accent>~2×</NodeChip>
       </Diagram>
     ),
     children:
-      "Against a fast target one Rust process sustains ~40k req/s and ~3× Python's throughput at the ceiling. Python must spin up multiprocessing + ZMQ just to under-perform a single Rust process.",
+      "Measured on a 144-core node: one Rust process sustains ~43k req/s byte-exact (~2× Python) using under half the cores — not even CPU-bound. An opt-in sharded mode reaches ~61k (~3×) when reproducible parity isn't required. Python must spin up multiprocessing + ZMQ just to under-perform it.",
   },
   {
     accent: "cyan",
@@ -183,17 +183,24 @@ const PERF_ROWS = [
     tone: "neutral" as const,
   },
   {
-    scenario: "Fast target, 100k requests — throughput",
-    rust: "13,746 req/s",
-    python: "4,500 req/s",
-    read: "≈3× — the win appears only when the client is the limit.",
+    scenario: "Fast target, c4-144 — byte-exact ceiling (default)",
+    rust: "~43,000 req/s",
+    python: "~21,000 req/s",
+    read: "~2× — parity preserved (global dispatch). Measured, 0 errors.",
     tone: "success" as const,
   },
   {
-    scenario: "Fast target, single process — ceiling",
-    rust: "~40,000 req/s",
-    python: "needs multiproc + ZMQ",
-    read: "One Rust process beats Python's whole fan-out.",
+    scenario: "Fast target, c4-144 — opt-in sharded (not byte-exact)",
+    rust: "~61,000 req/s",
+    python: "—",
+    read: "~3×, when reproducible parity isn't required.",
+    tone: "success" as const,
+  },
+  {
+    scenario: "Client-side latency (p50) at the ceiling",
+    rust: "~7 ms",
+    python: "~40 ms",
+    read: "~5–7× lower — Python pays per-request asyncio/GC overhead.",
     tone: "success" as const,
   },
 ];
@@ -265,7 +272,7 @@ export function RustPortWhyDeck(): React.JSX.Element {
 
             {/* ── Headline numbers (recent, honest) ────────────────────────── */}
             <Grid columns={4} gap={16}>
-              <Stat label="Ceiling throughput" value="≈3×" trend="13.7k vs 4.5k req/s" tone="positive" />
+              <Stat label="Byte-exact ceiling" value="~43k" trend="~2× Python · 61k opt-in" tone="positive" />
               <Stat label="Metric drift @ 250 conc." value="±0.3%" trend="indistinguishable" tone="neutral" />
               <Stat label="Processes for a single-node run" value="1" trend="was ~10 services" tone="positive" />
               <Stat label="Execution modes, one front-end" value="3" trend="online · mock · offline" tone="positive" />
@@ -355,7 +362,7 @@ export function RustPortWhyDeck(): React.JSX.Element {
                 (the GIL forces multiple processes + a bus). Rust's{" "}
                 <span className={inkClassName("primary")}>cellular</span> mode is a{" "}
                 <span className={inkClassName("primary")}>deliberate, opt-in</span> scale-out that only
-                engages when a run genuinely exceeds one host's ~15–28k connection ceiling. The default
+                engages when a run genuinely exceeds one host's ~64k connection ceiling (HTTP/1.1 4-tuple). The default
                 single-node path stays one process. Same word — “distributed” — opposite reason.
               </Callout>
               <Callout tone="warning" title="“Won't free-threaded (no-GIL) Python make this moot?”">
@@ -403,12 +410,12 @@ export function RustPortWhyDeck(): React.JSX.Element {
                 </span>
                 . That is exactly why the two implementations are{" "}
                 <span className={inkClassName("primary")}>statistically indistinguishable</span> at 250
-                concurrency. The ≈3× only shows up against a near-zero-latency target, where AIPerf's own
-                dispatch rate is the limit. We do not claim faster customer numbers — we claim the same
-                numbers, from a simpler system, with more headroom.
+                concurrency. The ~2× (byte-exact) only shows up against a near-zero-latency target, where
+                AIPerf's own dispatch rate is the limit. We do not claim faster customer numbers — we claim the
+                same numbers, from a simpler system, with headroom (it uses under half the node's cores).
               </Callout>
               <Callout tone="neutral" title="And what we do NOT claim">
-                The single-node ~15–28k concurrent-connection limit is an{" "}
+                The single-node ~64k concurrent-connection limit (HTTP/1.1, one source-IP→endpoint 4-tuple) is an{" "}
                 <span className={inkClassName("primary")}>OS/TCP ephemeral-port fact, not a language advantage</span>.
                 Rust hits the same wall Python does; it is addressed the same way in both — HTTP/2 stream
                 multiplexing or multi-node distribution — so it is not part of the case for Rust.
@@ -534,7 +541,7 @@ export function RustPortWhyDeck(): React.JSX.Element {
                   <span className={inkClassName("primary")}>retiring the GIL-driven distributed system</span>{" "}
                   AIPerf never actually wanted — replacing mandatory single-host fan-out with one process
                   and opt-in cellular scale-out. Performance is a real but bounded bonus: parity where the
-                  server dominates, ~3× ahead at the client ceiling. Because a prototype already
+                  server dominates, ~2× ahead byte-exact (≈3× in opt-in sharded mode) at the client ceiling. Because a prototype already
                   demonstrates parity, this is a low-risk investment, not a research bet.
                 </p>
               </Stack>
