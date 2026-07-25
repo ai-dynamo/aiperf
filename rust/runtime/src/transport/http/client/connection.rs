@@ -619,10 +619,19 @@ mod tests {
         };
         // Repeated non-prepared builds return the same cached Arc, not a fresh
         // aws-lc provider + webpki root store each time.
-        assert!(Arc::ptr_eq(&rustls_config(&verify), &rustls_config(&verify)));
-        assert!(Arc::ptr_eq(&rustls_config(&insecure), &rustls_config(&insecure)));
+        assert!(Arc::ptr_eq(
+            &rustls_config(&verify),
+            &rustls_config(&verify)
+        ));
+        assert!(Arc::ptr_eq(
+            &rustls_config(&insecure),
+            &rustls_config(&insecure)
+        ));
         // The two verify modes are distinct configs.
-        assert!(!Arc::ptr_eq(&rustls_config(&verify), &rustls_config(&insecure)));
+        assert!(!Arc::ptr_eq(
+            &rustls_config(&verify),
+            &rustls_config(&insecure)
+        ));
     }
 
     /// A resolver that fails the connect phase for its first `fail_first`

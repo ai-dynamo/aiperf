@@ -2408,9 +2408,11 @@ mod tests {
         use clap::Parser;
 
         for bad in ["nan", "inf", "-inf"] {
-            let flags =
-                ProfileFlags::try_parse_from(["profile", &format!("--synthesis-speedup-ratio={bad}")])
-                    .expect("flags parse");
+            let flags = ProfileFlags::try_parse_from([
+                "profile",
+                &format!("--synthesis-speedup-ratio={bad}"),
+            ])
+            .expect("flags parse");
             let err = super::build_synthesis(&flags)
                 .expect_err("non-finite synthesis value must be a clean error, not a panic");
             assert!(
