@@ -603,8 +603,14 @@ fn payload_extraction_covers_items_tools_flat_and_pretokenized() {
     let extracted = ChatEndpoint.extract_payload_inputs(&payload);
     assert_eq!(extracted.image_count, 1);
     assert_eq!(extracted.messages.as_ref().unwrap().len(), 2);
-    assert!(extracted.tool_texts.contains(&"fn".to_string()));
-    assert!(extracted.tool_texts.contains(&"{}".to_string()));
+    // Replayed assistant `tool_calls` ride inside the rendered `messages` array,
+    // so the chat template tokenizes them on the `texts` ISL path; routing them to
+    // `tool_texts` as well would double-count them (see `walk_item_tool_calls`).
+    assert!(extracted.texts.contains(&"fn".to_string()));
+    assert!(extracted.texts.contains(&"{}".to_string()));
+    assert!(!extracted.tool_texts.contains(&"fn".to_string()));
+    // The `tools` schema is not part of any rendered message, so it is the tool
+    // ledger's own content.
     assert!(
         extracted
             .tool_texts
