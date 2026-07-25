@@ -22,7 +22,10 @@ use crate::agentx::cache_bust::{resolve_tree_marker, CacheBustLedger, CacheBustT
 use crate::agentx::loader::ReconstructedConversation;
 use crate::agentx::wire::{chat_request_body, ChatRequestOptions};
 use crate::dataset::Dataset;
-use crate::dataset::model::{Conversation, ConversationContextMode, ModelId, SessionId, Turn};
+use crate::dataset::model::{
+    BranchId, Conversation, ConversationBranch, ConversationBranchMode, ConversationContextMode,
+    DagMetadata, DispatchTiming, ModelId, PrerequisiteKind, SessionId, Turn, TurnPrerequisite,
+};
 use crate::dataset::segment::{Role, SegmentPool};
 
 /// Wire-body options applied when composing (scenario-derived).
@@ -144,6 +147,7 @@ pub fn compose_weka_agentic_dataset(
         );
 
         let mut turns = Vec::with_capacity(conv.turns.len());
+        let mut conv_branches: Vec<ConversationBranch> = Vec::new();
         let mut parent = None;
         for (i, t) in conv.turns.iter().enumerate() {
             let req_opts = ChatRequestOptions {
@@ -158,7 +162,7 @@ pub fn compose_weka_agentic_dataset(
             let handle = pool.intern_raw(parent, wire)?;
             parent = Some(handle);
 
-            let turn = Turn {
+            let mut turn = Turn {
                 role: Some(Role::from("user")),
                 model: Some(ModelId::from(t.model.as_str())),
                 max_tokens: u32::try_from(t.max_tokens.max(1)).ok(),
@@ -168,17 +172,73 @@ pub fn compose_weka_agentic_dataset(
                 body: Turn::dispatch_body(Some(handle), None, &[]),
                 ..Turn::default()
             };
+
+            // Surface the reconstructed subagent spawn/join structure onto the
+            // composed turn: a spawn declares a branch (recorded on the turn and
+            // the conversation DAG); a join gates the turn on child completion.
+            if let Some(sb) = &t.spawn_branch {
+                let bid = BranchId::from(sb.branch_id.as_str());
+                turn.branch_ids.push(bid.clone());
+                conv_branches.push(ConversationBranch {
+                    branch_id: bid,
+                    child_conversation_ids: sb
+                        .child_session_ids
+                        .iter()
+                        .map(|s| SessionId::from(s.clone()))
+                        .collect(),
+                    mode: if sb.mode_fork {
+                        ConversationBranchMode::Fork
+                    } else {
+                        ConversationBranchMode::Spawn
+                    },
+                    dispatch_timing: DispatchTiming::Post,
+                    background: sb.background,
+                });
+            }
+            if let Some(jp) = &t.join_prerequisite {
+                turn.prerequisites.push(TurnPrerequisite {
+                    kind: PrerequisiteKind::SpawnJoin,
+                    branch_id: Some(BranchId::from(jp.branch_id.as_str())),
+                    child_conversation_ids: jp
+                        .child_session_ids
+                        .iter()
+                        .map(|s| SessionId::from(s.clone()))
+                        .collect(),
+                    barrier_id: None,
+                    timer_seconds: None,
+                    event_name: None,
+                });
+            }
+
             turns.push(turn);
         }
 
+        let session_id = SessionId::from(conv.session_id.clone());
+        // Attach a DAG only when the conversation declared spawn branches; the
+        // linear (no-subagent) path leaves `dag` absent.
+        let dag = if conv_branches.is_empty() {
+            None
+        } else {
+            Some(DagMetadata {
+                branches: conv_branches.into_iter().collect(),
+                is_root: conv.parent_conversation_id.is_none(),
+                agent_depth: 0,
+                parent_conversation_id: conv
+                    .parent_conversation_id
+                    .as_ref()
+                    .map(|p| SessionId::from(p.clone())),
+                root_conversation_id: SessionId::from(conv.replay_scope_id.clone()),
+            })
+        };
+
         conversations.push(Conversation {
-            session_id: SessionId::from(conv.session_id.clone()),
+            session_id,
             turns,
             system: None,
             user_context: None,
             context_mode: None,
             accuracy: None,
-            dag: None,
+            dag,
         });
     }
 
