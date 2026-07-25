@@ -1261,6 +1261,20 @@ fn lower_graph(
     )
 }
 
+/// Recover the authored accelerated cache-warmup duration
+/// (`--agentic-cache-warmup-duration`) from a legacy-weka run's authored phases.
+///
+/// The CLI stamps the flag onto a phase's `agentic_cache_warmup_duration`; the
+/// legacy path synthesizes its own WARMUP phase and replaces the authored ones,
+/// so the value is recovered here (first authored phase carrying it) and threaded
+/// onto the synthesized warmup phase. Returns `None` when unset.
+#[cfg(feature = "agentx")]
+fn warmup_agentic_cache_duration(phases: &[PhaseSpec]) -> Option<f64> {
+    phases
+        .iter()
+        .find_map(|phase| phase.common().agentic_cache_warmup_duration)
+}
+
 /// Lower a legacy-AgentX weka run into a scheduled `NativeRunSpec` driven by the
 /// `agentic_replay` timing mode. Reconstructs the WEKA trajectories with the
 /// byte-exact AgentX loader, composes them into a verbatim-replay linear dataset,
@@ -1424,6 +1438,13 @@ fn lower_legacy_agentic(
     warmup_common.name = "warmup".to_string();
     warmup_common.kind = Some(crate::engine::protocol::PhaseRoleSpec::Warmup);
     warmup_common.exclude_from_results = true;
+    // Thread the accelerated cache-warmup duration onto the synthesized WARMUP
+    // phase (`--agentic-cache-warmup-duration`). The CLI stamps it on an authored
+    // phase's common; this synthesized warmup replaces those, so recover the
+    // authored value from any authored phase and carry it forward so
+    // `dataset_build` can populate `AgenticReplayConfig.cache_warmup_duration_s`.
+    warmup_common.agentic_cache_warmup_duration =
+        warmup_agentic_cache_duration(&workload.phases);
     // The warmup phase dispatches each warmup conversation exactly once (no
     // recycle), so its record count is known. Set `requests` to that count so the
     // per-phase record-ordinal base of the following PROFILING phase is offset past
@@ -1676,6 +1697,51 @@ mod tests {
                 "optional fixture file is absent".into(),
             ))
         }
+    }
+
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn warmup_agentic_cache_duration_recovers_authored_value() {
+        // The CLI stamps `--agentic-cache-warmup-duration` onto an authored
+        // phase's common; the legacy path recovers it to thread onto its
+        // synthesized WARMUP phase so `dataset_build` populates
+        // `AgenticReplayConfig.cache_warmup_duration_s`.
+        let phases: Vec<PhaseSpec> = serde_json::from_str(
+            r#"[
+                {
+                    "type": "concurrency",
+                    "name": "warmup",
+                    "exclude_from_results": true,
+                    "concurrency": 1,
+                    "agentic_cache_warmup_duration": 5.0
+                },
+                {
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "concurrency": 1
+                }
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(warmup_agentic_cache_duration(&phases), Some(5.0));
+    }
+
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn warmup_agentic_cache_duration_absent_when_unset() {
+        let phases: Vec<PhaseSpec> = serde_json::from_str(
+            r#"[
+                {
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "concurrency": 1
+                }
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(warmup_agentic_cache_duration(&phases), None);
     }
 
     #[test]

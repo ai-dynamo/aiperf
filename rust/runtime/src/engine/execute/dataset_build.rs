@@ -326,6 +326,16 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                         AgenticPhase::Profiling => Rc::new(agentic_trees.as_ref().clone()),
                         AgenticPhase::Warmup => Rc::new(Vec::new()),
                     },
+                    // Accelerated cache-warmup is a WARMUP-phase concern; the
+                    // authored `agentic_cache_warmup_duration` is threaded onto
+                    // the warmup phase's common by `lower_legacy_agentic`. The
+                    // PROFILING instance never drives the substage.
+                    cache_warmup_duration_s: match agentic_phase {
+                        AgenticPhase::Warmup => phase.common().agentic_cache_warmup_duration,
+                        AgenticPhase::Profiling => None,
+                    },
+                    // Reserved for the later accelerated substage build.
+                    max_tokens_override: None,
                 };
                 let workload =
                     Rc::new(AgenticReplayWorkload::new(source, config)?) as Rc<dyn Workload>;

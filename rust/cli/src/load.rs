@@ -903,6 +903,22 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             ),
         }
     }
+    // Restrict `--agentic-cache-warmup-duration` to the agentic_replay (legacy
+    // weka) timing mode. The accelerated cache-warmup substage is consumed solely
+    // by the agentic_replay lowering; on any other run the value is silently
+    // dropped, so an unguarded flag is an invisible no-op. Reject it instead
+    // (ports Python's `validate_agentic_cache_warmup`). The resolved timing mode
+    // is agentic_replay exactly when `weka_semantics` is legacy/agentx (the
+    // scenario-declared or `--weka-semantics`-forced legacy path).
+    if inputs.agentic_cache_warmup_duration.is_some()
+        && !matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx"))
+    {
+        anyhow::bail!(
+            "--agentic-cache-warmup-duration requires the agentic_replay timing mode \
+             (set by --scenario inferencex-agentx-mvp or --weka-semantics legacy); \
+             the resolved timing mode is not agentic_replay."
+        );
+    }
     let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);
     if let Some(ref mut phases) = inputs.phases_override {
         apply_cli_loadgen_overlays(phases, &loadgen_overlay)?;
@@ -2727,6 +2743,60 @@ mod tests {
                 err.to_string().contains("scenario lock failure"),
                 "unexpected error: {err}"
             );
+        });
+    }
+
+    /// `--agentic-cache-warmup-duration` on a non-agentic run (no scenario / no
+    /// `--weka-semantics legacy`) is rejected: the accelerated cache-warmup
+    /// substage would be silently dropped, so the flag is an invisible no-op.
+    #[test]
+    fn agentic_cache_warmup_rejected_without_agentic_replay() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--agentic-cache-warmup-duration",
+                "5",
+            ]);
+            let err = super::resolve(&flags).expect_err("guard must reject non-agentic run");
+            assert!(
+                err.to_string()
+                    .contains("--agentic-cache-warmup-duration requires the agentic_replay"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    /// Under `--weka-semantics legacy` the run resolves to the agentic_replay
+    /// timing mode, so `--agentic-cache-warmup-duration` passes the guard (any
+    /// failure must not be the guard's own rejection).
+    #[test]
+    fn agentic_cache_warmup_accepted_under_legacy_weka() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--streaming",
+                "--weka-semantics",
+                "legacy",
+                "--agentic-cache-warmup-duration",
+                "5",
+            ]);
+            if let Err(err) = super::resolve(&flags) {
+                assert!(
+                    !err.to_string()
+                        .contains("--agentic-cache-warmup-duration requires the agentic_replay"),
+                    "guard must not fire under legacy weka: {err}"
+                );
+            }
         });
     }
 

@@ -189,6 +189,16 @@ pub struct AgenticReplayConfig {
     /// for a run with no subagent trees — the workload's join gate then stays a
     /// pass-through (never defers, recycles as before).
     pub trees: Rc<Vec<TreeSpec>>,
+    /// Accelerated cache-warmup duration in seconds (Python
+    /// `--agentic-cache-warmup-duration`), threaded from the WARMUP phase's
+    /// authored `agentic_cache_warmup_duration`. `None` (the default) leaves the
+    /// warmup phase as the standard turn-(n-1) prime; a later stage consumes this
+    /// to drive the accelerated substage. Absent on the PROFILING instance.
+    pub cache_warmup_duration_s: Option<f64>,
+    /// Optional per-turn `max_tokens` override for the accelerated cache-warmup
+    /// substage (`None` = use each turn's recorded cap). Reserved for the later
+    /// substage build; the plumbing task defaults it to `None`.
+    pub max_tokens_override: Option<u32>,
 }
 
 /// The agentic-replay workload: drives one phase's dispatch over a
