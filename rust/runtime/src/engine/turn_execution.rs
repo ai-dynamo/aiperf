@@ -840,7 +840,7 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
         return Ok(());
     }
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, run_worker(receiver, sink, clock));
+    local.block_on(&runtime, run_worker(receiver, sink, clock, worker_id));
     Ok(())
 }
 
@@ -848,6 +848,7 @@ async fn run_worker<S: WorkerSink + 'static>(
     mut receiver: mpsc::Receiver<WorkerMessage>,
     sink: Rc<S>,
     clock: Rc<dyn Clock>,
+    worker_id: usize,
 ) {
     let mut jobs = JoinSet::new();
     let mut accepting = true;
@@ -909,7 +910,7 @@ async fn run_worker<S: WorkerSink + 'static>(
         }
     }
     if let Some((end_ns, reply)) = pending_drain {
-        let records = observer
+        let mut records = observer
             .map(|observer| {
                 observer
                     .take_finalizer_at(end_ns)
@@ -917,6 +918,16 @@ async fn run_worker<S: WorkerSink + 'static>(
                     .records
             })
             .unwrap_or_default();
+        // Stamp the executing worker identity into records the coordinator did
+        // not already attribute. In the hop path the worker-local observer holds
+        // exactly this thread's requests, so `worker_id` here is authoritative:
+        // it makes per-worker routing (e.g. `HopRouting::Sticky` session
+        // affinity) observable at the record boundary.
+        for (_uuid, ingest) in &mut records {
+            if ingest.worker_id.is_none() {
+                ingest.worker_id = Some(worker_id.to_string());
+            }
+        }
         let _ = reply.send(records);
     }
 }
