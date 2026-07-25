@@ -1361,6 +1361,17 @@ fn lower_legacy_agentic(
         !convs.is_empty(),
         "legacy weka reconstruction produced no conversations"
     );
+    // The sampleable pool is the ROOT trajectories (subagent children are spawned,
+    // not independently sampled; warmup conversations are non-root). A worker shard
+    // with zero sampleable roots trips "partition owns no sampleable sessions", so
+    // cap workers to the root-trajectory count — this supports multiple workers
+    // (up to that count) without empty shards, and keeps each whole tree on one
+    // worker so the join gate + recycle stay coherent.
+    let num_root_trajectories = convs
+        .iter()
+        .filter(|c| c.parent_conversation_id.is_none())
+        .count()
+        .max(1);
     // Apply the per-lane t\* snapshot slice (Python `AgenticReplayStrategy`): sample
     // t\* once over each lane's full recorded span, EXCLUDE history (turns before
     // the profiling resume point), and rebase each retained turn's `timestamp_ms`
@@ -1423,17 +1434,13 @@ fn lower_legacy_agentic(
             .map(|p| agentic_replay_phase(p.common().clone())),
     );
 
-    // The agentic-replay timing mode is a single coherent driver: one workload
-    // instance owns the whole dataset, the per-tree join gate, the session-tree
-    // registry, and the recycle cursor. Sharding conversations across workers
-    // (`workers > 1`, per-thread partition) or cells would split a trajectory
-    // tree's root and its subagent children into different partitions — breaking
-    // join gating and recycle, and tripping the "partition owns no sampleable
-    // sessions" guard. So the mode runs global-dispatch, non-cellular, single
-    // worker. (Cellular `cells > 1` is rejected upstream at run selection.)
+    // Multiple workers are supported, but capped to the root-trajectory count so
+    // every shard owns at least one sampleable root and each whole tree stays on
+    // one worker (join gate + recycle are per-workload-instance). Cellular
+    // (`cells > 1`) and non-global admission are rejected at CLI resolution.
     build_common_plan(
         run,
-        1,
+        workload.worker_count.min(num_root_trajectories),
         NativeDatasetPlan::PreparedLinear(prepared),
         tokenizer,
         &agentic_phases,

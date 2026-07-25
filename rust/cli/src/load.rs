@@ -874,15 +874,26 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // Cellular execution (`--cells > 1`) would partition a trajectory tree's root
     // and subagent children across cell processes, breaking join gating — reject
     // it with a clear error (use `--weka-semantics graph-ir` for cellular weka).
-    if matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx"))
-        && inputs.runtime_cells > 1
-    {
-        anyhow::bail!(
-            "the agentic_replay (legacy weka) timing mode does not support cellular \
-             execution (--cells {}); it runs as a single non-cellular driver. Use \
-             --weka-semantics graph-ir for cellular weka replay.",
-            inputs.runtime_cells
-        );
+    if matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx")) {
+        if inputs.runtime_cells > 1 {
+            anyhow::bail!(
+                "the agentic_replay (legacy weka) timing mode does not support cellular \
+                 execution (--cells {}); it runs non-cellular. Use --weka-semantics \
+                 graph-ir for cellular weka replay.",
+                inputs.runtime_cells
+            );
+        }
+        // Non-global admission (`--dispatch sharded`) statically partitions
+        // conversations per thread, which would split a trajectory tree's root and
+        // subagent children across shards and break join gating. Require global
+        // (shared) admission; `global`/`global-hop` are fine, `sharded` is not.
+        if inputs.runtime_dispatch == Some(DispatchMode::Sharded) {
+            anyhow::bail!(
+                "the agentic_replay (legacy weka) timing mode requires global admission; \
+                 --dispatch sharded is not supported (it partitions trajectory trees \
+                 across worker threads). Use --dispatch global (the default) or global-hop."
+            );
+        }
     }
     let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);
     if let Some(ref mut phases) = inputs.phases_override {
