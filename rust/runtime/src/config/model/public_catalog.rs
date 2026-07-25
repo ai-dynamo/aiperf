@@ -37,8 +37,7 @@ pub fn lookup(name: &str) -> Option<&'static PublicMeta> {
 /// Iterate every catalog entry as `(name, metadata)`.
 ///
 /// Exposed so cross-crate tests (in `aiperf-cli`, which can depend on the
-/// runtime loader registry) can validate that every catalog format resolves,
-/// without `aiperf-config` itself depending on `aiperf-runtime`.
+/// runtime loader registry) can validate that every catalog format resolves.
 pub fn catalog_entries() -> impl Iterator<Item = (&'static str, &'static PublicMeta)> {
     CATALOG.iter().map(|(name, meta)| (name.as_str(), meta))
 }

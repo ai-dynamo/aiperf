@@ -32,10 +32,9 @@ use crate::extensions::AIPerfRegistry;
 /// per-thread partition. `workers==1` and the single-thread coordinator path
 /// have no cross-thread admission concern, so the mode is inert there.
 ///
-/// The enum itself is defined in the leaf `aiperf-config` crate (so the typed
-/// config model and runtime share one serde-stable type without a cycle) and
-/// re-exported here to keep `crate::engine::protocol::DispatchMode` call sites
-/// unchanged.
+/// The enum itself is defined in `crate::config::model::dispatch` (so the typed
+/// config model and runtime share one serde-stable type) and re-exported here to
+/// keep `crate::engine::protocol::DispatchMode` call sites unchanged.
 pub use crate::config::model::DispatchMode;
 
 /// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]

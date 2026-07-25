@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Cross-crate guard for the embedded public-dataset catalog.
 //!
-//! The catalog lives in the leaf `aiperf-config` crate, which cannot depend on
-//! `aiperf-runtime`. This test lives in `aiperf-cli` (which depends on both) so
-//! it can validate every catalog format against the runtime loader registry.
-//! Relocated verbatim from `aiperf-config`'s `public_catalog` unit tests when
-//! `DispatchMode` moved into the leaf crate and the config→runtime edge was cut.
+//! The catalog lives in `aiperf_runtime::config`. This test lives in `aiperf-cli`
+//! so it can validate every catalog format against the runtime loader registry.
+//! Relocated verbatim from the former `aiperf-config` crate's `public_catalog`
+//! unit tests when that crate was folded into `aiperf_runtime::config`.
 
 use aiperf_runtime::config::model::public_catalog::catalog_entries;
 use aiperf_runtime::dataset::loader::LoaderRegistry;
