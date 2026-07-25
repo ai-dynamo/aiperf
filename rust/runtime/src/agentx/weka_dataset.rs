@@ -13,7 +13,6 @@
 //! or prompt re-synthesis — and the recorded per-turn `timestamp_ms`/`delay_ms`
 //! are carried so the workload can compute t\*-relative dispatch times.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -24,8 +23,7 @@ use crate::agentx::loader::ReconstructedConversation;
 use crate::agentx::wire::{chat_request_body, ChatRequestOptions};
 use crate::dataset::Dataset;
 use crate::dataset::model::{
-    BranchId, Conversation, ConversationBranch, ConversationBranchMode, ConversationContextMode,
-    DagMetadata, DispatchTiming, ModelId, PrerequisiteKind, SessionId, Turn, TurnPrerequisite,
+    Conversation, ConversationContextMode, ModelId, SessionId, Turn,
 };
 use crate::dataset::segment::{Role, SegmentPool};
 
@@ -137,17 +135,16 @@ pub fn compose_weka_agentic_dataset(
     let mut ledger = CacheBustLedger::default();
     let mut conversations = Vec::with_capacity(convs.len());
 
-    // Session ids that some spawn branch targets as a child. Such conversations
-    // need lineage `DagMetadata` even when they declare no branches of their own,
-    // so the DAG validation (`branch references unknown child` / `child not
-    // referenced by parent`) is satisfied. Unrelated conversations stay `dag: None`.
-    let spawn_child_ids: HashSet<&str> = convs
-        .iter()
-        .flat_map(|c| c.turns.iter())
-        .filter_map(|t| t.spawn_branch.as_ref())
-        .flat_map(|sb| sb.child_session_ids.iter().map(String::as_str))
-        .collect();
-
+    // NOTE: the reconstructed subagent spawn/join structure
+    // (`ReconstructedTurn.spawn_branch` / `.join_prerequisite`) is intentionally
+    // NOT propagated onto the composed `Dataset` (no `ConversationBranch`, no
+    // `TurnPrerequisite`, no `DagMetadata`). The dataset's DAG validator cannot be
+    // satisfied once history-slicing separates a spawn declaration from its join
+    // turn, and carrying the DAG would force subagent children to be non-sampleable
+    // (breaking multi-worker partitioning). Join gating instead consumes a side
+    // `Vec<TreeSpec>` built directly from the reconstruction and threaded into the
+    // `agentic_replay` workload — so children stay plain, sampleable conversations
+    // and the dataset stays DAG-free and valid under any slice.
     for (traj_index, conv) in convs.iter().enumerate() {
         // The trajectory tree's root correlation (subagent/flat children share it).
         let correlation = conv
@@ -164,7 +161,6 @@ pub fn compose_weka_agentic_dataset(
         );
 
         let mut turns = Vec::with_capacity(conv.turns.len());
-        let mut conv_branches: Vec<ConversationBranch> = Vec::new();
         let mut parent = None;
         for (i, t) in conv.turns.iter().enumerate() {
             let req_opts = ChatRequestOptions {
@@ -179,7 +175,7 @@ pub fn compose_weka_agentic_dataset(
             let handle = pool.intern_raw(parent, wire)?;
             parent = Some(handle);
 
-            let mut turn = Turn {
+            let turn = Turn {
                 role: Some(Role::from("user")),
                 model: Some(ModelId::from(t.model.as_str())),
                 max_tokens: u32::try_from(t.max_tokens.max(1)).ok(),
@@ -189,85 +185,18 @@ pub fn compose_weka_agentic_dataset(
                 body: Turn::dispatch_body(Some(handle), None, &[]),
                 ..Turn::default()
             };
-
-            // Surface the reconstructed subagent spawn/join structure onto the
-            // composed turn: a spawn declares a branch (recorded on the turn and
-            // the conversation DAG); a join gates the turn on child completion.
-            if let Some(sb) = &t.spawn_branch {
-                let bid = BranchId::from(sb.branch_id.as_str());
-                turn.branch_ids.push(bid.clone());
-                conv_branches.push(ConversationBranch {
-                    branch_id: bid,
-                    child_conversation_ids: sb
-                        .child_session_ids
-                        .iter()
-                        .map(|s| SessionId::from(s.clone()))
-                        .collect(),
-                    mode: if sb.mode_fork {
-                        ConversationBranchMode::Fork
-                    } else {
-                        ConversationBranchMode::Spawn
-                    },
-                    dispatch_timing: DispatchTiming::Post,
-                    background: sb.background,
-                });
-            }
-            if let Some(jp) = &t.join_prerequisite {
-                turn.prerequisites.push(TurnPrerequisite {
-                    kind: PrerequisiteKind::SpawnJoin,
-                    branch_id: Some(BranchId::from(jp.branch_id.as_str())),
-                    child_conversation_ids: jp
-                        .child_session_ids
-                        .iter()
-                        .map(|s| SessionId::from(s.clone()))
-                        .collect(),
-                    barrier_id: None,
-                    timer_seconds: None,
-                    event_name: None,
-                });
-            }
-
             turns.push(turn);
         }
 
-        let session_id = SessionId::from(conv.session_id.clone());
-        let is_root = conv.parent_conversation_id.is_none();
-        let parent_id = conv
-            .parent_conversation_id
-            .as_ref()
-            .map(|p| SessionId::from(p.clone()));
-        let root_id = SessionId::from(conv.replay_scope_id.clone());
-        // Attach a DAG when the conversation either declares spawn branches or is
-        // itself a spawn-branch child (needs lineage); linear conversations with
-        // no subagent relationship leave `dag` absent.
-        let dag = if !conv_branches.is_empty() {
-            Some(DagMetadata {
-                branches: conv_branches.into_iter().collect(),
-                is_root,
-                agent_depth: if is_root { 0 } else { 1 },
-                parent_conversation_id: parent_id,
-                root_conversation_id: root_id,
-            })
-        } else if spawn_child_ids.contains(conv.session_id.as_str()) {
-            Some(DagMetadata {
-                branches: Default::default(),
-                is_root: false,
-                agent_depth: 1,
-                parent_conversation_id: parent_id,
-                root_conversation_id: root_id,
-            })
-        } else {
-            None
-        };
-
         conversations.push(Conversation {
-            session_id,
+            session_id: SessionId::from(conv.session_id.clone()),
             turns,
             system: None,
             user_context: None,
             context_mode: None,
             accuracy: None,
-            dag,
+            // No DAG: subagent gating rides a side TreeSpec map, not the dataset.
+            dag: None,
         });
     }
 
@@ -341,7 +270,12 @@ mod tests {
     }
 
     #[test]
-    fn composer_preserves_spawn_join_metadata() {
+    fn composer_leaves_dataset_dag_free_despite_spawn_join_metadata() {
+        // Subagent spawn/join structure on the reconstruction MUST NOT be
+        // propagated onto the composed Dataset: it would trip the DAG validator
+        // once history-slicing separates a spawn from its join, and would make
+        // children non-sampleable (breaking multi-worker). Gating rides a side
+        // TreeSpec map instead — the composed dataset stays clean and valid.
         use crate::agentx::loader::{JoinPrerequisite, SpawnBranch};
         let mut t0 = turn(0.0, "a");
         t0.spawn_branch = Some(SpawnBranch {
@@ -362,28 +296,22 @@ mod tests {
             parent_conversation_id: None,
             turns: vec![t0, t1, t2],
         };
-        // The spawned child conversation the branch targets; its lineage is
-        // surfaced onto the composed dataset so the DAG validates.
         let child = ReconstructedConversation {
             session_id: "t::sa:a".into(),
             replay_scope_id: "t".into(),
             parent_conversation_id: Some("t".into()),
             turns: vec![turn(0.0, "child")],
         };
+        // Composes without a DAG-validation error, and every conversation is
+        // DAG-free with no branch/prerequisite metadata on its turns.
         let ds = compose_weka_agentic_dataset(&[root, child], &opts()).unwrap();
-        let conv = &ds.conversations()[0];
-        assert!(!conv.turns[0].branch_ids.is_empty());
-        assert_eq!(conv.turns[0].branch_ids[0].as_str(), "br:a");
-        // The spawn branch is attached to the conversation DAG.
-        let dag = conv.dag.as_ref().expect("dag present");
-        assert_eq!(dag.branches.len(), 1);
-        assert_eq!(dag.branches[0].mode, crate::dataset::model::ConversationBranchMode::Spawn);
-        let pre = &conv.turns[2].prerequisites[0];
-        assert_eq!(pre.kind, crate::dataset::model::PrerequisiteKind::SpawnJoin);
-        assert_eq!(
-            pre.child_conversation_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-            vec!["t::sa:a"]
-        );
+        for conv in ds.conversations() {
+            assert!(conv.dag.is_none(), "dataset must stay DAG-free");
+            for t in &conv.turns {
+                assert!(t.branch_ids.is_empty());
+                assert!(t.prerequisites.is_empty());
+            }
+        }
     }
 
     #[test]
