@@ -164,9 +164,109 @@ pub fn offset_ms(timestamp_ms: Option<f64>, t_star_ms: f64) -> f64 {
     }
 }
 
+/// A stream turn's replay phase under a sampled t*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayPhase {
+    /// Pre-t* turn back-seeded as history (not dispatched).
+    History,
+    /// The last pre-t* turn, dispatched as the warmup/session-start.
+    Warmup,
+    /// A turn at/after t*, dispatched during PROFILING at its offset.
+    Profiling,
+}
+
+/// One scheduled turn: its phase and (for PROFILING) its dispatch offset from t*.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScheduledTurn {
+    /// Turn index within the stream.
+    pub k: i64,
+    /// Replay phase.
+    pub phase: ReplayPhase,
+    /// PROFILING dispatch offset from t* in ms (`None` for history/warmup).
+    pub offset_ms: Option<f64>,
+}
+
+/// Compute a stream's agentic-replay execution schedule from its recorded turn
+/// timestamps and a sampled t*: which turns are history / warmup / profiling, and
+/// each profiling turn's dispatch offset from t*. This is the deterministic
+/// execution-order timing schedule the async dispatch loop fires against.
+pub fn replay_schedule(turn_timestamps_ms: &[Option<f64>], t_star_ms: f64) -> Vec<ScheduledTurn> {
+    let n = turn_timestamps_ms.len() as i64;
+    let resume = next_turn_index_at_or_after(turn_timestamps_ms, t_star_ms);
+    let warmup_idx = resume.and_then(warmup_turn_index);
+    (0..n)
+        .map(|k| {
+            let (phase, offset) = match resume {
+                None => {
+                    if k == n - 1 {
+                        (ReplayPhase::Warmup, None)
+                    } else {
+                        (ReplayPhase::History, None)
+                    }
+                }
+                Some(resume) => {
+                    if Some(k) == warmup_idx {
+                        (ReplayPhase::Warmup, None)
+                    } else if k >= resume {
+                        (
+                            ReplayPhase::Profiling,
+                            Some(offset_ms(turn_timestamps_ms[k as usize], t_star_ms)),
+                        )
+                    } else {
+                        (ReplayPhase::History, None)
+                    }
+                }
+            };
+            ScheduledTurn {
+                k,
+                phase,
+                offset_ms: offset,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_schedule_matches_python_golden() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("tests/fixtures/agentx/schedule_golden.json");
+        let raw = match std::fs::read(&path) {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skip: schedule golden absent");
+                return;
+            }
+        };
+        let scenarios: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        for sc in scenarios.as_array().unwrap() {
+            let name = sc["name"].as_str().unwrap();
+            let ts: Vec<Option<f64>> = sc["timestamps_ms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64())
+                .collect();
+            let t_star = sc["t_star_ms"].as_f64().unwrap();
+            let sched = replay_schedule(&ts, t_star);
+            let want = sc["per_turn"].as_array().unwrap();
+            assert_eq!(sched.len(), want.len(), "{name} turn count");
+            for (got, w) in sched.iter().zip(want) {
+                let want_phase = match w["phase"].as_str().unwrap() {
+                    "history" => ReplayPhase::History,
+                    "warmup" => ReplayPhase::Warmup,
+                    "profiling" => ReplayPhase::Profiling,
+                    other => panic!("bad phase {other}"),
+                };
+                assert_eq!(got.phase, want_phase, "{name} k{} phase", got.k);
+                assert_eq!(got.offset_ms, w["offset_ms"].as_f64(), "{name} k{} offset", got.k);
+            }
+        }
+    }
 
     #[test]
     fn t_star_rng_pick_matches_numpy() {

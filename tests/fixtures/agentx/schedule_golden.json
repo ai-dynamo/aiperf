@@ -1,0 +1,114 @@
+[
+ {
+  "name": "simple",
+  "timestamps_ms": [
+   0.0,
+   1000.0,
+   2000.0
+  ],
+  "t_star_ms": 800.0,
+  "resume_index": 1,
+  "warmup_index": 0,
+  "per_turn": [
+   {
+    "k": 0,
+    "phase": "warmup",
+    "offset_ms": null
+   },
+   {
+    "k": 1,
+    "phase": "profiling",
+    "offset_ms": 200.0
+   },
+   {
+    "k": 2,
+    "phase": "profiling",
+    "offset_ms": 1200.0
+   }
+  ]
+ },
+ {
+  "name": "all_profiling",
+  "timestamps_ms": [
+   500.0,
+   1500.0,
+   2500.0
+  ],
+  "t_star_ms": 200.0,
+  "resume_index": 0,
+  "warmup_index": null,
+  "per_turn": [
+   {
+    "k": 0,
+    "phase": "profiling",
+    "offset_ms": 300.0
+   },
+   {
+    "k": 1,
+    "phase": "profiling",
+    "offset_ms": 1300.0
+   },
+   {
+    "k": 2,
+    "phase": "profiling",
+    "offset_ms": 2300.0
+   }
+  ]
+ },
+ {
+  "name": "all_history",
+  "timestamps_ms": [
+   0.0,
+   100.0,
+   200.0
+  ],
+  "t_star_ms": 900.0,
+  "resume_index": null,
+  "warmup_index": null,
+  "per_turn": [
+   {
+    "k": 0,
+    "phase": "history",
+    "offset_ms": null
+   },
+   {
+    "k": 1,
+    "phase": "history",
+    "offset_ms": null
+   },
+   {
+    "k": 2,
+    "phase": "warmup",
+    "offset_ms": null
+   }
+  ]
+ },
+ {
+  "name": "boundary",
+  "timestamps_ms": [
+   0.0,
+   800.0,
+   1600.0
+  ],
+  "t_star_ms": 800.0,
+  "resume_index": 1,
+  "warmup_index": 0,
+  "per_turn": [
+   {
+    "k": 0,
+    "phase": "warmup",
+    "offset_ms": null
+   },
+   {
+    "k": 1,
+    "phase": "profiling",
+    "offset_ms": 0.0
+   },
+   {
+    "k": 2,
+    "phase": "profiling",
+    "offset_ms": 800.0
+   }
+  ]
+ }
+]
