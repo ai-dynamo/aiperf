@@ -105,8 +105,17 @@ fn set_dotted(cfg: &mut Value, path: &str, value: Value) -> bool {
         let next: Option<&mut Value> = match cur {
             Value::Object(map) => {
                 if is_leaf {
-                    map.insert(seg.to_string(), value);
-                    return true;
+                    // The leaf key must already exist: `BenchmarkConfig` is not
+                    // `deny_unknown_fields`, so inserting a typo'd key would be
+                    // silently dropped on re-deserialize, yielding duplicate runs
+                    // with no error. Require pre-existence like the array path.
+                    match map.get_mut(seg) {
+                        Some(slot) => {
+                            *slot = value;
+                            return true;
+                        }
+                        None => return false,
+                    }
                 }
                 map.get_mut(seg)
             }
@@ -382,13 +391,14 @@ mod tests {
 
     #[test]
     fn missing_path_is_an_error() {
+        // A leaf key that does not exist on an existing object is a hard error:
+        // set_dotted requires pre-existence so a typo'd path cannot silently
+        // inject a key that re-deserialization drops.
         let sweep = Sweep::magic_list("phases.profiling.nonexistent_field", vec![Value::from(1)]);
-        // Setting an object leaf inserts, so target a non-existent named phase.
+        // A missing named phase (array element) cannot be traversed.
         let sweep_bad_phase =
             Sweep::magic_list("phases.no_such_phase.concurrency", vec![Value::from(1)]);
-        // A leaf on an existing object is created (permissive), so this succeeds.
-        assert!(build_benchmark_plan(&base_two_field_cfg(), &sweep, Some(1)).is_ok());
-        // A missing named array element cannot be traversed: hard error.
+        assert!(build_benchmark_plan(&base_two_field_cfg(), &sweep, Some(1)).is_err());
         assert!(build_benchmark_plan(&base_two_field_cfg(), &sweep_bad_phase, Some(1)).is_err());
     }
 }
