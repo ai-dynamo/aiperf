@@ -1862,15 +1862,22 @@ fn prepare_graph_phase(
     let phase_rng_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
     let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, phase_rng_index);
     let common = phase.common();
+    // Warmup and profiling use the same deterministic per-trace snapshot instant.
+    let mut phase_plans = apply_tstar_split(&input.plans, phase, t_star);
+    // Drop any trace whose t*-snapshot is empty: a warmup prime sampled past the
+    // trace's last turn, or a profiling chop that keeps nothing, yields a zero-node
+    // graph. Admitting one records a "no dispatchable nodes" failure and — worse —
+    // leaves a one-pass phase's session drain waiting on a session that never
+    // dispatches, deadlocking the phase. The corpus draw and the one-pass session
+    // bound below therefore count only the non-empty snapshots.
+    phase_plans.retain(|plan| !plan.graph.nodes.is_empty());
     let one_pass =
         common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
     let session_limit = if one_pass {
-        Some(u64::try_from(input.plans.len()).context("graph root count exceeds u64")?)
+        Some(u64::try_from(phase_plans.len()).context("graph root count exceeds u64")?)
     } else {
         common.sessions
     };
-    // Warmup and profiling use the same deterministic per-trace snapshot instant.
-    let phase_plans = apply_tstar_split(&input.plans, phase, t_star);
     // Cache-pressure warmup recycles the rewritten corpus for the configured duration.
     let pressure = build_pressure_recycle(&phase_plans, &input.plans, phase, common, t_star)
         .with_context(|| {
