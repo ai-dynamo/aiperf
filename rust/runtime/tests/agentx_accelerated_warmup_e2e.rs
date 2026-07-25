@@ -36,7 +36,9 @@ use aiperf_runtime::dataset::{
 };
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
 use aiperf_runtime::dispatch::sink::RequestObserver;
-use aiperf_runtime::endpoints::{EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig};
+use aiperf_runtime::endpoints::{
+    EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
+};
 use aiperf_runtime::graph::runtime::drive_sim;
 use aiperf_runtime::multiturn::{
     ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference, TurnToSend,
@@ -97,13 +99,23 @@ impl TurnDispatcher for SimDispatcher {
             max_output_tokens: turn.max_output_tokens,
             dispatch_ms: (start_ns - self.origin_ns) as f64 / 1_000_000.0,
         });
-        observer.on_admit(turn.uuid, (start_ns - self.origin_ns) as f64 / 1_000_000.0, 0);
+        observer.on_admit(
+            turn.uuid,
+            (start_ns - self.origin_ns) as f64 / 1_000_000.0,
+            0,
+        );
         self.clock.clone().sleep(self.ttft_ns).await;
         on_first_token(self.ttft_ns);
-        observer.on_token(turn.uuid, (self.clock.now_ns() - self.origin_ns) as f64 / 1_000_000.0);
+        observer.on_token(
+            turn.uuid,
+            (self.clock.now_ns() - self.origin_ns) as f64 / 1_000_000.0,
+        );
         for _ in 1..turn.max_output_tokens {
             self.clock.clone().sleep(self.itl_ns).await;
-            observer.on_token(turn.uuid, (self.clock.now_ns() - self.origin_ns) as f64 / 1_000_000.0);
+            observer.on_token(
+                turn.uuid,
+                (self.clock.now_ns() - self.origin_ns) as f64 / 1_000_000.0,
+            );
         }
         observer.on_terminal(turn.uuid, ReplayTerminalStatus::Completed);
         Ok(TurnDispatchOutcome {
@@ -138,7 +150,11 @@ async fn multiturn_source(rows: serde_json::Value, model: &str) -> Box<dyn Conve
         .unwrap()
         .prepare(
             &EndpointId::new("chat").unwrap(),
-            RawEndpointConfig { streaming: true, use_server_token_count: true, ..RawEndpointConfig::default() },
+            RawEndpointConfig {
+                streaming: true,
+                use_server_token_count: true,
+                ..RawEndpointConfig::default()
+            },
         )
         .unwrap();
     let mut table = PreparedEndpointTable::new();
@@ -149,7 +165,10 @@ async fn multiturn_source(rows: serde_json::Value, model: &str) -> Box<dyn Conve
             model,
             4,
             Rc::new(table),
-            PreparedEndpointReference { key, endpoint_id: EndpointId::new("chat").unwrap() },
+            PreparedEndpointReference {
+                key,
+                endpoint_id: EndpointId::new("chat").unwrap(),
+            },
         )
         .unwrap(),
     )
@@ -233,7 +252,8 @@ fn dataset_rows() -> serde_json::Value {
 #[test]
 fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
     // Shared cross-phase carrier: WARMUP populates it, PROFILING consumes it.
-    let carrier: aiperf_runtime::agentic_replay::WarmupHandoffCarrier = new_warmup_handoff_carrier();
+    let carrier: aiperf_runtime::agentic_replay::WarmupHandoffCarrier =
+        new_warmup_handoff_carrier();
 
     // ---- WARMUP: accelerated cache-pressure substage (max_tokens=1, zero idle). ----
     let warmup_seen = {
@@ -260,22 +280,47 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
     //     at zero idle (t == 0). Lanes a,b advance under compression; c is single-turn.
     assert!(!warmup_seen.is_empty(), "warmup dispatched pressure turns");
     for s in &warmup_seen {
-        assert_eq!(s.max_output_tokens, 1, "warmup pressure forces max_tokens=1: {s:?}");
+        assert_eq!(
+            s.max_output_tokens, 1,
+            "warmup pressure forces max_tokens=1: {s:?}"
+        );
     }
     for id in ["a", "b", "c"] {
-        let first = warmup_seen.iter().find(|s| s.conversation_id == id).unwrap();
+        let first = warmup_seen
+            .iter()
+            .find(|s| s.conversation_id == id)
+            .unwrap();
         assert_eq!(first.turn_index, 0, "lane {id} pressure starts at turn 0");
-        assert!(first.dispatch_ms.abs() < 1e-6, "lane {id} first pressure turn at zero idle");
+        assert!(
+            first.dispatch_ms.abs() < 1e-6,
+            "lane {id} first pressure turn at zero idle"
+        );
     }
     // Lanes a,b advanced past turn 0 under compression (proves live-trajectory replay).
-    assert!(warmup_seen.iter().any(|s| s.conversation_id == "a" && s.turn_index >= 1));
-    assert!(warmup_seen.iter().any(|s| s.conversation_id == "b" && s.turn_index >= 1));
+    assert!(
+        warmup_seen
+            .iter()
+            .any(|s| s.conversation_id == "a" && s.turn_index >= 1)
+    );
+    assert!(
+        warmup_seen
+            .iter()
+            .any(|s| s.conversation_id == "b" && s.turn_index >= 1)
+    );
 
     // The carrier now holds the drained frontier the WARMUP finalize produced. These
     // assertions read the production `finalize` output directly (the load-bearing
     // handoff): resume indices, residual offsets, and the recycled empty lane.
-    let handoff = carrier.lock().unwrap().clone().expect("warmup populated the carrier");
-    assert_eq!(handoff.lanes.len(), 3, "one handoff lane per live trajectory");
+    let handoff = carrier
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("warmup populated the carrier");
+    assert_eq!(
+        handoff.lanes.len(),
+        3,
+        "one handoff lane per live trajectory"
+    );
     // (b, carrier) Lanes a,b survived mid-flight and resume at their TRUE next turn
     //     index (> 0) carrying a strictly-positive residual dispatch offset.
     let mut surviving = 0usize;
@@ -283,8 +328,14 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
     for lane in handoff.lanes.values() {
         for st in &lane.states {
             if st.x_correlation_id == "a" || st.x_correlation_id == "b" {
-                assert!(st.next_turn_index >= 2, "surviving lane resumes past turn 0 (drained frontier)");
-                assert!(st.next_dispatch_offset_ms > 0.0, "surviving lane carries a residual offset");
+                assert!(
+                    st.next_turn_index >= 2,
+                    "surviving lane resumes past turn 0 (drained frontier)"
+                );
+                assert!(
+                    st.next_dispatch_offset_ms > 0.0,
+                    "surviving lane carries a residual offset"
+                );
                 surviving += 1;
             }
             max_offset_ms = max_offset_ms.max(st.next_dispatch_offset_ms);
@@ -299,8 +350,14 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
         .flat_map(|l| &l.states)
         .find(|s| s.x_correlation_id.contains("#w"))
         .expect("drained lane recycled a fresh root");
-    assert_eq!(recycled_state.next_turn_index, 0, "recycled root starts at turn 0");
-    assert_eq!(recycled_state.next_dispatch_offset_ms, 0.0, "recycled root has zero residual offset");
+    assert_eq!(
+        recycled_state.next_turn_index, 0,
+        "recycled root starts at turn 0"
+    );
+    assert_eq!(
+        recycled_state.next_dispatch_offset_ms, 0.0,
+        "recycled root has zero residual offset"
+    );
 
     // ---- PROFILING: drive the REAL resume dispatch off the carrier. ----
     // Turns are made effectively non-terminating within the observation window (10 s
@@ -328,7 +385,10 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
         let phase = PhaseConfig::new(
             "profiling",
             PhaseKind::Profiling,
-            StopConfig { expected_duration_ns: Some(deadline_ns), ..StopConfig::default() },
+            StopConfig {
+                expected_duration_ns: Some(deadline_ns),
+                ..StopConfig::default()
+            },
         )
         .with_grace_period(GracePeriod::Disabled)
         .with_runtime_intervals(1_000_000, 1_000_000);
@@ -350,7 +410,11 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
         });
         assert!(!outcome.deadlocked, "profiling phase must drain");
         // (d) aggregate metrics present and clean completion (no slot panic reached here).
-        let report = Rc::try_unwrap(phase_report).ok().unwrap().into_inner().unwrap();
+        let report = Rc::try_unwrap(phase_report)
+            .ok()
+            .unwrap()
+            .into_inner()
+            .unwrap();
         assert_eq!(report.reports.len(), 1, "one profiling phase report");
         seen_handle.seen.borrow().clone()
     };
@@ -362,17 +426,33 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
             .iter()
             .find(|s| s.conversation_id == id && s.x_correlation_id == id)
             .unwrap_or_else(|| panic!("lane {id} resumed in profiling"));
-        assert_eq!(resume.turn_index, 2, "lane {id} resumes at recorded next turn index 2, not 0");
-        assert!(resume.dispatch_ms > 1.0, "lane {id} resumes at residual offset, got {}", resume.dispatch_ms);
-        assert_eq!(resume.max_output_tokens, 4, "profiling restores the recorded output cap");
+        assert_eq!(
+            resume.turn_index, 2,
+            "lane {id} resumes at recorded next turn index 2, not 0"
+        );
+        assert!(
+            resume.dispatch_ms > 1.0,
+            "lane {id} resumes at residual offset, got {}",
+            resume.dispatch_ms
+        );
+        assert_eq!(
+            resume.max_output_tokens, 4,
+            "profiling restores the recorded output cap"
+        );
     }
     // (c) Real recycle dispatch: the drained lane's fresh root fires at turn 0, ~zero offset.
     let recycled = profiling_seen
         .iter()
         .find(|s| s.x_correlation_id.contains("#w"))
         .expect("drained lane recycled a fresh root in profiling");
-    assert_eq!(recycled.turn_index, 0, "recycled drained lane starts a fresh root at turn 0");
-    assert!(recycled.dispatch_ms.abs() < 1.0, "recycled fresh root fires at ~zero offset");
+    assert_eq!(
+        recycled.turn_index, 0,
+        "recycled drained lane starts a fresh root at turn 0"
+    );
+    assert!(
+        recycled.dispatch_ms.abs() < 1.0,
+        "recycled fresh root fires at ~zero offset"
+    );
 }
 
 /// Regression guard: with NO accelerated duration and an empty carrier, the profiling
@@ -394,14 +474,20 @@ fn non_accelerated_profiling_is_unchanged_starts_at_turn_zero() {
         seen: RefCell::new(Vec::new()),
     });
     let seen_handle = dispatcher.clone();
-    let stop = StopConfig { expected_duration_ns: Some(50_000_000), ..StopConfig::default() };
+    let stop = StopConfig {
+        expected_duration_ns: Some(50_000_000),
+        ..StopConfig::default()
+    };
     let _ = run(clock, workload, dispatcher, stop, true);
     let seen = seen_handle.seen.borrow();
     // Every lane's FIRST dispatch is turn 0 (no carrier resume).
     for id in ["a", "b", "c"] {
         let first = seen.iter().find(|s| s.conversation_id == id);
         if let Some(first) = first {
-            assert_eq!(first.turn_index, 0, "non-accelerated lane {id} starts at turn 0");
+            assert_eq!(
+                first.turn_index, 0,
+                "non-accelerated lane {id} starts at turn 0"
+            );
         }
     }
     let _keep: Cell<usize> = Cell::new(0);

@@ -31,9 +31,7 @@ use crate::agentx::handoff::{
 };
 use crate::agentx::replay_gate::ReplayGate;
 use crate::agentx::session_tree::{PhaseKey, SessionTreeRegistry, SlotReleaser};
-use crate::agentx::trajectory_source::{
-    profiling_dispatch_delays_ms, warmup_dispatch_offsets_ms,
-};
+use crate::agentx::trajectory_source::{profiling_dispatch_delays_ms, warmup_dispatch_offsets_ms};
 use crate::multiturn::ConversationSource;
 use crate::scheduled::{ScheduledRuntime, Workload};
 use crate::scheduler::LocalTaskScheduler;
@@ -153,7 +151,8 @@ fn apply_max_tokens_override(
     turn: &mut crate::multiturn::TurnToSend,
     max_tokens_override: Option<u32>,
 ) {
-    turn.max_output_tokens = effective_max_output_tokens(turn.max_output_tokens, max_tokens_override);
+    turn.max_output_tokens =
+        effective_max_output_tokens(turn.max_output_tokens, max_tokens_override);
 }
 
 /// Strip a leading `[rid:<12hex>]\n\n` cache-bust marker, if present.
@@ -163,7 +162,9 @@ fn strip_rid_prefix(content: &str) -> &str {
         && rest[..close].len() == 12
         && rest[..close].bytes().all(|b| b.is_ascii_hexdigit())
     {
-        return rest[close + 1..].strip_prefix("\n\n").unwrap_or(&rest[close + 1..]);
+        return rest[close + 1..]
+            .strip_prefix("\n\n")
+            .unwrap_or(&rest[close + 1..]);
     }
     content
 }
@@ -202,7 +203,9 @@ pub fn new_warmup_handoff_carrier() -> WarmupHandoffCarrier {
 pub fn downcast_warmup_handoff_carrier(
     any: &crate::agentic_tree::WarmupHandoffCarrierAny,
 ) -> Option<WarmupHandoffCarrier> {
-    any.clone().downcast::<Mutex<Option<LegacyWarmupHandoff>>>().ok()
+    any.clone()
+        .downcast::<Mutex<Option<LegacyWarmupHandoff>>>()
+        .ok()
 }
 
 /// Per-lane recorded metadata the accelerated-warmup substage needs to project
@@ -306,10 +309,7 @@ pub struct AgenticReplayWorkload {
 
 impl AgenticReplayWorkload {
     /// Build the workload over a reconstructed-trajectory conversation source.
-    pub fn new(
-        source: Box<dyn ConversationSource>,
-        config: AgenticReplayConfig,
-    ) -> Result<Self> {
+    pub fn new(source: Box<dyn ConversationSource>, config: AgenticReplayConfig) -> Result<Self> {
         Ok(Self {
             source: Rc::new(RefCell::new(source)),
             config,
@@ -375,7 +375,8 @@ impl AgenticReplayWorkload {
                 // Warmup convs carry the `::warmup` suffix; each phase dispatches
                 // only its own conversations (Python's separate warmup barrier).
                 .filter(|meta| {
-                    meta.conversation_id.ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX)
+                    meta.conversation_id
+                        .ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX)
                         == want_warmup
                 })
                 .map(|meta| {
@@ -401,8 +402,10 @@ impl AgenticReplayWorkload {
         let raw: Vec<f64> = lanes.iter().map(|l| l.first_profiling_offset_ms).collect();
         let offsets_ms: Vec<f64> = match cfg.phase {
             AgenticPhase::Warmup => {
-                let leads: Vec<Option<f64>> =
-                    lanes.iter().map(|l| Some(l.first_profiling_offset_ms)).collect();
+                let leads: Vec<Option<f64>> = lanes
+                    .iter()
+                    .map(|l| Some(l.first_profiling_offset_ms))
+                    .collect();
                 warmup_dispatch_offsets_ms(&leads)
             }
             AgenticPhase::Profiling => {
@@ -572,7 +575,11 @@ impl AgenticReplayWorkload {
                 x_correlation_id: corr.clone(),
             });
 
-            let session = match self.source.borrow().session_for(&lane.conversation_id, corr) {
+            let session = match self
+                .source
+                .borrow()
+                .session_for(&lane.conversation_id, corr)
+            {
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(error = %error, lane = %lane.conversation_id, "accelerated warmup lane session failed");
@@ -640,7 +647,11 @@ impl AgenticReplayWorkload {
             let next = credit.turn_index + 1;
             HandoffBaseDelayInputs {
                 next_delay_ms: lane.turn_delays_ms.get(next).copied().flatten(),
-                prev_timestamp_ms: lane.turn_timestamps_ms.get(credit.turn_index).copied().flatten(),
+                prev_timestamp_ms: lane
+                    .turn_timestamps_ms
+                    .get(credit.turn_index)
+                    .copied()
+                    .flatten(),
                 next_timestamp_ms: lane.turn_timestamps_ms.get(next).copied().flatten(),
                 prev_api_time_ms: None,
             }
@@ -658,13 +669,14 @@ impl AgenticReplayWorkload {
                 (root, turns)
             })
             .collect::<BTreeMap<_, _>>();
-        let completed_prefixes = |root: &str| -> Vec<crate::agentx::replay_dependencies::ReplayResumeBoundary> {
-            observer
-                .gate
-                .borrow()
-                .completed_prefixes(root)
-                .unwrap_or_default()
-        };
+        let completed_prefixes =
+            |root: &str| -> Vec<crate::agentx::replay_dependencies::ReplayResumeBoundary> {
+                observer
+                    .gate
+                    .borrow()
+                    .completed_prefixes(root)
+                    .unwrap_or_default()
+            };
         // Empty lanes (a fully-drained tree) recycle a fresh root, drawing the lane's
         // own template with a fresh correlation id (Python `next_recycle_conversation_id`).
         let recycle_cursor = Cell::new(0usize);
@@ -1014,7 +1026,8 @@ fn schedule_agentic_turn(
                                 Ok(meta) => meta,
                                 Err(_) => return,
                             };
-                            let mut next = match src.next_turn(&credit, outcome.to_turn_response()) {
+                            let mut next = match src.next_turn(&credit, outcome.to_turn_response())
+                            {
                                 Ok(Some(turn)) => turn,
                                 _ => return,
                             };
@@ -1029,8 +1042,16 @@ fn schedule_agentic_turn(
                             .end_ns
                             .saturating_add((effective_delay_ms.max(0.0) * NS_PER_MS) as i64);
                         schedule_agentic_turn(
-                            runtime_c, source_c, next_turn, next_target, true, recycle, gate_c,
-                            defer_c, observer_c, accel_c,
+                            runtime_c,
+                            source_c,
+                            next_turn,
+                            next_target,
+                            true,
+                            recycle,
+                            gate_c,
+                            defer_c,
+                            observer_c,
+                            accel_c,
                         );
                     })
                 }),
@@ -1257,7 +1278,10 @@ impl TreeGate {
             }
             let entry = joins.entry(spec.root.clone()).or_default();
             for (turn_index, required) in &spec.join_turns {
-                entry.entry(*turn_index).or_default().extend(required.iter().cloned());
+                entry
+                    .entry(*turn_index)
+                    .or_default()
+                    .extend(required.iter().cloned());
             }
         }
 
@@ -1304,7 +1328,10 @@ impl TreeGate {
             return self.registry.borrow_mut().on_root_terminal(conversation_id);
         }
         // Otherwise treat as a child terminal; report drain of the owning tree.
-        let first_time = self.terminated.borrow_mut().insert(conversation_id.to_string());
+        let first_time = self
+            .terminated
+            .borrow_mut()
+            .insert(conversation_id.to_string());
         if let Some(root) = self.child_root.get(conversation_id).cloned() {
             if first_time {
                 return self.registry.borrow_mut().on_descendant_done(&root);
@@ -1372,7 +1399,9 @@ mod tree_gate_tests {
 
     #[test]
     fn build_tree_specs_groups_root_and_children() {
-        use crate::agentx::loader::{JoinPrerequisite, ReconstructedConversation, ReconstructedTurn};
+        use crate::agentx::loader::{
+            JoinPrerequisite, ReconstructedConversation, ReconstructedTurn,
+        };
 
         // A bare reconstructed turn; `join` optionally hangs a join prerequisite
         // on it (the only field `build_tree_specs` reads besides ordering).
@@ -1413,7 +1442,10 @@ mod tree_gate_tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].root, "t");
         assert_eq!(specs[0].children, vec!["t::sa:a".to_string()]);
-        assert_eq!(specs[0].join_turns, vec![(2usize, vec!["t::sa:a".to_string()])]);
+        assert_eq!(
+            specs[0].join_turns,
+            vec![(2usize, vec!["t::sa:a".to_string()])]
+        );
     }
 
     #[test]

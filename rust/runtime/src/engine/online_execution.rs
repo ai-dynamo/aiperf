@@ -1290,9 +1290,9 @@ fn lower_legacy_agentic(
 ) -> Result<NativeRunSpec> {
     use crate::agentx::config::WekaConfig;
     use crate::agentx::corpus::CorpusTokenSynth;
-    use crate::agentx::hf_dataset::{load_hf_weka_traces, HfDatasetRef};
-    use crate::agentx::loader::{convert_traces_serial, MainReconstructOptions};
-    use crate::agentx::weka_dataset::{compose_weka_agentic_dataset, WekaComposeOptions};
+    use crate::agentx::hf_dataset::{HfDatasetRef, load_hf_weka_traces};
+    use crate::agentx::loader::{MainReconstructOptions, convert_traces_serial};
+    use crate::agentx::weka_dataset::{WekaComposeOptions, compose_weka_agentic_dataset};
     use crate::rng::compat::python_random::PythonRandomGenerator;
     use std::collections::HashMap;
 
@@ -1378,11 +1378,19 @@ fn lower_legacy_agentic(
     let opts = MainReconstructOptions::default();
     let results = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
         let tok = tokenizer_impl.clone();
-        CorpusTokenSynth::new((*corpus).clone(), bs, hash_base_seed, tid, move |t: &[u32]| {
-            tok.decode(t).unwrap_or_default()
-        })
+        CorpusTokenSynth::new(
+            (*corpus).clone(),
+            bs,
+            hash_base_seed,
+            tid,
+            move |t: &[u32]| tok.decode(t).unwrap_or_default(),
+        )
     });
-    let convs: Vec<_> = results.into_iter().filter_map(Result::ok).flatten().collect();
+    let convs: Vec<_> = results
+        .into_iter()
+        .filter_map(Result::ok)
+        .flatten()
+        .collect();
     ensure!(
         !convs.is_empty(),
         "legacy weka reconstruction produced no conversations"
@@ -1393,7 +1401,11 @@ fn lower_legacy_agentic(
     // to its t\*-relative dispatch offset. The `agentic_replay` workload then owns
     // only the cross-lane phase-start alignment + dispatch.
     let convs = crate::agentx::weka_dataset::slice_trajectories_at_tstar(
-        convs, root_seed, 0.0, 1.0, Some(10_000.0),
+        convs,
+        root_seed,
+        0.0,
+        1.0,
+        Some(10_000.0),
     );
     ensure!(
         !convs.is_empty(),
@@ -1454,8 +1466,7 @@ fn lower_legacy_agentic(
     // phase's common; this synthesized warmup replaces those, so recover the
     // authored value from any authored phase and carry it forward so
     // `dataset_build` can populate `AgenticReplayConfig.cache_warmup_duration_s`.
-    warmup_common.agentic_cache_warmup_duration =
-        warmup_agentic_cache_duration(&workload.phases);
+    warmup_common.agentic_cache_warmup_duration = warmup_agentic_cache_duration(&workload.phases);
     // The warmup phase dispatches each warmup conversation exactly once (no
     // recycle), so its record count is known. Set `requests` to that count so the
     // per-phase record-ordinal base of the following PROFILING phase is offset past
@@ -1465,20 +1476,22 @@ fn lower_legacy_agentic(
     // this does not gate warmup dispatch — it only offsets the ordinal space.
     let warmup_count = convs
         .iter()
-        .filter(|c| c.session_id.ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX))
+        .filter(|c| {
+            c.session_id
+                .ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX)
+        })
         .count();
     warmup_common.requests = Some(warmup_count as u64);
     warmup_common.sessions = None;
     warmup_common.duration = None;
-    let agentic_replay_phase = |common: crate::engine::protocol::PhaseCommonSpec| {
-        PhaseSpec::AgenticReplay {
+    let agentic_replay_phase =
+        |common: crate::engine::protocol::PhaseCommonSpec| PhaseSpec::AgenticReplay {
             common,
             start_min_ratio: 0.0,
             start_max_ratio: 1.0,
             idle_gap_cap_seconds: Some(10.0),
             burst_phase_starts: false,
-        }
-    };
+        };
     let mut agentic_phases: Vec<PhaseSpec> = vec![agentic_replay_phase(warmup_common)];
     agentic_phases.extend(
         workload
