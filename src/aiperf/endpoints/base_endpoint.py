@@ -427,18 +427,27 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         """Make a TextResponseData object from a string or return None if the text is empty."""
         return TextResponseData(text=text) if text else None
 
-    def auto_detect_and_extract(self, json_obj: dict) -> BaseResponseData | None:
+    def auto_detect_and_extract(self, json_obj: Any) -> BaseResponseData | None:
         """Optional utility: Auto-detect response type and extract relevant data.
 
         Tries to extract data in this order: embeddings, rankings, text.
         Endpoints can use this as a fallback or for flexible response handling.
 
+        A JSON body is not necessarily an object: a top-level array (e.g. a
+        reranker returning ``[{"index": 0, "score": 0.98}, ...]``) is valid
+        JSON and reaches this method as a ``list``. Such values are routed
+        through ``convert_to_response_data`` instead of the ``dict``-only
+        probes below, which would raise ``AttributeError``.
+
         Args:
-            json_obj: JSON response object
+            json_obj: JSON response body
 
         Returns:
             Typed response data object or None if not found
         """
+        if not isinstance(json_obj, dict):
+            return self.convert_to_response_data(json_obj)
+
         if data := self.try_extract_embeddings(json_obj):
             return data
 

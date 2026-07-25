@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.models import Turn
+from aiperf.common.models import RankingsResponseData, TextResponse, Turn
 from aiperf.endpoints.raw_endpoint import RawEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -44,3 +44,14 @@ class TestRawEndpointFormatPayload:
         request_info = create_request_info(model_endpoint=ep_info, turns=[])
         with pytest.raises(NotImplementedError):
             raw_endpoint.format_payload(request_info)
+
+
+class TestRawEndpointParseResponse:
+    def test_top_level_json_array_is_parsed_as_rankings(self, raw_endpoint):
+        """A top-level JSON array (e.g. a reranker response) must not crash."""
+        response = TextResponse(perf_ns=1, text='[{"index": 0, "score": 0.98}]')
+        parsed = raw_endpoint.parse_response(response)
+        assert parsed is not None
+        assert parsed.data == RankingsResponseData(
+            rankings=[{"index": 0, "score": 0.98}]
+        )
