@@ -43,8 +43,8 @@ use aiperf_runtime::engine::turn_execution::{
     ExecutionBackendConfig, HttpExecutionFactory, PreparedEndpointTableFactory,
     RequestExecutorFactory,
 };
-use aiperf_runtime::metrics::{MetricsConfig, RequestMetricMetadata};
-use aiperf_runtime::metrics_core::RecordIngest;
+use aiperf_runtime::metrics::RequestMetricMetadata;
+use aiperf_runtime::metrics_core::{MetricsConfig, RecordIngest};
 use aiperf_runtime::multiturn::{PreparedEndpointReference, TurnDataPolicy};
 use aiperf_runtime::transport::core::{
     ConnectionReuseStrategy, MeasuredContext, PreparedEndpointBinding, PreparedTurn, Request,
@@ -85,6 +85,7 @@ struct KeepAliveMock {
 impl KeepAliveMock {
     fn spawn() -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let addr = listener.local_addr().unwrap();
         let base_url = format!("http://{addr}");
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
