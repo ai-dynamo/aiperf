@@ -18,5 +18,6 @@
 pub mod prepass;
 pub mod prompt;
 pub mod rng;
+pub mod synth;
 pub mod selection;
 pub mod trace;
