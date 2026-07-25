@@ -38,51 +38,15 @@ built behavior; this record states how the definition layer is meant to converge
 
 ## Built
 
-The pieces this record unifies exist today, separately.
-
-**Benchmark metrics — registry-driven, but definition and computation are fused.**
-`MetricTag` is a fieldless, contiguously-discriminated enum of 125 variants
-(`runtime/src/metrics_core/catalog.rs`), with `MetricTag::COUNT` and
-`index(self) -> usize { self as usize }` already relying on that contiguity.
-`MetricSpec` carries both presentation fields (`header`, `short_header`,
-`short_header_hide_unit`, `unit`, `display_unit`, `display_order`, `console_group`,
-`plot_direction`, `value_type`) and computation fields (`flags`, `required`,
-`kind`, `aggregation`). `CATALOG` is a `LazyLock<Vec<MetricSpec>>`: a `vec![spec!…]`
-literal list, then a runtime post-pass, `configure_catalog_metadata`, that *mutates*
-`short_header`, `value_type`, and `plot_direction` per tag after construction — this
-post-construction mutation, not the graph validation, is what forces `LazyLock`.
-`spec_for(tag)` is a linear `CATALOG.iter().find`. `larger_is_better` is encoded as
-`MetricFlags::LARGER_IS_BETTER`, and `plot_direction` is derived from it.
-`validate_catalog` (uniqueness, dependency resolution, tier rules, acyclicity via a
-petgraph toposort) runs at bootstrap and feeds `DERIVED_TOPO_ORDER`; it does **not**
-assert every `MetricTag` has a spec.
-
-The SLA/good-request direction was recently pre-resolved off the per-record path:
-`SloThreshold` now carries a `larger_is_better: bool` computed once at construction
-(`native`/`from_display`), and `compute_good_request` reads it directly. Every
-metric-catalog `spec_for` caller lives in `metrics_core/accumulator.rs` and runs at
-config-time or end-of-phase summary-time; the transport/dispatch/scheduler/graph/
-engine hot paths contain zero metric-catalog lookups.
-
-**Dataset-analysis outputs — a plain typed report, no registry.** `DatasetAnalysis`
-(`runtime/src/dataset/analysis.rs`) is a struct tree of typed sections holding
-`Option<StatSummary>` distributions. Output identity is the serde field name (JSON)
-or a hand-written string literal (`rows.push(("isl", …))`, `format!("turn{ti}_isl")`)
-in `export/dataset_analysis.rs`. The only shared schema is `const STAT_KEYS`, reused
-to match the genai_perf CSV columns. There is no tag enum, no `spec_for`, no
-validation.
-
-**Server and GPU telemetry — separate, partly dynamic.** Server metrics
-(`runtime/src/server_metrics/`) are scraped Prometheus samples keyed by an arbitrary
-name plus `labels: BTreeMap<String,String>`, discovered at runtime. GPU telemetry
-(`runtime/src/gpu_telemetry/`) has its own fixed record struct. Neither is in any
-registry.
-
-## Future requirements
+The shared definition layer is built for the two static families (benchmark metrics
+and analyzer outputs). Server and GPU telemetry remain outside it — only the
+namespaced seam is reserved.
 
 ### The `Definition` type
 
-A lookup-only value; no dependency graph, aggregation, or accumulation state.
+A lookup-only value (`runtime/src/metrics_core/definition.rs`); no dependency graph,
+aggregation, or accumulation state. `#[non_exhaustive]`, so future families are
+additive:
 
 ```rust
 #[non_exhaustive]
@@ -102,195 +66,149 @@ pub struct Definition {
 }
 ```
 
-Methods centralize the questions consumers ask:
+The three consumer questions are centralized as methods:
 
 - `effective_display_unit(&self) -> Unit` — `display_unit.unwrap_or(unit)`.
 - `passes_threshold(&self, value: Native, threshold: Native) -> bool` — the one
-  place SLA direction logic lives: `if larger_is_better { value >= threshold } else
-  { value <= threshold }`. Both operands are native-unit newtypes (see below), so a
-  mixed-scale comparison is a **compile error**, not a latent bug.
+  place SLA direction logic lives (`larger_is_better ? value >= threshold : value <=
+  threshold`). Both operands are native-unit newtypes, so a mixed-scale comparison is
+  a **compile error**.
 - `format_value(&self, value: f64) -> String` — the single renderer (unit +
-  `value_type` + precision policy) every sink uses, so a value renders identically
-  in console, CSV, and JSON.
+  `value_type` + precision policy) every sink uses.
 
-`Definition` and the family/group enums are `#[non_exhaustive]` so future families
-are additive, never a breaking change.
-
-### `id` as a versioned contract
-
-The `id` is a CSV header, a JSON key, and an SLA-config token that external tools
-parse, so it is treated as a stable contract:
-
-- **Namespaced** — `aiperf.ttft`, `analyzer.isl`, later `server.<name>`,
-  `gpu.<field>`. Namespacing makes cross-family collisions structurally impossible
-  and keeps origin legible.
-- **Aliased** — a rename keeps the old id in `aliases`; `resolve` honors it, so
-  renaming a Rust variant never breaks a downstream parser or an existing config.
-- **Snapshotted** — an `insta` JSON snapshot of the sorted public id set (with
-  `INSTA_UPDATE=no` in CI) turns any accidental rename or removal into a reviewable
-  diff rather than a silently broken artifact. Snapshot diffs are reviewed with
-  `cargo insta review`, never blanket-accepted.
-
-### Static core: compile-time complete, O(1)
-
-The 125 metric definitions live behind an **exhaustive `const fn` match** on
-`MetricTag`, returning `&'static Definition`:
-
-```rust
-pub const fn metric_definition(tag: MetricTag) -> &'static Definition {
-    match tag {
-        MetricTag::RequestCount => &REQUEST_COUNT_DEF,
-        // … one arm per variant, no wildcard …
-    }
-}
-```
-
-The exhaustive, wildcard-free match makes a `MetricTag` with no `Definition` a
-**compile error** (the same mechanism `as_str` already uses for names), replacing
-the runtime `assert_eq!(len, 125)`. It is the exhaustiveness contract; we do **not**
-rely on `as usize` indexing into a parallel array for correctness, because a
-fieldless enum without an explicit `#[repr]` has an unspecified discriminant layout
-and reordering would silently misalign. LLVM lowers the small-integer match to a
-jump table, so lookup stays effectively O(1). `spec_for` is reimplemented over this
-match (or the const array derived from it), retiring the `CATALOG.iter().find`
-linear scan.
-
-The string-keyed lookup for the static core (metric ids + analyzer base ids) is a
-compile-time **`phf`** perfect-hash map `&'static str -> &'static Definition` —
-collision-free, zero runtime init:
-
-```rust
-pub fn definition(id: &str) -> Option<&'static Definition>;  // exact, incl. aliases
-pub fn resolve(name: &str) -> Option<&'static Definition>;   // exact, else base-concept
-```
-
-Because the whole static core is `const`/`phf`, it carries no `LazyLock`. Runtime
-initialization is reserved for the genuinely non-const parts, which stay as separate
-`static … : LazyLock<…>` (never `const`): `validate_catalog`/`DERIVED_TOPO_ORDER`
-(petgraph toposort) and any future dynamic family (below). The immutable catalog data
-and the derived/validated views are split cleanly.
-
-### Analyzer outputs: base concepts + resolver
-
-Analyzer outputs register a small static `&[Definition]` of **base concepts** —
-`analyzer.isl`, `analyzer.osl`, `analyzer.total`, `analyzer.isl_osl_ratio`,
-`analyzer.turns_per_conversation`, `analyzer.per_turn_isl`, `analyzer.per_turn_osl`,
-timeline scalars. Parameterized emitted names (`turn3_isl`) are not stored per name;
-the producer holds the base id (`analyzer.per_turn_isl`) and looks *that* up for
-unit/header/direction, composing the concrete label itself — exactly the shape of
-today's `format!("turn{ti}_isl")` code. `resolve(name)` is a convenience that maps a
-concrete name to its base via a small registered prefix rule; no per-row string
-parsing is required on any hot path. `export/dataset_analysis.rs` replaces its
-string literals with base-def lookups.
+`MetricValueType` carries an `Int` variant alongside the float/duration cases so
+count-typed metrics render without a spurious decimal.
 
 ### Typed units for SLA
 
-Unit-scale mismatch (comparing a ms threshold against a ns value) is made
-unrepresentable with lightweight hand-rolled newtypes `Native(f64)` /
-`Display(f64)` — not `uom`, whose dimensional-analysis machinery is overkill and
-costs compile time and call-site ceremony here. The newtypes implement only
-dimensionally valid arithmetic (add/sub within a scale; scale by bare scalars) and
-`From` only for the safe direction; there is **deliberately no cross-scale
-arithmetic**, so `native + display` does not compile. `Unit::convert_value` is not
-`const`, so display→native conversion stays a config-time step — which is already
-how `SloThreshold::from_display` resolves a threshold once at construction. The
-`Definition` stores unit *enums* only; numbers never get converted at definition
-time.
+`Native(f64)` / `Display(f64)` newtypes make unit-scale mismatch unrepresentable —
+hand-rolled (not `uom`), implementing only dimensionally valid arithmetic and `From`
+in the safe direction; `native + display` does not compile. SLA now goes through
+typed `Native` and `Definition::passes_threshold`: `SloThreshold` resolves the
+threshold once at construction (`native`/`from_display`, pre-resolved
+`larger_is_better`), so `compute_good_request` does no per-record registry lookup.
 
-### Definition-driven rendering and docs
+### `id` as a versioned contract
 
-Every sink reads presentation off the looked-up `Definition`:
-`Definition::format_value` renders values, and `header`/`short_header`/
-`effective_display_unit`/`display_order`/`group` drive table and column layout. An
-`aiperf metrics list` / `describe <id>` command dumps the registry, and a generated
-markdown reference table is emitted from it, so docs are produced from the registry
-and cannot drift.
+The `id` is namespaced (`aiperf.<tag>`, `analyzer.*`), making cross-family collisions
+structurally impossible. A rename keeps the old id in `aliases`; `resolve` honors it.
+An `insta` JSON snapshot of the sorted public id set (134 ids) turns any accidental
+rename or removal into a reviewable diff.
 
-### Refactor of `MetricSpec`
+### Static core: compile-time complete, O(1)
 
-`MetricSpec` embeds a `Definition` and keeps only computation:
+`MetricTag` is a fieldless, contiguously-discriminated enum
+(`runtime/src/metrics_core/catalog.rs`). The catalog is now a `const`-static
+`CATALOG: [MetricSpec; MetricTag::COUNT]` array — the runtime post-pass
+(`configure_catalog_metadata`) was folded into the const literals, and the 58 rows
+that built flags with the `A | B` operator were rewritten to `.union()` (bitflags 2.x
+`union` is const). `metric_definition(tag)` is O(1) via discriminant indexing into the
+array, guarded by a discriminant-order check.
+
+**Deviation (d):** compile-time completeness comes from the **const-array length**
+(`[MetricSpec; MetricTag::COUNT]` cannot be built without one row per variant) plus a
+discriminant-order guard, **not** from a 125-arm exhaustive `const fn` match as the
+spec originally envisioned. The array length is the completeness invariant; a new
+`MetricTag` variant without a row fails to build.
+
+**Deviation (a):** the string-keyed lookup is a `LazyLock<HashMap<&str,
+&'static Definition>>`, **not** a compile-time `phf` map. A `const phf` cannot hold
+`&CATALOG[..].def` references (the catalog array is itself a `static`, so its element
+addresses are not `const`-known), so the id map is built once at first use. The
+`definition(id)` / `resolve(name)` API (exact match incl. aliases; `resolve` applies
+the `turnN_` base-concept rule) is unchanged from the design.
+
+### Analyzer outputs: base concepts + resolver
+
+Analyzer outputs register a small static set of **base concepts** (`analyzer.isl`,
+`analyzer.osl`, `analyzer.per_turn_isl`, …) in the same registry. Parameterized names
+(`turn3_isl`) are not stored per name; the producer holds the base id and composes the
+concrete label. `export/dataset_analysis.rs` sources its CSV row names from the
+registry, producing byte-identical output.
+
+**Deviation (c):** the analyzer CSV registry-sourcing currently materializes only the
+**row-name token** from the base definition (the CSV has no unit/header column to
+drive), so header/unit fields on the analyzer defs are carried but not yet rendered
+into that artifact.
+
+### `MetricSpec` refactor
+
+`MetricSpec` now embeds a `Definition` and holds only computation plus the typed
+console group:
 
 ```rust
 pub struct MetricSpec {
     pub tag: MetricTag,
     pub def: Definition,          // def.id == the metric's namespaced id
     pub flags: MetricFlags,       // minus LARGER_IS_BETTER (now def.larger_is_better)
+    pub console_group: MetricConsoleGroup,
     pub required: &'static [MetricTag],
     pub kind: MetricType,
     pub aggregation: Option<AggregationKind>,
 }
 ```
 
-- `configure_catalog_metadata` (the runtime post-pass that mutates `short_header`,
-  `value_type`, `plot_direction`) is folded into the `spec!`/const literals or a
-  `const fn`-of-tag, so the catalog becomes `const`/`static` rather than a mutated
-  `LazyLock<Vec>`.
-- The 58 catalog rows that build flags with the `A | B` **operator** are rewritten
-  to `A.union(B)` (bitflags 2.x `union` is const; the `|` operator overload is not
-  callable in `const`). Any flag test needed *inside* a `const fn` compares raw bits
-  (`(bits & OTHER) == OTHER`) rather than relying on `.contains` being const. No
-  zero-bit flag is defined.
-- `plot_direction` is deleted; `def.larger_is_better` is the single source of
-  direction for both SLA and plotting.
-- The ~50 consumer sites that read `spec.header`/`.unit`/`.display_unit`/
-  `.plot_direction`/`.console_group` (concentrated in `metrics_core`, thin exporter
-  tail) are kept stable with delegating accessors on `MetricSpec`
-  (`spec.header()` → `spec.def.header`), bounding the diff.
+Seven legacy scalar presentation fields (`header`, `short_header`,
+`short_header_hide_unit`, `unit`, `display_unit`, `display_order`, `plot_direction`)
+were removed; consumer sites read through delegating accessors (`spec.header()` →
+`spec.def.header`). `plot_direction` is gone; `def.larger_is_better` is the single
+source of direction (a `plot_direction_for(&def)` helper derives the plotting enum).
 
-### Extensibility seam (server / GPU)
+**Deviation (b):** `console_group` is **retained as a typed `MetricConsoleGroup`
+metric-render field** on `MetricSpec` (it drives console table grouping), while
+`def.group = DefinitionGroup::Named(console_group)` carries the portable string label
+in the `Definition`. The typed field was not collapsed into `def.group`.
 
-The static core stays `const`/`phf`. Whole future families register through a
-`DefinitionSource` trait yielding `&'static Definition`s, collected at bootstrap into
-a runtime `OnceLock`/`LazyLock` view — reusing the existing
-`AIPerfRegistry`/`AIPerfExtension` transactional pattern (duplicate ids rejected,
-fail-closed) rather than a parallel mechanism, and preferring a trait-object source
-list over a global mutable registry. Truly dynamic server metrics (arbitrary
-Prometheus name + labels) resolve through a `server.*`-namespaced escape hatch, kept
-distinct from the closed static families.
+### Definition-driven rendering and CLI
 
-### Hot-path boundary (invariant)
+`Definition::format_value` renders values and `header`/`short_header`/
+`effective_display_unit`/`display_order`/`group` drive layout. `aiperf metrics list`,
+`aiperf metrics describe <id>`, and `aiperf metrics list --markdown`
+(`cli/src/metrics_list.rs`) dump the registry, so a metrics reference is produced from
+the registry and cannot drift.
 
-`definition()`/`resolve()` return `&'static` and are **config/render-time only**;
-the per-record and per-token paths never call them. Any field the hot path needs
-(e.g. `larger_is_better`) is pre-resolved onto the relevant config struct once, as
-`SloThreshold` already does. This is documented on the lookup functions and holds by
-construction — the audit confirmed zero metric-catalog lookups in the transport,
-dispatch, scheduler, `scheduled`, `request_rate`, `phase_runtime`, graph, or engine
-paths.
+### Hot-path boundary (invariant, holds)
+
+`definition()`/`resolve()` return `&'static` and are config/render-time only; the
+per-record and per-token paths never call them. The one hot-path direction question
+(`larger_is_better`) is pre-resolved onto `SloThreshold` at construction. The audit
+confirmed zero metric-catalog lookups in transport, dispatch, scheduler, `scheduled`,
+`request_rate`, `phase_runtime`, graph, or engine paths.
+
+## Future requirements
+
+### Extensibility seam (server / GPU) — seam only
+
+Server metrics (`runtime/src/server_metrics/`, arbitrary Prometheus name +
+`labels: BTreeMap<String,String>`, discovered at runtime) and GPU telemetry
+(`runtime/src/gpu_telemetry/`, fixed record struct) are **not merged into the registry
+yet** — only the namespaced-id seam (`server.*`, `gpu.*`) is reserved. Whole future
+families are intended to register through a `DefinitionSource` trait yielding
+`&'static Definition`s, collected at bootstrap into a runtime `OnceLock`/`LazyLock`
+view, reusing the existing `AIPerfRegistry`/`AIPerfExtension` transactional pattern
+(duplicate ids rejected, fail-closed). Truly dynamic server metrics resolve through a
+`server.*`-namespaced escape hatch, kept distinct from the closed static families.
 
 ### Non-goals
 
 - No change to the computation graph, `kind`, `aggregation`, or accumulation.
-- No wire/artifact format change: definitions carry the same `header`/`unit` values,
-  so console, CSV, and JSON output stay byte-compatible.
+- No wire/artifact format change: console, CSV, and JSON output stay byte-compatible.
 - Server and GPU families are not merged now; only the namespaced seam is
   established.
-
-### Verification
-
-- **Compile-time completeness** — a new `MetricTag` without a `Definition` fails to
-  build (exhaustive match, no wildcard).
-- **Lookup** — `definition("aiperf.ttft")` and an analyzer base id resolve to the
-  expected `Definition`; `resolve("turn3_isl")` resolves to `analyzer.per_turn_isl`;
-  an alias resolves to its canonical def.
-- **Id-set snapshot** — `insta` JSON snapshot of the sorted public id set, CI locked
-  with `INSTA_UPDATE=no`.
-- **SLA direction** — `passes_threshold` holds in both directions; `Native`/`Display`
-  mixing fails to compile (trybuild or a documented type-level check).
-- **Unit round-trip** — display→native→display is lossless within tolerance.
-- **Rendering** — `format_value` output is identical across sinks; an existing
-  metrics table and CSV render byte-identically before and after the refactor.
 
 ## Source anchors
 
 - `runtime/src/metrics_core/catalog.rs` — `MetricTag` (fieldless, contiguous,
-  `COUNT`/`index`), `MetricSpec`, `spec!`, `CATALOG`, `configure_catalog_metadata`,
-  `spec_for`, `validate_catalog`; the enum/spec split and const-match lookup land
-  here.
-- `runtime/src/metrics_core/definition.rs` — new module: `Definition`,
-  `DefinitionId`/namespacing, `DefinitionGroup`, `Native`/`Display`, the `const fn`
-  metric-definition match, the `phf` id map, `definition`/`resolve`; re-exported as
-  `crate::definitions`.
+  `COUNT`/`index`), `MetricSpec` (embedded `def` + computation + typed
+  `console_group`), `spec!`, the const-static `CATALOG: [MetricSpec; COUNT]`,
+  `metric_definition`/`spec_for` (discriminant indexing), `plot_direction_for`,
+  `validate_catalog`.
+- `runtime/src/metrics_core/definition.rs` — `Definition`,
+  `DefinitionId`/namespacing, `DefinitionGroup`, `Native`/`Display`,
+  `effective_display_unit`/`passes_threshold`/`format_value`, the
+  `LazyLock<HashMap>` id registry, `definition`/`resolve` (+ aliases, `turnN_` rule).
+- `cli/src/metrics_list.rs` — `aiperf metrics list`/`describe <id>`/`--markdown`
+  registry dump.
 - `runtime/src/metrics_core/accumulator.rs` — `SloThreshold`
   (`native`/`from_display`, pre-resolved `larger_is_better`), `compute_good_request`;
   moves to `Definition::passes_threshold`.
