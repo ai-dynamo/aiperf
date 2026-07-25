@@ -900,12 +900,25 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
 pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
     validate_baseten_extra_input_collisions(&inputs)?;
+    // Effective weka semantics, resolved while `inputs` is still whole (needed
+    // before scenario-lock materialization so a graph-ir-specific lock targets the
+    // right arm).
+    let weka_semantics = resolve_weka_semantics(&inputs);
+    // Materialize the `--scenario` submission locks onto `inputs` so BOTH weka
+    // runtimes honor them. The legacy path hardcodes `ignore_eos`/t*/cache-bust in
+    // its lowering and never consults `inputs` for them; the graph-ir path instead
+    // derives its composed wire body (from `inputs.extra`) and its t* warmup phase
+    // (from `inputs.warmup` + the synthesis block) from `inputs`. Without this a
+    // `--weka-semantics graph-ir` run under an agentic scenario silently drops
+    // `ignore_eos` from the body and runs a single unprimed profiling phase. A
+    // no-op without the `agentx` feature. Runs before `resolve_scenario_outcome`
+    // so the outcome report and its conflict checks see the injected values.
+    #[cfg(feature = "agentx")]
+    apply_scenario_graph_locks(&mut inputs, weka_semantics.as_deref())?;
     // Resolve legacy-AgentX scenario locks (`--scenario`) while `inputs` is still
     // whole (later lowering partially moves it). A no-op without the `agentx`
     // feature. A hard scenario-lock conflict fails resolution here.
     let scenario_outcome = resolve_scenario_outcome(&inputs)?;
-    // Effective weka semantics, resolved while `inputs` is still whole.
-    let weka_semantics = resolve_weka_semantics(&inputs);
     // The agentic_replay (legacy weka) timing mode is a single coherent driver:
     // one workload instance owns the per-tree join gate, session-tree registry,
     // and recycle cursor. It runs global-dispatch, single-worker, non-cellular.
@@ -1656,6 +1669,132 @@ fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
         return Some("legacy".to_string());
     }
     None
+}
+
+/// Materialize a `--scenario`'s submission locks onto `inputs` so BOTH weka
+/// reconstruction runtimes honor them.
+///
+/// The legacy AgentX path hardcodes `ignore_eos`, the `t*` window, and the
+/// cache-bust target in `lower_legacy_agentic`, so it never consulted `inputs`.
+/// The graph-ir path instead composes its wire body from `inputs.extra`
+/// (`ignore_eos` reaches the payload only through `endpoint.extra` -> `merge_extra`)
+/// and derives its phase list + `t*` snapshot from `inputs` (a `"warmup"` phase
+/// plus the recorded-graph synthesis block). Without this step a
+/// `--scenario inferencex-agentx-mvp --weka-semantics graph-ir` run drops
+/// `ignore_eos` from the body and runs a single unprimed profiling phase (no `t*`
+/// warmup barrier). Idempotent and conservative: only fills values the user left
+/// unset, so `resolve_scenario_outcome`'s explicit-conflict checks still fire.
+#[cfg(feature = "agentx")]
+fn apply_scenario_graph_locks(
+    inputs: &mut Inputs,
+    weka_semantics: Option<&str>,
+) -> anyhow::Result<()> {
+    let Some(name) = inputs.scenario.clone() else {
+        return Ok(());
+    };
+    let Some(spec) = aiperf_runtime::agentx::scenario::get_scenario(&name) else {
+        return Ok(());
+    };
+
+    // GAP 1 — scenario feature flags into the composed request body. `ignore_eos`
+    // reaches the endpoint wire payload only via `inputs.extra`; insert only when
+    // absent so an explicit `ignore_eos:false` still surfaces as a lock conflict.
+    if spec.require_ignore_eos && !inputs.extra.contains_key("ignore_eos") {
+        inputs
+            .extra
+            .insert("ignore_eos".to_string(), serde_json::Value::Bool(true));
+    }
+
+    // GAP 2 — the graph-ir arm needs the `t*` snapshot window plus a warmup
+    // barrier that the legacy arm synthesizes inside its lowering. Legacy leaves
+    // `inputs` untouched for these, so scope the materialization to graph-ir.
+    let is_graph_ir = !matches!(weka_semantics, Some("legacy") | Some("agentx"));
+    if is_graph_ir {
+        let min = spec.default_trajectory_start_min_ratio.unwrap_or(0.0);
+        let max = spec.default_trajectory_start_max_ratio.unwrap_or(1.0);
+        inputs.trajectory_start_min_ratio = min;
+        inputs.trajectory_start_max_ratio = max;
+        apply_scenario_synthesis(inputs, &spec, min, max)?;
+        // Author a prime-once/drain warmup barrier (excluded from results). With
+        // no request/session/duration bound the graph runtime fires each trace's
+        // `t*`-primed plan exactly once and drains, mirroring the legacy warmup
+        // phase. Only synthesize when the user has not authored their own warmup.
+        if inputs.warmup.is_none() {
+            inputs.warmup = Some(Warmup {
+                concurrency: inputs.concurrency,
+                rate: None,
+                requests: None,
+                sessions: None,
+                prefill_concurrency: None,
+                rate_mode: None,
+                concurrency_ramp: None,
+                rate_ramp: None,
+                prefill_ramp: None,
+                duration: None,
+                grace_period: None,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Overlay the scenario `t*` window, idle-gap cap, and cache-bust target onto the
+/// recorded-graph `synthesis` block the graph-input adapter reads
+/// (`TraceSynthesisSpec`). Preserves any user-authored `--synthesis-*` values and
+/// supplies the required (non-defaulted) spec fields at identity when absent.
+#[cfg(feature = "agentx")]
+fn apply_scenario_synthesis(
+    inputs: &mut Inputs,
+    spec: &aiperf_runtime::agentx::scenario::ScenarioSpec,
+    min: f64,
+    max: f64,
+) -> anyhow::Result<()> {
+    use aiperf_runtime::agentx::cache_bust::CacheBustTarget;
+    let num = |v: f64| -> anyhow::Result<serde_json::Value> {
+        serde_json::Number::from_f64(v)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| anyhow::anyhow!("scenario synthesis value must be finite, got {v}"))
+    };
+    let mut m = match inputs.synthesis.take() {
+        Some(serde_json::Value::Object(existing)) => existing,
+        _ => {
+            // Required (non-`serde(default)`) `TraceSynthesisSpec` fields, at
+            // identity so no reconstruction transform is applied.
+            let mut base = serde_json::Map::new();
+            base.insert("speedup_ratio".to_string(), num(1.0)?);
+            base.insert("prefix_len_multiplier".to_string(), num(1.0)?);
+            base.insert(
+                "prefix_root_multiplier".to_string(),
+                serde_json::Value::from(1u64),
+            );
+            base.insert("prompt_len_multiplier".to_string(), num(1.0)?);
+            base.insert("output_len_multiplier".to_string(), num(1.0)?);
+            base.insert(
+                "dataset_sampling_strategy".to_string(),
+                serde_json::Value::String("sequential".to_string()),
+            );
+            base
+        }
+    };
+    m.insert("trajectory_start_min_ratio".to_string(), num(min)?);
+    m.insert("trajectory_start_max_ratio".to_string(), num(max)?);
+    m.insert(
+        "t_star_random_seed".to_string(),
+        serde_json::Value::from(inputs.random_seed.unwrap_or(0)),
+    );
+    if let Some(idle) = spec.trace_idle_gap_cap_seconds {
+        m.insert("idle_gap_cap_seconds".to_string(), num(idle)?);
+    }
+    // Only `first_turn_prefix` round-trips through `CacheBustTarget::parse`; any
+    // other target stays absent (disabled) rather than silently misprojecting.
+    if let Some(CacheBustTarget::FirstTurnPrefix) = spec.require_cache_bust {
+        m.insert(
+            "cache_bust_target".to_string(),
+            serde_json::Value::String("first_turn_prefix".to_string()),
+        );
+    }
+    inputs.synthesis = Some(serde_json::Value::Object(m));
+    Ok(())
 }
 
 /// Without the `agentx` feature, only an explicit flag threads through (the
