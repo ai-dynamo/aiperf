@@ -13,6 +13,7 @@
 //! or prompt re-synthesis — and the recorded per-turn `timestamp_ms`/`delay_ms`
 //! are carried so the workload can compute t\*-relative dispatch times.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -131,6 +132,17 @@ pub fn compose_weka_agentic_dataset(
     let mut ledger = CacheBustLedger::default();
     let mut conversations = Vec::with_capacity(convs.len());
 
+    // Session ids that some spawn branch targets as a child. Such conversations
+    // need lineage `DagMetadata` even when they declare no branches of their own,
+    // so the DAG validation (`branch references unknown child` / `child not
+    // referenced by parent`) is satisfied. Unrelated conversations stay `dag: None`.
+    let spawn_child_ids: HashSet<&str> = convs
+        .iter()
+        .flat_map(|c| c.turns.iter())
+        .filter_map(|t| t.spawn_branch.as_ref())
+        .flat_map(|sb| sb.child_session_ids.iter().map(String::as_str))
+        .collect();
+
     for (traj_index, conv) in convs.iter().enumerate() {
         // The trajectory tree's root correlation (subagent/flat children share it).
         let correlation = conv
@@ -214,21 +226,33 @@ pub fn compose_weka_agentic_dataset(
         }
 
         let session_id = SessionId::from(conv.session_id.clone());
-        // Attach a DAG only when the conversation declared spawn branches; the
-        // linear (no-subagent) path leaves `dag` absent.
-        let dag = if conv_branches.is_empty() {
-            None
-        } else {
+        let is_root = conv.parent_conversation_id.is_none();
+        let parent_id = conv
+            .parent_conversation_id
+            .as_ref()
+            .map(|p| SessionId::from(p.clone()));
+        let root_id = SessionId::from(conv.replay_scope_id.clone());
+        // Attach a DAG when the conversation either declares spawn branches or is
+        // itself a spawn-branch child (needs lineage); linear conversations with
+        // no subagent relationship leave `dag` absent.
+        let dag = if !conv_branches.is_empty() {
             Some(DagMetadata {
                 branches: conv_branches.into_iter().collect(),
-                is_root: conv.parent_conversation_id.is_none(),
-                agent_depth: 0,
-                parent_conversation_id: conv
-                    .parent_conversation_id
-                    .as_ref()
-                    .map(|p| SessionId::from(p.clone())),
-                root_conversation_id: SessionId::from(conv.replay_scope_id.clone()),
+                is_root,
+                agent_depth: if is_root { 0 } else { 1 },
+                parent_conversation_id: parent_id,
+                root_conversation_id: root_id,
             })
+        } else if spawn_child_ids.contains(conv.session_id.as_str()) {
+            Some(DagMetadata {
+                branches: Default::default(),
+                is_root: false,
+                agent_depth: 1,
+                parent_conversation_id: parent_id,
+                root_conversation_id: root_id,
+            })
+        } else {
+            None
         };
 
         conversations.push(Conversation {
@@ -327,13 +351,21 @@ mod tests {
             branch_id: "br:a".into(),
             child_session_ids: vec!["t::sa:a".into()],
         });
-        let c = ReconstructedConversation {
+        let root = ReconstructedConversation {
             session_id: "t".into(),
             replay_scope_id: "t".into(),
             parent_conversation_id: None,
             turns: vec![t0, t1, t2],
         };
-        let ds = compose_weka_agentic_dataset(std::slice::from_ref(&c), &opts()).unwrap();
+        // The spawned child conversation the branch targets; its lineage is
+        // surfaced onto the composed dataset so the DAG validates.
+        let child = ReconstructedConversation {
+            session_id: "t::sa:a".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: Some("t".into()),
+            turns: vec![turn(0.0, "child")],
+        };
+        let ds = compose_weka_agentic_dataset(&[root, child], &opts()).unwrap();
         let conv = &ds.conversations()[0];
         assert!(!conv.turns[0].branch_ids.is_empty());
         assert_eq!(conv.turns[0].branch_ids[0].as_str(), "br:a");
