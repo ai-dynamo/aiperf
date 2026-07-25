@@ -770,6 +770,7 @@ impl TracePlacement for GraphWorkerBackend {
             endpoint_runtime: self.endpoint_runtime.clone(),
             trace_id: plan.trace.id.clone(),
             nodes: plan.graph.nodes.clone().into_iter().collect(),
+            prepared_metadata: RefCell::new(HashMap::new()),
             segments: self.segments.clone(),
             observer,
             phase: self.phase,
@@ -839,11 +840,29 @@ impl TracePlacement for GraphWorkerBackend {
     }
 }
 
+/// Authored node dispatch metadata decoded once per node from the immutable
+/// segment catalog. All fields are node-invariant, so a sink caches one instance
+/// per node id and clones the parsed values into each dispatch rather than
+/// re-parsing the backing segment bytes on every fire.
+struct PreparedNodeMetadata {
+    extra_headers: BTreeMap<String, String>,
+    raw_tools: Option<Vec<Value>>,
+    raw_system: Option<Vec<Value>>,
+    extra_body: Option<Map<String, Value>>,
+    parameters: BTreeMap<String, String>,
+}
+
 struct EngineGraphSink {
     clock: Rc<dyn Clock>,
     endpoint_runtime: Rc<dyn GraphEndpointRuntime>,
     trace_id: String,
     nodes: HashMap<String, LlmNode>,
+    /// Authored per-node metadata decoded from immutable segment bytes, cached on
+    /// first dispatch of each node. These handles (`tools`, raw system, extra
+    /// body/headers, request parameters) never change for a node, so bounded and
+    /// loop cycling that re-fires the same node reuses the parsed values instead
+    /// of re-decoding all five segments from bytes on every dispatch.
+    prepared_metadata: RefCell<HashMap<String, Rc<PreparedNodeMetadata>>>,
     segments: Arc<dyn SegmentStore>,
     observer: Rc<NativeMetricsObserver>,
     phase: Phase,
@@ -929,8 +948,9 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             }
             (Some(raw_messages), None)
         };
+        let prepared = self.prepared_metadata(node_id, node)?;
         let extra_headers = uniquify_dynamo_session_headers(
-            self.raw_string_map(node, "extra_headers_handle")?,
+            prepared.extra_headers.clone(),
             self.phase,
             &self.trace_id,
         );
@@ -942,9 +962,9 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 .context("graph max_tokens exceeds u32")?,
             raw_messages,
             lowered,
-            raw_tools: self.raw_array(node, "tools_handle")?,
-            raw_system: self.raw_array(node, "raw_system_handle")?,
-            extra_body: self.raw_object(node, "extra_body_handle")?,
+            raw_tools: prepared.raw_tools.clone(),
+            raw_system: prepared.raw_system.clone(),
+            extra_body: prepared.extra_body.clone(),
             ..Turn::default()
         };
         let max_output_tokens = max_tokens.unwrap_or(self.default_max_tokens);
@@ -956,7 +976,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             authored_input_tokens: metadata_u64(node, "input_tokens").unwrap_or(0),
             max_output_tokens,
             extra_headers,
-            parameters: self.raw_string_map(node, "request_parameters_handle")?,
+            parameters: prepared.parameters.clone(),
             trace_id: self.trace_id.clone(),
             is_final_turn: self.terminal_nodes.contains(node_id),
             cancel_after_ns: options.cancel_after_ns,
@@ -1110,6 +1130,28 @@ impl EngineGraphSink {
                     .map_err(|_| anyhow!("graph metadata {name:?} handle exceeds u32"))
             })
             .transpose()
+    }
+
+    /// Decode (once per node) and cache the authored dispatch metadata backing
+    /// this node's segment handles, so repeated dispatches of the same node reuse
+    /// the parsed values instead of re-reading segment bytes each fire. Errors
+    /// surface on the first dispatch of the offending node, exactly as when the
+    /// handles were decoded inline per dispatch.
+    fn prepared_metadata(&self, node_id: &str, node: &LlmNode) -> Result<Rc<PreparedNodeMetadata>> {
+        if let Some(prepared) = self.prepared_metadata.borrow().get(node_id).cloned() {
+            return Ok(prepared);
+        }
+        let prepared = Rc::new(PreparedNodeMetadata {
+            extra_headers: self.raw_string_map(node, "extra_headers_handle")?,
+            raw_tools: self.raw_array(node, "tools_handle")?,
+            raw_system: self.raw_array(node, "raw_system_handle")?,
+            extra_body: self.raw_object(node, "extra_body_handle")?,
+            parameters: self.raw_string_map(node, "request_parameters_handle")?,
+        });
+        self.prepared_metadata
+            .borrow_mut()
+            .insert(node_id.to_string(), prepared.clone());
+        Ok(prepared)
     }
 
     fn raw_value(&self, node: &LlmNode, name: &str) -> Result<Option<Value>> {

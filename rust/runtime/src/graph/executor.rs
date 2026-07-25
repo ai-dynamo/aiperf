@@ -22,7 +22,7 @@ use crate::graph::channels::producers_per_channel;
 use crate::graph::context::{NodeExecutionResult, TraceContext};
 use crate::graph::errors::TraceError;
 use crate::graph::materialize::PromptMaterializer;
-use crate::graph::model::{ChannelSpec, ChannelType, Count, GraphRecord, LlmNode, TraceRecord};
+use crate::graph::model::{ChannelSpec, ChannelType, GraphRecord, LlmNode, TraceRecord};
 use crate::graph::policy::{
     NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
     NodeFailurePolicy, NoopNodeDispatchPolicy, ResilientNodeFailurePolicy,
@@ -403,11 +403,7 @@ impl<M: WireMessage> TraceExecutor<M> {
         value: ChanVal,
         ctx: &Rc<TraceContext>,
     ) -> Result<(), TraceError> {
-        ctx.store.write_channel_value(
-            std::slice::from_ref(&channel.to_string()),
-            &value,
-            node_id,
-        )?;
+        ctx.store.write_channel_value(&[channel], &value, node_id)?;
         Ok(())
     }
 
@@ -447,12 +443,10 @@ impl<M: WireMessage> TraceExecutor<M> {
         node: &LlmNode,
         ctx: &Rc<TraceContext>,
     ) -> Result<i64, StoreError> {
-        let requirements: Vec<(String, Count)> = node
-            .inputs
-            .iter()
-            .map(|r| (r.channel.clone(), r.count.clone()))
-            .collect();
-        let _capture = ctx.store.await_inputs(&requirements).await?;
+        let _capture = ctx
+            .store
+            .await_inputs(node.inputs.iter().map(|r| (r.channel.as_str(), &r.count)))
+            .await?;
         let gate_seq = ctx.store.current_seq();
         let node_firable_wall_us = self.loop_wall_us();
         self.apply_firing_delay(node_id, ctx, node_firable_wall_us)

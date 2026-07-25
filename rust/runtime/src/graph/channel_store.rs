@@ -174,7 +174,7 @@ impl VersionedChannelStore {
     /// Commit a value that already retains encoded message wires.
     pub fn write_channel_value(
         &self,
-        channel_names: &[String],
+        channel_names: &[&str],
         value: &ChanVal,
         writer_node_id: &str,
     ) -> Result<(), StoreError> {
@@ -183,11 +183,11 @@ impl VersionedChannelStore {
         }
         {
             let inner = self.inner.borrow();
-            for channel in channel_names {
+            for &channel in channel_names {
                 validate_write_channel(&inner, channel, writer_node_id)?;
             }
         }
-        for channel in channel_names {
+        for &channel in channel_names {
             {
                 let mut inner = self.inner.borrow_mut();
                 commit_write_channel(&mut inner, channel, value, writer_node_id);
@@ -200,27 +200,34 @@ impl VersionedChannelStore {
     // ---- await_inputs ---------------------------------------------------
 
     /// Block until every requirement is satisfied; return frozen captures.
-    pub async fn await_inputs(
+    ///
+    /// Requirements are borrowed as `(channel, count)` pairs so callers can hand
+    /// in an iterator over their node's declared inputs without cloning each
+    /// channel string and `Count` on the per-fire hot path.
+    pub async fn await_inputs<'a, I>(
         &self,
-        requirements: &[(String, Count)],
-    ) -> Result<BTreeMap<String, VersionCapture>, StoreError> {
+        requirements: I,
+    ) -> Result<BTreeMap<String, VersionCapture>, StoreError>
+    where
+        I: IntoIterator<Item = (&'a str, &'a Count)>,
+    {
         let mut captures: BTreeMap<String, VersionCapture> = BTreeMap::new();
         for (channel, count) in requirements {
             {
                 let inner = self.inner.borrow();
                 if !inner.specs.contains_key(channel) {
-                    return Err(StoreError::UnknownChannel(channel.clone()));
+                    return Err(StoreError::UnknownChannel(channel.to_string()));
                 }
                 if let Some(reason) = inner.orphaned.get(channel) {
                     return Err(StoreError::Orphaned {
-                        channel: channel.clone(),
+                        channel: channel.to_string(),
                         reason: reason.clone(),
                     });
                 }
             }
             let target = self.resolve_count(channel, count);
             self.await_count(channel, target).await?;
-            captures.insert(channel.clone(), self.capture(channel, target));
+            captures.insert(channel.to_string(), self.capture(channel, target));
         }
         Ok(captures)
     }

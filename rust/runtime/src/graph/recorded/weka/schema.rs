@@ -351,10 +351,7 @@ fn required_string(
 }
 
 fn scalar_string(value: &Value, label: &str) -> Result<String, RecordedTraceError> {
-    value
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be a string")))
+    super::super::scalar::string(value, "WEKA", label)
 }
 
 fn aliased_required<'a>(
@@ -421,8 +418,7 @@ fn parse_raw_hashes(entry: &RawHashEntry, label: &str) -> Result<Vec<i128>, Reco
 }
 
 fn bigint(value: &Value, label: &str) -> Result<BigInt, RecordedTraceError> {
-    super::super::scalar::integer(value)
-        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be an integer")))
+    super::super::scalar::integer_labeled(value, "WEKA", label)
 }
 
 fn positive_usize(value: &Value, label: &str) -> Result<usize, RecordedTraceError> {
