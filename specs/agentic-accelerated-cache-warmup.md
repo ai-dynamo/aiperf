@@ -180,12 +180,30 @@ cap present?         delay = min(delay, idle_gap_cap_ms)   # idle-gap cap, NOT 6
 
 ## Out of scope
 
-Nothing further — this is the terminal parity subsystem. The legacy `agentic_replay`
-mode reaches full byte-exact parity (under `SimClock`) with Python
-`AgenticReplayStrategy`. The linear-lane MVP populates the DAG fields
-(`agent_depth`, `parent_correlation_id`, `root_correlation_id`, `branch_mode`) with
-their tree-root defaults; full subagent-depth population across the handoff waits on
-the WEKA loader emitting those onto each turn (a separate loader-seam task).
+This is the terminal parity subsystem. The legacy `agentic_replay` mode reaches full
+byte-exact parity (under `SimClock`) with Python `AgenticReplayStrategy` for the
+weka corpus: the residual/handoff formula is golden-verified against the real Python
+methods, and live global-hop runs on `weka_cc_traces_062126` are clean for both the
+accelerated (`--agentic-cache-warmup-duration`) and non-accelerated paths.
+
+The linear-lane MVP populates the DAG fields (`agent_depth`,
+`parent_correlation_id`, `root_correlation_id`, `branch_mode`) with their tree-root
+defaults; full subagent-depth population across the handoff waits on the WEKA loader
+emitting those onto each turn (a separate loader-seam task).
+
+Known non-blocking follow-ups (from the whole-branch review, none affect the
+weka byte-exact path):
+
+- The live finalize closure passes `prev_api_time_ms = None`; Python
+  `_handoff_base_delay_ms` reads `turns[i].api_time_ms`. This only affects the
+  timestamp-fallback base branch, which is bypassed whenever a recorded `delay_ms`
+  is present (the weka case) — wire `api_time_ms` through when the fallback matters.
+- The replay-gate reseed in `execute_profiling_resume` is inert linear-MVP parity
+  surface (seeded/activated but not threaded to dispatch); it activates with the
+  subagent-depth loader-seam task above.
+- The accelerated-carrier downcast falls back to a fresh empty carrier on type
+  mismatch; harden the agentx/accelerated branch to error rather than silently run
+  a non-accelerated handoff if the carrier type ever drifts.
 
 ## Source anchors
 

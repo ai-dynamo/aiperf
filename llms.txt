@@ -518,9 +518,10 @@ Inputs, endpoints, and graph:
   the remaining byte-exact-parity piece for subagent trajectory trees, driven by the
   ported `agentx::session_tree` registry over `Turn.prerequisites`/`ConversationBranch`.
 - [`docs/specs/agentic-accelerated-cache-warmup.md`](docs/specs/agentic-accelerated-cache-warmup.md) —
-  forward-looking design record for the gated accelerated cache-pressure warmup +
-  warmup→profiling residual-delay handoff in the legacy `agentic_replay` timing mode
-  (`--agentic-cache-warmup-duration`); the terminal parity subsystem, mining the graph
+  the gated accelerated cache-pressure warmup + warmup→profiling residual-delay handoff
+  in the legacy `agentic_replay` timing mode (`--agentic-cache-warmup-duration`); the
+  terminal parity subsystem (built; residual/handoff golden-verified against the real
+  Python methods, live global-hop clean on `weka_cc_traces_062126`), mining the graph
   path's Clock-derived `chop_trie_at_frontier`/`GraphWarmupHandoff` reference.
 
 Measurement and output:
