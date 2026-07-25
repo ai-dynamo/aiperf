@@ -9,24 +9,17 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub mod artifacts;
 pub mod config;
-pub mod dataset;
-pub mod endpoint;
-pub mod export;
-pub mod metrics;
-pub mod models;
-pub mod phase;
-pub mod public_catalog;
-pub mod rate_series;
-pub mod resolved;
-pub mod runtime;
-pub mod telemetry;
-pub mod tokenizer;
-pub mod transport;
 
+// Leaf model modules now live in `aiperf-config`; re-export them so `crate::model::…`
+// call sites (and intra-model `super::…` paths in `config.rs`) resolve unchanged.
+pub use aiperf_config::model::{
+    artifacts, dataset, endpoint, export, metrics, models, phase, public_catalog, rate_series,
+    resolved, runtime, telemetry, tokenizer, transport,
+};
+
+pub use aiperf_config::model::resolved::Resolved;
 pub use config::BenchmarkConfig;
-pub use resolved::Resolved;
 
 /// A benchmark run serialized directly as the runner request body.
 ///

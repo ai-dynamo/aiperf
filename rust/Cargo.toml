@@ -30,6 +30,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # internal crates
 aiperf-runtime = { path = "runtime" }
+aiperf-config = { path = "config" }
 
 # external (shared versions)
 anyhow = "1"

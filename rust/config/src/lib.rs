@@ -7,6 +7,8 @@
 //! type onto. For now it exposes a single placeholder anchor, [`schema_version`],
 //! so the crate has a testable symbol; it is removed once `AiperfConfig` lands.
 
+pub mod model;
+
 /// Returns the Config-v2 schema version string this crate targets.
 ///
 /// Placeholder anchor for the leaf crate; superseded when the unified

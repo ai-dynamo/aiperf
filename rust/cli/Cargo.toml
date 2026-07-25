@@ -75,6 +75,7 @@ full = ["dynosim", "parquet", "cellular", "grpc", "agentx"]
 
 [dependencies]
 aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }
+aiperf-config = { workspace = true }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "string"] }
 serde.workspace = true
