@@ -172,3 +172,89 @@ pub fn build_engine_state(config: &crate::config::MockServerConfig) -> std::sync
     cfg.scheduler_enabled = false;
     crate::app::build_state(cfg)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::MockServerConfig;
+
+    fn fast_state() -> std::sync::Arc<AppState> {
+        let config = MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            ..MockServerConfig::default()
+        }
+        .apply_flags();
+        build_engine_state(&config)
+    }
+
+    /// Drive `route_fast` end-to-end for one POST body and return the framed
+    /// HTTP/1.1 response bytes (the same bytes the hand-rolled `--blocking`/
+    /// `--uring` engines write to the socket).
+    fn route_post(state: &AppState, path: &str, json: &str) -> Vec<u8> {
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{json}",
+            json.len(),
+        );
+        let buf = request.into_bytes();
+        let head = parse_head(&buf).unwrap().unwrap();
+        route_fast(state, &head, &buf).expect("fast path serves this route")
+    }
+
+    #[test]
+    fn route_fast_streaming_chat_emits_sse_frames() {
+        let state = fast_state();
+        let out = route_post(
+            &state,
+            "/v1/chat/completions",
+            r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}"#,
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("Content-Type: text/event-stream"),
+            "streaming chat must set the SSE content type: {text:?}"
+        );
+        assert!(text.contains("data: "), "missing SSE data frames");
+        assert!(text.contains("chat.completion.chunk"), "missing chunk object");
+        assert!(text.contains("[DONE]"), "missing terminal [DONE] frame");
+        assert!(text.contains("\"usage\""), "missing usage frame");
+    }
+
+    #[test]
+    fn route_fast_streaming_completions_emits_sse_frames() {
+        let state = fast_state();
+        let out = route_post(
+            &state,
+            "/v1/completions",
+            r#"{"model":"gpt-4","prompt":"hi","stream":true}"#,
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("Content-Type: text/event-stream"),
+            "streaming completions must set the SSE content type: {text:?}"
+        );
+        assert!(text.contains("data: "), "missing SSE data frames");
+        assert!(text.contains("[DONE]"), "missing terminal [DONE] frame");
+    }
+
+    #[test]
+    fn route_fast_non_streaming_chat_emits_json() {
+        let state = fast_state();
+        let out = route_post(
+            &state,
+            "/v1/chat/completions",
+            r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}"#,
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("Content-Type: application/json"),
+            "non-streaming chat must be JSON: {text:?}"
+        );
+        assert!(text.contains("chat.completion"), "missing completion object");
+        // Body must be well-formed JSON after the header/body split.
+        let body = text.split("\r\n\r\n").nth(1).expect("has a body");
+        let value: serde_json::Value = serde_json::from_str(body).expect("valid JSON body");
+        assert_eq!(value["object"], "chat.completion");
+    }
+}
+

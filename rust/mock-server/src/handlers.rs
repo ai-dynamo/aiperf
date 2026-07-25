@@ -463,7 +463,7 @@ fn record_streaming_fast(
 pub(crate) fn render_chat_completion_fast(
     state: &AppState,
     req: &ChatCompletionRequest,
-) -> (&'static str, Vec<u8>) {
+) -> (&'static str, Bytes) {
     let endpoint = "/v1/chat/completions";
     let start = Instant::now();
     state.recorder.init_model_config(&req.model);
@@ -486,7 +486,11 @@ pub(crate) fn render_chat_completion_fast(
             record_streaming_fast(state, endpoint, &ctx, &labeled, total_tokens, start, || {
                 render_chat_fast_body(&ctx, include_usage)
             });
-        return ("text/event-stream", body.to_vec());
+        // `body` is already a single-owner `Bytes`; return it directly instead of
+        // copying it out into an owned `Vec` (the caller only borrows it as
+        // `&[u8]`). The SSE body scales with the output token count, so the copy
+        // was per-request waste on the throughput engines.
+        return ("text/event-stream", body);
     }
 
     state.recorder.admit_fast(&labeled);
@@ -506,7 +510,7 @@ pub(crate) fn render_chat_completion_fast(
         ctx.tokenized.text.len() as u64,
         resp_bytes,
     );
-    ("application/json", json_body)
+    ("application/json", Bytes::from(json_body))
 }
 
 /// Text-completion (`/v1/completions`) generation for the hand-rolled engines,
@@ -514,7 +518,7 @@ pub(crate) fn render_chat_completion_fast(
 pub(crate) fn render_text_completion_fast(
     state: &AppState,
     req: &crate::models::CompletionRequest,
-) -> (&'static str, Vec<u8>) {
+) -> (&'static str, Bytes) {
     let endpoint = "/v1/completions";
     let start = Instant::now();
     state.recorder.init_model_config(&req.model);
@@ -540,7 +544,8 @@ pub(crate) fn render_text_completion_fast(
             record_streaming_fast(state, endpoint, &ctx, &labeled, total_tokens, start, || {
                 render_text_fast_body(&ctx, include_usage)
             });
-        return ("text/event-stream", body.to_vec());
+        // Return the single-owner SSE `Bytes` directly; see the chat path above.
+        return ("text/event-stream", body);
     }
 
     state.recorder.record_request_start(endpoint, &ctx.model);
@@ -562,7 +567,7 @@ pub(crate) fn render_text_completion_fast(
     );
     state.recorder.record_llm_inflight_end(&ctx.model);
     state.recorder.record_request_end(endpoint);
-    ("application/json", json_body)
+    ("application/json", Bytes::from(json_body))
 }
 
 /// Embeddings (`/v1/embeddings`) generation for the hand-rolled engines. Always
