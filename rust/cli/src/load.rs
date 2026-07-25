@@ -984,13 +984,8 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // per-session connection reuse makes `Sticky` the sensible default (one
     // worker per session keeps the sticky pool warm), otherwise `RoundRobin`.
     // Inert unless the run is `global-hop` with `workers > 1`.
-    let resolved_hop_routing = inputs.runtime_hop_routing.unwrap_or({
-        if resolved_connection_reuse == ConnectionReuse::StickyUserSessions {
-            HopRouting::Sticky
-        } else {
-            HopRouting::RoundRobin
-        }
-    });
+    let resolved_hop_routing =
+        resolve_hop_routing(inputs.runtime_hop_routing, resolved_connection_reuse);
     let endpoint = Endpoint {
         urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
         endpoint_type: EndpointType(inputs.endpoint_type),
@@ -2305,6 +2300,26 @@ pub(crate) fn parse_model_strategy(s: &str) -> anyhow::Result<ModelStrategy> {
     })
 }
 
+/// Resolve the effective global-hop worker-assignment policy.
+///
+/// An explicit `--hop-routing`/`runtime.hop_routing` always wins. Absent, a
+/// [`ConnectionReuse::StickyUserSessions`] run defaults to [`HopRouting::Sticky`]
+/// (one worker per session keeps the sticky connection pool warm); every other
+/// reuse strategy defaults to [`HopRouting::RoundRobin`]. The value is inert
+/// unless the run is `global-hop` with `workers > 1`.
+pub(crate) fn resolve_hop_routing(
+    explicit: Option<HopRouting>,
+    connection_reuse: ConnectionReuse,
+) -> HopRouting {
+    explicit.unwrap_or({
+        if connection_reuse == ConnectionReuse::StickyUserSessions {
+            HopRouting::Sticky
+        } else {
+            HopRouting::RoundRobin
+        }
+    })
+}
+
 /// Parse `--connection-reuse-strategy`.
 pub(crate) fn parse_connection_reuse(s: &str) -> anyhow::Result<ConnectionReuse> {
     Ok(match s {
@@ -2422,7 +2437,44 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{is_fake_model_name, is_truthy_env};
+    use super::{is_fake_model_name, is_truthy_env, resolve_hop_routing};
+    use aiperf_runtime::engine::protocol::HopRouting;
+    use crate::model::endpoint::ConnectionReuse;
+
+    #[test]
+    fn hop_routing_defaults_to_sticky_under_sticky_user_sessions() {
+        assert_eq!(
+            resolve_hop_routing(None, ConnectionReuse::StickyUserSessions),
+            HopRouting::Sticky
+        );
+    }
+
+    #[test]
+    fn hop_routing_explicit_wins_over_sticky_default() {
+        assert_eq!(
+            resolve_hop_routing(
+                Some(HopRouting::RoundRobin),
+                ConnectionReuse::StickyUserSessions
+            ),
+            HopRouting::RoundRobin
+        );
+    }
+
+    #[test]
+    fn hop_routing_defaults_to_round_robin_under_pooled() {
+        assert_eq!(
+            resolve_hop_routing(None, ConnectionReuse::Pooled),
+            HopRouting::RoundRobin
+        );
+    }
+
+    #[test]
+    fn hop_routing_explicit_least_loaded_under_pooled() {
+        assert_eq!(
+            resolve_hop_routing(Some(HopRouting::LeastLoaded), ConnectionReuse::Pooled),
+            HopRouting::LeastLoaded
+        );
+    }
 
     #[test]
     fn synthesis_rejects_non_finite_value() {
