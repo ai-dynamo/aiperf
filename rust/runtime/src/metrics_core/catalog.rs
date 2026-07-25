@@ -7,6 +7,7 @@
 //! dependencies. This module validates the registry and dependency order;
 //! accumulation is implemented in [`crate::metrics_core::accumulator`].
 
+use crate::metrics_core::definition::{Definition, DefinitionGroup};
 use crate::metrics_core::{MetricValueType, Unit};
 use bitflags::bitflags;
 use petgraph::algo::toposort;
@@ -412,6 +413,9 @@ impl MetricFlags {
 #[derive(Debug, Clone, Copy)]
 pub struct MetricSpec {
     pub tag: MetricTag,
+    /// Embedded portable definition (dual-write with the legacy presentation
+    /// fields below; later tasks remove the legacy fields).
+    pub def: Definition,
     pub header: &'static str,
     pub short_header: Option<&'static str>,
     pub short_header_hide_unit: bool,
@@ -427,10 +431,51 @@ pub struct MetricSpec {
     pub aggregation: Option<AggregationKind>,
 }
 
+impl MetricSpec {
+    /// Display header, delegating to the embedded [`Definition`].
+    pub fn header(&self) -> &'static str {
+        self.def.header
+    }
+
+    /// Canonical unit, delegating to the embedded [`Definition`].
+    pub fn unit(&self) -> Unit {
+        self.def.unit
+    }
+
+    /// Optional display unit override, delegating to the embedded [`Definition`].
+    pub fn display_unit(&self) -> Option<Unit> {
+        self.def.display_unit
+    }
+
+    /// Optional short header, delegating to the embedded [`Definition`].
+    pub fn short_header(&self) -> Option<&'static str> {
+        self.def.short_header
+    }
+
+    /// Optional display order, delegating to the embedded [`Definition`].
+    pub fn display_order(&self) -> Option<u32> {
+        self.def.display_order
+    }
+}
+
 macro_rules! spec {
     ($tag:ident, $header:expr, $unit:ident, $kind:ident, $agg:expr, $flags:expr, [$($req:ident),* $(,)?]) => {
         MetricSpec {
             tag: MetricTag::$tag,
+            def: Definition {
+                id: MetricTag::$tag.as_str(),
+                header: $header,
+                short_header: None,
+                short_header_hide_unit: false,
+                unit: Unit::$unit,
+                display_unit: None,
+                display_order: None,
+                group: DefinitionGroup::Default,
+                larger_is_better: $flags.contains(MetricFlags::LARGER_IS_BETTER),
+                value_type: MetricValueType::Float,
+                aliases: &[],
+                deprecated_since: None,
+            },
             header: $header,
             short_header: None,
             short_header_hide_unit: false,
@@ -2156,7 +2201,7 @@ pub fn validate_catalog() -> Result<Vec<MetricTag>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CATALOG, MetricFlags, MetricTag, validate_catalog};
+    use super::{CATALOG, MetricFlags, MetricTag, spec_for, validate_catalog};
 
     fn catalog_fingerprint() -> u64 {
         fn feed(hash: &mut u64, bytes: &[u8]) {
@@ -2236,5 +2281,12 @@ mod tests {
         // and EffectiveImageSamplesPerSecondPerUser (sweep-line effective, active, and
         // per-user variants; per-user divides by overall concurrency per design 0006).
         assert_eq!(catalog_fingerprint(), 7_024_082_593_996_193_480);
+    }
+
+    #[test]
+    fn metricspec_accessors_delegate_to_def() {
+        let s = spec_for(MetricTag::RequestLatency).unwrap();
+        assert_eq!(s.header(), s.def.header);
+        assert_eq!(s.unit(), s.def.unit);
     }
 }
