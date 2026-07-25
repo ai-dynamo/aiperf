@@ -109,6 +109,32 @@ dependency for a real fixture-level diff — wiring the real Qwen-tokenized corp
 Python's `PromptGenerator._tokenized_corpus`, then the full-loader golden-diff over
 `tests/fixtures/weka_traces/`.
 
+### Slice status (all pure logic byte-exact vs real Python)
+
+- **Slice 1 (reconstruction)** — `trace`, `rng`, `corpus`, `prompt`, `synth`,
+  `tool_shape`, `chains`, `prepass`, `selection`, `subagent`, `plan`, `loader`.
+  Full `convert_trace_to_conversations` (main + subagent children + flat chains).
+  **REAL-CORPUS e2e GREEN** (Qwen3-0.6B; main + subagent; content + per-turn timing).
+- **Slice 2 (parallel)** — `convert_traces_serial`/`convert_traces_parallel`
+  (rayon), **byte-identical to serial** (8-trace equality test).
+- **Slice 3 (timing runtime)** — `cache_bust`, `session_tree`,
+  `replay_dependencies`, `trajectory_source` (t\*-sampling core) all byte-exact.
+  Remaining: the Clock-driven `agentic_replay` dispatch loop + stateful
+  `ReplayBarrierCoordinator`/`TrajectorySource` (execution integration).
+- **Slice 4 (scenario/metrics)** — `scenario` (context-overflow classifier,
+  `ScenarioSpec`, `inferencex-agentx-mvp`, `get_scenario`), `metrics`
+  (`TheoreticalPrefixCacheAccumulator`, `ContextOverflowCount`). Remaining: the
+  `apply_scenario` config-lock resolver.
+- **Slice 5 (HF loader)** — remaining (network download wrapper; delegates
+  reconstruction to Slice 1).
+- **Switchable semantics** — `switch::WekaSemantics { Legacy, GraphIr }` +
+  `resolve(flag)` + `reconstruct_legacy` dispatch. Legacy arm fully wired to the
+  ported pipeline; graph-ir arm hands off to `graph::recorded`.
+
+Remaining frontier: live-runtime integration (the dispatch loop that emits
+execution-order timing → raw-export **timing** e2e), the scenario validator, and
+the HF download wrapper.
+
 ## Future requirements
 
 Delivered in dependency order as separate implementation slices. Each slice is
