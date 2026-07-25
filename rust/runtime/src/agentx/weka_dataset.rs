@@ -1,0 +1,168 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Compose reconstructed WEKA trajectories into a linear scheduled [`Dataset`].
+//!
+//! The agentic-replay timing mode runs on the shared scheduled runtime, which
+//! reads turns through a [`ConversationSource`](crate::multiturn::ConversationSource)
+//! over a [`Dataset`]. This module builds that dataset directly from the
+//! byte-exact AgentX reconstruction: each turn's exact OpenAI `/v1/chat/completions`
+//! body (from [`crate::agentx::wire::chat_request_body`], with the byte-exact
+//! cache-bust marker on the first turn of each trajectory tree) is interned as an
+//! opaque `Raw` segment so the transport replays it verbatim — no re-tokenization
+//! or prompt re-synthesis — and the recorded per-turn `timestamp_ms`/`delay_ms`
+//! are carried so the workload can compute t\*-relative dispatch times.
+
+use std::sync::Arc;
+
+use anyhow::Result;
+use bytes::Bytes;
+
+use crate::agentx::cache_bust::{resolve_tree_marker, CacheBustLedger, CacheBustTarget};
+use crate::agentx::loader::ReconstructedConversation;
+use crate::agentx::wire::{chat_request_body, ChatRequestOptions};
+use crate::dataset::Dataset;
+use crate::dataset::model::{Conversation, ConversationContextMode, ModelId, SessionId, Turn};
+use crate::dataset::segment::{Role, SegmentPool};
+
+/// Wire-body options applied when composing (scenario-derived).
+#[derive(Debug, Clone)]
+pub struct WekaComposeOptions {
+    /// Emit `stream: true` (scenario requires streaming).
+    pub streaming: bool,
+    /// Inject `ignore_eos: true`.
+    pub ignore_eos: bool,
+    /// Benchmark id for the cache-bust digest.
+    pub benchmark_id: String,
+    /// Cache-bust placement (scenario-locked to first-turn-prefix for the MVP).
+    pub cache_bust_target: CacheBustTarget,
+}
+
+/// Compose reconstructed conversations into a verbatim-replay [`Dataset`].
+///
+/// Turns carry their exact chat body as a `Raw` segment (byte-for-byte replay,
+/// preserving tool messages) plus the recorded `timestamp_ms`/`delay_ms`. The
+/// cache-bust marker (resolved once per trajectory tree via a shared ledger) is
+/// baked into the first turn's body. Context mode is `MessageArrayWithResponses`
+/// (each turn is a complete self-contained messages array).
+pub fn compose_weka_agentic_dataset(
+    convs: &[ReconstructedConversation],
+    opts: &WekaComposeOptions,
+) -> Result<Dataset> {
+    let mut pool = SegmentPool::new();
+    let mut ledger = CacheBustLedger::default();
+    let mut conversations = Vec::with_capacity(convs.len());
+
+    for (traj_index, conv) in convs.iter().enumerate() {
+        // The trajectory tree's root correlation (subagent/flat children share it).
+        let correlation = conv
+            .parent_conversation_id
+            .clone()
+            .unwrap_or_else(|| conv.session_id.clone());
+        let marker = resolve_tree_marker(
+            &mut ledger,
+            &correlation,
+            &opts.benchmark_id,
+            traj_index as i64,
+            &conv.session_id,
+            opts.cache_bust_target,
+        );
+
+        let mut turns = Vec::with_capacity(conv.turns.len());
+        let mut parent = None;
+        for (i, t) in conv.turns.iter().enumerate() {
+            let req_opts = ChatRequestOptions {
+                streaming: opts.streaming,
+                ignore_eos: opts.ignore_eos,
+                // The marker rides the first turn only; it is then part of the
+                // self-contained prefix of every later turn's replayed body.
+                cache_bust_marker: if i == 0 { marker.clone() } else { None },
+            };
+            let body = chat_request_body(&t.model, &t.raw_messages, t.max_tokens, &req_opts);
+            let wire = Bytes::from(serde_json::to_vec(&body)?);
+            let handle = pool.intern_raw(parent, wire)?;
+            parent = Some(handle);
+
+            let turn = Turn {
+                role: Some(Role::from("user")),
+                model: Some(ModelId::from(t.model.as_str())),
+                max_tokens: u32::try_from(t.max_tokens.max(1)).ok(),
+                streaming: Some(opts.streaming),
+                timestamp_ms: t.timestamp_ms,
+                delay_ms: t.delay_ms,
+                body: Turn::dispatch_body(Some(handle), None, &[]),
+                ..Turn::default()
+            };
+            turns.push(turn);
+        }
+
+        conversations.push(Conversation {
+            session_id: SessionId::from(conv.session_id.clone()),
+            turns,
+            system: None,
+            user_context: None,
+            context_mode: None,
+            accuracy: None,
+            dag: None,
+        });
+    }
+
+    Dataset::new(
+        conversations,
+        Arc::new(pool.freeze()),
+        "sequential",
+        ConversationContextMode::MessageArrayWithResponses,
+    )
+    .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agentx::loader::{ReconstructedConversation, ReconstructedTurn};
+    use crate::agentx::synth::ChatMessage;
+
+    fn turn(ts: f64, content: &str) -> ReconstructedTurn {
+        ReconstructedTurn {
+            timestamp_ms: Some(ts),
+            delay_ms: None,
+            api_time_ms: None,
+            source_trace_id: "t".into(),
+            source_outer_idx: 0,
+            source_kind: "weka_main".into(),
+            model: "m".into(),
+            max_tokens: 8,
+            raw_messages: vec![ChatMessage::plain("user", content.to_string())],
+            reset_context: false,
+            theoretical_prefix_cache_hit_blocks: 0,
+            theoretical_prefix_cache_total_blocks: 1,
+            input_kind: None,
+        }
+    }
+
+    #[test]
+    fn composes_verbatim_turns_with_timestamps_and_marker() {
+        let conv = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![turn(0.0, "hello"), turn(1000.0, "again")],
+        };
+        let ds = compose_weka_agentic_dataset(
+            std::slice::from_ref(&conv),
+            &WekaComposeOptions {
+                streaming: true,
+                ignore_eos: true,
+                benchmark_id: "bench".into(),
+                cache_bust_target: CacheBustTarget::FirstTurnPrefix,
+            },
+        )
+        .unwrap();
+        assert_eq!(ds.conversations().len(), 1);
+        let c = &ds.conversations()[0];
+        assert_eq!(c.turns.len(), 2);
+        assert_eq!(c.turns[0].timestamp_ms, Some(0.0));
+        assert_eq!(c.turns[1].timestamp_ms, Some(1000.0));
+        assert_eq!(c.turns[0].max_tokens, Some(8));
+    }
+}

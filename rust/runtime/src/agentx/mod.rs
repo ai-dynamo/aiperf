@@ -24,6 +24,9 @@ pub mod export;
 /// under the `parquet` feature).
 pub mod hf_dataset;
 pub mod loader;
+/// Compose reconstructed WEKA trajectories into a linear scheduled `Dataset` for
+/// the agentic-replay timing mode.
+pub mod weka_dataset;
 pub mod metrics;
 pub mod plan;
 pub mod prepass;
