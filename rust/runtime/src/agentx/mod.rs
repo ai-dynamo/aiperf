@@ -36,4 +36,5 @@ pub mod selection;
 pub mod session_tree;
 pub mod subagent;
 pub mod trace;
+pub mod wire;
 pub mod trajectory_source;
