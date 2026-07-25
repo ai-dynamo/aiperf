@@ -17,6 +17,7 @@ use std::rc::Rc;
 
 use serde_json::Value;
 
+use crate::agentx::cache_bust::{resolve_tree_marker, CacheBustLedger, CacheBustTarget};
 use crate::agentx::export::raw_export_records;
 use crate::agentx::loader::ReconstructedConversation;
 use crate::agentx::trajectory_source::{
@@ -152,6 +153,13 @@ pub struct DispatchItem {
     pub dispatch_ns: i64,
     /// Conversation the request belongs to.
     pub session_id: String,
+    /// The trajectory tree's root correlation id (shared by every member of a
+    /// tree; = `parent_conversation_id` or `session_id`). Sticky routing and the
+    /// cache-bust marker key off this, and it carries across warmup→profiling.
+    pub correlation_id: String,
+    /// Replay phase of this dispatch (warmup fires first and primes the server
+    /// KV to the t* state; profiling turns resume against that warmed prefix).
+    pub phase: ReplayPhase,
     /// Mapped model name.
     pub model: String,
     /// `max_tokens` for the request.
@@ -160,23 +168,87 @@ pub struct DispatchItem {
     pub request_body: Value,
 }
 
-/// Build the complete transport-ready dispatch plan for a reconstructed trace:
-/// clock-driven schedule (via [`run_replay_sim`]) crossed with the wire request
-/// body (via [`crate::agentx::wire::chat_request_body`]) per fired turn. The
-/// online transport fires each item's `request_body` at its `dispatch_ns`.
-pub fn build_dispatch_plan(
+/// One trajectory stream's dispatch, split into its warmup turn (dispatched first
+/// to prime the server KV to the t* state) and its profiling turns (dispatched at
+/// their t*-relative offsets). The executor fires `warmup` to completion, then
+/// the `profiling` turns — per stream, so inter-stream timing is preserved
+/// (Python `AgenticReplayStrategy._execute_warmup` → profiling handoff).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamDispatch {
+    /// The stream's conversation session id.
+    pub session_id: String,
+    /// The trajectory tree's root correlation id (shared warmup+profiling).
+    pub correlation_id: String,
+    /// The warmup dispatch (turn n-1 carrying the full back-seeded prefix and the
+    /// cache-bust marker), or `None` when the stream has no pre-t* turn.
+    pub warmup: Option<DispatchItem>,
+    /// Profiling dispatches at their t*-relative offsets, in fire order.
+    pub profiling: Vec<DispatchItem>,
+}
+
+/// The trajectory-tree root correlation id for a conversation: its
+/// `parent_conversation_id` (subagent/flat children) or its own `session_id`
+/// (the root). Every member of one tree shares this, so they resolve one
+/// cache-bust marker and route stickily together.
+fn root_correlation_id(conv: &ReconstructedConversation) -> String {
+    conv.parent_conversation_id
+        .clone()
+        .unwrap_or_else(|| conv.session_id.clone())
+}
+
+/// Map an export record's `"phase"` string to a [`ReplayPhase`].
+fn record_phase(rec: &Value) -> ReplayPhase {
+    match rec["phase"].as_str() {
+        Some("warmup") => ReplayPhase::Warmup,
+        Some("profiling") => ReplayPhase::Profiling,
+        // Only dispatched (warmup/profiling) turns reach here; default profiling.
+        _ => ReplayPhase::Profiling,
+    }
+}
+
+/// Build the transport-ready dispatch plan for reconstructed conversations, with
+/// byte-exact cache-bust markers ([`crate::agentx::cache_bust`]).
+///
+/// For each conversation the trajectory tree's marker is resolved once through
+/// the shared `ledger` (root mints, tree members reuse, `recycle_pass` per base
+/// trace id) and applied to the **first dispatched turn only** — the warmup turn,
+/// or the first profiling turn when there is no warmup. Every dispatch of a tree
+/// carries the same `correlation_id`, so the marker (embedded in the warmup
+/// prefix) and sticky routing survive the warmup→profiling handoff. Passing the
+/// same `ledger` by `&mut` across warmup and profiling builds preserves marker
+/// continuity. `trajectory_index_of` supplies each conversation's trajectory
+/// index for the digest key.
+#[allow(clippy::too_many_arguments)]
+pub fn build_dispatch_plan_with_cachebust(
     convs: &[ReconstructedConversation],
     t_star_ms: f64,
     burst: bool,
     cap_ms: Option<f64>,
-    opts: &crate::agentx::wire::ChatRequestOptions,
+    base_opts: &crate::agentx::wire::ChatRequestOptions,
+    ledger: &mut CacheBustLedger,
+    benchmark_id: &str,
+    target: CacheBustTarget,
+    mut trajectory_index_of: impl FnMut(&ReconstructedConversation) -> i64,
 ) -> Vec<DispatchItem> {
     use crate::agentx::synth::ChatMessage;
     let mut plan: Vec<DispatchItem> = Vec::new();
     for conv in convs {
+        let correlation_id = root_correlation_id(conv);
+        let trajectory_index = trajectory_index_of(conv);
+        // Resolve the tree's marker once (idempotent per correlation id).
+        let marker = resolve_tree_marker(
+            ledger,
+            &correlation_id,
+            benchmark_id,
+            trajectory_index,
+            &conv.session_id,
+            target,
+        );
         // Synchronous schedule computation (no clock driver) so the plan can be
         // built inside an async transport context without a nested runtime.
-        for (dispatch_ns, rec) in computed_dispatch(conv, t_star_ms, burst, cap_ms) {
+        for (idx, (dispatch_ns, rec)) in
+            computed_dispatch(conv, t_star_ms, burst, cap_ms).into_iter().enumerate()
+        {
             let messages: Vec<ChatMessage> = rec["raw_messages"]
                 .as_array()
                 .unwrap()
@@ -190,10 +262,25 @@ pub fn build_dispatch_plan(
                 .collect();
             let model = rec["model"].as_str().unwrap_or("").to_string();
             let max_tokens = rec["max_tokens"].as_i64().unwrap_or(1);
-            let body = crate::agentx::wire::chat_request_body(&model, &messages, max_tokens, opts);
+            // The marker rides only the first dispatched turn of the stream; it is
+            // baked into that turn's back-seeded prefix and thereafter replayed.
+            let opts = if idx == 0 {
+                crate::agentx::wire::ChatRequestOptions {
+                    cache_bust_marker: marker.clone(),
+                    ..base_opts.clone()
+                }
+            } else {
+                crate::agentx::wire::ChatRequestOptions {
+                    cache_bust_marker: None,
+                    ..base_opts.clone()
+                }
+            };
+            let body = crate::agentx::wire::chat_request_body(&model, &messages, max_tokens, &opts);
             plan.push(DispatchItem {
                 dispatch_ns,
                 session_id: rec["session_id"].as_str().unwrap_or("").to_string(),
+                correlation_id: correlation_id.clone(),
+                phase: record_phase(&rec),
                 model,
                 max_tokens,
                 request_body: body,
@@ -201,6 +288,61 @@ pub fn build_dispatch_plan(
         }
     }
     plan
+}
+
+/// Build the complete transport-ready dispatch plan for reconstructed
+/// conversations (no cache-bust): clock-driven schedule crossed with the wire
+/// request body per fired turn. The online transport fires each item's
+/// `request_body` at its `dispatch_ns`. Delegates to
+/// [`build_dispatch_plan_with_cachebust`] with [`CacheBustTarget::None`].
+pub fn build_dispatch_plan(
+    convs: &[ReconstructedConversation],
+    t_star_ms: f64,
+    burst: bool,
+    cap_ms: Option<f64>,
+    opts: &crate::agentx::wire::ChatRequestOptions,
+) -> Vec<DispatchItem> {
+    let mut ledger = CacheBustLedger::default();
+    build_dispatch_plan_with_cachebust(
+        convs,
+        t_star_ms,
+        burst,
+        cap_ms,
+        opts,
+        &mut ledger,
+        "",
+        CacheBustTarget::None,
+        |_| 0,
+    )
+}
+
+/// Group a flat dispatch plan into per-stream [`StreamDispatch`]es, splitting each
+/// stream's warmup turn from its profiling turns so the executor can fire warmup
+/// to completion before profiling (per stream). Streams appear in first-seen
+/// order; within a stream, profiling turns keep their fire order.
+pub fn streams_from_plan(plan: Vec<DispatchItem>) -> Vec<StreamDispatch> {
+    let mut order: Vec<String> = Vec::new();
+    let mut streams: std::collections::HashMap<String, StreamDispatch> =
+        std::collections::HashMap::new();
+    for item in plan {
+        let entry = streams.entry(item.session_id.clone()).or_insert_with(|| {
+            order.push(item.session_id.clone());
+            StreamDispatch {
+                session_id: item.session_id.clone(),
+                correlation_id: item.correlation_id.clone(),
+                warmup: None,
+                profiling: Vec::new(),
+            }
+        });
+        match item.phase {
+            ReplayPhase::Warmup => entry.warmup = Some(item),
+            _ => entry.profiling.push(item),
+        }
+    }
+    order
+        .into_iter()
+        .map(|sid| streams.remove(&sid).expect("session present"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -335,6 +477,78 @@ mod tests {
         assert_eq!(fired[1].1["phase"], serde_json::json!("profiling"));
         // Real reconstructed content present on the fired records.
         assert!(!fired[1].1["raw_messages"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cachebust_marker_rides_first_turn_only_byte_exact() {
+        use crate::agentx::cache_bust::{
+            build_cache_bust_marker, CacheBustLedger, CacheBustTarget,
+        };
+        use crate::agentx::wire::ChatRequestOptions;
+        let conv = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![turn(0.0, 0), turn(1000.0, 1)],
+        };
+        let mut ledger = CacheBustLedger::default();
+        // t*=500: warmup turn0 @0 (first dispatched), profiling turn1 @500ms.
+        let plan = build_dispatch_plan_with_cachebust(
+            std::slice::from_ref(&conv),
+            500.0,
+            false,
+            None,
+            &ChatRequestOptions { streaming: true, ignore_eos: true, cache_bust_marker: None },
+            &mut ledger,
+            "bench",
+            CacheBustTarget::FirstTurnPrefix,
+            |_| 0,
+        );
+        assert_eq!(plan.len(), 2);
+        // The byte-exact marker (recycle_pass 0, trajectory_index 0, base "t").
+        let marker =
+            build_cache_bust_marker("bench", 0, 0, "t", CacheBustTarget::FirstTurnPrefix).unwrap();
+        let first = plan[0].request_body["messages"][0]["content"].as_str().unwrap();
+        assert_eq!(first, format!("{marker}turn0"));
+        assert!(first.starts_with("[rid:"));
+        // The second (profiling) turn carries NO marker.
+        assert_eq!(
+            plan[1].request_body["messages"][0]["content"],
+            serde_json::json!("turn1")
+        );
+        // Phase + correlation tagging.
+        assert_eq!(plan[0].phase, ReplayPhase::Warmup);
+        assert_eq!(plan[1].phase, ReplayPhase::Profiling);
+        assert_eq!(plan[0].correlation_id, "t");
+        assert_eq!(plan[1].correlation_id, "t");
+    }
+
+    #[test]
+    fn streams_from_plan_splits_warmup_and_profiling() {
+        use crate::agentx::wire::ChatRequestOptions;
+        let conv = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![turn(0.0, 0), turn(500.0, 1), turn(900.0, 2)],
+        };
+        // t*=250: warmup turn0, profiling turn1+turn2.
+        let plan = build_dispatch_plan(
+            std::slice::from_ref(&conv),
+            250.0,
+            false,
+            None,
+            &ChatRequestOptions { streaming: true, ignore_eos: true, cache_bust_marker: None },
+        );
+        let streams = streams_from_plan(plan);
+        assert_eq!(streams.len(), 1);
+        let s = &streams[0];
+        assert_eq!(s.session_id, "t");
+        assert_eq!(s.correlation_id, "t");
+        assert!(s.warmup.is_some());
+        assert_eq!(s.warmup.as_ref().unwrap().phase, ReplayPhase::Warmup);
+        assert_eq!(s.profiling.len(), 2);
+        assert!(s.profiling.iter().all(|p| p.phase == ReplayPhase::Profiling));
     }
 
     #[test]
