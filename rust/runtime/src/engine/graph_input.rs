@@ -825,13 +825,55 @@ fn prepare_recorded_public(
     if let DatasetSource::HuggingFace { max_rows, .. } = &mut load.source {
         *max_rows = root_limit;
     }
+    // A synthesis block (authored via `--synthesis-*` or materialized by an
+    // agentic scenario lock) carries the trajectory-start (`t*`) window, idle-gap
+    // cap, and cache-bust target. Public recorded sources historically ignored it
+    // and always full-replayed; thread it here so `--public-dataset` applies the
+    // same snapshot the file path does (else the scenario's t* warmup/profiling
+    // clip and cache-bust silently vanish for the live HF corpora).
+    let synthesis = input.synthesis;
+    let allow_dataset_wrap = synthesis
+        .as_ref()
+        .and_then(|value| value.allow_dataset_wrap)
+        .unwrap_or(false);
+    let max_context_length = synthesis
+        .as_ref()
+        .and_then(|value| value.max_context_length)
+        .map(usize::try_from)
+        .transpose()
+        .context("recorded max_context_length exceeds usize")?;
+    let max_osl = synthesis
+        .as_ref()
+        .and_then(|value| value.max_osl)
+        .map(|value| value as usize);
+    let idle_gap_cap_seconds = synthesis
+        .as_ref()
+        .map_or(Some(60.0), |value| value.idle_gap_cap_seconds);
+    let t_star_window = synthesis
+        .as_ref()
+        .map_or_else(TStarWindow::default, |value| TStarWindow {
+            start_min_ratio: value.trajectory_start_min_ratio,
+            start_max_ratio: value.trajectory_start_max_ratio,
+            random_seed: value.t_star_random_seed,
+            run_random_seed: context
+                .run_random_seed
+                .unwrap_or_else(|| RngRoot::new(None).derive_seed_or_entropy("dataset.sampler")),
+            sampling_strategy: GraphSamplingStrategy::parse(
+                value.dataset_sampling_strategy.as_deref(),
+            ),
+        });
+    let cache_bust_target = CacheBustTarget::parse(
+        synthesis
+            .as_ref()
+            .and_then(|value| value.cache_bust_target.as_deref()),
+    );
     Ok(PreparedRecordedInput {
         input: RecordedTraceInputConfig {
             load,
             root_limit,
-            max_context_length: None,
-            max_osl: None,
-            idle_gap_cap_seconds: Some(60.0),
+            max_context_length,
+            max_osl,
+            idle_gap_cap_seconds,
             prompt_corpus: PromptCorpus::parse(
                 input
                     .prompts
@@ -846,11 +888,9 @@ fn prepare_recorded_public(
         },
         random_seed: input.random_seed,
         default_output_tokens: 1,
-        allow_dataset_wrap: false,
-        // Public recorded sources carry no synthesis block, so the trajectory
-        // window defaults to full replay and no cache-bust marker is applied.
-        t_star_window: TStarWindow::default(),
-        cache_bust_target: CacheBustTarget::None,
+        allow_dataset_wrap,
+        t_star_window,
+        cache_bust_target,
     })
 }
 

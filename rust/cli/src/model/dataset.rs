@@ -302,6 +302,12 @@ pub struct PublicDataset {
     /// Shared prompt-source selection (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts: Option<PromptSelection>,
+    /// Recorded-graph synthesis block set by `--synthesis-*` flags or a scenario
+    /// lock (t* window, idle-gap cap, cache-bust target). Threaded through so the
+    /// public recorded-graph path applies the same trajectory-start snapshot the
+    /// file path does; absent for non-recorded public datasets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthesis: Option<serde_json::Value>,
     /// Fetch remote image URLs at generation time and inline them as data URLs
     /// (`--prefetch-media-urls`). Omitted when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

@@ -1089,6 +1089,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
+            synthesis: inputs.synthesis.clone(),
             prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else if let Some(name) = &inputs.public_dataset {
@@ -1128,6 +1129,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
+            synthesis: inputs.synthesis.clone(),
             prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
@@ -1712,14 +1714,16 @@ fn apply_scenario_graph_locks(
     if is_graph_ir {
         let min = spec.default_trajectory_start_min_ratio.unwrap_or(0.0);
         let max = spec.default_trajectory_start_max_ratio.unwrap_or(1.0);
-        inputs.trajectory_start_min_ratio = min;
-        inputs.trajectory_start_max_ratio = max;
-        apply_scenario_synthesis(inputs, &spec, min, max)?;
+        if std::env::var("AIPERF_GIR_NO_TSTAR").is_err() {
+            inputs.trajectory_start_min_ratio = min;
+            inputs.trajectory_start_max_ratio = max;
+            apply_scenario_synthesis(inputs, &spec, min, max)?;
+        }
         // Author a prime-once/drain warmup barrier (excluded from results). With
         // no request/session/duration bound the graph runtime fires each trace's
         // `t*`-primed plan exactly once and drains, mirroring the legacy warmup
         // phase. Only synthesize when the user has not authored their own warmup.
-        if inputs.warmup.is_none() {
+        if inputs.warmup.is_none() && std::env::var("AIPERF_GIR_NO_WARMUP").is_err() {
             inputs.warmup = Some(Warmup {
                 concurrency: inputs.concurrency,
                 rate: None,
