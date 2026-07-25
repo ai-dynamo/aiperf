@@ -49,6 +49,23 @@ impl Sweep {
             sweep_type: SweepType::Grid,
         }
     }
+
+    /// A lockstep (zip) sweep of the given axes.
+    pub fn zip(axes: Vec<SweepAxis>) -> Self {
+        Self {
+            axes,
+            sweep_type: SweepType::Zip,
+        }
+    }
+
+    /// A single-axis sweep from a "magic list": a numeric list authored directly
+    /// at a config path (e.g. a phase field carrying `[1, 2, 4]`) that expands to
+    /// one run per element. The last path component is the directory segment.
+    pub fn magic_list(path: impl Into<String>, values: Vec<Value>) -> Self {
+        let path = path.into();
+        let seg = path.rsplit('.').next().unwrap_or(path.as_str()).to_string();
+        Self::grid(vec![SweepAxis { path, seg, values }])
+    }
 }
 
 /// Render a JSON scalar for a variation label / directory name.
@@ -279,5 +296,99 @@ mod tests {
             variation["values"]["phases.profiling.concurrency"],
             serde_json::json!(2)
         );
+    }
+
+    /// A base config with `profiling` (concurrency) and `requests` phase fields
+    /// plus a `main` dataset, exercising multi-axis and array-by-name paths.
+    fn base_two_field_cfg() -> BenchmarkConfig {
+        use crate::model::phase::{Phase, PhaseCommon, PhaseKind, PhaseRole};
+        let common = PhaseCommon {
+            name: "profiling".into(),
+            kind: Some(PhaseRole::Profiling),
+            exclude_from_results: false,
+            seamless: false,
+            requests: Some(10),
+            sessions: None,
+            duration: None,
+            prefill_concurrency: None,
+            grace_period: None,
+            concurrency_ramp: None,
+            prefill_ramp: None,
+            rate_ramp: None,
+            cancellation: None,
+            agentic_cache_warmup_duration: None,
+            adaptive_scale: None,
+            rate_series: None,
+        };
+        BenchmarkConfig {
+            phases: Some(vec![Phase {
+                common,
+                kind: PhaseKind::Concurrency { concurrency: 1 },
+            }]),
+            ..BenchmarkConfig::default()
+        }
+    }
+
+    #[test]
+    fn zip_axes_expand_in_lockstep() {
+        // Two axes of equal length combine lockstep, not cartesian.
+        let sweep = Sweep::zip(vec![
+            SweepAxis {
+                path: "phases.profiling.concurrency".to_string(),
+                seg: "concurrency".to_string(),
+                values: vec![Value::from(1), Value::from(2)],
+            },
+            SweepAxis {
+                path: "phases.profiling.requests".to_string(),
+                seg: "requests".to_string(),
+                values: vec![Value::from(100), Value::from(200)],
+            },
+        ]);
+
+        let runs = build_benchmark_plan(&base_two_field_cfg(), &sweep, Some(7)).expect("plan");
+        assert_eq!(runs.len(), 2, "lockstep yields one run per index, not 4");
+
+        let cfg0 = serde_json::to_value(&runs[0].cfg).unwrap();
+        assert_eq!(cfg0["phases"][0]["concurrency"], serde_json::json!(1));
+        assert_eq!(cfg0["phases"][0]["requests"], serde_json::json!(100));
+        let cfg1 = serde_json::to_value(&runs[1].cfg).unwrap();
+        assert_eq!(cfg1["phases"][0]["concurrency"], serde_json::json!(2));
+        assert_eq!(cfg1["phases"][0]["requests"], serde_json::json!(200));
+        assert_eq!(runs[1].random_seed, Some(8));
+    }
+
+    #[test]
+    fn magic_list_expands_numeric_list_at_phase_path() {
+        // A numeric list authored at a phase path expands to one run per element.
+        let sweep = Sweep::magic_list(
+            "phases.profiling.concurrency",
+            vec![Value::from(4), Value::from(8), Value::from(16)],
+        );
+        assert_eq!(sweep.axes[0].seg, "concurrency");
+
+        let runs = build_benchmark_plan(&base_two_field_cfg(), &sweep, Some(42)).expect("plan");
+        assert_eq!(runs.len(), 3);
+        let got: Vec<i64> = runs
+            .iter()
+            .map(|r| {
+                serde_json::to_value(&r.cfg).unwrap()["phases"][0]["concurrency"]
+                    .as_i64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(got, vec![4, 8, 16]);
+        assert_eq!(runs[2].random_seed, Some(44));
+    }
+
+    #[test]
+    fn missing_path_is_an_error() {
+        let sweep = Sweep::magic_list("phases.profiling.nonexistent_field", vec![Value::from(1)]);
+        // Setting an object leaf inserts, so target a non-existent named phase.
+        let sweep_bad_phase =
+            Sweep::magic_list("phases.no_such_phase.concurrency", vec![Value::from(1)]);
+        // A leaf on an existing object is created (permissive), so this succeeds.
+        assert!(build_benchmark_plan(&base_two_field_cfg(), &sweep, Some(1)).is_ok());
+        // A missing named array element cannot be traversed: hard error.
+        assert!(build_benchmark_plan(&base_two_field_cfg(), &sweep_bad_phase, Some(1)).is_err());
     }
 }
