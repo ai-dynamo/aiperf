@@ -97,6 +97,35 @@ pub fn run_replay_sim(
     execute_replay_sim(dispatches)
 }
 
+/// The complete clock-driven legacy replay: reconstruct a trace, then execute
+/// each of its conversations (root + subagent/flat children) under the SimClock
+/// at `t_star_ms`, returning every conversation's fired export records
+/// (`session_id` → `(dispatch_ns, record)` in fired order). This is the full
+/// legacy path — trace bytes → reconstruction → clock-driven dispatch → export
+/// — the deterministic end-to-end run.
+pub fn execute_legacy_replay<S>(
+    trace_id: &str,
+    trace: &crate::agentx::trace::WekaTrace,
+    synth: &mut S,
+    model_map: &std::collections::HashMap<String, String>,
+    cfg: &crate::agentx::config::WekaConfig,
+    opts: &crate::agentx::loader::MainReconstructOptions,
+    t_star_ms: f64,
+    burst: bool,
+    cap_ms: Option<f64>,
+) -> Result<Vec<(String, Vec<(i64, Value)>)>, crate::agentx::synth::PrefixTooTruncated>
+where
+    S: crate::agentx::synth::TokenSynth,
+{
+    let convs = crate::agentx::loader::convert_trace_to_conversations(
+        trace_id, trace, synth, model_map, cfg, opts,
+    )?;
+    Ok(convs
+        .iter()
+        .map(|c| (c.session_id.clone(), run_replay_sim(c, t_star_ms, burst, cap_ms)))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +187,76 @@ mod tests {
         assert_eq!(fired[3].0, 650 * NS_PER_MS);
         // Content survives the run.
         assert_eq!(fired[1].1["raw_messages"][0]["content"], serde_json::json!("turn2"));
+    }
+
+    #[test]
+    fn full_legacy_replay_from_trace_bytes_under_simclock() {
+        use crate::agentx::config::WekaConfig;
+        use crate::agentx::loader::MainReconstructOptions;
+        use crate::agentx::synth::TokenSynth;
+        use crate::agentx::trace::{HashIdScope, WekaNormalRequest, WekaRequest, WekaTrace};
+        struct Stub;
+        impl TokenSynth for Stub {
+            fn decode_block_tokens(&mut self, h: &[i64]) -> Vec<u32> {
+                h.iter().flat_map(|&x| (0..4).map(move |i| x as u32 * 1000 + i)).collect()
+            }
+            fn sample_partial_tail_tokens(&mut self, n: usize, _s: &str) -> Vec<u32> {
+                (0..n as u32).map(|i| 900_000 + i).collect()
+            }
+            fn decode_tokens_to_text(&self, t: &[u32]) -> String {
+                t.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ")
+            }
+        }
+        let norm = |t: f64, hs: &[i64]| {
+            WekaRequest::Normal(WekaNormalRequest {
+                t,
+                model: "m".into(),
+                input_length: hs.len() as i64 * 4,
+                output_length: 4,
+                hash_ids: hs.to_vec(),
+                input_types: vec![],
+                output_types: vec![],
+                stop: String::new(),
+                api_time: Some(0.1),
+                think_time: None,
+            })
+        };
+        let trace = WekaTrace {
+            id: "t".into(),
+            models: vec!["m".into()],
+            block_size: 4,
+            hash_id_scope: HashIdScope::Local,
+            tool_tokens: 0,
+            system_tokens: 0,
+            requests: vec![norm(0.0, &[1, 2]), norm(1.0, &[1, 2, 3]), norm(2.0, &[1, 2, 3, 4])],
+            totals: None,
+        };
+        let mut synth = Stub;
+        // Full path: trace -> reconstruct -> SimClock dispatch -> export.
+        // t*=500ms: turn0 warmup@0, turn1(t=1000->off500), turn2(t=2000->off1500).
+        let out = execute_legacy_replay(
+            "t",
+            &trace,
+            &mut synth,
+            &std::collections::HashMap::new(),
+            &WekaConfig { split_flattened_agents: false, ..WekaConfig::default() },
+            &MainReconstructOptions::default(),
+            500.0,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1); // root conversation
+        let (sid, fired) = &out[0];
+        assert_eq!(sid, "t");
+        assert_eq!(fired.len(), 3);
+        // Fired under the clock at 0, 500ms, 1500ms.
+        assert_eq!(fired[0].0, 0);
+        assert_eq!(fired[1].0, 500 * NS_PER_MS);
+        assert_eq!(fired[2].0, 1500 * NS_PER_MS);
+        assert_eq!(fired[0].1["phase"], serde_json::json!("warmup"));
+        assert_eq!(fired[1].1["phase"], serde_json::json!("profiling"));
+        // Real reconstructed content present on the fired records.
+        assert!(!fired[1].1["raw_messages"].as_array().unwrap().is_empty());
     }
 }
