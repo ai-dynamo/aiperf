@@ -725,8 +725,11 @@ pub fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Resul
 pub struct InputSession {
     /// Conversation/session identity.
     pub session_id: String,
-    /// One canonical request body per turn, ordered by turn index.
-    pub payloads: Vec<Box<RawValue>>,
+    /// One canonical request body per turn, ordered by turn index. Held as a
+    /// shared `Bytes` handle (a refcount to the immutable prebuilt body), so
+    /// retaining inputs.json data never copies a multi-MB body; each is parsed
+    /// into a borrowed [`RawValue`] once, at write time.
+    pub payloads: Vec<bytes::Bytes>,
 }
 
 #[derive(Serialize)]
@@ -749,15 +752,32 @@ struct InputsSessionRow<'a> {
 /// compatibility) read multimodal presence directly from
 /// `payloads[].messages[].content[]`.
 pub fn write_inputs_json(path: &Path, sessions: &[InputSession]) -> Result<()> {
-    let document = InputsDocument {
-        data: sessions
-            .iter()
-            .map(|session| InputsSessionRow {
+    // Parse each retained body into a borrowed `RawValue` here, at write time:
+    // the borrow references the shared `Bytes` in `sessions` (no owned copy) and
+    // `to_writer_pretty` emits its bytes verbatim, byte-identical to retaining an
+    // owned `Box<RawValue>` per turn.
+    let data = sessions
+        .iter()
+        .map(|session| {
+            let payloads = session
+                .payloads
+                .iter()
+                .map(|payload| {
+                    serde_json::from_slice::<&RawValue>(payload.as_ref()).with_context(|| {
+                        format!(
+                            "validating inputs.json payload for conversation {:?}",
+                            session.session_id
+                        )
+                    })
+                })
+                .collect::<Result<Vec<&RawValue>>>()?;
+            Ok(InputsSessionRow {
                 session_id: &session.session_id,
-                payloads: session.payloads.iter().map(Box::as_ref).collect(),
+                payloads,
             })
-            .collect(),
-    };
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let document = InputsDocument { data };
     let mut writer = create_export_writer(path, "inputs export directory", "native inputs export")?;
     serde_json::to_writer_pretty(&mut writer, &document)
         .with_context(|| format!("serializing inputs export {}", path.display()))?;

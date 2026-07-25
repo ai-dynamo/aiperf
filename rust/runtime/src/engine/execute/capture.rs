@@ -49,8 +49,7 @@ pub(crate) struct RunCapture {
     /// independent of run-to-run worker dispatch races and, for the
     /// deterministic synthetic session ids (`session_000000`, …), reproduces
     /// dataset composition order.
-    pub(crate) input_sessions:
-        RefCell<BTreeMap<String, BTreeMap<usize, Box<serde_json::value::RawValue>>>>,
+    pub(crate) input_sessions: RefCell<BTreeMap<String, BTreeMap<usize, bytes::Bytes>>>,
     /// Non-consuming cloned records for the live-results sink, keyed by uuid;
     /// the authoritative record stays in the worker observer for the drain.
     pub(crate) live_records: RefCell<HashMap<Uuid, RecordIngest>>,
@@ -312,7 +311,7 @@ impl RunCapture {
         &self,
         conversation_id: &str,
         turn_index: usize,
-        payload: &[u8],
+        payload: bytes::Bytes,
     ) -> Result<()> {
         if !self.inputs_enabled {
             return Ok(());
@@ -320,14 +319,9 @@ impl RunCapture {
         let mut sessions = self.input_sessions.borrow_mut();
         let turns = sessions.entry(conversation_id.to_string()).or_default();
         if let std::collections::btree_map::Entry::Vacant(slot) = turns.entry(turn_index) {
-            let parsed: Box<serde_json::value::RawValue> = serde_json::from_slice(payload)
-                .with_context(|| {
-                    format!(
-                        "validating canonical request payload for inputs.json \
-                         (conversation {conversation_id}, turn {turn_index})"
-                    )
-                })?;
-            slot.insert(parsed);
+            // Retain the shared body handle verbatim (a refcount, never a copy);
+            // it is validated once into a borrowed RawValue at write time.
+            slot.insert(payload);
         }
         Ok(())
     }
@@ -1125,7 +1119,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
                 self.capture.record_input_payload(
                     &inputs_conversation_id,
                     inputs_turn_index,
-                    &collected.request_payload,
+                    collected.request_payload.clone(),
                 )?;
                 self.capture.record_http_exchange(
                     uuid,
@@ -1296,37 +1290,34 @@ mod tests {
         );
         // Distinct canonical bodies per (conversation, turn). "conv-b" is a two-turn
         // conversation; "conv-a" is single-turn.
-        let body = |tag: &str| format!(r#"{{"model":"m","tag":"{tag}"}}"#).into_bytes();
+        let body = |tag: &str| bytes::Bytes::from(format!(r#"{{"model":"m","tag":"{tag}"}}"#));
         // Feed the during-run capture out of conversation order, with a recycled
         // duplicate (conv-b turn 0 dispatched twice, e.g. via --request-count recycling);
         // the second write must be ignored (first-write-wins dedup).
         capture
-            .record_input_payload("conv-b", 0, &body("b0"))
+            .record_input_payload("conv-b", 0, body("b0"))
             .unwrap();
         capture
-            .record_input_payload("conv-a", 0, &body("a0"))
+            .record_input_payload("conv-a", 0, body("a0"))
             .unwrap();
         capture
-            .record_input_payload("conv-b", 1, &body("b1"))
+            .record_input_payload("conv-b", 1, body("b1"))
             .unwrap();
         capture
-            .record_input_payload("conv-b", 0, &body("b0-recycled"))
+            .record_input_payload("conv-b", 0, body("b0-recycled"))
             .unwrap();
         let capture_sessions = capture.take_input_sessions();
 
         // The up-front generator emits sessions conversation-id-sorted, each with its
         // turns in order — build the equivalent list directly.
-        let parse = |bytes: Vec<u8>| {
-            serde_json::from_slice::<Box<serde_json::value::RawValue>>(&bytes).unwrap()
-        };
         let up_front = vec![
             InputSession {
                 session_id: "conv-a".into(),
-                payloads: vec![parse(body("a0"))],
+                payloads: vec![body("a0")],
             },
             InputSession {
                 session_id: "conv-b".into(),
-                payloads: vec![parse(body("b0")), parse(body("b1"))],
+                payloads: vec![body("b0"), body("b1")],
             },
         ];
 

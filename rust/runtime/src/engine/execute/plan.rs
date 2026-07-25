@@ -652,28 +652,15 @@ pub(crate) fn build_up_front_input_sessions(
     let sessions = source
         .materialize_input_payloads()?
         .ok_or_else(|| anyhow!("resident dataset cannot generate inputs.json up front"))?;
-    sessions
+    // Move the shared body handles through verbatim; each is validated once into
+    // a borrowed RawValue at write time (`write_inputs_json`), not copied here.
+    Ok(sessions
         .into_iter()
-        .map(|session| {
-            let payloads = session
-                .payloads
-                .iter()
-                .map(|payload| {
-                    serde_json::from_slice::<Box<serde_json::value::RawValue>>(payload)
-                        .with_context(|| {
-                            format!(
-                                "validating up-front inputs.json payload for conversation {:?}",
-                                session.session_id
-                            )
-                        })
-                })
-                .collect::<Result<Vec<_>>>()?;
-            Ok(InputSession {
-                session_id: session.session_id,
-                payloads,
-            })
+        .map(|session| InputSession {
+            session_id: session.session_id,
+            payloads: session.payloads,
         })
-        .collect()
+        .collect())
 }
 
 /// Force-disable switch for exact-fold. Default on;
