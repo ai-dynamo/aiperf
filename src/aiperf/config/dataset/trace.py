@@ -99,36 +99,13 @@ class SynthesisConfig(BaseConfig):
         ),
     ]
 
-    max_context_length: Annotated[
-        int | None,
-        Field(
-            ge=1,
-            default=None,
-            description="Maximum per-trace input-plus-output context for recorded graph selection.",
-        ),
-    ]
-
     allow_dataset_wrap: Annotated[
-        bool | None,
+        bool,
         Field(
-            default=None,
-            description="Whether a finite recorded graph corpus may wrap during selection.",
-        ),
-    ]
-
-    idle_gap_cap_seconds: Annotated[
-        float | None,
-        Field(
-            ge=0.0,
-            default=60.0,
-            description="True-idle gap cap for weka_trace/dynamo_trace; null disables warping.",
-        ),
-    ]
-
-    corpus: Annotated[
-        Literal["coding", "sonnet"] | None,
-        Field(
-            default=None,
-            description="Content corpus for recorded graph prompt reconstruction.",
+            default=False,
+            description="Allow the finite weka/agentic trace pool to wrap (reuse "
+            "distinct roots across concurrency lanes) when concurrency exceeds "
+            "the number of eligible traces. Defaults to False: over-subscription "
+            "fails unless this is explicitly enabled.",
         ),
     ]

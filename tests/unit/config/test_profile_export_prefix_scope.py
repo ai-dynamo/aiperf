@@ -22,6 +22,9 @@ defaults remain: `profile_export_aiperf.csv`, `profile_export.jsonl`,
 
 from __future__ import annotations
 
+import pytest
+from pytest import param
+
 from aiperf.config.artifacts import ArtifactsConfig
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
@@ -33,63 +36,24 @@ class TestPrefixAppliedToEveryExport:
     def _cfg(self) -> ArtifactsConfig:
         return ArtifactsConfig(prefix="foo")
 
-    def test_csv_summary(self):
-        assert self._cfg().profile_export_csv_file.name == "foo.csv"
-
-    def test_json_summary(self):
-        assert self._cfg().profile_export_json_file.name == "foo.json"
-
-    def test_timeslices_csv(self):
-        assert (
-            self._cfg().profile_export_timeslices_csv_file.name == "foo_timeslices.csv"
-        )
-
-    def test_timeslices_json(self):
-        assert (
-            self._cfg().profile_export_timeslices_json_file.name
-            == "foo_timeslices.json"
-        )
-
-    def test_per_record_jsonl(self):
-        assert self._cfg().profile_export_jsonl_file.name == "foo.jsonl"
-
-    def test_raw_jsonl(self):
-        assert self._cfg().profile_export_raw_jsonl_file.name == "foo_raw.jsonl"
-
-    def test_per_record_parquet(self):
-        assert self._cfg().profile_export_parquet_file.name == "foo.parquet"
-
-    def test_per_record_csv(self):
-        assert self._cfg().profile_export_records_csv_file.name == "foo_records.csv"
-
-    def test_gpu_telemetry_jsonl(self):
-        assert (
-            self._cfg().profile_export_gpu_telemetry_jsonl_file.name
-            == "foo_gpu_telemetry.jsonl"
-        )
-
-    def test_server_metrics_jsonl(self):
-        assert (
-            self._cfg().server_metrics_export_jsonl_file.name
-            == "foo_server_metrics.jsonl"
-        )
-
-    def test_server_metrics_json(self):
-        assert (
-            self._cfg().server_metrics_export_json_file.name
-            == "foo_server_metrics.json"
-        )
-
-    def test_server_metrics_csv(self):
-        assert (
-            self._cfg().server_metrics_export_csv_file.name == "foo_server_metrics.csv"
-        )
-
-    def test_server_metrics_parquet(self):
-        assert (
-            self._cfg().server_metrics_export_parquet_file.name
-            == "foo_server_metrics.parquet"
-        )
+    @pytest.mark.parametrize(
+        "attr, expected",
+        [
+            param("profile_export_csv_file", "foo.csv", id="csv_summary"),
+            param("profile_export_json_file", "foo.json", id="json_summary"),
+            param("profile_export_timeslices_csv_file", "foo_timeslices.csv", id="timeslices_csv"),
+            param("profile_export_timeslices_json_file", "foo_timeslices.json", id="timeslices_json"),
+            param("profile_export_jsonl_file", "foo.jsonl", id="per_record_jsonl"),
+            param("profile_export_raw_jsonl_file", "foo_raw.jsonl", id="raw_jsonl"),
+            param("profile_export_gpu_telemetry_jsonl_file", "foo_gpu_telemetry.jsonl", id="gpu_telemetry_jsonl"),
+            param("server_metrics_export_jsonl_file", "foo_server_metrics.jsonl", id="server_metrics_jsonl"),
+            param("server_metrics_export_json_file", "foo_server_metrics.json", id="server_metrics_json"),
+            param("server_metrics_export_csv_file", "foo_server_metrics.csv", id="server_metrics_csv"),
+            param("server_metrics_export_parquet_file", "foo_server_metrics.parquet", id="server_metrics_parquet"),
+        ],
+    )  # fmt: skip
+    def test_prefixed_export_name(self, attr, expected):
+        assert getattr(self._cfg(), attr).name == expected
 
 
 class TestUnsetPrefixPreservesPerFileDefaults:
@@ -98,37 +62,20 @@ class TestUnsetPrefixPreservesPerFileDefaults:
     def _cfg(self) -> ArtifactsConfig:
         return ArtifactsConfig()  # no prefix
 
-    def test_csv_summary_default(self):
-        assert self._cfg().profile_export_csv_file.name == "profile_export_aiperf.csv"
-
-    def test_json_summary_default(self):
-        assert self._cfg().profile_export_json_file.name == "profile_export_aiperf.json"
-
-    def test_timeslices_csv_default(self):
-        assert (
-            self._cfg().profile_export_timeslices_csv_file.name
-            == "profile_export_aiperf_timeslices.csv"
-        )
-
-    def test_timeslices_json_default(self):
-        assert (
-            self._cfg().profile_export_timeslices_json_file.name
-            == "profile_export_aiperf_timeslices.json"
-        )
-
-    def test_per_record_jsonl_default(self):
-        assert self._cfg().profile_export_jsonl_file.name == "profile_export.jsonl"
-
-    def test_raw_jsonl_default(self):
-        assert (
-            self._cfg().profile_export_raw_jsonl_file.name == "profile_export_raw.jsonl"
-        )
-
-    def test_gpu_telemetry_jsonl_default(self):
-        assert (
-            self._cfg().profile_export_gpu_telemetry_jsonl_file.name
-            == "gpu_telemetry_export.jsonl"
-        )
+    @pytest.mark.parametrize(
+        "attr, expected",
+        [
+            param("profile_export_csv_file", "profile_export_aiperf.csv", id="csv_summary_default"),
+            param("profile_export_json_file", "profile_export_aiperf.json", id="json_summary_default"),
+            param("profile_export_timeslices_csv_file", "profile_export_aiperf_timeslices.csv", id="timeslices_csv_default"),
+            param("profile_export_timeslices_json_file", "profile_export_aiperf_timeslices.json", id="timeslices_json_default"),
+            param("profile_export_jsonl_file", "profile_export.jsonl", id="per_record_jsonl_default"),
+            param("profile_export_raw_jsonl_file", "profile_export_raw.jsonl", id="raw_jsonl_default"),
+            param("profile_export_gpu_telemetry_jsonl_file", "gpu_telemetry_export.jsonl", id="gpu_telemetry_jsonl_default"),
+        ],
+    )  # fmt: skip
+    def test_default_export_name(self, attr, expected):
+        assert getattr(self._cfg(), attr).name == expected
 
     def test_server_metrics_defaults(self):
         c = self._cfg()

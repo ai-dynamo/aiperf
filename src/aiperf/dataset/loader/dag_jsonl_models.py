@@ -148,8 +148,9 @@ class DagTurn(AIPerfBaseModel):
     spawns: list[str | DagSpawn] = Field(
         default_factory=list,
         description="Child session ids to dispatch as SPAWN branches after "
-        "this turn completes (children start fresh, route freely). Each "
-        "entry may be a bare string (auto-join on next turn) or a "
+        "this turn completes (children start fresh; sticky-colocated on the "
+        "parent worker while its sticky entry is live, least-loaded after). "
+        "Each entry may be a bare string (auto-join on next turn) or a "
         "``DagSpawn`` object carrying a ``join_at`` index for delayed joins.",
     )
     delay: float = Field(

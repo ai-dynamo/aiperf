@@ -19,7 +19,6 @@ from unittest.mock import patch
 import orjson
 import pytest
 
-from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset import mmap_cache
 from tests.unit.conftest import make_run_from_cli
@@ -249,7 +248,9 @@ class TestComputeCacheKey:
 
     def test_settings_payload_includes_seed_corpus_osl(self, tmp_path: Path) -> None:
         # Regression guard for the wrong-cache-hit findings: random_seed,
-        # prompt_corpus, and the per-record OSL fallback must enter the key.
+        # prompts.corpus, and the per-record OSL fallback must enter the key.
+        from aiperf.common.enums import PromptCorpus
+        from aiperf.config.dataset import PromptSelectionConfig
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -265,9 +266,12 @@ class TestComputeCacheKey:
                 random_seed=123,
             )
         )
+        dataset = run.cfg.get_default_dataset()
+        dataset.prompts = PromptSelectionConfig(corpus=PromptCorpus.CODING)
         payload = mmap_cache._settings_payload_from_run(run)
         assert payload["random_seed"] == 123
-        assert "prompt_corpus" in payload
+        assert "corpus" in payload
+        assert payload["corpus"] == "coding"
         assert "osl_fallback" in payload
 
     def test_key_is_deterministic_for_identical_inputs(self, tmp_path: Path) -> None:
@@ -490,7 +494,7 @@ class TestLookupAndPopulate:
         raw["version"] = 22
         manifest_path.write_bytes(orjson.dumps(raw))
 
-        assert mmap_cache.MANIFEST_VERSION == 25
+        assert mmap_cache.MANIFEST_VERSION == 26
         assert mmap_cache.lookup("pre-overlap-frontier", compressed=False) is None
 
     def test_lookup_compressed_mismatch_returns_none(self, tmp_path: Path) -> None:
@@ -498,6 +502,26 @@ class TestLookupAndPopulate:
         _populate_entry(cache_root, cache_key="uncomp", compressed=False)
         # Same key requested as compressed -> MISS.
         assert mmap_cache.lookup("uncomp", compressed=True) is None
+
+    def test_invalidate_removes_entry_so_populate_can_heal(
+        self, tmp_path: Path
+    ) -> None:
+        cache_root = mmap_cache.cache_dir()
+        entry_dir = _populate_entry(cache_root, cache_key="poison")
+        assert entry_dir.exists()
+        assert mmap_cache.lookup("poison", compressed=False) is not None
+
+        assert mmap_cache.invalidate("poison") is True
+        assert not entry_dir.exists()
+        assert mmap_cache.lookup("poison", compressed=False) is None
+        assert mmap_cache.invalidate("poison") is False  # already gone
+
+        # populate can rewrite the key after invalidation
+        healed = _populate_entry(cache_root, cache_key="poison", data_bytes=b"HEALED")
+        hit = mmap_cache.lookup("poison", compressed=False)
+        assert hit is not None
+        assert hit.entry_dir == healed
+        assert hit.data_path.read_bytes() == b"HEALED"
 
     def test_restore_hardlinks_to_run_dir(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -1151,20 +1175,17 @@ class TestAcquireCacheLockBypassAndFallback:
         monkeypatch.setattr(mmap_cache_lock, "_blocking_acquire", flock_then_soft)
 
         # SoftFileLock's mode= is umask-masked; the post-acquire chmod must still
-        # yield 0o664 under a restrictive cluster umask. POSIX permission bits
-        # and umask are Unix semantics: Windows os.chmod only toggles the
-        # read-only bit, so the mode assertion is guarded to non-Windows.
+        # yield 0o664 under a restrictive cluster umask.
         old_umask = os.umask(0o077)
         try:
             async with mmap_cache.acquire_cache_lock("softlock", timeout=5.0):
                 assert attempted == [FileLock, SoftFileLock]
                 assert lock_path_holder, "SoftFileLock acquire path was not exercised"
-                if not IS_WINDOWS:
-                    on_disk = stat.S_IMODE(lock_path_holder[0].stat().st_mode)
-                    assert on_disk == mmap_cache_lock._LOCK_FILE_MODE, (
-                        f"SoftFileLock lock file mode {oct(on_disk)} != "
-                        f"{oct(mmap_cache_lock._LOCK_FILE_MODE)} under umask 077"
-                    )
+                on_disk = stat.S_IMODE(lock_path_holder[0].stat().st_mode)
+                assert on_disk == mmap_cache_lock._LOCK_FILE_MODE, (
+                    f"SoftFileLock lock file mode {oct(on_disk)} != "
+                    f"{oct(mmap_cache_lock._LOCK_FILE_MODE)} under umask 077"
+                )
         finally:
             os.umask(old_umask)
 

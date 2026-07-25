@@ -33,6 +33,10 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 
     async def export(self, console: Console) -> None:
         """Export OSL mismatch warning to console if mismatches detected."""
+        if self._results is None:
+            self.debug("No results available, skipping output sequence length warning")
+            return
+
         metric = self._get_mismatch_metric()
         if not metric or not metric.avg or metric.avg <= 0:
             self.debug(
@@ -67,15 +71,21 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 
     def _get_mismatch_metric(self) -> MetricResult | None:
         """Extract the OSL mismatch count metric from results."""
+        if self._results is None:
+            return None
         return self._results.get(OSLMismatchCountMetric.tag)
 
     def _get_total_records(self) -> int:
         """Get the total number of valid records from results."""
+        if self._results is None:
+            return 0
         metric = self._results.get(RequestCountMetric.tag)
         return int(metric.avg) if metric and metric.avg else 0
 
     def _get_avg_diff(self) -> float | None:
         """Get the average OSL mismatch diff percentage from results."""
+        if self._results is None:
+            return None
         metric = self._results.get(OSLMismatchDiffMetric.tag)
         return metric.avg if metric else None
 

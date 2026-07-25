@@ -92,6 +92,9 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Replay Send Schedule Offset](#replay-send-schedule-offset)
     - [Replay Schedule Lag p50 / p90 / p99](#replay-schedule-lag-p50--p90--p99)
     - [Replay Schedule Degraded](#replay-schedule-degraded)
+  - [Agentic / Trace Metrics](#agentic--trace-metrics)
+    - [Theoretical Prefix Cache Hit](#theoretical-prefix-cache-hit)
+    - [Context Overflow Count](#context-overflow-count)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
     - [Good Request Fraction](#good-request-fraction)
@@ -1468,6 +1471,64 @@ Boolean (0/1) signal that the replay could not keep up with the offered schedule
 ```python
 replay_sched_degraded = 1 if percentile(lag_ms, 99) > 500.0 else 0
 ```
+
+---
+
+## Agentic / Trace Metrics
+
+> [!NOTE]
+> These metrics appear for agentic/WEKA trace replay workloads. Theoretical
+> prefix-cache accounting requires a loader that stamps per-turn block counts
+> (e.g. `weka_trace`). Context-overflow counting applies whenever the runtime
+> classifier tags an error as context overflow.
+
+### Theoretical Prefix Cache Hit
+
+**Type:** Accumulator summary (not a record/aggregate metric plugin)
+
+Ideal infinite-cache prefix hit rate implied by the trace's hash_id block
+overlap, as stamped by the WEKA loader. Emitted by
+`TheoreticalPrefixCacheAccumulator` on the `metric_records` channel.
+
+**Formula:**
+```python
+theoretical_prefix_cache_hit = 100.0 * sum(hit_blocks) / sum(total_blocks)
+```
+
+**Export fields:**
+- `avg` / `current`: hit rate percent
+- `sum`: cumulative hit blocks (numerator)
+- `count`: cumulative total blocks (denominator)
+
+**Notes:**
+- Phase-scoped via `export_results(ctx)` so warmup blocks do not leak into
+  profiling (and vice versa).
+- Only appears when at least one conversation turn carries both
+  `theoretical_prefix_cache_hit_blocks` and
+  `theoretical_prefix_cache_total_blocks`.
+
+---
+
+### Context Overflow Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+Number of requests whose error body was classified as a context-length /
+context-overflow rejection. Used by the InferenceX AgentX scenario to flip
+`submission_valid=false` when the overflow rate exceeds 1%.
+
+**Formula:**
+```python
+context_overflow_count = sum(1 if request.context_overflow else 0)
+```
+
+**Notes:**
+- Marked `ERROR_ONLY` / `NO_INDIVIDUAL_RECORDS` (aggregate signal only).
+- Under `--scenario inferencex-agentx-mvp`, matching overflows may take the
+  records-side skip path (`context_overflow_skip`) and land in the
+  `skipped_context_overflow_count` side channel instead of normal error
+  metrics; the aggregate exporter still merges both into the overflow rate
+  denominator (`request_count + error_request_count + skipped_context_overflow_count`).
 
 ---
 

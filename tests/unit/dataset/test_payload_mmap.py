@@ -236,3 +236,108 @@ async def test_adopt_existing_files_requires_files_on_disk(tmp_path, monkeypatch
 
     with pytest.raises(FileNotFoundError, match="requires both files"):
         store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)
+
+
+@pytest.mark.asyncio
+async def test_adopt_existing_files_compress_only_uses_zst_paths(tmp_path, monkeypatch):
+    """Cache HIT restore writes .zst only; adopt must not require uncompressed paths."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_adopt_zst", compress_only=True
+    )
+    store._compressed_data_path.parent.mkdir(parents=True, exist_ok=True)
+    store._compressed_data_path.write_bytes(b"ZDATA")
+    store._compressed_index_path.write_bytes(b"ZIDX")
+    assert not store._data_path.exists()
+    assert not store._index_path.exists()
+
+    store.adopt_existing_files(
+        session_ids=["s1"], total_size_bytes=100, compressed_size_bytes=5
+    )
+    assert store._finalized is True
+    assert store._compressed_size == 5
+
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_adopt_existing_files_compress_only_missing_zst_raises(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_adopt_zst_missing", compress_only=True
+    )
+    with pytest.raises(FileNotFoundError, match=r"dataset\.dat\.zst"):
+        store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)
+
+
+@pytest.mark.asyncio
+async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
+    """PAYLOAD_BYTES index must round-trip max_tokens and timestamp.
+
+    Turn scalars live outside the wire body for some loaders (e.g. mooncake
+    ``output_length`` / ``timestamp``). Persisting them on PayloadOffset keeps
+    OSL-mismatch and schedule-lag metrics alive on the verbatim path.
+    """
+    from aiperf.dataset.memory_map_utils import (
+        PayloadOffset,
+        max_tokens_from_wire_payload,
+        turn_from_payload_turn,
+    )
+
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_payload_scalars", format=MemoryMapFormat.PAYLOAD_BYTES
+    )
+    await store.initialize()
+
+    # Wire body omits max_tokens; scalar comes only from Turn.max_tokens.
+    payload = {"messages": [{"role": "user", "content": "hi"}], "model": "m"}
+    conv = Conversation(
+        session_id="conv-1",
+        turns=[
+            Turn(
+                role="user",
+                raw_payload=payload,
+                max_tokens=128,
+                timestamp=42.5,
+            )
+        ],
+    )
+    await store.add_conversation("conv-1", conv)
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(
+        metadata.data_file_path,
+        metadata.index_file_path,
+    )
+
+    entry = client.get_payload_turn("conv-1", 0)
+    assert entry is not None
+    assert entry.max_tokens == 128
+    assert entry.timestamp == 42.5
+    assert orjson.loads(entry.payload_bytes) == payload
+
+    turn = turn_from_payload_turn(entry)
+    assert turn.max_tokens == 128
+    assert turn.timestamp == 42.5
+    assert turn.raw_payload == payload
+
+    # Wire-JSON fallback recovers max_tokens when index scalars are absent
+    # (legacy PayloadOffset with only offset/size).
+    legacy = PayloadOffset(offset=0, size=0)
+    assert legacy.max_tokens is None
+    assert (
+        max_tokens_from_wire_payload({"max_completion_tokens": 16, "messages": []})
+        == 16
+    )
+    assert max_tokens_from_wire_payload({"max_output_tokens": 8}) == 8
+    assert max_tokens_from_wire_payload({"max_tokens": 0}) is None
+
+    client.close()
+    await store.stop()

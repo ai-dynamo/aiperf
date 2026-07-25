@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationContextMode, MemoryMapFormat
 from aiperf.common.environment import Environment
@@ -118,6 +119,8 @@ class TestPayloadBytesFallbackServing:
         assert conversation.session_id == conversation_id
         assert len(conversation.turns) == 1
         assert conversation.turns[0].raw_payload == RAW_PAYLOAD
+        # Wire JSON max_tokens must be restored onto the Turn for OSL metrics.
+        assert conversation.turns[0].max_tokens == 7
         await dm.stop()
 
     @pytest.mark.asyncio
@@ -137,6 +140,7 @@ class TestPayloadBytesFallbackServing:
         )
 
         assert response.turn.raw_payload == RAW_PAYLOAD
+        assert response.turn.max_tokens == 7
         await dm.stop()
 
     @pytest.mark.asyncio
@@ -332,12 +336,27 @@ class TestSelectMmapFormat:
             == MemoryMapFormat.CONVERSATION
         )
 
-    def test_mixed_raw_state_raises(self) -> None:
+    def test_mixed_across_conversations_selects_conversation(self) -> None:
+        """Global mix is allowed: fall back to CONVERSATION rather than hard-fail."""
         dm = self._manager()
-        with pytest.raises(ValueError, match="Mixed raw_payload state"):
+        assert (
             dm._select_mmap_format(
                 [_raw_conversation("r1"), _single_turn_conversation("s1")]
             )
+            == MemoryMapFormat.CONVERSATION
+        )
+
+    def test_mixed_within_conversation_raises(self) -> None:
+        dm = self._manager()
+        mixed = Conversation(
+            session_id="mixed",
+            turns=[
+                Turn(role="user", raw_payload={"p": 0}),
+                Turn(role="user", texts=[Text(contents=["no payload"])]),
+            ],
+        )
+        with pytest.raises(ValueError, match="mixed[\\s\\S]*raw_payload"):
+            dm._select_mmap_format([mixed])
 
 
 class TestGenerateInputPayloadsVerbatim:
@@ -381,16 +400,18 @@ class TestGenerateInputPayloadsVerbatim:
 
 
 class TestRunMmapPaths:
-    def test_local_paths_are_uncompressed(self) -> None:
+    @pytest.mark.parametrize(
+        "compress_only, data_name, index_name",
+        [
+            param(False, "dataset.dat", "index.dat", id="local-uncompressed"),
+            param(True, "dataset.dat.zst", "index.dat.zst", id="kubernetes-compressed"),
+        ],
+    )  # fmt: skip
+    def test_run_mmap_paths(
+        self, compress_only: bool, data_name: str, index_name: str
+    ) -> None:
         dm = DatasetManager(run=_make_synthetic_run(), service_id="dm-test")
-        dm._compress_only = False
+        dm._compress_only = compress_only
         data_p, index_p = dm._run_mmap_paths()
-        assert data_p.name == "dataset.dat"
-        assert index_p.name == "index.dat"
-
-    def test_kubernetes_paths_are_compressed(self) -> None:
-        dm = DatasetManager(run=_make_synthetic_run(), service_id="dm-test")
-        dm._compress_only = True
-        data_p, index_p = dm._run_mmap_paths()
-        assert data_p.name == "dataset.dat.zst"
-        assert index_p.name == "index.dat.zst"
+        assert data_p.name == data_name
+        assert index_p.name == index_name

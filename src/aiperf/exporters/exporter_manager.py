@@ -356,11 +356,16 @@ class ExporterManager(AIPerfLoggerMixin):
             await self._run_console_exporters(live_console)
         else:
             if console.is_terminal:
-                replay_console = Console(
+                # Plain-text TTY (NO_COLOR / no color_system): still re-render at
+                # the live terminal width so interactive tables match the pane,
+                # then replay without ANSI. The .txt artifact stays on the
+                # fixed-width recording pass above.
+                live_width = getattr(console, "_width", None) or console.width
+                replay_console = self._fixed_width_console(
+                    width=live_width,
                     record=True,
                     file=io.StringIO(),
                     force_terminal=True,
-                    width=console.width,
                 )
                 await self._run_console_exporters(replay_console)
             else:

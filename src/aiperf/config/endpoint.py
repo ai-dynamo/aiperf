@@ -217,6 +217,18 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    _streaming_explicitly_set: bool = False
+
+    transport: Annotated[
+        TransportType | None,
+        Field(
+            default=None,
+            description="Transport plugin name. Currently only 'http' (aiohttp-based "
+            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
+            "setting overrides auto-detection.",
+        ),
+    ]
+
     connection_reuse: Annotated[
         ConnectionReuseStrategy,
         Field(
@@ -460,6 +472,18 @@ class EndpointConfig(BaseConfig):
                 data["urls"] = [url] if isinstance(url, str) else url
 
         return data
+
+    @model_validator(mode="after")
+    def _record_streaming_explicit_set_flag(self) -> Self:
+        """Snapshot whether the user explicitly set ``streaming``.
+
+        Scenario validation distinguishes "user explicitly passed
+        --streaming/--no-streaming" (raise on conflict) from "streaming is at
+        default; auto-fill from the scenario spec" (info log). Surface a stable
+        underscore flag for the scenario resolver's defensive ``getattr``.
+        """
+        self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
 
     @model_validator(mode="after")
     def _validate_endpoint_boundaries(self) -> Self:

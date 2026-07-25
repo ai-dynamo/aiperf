@@ -388,11 +388,13 @@ class ResolvedConfig(BaseModel):
     )
     scenario_outcome: Any = Field(
         default=None,
-        description="Result of applying a named ``--scenario`` config-lock "
-        "(``aiperf.common.scenario.ScenarioOutcome``). Populated by the "
-        "ScenarioResolver step; None when no scenario was set. Typed ``Any`` to "
-        "avoid importing the scenario package (and its config-chain deps) at "
-        "plan-model import time.",
+        description="Result of applying the named benchmark-scenario invariant "
+        "lock (set by ScenarioResolver). None when no --scenario was set; "
+        "carries applied locks, any --unsafe-override violations, and "
+        "submission_valid for downstream reporting. Runtime type: "
+        "aiperf.common.scenario.ScenarioOutcome | None. Typed ``Any`` to break "
+        "the import cycle aiperf.common.scenario.base -> common.models -> "
+        "config.config -> config.resolution.plan.",
     )
 
 

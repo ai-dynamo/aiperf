@@ -32,7 +32,7 @@ from aiperf.config.loader.duration import (
 from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
 from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.config.sweep.adaptive import SLAFilter
-from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
+from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType, TimingMode
 
 __all__ = [
     "BasePhaseConfig",
@@ -257,11 +257,137 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
-    # BenchmarkConfig uses this classification for its implicit scheduled or
-    # graph workload. Explicit open workloads delegate the decision to their
-    # registered runner factory because Python cannot interpret their phase
-    # semantics. Subclasses set False when the built-in phase itself owns a
-    # stop (for example FixedSchedulePhase infers it from the dataset).
+    # -------------------------------------------------------------------------
+    # Agentic-replay timing (AGENTIC_REPLAY timing mode only)
+    # -------------------------------------------------------------------------
+
+    timing_mode: Annotated[
+        TimingMode | None,
+        Field(
+            default=None,
+            description="Explicit timing-strategy override for this phase. When "
+            "set, it WINS over the timing mode derived from ``type`` in "
+            "``aiperf.timing.config._phase_timing_mode`` (read via "
+            "``_is_agentic_replay`` and ``_build_profiling_config``). This is "
+            "how a benchmark-scenario invariant-lock stamps AGENTIC_REPLAY onto "
+            "the profiling phase(s): the scenario validator sets "
+            "``phase.timing_mode = TimingMode.AGENTIC_REPLAY`` and the credit "
+            "pipeline then routes the phase through the agentic-replay strategy. "
+            "Leave None for normal/dag_jsonl runs so the phase-type mapping "
+            "applies (REQUEST_RATE / FIXED_SCHEDULE / USER_CENTRIC_RATE). "
+            "Distinct from the sweep ``scenarios`` strategy.",
+        ),
+    ]
+
+    failed_request_threshold: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            le=1.0,
+            description="Abort the run early when (failed_records / total_records) exceeds this "
+            "ratio. Default None disables the check. Only PROFILING-phase records "
+            "count toward the ratio. A grace floor of max(concurrency, 10) records "
+            "must accumulate before the check is armed, so a single early failure "
+            "cannot kill the run. When the threshold is exceeded a "
+            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
+            "normal cancel path, partial results are still aggregated, and the run "
+            "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
+            "in record_processor_service so the rate measures real failures only.",
+        ),
+    ]
+
+    trajectory_start_min_ratio: Annotated[
+        float,
+        Field(
+            default=0.25,
+            ge=0.0,
+            le=1.0,
+            description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
+            "position within each trajectory, expressed as a fraction of the "
+            "trace's recorded wall-clock duration (timestamped traces) or its "
+            "total turn count (legacy timestamp-less traces). Sampled per "
+            "trajectory at trajectory-build "
+            "time; deterministic given --random-seed.",
+        ),
+    ]
+
+    trajectory_start_max_ratio: Annotated[
+        float,
+        Field(
+            default=0.75,
+            ge=0.0,
+            le=1.0,
+            description="AGENTIC_REPLAY only: upper bound (inclusive) on the random start "
+            "position within each trajectory, expressed as a fraction of the "
+            "trace's recorded wall-clock duration (timestamped traces) or its "
+            "total turn count (legacy timestamp-less traces). For the "
+            "timestamp-less path the effective per-trace ceiling is "
+            "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
+            "after warmup.",
+        ),
+    ]
+
+    burst_phase_starts: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
+            "PROFILING-start dispatches into synchronized bursts instead of "
+            "spreading them by each request's recorded offset from t*. By "
+            "default (False) the phase starts are SPREAD: WARMUP requests are "
+            "aligned globally so every trajectory reaches its t* at the same "
+            "instant (the warmup end), and each lane's first PROFILING request "
+            "waits out its recorded gap after t* -- reproducing the recorded "
+            "arrival pattern at both phase boundaries. The rest of the replay "
+            "(inter-turn delays) is timing-faithful regardless of this flag; "
+            "it governs ONLY the burst-vs-spread of the two phase starts. Pass "
+            "--burst-phase-starts to fire each phase's first requests together "
+            "(faster concurrency ramp, synchronized start), e.g. for a "
+            "throughput-oriented run rather than a faithful arrival replay.",
+        ),
+    ]
+
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0,
+            description="AGENTIC_REPLAY only: additional cache-pressure warmup "
+            "duration in seconds. After the normal snapshot warmup drains, AIPerf "
+            "continues the live trajectories without recorded idle delays and with "
+            "one-token outputs for this long, then drains and resumes profiling "
+            "from the resulting trajectory state. Read off the profiling phase by "
+            "``timing.config._build_agentic_warmup_config``. None disables it.",
+        ),
+    ]
+
+    agentic_warmup_grace_period: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0,
+            description="AGENTIC_REPLAY only: grace period in seconds the "
+            "auto-synthesized warmup barrier waits for in-flight priming "
+            "requests after the warmup burst sends. Read off the profiling phase "
+            "by ``timing.config._build_agentic_warmup_config`` (the agentic "
+            "warmup is not a user-declared phase, so it does not inherit "
+            "``--warmup-grace-period``, which requires ``--warmup-duration``). "
+            "None waits indefinitely (the agentic warmup must complete every "
+            "primed trajectory before profiling starts).",
+        ),
+    ]
+
+    _failed_request_threshold_explicitly_set: bool = False
+    _trajectory_start_min_ratio_explicitly_set: bool = False
+    _trajectory_start_max_ratio_explicitly_set: bool = False
+    _burst_phase_starts_explicitly_set: bool = False
+
+    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
+    # stop condition is inferred from the dataset). Otherwise CLI users
+    # get autodefaults applied in the CLI->YAML converter (see
+    # ``aiperf.config.flags._converter_profiling``); YAML users must be
+    # explicit.
     _stop_condition_required: ClassVar[bool] = True
     _windows_reserved_phase_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL"}
@@ -329,6 +455,40 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         if self.grace_period is not None and self.duration is None:
             raise ValueError(
                 f"Phase '{self.name}': grace_period requires duration to be set"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _record_agentic_explicit_set_flags(self) -> Self:
+        """Snapshot which AGENTIC_REPLAY fields were explicitly provided.
+
+        Scenario validation distinguishes "user explicitly set the value to a
+        non-required value" (raise) from "value is at default; auto-fill from
+        scenario spec" (info log). Surface stable underscore flags for the
+        validator's defensive `getattr`.
+        """
+        self._failed_request_threshold_explicitly_set = (
+            "failed_request_threshold" in self.model_fields_set
+        )
+        self._trajectory_start_min_ratio_explicitly_set = (
+            "trajectory_start_min_ratio" in self.model_fields_set
+        )
+        self._trajectory_start_max_ratio_explicitly_set = (
+            "trajectory_start_max_ratio" in self.model_fields_set
+        )
+        self._burst_phase_starts_explicitly_set = (
+            "burst_phase_starts" in self.model_fields_set
+        )
+        return self
+
+    @model_validator(mode="after")
+    def validate_trajectory_start_range(self) -> Self:
+        """Ensure trajectory_start_min_ratio <= trajectory_start_max_ratio."""
+        if self.trajectory_start_min_ratio > self.trajectory_start_max_ratio:
+            raise ValueError(
+                f"--trajectory-start-min-ratio ({self.trajectory_start_min_ratio}) "
+                f"must be <= --trajectory-start-max-ratio "
+                f"({self.trajectory_start_max_ratio})."
             )
         return self
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from aiperf.config.flags._converter_profiling import _apply_agentic_replay_fields
 from aiperf.config.phases import PhaseType
 from aiperf.plugin.enums import ArrivalPattern
 
@@ -19,11 +20,17 @@ if TYPE_CHECKING:
 
 
 def _warmup_count_field(w: dict[str, Any], cli: CLIConfig) -> None:
+    # Mirror v1 ``_build_warmup_config`` (timing/config.py): every set cap is
+    # passed INDEPENDENTLY so the warmup phase's AND-combined stop conditions
+    # end on whichever fires first. The prior ``if/elif/elif`` silently dropped
+    # all but the highest-priority cap (e.g. --warmup-duration ignored when
+    # --num-warmup-requests was also set), diverging from both v1 and the
+    # sibling profiling converter (which routes every set cap).
     if cli.warmup_request_count is not None:
         w["requests"] = cli.warmup_request_count
-    elif cli.warmup_num_sessions is not None:
+    if cli.warmup_num_sessions is not None:
         w["sessions"] = cli.warmup_num_sessions
-    elif cli.warmup_duration is not None:
+    if cli.warmup_duration is not None:
         w["duration"] = cli.warmup_duration
 
 
@@ -198,8 +205,11 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
 
     if not ({"warmup_request_count", "warmup_num_sessions", "warmup_duration"} & s):
         # No warmup trigger -> no warmup phase. Refuse to silently drop
-        # secondary warmup-only flags the user supplied.
-        if cli.warmup_grace_period is not None:
+        # secondary warmup-only flags the user supplied — except under a
+        # --scenario, where the auto-synthesized agentic warmup consumes
+        # --warmup-grace-period as its barrier grace (v1 parity; see
+        # _apply_agentic_replay_fields in _converter_profiling).
+        if cli.warmup_grace_period is not None and cli.scenario is None:
             raise ValueError(
                 "--warmup-grace-period was supplied without any warmup "
                 "trigger; warmup runs only when --warmup-request-count, "
@@ -212,6 +222,7 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
     _warmup_count_field(w, cli)
     _warmup_pattern_type(w, cli, s)
     _warmup_ramps(w, cli, s)
+    _apply_agentic_replay_fields(w, cli)
     if "warmup_prefill_concurrency" in s:
         w["prefill_concurrency"] = cli.warmup_prefill_concurrency
     elif "prefill_concurrency" in s:
@@ -225,6 +236,11 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
         # explicit user input downstream), warmup_grace_period defaults to None,
         # so a non-None value means the user explicitly asked for it.
         if "duration" not in w:
+            if cli.scenario is not None:
+                # Under a scenario the agentic warmup barrier consumes the
+                # grace via _apply_agentic_replay_fields; the user-declared
+                # warmup phase does not apply to agentic replay anyway.
+                return w
             raise ValueError(
                 "--warmup-grace-period requires --warmup-duration; "
                 "grace_period applies only to duration-bounded warmup phases. "

@@ -43,10 +43,27 @@ MOCK_DAG_MODEL_CONTENT = """{"session_id": "root", "turns": [{"messages": [{"rol
 MOCK_MULTI_TURN_CONTENT = """{"session_id": "s1", "turns": [{"text": "Summarize.", "output_length": 100}, {"text": "Key points only."}, {"text": "Expand on point 2.", "output_length": 300}]}
 """
 
+# Realistic multi-block trace: hash_id 46 is a full block_size (512) block and
+# hash_id 47 is the partial tail (655 - 512 = 143). A hash_id maps to ONE fixed
+# block size (PromptGenerator hard-errors otherwise), so input_length is kept
+# equal across rows that reuse hash_ids [46, 47].
 MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
-{"timestamp": 10535, "input_length": 672, "output_length": 52, "hash_ids": [46, 47]}
+{"timestamp": 10535, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
 {"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
 """
+
+# The trace tests patch ``builtins.open`` globally, so the PromptGenerator corpus
+# loader would otherwise read the mocked trace content (~18 tokens) as its corpus
+# and be unable to materialize a full 512-token block. ``_dispatch_open`` routes
+# the corpus-file read to a real-sized corpus (~1200 tokens; the mock tokenizer
+# emits one token per word) while the trace file still returns the trace.
+_CORPUS_TEXT = " ".join(f"tok{i}" for i in range(1200))
+
+
+def _dispatch_open(*args, **kwargs):
+    path = str(args[0]) if args else ""
+    data = _CORPUS_TEXT if path.endswith("shakespeare.txt") else MOCK_TRACE_CONTENT
+    return mock_open(read_data=data)(*args, **kwargs)
 
 
 class TestCoreFunctionality:
@@ -149,9 +166,9 @@ class TestCoreFunctionality:
             composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
         assert composer.loader.multi_turn
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
-    @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
+    @patch("builtins.open", _dispatch_open)
     def test_create_dataset_trace(
         self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
     ):
@@ -167,9 +184,9 @@ class TestCoreFunctionality:
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
-    @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
+    @patch("builtins.open", _dispatch_open)
     def test_max_tokens_config(
         self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
     ):
@@ -250,9 +267,9 @@ class TestCoreFunctionality:
         assert turns[1].max_tokens == 200
         assert turns[2].max_tokens == 300
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
-    @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
+    @patch("builtins.open", _dispatch_open)
     @patch("pathlib.Path.iterdir", return_value=[])
     def test_max_tokens_mooncake(
         self,

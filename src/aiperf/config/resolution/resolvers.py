@@ -297,6 +297,29 @@ class CommConfigResolver:
         )
 
 
+class ScenarioResolver:
+    """Apply the named benchmark-scenario invariant lock, if configured.
+
+    Delegates to ``aiperf.common.scenario.apply_scenario`` which reads
+    ``run.cfg.scenario``; a None scenario is a no-op. Otherwise it auto-fills
+    scenario defaults onto ``run.cfg`` (e.g. profiling-phase ``timing_mode``,
+    ``duration``, ``endpoint.streaming``, the active dataset's cache-bust
+    target), validates the hard invariants, and stores a ``ScenarioOutcome`` on
+    ``run.resolved.scenario_outcome``. Raises ``ScenarioLockError`` on a hard
+    conflict unless ``run.cfg.unsafe_override`` downgrades it to warnings.
+
+    Ordered AFTER ``DatasetResolver`` (so ``run.resolved.dataset_types`` is
+    populated for the loader-identity check) and BEFORE ``TimingResolver`` (so
+    the locked per-phase ``timing_mode`` / ``duration`` are in place before the
+    duration sum).
+    """
+
+    def resolve(self, run: BenchmarkRun) -> None:
+        from aiperf.common.scenario import apply_scenario
+
+        apply_scenario(run)
+
+
 class TimingResolver:
     """Sum phase durations (plus grace_period), validate fixed_schedule timing data requirements."""
 

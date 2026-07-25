@@ -842,6 +842,20 @@ custom_dataset_loader:
     metadata:
       category: high_entropy
 
+  weka_trace:
+    class: aiperf.dataset.loader.weka_trace:WekaTraceLoader
+    description: |
+      Weka KV-cache-tester agentic coding trace loader. Replays real Claude
+      Code sessions with preserved per-request hash_ids, timing, and subagent
+      topology. Input is either a single trace JSON file or a directory of
+      per-conversation JSON files. Subagent entries spawn concurrent child
+      sessions via SPAWN + SPAWN_JOIN prerequisites.
+      Usage: --custom-dataset-type weka_trace --input-file path/to/traces/
+    metadata:
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
 # =============================================================================
 # Dataset Samplers
 # =============================================================================
@@ -929,6 +943,16 @@ timing_strategy:
       A mode where each session acts as a separate user with gap = num_users / request_rate between turns.
       Users block on their previous turn (no interleaving within a user).
       Matches LMBenchmark behavior for KV cache benchmarking.
+
+  agentic_replay:
+    class: aiperf.timing.strategies.agentic_replay:AgenticReplayStrategy
+    description: |
+      Trajectory-based multi-turn trace replay with randomized conversation start
+      (CLI defaults 25-75%; inferencex-agentx-mvp widens to 0-100%), single-turn
+      warmup with warmup barrier, FIFO trace recycling, and configurable
+      inter-turn delay cap. Designed for SemiAnalysis InferenceX AgentX-MVP
+      scenario but usable bare for any agentic-style benchmark.
+    metadata: {}
 
 # =============================================================================
 # Arrival Pattern (Interval Generators)
@@ -1057,6 +1081,16 @@ accumulator:
       Numpy-backed metrics accumulator that ingests inference metric records,
       stores per-tag time series with timestamps, and produces summaries with
       optional timeslicing. Always loaded.
+    metadata:
+      record_types: [metric_records]
+
+  theoretical_prefix_cache:
+    class: aiperf.metrics.theoretical_prefix_cache:TheoreticalPrefixCacheAccumulator
+    description: |
+      Lightweight accumulator for trace loaders that stamp per-turn
+      theoretical prefix-cache block counts. It emits cumulative infinite-cache
+      prefix hit rate during profiling without carrying hash_ids through the
+      request path.
     metadata:
       record_types: [metric_records]
 
@@ -1842,7 +1876,9 @@ public_dataset_loader:
       Exgentic agent LLM traces from HuggingFace. Replays complete recorded
       message and tool snapshots with recorded output limits. Fixed-schedule
       mode preserves call timestamps and overlaps; other modes replay sessions
-      closed-loop with recorded inter-turn delays.
+      closed-loop with recorded inter-turn delays. Set
+      `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID=1` for Dynamo session
+      affinity (the loader no longer stamps a session header).
     metadata:
       hf_dataset_name: Exgentic/agent-llm-traces
       hf_split: train
@@ -2114,6 +2150,343 @@ public_dataset_loader:
       hf_subset: test
       audio_column: audio
       streaming: true
+
+  semianalysis_cc_traces_weka:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka agentic coding trace dataset (no-subagents variant),
+      hosted on HuggingFace as semianalysisai/cc-traces-weka-no-subagents-051826
+      (539 MB jsonl, 98 traces, 22.8k requests, public, no auth required).
+      Filtered to v5-only + CC ≥ 2.1.139 + subagent blocks stripped; every
+      remaining trace has ≥20 main-agent turns. Each row is a complete
+      WekaTrace; reconstruction is delegated to WekaTraceLoader so file-based
+      and HF-based replay produce byte-identical conversations.
+      Usage: --public-dataset semianalysis_cc_traces_weka
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-no-subagents-051826
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_no_subagents:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, no-subagents variant — hosted on HuggingFace
+      as semianalysisai/cc-traces-weka-no-subagents-051826 (98 traces,
+      22.8k requests, public, no auth). v5-only + CC ≥ 2.1.139 filtered
+      derivative of the source weka traces with all WekaSubagentEntry blocks
+      stripped — only top-level main-agent turns remain, ≥20 turns each. Use
+      this corpus when you want a single linear agent stream per trace and
+      don't need parent/child fan-out structure. Each row is a complete
+      WekaTrace; reconstruction is delegated to WekaTraceLoader so file-based
+      and HF-based replay produce byte-identical conversations.
+      Usage: --public-dataset semianalysis_cc_traces_weka_no_subagents
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-no-subagents-051826
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents variant — generic rolling
+      alias that tracks the current default with-subagents corpus, presently
+      semianalysisai/cc-traces-weka-062126 (393 v7 traces, public, no auth).
+      v7-only + CC >= 2.1.139 + peak concurrent subagent groups <= 10, with
+      WekaSubagentEntry blocks preserved — captures full parent + Task-tool
+      sub-agent fan-out structure. >=20 main-agent turns per trace; non-
+      conversational classifier calls (max_tokens <= 64 + no tools) excluded
+      at source so the OSL distribution is not polluted by the 5-10-token
+      spike. Use this corpus when you want the full agentic-coding workload
+      including parallel sub-agent fan-out; pin
+      semianalysis_cc_traces_weka_062126 if you need the date locked. Each row
+      is a complete WekaTrace; reconstruction is delegated to WekaTraceLoader
+      so file-based and HF-based replay produce byte-identical conversations.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents 256k-capped variant — generic
+      rolling alias that tracks the current default 256k-capped corpus,
+      presently semianalysisai/cc-traces-weka-062126-256k (393 v7 traces,
+      public, no auth). Derived from the 062126 parent by dropping any request
+      whose in+out exceeds 256,000 proxy-tokenizer tokens while preserving
+      surviving requests' relative timestamps and subagent overlap. Designed for
+      replay against servers configured with max_model_len ~ 256k (e.g.
+      MiniMax-M2.5) where the unfiltered corpus would have requests rejected;
+      pin semianalysis_cc_traces_weka_062126_256k if you need the date locked.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_060226:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 variant — hosted on
+      HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060226 (225
+      traces, public, no auth). v6-only + CC ≥ 2.1.139 + max-parallel-subagents
+      ≤ 5, otherwise same filter stack as the 052726 with-subagents corpus
+      (≥20 main-agent turns, classifier calls excluded, exact-duplicate rows
+      deduped). Newer Claude Code CLI versions, fresher recording window.
+      Default for non-DSv4 agentic recipes; DSv4 stays on the 052726 variant
+      for continuity with prior baselines.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060226
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060226
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_060226_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 256k-capped variant —
+      hosted on HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060226-256k
+      (225 traces, public, no auth). Derived from the 060226 with-subagents
+      parent by dropping any request whose in+out exceeds 256,000 proxy-
+      tokenizer tokens and reshifting surviving timelines so think-time pacing
+      is preserved. Designed for replay against servers configured with
+      max_model_len ≈ 256k where the unfiltered with-subagents corpus would
+      have requests rejected.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060226_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060226-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_060526:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 variant — hosted on
+      HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060526 (336
+      traces, public, no auth). v6-only + CC ≥ 2.1.139 + max-parallel-subagents
+      ≤ 10, otherwise same filter stack as the 060226 with-subagents corpus
+      (≥20 main-agent turns, classifier calls excluded, exact-duplicate rows
+      deduped). Fresher recording window than 060226.
+      Prior default for DSv4 recipes (superseded by the 060826 variant).
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060526
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060526
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_060526_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 256k-capped variant —
+      hosted on HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060526-256k
+      (336 traces, public, no auth). Derived from the 060526 with-subagents
+      parent by dropping any request whose in+out exceeds 256,000 proxy-
+      tokenizer tokens and reshifting surviving timelines so think-time pacing
+      is preserved. Designed for replay against servers configured with
+      max_model_len ≈ 256k where the unfiltered with-subagents corpus would
+      have requests rejected.
+      Prior default for non-DSv4 recipes (superseded by the 060826 variant).
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060526_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060526-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_060826:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 variant — hosted on
+      HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060826 (391
+      traces, public, no auth). v6-only + CC ≥ 2.1.139 + max-parallel-subagents
+      ≤ 10, otherwise same filter stack as the 060526 with-subagents corpus
+      (≥20 main-agent turns, classifier calls excluded, exact-duplicate rows
+      deduped). Fresher recording window than 060526.
+      Prior default for DSv4 recipes (superseded by the 061526 variant).
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060826
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060826
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_060826_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 256k-capped variant —
+      hosted on HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060826-256k
+      (391 traces, public, no auth). Derived from the 060826 with-subagents
+      parent by dropping any request whose in+out exceeds 256,000 proxy-
+      tokenizer tokens and reshifting surviving timelines so think-time pacing
+      is preserved. Designed for replay against servers configured with
+      max_model_len ≈ 256k where the unfiltered with-subagents corpus would
+      have requests rejected.
+      Prior default for non-DSv4 recipes (superseded by the 061526 variant).
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060826_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060826-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_061326:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, v7 variant — hosted on HuggingFace as
+      semianalysisai/cc-traces-weka-061326 (183 traces, 26.6k main turns, 652
+      subagent groups, 18.3k subagent inner requests, 45.0k total requests,
+      public, no auth). v7-only + CC >= 2.1.139 + peak concurrent subagent
+      groups <= 10, otherwise same filter stack as the 060826 with-subagents
+      corpus (>=20 main-agent turns, classifier calls excluded, exact-duplicate
+      rows deduped). Per-request input capped at 990,016 tokens to strip
+      KV-cache overcount artifacts (effectively full context). The corpus
+      carries full parent + Task-tool subagent fan-out. Fresher recording window
+      than 060826.
+      Prior full-context AgentX corpus, retained as a date-pinned alias for
+      reproducibility. Superseded by the 061526 variant.
+      Usage: --public-dataset semianalysis_cc_traces_weka_061326
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-061326
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_061326_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, v7 256k-capped variant — hosted on
+      HuggingFace as semianalysisai/cc-traces-weka-061326-256k (183 traces,
+      public, no auth). Derived from the 061326 parent by dropping any request
+      whose in+out exceeds 256,000 proxy-tokenizer tokens and reshifting
+      surviving timelines so think-time pacing is preserved. Designed for
+      replay against servers configured with max_model_len ~ 256k where the
+      unfiltered corpus would have requests rejected.
+      Prior 256k-context AgentX corpus, retained as a date-pinned alias for
+      reproducibility. Superseded by the 061526 variant.
+      Usage: --public-dataset semianalysis_cc_traces_weka_061326_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-061326-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_061526:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, v7 variant — hosted on HuggingFace as
+      semianalysisai/cc-traces-weka-061526 (233 traces, 38.5k main turns, 787
+      subagent groups, 22.5k subagent inner requests, 61.0k total requests,
+      public, no auth). v7-only + CC >= 2.1.139 + at least 20 Anthropic
+      requests per session + peak concurrent subagent groups <= 10, with
+      classifier calls, image rows, and exact duplicates excluded. Per-request
+      input is capped at 990,016 tokens to strip KV-cache overcount artifacts
+      while preserving surviving requests' relative timestamps. The corpus
+      carries full parent + Task-tool subagent fan-out.
+      Prior full-context AgentX corpus, retained as a date-pinned alias for
+      reproducibility. Superseded by the 062126 variant.
+      Usage: --public-dataset semianalysis_cc_traces_weka_061526
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-061526
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_061526_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, v7 256k-capped variant — hosted on
+      HuggingFace as semianalysisai/cc-traces-weka-061526-256k (232 traces,
+      23.4k main turns, 787 subagent groups, 20.8k subagent inner requests,
+      44.2k total requests, public, no auth). Derived from the 061526 parent by
+      dropping any request whose input + output exceeds 256,000 proxy-tokenizer
+      tokens. Surviving requests retain their relative timestamps and subagent
+      overlap; only a uniform origin shift is applied when the first request is
+      filtered. Designed for servers configured with max_model_len ~ 256k.
+      Prior 256k-context AgentX corpus, retained as a date-pinned alias for
+      reproducibility. Superseded by the 062126 variant.
+      Usage: --public-dataset semianalysis_cc_traces_weka_061526_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-061526-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_062126:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, v7 variant — hosted on HuggingFace as
+      semianalysisai/cc-traces-weka-062126 (393 traces, 56.8k main turns, 1,697
+      subagent groups, 42.0k subagent inner requests, 98.8k total requests,
+      public, no auth). v7-only + CC >= 2.1.139 + at least 20 Anthropic
+      requests per session + peak concurrent subagent groups <= 10, with
+      classifier calls, image rows, exact duplicates, and dynamic-workflow-bug
+      sessions excluded. Per-request input is capped at 990,016 tokens to strip
+      KV-cache overcount artifacts while preserving relative timestamps.
+      Current default corpus for full-context AgentX recipes.
+      Usage: --public-dataset semianalysis_cc_traces_weka_062126
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_062126_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, v7 256k-capped variant — hosted on
+      HuggingFace as semianalysisai/cc-traces-weka-062126-256k (393 traces,
+      28.4k main turns, 1,697 subagent groups, 39.8k subagent inner requests,
+      68.3k total requests, public, no auth). Derived from the 062126 parent by
+      dropping any request whose input + output exceeds 256,000 proxy-tokenizer
+      tokens. Surviving requests retain their relative timestamps and subagent
+      overlap; only a uniform origin shift is applied when the first request is
+      filtered. Designed for servers configured with max_model_len ~ 256k.
+      Current default corpus for 256k-context AgentX recipes.
+      Usage: --public-dataset semianalysis_cc_traces_weka_062126_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  weka_hf:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      Generic HuggingFace-backed Weka trace dataset loader. Use this for newly
+      published compatible semianalysisai/cc-traces-weka-* corpora without
+      adding a pinned alias for each release. Selected automatically when you
+      pass --hf-weka-dataset (which supplies the HuggingFace dataset repo name);
+      passing --public-dataset weka_hf explicitly is equivalent.
+      Usage: --hf-weka-dataset semianalysisai/cc-traces-weka-...
+    metadata:
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
 
 # =============================================================================
 # ZMQ Proxies

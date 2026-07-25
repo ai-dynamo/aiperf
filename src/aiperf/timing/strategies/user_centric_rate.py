@@ -389,8 +389,12 @@ class UserCentricStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(
         self,
         credit: Credit,
+        *,
+        error: str | None = None,
     ) -> None:
         """Handle credit return: dispatch next turn.
+
+        ``error`` is accepted for protocol parity and ignored here.
 
         Schedules next turn at `max(now, user.next_send_time + turn_gap)`.
         This maintains ideal pacing when responses arrive on time, but if the

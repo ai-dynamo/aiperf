@@ -303,6 +303,17 @@ class StopConditionChecker:
         """
         return all(func() for func in self._can_send_dag_child_turn_funcs)
 
+    def can_send_child_turn(self) -> bool:
+        """Alias for :meth:`can_send_dag_child_turn`.
+
+        ``CreditIssuer``/``CreditCallbackHandler`` call this alias for reactive
+        child dispatch, while request-rate DAG dispatch calls
+        ``can_send_dag_child_turn`` directly. Both resolve to the same
+        root-target-aware child gating so dag_jsonl and AGENTIC_REPLAY share one
+        stop policy.
+        """
+        return self.can_send_dag_child_turn()
+
     def can_start_new_session(self) -> bool:
         """True if phase can start a NEW session (more restrictive).
 

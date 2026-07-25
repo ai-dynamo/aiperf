@@ -32,6 +32,9 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
+_AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC = 300.0
+
+
 # Map ``PhaseType`` values onto the ``ArrivalPattern`` values consumed by the
 # timing strategies. Concurrency / fixed_schedule phases don't use an arrival
 # pattern; we still set a sensible default so downstream code paths remain
@@ -55,6 +58,24 @@ def _phase_timing_mode(phase: PhaseConfig) -> TimingMode:
     if phase.type == PhaseType.USER_CENTRIC:
         return TimingMode.USER_CENTRIC_RATE
     return TimingMode.REQUEST_RATE
+
+
+def _is_agentic_replay(profiling_phases: list[PhaseConfig]) -> bool:
+    """True when the profiling phase resolves to the AGENTIC_REPLAY timing mode.
+
+    AGENTIC_REPLAY is selected by the agentic scenario lock (ScenarioResolver /
+    apply_scenario), which stamps ``timing_mode = AGENTIC_REPLAY`` on the
+    profiling phase. Detection reads that phase ``timing_mode`` when present,
+    falling back to the phase type mapping. Normal / dag_jsonl runs never
+    resolve to AGENTIC_REPLAY, so this stays False for them.
+    """
+    if not profiling_phases:
+        return False
+    phase = profiling_phases[0]
+    explicit = getattr(phase, "timing_mode", None)
+    if explicit is not None:
+        return explicit == TimingMode.AGENTIC_REPLAY
+    return _phase_timing_mode(phase) == TimingMode.AGENTIC_REPLAY
 
 
 class TimingConfig(AIPerfBaseModel):
@@ -84,27 +105,68 @@ class TimingConfig(AIPerfBaseModel):
         default=URLSelectionStrategy.ROUND_ROBIN,
         description="Strategy for selecting URLs when multiple URLs are provided.",
     )
+    concurrency: int | None = Field(
+        default=None,
+        gt=0,
+        description="User-configured target concurrency. Required by AGENTIC_REPLAY "
+        "to size the trajectory list built once at PhaseOrchestrator construction.",
+    )
+    random_seed: int | None = Field(
+        default=None,
+        ge=0,
+        description="User-configured random seed. Used by AGENTIC_REPLAY to derive "
+        "deterministic per-trace start-turn indices for trajectories.",
+    )
+    trajectory_start_min_ratio: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        description="AGENTIC_REPLAY: lower bound (inclusive) on the random "
+        "per-trajectory start position, as a fraction of the trace's total "
+        "turn count.",
+    )
+    trajectory_start_max_ratio: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description="AGENTIC_REPLAY: upper bound (inclusive) on the random "
+        "per-trajectory start position, as a fraction of the trace's total "
+        "turn count. Effective per-trace ceiling is min(int(max_ratio * n), n - 2).",
+    )
+    allow_dataset_wrap: bool = Field(
+        default=False,
+        description="Allow AGENTIC_REPLAY to reuse distinct eligible traces "
+        "across concurrency lanes when concurrency exceeds the loaded pool. "
+        "Defaults to False so over-subscription requires explicit opt-in.",
+    )
 
     @classmethod
     def from_run(cls, run: BenchmarkRun) -> TimingConfig:
         """Build ordered list of credit-phase configs from a ``BenchmarkRun``.
 
         Preserves the ordered ``cfg.phases`` list. Each executable phase gets
-        stable identity metadata: absolute ``phase_index``, profiling-only
-        ``profiling_index``, ``phase_name``, and ``phase_kind``. A phase-local
-        cancellation config is attached to each timing phase; omitted per-phase
-        cancellation inherits the run default.
+        stable identity metadata. AGENTIC_REPLAY replaces declared warmup phases
+        with its synthesized trajectory warmup.
         """
         cfg = run.cfg
 
+        profiling_phases = cfg.get_profiling_phases()
+        agentic = _is_agentic_replay(profiling_phases)
         artifact_dir = cfg.artifacts.dir
 
         profiling_default_cancellation = _default_cancellation_config(cfg.phases)
         warmup_default_cancellation = RequestCancellationConfig()
 
         configs: list[CreditPhaseConfig] = []
+        if agentic:
+            agentic_warmup = _build_agentic_warmup_config(profiling_phases[0])
+            if agentic_warmup is not None:
+                configs.append(agentic_warmup)
+
         profiling_index = 0
         for phase_index, phase in enumerate(cfg.phases):
+            if agentic and phase.kind == "warmup":
+                continue
             current_profiling_index = None
             if phase.kind == "profiling":
                 current_profiling_index = profiling_index
@@ -124,11 +186,29 @@ class TimingConfig(AIPerfBaseModel):
                 )
             )
 
+        # Agentic sizing fields: concurrency from the profiling phase;
+        # random_seed from the run; trajectory_start_* from the profiling
+        # phase (BasePhaseConfig fields added in P1). Defaults preserve normal
+        # / dag_jsonl behavior (these are only consumed on the agentic path).
+        first_profiling = profiling_phases[0] if profiling_phases else None
+        concurrency = getattr(first_profiling, "concurrency", None)
+        trajectory_min = getattr(first_profiling, "trajectory_start_min_ratio", 0.25)
+        trajectory_max = getattr(first_profiling, "trajectory_start_max_ratio", 0.75)
+        synthesis = getattr(cfg.get_default_dataset(), "synthesis", None)
+        allow_dataset_wrap = bool(
+            getattr(synthesis, "allow_dataset_wrap", False) if synthesis else False
+        )
+
         return cls(
             phase_configs=configs,
             request_cancellation=profiling_default_cancellation,
             urls=list(cfg.endpoint.urls),
             url_selection_strategy=cfg.endpoint.url_strategy,
+            concurrency=concurrency,
+            random_seed=run.random_seed,
+            trajectory_start_min_ratio=trajectory_min,
+            trajectory_start_max_ratio=trajectory_max,
+            allow_dataset_wrap=allow_dataset_wrap,
         )
 
 
@@ -264,6 +344,12 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default=None,
         ge=0,
         description="The fixed schedule end offset of the timing manager.",
+    )
+    agentic_cache_warmup_duration_sec: float | None = Field(
+        default=None,
+        gt=0,
+        description="Duration of the accelerated cache-pressure substage for "
+        "agentic replay warmup.",
     )
 
     artifact_dir: Path | None = Field(
@@ -477,6 +563,79 @@ def _build_warmup_config(
     )
 
 
+def _agentic_warmup_grace_period(phase: PhaseConfig) -> float | None:
+    """Resolve the agentic auto-warmup barrier grace from the profiling phase.
+
+    Explicit ``--agentic-warmup-grace-period`` wins. Otherwise, an accelerated
+    cache-pressure warmup drain is bounded by the larger of the benchmark grace
+    period (resolved onto the profiling phase's ``grace_period``) and a relaxed
+    default of ``min(cache_warmup_duration, 300s)`` — long accelerated warmups
+    hold many in-flight one-token requests, so a 30s benchmark grace drains too
+    aggressively. A plain snapshot warmup keeps the infinite barrier.
+    """
+    grace_period = getattr(phase, "agentic_warmup_grace_period", None)
+    if grace_period is not None:
+        return grace_period
+    cache_warmup_duration = getattr(phase, "agentic_cache_warmup_duration", None)
+    if cache_warmup_duration is not None:
+        default_grace_period = min(
+            cache_warmup_duration,
+            _AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC,
+        )
+        benchmark_grace_period = getattr(phase, "grace_period", None)
+        if benchmark_grace_period is None:
+            return default_grace_period
+        return max(benchmark_grace_period, default_grace_period)
+    return float("inf")
+
+
+def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None:
+    """Build the AGENTIC_REPLAY auto-warmup phase from the profiling PhaseConfig.
+
+    AGENTIC_REPLAY auto-creates a warmup phase sized to the trajectory list
+    (one credit per concurrency lane), dispatched as a single
+    CONCURRENCY_BURST. ``total_expected_requests=concurrency`` lets the
+    sending-complete stop condition fire after the warmup burst; if the pool
+    is smaller than concurrency the strategy emits ``mark_sending_complete``
+    itself.
+
+    The warmup barrier grace comes from ``agentic_warmup_grace_period`` (the
+    ``--agentic-warmup-grace-period`` knob, routed onto the profiling phase),
+    NOT from the profiling phase's own ``grace_period``. The agentic warmup is
+    synthesized rather than a user-declared warmup phase, so it cannot inherit
+    ``--warmup-grace-period`` (which requires ``--warmup-duration``); reusing the
+    profiling grace would leak the profiling tail into the warmup barrier. When
+    unset, grace is infinite so the barrier holds until every primed trajectory
+    returns (origin/agentx semantics) — except under accelerated cache-pressure
+    warmup, where the strategy-terminated drain must be bounded: there the
+    benchmark grace period (resolved onto the profiling phase's
+    ``grace_period``) caps the drain instead.
+    """
+    concurrency = getattr(phase, "concurrency", None)
+    grace_period = _agentic_warmup_grace_period(phase)
+    cache_warmup_duration = getattr(phase, "agentic_cache_warmup_duration", None)
+    return CreditPhaseConfig(
+        phase=CreditPhase.WARMUP,
+        timing_mode=TimingMode.AGENTIC_REPLAY,
+        # An accelerated cache-pressure warmup is strategy-terminated (the
+        # strategy emits ``mark_sending_complete`` when the duration elapses),
+        # so leave the request cap open instead of sizing it to concurrency.
+        total_expected_requests=(
+            None if cache_warmup_duration is not None else concurrency
+        ),
+        expected_duration_sec=None,
+        expected_num_sessions=None,
+        concurrency=concurrency,
+        prefill_concurrency=getattr(phase, "prefill_concurrency", None),
+        request_rate=None,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        arrival_smoothness=getattr(phase, "smoothness", None),
+        seamless=False,
+        grace_period_sec=grace_period if grace_period is not None else float("inf"),
+        agentic_cache_warmup_duration_sec=cache_warmup_duration,
+    )
+
+
 def _build_profiling_config(
     phase: PhaseConfig,
     *,
@@ -491,6 +650,11 @@ def _build_profiling_config(
     Grace period allows in-flight requests to complete after the stop condition
     is met, ensuring metrics include requests that were sent before the deadline.
     """
+    # An explicit ``timing_mode`` on the phase (set by the agentic scenario
+    # lock in P2) wins; otherwise derive it from the phase type. This is how
+    # AGENTIC_REPLAY reaches the profiling CreditPhaseConfig.
+    explicit_mode = getattr(phase, "timing_mode", None)
+    timing_mode = explicit_mode or _phase_timing_mode(phase)
     return CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         phase_index=phase_index,
@@ -498,7 +662,7 @@ def _build_profiling_config(
         phase_name=phase.name,
         phase_kind=phase.kind,
         request_cancellation=_phase_cancellation_config(phase, default_cancellation),
-        timing_mode=_phase_timing_mode(phase),
+        timing_mode=timing_mode,
         expected_duration_sec=phase.duration,
         total_expected_requests=phase.requests,
         expected_num_sessions=phase.sessions,

@@ -1,0 +1,9 @@
+{
+  "id": "trace_01_n1",
+  "models": ["claude-opus-4-5-20251101"],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "requests": [
+    {"t": 0.0, "type": "n", "model": "claude-opus-4-5-20251101", "in": 200, "out": 30, "hash_ids": [1, 2, 3], "input_types": ["text"], "output_types": ["text"], "stop": "end_turn", "api_time": 1.0, "think_time": 0.0}
+  ]
+}

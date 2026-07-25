@@ -52,6 +52,7 @@ async def aggregate_and_export(
     aggregation = ConfidenceAggregation(confidence_level=plan.confidence_level)
     aggregate_result = aggregation.aggregate(results)
     aggregate_result.metadata["cooldown_seconds"] = plan.cooldown_seconds
+    _stamp_scenario_submission_metadata(aggregate_result, results, plan)
 
     aggregate_dir = strategy.get_aggregate_path(base_dir)
 
@@ -84,6 +85,127 @@ async def aggregate_and_export(
         logger.info(f"Collated aggregate JSON written to: {export_paths[2]}")
 
     print_aggregate_summary(aggregate_result, logger)
+
+
+def _sum_runtime_response_counts(results: list) -> tuple[int, int]:
+    """Sum (total_responses, context_overflow_count) across successful runs.
+
+    Reads per-run averaged summary metrics. Total responses is
+    ``request_count + error_request_count + skipped_context_overflow_count``:
+    metric-path overflows are already inside ``error_request_count``
+    (``ContextOverflowCountMetric`` is ERROR_ONLY), while AGENTIC_REPLAY
+    skip-path overflows are only in the ``skipped_context_overflow_count``
+    side channel. The overflow numerator is the (possibly merged)
+    ``context_overflow_count`` metric. Missing metrics contribute 0.
+    """
+    from aiperf.common.finite import is_finite_value
+
+    def _avg(run, tag: str) -> int:
+        m = run.summary_metrics.get(tag)
+        if m is None or not is_finite_value(m.avg):
+            return 0
+        return int(m.avg)
+
+    total_responses = 0
+    context_overflow_count = 0
+    for run in results:
+        if not run.success:
+            continue
+        overflow = _avg(run, "context_overflow_count")
+        skipped = _avg(run, "skipped_context_overflow_count")
+        context_overflow_count += overflow
+        total_responses += (
+            _avg(run, "request_count") + _avg(run, "error_request_count") + skipped
+        )
+    return total_responses, context_overflow_count
+
+
+def _stamp_scenario_submission_metadata(
+    aggregate: AggregateResult,
+    results: list,
+    plan: BenchmarkPlan,
+) -> None:
+    """Inject scenario-submission carrier keys onto ``aggregate.metadata``.
+
+    The ``AggregateConfidenceJsonExporter`` pops these underscore-prefixed keys
+    to compute ``submission_valid`` / ``submission_invalid_reasons`` for the
+    aggregate JSON. Dataset provenance is stamped for every public-dataset run;
+    the scenario carrier keys are no-op when the base config sets no ``--scenario``.
+
+    The static validator outcome lives on ``run.resolved.scenario_outcome``
+    (set by ScenarioResolver). The per-run scenario_outcome is computed in each
+    benchmark subprocess and is not returned through ``RunResult``; the
+    invariant lock is deterministic from config, so we re-resolve it here off
+    the base config rather than threading a new return channel. Runtime totals
+    are summed from the per-run summary metrics.
+    """
+    base_config = plan.configs[0]
+
+    from aiperf.dataset.provenance import public_dataset_provenance
+
+    dataset = public_dataset_provenance(base_config)
+    if dataset is not None:
+        aggregate.metadata["dataset"] = dataset
+
+    scenario_name = getattr(base_config, "scenario", None)
+    if scenario_name is None:
+        return
+
+    outcome = None
+    reresolve_failed = False
+    try:
+        from aiperf.cli_runner import _make_benchmark_run
+        from aiperf.common.scenario import apply_scenario
+
+        run = _make_benchmark_run(base_config)
+        apply_scenario(run)
+        outcome = getattr(run.resolved, "scenario_outcome", None)
+    except Exception as exc:
+        # Fail closed: do not stamp submission_valid=True when the invariant
+        # lock could not be re-checked. Aggregation/export must still proceed.
+        from aiperf.common.aiperf_logger import AIPerfLogger
+
+        AIPerfLogger(__name__).warning(
+            f"Scenario re-resolution failed during aggregate stamp; "
+            f"marking submission_valid=False: {exc}"
+        )
+        reresolve_failed = True
+
+    if reresolve_failed:
+        submission_valid = False
+        submission_invalid_reasons: list[str] = ["scenario_reresolve_failed"]
+    elif outcome is None:
+        submission_valid = True
+        submission_invalid_reasons = []
+    else:
+        submission_valid = bool(getattr(outcome, "submission_valid", True))
+        submission_invalid_reasons = list(
+            getattr(outcome, "submission_invalid_reasons", []) or []
+        )
+
+    # Scenario + sweep only reaches aggregation under --unsafe-override: the
+    # envelope validator (_reject_scenario_with_sweep) hard-errors otherwise.
+    # apply_scenario above re-resolves a SINGLE expanded variation and cannot
+    # see the sweep, so it returns a clean per-variation outcome. Carry the
+    # envelope-level override violation forward here so a scenario sweep is
+    # never stamped as a valid submission. (scenario_name is non-None here.)
+    if getattr(plan, "is_sweep", False):
+        submission_valid = False
+        if "scenario_with_sweep" not in submission_invalid_reasons:
+            submission_invalid_reasons.append("scenario_with_sweep")
+
+    total_responses, context_overflow_count = _sum_runtime_response_counts(results)
+
+    aggregate.metadata["_scenario_name"] = scenario_name
+    aggregate.metadata["_validator_submission_valid"] = submission_valid
+    aggregate.metadata["_validator_submission_invalid_reasons"] = (
+        submission_invalid_reasons
+    )
+    aggregate.metadata["_total_responses"] = total_responses
+    aggregate.metadata["_context_overflow_count"] = context_overflow_count
+    aggregate.metadata["_was_cancelled"] = any(
+        getattr(r, "was_cancelled", False) for r in results
+    )
 
 
 def _maybe_compute_detailed(

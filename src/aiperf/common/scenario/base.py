@@ -1,30 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Scenario config-lock base models (adapted for the ajc/rust tree).
-
-Ported from ``ajc/aiperf-graph-ir:src/aiperf/common/scenario/base.py``.
-
-Adaptations for ajc/rust (see ``docs``/report for the full rationale):
-
-* ``timing_mode`` is a plain ``str`` documented marker instead of a
-  ``TimingMode`` enum value. ajc/rust has no ``TimingMode.GRAPH_IR``; a graph
-  (weka) workload is selected by dataset FORMAT (``weka_trace``), so the
-  validator DETECTS a weka workload rather than matching a per-phase timing
-  mode. The field survives only as a human-facing marker of intent.
-* ``require_cache_bust`` is a plain ``str | None`` documented marker instead of
-  a ``CacheBustTarget`` enum. ajc/rust has no ``endpoint.cache_bust`` knob, so
-  the corresponding lock is a documented skip (see
-  ``validator._apply_require_cache_bust``). The field is kept so the spec still
-  records the contract intent.
-"""
-
 from __future__ import annotations
 
 from typing import Any
 
 from pydantic import ConfigDict, Field
 
+from aiperf.common.enums import CacheBustTarget
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.plugin.enums import TimingMode
 
 
 class ScenarioSpec(AIPerfBaseModel):
@@ -33,14 +17,15 @@ class ScenarioSpec(AIPerfBaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid", frozen=True)
 
     name: str = Field(description="Scenario identifier, e.g. 'inferencex-agentx-mvp'.")
-    timing_mode: str = Field(
-        description="Documented marker for the required workload class "
-        "(e.g. 'graph_ir'). On ajc/rust a graph workload is selected by dataset "
-        "format (weka_trace); the validator detects a weka graph workload rather "
-        "than matching a per-phase timing mode, so this field is informational.",
+    timing_mode: TimingMode = Field(
+        description="Required timing mode for this scenario."
     )
     require_ignore_eos: bool = Field(
-        description="Inject ignore_eos=true into endpoint.extra; error on explicit false."
+        description="Inject ignore_eos=true into extra_inputs; error on explicit false."
+    )
+    require_use_think_time_only: bool = Field(
+        default=False,
+        description="Force --use-think-time-only=true to exclude response time from inter-turn delays.",
     )
     require_streaming: bool = Field(
         default=False,
@@ -49,6 +34,16 @@ class ScenarioSpec(AIPerfBaseModel):
             "--no-streaming). Streaming is required for the per-token latency "
             "metrics (TTFT, ITL) that are core to this benchmark; without it a "
             "run would silently report no first-token signal."
+        ),
+    )
+    forbid_ignore_trace_delays: bool = Field(
+        default=False,
+        description=(
+            "Reject --ignore-trace-delays. The scenario replays recorded trace "
+            "timing; --ignore-trace-delays nulls every per-turn timestamp/delay "
+            "in the loader, dispatching all turns back-to-back and falsifying the "
+            "workload while the run would otherwise still report "
+            "submission_valid=true."
         ),
     )
     forbid_input_truncation: bool = Field(
@@ -83,12 +78,9 @@ class ScenarioSpec(AIPerfBaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Trajectory-start (t*) window lower bound the scenario runs with, "
-            "living at cfg.trajectory_start_min_ratio "
-            "(--trajectory-start-min-ratio). apply_trajectory_ratios "
-            "AUTO-APPLIES this value onto the run config when the field is "
-            "unset; a user-explicit value is HONORED (parity with the agentx "
-            "validator). None disables the check."
+            "Value auto-filled into --trajectory-start-min-ratio when the user "
+            "leaves it unset. Explicit user values are honored. None disables "
+            "auto-fill."
         ),
     )
     default_trajectory_start_max_ratio: float | None = Field(
@@ -96,31 +88,32 @@ class ScenarioSpec(AIPerfBaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Trajectory-start (t*) window upper bound the scenario runs with, "
-            "living at cfg.trajectory_start_max_ratio "
-            "(--trajectory-start-max-ratio). apply_trajectory_ratios "
-            "AUTO-APPLIES this value onto the run config when the field is "
-            "unset; a user-explicit value is HONORED (parity with the agentx "
-            "validator). None disables the check."
+            "Value auto-filled into --trajectory-start-max-ratio when the user "
+            "leaves it unset. Explicit user values are honored. None disables "
+            "auto-fill."
         ),
+    )
+    inter_turn_delay_cap_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        description="Hard ceiling for trace inter-turn delays in seconds. None disables.",
     )
     trace_idle_gap_cap_seconds: float | None = Field(
         default=None,
         ge=0,
         description=(
             "Hard ceiling (seconds) for idle gaps within each root trace. For "
-            "recorded graph replay (weka, dynamo), parent + subagent "
-            "request-start timestamps are compressed "
-            "per-trace before per-turn delays are derived."
+            "Weka, parent + subagent request-start timestamps are compressed "
+            "per-trace before per-turn delays are derived. Takes precedence over "
+            "inter_turn_delay_cap_seconds and supersedes use_think_time_only."
         ),
     )
-    require_cache_bust: str | None = Field(
+    require_cache_bust: CacheBustTarget | None = Field(
         default=None,
         description=(
-            "Documented marker for the required first-turn cache-bust target. "
-            "ajc/rust has no endpoint.cache_bust knob, so the corresponding lock "
-            "is a documented skip (validator._apply_require_cache_bust). Kept so "
-            "the spec still records the contract intent."
+            "When set, prompt.cache_bust.target must equal this value. "
+            "Mismatch is rejected unless --unsafe-override is also set "
+            "(which stamps submission_valid=false)."
         ),
     )
 
@@ -161,8 +154,8 @@ class ScenarioOutcome(AIPerfBaseModel):
     applied_locks: list[str] = Field(
         default_factory=list,
         description="Short tags for each invariant lock that was applied "
-        "(auto-filled or validated), e.g. 'timing_mode', 'streaming'. "
-        "Order reflects application order.",
+        "(auto-filled or validated), e.g. 'timing_mode', 'streaming', "
+        "'cache_bust'. Order reflects application order.",
     )
     violations: list[ScenarioViolation] = Field(
         default_factory=list,
@@ -183,16 +176,42 @@ class ScenarioOutcome(AIPerfBaseModel):
 
 
 class ScenarioLockError(ValueError):
-    """Raised when a scenario lock is violated and --unsafe-override is not set."""
+    """Raised when a scenario lock is violated and cannot proceed.
 
-    def __init__(self, violations: list[ScenarioViolation]) -> None:
+    By default the message suggests ``--unsafe-override``. Pass
+    ``bypassable=False`` when the violations include hard locks that the
+    override cannot downgrade (e.g. AgentX on a synthetic default dataset).
+    """
+
+    def __init__(
+        self,
+        violations: list[ScenarioViolation],
+        *,
+        bypassable: bool = True,
+    ) -> None:
         self.violations = violations
+        self.bypassable = bypassable
         joined = "\n  - ".join(str(v) for v in violations)
+        if bypassable:
+            hint = (
+                "Pass --unsafe-override to convert to warnings "
+                "(run will be marked submission_valid=false)."
+            )
+        else:
+            hint = (
+                "These violations cannot be bypassed with --unsafe-override. "
+                "Provide --public-dataset (e.g. semianalysis_cc_traces_weka_062126) "
+                "or --hf-weka-dataset semianalysisai/cc-traces-weka-062126."
+            )
         super().__init__(
             f"Scenario invariants violated ({len(violations)} conflict"
             f"{'s' if len(violations) != 1 else ''}):\n  - {joined}\n"
-            "Pass --unsafe-override to convert to warnings (run will be marked submission_valid=false)."
+            f"{hint}"
         )
+
+
+class EmptyTracePoolError(RuntimeError):
+    """Raised when the loader produces 0 valid traces and the scenario requires a non-empty pool."""
 
 
 class TrajectoryWarmupFailedError(RuntimeError):
