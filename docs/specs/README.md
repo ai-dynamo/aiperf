@@ -77,6 +77,7 @@ read the record for the subsystem you are touching.
 | Spec | Purpose |
 |---|---|
 | [metrics.md](metrics.md) | The IO-free metrics engine: the column-store accumulator, the metric catalog, sweep curves, and the typed report; exact vs sketch modes. |
+| [definition-registry.md](definition-registry.md) | Planned single shared definition layer: a lookup-only `Definition` (header, units, `larger_is_better`, `value_type`, group, order) for metrics, dataset-analysis outputs, and later server/GPU telemetry — split out of `MetricSpec`, keyed by namespaced id, made compile-time complete via an exhaustive `const fn` match, and used for SLA comparison, table rendering, and generated docs. |
 | [telemetry.md](telemetry.md) | Side-channel measurement: GPU telemetry, server metrics, and network latency, feeding values into the metrics seam. |
 | [exporters.md](exporters.md) | The native output plane: the typed report core and the static set of `Exporter` sinks behind one trait. |
 | [dataset-analysis.md](dataset-analysis.md) | Built `--dry-run` analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse (ideal and finite-capacity), and the real execution timeline (concurrency, throughput, backlog) distilled from a dry run's records, emitted as `dataset_analysis.{txt,json,csv,html}`. |

@@ -549,6 +549,12 @@ Measurement and output:
 - [`docs/specs/metrics.md`](docs/specs/metrics.md) — the IO-free metrics engine: the
   column-store accumulator, the metric catalog, sweep curves, and the typed
   report; exact vs sketch modes.
+- [`docs/specs/definition-registry.md`](docs/specs/definition-registry.md) — planned
+  single shared definition layer: a lookup-only `Definition` (header, units,
+  `larger_is_better`, `value_type`, group, order) for metrics, dataset-analysis
+  outputs, and later server/GPU telemetry, split out of `MetricSpec`, keyed by
+  namespaced id, made compile-time complete via an exhaustive `const fn` match, and
+  used for SLA comparison, table rendering, and generated docs.
 - [`docs/specs/telemetry.md`](docs/specs/telemetry.md) — GPU telemetry, server metrics, and
   network latency side channels feeding the metrics seam.
 - [`docs/specs/exporters.md`](docs/specs/exporters.md) — the typed report core and the
