@@ -77,7 +77,6 @@ pub struct DatasetManifest {
 /// resident.
 pub struct FileCompressor {
     encoder: zstd::stream::read::Encoder<'static, io::BufReader<std::fs::File>>,
-    buf: Box<[u8]>,
 }
 
 impl FileCompressor {
@@ -85,18 +84,26 @@ impl FileCompressor {
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = std::fs::File::open(path)?;
         let encoder = zstd::stream::read::Encoder::new(file, ZSTD_LEVEL)?;
-        Ok(Self {
-            encoder,
-            buf: vec![0_u8; CHUNK_SIZE].into_boxed_slice(),
-        })
+        Ok(Self { encoder })
     }
 
     /// The next compressed chunk (at most [`CHUNK_SIZE`] bytes), or `None` at the
     /// end of the frame. A short read mid-stream is normal — callers loop until
     /// `None`.
+    ///
+    /// Reads straight into the owned buffer that is returned: every caller
+    /// consumes the `Vec` by move (`Bytes::from` on the HTTP ship path,
+    /// `blocking_send` on the velo path), so a reusable scratch buffer would only
+    /// add a redundant up-to-[`CHUNK_SIZE`] memcpy per chunk over a potentially
+    /// multi-GB records artifact.
     pub fn next_chunk(&mut self) -> io::Result<Option<Vec<u8>>> {
-        let n = self.encoder.read(&mut self.buf)?;
-        Ok((n > 0).then(|| self.buf[..n].to_vec()))
+        let mut chunk = vec![0_u8; CHUNK_SIZE];
+        let n = self.encoder.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        chunk.truncate(n);
+        Ok(Some(chunk))
     }
 }
 
