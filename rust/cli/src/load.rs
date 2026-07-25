@@ -2556,6 +2556,45 @@ mod tests {
     }
 
     #[test]
+    fn hf_format_flag_overrides_projected_format_and_bypasses_catalog() {
+        run_on_big_stack(|| {
+            // `--hf-format` forces a specific registered loader for `--hf-dataset`
+            // instead of the auto-detecting `hf` format, while still projecting a
+            // `public` dataset whose source is the arbitrary repo id (no catalog
+            // lookup). Column overrides land in the loader options bag.
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--hf-dataset",
+                "some-org/convo-set",
+                "--hf-format",
+                "hf_conversation",
+                "--hf-subset",
+                "default",
+                "--hf-text-column",
+                "conversations",
+                "--hf-output-column",
+                "reply",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            let ds = &value["cfg"]["datasets"][0];
+            assert_eq!(ds["type"], serde_json::json!("public"));
+            assert_eq!(ds["name"], serde_json::json!("some-org/convo-set"));
+            // The override wins over the default `hf` format.
+            assert_eq!(ds["format"], serde_json::json!("hf_conversation"));
+            assert_eq!(ds["source"]["type"], serde_json::json!("hugging_face"));
+            assert_eq!(ds["source"]["dataset"], serde_json::json!("some-org/convo-set"));
+            assert_eq!(ds["source"]["subset"], serde_json::json!("default"));
+            assert_eq!(ds["options"]["text_column"], serde_json::json!("conversations"));
+            assert_eq!(ds["options"]["output_column"], serde_json::json!("reply"));
+        });
+    }
+
+    #[test]
     fn baseten_extra_input_collisions_are_rejected_and_opt_outable() {
         run_on_big_stack(baseten_extra_input_collisions_are_rejected_and_opt_outable_body);
     }
