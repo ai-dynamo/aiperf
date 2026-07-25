@@ -25,8 +25,8 @@ pub struct PublicMeta {
 }
 
 static CATALOG: LazyLock<BTreeMap<String, PublicMeta>> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../resources/public_datasets.json"))
-        .expect("embedded public_datasets.json is valid")
+    serde_yaml::from_str(include_str!("../../resources/public_datasets.yaml"))
+        .expect("embedded public_datasets.yaml is valid")
 });
 
 /// Look up a public dataset by name.

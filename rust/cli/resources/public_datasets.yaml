@@ -1,0 +1,450 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# =============================================================================
+# AIPerf public-dataset catalog
+# =============================================================================
+# Curated `--public-dataset <name>` shortcuts over the native dataset loaders.
+# Each entry is pure data (no code) deserialized into `PublicMeta`
+# (rust/cli/src/model/public_catalog.rs); an arbitrary dataset not listed here can
+# still be benchmarked directly with `--hf-dataset <id>`.
+#
+# Fields per entry:
+#   format         registered loader id (see register_builtin_formats)
+#   source         {type: hugging_face, dataset, subset, split[, revision]}
+#                  or {type: url, url}
+#   options        loader-specific options (e.g. prompt_column, conversation_column)
+#   streaming      true caps rows at the request count; false loads the full split
+#   entries_first  true prefers --num-dataset-entries for the row cap
+# =============================================================================
+
+
+# --- Instruction / question-answer datasets  (single flat prompt column) 
+
+aimo:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "AI-MO/NuminaMath-TIR"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "problem"
+  streaming: false
+  entries_first: false
+
+aimo_aime:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "AI-MO/aimo-validation-aime"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "problem"
+  streaming: false
+  entries_first: false
+
+aimo_numina_1_5:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "AI-MO/NuminaMath-1.5"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "problem"
+  streaming: false
+  entries_first: false
+
+aimo_numina_cot:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "AI-MO/NuminaMath-CoT"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "problem"
+  streaming: false
+  entries_first: false
+
+alpaca:
+  # validated 2026-07-25 against the HF dataset viewer
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "tatsu-lab/alpaca"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "instruction"
+  streaming: true
+  entries_first: false
+
+alpaca_cleaned:
+  # validated 2026-07-25 against the HF dataset viewer
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "yahma/alpaca-cleaned"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "instruction"
+  streaming: true
+  entries_first: false
+
+blazedit_10k:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "vdaita/edit_10k_char"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "change_request"
+    prompt_template: "Given a code file, please apply the change requests and generate the new file.
+
+Original file:
+```python
+{code}
+```
+
+Change request:
+{change_request}
+
+Please generate the new code file in the \"New file\" section below."
+  streaming: false
+  entries_first: false
+
+blazedit_5k:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "vdaita/edit_5k_char"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "change_request"
+    prompt_template: "Given a code file, please apply the change requests and generate the new file.
+
+Original file:
+```python
+{code}
+```
+
+Change request:
+{change_request}
+
+Please generate the new code file in the \"New file\" section below."
+  streaming: false
+  entries_first: false
+
+dolly:
+  # validated 2026-07-25 against the HF dataset viewer
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "databricks/databricks-dolly-15k"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "instruction"
+  streaming: true
+  entries_first: false
+
+instruct_coder:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "likaixin/InstructCoder"
+    subset: "default"
+    split: "train"
+  options:
+    prompt_column: "instruction"
+  streaming: false
+  entries_first: false
+
+mmlu:
+  # validated 2026-07-25 (subset all/test; bare question prompt, no choices appended)
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "cais/mmlu"
+    subset: "all"
+    split: "test"
+  options:
+    prompt_column: "question"
+  streaming: true
+  entries_first: false
+
+mmstar:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "Lin-Chen/MMStar"
+    subset: "val"
+    split: "val"
+  options:
+    image_column: "image"
+    prompt_column: "question"
+  streaming: false
+  entries_first: false
+
+spec_al_gsm8k:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "openai/gsm8k"
+    subset: "main"
+    split: "test"
+  options:
+    prompt_column: "question"
+  streaming: false
+  entries_first: false
+
+spec_al_humaneval:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "openai/openai_humaneval"
+    subset: "openai_humaneval"
+    split: "test"
+  options:
+    prompt_column: "prompt"
+  streaming: false
+  entries_first: false
+
+spec_al_math500:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "HuggingFaceH4/MATH-500"
+    subset: "default"
+    split: "test"
+  options:
+    prompt_column: "problem"
+  streaming: false
+  entries_first: false
+
+spec_al_mbpp:
+  format: "hf_instruction_response"
+  source:
+    type: "hugging_face"
+    dataset: "google-research-datasets/mbpp"
+    subset: "full"
+    split: "test"
+  options:
+    prompt_column: "text"
+  streaming: false
+  entries_first: false
+
+# --- Multi-turn conversation datasets  (chat-message arrays) -----------
+
+llava_onevision:
+  format: "hf_conversation"
+  source:
+    type: "hugging_face"
+    dataset: "lmms-lab/LLaVA-OneVision-Data"
+    subset: "sharegpt4o"
+    split: "train"
+  options:
+    conversation_column: "conversations"
+    image_column: "image"
+    message_content_key: "value"
+  streaming: true
+  entries_first: false
+
+ultrachat:
+  # validated 2026-07-25 (split train_sft; role/content messages)
+  format: "hf_conversation"
+  source:
+    type: "hugging_face"
+    dataset: "HuggingFaceH4/ultrachat_200k"
+    subset: "default"
+    split: "train_sft"
+  options:
+    conversation_column: "messages"
+    message_content_key: "content"
+  streaming: true
+  entries_first: false
+
+vision_arena:
+  format: "hf_conversation"
+  source:
+    type: "hugging_face"
+    dataset: "lmarena-ai/VisionArena-Chat"
+    subset: "default"
+    split: "train"
+  options:
+    conversation_column: "conversation"
+    image_column: "images"
+    message_content_key: "content"
+  streaming: true
+  entries_first: false
+
+# --- ShareGPT-style human/gpt conversation pairs -----------------------
+
+sharegpt:
+  format: "sharegpt"
+  source:
+    type: "url"
+    url: "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
+  options: {}
+  streaming: false
+  entries_first: false
+
+sharegpt_vicuna:
+  # HF-native ShareGPT (commonly cited in vLLM benchmark docs)
+  format: "sharegpt"
+  source:
+    type: "hugging_face"
+    dataset: "Aeala/ShareGPT_Vicuna_unfiltered"
+    subset: "default"
+    split: "train"
+  options: {}
+  streaming: true
+  entries_first: false
+
+# --- MT-Bench multi-turn prompts ---------------------------------------
+
+spec_al_mtbench:
+  format: "mt_bench"
+  source:
+    type: "hugging_face"
+    dataset: "HuggingFaceH4/mt_bench_prompts"
+    subset: "default"
+    split: "train"
+  options: {}
+  streaming: false
+  entries_first: false
+
+# --- Spec-decoding benchmark corpora -----------------------------------
+
+spec_bench:
+  format: "spec_bench"
+  source:
+    type: "url"
+    url: "https://raw.githubusercontent.com/hemingkx/Spec-Bench/fd2c1cd7d2201ef71db4c5f4e455008f017967bf/data/spec_bench/question.jsonl"
+  options: {}
+  streaming: false
+  entries_first: false
+
+# --- Video question-answer (multimodal) --------------------------------
+
+mmvu:
+  format: "mmvu"
+  source:
+    type: "hugging_face"
+    dataset: "yale-nlp/MMVU"
+    subset: "default"
+    split: "validation"
+  options:
+    video_column: "video"
+  streaming: false
+  entries_first: false
+
+# --- Automatic-speech-recognition datasets (audio) ---------------------
+
+ami:
+  format: "hf_asr"
+  source:
+    type: "hugging_face"
+    dataset: "edinburghcstr/ami"
+    subset: "ihm"
+    split: "test"
+  options:
+    audio_column: "audio"
+  streaming: true
+  entries_first: false
+
+gigaspeech:
+  format: "hf_asr"
+  source:
+    type: "hugging_face"
+    dataset: "speechcolab/gigaspeech"
+    subset: "xs"
+    split: "test"
+  options:
+    audio_column: "audio"
+  streaming: true
+  entries_first: false
+
+librispeech:
+  format: "hf_asr"
+  source:
+    type: "hugging_face"
+    dataset: "openslr/librispeech_asr"
+    subset: "clean"
+    split: "test"
+  options:
+    audio_column: "audio"
+  streaming: true
+  entries_first: false
+
+spgispeech:
+  format: "hf_asr"
+  source:
+    type: "hugging_face"
+    dataset: "kensho/spgispeech"
+    subset: "test"
+    split: "test"
+  options:
+    audio_column: "audio"
+  streaming: true
+  entries_first: false
+
+voxpopuli:
+  format: "hf_asr"
+  source:
+    type: "hugging_face"
+    dataset: "facebook/voxpopuli"
+    subset: "en"
+    split: "test"
+  options:
+    audio_column: "audio"
+  streaming: true
+  entries_first: false
+
+# --- Recorded traces ---------------------------------------------------
+
+weka_cc_traces_062126:
+  format: "weka_trace"
+  source:
+    type: "hugging_face"
+    dataset: "semianalysisai/cc-traces-weka-062126"
+    subset: "default"
+    split: "train"
+    revision: "23f152f6f0f9399a85901b89a6458def0ef16729"
+  options: {}
+  streaming: true
+  entries_first: true
+
+# --- Agent LLM traces --------------------------------------------------
+
+exgentic:
+  format: "exgentic"
+  source:
+    type: "hugging_face"
+    dataset: "Exgentic/agent-llm-traces"
+    subset: "default"
+    split: "train"
+    revision: "70036b93a04e61b0ea2706a68b962f4f26774587"
+  options: {}
+  streaming: true
+  entries_first: true
+
+# --- Agent LLM traces (v2 schema) --------------------------------------
+
+exgentic_v2:
+  format: "exgentic_v2"
+  source:
+    type: "hugging_face"
+    dataset: "Exgentic/agent-llm-traces-v2"
+    subset: "default"
+    split: "train"
+    revision: "4b8ad4ab198438e5a170f9171c19c6a2cf7c1814"
+  options: {}
+  streaming: true
+  entries_first: true
