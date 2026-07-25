@@ -236,6 +236,8 @@ pub(crate) struct Inputs {
     pub inline_records: Option<serde_json::Value>,
     /// Named submission scenario (`--scenario`; `cfg.scenario`).
     pub scenario: Option<String>,
+    /// WEKA reconstruction semantics (`--weka-semantics`; legacy|graph-ir).
+    pub weka_semantics: Option<String>,
     /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
     pub trajectory_start_min_ratio: f64,
     /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
@@ -735,6 +737,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         adaptive_scale: build_adaptive_scale(flags, concurrency)?,
         prefix_prompts: build_prefix_prompts(flags),
         scenario: flags.scenario.clone(),
+        weka_semantics: flags.weka_semantics.clone(),
         trajectory_start_min_ratio: flags.trajectory_start_min_ratio.unwrap_or(0.0),
         trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
         unsafe_override: flags.unsafe_override,
@@ -1358,6 +1361,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         endpoint_profiles: serde_json::Map::new(),
         failure_policy: None,
         scenario: inputs.scenario.clone(),
+        weka_semantics: resolve_weka_semantics(&inputs),
         trajectory_start_max_ratio: inputs.trajectory_start_max_ratio,
         trajectory_start_min_ratio: inputs.trajectory_start_min_ratio,
         unsafe_override: inputs.unsafe_override,
@@ -1487,6 +1491,32 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
 #[cfg(not(feature = "agentx"))]
 fn resolve_scenario_outcome(_inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
     Ok(None)
+}
+
+/// Resolve the effective WEKA reconstruction semantics for the run: an explicit
+/// `--weka-semantics` flag always wins; otherwise an agentic-replay scenario
+/// selects `legacy` (the byte-exact AgentX path), and everything else defers to
+/// the graph-ir default (`None`). Authored onto the config so the engine's graph
+/// workload factory can branch. Only the `agentx` build can select `legacy`.
+#[cfg(feature = "agentx")]
+fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
+    if let Some(flag) = inputs.weka_semantics.as_deref() {
+        return Some(flag.to_string());
+    }
+    if let Some(name) = inputs.scenario.as_deref()
+        && let Some(spec) = aiperf_runtime::agentx::scenario::get_scenario(name)
+        && spec.timing_mode == "agentic_replay"
+    {
+        return Some("legacy".to_string());
+    }
+    None
+}
+
+/// Without the `agentx` feature, only an explicit flag threads through (the
+/// engine rejects `legacy` at selection since the legacy path is compiled out).
+#[cfg(not(feature = "agentx"))]
+fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
+    inputs.weka_semantics.clone()
 }
 
 /// Build one phase from resolved axes. A request rate selects a Poisson arrival

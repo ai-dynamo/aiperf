@@ -254,6 +254,11 @@ pub struct BenchmarkConfigWireV2 {
     /// defaults.
     #[serde(default)]
     pub export: Value,
+    /// Resolved WEKA reconstruction semantics (`legacy`|`graph-ir`); authored into
+    /// the graph workload so the engine selects the legacy agentic path. Absent
+    /// defers to the graph-ir default.
+    #[serde(default)]
+    pub weka_semantics: Option<String>,
 }
 
 impl BenchmarkRunWireV2 {
@@ -315,6 +320,7 @@ impl BenchmarkRunWireV2 {
                 "tokenizer": self.cfg.tokenizer.unwrap_or_else(|| serde_json::json!({})),
                 "phases": self.cfg.phases,
                 "failure_policy": self.cfg.failure_policy,
+                "weka_semantics": self.cfg.weka_semantics,
             }))?,
         };
         let (sidecars, sidecars_present) = if !self.cfg.sidecars.is_null()

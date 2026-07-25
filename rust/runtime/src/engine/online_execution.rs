@@ -264,6 +264,21 @@ impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
     }
 }
 
+/// Whether a graph weka run selects the legacy AgentX agentic pipeline.
+///
+/// `None`/`graph-ir` (any spelling) uses the graph-ir path; `legacy`/`agentx`
+/// selects the byte-exact legacy path; any other value is rejected. Kept
+/// feature-independent so a lean build still parses and rejects the selector.
+fn weka_wants_legacy(semantics: Option<&str>) -> Result<bool> {
+    match semantics.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") | Some("graph-ir") | Some("graphir") | Some("graph_ir") => Ok(false),
+        Some("legacy") | Some("agentx") => Ok(true),
+        Some(other) => Err(anyhow!(
+            "unknown weka semantics {other:?}; expected 'legacy' or 'graph-ir'"
+        )),
+    }
+}
+
 /// Built-in Graph-IR workload for native and dynosim transports.
 struct GraphWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
@@ -316,6 +331,11 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
                     "online graph execution requires exactly one default model"
                 );
                 validate_authored_tokenizer(&workload.tokenizer)?;
+                // The legacy AgentX path owns its own loader (weka reconstruction),
+                // so it does not go through the graph-input identity validation.
+                if weka_wants_legacy(workload.weka_semantics.as_deref())? {
+                    return Ok(());
+                }
                 context
                     .graph_inputs()
                     .validate_identity(&workload.dataset)?;
@@ -344,6 +364,23 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
             Some(binding) => {
                 let workload =
                     workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), "graph")?;
+                // Legacy AgentX agentic weka path: a separate loader+runtime,
+                // selected by `--weka-semantics legacy` (default under an
+                // agentic-replay scenario). Graph-ir stays the fall-through.
+                if weka_wants_legacy(workload.weka_semantics.as_deref())? {
+                    #[cfg(feature = "agentx")]
+                    {
+                        return crate::engine::legacy_agentx_execution::prepare_legacy_agentx_operation(
+                            run, context, workload, binding,
+                        );
+                    }
+                    #[cfg(not(feature = "agentx"))]
+                    {
+                        anyhow::bail!(
+                            "--weka-semantics legacy requires a build with the `agentx` feature"
+                        );
+                    }
+                }
                 let plan = lower_graph(
                     run,
                     context,

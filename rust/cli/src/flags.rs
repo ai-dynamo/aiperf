@@ -134,6 +134,11 @@ pub struct ProfileFlags {
     #[arg(long = "scenario")]
     pub scenario: Option<String>,
 
+    /// WEKA reconstruction semantics (`--weka-semantics legacy|graph-ir`). Unset
+    /// defaults to `legacy` under an agentic-replay scenario, else `graph-ir`.
+    #[arg(long = "weka-semantics")]
+    pub weka_semantics: Option<String>,
+
     /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
     #[arg(long = "trajectory-start-min-ratio")]
     pub trajectory_start_min_ratio: Option<f64>,
