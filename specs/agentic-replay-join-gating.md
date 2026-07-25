@@ -36,75 +36,80 @@ The `agentic_replay` timing mode already exists and runs end-to-end
   cache-bust including per-recycle `recycle_pass` minting, per-stream
   continuations, trajectory recycle with a fresh-correlation double-recycle guard,
   and full engine-parity output through the shared scheduled runtime.
-- Subagent children are reconstructed as separate conversations and dispatched at
-  their t\*-relative offsets. This reproduces the recorded ordering but does **not**
-  enforce the live cross-lane dependency: a parent join turn fires at its recorded
-  offset rather than waiting for actual (possibly slow) child completion, and a
-  tree recycles per round-robin rather than on whole-tree drain.
+### Cross-lane join gating (built)
 
-The reconstruction already detects subagent spawn/join structure (the LCP spawn +
-seam-join detection in `agentx::subagent`), and the dataset `Turn` model already
-carries the fields needed to express it (`TurnPrerequisite`, `ConversationBranch`,
-`Turn.prerequisites`, `Turn.branch_ids`, `Conversation.dag`). The pure
-tree-lifecycle logic is already ported (`agentx::session_tree::SessionTreeRegistry`
-with `open_tree` / `register_descendants` / `on_descendant_done` /
-`on_root_terminal` / `release_all`). Neither the metadata surfacing nor the
-registry wiring is connected to dispatch yet.
+Subagent trajectory trees are gated on **live** child completion — a parent join
+turn waits for the actual terminal of its children, and a tree recycles only after
+the whole tree drains:
 
-## Future requirements
+1. A parent turn that consumes subagent results (`SpawnJoin`) is **deferred** while
+   any of its required children have not reached terminal; it is released and
+   dispatched at `runtime.now_ns()` when the last required child terminates
+   (success **or** failure). Matches Python's `waiting_on_children` exclusion from
+   `dispatchable`.
+2. A `background` spawn does **not** gate the parent (its join carries no
+   prerequisite).
+3. A tree's lane recycles only after `on_root_terminal` **and** all descendants
+   drain — not per round-robin.
 
-### Contract
+#### Single central driver (global-hop)
 
-For a trajectory tree replayed in the PROFILING phase:
+The gate, the ported `session_tree::SessionTreeRegistry`, and the recycle cursor
+all live in **one** workload instance. The agentic mode therefore runs under
+`--dispatch global-hop` (forced at CLI resolution and re-asserted at
+`lower_legacy_agentic`): global-hop is a **single coordinator scheduling loop**
+(the one central driver over the whole cell) that hops each request to a pool of
+`N` worker transport threads — the Rust analog of Python's `1 strategy : 1 router :
+N workers`. `--cells > 1` and non-global-hop `--dispatch` (`sharded`/`global`, which
+run `N` independent per-worker pipelines) are rejected — they would split a tree's
+root and children across partitions and give each partition its own gate.
 
-1. A parent turn carrying a `SpawnJoin` prerequisite for branch *b* is **not
-   dispatched** until every child conversation named by *b* has reached terminal
-   (success or failure). This matches Python's `waiting_on_children` exclusion
-   from `dispatchable` and the join resume in `_dispatch_snapshot_for_profiling`.
-2. A `background` spawn does **not** gate the parent — the parent continues after
-   emitting the branch; the children replay concurrently.
-3. A tree's slot is held until `on_root_terminal` **and** all descendants drain;
-   only then may recycle draw against that tree's lane (replacing today's
-   unconditional round-robin recycle). This matches the session-tree-registry
-   "root slot held until the whole tree drains" behavior.
-4. Dispatch order and per-turn dispatch instants under these gates are byte-exact
-   against Python for a fixed seed + trace, validated by a Python-generated golden.
+#### Metadata: a side `TreeSpec` map, not the dataset DAG
 
-### Data model (reuse existing fields)
+The composed `Dataset` is deliberately **DAG-free**. Carrying spawn/join on the
+dataset `Turn` model (`ConversationBranch` / `TurnPrerequisite` / `Conversation.dag`)
+cannot satisfy the DAG validator once t\*-history-slicing separates a spawn
+declaration from its join turn, and it would make subagent children non-sampleable
+(breaking multi-worker partitioning). Instead the reconstruction emits
+`spawn_branch`/`join_prerequisite` onto `ReconstructedTurn`, and
+`agentic_replay::build_tree_specs` builds a side `Vec<TreeSpec>` (root id, the
+**transitive** descendant set flattened by walking `parent_conversation_id` to the
+root, and join turns keyed by the **profiling** (sliced) turn index). A join whose
+children did not survive t\* is dropped (they never dispatch, so gating on them would
+deadlock). The specs ride `Arc<Vec<TreeSpec>>` on `PreparedDatasetInput` (module
+`agentic_tree`, always compiled) into `AgenticReplayConfig`.
 
-Spawn/join structure is authored onto the dataset `Turn` model — no side channel,
-no new request bytes:
-
-- The parent's **spawn turn** carries a `ConversationBranch`
-  (`branch_id → child_conversation_ids`, `mode` fork/spawn, `background`) on
-  `Conversation.dag` / `Turn.branch_ids`.
-- The parent's **join turn** carries a `TurnPrerequisite { kind: SpawnJoin,
-  branch_id, child_conversation_ids }`.
-
-These map 1:1 onto Python `spawn_by_branch` / `join_by_branch` /
-`join_turn_index`. The join turn is the first parent turn whose recorded timestamp
-is at/after the branch's child-completion time (the existing seam-join point);
-`background` branches emit a `ConversationBranch` with no join prerequisite.
-
-### Components and data flow
+#### Dispatch flow
 
 ```
 reconstruction (agentx::subagent/loader)
-    └─ emit ConversationBranch on spawn turn + SpawnJoin prerequisite on join turn
-composer (agentx::weka_dataset)
-    └─ preserve turn.prerequisites / turn.branch_ids / Conversation.dag onto the Dataset
-workload setup (agentic_replay)
-    └─ SessionTreeRegistry: open_tree(root_corr) per tree; register_descendants(n)
-dispatch loop
-    ├─ a turn with a SpawnJoin prerequisite is deferred while waiting_on_children
-    ├─ each child terminal → on_descendant_done(root_corr); when the branch is
-    │  satisfied, release the deferred parent join turn
-    └─ recycle draws a tree's lane only after on_root_terminal + full drain
+    └─ spawn_branch / join_prerequisite on ReconstructedTurn
+lower_legacy_agentic
+    ├─ slice at t* (history excluded) → build_tree_specs(&sliced convs) → Vec<TreeSpec>
+    └─ compose DAG-free dataset; carry Arc<Vec<TreeSpec>>; force global-hop
+workload (AgenticReplayWorkload::execute, single central driver)
+    ├─ TreeGate::try_new(&tree_specs) (empty specs → gate None → pass-through)
+    ├─ a turn where gate.is_waiting(conv, turn_index) is DEFERRED (take_ready queue)
+    ├─ each terminal → gate.on_child_terminal(conv); released parents dispatch at now
+    └─ recycle draws only when gate.on_lane_terminal(root) reports whole-tree drain
 ```
 
-The registry is the single source of truth for "is this tree's parent releasable"
-and "may this tree recycle". A per-branch deferred-dispatch slot holds the parent
-join turn until release.
+Record-ordinal note: the warmup phase's `requests` is set to its (recycle-free)
+conversation count so the striding record-ordinal issuer offsets the profiling
+phase's absolute-slot base past the warmup range (otherwise both phases collide at
+slot 0 under the striding issuer). `enforce_stop=false` keeps this from gating
+warmup dispatch.
+
+Byte-exact parity is validated by `tests/agentx_join_gating_parity.rs` against a
+Python-generated golden (`TrajectorySource._snapshot_for` waiting/release
+decisions), and the deferral ordering by `tests/agentx_join_gating_e2e.rs`.
+
+## Future requirements
+
+- **Accelerated cache warmup** (`--agentic-cache-warmup-duration`) + handoff
+  residual delay — out of MVP-scenario scope, unimplemented (its own spec).
+- Multi-child and t\*-liveness golden coverage (current golden is single-child;
+  the multi-child release ordering is covered by the e2e, not the golden).
 
 ### Error handling
 
@@ -132,8 +137,16 @@ join turn until release.
 - Reconstruction + subagent spawn/join detection: `rust/runtime/src/agentx/subagent.rs`,
   `rust/runtime/src/agentx/loader.rs`.
 - Dataset composer: `rust/runtime/src/agentx/weka_dataset.rs`.
-- Tree lifecycle (pure, to be wired): `rust/runtime/src/agentx/session_tree.rs`,
+- Tree gate + `build_tree_specs` + `take_ready` deferral: `rust/runtime/src/agentic_replay.rs`;
+  `TreeSpec` (always-compiled): `rust/runtime/src/agentic_tree.rs`.
+- Tree lifecycle (pure): `rust/runtime/src/agentx/session_tree.rs`,
   `rust/runtime/src/agentx/replay_dependencies.rs`.
+- Global-hop single-driver dispatch: `rust/runtime/src/engine/global_hop.rs`;
+  forcing + guards: `rust/cli/src/load.rs`, `rust/runtime/src/engine/online_execution.rs`
+  (`lower_legacy_agentic`).
+- Parity + gating tests: `rust/runtime/tests/agentx_join_gating_parity.rs`,
+  `rust/runtime/tests/agentx_join_gating_e2e.rs`,
+  `tools/agentx_join_gating_golden.py`, `rust/runtime/tests/fixtures/agentx/join_gating_golden.json`.
 - Turn model fields (`TurnPrerequisite`, `ConversationBranch`, `prerequisites`,
   `branch_ids`, `dag`): `rust/runtime/src/dataset/model.rs`.
 - Selection + lowering into the scheduled path: `rust/runtime/src/engine/online_execution.rs`
