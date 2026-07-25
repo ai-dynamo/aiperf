@@ -12,6 +12,7 @@ use prost::Message;
 use serde_json::{Map, Number, Value};
 
 use crate::transport::grpc::proto::infer_parameter::ParameterChoice;
+use crate::transport::grpc::riva_codec::finite_number;
 use crate::transport::grpc::proto::model_infer_request::{
     InferInputTensor, InferRequestedOutputTensor,
 };
@@ -377,12 +378,12 @@ fn typed_tensor_data(
         "FP16" | "FP32" => contents
             .fp32_contents
             .iter()
-            .map(|value| json_number(f64::from(*value)))
+            .map(|value| finite_number(f64::from(*value), "KServe tensor"))
             .collect::<Result<_, _>>()?,
         "FP64" => contents
             .fp64_contents
             .iter()
-            .map(|value| json_number(*value))
+            .map(|value| finite_number(*value, "KServe tensor"))
             .collect::<Result<_, _>>()?,
         "BOOL" => contents
             .bool_contents
@@ -464,9 +465,9 @@ fn raw_scalar(bytes: &[u8], datatype: &str) -> Result<Value, CodecError> {
         "UINT32" => Value::Number(Number::from(u32::from_le_bytes(array(bytes)?))),
         "INT64" => Value::Number(Number::from(i64::from_le_bytes(array(bytes)?))),
         "UINT64" => Value::Number(Number::from(u64::from_le_bytes(array(bytes)?))),
-        "FP16" => json_number(f64::from(f16::from_bits(u16::from_le_bytes(array(bytes)?))))?,
-        "FP32" => json_number(f64::from(f32::from_le_bytes(array(bytes)?)))?,
-        "FP64" => json_number(f64::from_le_bytes(array(bytes)?))?,
+        "FP16" => finite_number(f64::from(f16::from_bits(u16::from_le_bytes(array(bytes)?))), "KServe tensor")?,
+        "FP32" => finite_number(f64::from(f32::from_le_bytes(array(bytes)?)), "KServe tensor")?,
+        "FP64" => finite_number(f64::from_le_bytes(array(bytes)?), "KServe tensor")?,
         _ => Value::String(String::from_utf8_lossy(bytes).into_owned()),
     })
 }
@@ -475,12 +476,6 @@ fn array<const N: usize>(bytes: &[u8]) -> Result<[u8; N], CodecError> {
     bytes
         .try_into()
         .map_err(|_| CodecError::new(format!("expected {N} tensor bytes, got {}", bytes.len())))
-}
-
-fn json_number(value: f64) -> Result<Value, CodecError> {
-    Number::from_f64(value)
-        .map(Value::Number)
-        .ok_or_else(|| CodecError::new("KServe tensor contains non-finite float"))
 }
 
 fn json_i64(value: &Value) -> Option<i64> {

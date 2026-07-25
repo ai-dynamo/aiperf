@@ -292,10 +292,6 @@ impl PreparedEndpoint for PreparedRawEndpoint {
         RawEndpoint.extract_payload_inputs(body)
     }
 
-    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
-        extract_prepared_responses(self, record)
-    }
-
     fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {
         RawEndpoint.build_assistant_turn(record)
     }
@@ -355,10 +351,6 @@ impl PreparedEndpoint for PreparedTemplateEndpoint {
         TemplateEndpoint.extract_payload_inputs(body)
     }
 
-    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
-        extract_prepared_responses(self, record)
-    }
-
     fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {
         TemplateEndpoint.build_assistant_turn(record)
     }
@@ -366,19 +358,6 @@ impl PreparedEndpoint for PreparedTemplateEndpoint {
     fn captures_assistant_turn(&self) -> bool {
         TemplateEndpoint.captures_assistant_turn()
     }
-}
-
-fn extract_prepared_responses(
-    endpoint: &dyn PreparedEndpoint,
-    record: &RequestRecord,
-) -> EndpointResult<Vec<ParsedResponse>> {
-    let mut parsed = Vec::new();
-    for response in &record.responses {
-        if let Some(response) = endpoint.parse_response(response)? {
-            parsed.push(response);
-        }
-    }
-    Ok(parsed)
 }
 
 /// Lower a `serde_json::Value` into a `minijinja::Value` without routing numbers

@@ -11,3 +11,4 @@ pub mod grpc;
 pub mod http;
 pub(crate) mod measure;
 pub(crate) mod reduce;
+pub(crate) mod retry;

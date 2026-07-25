@@ -406,28 +406,17 @@ pub async fn establish_with_resolver(
     // pre-send `ErrorKind::Connect` failures (DNS/TCP/TLS/handshake) are worth
     // retrying, because the request bytes never left the client and the server
     // cannot have observed a partial request. Connect timeouts and every
-    // post-send outcome are handed back to the caller unchanged.
-    let mut retries_taken: u32 = 0;
-    loop {
-        match establish_once(url, cfg, &clock, trace, resolver).await {
-            Ok(pair) => return Ok(pair),
-            Err(err) => {
-                if err.kind != ErrorKind::Connect || retries_taken >= cfg.max_connect_retries {
-                    return Err(err);
-                }
-                retries_taken += 1;
-                // Each successive retry waits longer: the Nth retry pauses for
-                // N * connect_retry_backoff_ns. The pause always runs on the
-                // injected Clock so virtual-time replays stay deterministic.
-                let wait_ns = cfg
-                    .connect_retry_backoff_ns
-                    .saturating_mul(i64::from(retries_taken));
-                if wait_ns > 0 {
-                    clock.clone().sleep(wait_ns).await;
-                }
-            }
-        }
-    }
+    // post-send outcome are handed back to the caller unchanged. The retry loop
+    // and clock-driven linear backoff are shared with the gRPC transport via
+    // `transport::retry::retry_connect`.
+    crate::transport::retry::retry_connect(
+        &clock,
+        cfg.max_connect_retries,
+        cfg.connect_retry_backoff_ns,
+        |err: &ErrorDetails| err.kind == ErrorKind::Connect,
+        async || establish_once(url, cfg, &clock, trace, resolver).await,
+    )
+    .await
 }
 
 /// Establish a connection with the connect-phase deadline applied, but without

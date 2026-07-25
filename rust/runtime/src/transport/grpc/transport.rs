@@ -30,6 +30,7 @@ use tonic::{Code, Request, Status};
 use url::{Host, Url};
 
 use crate::clock::Clock;
+use crate::transport::retry::retry_connect;
 
 use crate::transport::grpc::binding::GrpcEndpointBinding;
 use crate::transport::grpc::models::{
@@ -816,7 +817,8 @@ impl GrpcTransport {
             &self.clock,
             self.config.max_connect_retries,
             self.config.connect_retry_backoff_ns,
-            || self.connect_once(&endpoint, target, total_deadline),
+            |error: &GrpcTransportError| error.details.kind == GrpcErrorKind::Other,
+            async || self.connect_once(&endpoint, target, total_deadline).await,
         )
         .await?;
         record.trace.connect_end_ns = Some(self.clock.now_ns());
@@ -1045,45 +1047,6 @@ fn request_deadline(
     }
 }
 
-/// Drive a connect-phase `attempt` with retry-on-connect-failure and linear
-/// backoff. `attempt` is invoked once, then up to `max_connect_retries` more
-/// times whenever it yields a genuine pre-RPC connect failure
-/// ([`GrpcErrorKind::Other`]). Any other failure category — including the mapped
-/// channel-ready and whole-request timeouts from [`deadline_error`] — is
-/// returned immediately without consuming a retry. Retry `n` (1-based) sleeps
-/// `n * connect_retry_backoff_ns` on the injected [`Clock`] before re-invoking
-/// `attempt`, so virtual-time replays stay deterministic. This is the gRPC
-/// analogue of `client::connection::establish_with_resolver`'s retry loop.
-async fn retry_connect<T, F, Fut>(
-    clock: &Rc<dyn Clock>,
-    max_connect_retries: u32,
-    connect_retry_backoff_ns: i64,
-    mut attempt: F,
-) -> Result<T, GrpcTransportError>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, GrpcTransportError>>,
-{
-    let mut retries_taken: u32 = 0;
-    loop {
-        match attempt().await {
-            Ok(value) => return Ok(value),
-            Err(error) => {
-                if error.details.kind != GrpcErrorKind::Other
-                    || retries_taken >= max_connect_retries
-                {
-                    return Err(error);
-                }
-                retries_taken += 1;
-                let wait_ns = connect_retry_backoff_ns.saturating_mul(i64::from(retries_taken));
-                if wait_ns > 0 {
-                    clock.clone().sleep(wait_ns).await;
-                }
-            }
-        }
-    }
-}
-
 async fn await_deadline<F>(
     clock: Rc<dyn Clock>,
     deadline: Option<Deadline>,
@@ -1304,12 +1267,11 @@ const fn grpc_code_name(code: i32) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        GrpcClientConfig, GrpcErrorKind, GrpcTransport, GrpcTransportError, retry_connect,
-    };
+    use super::{GrpcClientConfig, GrpcErrorKind, GrpcTransport, GrpcTransportError};
     use crate::clock::{Clock, RealClock, SimClock, drive_sim};
     use crate::transport::grpc::GrpcRequestRecord;
     use crate::transport::grpc::models::{ConnectionReuseStrategy, GrpcRequestConfig};
+    use crate::transport::retry::retry_connect;
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -1324,10 +1286,16 @@ mod tests {
         let clk: Rc<dyn Clock> = clock.clone();
         let calls = Cell::new(0_u32);
         let out = drive_sim(clock.clone(), async move {
-            retry_connect(&clk, 2, 1_000, || {
-                calls.set(calls.get() + 1);
-                async { Err::<(), _>(err(GrpcErrorKind::Other)) }
-            })
+            retry_connect(
+                &clk,
+                2,
+                1_000,
+                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                || {
+                    calls.set(calls.get() + 1);
+                    async { Err::<(), _>(err(GrpcErrorKind::Other)) }
+                },
+            )
             .await
             .map(|_| ())
             .map_err(|e| (e, calls.get()))
@@ -1347,17 +1315,23 @@ mod tests {
         let calls = Cell::new(0_u32);
         let out = drive_sim(clock.clone(), async move {
             let made = Cell::new(0_u32);
-            let result = retry_connect(&clk, 5, 1_000, || {
-                calls.set(calls.get() + 1);
-                made.set(calls.get());
-                async {
-                    if calls.get() <= 2 {
-                        Err::<u32, _>(err(GrpcErrorKind::Other))
-                    } else {
-                        Ok(calls.get())
+            let result = retry_connect(
+                &clk,
+                5,
+                1_000,
+                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                || {
+                    calls.set(calls.get() + 1);
+                    made.set(calls.get());
+                    async {
+                        if calls.get() <= 2 {
+                            Err::<u32, _>(err(GrpcErrorKind::Other))
+                        } else {
+                            Ok(calls.get())
+                        }
                     }
-                }
-            })
+                },
+            )
             .await;
             result.map(|v| (v, made.get()))
         });
@@ -1379,10 +1353,16 @@ mod tests {
         let clk: Rc<dyn Clock> = clock.clone();
         let calls = Cell::new(0_u32);
         let out = drive_sim(clock.clone(), async move {
-            retry_connect(&clk, 5, 1_000, || {
-                calls.set(calls.get() + 1);
-                async { Err::<(), _>(err(GrpcErrorKind::RequestSendTimeout)) }
-            })
+            retry_connect(
+                &clk,
+                5,
+                1_000,
+                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                || {
+                    calls.set(calls.get() + 1);
+                    async { Err::<(), _>(err(GrpcErrorKind::RequestSendTimeout)) }
+                },
+            )
             .await
             .map(|_| ())
             .map_err(|e| (e, calls.get()))
@@ -1399,10 +1379,16 @@ mod tests {
         let clk: Rc<dyn Clock> = clock.clone();
         let calls = Cell::new(0_u32);
         let out = drive_sim(clock.clone(), async move {
-            retry_connect(&clk, 0, 1_000, || {
-                calls.set(calls.get() + 1);
-                async { Err::<(), _>(err(GrpcErrorKind::Other)) }
-            })
+            retry_connect(
+                &clk,
+                0,
+                1_000,
+                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                || {
+                    calls.set(calls.get() + 1);
+                    async { Err::<(), _>(err(GrpcErrorKind::Other)) }
+                },
+            )
             .await
             .map(|_| ())
             .map_err(|e| (e, calls.get()))

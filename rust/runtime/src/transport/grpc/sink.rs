@@ -718,7 +718,7 @@ mod tests {
         let parsed = endpoint.parse_response(&response).unwrap().unwrap();
         let data = parsed.data.as_ref().unwrap();
         let mut metadata = ModelResponseMetadata::default();
-        assert_eq!(absorb_response_data(data, &mut metadata), "");
+        assert_eq!(absorb_response_data(data, &mut metadata).as_ref(), "");
         assert_eq!(metadata.content, None);
 
         let empty = ServerResponse::from_json(2, serde_json::json!({"audio": ""}));

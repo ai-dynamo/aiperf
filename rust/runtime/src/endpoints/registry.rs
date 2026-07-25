@@ -404,7 +404,19 @@ pub trait PreparedEndpoint: fmt::Debug {
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload;
 
     /// Parse every response in a request record.
-    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>>;
+    ///
+    /// The default parses each response with [`Self::parse_response`], dropping
+    /// `None` results and propagating the first error. Endpoints whose extraction
+    /// differs (e.g. eventstream reframing or simulation) override this.
+    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
+        let mut parsed = Vec::new();
+        for response in &record.responses {
+            if let Some(response) = self.parse_response(response)? {
+                parsed.push(response);
+            }
+        }
+        Ok(parsed)
+    }
 
     /// Build an assistant turn for context replay.
     fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>>;

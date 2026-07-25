@@ -28,180 +28,121 @@ use crate::endpoints::registry::{
     PreparedRequest, ReadinessMethod, ReadinessPolicy, ReadinessSuccess,
 };
 
-const KSERVE_CHAT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
-    id: "kserve_chat",
+/// Shared field defaults for the KServe descriptors below. Every descriptor is
+/// non-streaming, token-producing off, tokenizes input, needs no raw token IDs /
+/// form data / polling / inline media, and reports `service_kind = "kserve"`;
+/// each literal overrides only the fields that differ via `..DEFAULT`.
+const DEFAULT: EndpointDescriptor = EndpointDescriptor {
+    id: "",
     aliases: &[],
-    description: "KServe OpenAI-compatible Chat Completions API",
-    endpoint_path: Some("/openai/v1/chat/completions"),
+    description: "",
+    endpoint_path: None,
     streaming_path: None,
-    supports_streaming: true,
-    produces_tokens: true,
+    supports_streaming: false,
+    produces_tokens: false,
     tokenizes_input: true,
     requires_raw_token_ids: false,
     requires_form_data: false,
     requires_polling: false,
     requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "",
+    service_kind: "kserve",
+};
+
+const KSERVE_CHAT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "kserve_chat",
+    description: "KServe OpenAI-compatible Chat Completions API",
+    endpoint_path: Some("/openai/v1/chat/completions"),
+    supports_streaming: true,
+    produces_tokens: true,
     input_modalities: &[
         Modality::Text,
         Modality::Image,
         Modality::Audio,
         Modality::Video,
     ],
-    output_modalities: &[Modality::Tokens],
     metrics_title: "LLM Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_COMPLETIONS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_completions",
-    aliases: &[],
     description: "KServe OpenAI-compatible Completions API",
     endpoint_path: Some("/openai/v1/completions"),
-    streaming_path: None,
     supports_streaming: true,
     produces_tokens: true,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
-    output_modalities: &[Modality::Tokens],
     metrics_title: "LLM Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_EMBEDDINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_embeddings",
-    aliases: &[],
     description: "KServe OpenAI-compatible Embeddings API",
     endpoint_path: Some("/openai/v1/embeddings"),
-    streaming_path: None,
-    supports_streaming: false,
-    produces_tokens: false,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
     output_modalities: &[Modality::Embeddings],
     metrics_title: "Embeddings Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_V1_PREDICT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_v1_predict",
-    aliases: &[],
     description: "KServe V1 instances/predictions inference protocol",
     endpoint_path: Some("/v1/models/{model_name}:predict"),
-    streaming_path: None,
-    supports_streaming: false,
-    produces_tokens: false,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
     output_modalities: &[Modality::Tokens, Modality::Embeddings, Modality::Rankings],
     metrics_title: "KServe V1 Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_V2_INFER_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_v2_infer",
-    aliases: &[],
     description: "KServe V2 Open Inference Protocol text endpoint",
     endpoint_path: Some("/v2/models/{model_name}/infer"),
     streaming_path: Some("/v2/models/{model_name}/infer"),
     supports_streaming: true,
     produces_tokens: true,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
-    output_modalities: &[Modality::Tokens],
     metrics_title: "KServe V2 Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_V2_EMBEDDINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_v2_embeddings",
-    aliases: &[],
     description: "KServe V2 Open Inference Protocol embeddings endpoint",
     endpoint_path: Some("/v2/models/{model_name}/infer"),
-    streaming_path: None,
-    supports_streaming: false,
-    produces_tokens: false,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
     output_modalities: &[Modality::Embeddings],
     metrics_title: "KServe V2 Embeddings Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_V2_RANKINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_v2_rankings",
-    aliases: &[],
     description: "KServe V2 Open Inference Protocol rankings endpoint",
     endpoint_path: Some("/v2/models/{model_name}/infer"),
-    streaming_path: None,
-    supports_streaming: false,
-    produces_tokens: false,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
     output_modalities: &[Modality::Rankings],
     metrics_title: "KServe V2 Rankings Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_V2_VLM_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_v2_vlm",
-    aliases: &[],
     description: "KServe V2 Open Inference Protocol vision-language endpoint",
     endpoint_path: Some("/v2/models/{model_name}/infer"),
     streaming_path: Some("/v2/models/{model_name}/infer"),
     supports_streaming: true,
     produces_tokens: true,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
     input_modalities: &[Modality::Text, Modality::Image],
-    output_modalities: &[Modality::Tokens],
     metrics_title: "KServe V2 VLM Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 const KSERVE_V2_IMAGES_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "kserve_v2_images",
-    aliases: &[],
     description: "KServe V2 Open Inference Protocol image-generation endpoint",
     endpoint_path: Some("/v2/models/{model_name}/infer"),
-    streaming_path: None,
-    supports_streaming: false,
-    produces_tokens: false,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
     output_modalities: &[Modality::Image],
     metrics_title: "KServe V2 Image Generation Metrics",
-    service_kind: "kserve",
+    ..DEFAULT
 };
 
 /// V2-only factory for KServe's OpenAI-compatible chat route.
@@ -491,14 +432,6 @@ impl PreparedEndpoint for PreparedKServeEndpoint {
 
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
         self.behavior.extract_payload_inputs(body)
-    }
-
-    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
-        record
-            .responses
-            .iter()
-            .filter_map(|response| self.parse_response(response).transpose())
-            .collect()
     }
 
     fn build_assistant_turn(&self, _record: &RequestRecord) -> EndpointResult<Option<Turn>> {

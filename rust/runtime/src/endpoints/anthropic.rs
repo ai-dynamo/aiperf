@@ -250,8 +250,16 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
     }
 }
 
+/// Compare a wire event/type name against an already-normalized constant
+/// without allocating: `-` is treated as `_` and ASCII case is ignored. Runs on
+/// every streamed frame, so it stays alloc-free (the previous `replace` built a
+/// short `String` per token).
 fn normalized_eq(actual: &str, expected: &str) -> bool {
-    actual.replace('-', "_").eq_ignore_ascii_case(expected)
+    actual.len() == expected.len()
+        && actual.bytes().zip(expected.bytes()).all(|(a, e)| {
+            let a = if a == b'-' { b'_' } else { a };
+            a.eq_ignore_ascii_case(&e)
+        })
 }
 
 fn parse_non_streaming(perf_ns: u64, object: &Map<String, Value>) -> Option<ParsedResponse> {

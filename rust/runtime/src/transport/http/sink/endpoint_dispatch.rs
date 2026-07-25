@@ -348,14 +348,30 @@ impl TransportSink {
             first_token_released: &first_token_released,
             on_first_token,
         };
+        // Retain the pass-1 decoded responses when this endpoint reconstructs an
+        // assistant turn, so the capture below reuses them instead of decoding
+        // every buffered response a second time. `filter_map(decode_response)`
+        // in the old capture kept exactly the successfully-decoded responses
+        // regardless of parse outcome, so we push right after a successful
+        // decode (before any parse-failure `continue`) to preserve that set.
+        let captures_turn = endpoint.captures_assistant_turn();
+        let mut decoded_responses: Vec<ServerResponse> = Vec::new();
         for response in &record.responses {
-            let Some(server_response) = binding.decode_response(response) else {
+            let Some(decoded) = binding.decode_response(response) else {
                 continue;
+            };
+            let server_response: &ServerResponse = if captures_turn {
+                decoded_responses.push(decoded);
+                decoded_responses
+                    .last()
+                    .expect("just pushed a decoded response")
+            } else {
+                &decoded
             };
             if let Some(value) = &server_response.json {
                 absorb_wire_response_metadata(value, &mut model_response);
             }
-            let parsed = match parse_endpoint_response(endpoint, &server_response) {
+            let parsed = match parse_endpoint_response(endpoint, server_response) {
                 Ok(parsed) => parsed,
                 Err(error) => {
                     if data_policy.allow_content_diagnostics() {
@@ -403,13 +419,9 @@ impl TransportSink {
                 .and_then(|(prompt, completion)| prompt.checked_add(completion));
         }
 
-        if endpoint.captures_assistant_turn() {
+        if captures_turn {
             let endpoint_record = EndpointRequestRecord {
-                responses: record
-                    .responses
-                    .iter()
-                    .filter_map(|response| binding.decode_response(response))
-                    .collect(),
+                responses: decoded_responses,
             };
             match endpoint.build_assistant_turn(&endpoint_record) {
                 Ok(Some(turn)) => {
