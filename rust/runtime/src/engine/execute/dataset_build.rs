@@ -114,10 +114,14 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     // Side-channel subagent join-gate specs (empty for every non-agentic run).
     // Consumed only by the `agentic_replay` phase branch below.
     agentic_trees: std::sync::Arc<Vec<crate::agentic_tree::TreeSpec>>,
+    // Cross-phase accelerated cache-warmup handoff carrier (empty for every
+    // non-accelerated run). Consumed only by the `agentic_replay` phase branch.
+    warmup_handoff: crate::agentic_tree::WarmupHandoffCarrierAny,
 ) -> Result<ScheduledPhasePlan> {
     // Silence the unused-binding warning on builds without the `agentx` feature
     // (the only consumer is the feature-gated agentic_replay branch below).
     let _ = &agentic_trees;
+    let _ = &warmup_handoff;
     let phase_rng =
         RngRoot::new(dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
     let phase_dataset = match phase {
@@ -334,8 +338,25 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                         AgenticPhase::Warmup => phase.common().agentic_cache_warmup_duration,
                         AgenticPhase::Profiling => None,
                     },
-                    // Reserved for the later accelerated substage build.
-                    max_tokens_override: None,
+                    // Force `max_tokens=1` on the WARMUP instance when accelerated
+                    // cache-warmup is armed (Python `_WARMUP_MAX_TOKENS=1`); the
+                    // PROFILING instance and non-accelerated warmup keep recorded caps.
+                    max_tokens_override: match agentic_phase {
+                        AgenticPhase::Warmup
+                            if phase.common().agentic_cache_warmup_duration.is_some() =>
+                        {
+                            Some(1)
+                        }
+                        _ => None,
+                    },
+                    // Shared cross-phase handoff carrier: both agentic instances
+                    // downcast the SAME type-erased carrier so WARMUP's finalize is
+                    // visible to PROFILING's resume. A non-agentic/empty carrier
+                    // downcasts to `None` and leaves profiling as the non-accel path.
+                    warmup_handoff: crate::agentic_replay::downcast_warmup_handoff_carrier(
+                        &warmup_handoff,
+                    )
+                    .unwrap_or_else(crate::agentic_replay::new_warmup_handoff_carrier),
                 };
                 let workload =
                     Rc::new(AgenticReplayWorkload::new(source, config)?) as Rc<dyn Workload>;

@@ -122,6 +122,12 @@ pub(crate) async fn execute_native_inner(
         NativeDatasetPlan::PreparedLinear(dataset) => dataset.agentic_trees.clone(),
         _ => std::sync::Arc::default(),
     };
+    // Cross-phase accelerated cache-warmup handoff carrier (empty for every
+    // non-accelerated run), threaded into both agentic phase instances.
+    let warmup_handoff = match &request.dataset {
+        NativeDatasetPlan::PreparedLinear(dataset) => dataset.warmup_handoff.clone(),
+        _ => crate::agentic_tree::empty_warmup_handoff_carrier(),
+    };
     let default_output_tokens = if accuracy.is_some() {
         dataset_default_output_tokens(&dataset)?
     } else {
@@ -375,6 +381,7 @@ pub(crate) async fn execute_native_inner(
                         .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
                     on_failure,
                     agentic_trees.clone(),
+                    warmup_handoff.clone(),
                 )?;
                 let profiling_idx = if phase.common().exclude_from_results {
                     None
@@ -604,6 +611,7 @@ pub(crate) async fn execute_native_inner(
             samplers: registry.samplers().clone(),
             dataset: dataset.clone(),
             agentic_trees: agentic_trees.clone(),
+            warmup_handoff: warmup_handoff.clone(),
             primary_model: primary_model.clone(),
             metrics_config: metrics_config.clone(),
             tokenizer: tokenizer.clone(),

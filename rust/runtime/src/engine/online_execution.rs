@@ -1418,11 +1418,22 @@ fn lower_legacy_agentic(
     // for a root-only run (the workload gate then stays a pass-through).
     let agentic_trees = std::sync::Arc::new(crate::agentic_replay::build_tree_specs(&convs));
 
+    // Install a live cross-phase accelerated cache-warmup carrier only when the
+    // run authored `--agentic-cache-warmup-duration`; otherwise an empty carrier
+    // keeps profiling on the exact non-accelerated path. The typed carrier is
+    // stored type-erased so the non-`agentx` phase-plan plumbing can thread it.
+    let warmup_handoff: crate::agentic_tree::WarmupHandoffCarrierAny =
+        if warmup_agentic_cache_duration(&workload.phases).is_some() {
+            crate::agentic_replay::new_warmup_handoff_carrier()
+        } else {
+            crate::agentic_tree::empty_warmup_handoff_carrier()
+        };
     let prepared = crate::engine::dataset_input::PreparedDatasetInput {
         dataset,
         random_seed: run.identity.random_seed,
         default_output_tokens: 1,
         agentic_trees,
+        warmup_handoff,
     };
 
     // Translate each authored phase to the agentic_replay timing mode, and

@@ -17,14 +17,19 @@
 //! them against the [`crate::multiturn::ConversationSource`] seam.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::agentx::cache_bust::CacheBustTarget;
-use crate::agentx::handoff::AcceleratedObserver;
+use crate::agentx::handoff::{
+    AcceleratedObserver, FinalizeInputs, HandoffBaseDelayInputs, HandoffCredit, HandoffRecorder,
+    LegacyWarmupHandoff, PrevLaneTrajectory, finalize, finish_accelerated,
+};
+use crate::agentx::replay_gate::ReplayGate;
 use crate::agentx::session_tree::{PhaseKey, SessionTreeRegistry, SlotReleaser};
 use crate::agentx::trajectory_source::{
     profiling_dispatch_delays_ms, warmup_dispatch_offsets_ms,
@@ -175,6 +180,69 @@ struct LaneDispatch {
     has_warmup: bool,
 }
 
+/// Cross-phase carrier for the accelerated cache-warmup handoff — the legacy
+/// analogue of the graph path's `Rc<RefCell<Option<GraphWarmupHandoff>>>`
+/// ([`crate::engine::graph_phase_runtime`]). The WARMUP phase's `execute`
+/// populates it at drain/finalize; the PROFILING phase's `execute` reads it to
+/// resume each lane at its residual frontier. `Arc<Mutex<..>>` (not `Rc<RefCell>`)
+/// so the carrier can ride the `Send + Sync` shared run resources; it is written
+/// and read only at phase boundaries on the single global-hop coordinator, never
+/// on a per-request/token path.
+pub type WarmupHandoffCarrier = Arc<Mutex<Option<LegacyWarmupHandoff>>>;
+
+/// Construct a fresh, empty typed accelerated-warmup carrier. The agentic run
+/// assembly (`lower_legacy_agentic`) creates one and stores it type-erased on the
+/// prepared dataset so both agentic phase instances share it.
+pub fn new_warmup_handoff_carrier() -> WarmupHandoffCarrier {
+    Arc::new(Mutex::new(None))
+}
+
+/// Downcast a type-erased [`WarmupHandoffCarrierAny`](crate::agentic_tree::WarmupHandoffCarrierAny)
+/// to the typed carrier, or `None` for the empty non-agentic carrier.
+pub fn downcast_warmup_handoff_carrier(
+    any: &crate::agentic_tree::WarmupHandoffCarrierAny,
+) -> Option<WarmupHandoffCarrier> {
+    any.clone().downcast::<Mutex<Option<LegacyWarmupHandoff>>>().ok()
+}
+
+/// Per-lane recorded metadata the accelerated-warmup substage needs to project
+/// the drained frontier into residual handoff delays.
+struct LaneMeta {
+    /// Template/conversation id of the live lane.
+    conversation_id: String,
+    /// Number of recorded turns available in the lane.
+    num_turns: usize,
+    /// Recorded relative `delay_ms` per turn index (`None` when absent).
+    turn_delays_ms: Vec<Option<f64>>,
+    /// Recorded absolute `timestamp_ms` per turn index (`None` when absent).
+    turn_timestamps_ms: Vec<Option<f64>>,
+}
+
+/// Project a barrier-retained [`ReplayTurn`](crate::agentx::replay_gate::ReplayTurn)
+/// into a [`PendingHandoffTurn`](crate::agentx::handoff::PendingHandoffTurn) for the
+/// finalize projection, filling the linear-MVP DAG defaults (agent_depth 0, root =
+/// self). `num_turns` is recovered from the lane's recorded turn count.
+fn pending_handoff_turn(
+    turn: &crate::agentx::replay_gate::ReplayTurn,
+    lane_by_conv: &HashMap<String, usize>,
+    lanes: &[LaneMeta],
+) -> crate::agentx::handoff::PendingHandoffTurn {
+    let num_turns = lane_by_conv
+        .get(&turn.key.conversation_id)
+        .and_then(|&i| lanes.get(i))
+        .map_or(0, |l| l.num_turns) as i64;
+    crate::agentx::handoff::PendingHandoffTurn {
+        conversation_id: turn.key.conversation_id.clone(),
+        x_correlation_id: turn.root_id.clone(),
+        turn_index: turn.key.turn_index,
+        num_turns,
+        agent_depth: 0,
+        parent_correlation_id: None,
+        root_correlation_id: None,
+        branch_mode: crate::agentx::handoff::BranchMode::default(),
+    }
+}
+
 /// Which phase an [`AgenticReplayWorkload`] instance drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgenticPhase {
@@ -215,9 +283,16 @@ pub struct AgenticReplayConfig {
     /// to drive the accelerated substage. Absent on the PROFILING instance.
     pub cache_warmup_duration_s: Option<f64>,
     /// Optional per-turn `max_tokens` override for the accelerated cache-warmup
-    /// substage (`None` = use each turn's recorded cap). Reserved for the later
-    /// substage build; the plumbing task defaults it to `None`.
+    /// substage (`None` = use each turn's recorded cap). Set to `Some(1)` on the
+    /// WARMUP instance when `cache_warmup_duration_s` is present so every pressure
+    /// credit forces single-token generation (Python `_WARMUP_MAX_TOKENS=1`).
     pub max_tokens_override: Option<u32>,
+    /// Cross-phase accelerated-warmup handoff carrier. The WARMUP instance writes
+    /// the drained [`LegacyWarmupHandoff`] here at finalize; the PROFILING instance
+    /// reads it to resume each lane at its residual frontier. An empty carrier
+    /// (`None` inside) on PROFILING means the non-accelerated path — profiling runs
+    /// exactly as today. Default-constructed (empty) for every non-accelerated run.
+    pub warmup_handoff: WarmupHandoffCarrier,
 }
 
 /// The agentic-replay workload: drives one phase's dispatch over a
@@ -254,6 +329,38 @@ impl Workload for AgenticReplayWorkload {
     }
 
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
+        let cfg = &self.config;
+        // Accelerated cache-pressure warmup: instead of the static turn-(n-1)
+        // prime, continue replaying the live profiling trajectories under
+        // compressed traffic (zero idle, `max_tokens=1`) for the configured
+        // wall-duration, then hand the drained per-lane frontier to PROFILING via
+        // the carrier (Python `_start_accelerated_warmup` / `finalize_phase`).
+        if cfg.phase == AgenticPhase::Warmup
+            && cfg
+                .cache_warmup_duration_s
+                .is_some_and(|d| d.is_finite() && d > 0.0)
+        {
+            return self.execute_accelerated_warmup(runtime).await;
+        }
+        // PROFILING resume from a populated accelerated-warmup carrier (Python
+        // `setup_phase` prefix-reseed + residual-offset dispatch). An empty carrier
+        // leaves the profiling path EXACTLY as the non-accelerated run.
+        if cfg.phase == AgenticPhase::Profiling
+            && let Ok(guard) = cfg.warmup_handoff.lock()
+            && let Some(handoff) = guard.clone()
+        {
+            drop(guard);
+            return self.execute_profiling_resume(runtime, handoff).await;
+        }
+        self.execute_standard(runtime).await
+    }
+}
+
+impl AgenticReplayWorkload {
+    /// Standard (non-accelerated) warmup/profiling dispatch: warmup primes each
+    /// `::warmup` turn-(n-1) once; profiling replays each post-t\* lane at its
+    /// recorded offsets with recycle. Unchanged from the pre-accelerated port.
+    async fn execute_standard(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
         let cfg = &self.config;
         // 1) Read each lane's t\*-relative dispatch offsets. The snapshot slice
         // ([`crate::agentx::weka_dataset::slice_trajectories_at_tstar`]) already
@@ -377,10 +484,313 @@ impl Workload for AgenticReplayWorkload {
                 recycle.clone(),
                 gate.clone(),
                 defer_queue.clone(),
-                // Standard warmup/profiling path: no accelerated observer. The
-                // accelerated substage (a later task) is the sole arming caller.
+                // Standard warmup/profiling path: no accelerated observer.
                 None,
+                AccelCtx::default(),
             );
+        }
+        Ok(())
+    }
+
+    /// Accelerated cache-pressure warmup substage (Python `_start_accelerated_warmup`
+    /// / `_dispatch_accelerated_trajectory` / `_finish_accelerated_warmup` /
+    /// `finalize_phase`).
+    ///
+    /// Pressure-replays each live profiling lane (the non-`::warmup` conversations,
+    /// which `slice_trajectories_at_tstar` already rebased to start at their post-t\*
+    /// turn 0) from turn 0 at zero idle delay with `max_tokens=1`, chaining
+    /// continuations under compression. A Clock-scheduled duration timer sets the
+    /// drain latch (no new issuance), pauses the replay barrier gate, and cancels
+    /// pending dispatches; already-issued requests drain via `wait_idle`. The drained
+    /// DAG is then projected into a [`LegacyWarmupHandoff`] and published on the
+    /// carrier for PROFILING to resume from.
+    async fn execute_accelerated_warmup(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
+        let cfg = &self.config;
+        let duration_s = cfg
+            .cache_warmup_duration_s
+            .expect("accelerated warmup requires a duration");
+
+        // Live lanes = the profiling (non-`::warmup`) conversations, in dataset
+        // order. Each is a warmup pressure lane AND its own linear-MVP tree root.
+        let lanes: Vec<LaneMeta> = {
+            let source = self.source.borrow();
+            source
+                .conversations()
+                .iter()
+                .filter(|meta| {
+                    !meta
+                        .conversation_id
+                        .ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX)
+                })
+                .map(|meta| LaneMeta {
+                    conversation_id: meta.conversation_id.clone(),
+                    num_turns: meta.turns.len(),
+                    // Recorded inter-turn delays (delay_ms per turn index), used for
+                    // the residual base after compression.
+                    turn_delays_ms: meta.turns.iter().map(|t| t.delay_ms).collect(),
+                    turn_timestamps_ms: meta.turns.iter().map(|t| t.timestamp_ms).collect(),
+                })
+                .collect()
+        };
+
+        // Barrier gate + return-observation recorder. Linear MVP: no cross-stream
+        // predecessors (each lane is an independent tree root), so the gate is a
+        // pass-through until paused for drain; it still records completed prefixes
+        // and retained pending turns for the handoff.
+        let mut gate = ReplayGate::new(BTreeMap::new());
+        gate.activate();
+        let observer = Rc::new(AcceleratedObserver::new(gate, HandoffRecorder::new()));
+
+        // Lane bookkeeping for the finalize projection: root/correlation -> lane.
+        let mut root_to_lane: BTreeMap<String, usize> = BTreeMap::new();
+        let mut correlation_to_lane: BTreeMap<String, usize> = BTreeMap::new();
+        let mut prev_lanes: Vec<PrevLaneTrajectory> = Vec::new();
+
+        let anchor_ns = runtime.now_ns();
+        let accel = AccelCtx {
+            draining: Rc::new(Cell::new(false)),
+            zero_idle: true,
+        };
+        let defer_queue: Rc<RefCell<Vec<PendingJoin>>> = Rc::new(RefCell::new(Vec::new()));
+
+        for (lane_idx, lane) in lanes.iter().enumerate() {
+            if lane.num_turns == 0 {
+                prev_lanes.push(PrevLaneTrajectory {
+                    conversation_id: lane.conversation_id.clone(),
+                    x_correlation_id: lane.conversation_id.clone(),
+                });
+                continue;
+            }
+            // Linear MVP: correlation id == conversation id (unique per lane), and
+            // the lane is its own tree root.
+            let corr = lane.conversation_id.clone();
+            root_to_lane.insert(corr.clone(), lane_idx);
+            correlation_to_lane.insert(corr.clone(), lane_idx);
+            prev_lanes.push(PrevLaneTrajectory {
+                conversation_id: lane.conversation_id.clone(),
+                x_correlation_id: corr.clone(),
+            });
+
+            let session = match self.source.borrow().session_for(&lane.conversation_id, corr) {
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::warn!(error = %error, lane = %lane.conversation_id, "accelerated warmup lane session failed");
+                    continue;
+                }
+            };
+            // `build_turn_at(start_turn_index + 1)`; the sliced profiling lane's
+            // start turn is turn 0, so the pressure replay begins at turn 0.
+            let mut first = match session.build_turn_at(0, None) {
+                Ok(turn) => turn,
+                Err(error) => {
+                    tracing::warn!(error = %error, lane = %lane.conversation_id, "accelerated warmup first turn failed");
+                    continue;
+                }
+            };
+            apply_max_tokens_override(&mut first, cfg.max_tokens_override);
+            schedule_agentic_turn(
+                runtime.clone(),
+                self.source.clone(),
+                first,
+                anchor_ns,
+                true,
+                None,
+                None,
+                defer_queue.clone(),
+                Some(observer.clone()),
+                accel.clone(),
+            );
+        }
+
+        // Arm the Clock-driven drain timer: at +duration set the drain latch, pause
+        // the barrier gate (Python `_finish_accelerated_warmup`), and cancel pending
+        // (not-yet-issued) dispatches so no new pressure work starts.
+        let duration_ns = (duration_s * 1_000_000_000.0) as i64;
+        {
+            let observer = observer.clone();
+            let draining = accel.draining.clone();
+            let runtime = runtime.clone();
+            runtime.clone().scheduler().schedule_later(
+                duration_ns,
+                Box::pin(async move {
+                    draining.set(true);
+                    finish_accelerated(&observer);
+                    runtime.scheduler().cancel_pending();
+                }),
+            );
+        }
+        // Await the drain timer + in-flight settle. The drain timer is a tracked
+        // task, so `wait_idle` cannot resolve before +duration; after it fires and
+        // cancels pending, the in-flight requests drain and this resolves.
+        runtime.scheduler().wait_idle().await;
+
+        // Finalize: project the drained DAG into the carrier (Python `finalize_phase`).
+        let finalized_ns = runtime.now_ns();
+        let lane_by_conv: HashMap<String, usize> = lanes
+            .iter()
+            .enumerate()
+            .map(|(i, l)| (l.conversation_id.clone(), i))
+            .collect();
+        let base_delay_inputs = |credit: &HandoffCredit| -> HandoffBaseDelayInputs {
+            let Some(&lane_idx) = lane_by_conv.get(&credit.conversation_id) else {
+                return HandoffBaseDelayInputs::default();
+            };
+            let lane = &lanes[lane_idx];
+            let next = credit.turn_index + 1;
+            HandoffBaseDelayInputs {
+                next_delay_ms: lane.turn_delays_ms.get(next).copied().flatten(),
+                prev_timestamp_ms: lane.turn_timestamps_ms.get(credit.turn_index).copied().flatten(),
+                next_timestamp_ms: lane.turn_timestamps_ms.get(next).copied().flatten(),
+                prev_api_time_ms: None,
+            }
+        };
+        let pending_by_root = observer
+            .gate
+            .borrow()
+            .pending_turns_by_root()
+            .into_iter()
+            .map(|(root, turns)| {
+                let turns = turns
+                    .into_iter()
+                    .map(|t| pending_handoff_turn(&t, &lane_by_conv, &lanes))
+                    .collect::<Vec<_>>();
+                (root, turns)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let completed_prefixes = |root: &str| -> Vec<crate::agentx::replay_dependencies::ReplayResumeBoundary> {
+            observer
+                .gate
+                .borrow()
+                .completed_prefixes(root)
+                .unwrap_or_default()
+        };
+        // Empty lanes (a fully-drained tree) recycle a fresh root, drawing the lane's
+        // own template with a fresh correlation id (Python `next_recycle_conversation_id`).
+        let recycle_cursor = Cell::new(0usize);
+        let recycle_ids: Vec<String> = lanes.iter().map(|l| l.conversation_id.clone()).collect();
+        let recycle_draw = || -> Option<(String, String)> {
+            if recycle_ids.is_empty() {
+                return None;
+            }
+            let i = recycle_cursor.get();
+            recycle_cursor.set(i + 1);
+            let template = recycle_ids[i % recycle_ids.len()].clone();
+            let corr = format!("{template}#w{i}");
+            Some((template, corr))
+        };
+
+        let handoff = {
+            let recorder = observer.recorder.borrow();
+            finalize(FinalizeInputs {
+                handoff_credits: recorder.handoff_credits(),
+                return_wall_ns: recorder.return_wall_ns(),
+                pending_by_root: &pending_by_root,
+                root_to_lane: &root_to_lane,
+                correlation_to_lane: &correlation_to_lane,
+                num_lanes: lanes.len(),
+                finalized_ns,
+                cap_ms: cfg.idle_gap_cap_ms,
+                base_delay_inputs,
+                completed_prefixes,
+                recycle_draw,
+                prev_lanes: &prev_lanes,
+            })
+        };
+        if let Ok(mut guard) = cfg.warmup_handoff.lock() {
+            *guard = Some(handoff);
+        }
+        Ok(())
+    }
+
+    /// PROFILING resume from the accelerated-warmup carrier (Python `setup_phase`
+    /// prefix-reseed + residual-offset dispatch). Each surviving lane state is
+    /// resumed at its true `next_turn_index` via `build_turn_at` at its residual
+    /// `next_dispatch_offset_ms`; recycled (empty-warmup-drained) lanes start a
+    /// fresh root at turn 0. The barrier gate is re-seeded with each lane's
+    /// completed prefixes and re-activated (inert for the linear MVP, kept for
+    /// parity). Continuations chain at recorded cadence with recorded `max_tokens`.
+    async fn execute_profiling_resume(
+        &self,
+        runtime: Rc<ScheduledRuntime>,
+        handoff: LegacyWarmupHandoff,
+    ) -> Result<()> {
+        let cfg = &self.config;
+        let lead_ns = if runtime.clock().is_virtual() {
+            0
+        } else {
+            SCHEDULE_START_LEAD_NS
+        };
+        let anchor_ns = runtime.now_ns().saturating_add(lead_ns);
+
+        // Re-seed the barrier gate with the merged completed prefixes and activate
+        // it (Python `setup_phase`). Inert without submit-wiring in the linear MVP,
+        // but preserves the parity surface.
+        let mut gate = ReplayGate::new(BTreeMap::new());
+        for lane in handoff.lanes.values() {
+            if let Some(state) = lane.states.first() {
+                let root = state.effective_root_correlation_id();
+                let _ = gate.seed_completed_prefixes(root, &lane.boundaries);
+            }
+        }
+        gate.activate();
+
+        let tree_specs = &cfg.trees;
+        let tree_gate: Option<Rc<TreeGate>> = if tree_specs.is_empty() {
+            None
+        } else {
+            Some(Rc::new(TreeGate::try_new(tree_specs)?))
+        };
+        let defer_queue: Rc<RefCell<Vec<PendingJoin>>> = Rc::new(RefCell::new(Vec::new()));
+        // Recycle over the resumed lane templates to sustain a duration run.
+        let recycle_ids: Vec<String> = handoff
+            .lanes
+            .values()
+            .filter_map(|l| l.states.first().map(|s| s.conversation_id.clone()))
+            .collect();
+        let recycle = Rc::new(RecycleState {
+            ids: recycle_ids,
+            cursor: Cell::new(0),
+            recycle_pass: RefCell::new(HashMap::new()),
+            benchmark_id: cfg.benchmark_id.clone(),
+            cache_bust_target: cfg.cache_bust_target,
+        });
+
+        for lane in handoff.lanes.values() {
+            for state in &lane.states {
+                let session = match self
+                    .source
+                    .borrow()
+                    .session_for(&state.conversation_id, state.x_correlation_id.clone())
+                {
+                    Ok(session) => session,
+                    Err(error) => {
+                        tracing::warn!(error = %error, lane = %state.conversation_id, "profiling resume session failed");
+                        continue;
+                    }
+                };
+                let start_index = state.next_turn_index.max(0) as usize;
+                let first = match session.build_turn_at(start_index, None) {
+                    Ok(turn) => turn,
+                    Err(error) => {
+                        tracing::warn!(error = %error, lane = %state.conversation_id, index = start_index, "profiling resume turn failed");
+                        continue;
+                    }
+                };
+                let target_ns = anchor_ns
+                    .saturating_add((state.next_dispatch_offset_ms.max(0.0) * NS_PER_MS) as i64);
+                schedule_agentic_turn(
+                    runtime.clone(),
+                    self.source.clone(),
+                    first,
+                    target_ns,
+                    true,
+                    Some(recycle.clone()),
+                    tree_gate.clone(),
+                    defer_queue.clone(),
+                    None,
+                    AccelCtx::default(),
+                );
+            }
         }
         Ok(())
     }
@@ -443,6 +853,20 @@ pub fn take_ready<T>(
 /// [`Clock`](crate::clock::Clock). `None` (every current caller — the standard
 /// warmup/profiling path) changes no runtime behavior; the accelerated substage
 /// (a later task) is the sole caller that arms it.
+/// Accelerated-warmup dispatch context threaded alongside the tree gate: the
+/// drain latch (set when the duration timer fires — no new continuation/recycle
+/// issuance after it) and the zero-idle flag (accelerated pressure fires each
+/// continuation immediately, ignoring the recorded inter-turn `delay_ms`).
+#[derive(Clone, Default)]
+struct AccelCtx {
+    /// Set once the accelerated-warmup duration timer fires; consulted before any
+    /// new continuation or recycle is scheduled so the DAG drains without new work.
+    draining: Rc<Cell<bool>>,
+    /// Accelerated pressure fires continuations at zero idle delay (Python
+    /// compressed traffic), overriding the recorded inter-turn cadence.
+    zero_idle: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn schedule_agentic_turn(
     runtime: Rc<ScheduledRuntime>,
@@ -454,6 +878,7 @@ fn schedule_agentic_turn(
     gate: Option<Rc<TreeGate>>,
     defer_queue: Rc<RefCell<Vec<PendingJoin>>>,
     observer: Option<Rc<AcceleratedObserver>>,
+    accel: AccelCtx,
 ) {
     // Defer a gated join turn until its awaited children terminate. The child
     // terminal callbacks (below) drain the queue and re-dispatch at `now_ns`.
@@ -478,6 +903,7 @@ fn schedule_agentic_turn(
             let gate_c = gate.clone();
             let defer_c = defer_queue.clone();
             let observer_c = observer.clone();
+            let accel_c = accel.clone();
             runtime.issue_turn(
                 turn,
                 target_ns,
@@ -528,6 +954,7 @@ fn schedule_agentic_turn(
                                         gate_c.clone(),
                                         defer_c.clone(),
                                         observer_c.clone(),
+                                        accel_c.clone(),
                                     );
                                 }
                             }
@@ -537,7 +964,10 @@ fn schedule_agentic_turn(
                             let drained = gate_c
                                 .as_ref()
                                 .map_or(true, |g| g.on_lane_terminal(&conv_id));
+                            // No new recycle issuance once the accelerated-warmup
+                            // drain latch is set (Python `mark_sending_complete`).
                             if drained
+                                && !accel_c.draining.get()
                                 && let Some(recycle) = &recycle
                                 && runtime_c.can_issue(true)
                                 && let Some(draw) = recycle.next_draw()
@@ -563,12 +993,15 @@ fn schedule_agentic_turn(
                                         gate_c,
                                         defer_c,
                                         observer_c,
+                                        accel_c.clone(),
                                     );
                                 }
                             }
                             return;
                         }
-                        if !chain {
+                        // Stop chaining new continuations once the drain latch is
+                        // set: already-issued requests drain, no new ones start.
+                        if !chain || accel_c.draining.get() {
                             return;
                         }
                         let (delay_ms, next_turn) = {
@@ -583,12 +1016,15 @@ fn schedule_agentic_turn(
                             };
                             (meta.delay_ms.unwrap_or(0.0), next)
                         };
+                        // Accelerated pressure fires continuations at zero idle;
+                        // the standard path honors the recorded inter-turn delay.
+                        let effective_delay_ms = if accel_c.zero_idle { 0.0 } else { delay_ms };
                         let next_target = outcome
                             .end_ns
-                            .saturating_add((delay_ms.max(0.0) * NS_PER_MS) as i64);
+                            .saturating_add((effective_delay_ms.max(0.0) * NS_PER_MS) as i64);
                         schedule_agentic_turn(
                             runtime_c, source_c, next_turn, next_target, true, recycle, gate_c,
-                            defer_c, observer_c,
+                            defer_c, observer_c, accel_c,
                         );
                     })
                 }),

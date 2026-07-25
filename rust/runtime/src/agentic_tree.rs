@@ -35,3 +35,20 @@ pub struct TreeSpec {
     /// Root join points: `(turn_index, required_child_ids)`.
     pub join_turns: Vec<(usize, Vec<String>)>,
 }
+
+/// Opaque cross-phase carrier slot for the accelerated cache-warmup handoff.
+///
+/// The concrete payload (`Arc<Mutex<Option<LegacyWarmupHandoff>>>`) lives behind
+/// the `agentx`-gated [`crate::agentx::handoff`] module; this non-gated type-erased
+/// alias lets the (non-gated) native phase-plan plumbing thread the carrier without
+/// a feature-conditional signature. The WARMUP agentic phase downcasts and populates
+/// it at finalize; PROFILING downcasts and reads it. Non-agentic (and non-accelerated)
+/// runs carry [`empty_warmup_handoff_carrier`], which no phase ever downcasts.
+pub type WarmupHandoffCarrierAny = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+
+/// An empty (never-populated) accelerated-warmup carrier for non-agentic and
+/// non-accelerated runs. Downcasting it to the typed carrier fails by design, so
+/// the profiling path stays exactly the non-accelerated behavior.
+pub fn empty_warmup_handoff_carrier() -> WarmupHandoffCarrierAny {
+    std::sync::Arc::new(())
+}
