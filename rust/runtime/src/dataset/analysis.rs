@@ -202,11 +202,13 @@ pub struct LengthStats {
 }
 
 /// Compute the [`LengthStats`] over a set of planned turns. Ratios are computed
-/// only for turns with a positive output budget.
-pub fn length_stats(turns: &[AnalyzedTurn]) -> LengthStats {
-    let mut isl = Vec::with_capacity(turns.len());
-    let mut osl = Vec::with_capacity(turns.len());
-    let mut total = Vec::with_capacity(turns.len());
+/// only for turns with a positive output budget. Accepts anything iterable as
+/// `&AnalyzedTurn` so callers can pass a slice or a filtered borrow without
+/// cloning.
+pub fn length_stats<'a>(turns: impl IntoIterator<Item = &'a AnalyzedTurn>) -> LengthStats {
+    let mut isl = Vec::new();
+    let mut osl = Vec::new();
+    let mut total = Vec::new();
     let mut ratio = Vec::new();
     let mut total_prompt_tokens = 0u64;
     let mut total_completion_tokens = 0u64;
@@ -671,20 +673,17 @@ pub fn analyze(
     analysis
 }
 
-/// Group `turns` by conversation id and compute a [`LengthStats`] per group.
-///
-/// Conversations are emitted in ascending id order for stable output. Each
-/// group's length distribution is the same computation as the dataset-wide
-/// [`length_stats`], restricted to that conversation's turns.
+/// Group `turns` by conversation id (ascending) and compute a [`LengthStats`]
+/// per group, restricted to that conversation's turns.
 fn per_conversation_summaries(turns: &[AnalyzedTurn]) -> Vec<ConversationSummary> {
     use std::collections::BTreeMap;
 
-    let mut by_conversation: BTreeMap<&str, Vec<AnalyzedTurn>> = BTreeMap::new();
+    let mut by_conversation: BTreeMap<&str, Vec<&AnalyzedTurn>> = BTreeMap::new();
     for turn in turns {
         by_conversation
             .entry(turn.conversation_id.as_str())
             .or_default()
-            .push(turn.clone());
+            .push(turn);
     }
 
     by_conversation
@@ -692,7 +691,7 @@ fn per_conversation_summaries(turns: &[AnalyzedTurn]) -> Vec<ConversationSummary
         .map(|(conversation_id, group)| ConversationSummary {
             conversation_id: conversation_id.to_string(),
             turns: group.len() as u64,
-            lengths: length_stats(&group),
+            lengths: length_stats(group.iter().copied()),
         })
         .collect()
 }

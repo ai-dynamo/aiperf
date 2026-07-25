@@ -134,9 +134,9 @@ static EMPTY_PERCENTILES: std::sync::LazyLock<BTreeMap<String, ReportValue>> =
 /// The borrowed `percentiles` table is the variant's own `pN` map (empty for the
 /// single-valued scalar/counter variants).
 pub(crate) struct CanonicalStats<'a> {
-    /// Representative value: the distribution/histogram average, or the scalar
-    /// value / counter total. This is the bare-tag value for keyed emitters and
-    /// the lone value broadcast by [`Self::single_value`] emitters.
+    /// Representative value: distribution/histogram average, or scalar value /
+    /// counter total. The bare-tag value, and the lone value `single_value`
+    /// emitters broadcast across their columns.
     pub avg: Option<ReportValue>,
     /// Minimum observation (distribution only).
     pub min: Option<ReportValue>,
@@ -150,9 +150,8 @@ pub(crate) struct CanonicalStats<'a> {
     pub sum: Option<ReportValue>,
     /// Percentile table keyed by `pN`.
     pub percentiles: &'a BTreeMap<String, ReportValue>,
-    /// Whether this came from a single-valued variant (scalar/counter), where the
-    /// representative stands in for the min/max/percentile columns at emitters
-    /// that broadcast a lone value across their stat columns.
+    /// True for the single-valued variants (scalar/counter): the representative
+    /// stands in for the min/max/percentile columns.
     pub single_value: bool,
 }
 

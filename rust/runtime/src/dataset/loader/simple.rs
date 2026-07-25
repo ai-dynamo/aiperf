@@ -535,6 +535,9 @@ impl Composer for MultiTurnComposer {
         // Flush any still-deferred leading system turn: it was the session's only
         // turn, so a conversation-level system message would leave it
         // undispatchable. Restore it as a normal turn (pre-hoist behavior).
+        // Indexes three parallel arrays (`pending_system`, `acc.parents`,
+        // `acc.conversations`) by the same position, so a range loop is required.
+        #[allow(clippy::needless_range_loop)]
         for position in 0..acc.conversations.len() {
             if let Some(pending) = pending_system[position].take() {
                 let turn = compose_simple_turn(pending, &mut acc.parents[position], &mut state)?;

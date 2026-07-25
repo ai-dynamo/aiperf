@@ -1290,7 +1290,7 @@ mod tests {
                 &clk,
                 2,
                 1_000,
-                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                |e: &GrpcTransportError| e.details.kind == GrpcErrorKind::Other,
                 || {
                     calls.set(calls.get() + 1);
                     async { Err::<(), _>(err(GrpcErrorKind::Other)) }
@@ -1319,7 +1319,7 @@ mod tests {
                 &clk,
                 5,
                 1_000,
-                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                |e: &GrpcTransportError| e.details.kind == GrpcErrorKind::Other,
                 || {
                     calls.set(calls.get() + 1);
                     made.set(calls.get());
@@ -1357,7 +1357,7 @@ mod tests {
                 &clk,
                 5,
                 1_000,
-                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                |e: &GrpcTransportError| e.details.kind == GrpcErrorKind::Other,
                 || {
                     calls.set(calls.get() + 1);
                     async { Err::<(), _>(err(GrpcErrorKind::RequestSendTimeout)) }
@@ -1383,7 +1383,7 @@ mod tests {
                 &clk,
                 0,
                 1_000,
-                |e: &GrpcTransportError| e.details().kind == GrpcErrorKind::Other,
+                |e: &GrpcTransportError| e.details.kind == GrpcErrorKind::Other,
                 || {
                     calls.set(calls.get() + 1);
                     async { Err::<(), _>(err(GrpcErrorKind::Other)) }
