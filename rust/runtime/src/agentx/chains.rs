@@ -589,14 +589,27 @@ mod tests {
     }
 
     #[test]
-    fn divergent_prefix_spawns_worker() {
-        // r2 shares only prefix [1] then diverges -> spawns a worker chain.
+    fn divergence_without_pullback_is_a_seam() {
+        // r1 shares only prefix [1] then diverges; nothing later pulls back to
+        // the longer pre-shrink state, so it elects as a join seam (one chain).
+        let normals = vec![(0, req(0.0, "m", &[1, 2])), (1, req(1.0, "m", &[1, 9]))];
+        let r = detect_agent_chains(normals, 3600.0, 0.5);
+        assert_eq!(r.worker_indices.len(), 0);
+        assert_eq!(r.seams_merged, 1);
+    }
+
+    #[test]
+    fn divergence_with_future_pullback_spawns_worker() {
+        // r1 diverges from [1,2]; r2 later EXTENDS the longer state [1,2,3],
+        // proving r1 was a separate spawned agent, not a continuation.
         let normals = vec![
             (0, req(0.0, "m", &[1, 2])),
             (1, req(1.0, "m", &[1, 9])),
+            (2, req(2.0, "m", &[1, 2, 3])),
         ];
         let r = detect_agent_chains(normals, 3600.0, 0.5);
         assert_eq!(r.worker_indices.len(), 1);
+        assert_eq!(r.seams_merged, 0);
     }
 
     #[test]
