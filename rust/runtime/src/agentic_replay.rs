@@ -16,7 +16,7 @@
 //! byte-exact marker builder in [`crate::agentx::cache_bust`]; this module drives
 //! them against the [`crate::multiturn::ConversationSource`] seam.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -35,6 +35,28 @@ const NS_PER_MS: f64 = 1_000_000.0;
 /// Lead the real-clock scheduling pass by this much so `schedule_at_ns` targets
 /// stay in the future while the O(n) pass runs (mirrors fixed_schedule).
 const SCHEDULE_START_LEAD_NS: i64 = 25_000_000;
+
+/// Round-robin recycle cursor over the profiling lanes: when a lane's stream
+/// completes and the phase budget still permits, the next trajectory is redrawn
+/// (Python `next_recycle_conversation_id` with the `sequential` sampler) and
+/// dispatched immediately to sustain a duration run.
+struct RecycleState {
+    /// Profiling conversation ids in dataset order.
+    ids: Vec<String>,
+    /// Next index to draw.
+    cursor: Cell<usize>,
+}
+
+impl RecycleState {
+    fn next_id(&self) -> Option<String> {
+        if self.ids.is_empty() {
+            return None;
+        }
+        let i = self.cursor.get();
+        self.cursor.set(i + 1);
+        Some(self.ids[i % self.ids.len()].clone())
+    }
+}
 
 /// Per-lane dispatch decision computed from the trajectory's recorded timestamps.
 struct LaneDispatch {
@@ -174,6 +196,14 @@ impl Workload for AgenticReplayWorkload {
         };
         let anchor_ns = runtime.now_ns().saturating_add(lead_ns);
         let source = Rc::clone(&self.source);
+        // Profiling recycles exhausted trajectories to sustain a duration run;
+        // warmup is a one-shot prime with no recycle.
+        let recycle = (cfg.phase == AgenticPhase::Profiling).then(|| {
+            Rc::new(RecycleState {
+                ids: lanes.iter().map(|l| l.conversation_id.clone()).collect(),
+                cursor: Cell::new(0),
+            })
+        });
         for (lane, offset_ms_val) in lanes.iter().zip(offsets_ms.iter()) {
             let dispatch = match cfg.phase {
                 AgenticPhase::Warmup if lane.has_warmup => true,
@@ -205,7 +235,14 @@ impl Workload for AgenticReplayWorkload {
             let target_ns = anchor_ns.saturating_add((offset_ms_val.max(0.0) * NS_PER_MS) as i64);
             // Profiling chains continuations on response; warmup fires one turn.
             let chain = cfg.phase == AgenticPhase::Profiling;
-            schedule_agentic_turn(runtime.clone(), source.clone(), first, target_ns, chain);
+            schedule_agentic_turn(
+                runtime.clone(),
+                source.clone(),
+                first,
+                target_ns,
+                chain,
+                recycle.clone(),
+            );
         }
         Ok(())
     }
@@ -214,12 +251,14 @@ impl Workload for AgenticReplayWorkload {
 /// Schedule one lane turn at `target_ns`, then (when `chain`) recursively schedule
 /// its continuation on completion at the recorded inter-turn `delay_ms` from the
 /// prior turn's end — Python's per-stream sequential continuation.
+#[allow(clippy::too_many_arguments)]
 fn schedule_agentic_turn(
     runtime: Rc<ScheduledRuntime>,
     source: Rc<RefCell<Box<dyn ConversationSource>>>,
     turn: crate::multiturn::TurnToSend,
     target_ns: i64,
     chain: bool,
+    recycle: Option<Rc<RecycleState>>,
 ) {
     let scheduler = runtime.scheduler();
     scheduler.schedule_at_ns(
@@ -233,7 +272,33 @@ fn schedule_agentic_turn(
                 None,
                 Box::new(move |credit, outcome| {
                     Box::pin(async move {
-                        if !chain || credit.is_final_turn() {
+                        if credit.is_final_turn() {
+                            // The stream is done. Recycle a fresh trajectory to
+                            // sustain the run while the phase budget permits.
+                            if let Some(recycle) = &recycle
+                                && runtime_c.can_issue(true)
+                                && let Some(next_id) = recycle.next_id()
+                            {
+                                let session = source_c
+                                    .borrow()
+                                    .session_for(&next_id, next_id.clone());
+                                if let Ok(session) = session
+                                    && let Ok(first) = session.build_first_turn(None)
+                                {
+                                    let now = runtime_c.now_ns();
+                                    schedule_agentic_turn(
+                                        runtime_c,
+                                        source_c,
+                                        first,
+                                        now,
+                                        true,
+                                        Some(recycle.clone()),
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                        if !chain {
                             return;
                         }
                         let (delay_ms, next_turn) = {
@@ -251,7 +316,9 @@ fn schedule_agentic_turn(
                         let next_target = outcome
                             .end_ns
                             .saturating_add((delay_ms.max(0.0) * NS_PER_MS) as i64);
-                        schedule_agentic_turn(runtime_c, source_c, next_turn, next_target, true);
+                        schedule_agentic_turn(
+                            runtime_c, source_c, next_turn, next_target, true, recycle,
+                        );
                     })
                 }),
             );
