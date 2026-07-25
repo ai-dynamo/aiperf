@@ -32,7 +32,7 @@ use aiperf_runtime::agentx::cache_bust::CacheBustTarget;
 use aiperf_runtime::clock::Clock;
 use aiperf_runtime::clock::sim_clock::SimClock;
 use aiperf_runtime::dataset::{
-    ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, NativeDataset, TiktokenTokenizer,
+    ComposeConfig, Dataset, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
 };
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
 use aiperf_runtime::dispatch::sink::RequestObserver;
@@ -41,18 +41,31 @@ use aiperf_runtime::graph::runtime::drive_sim;
 use aiperf_runtime::multiturn::{
     ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference, TurnToSend,
 };
+use aiperf_runtime::phase_runtime::{ScheduledPhasePlan, run_scheduled_phases};
 use aiperf_runtime::rng::RngRoot;
 use aiperf_runtime::scheduled::{
-    ModelResponseMetadata, ScheduledRunReport, TurnDispatchOutcome, TurnDispatcher, Workload,
-    run_scheduled_workload,
+    ModelResponseMetadata, ScheduledAncillaryPolicies as PhaseAncillary, ScheduledRunReport,
+    TurnDispatchOutcome, TurnDispatcher, Workload, run_scheduled_workload,
 };
-use aiperf_runtime::timing::StopConfig;
+use aiperf_runtime::timing::{
+    GracePeriod, PhaseBranchStats, PhaseConfig, PhaseKind, PhaseObserver, PhaseStats, StopConfig,
+};
 use async_trait::async_trait;
+
+/// No-op phase observer for the full phase-runner harness.
+struct NoopPhaseObserver;
+impl PhaseObserver for NoopPhaseObserver {
+    fn on_phase_start(&self, _config: &PhaseConfig, _stats: PhaseStats) {}
+    fn on_progress(&self, _stats: PhaseStats) {}
+    fn on_sending_complete(&self, _stats: PhaseStats) {}
+    fn on_phase_complete(&self, _stats: PhaseStats, _branch: Option<PhaseBranchStats>) {}
+}
 
 /// One observed dispatch: the identity + forced output cap + virtual dispatch instant.
 #[derive(Clone, Debug)]
 struct Seen {
     conversation_id: String,
+    x_correlation_id: String,
     turn_index: usize,
     max_output_tokens: usize,
     dispatch_ms: f64,
@@ -79,6 +92,7 @@ impl TurnDispatcher for SimDispatcher {
         let start_ns = self.clock.now_ns();
         self.seen.borrow_mut().push(Seen {
             conversation_id: turn.conversation_id.clone(),
+            x_correlation_id: turn.x_correlation_id.clone(),
             turn_index: turn.turn_index,
             max_output_tokens: turn.max_output_tokens,
             dispatch_ms: (start_ns - self.origin_ns) as f64 / 1_000_000.0,
@@ -110,7 +124,7 @@ impl TurnDispatcher for SimDispatcher {
 /// whose per-turn context is reproducible up front — the property `build_turn_at(k)`
 /// jump-resume requires. `delay` on a row becomes that turn's recorded `delay_ms`.
 async fn multiturn_source(rows: serde_json::Value, model: &str) -> Box<dyn ConversationSource> {
-    let dataset: NativeDataset = LoaderRegistry::with_builtin_formats()
+    let dataset: Dataset = LoaderRegistry::with_builtin_formats()
         .unwrap()
         .build_dataset(
             Some("single_turn"),
@@ -195,22 +209,25 @@ fn run(
 /// Two five-turn live lanes ("a","b") and one single-turn lane ("c"). Rows 1.. carry
 /// a recorded 100 ms inter-turn delay so the handoff residual is non-zero.
 fn dataset_rows() -> serde_json::Value {
-    let lane = |id: &str, turns: usize| {
-        (0..turns).map(move |i| {
-            let mut row = serde_json::json!({
-                "session_id": id,
-                "text": format!("{id} q{i} alpha beta gamma"),
-                "output_length": 4,
-            });
-            if i > 0 {
-                row["delay"] = serde_json::json!(100.0);
-            }
-            row
-        })
+    let lane = |id: &str, turns: usize| -> Vec<serde_json::Value> {
+        (0..turns)
+            .map(|i| {
+                let mut row = serde_json::json!({
+                    "session_id": id,
+                    "text": format!("{id} q{i} alpha beta gamma"),
+                    "output_length": 4,
+                });
+                if i > 0 {
+                    row["delay"] = serde_json::json!(100.0);
+                }
+                row
+            })
+            .collect()
     };
-    serde_json::Value::Array(
-        lane("a", 5).chain(lane("b", 5)).chain(lane("c", 1)).collect(),
-    )
+    let mut rows = lane("a", 5);
+    rows.extend(lane("b", 5));
+    rows.extend(lane("c", 1));
+    serde_json::Value::Array(rows)
 }
 
 #[test]
@@ -254,11 +271,43 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
     assert!(warmup_seen.iter().any(|s| s.conversation_id == "a" && s.turn_index >= 1));
     assert!(warmup_seen.iter().any(|s| s.conversation_id == "b" && s.turn_index >= 1));
 
-    // The carrier now holds the drained frontier the WARMUP finalize produced.
+    // The carrier now holds the drained frontier the WARMUP finalize produced. These
+    // assertions read the production `finalize` output directly (the load-bearing
+    // handoff): resume indices, residual offsets, and the recycled empty lane.
     let handoff = carrier.lock().unwrap().clone().expect("warmup populated the carrier");
     assert_eq!(handoff.lanes.len(), 3, "one handoff lane per live trajectory");
+    // (b, carrier) Lanes a,b survived mid-flight and resume at their TRUE next turn
+    //     index (> 0) carrying a strictly-positive residual dispatch offset.
+    let mut surviving = 0usize;
+    let mut max_offset_ms = 0.0f64;
+    for lane in handoff.lanes.values() {
+        for st in &lane.states {
+            if st.x_correlation_id == "a" || st.x_correlation_id == "b" {
+                assert!(st.next_turn_index >= 2, "surviving lane resumes past turn 0 (drained frontier)");
+                assert!(st.next_dispatch_offset_ms > 0.0, "surviving lane carries a residual offset");
+                surviving += 1;
+            }
+            max_offset_ms = max_offset_ms.max(st.next_dispatch_offset_ms);
+        }
+    }
+    assert_eq!(surviving, 2, "lanes a and b both survived the warmup drain");
+    // (c, carrier) The drained single-turn lane recycled a FRESH root (turn 0, a
+    //     `#w` recycle correlation, zero offset) rather than a surviving resume.
+    let recycled_state = handoff
+        .lanes
+        .values()
+        .flat_map(|l| &l.states)
+        .find(|s| s.x_correlation_id.contains("#w"))
+        .expect("drained lane recycled a fresh root");
+    assert_eq!(recycled_state.next_turn_index, 0, "recycled root starts at turn 0");
+    assert_eq!(recycled_state.next_dispatch_offset_ms, 0.0, "recycled root has zero residual offset");
 
-    // ---- PROFILING: resume each lane from the carrier frontier. ----
+    // ---- PROFILING: drive the REAL resume dispatch off the carrier. ----
+    // Turns are made effectively non-terminating within the observation window (10 s
+    // virtual each) and the duration budget is set just past the largest residual
+    // offset, so exactly the initial resume/recycle dispatches fire — cleanly, with
+    // no lane completing into a recycle the bare harness could not cancel.
+    let deadline_ns = ((max_offset_ms + 20.0) * 1_000_000.0) as i64;
     let profiling_seen = {
         let source = block_on_source(dataset_rows());
         let cfg = config(AgenticPhase::Profiling, carrier.clone(), None, None);
@@ -268,43 +317,62 @@ fn accelerated_warmup_pressure_then_profiling_resumes_at_residual_frontier() {
         let dispatcher = Rc::new(SimDispatcher {
             clock: clock_dyn,
             origin_ns: clock.now_ns(),
-            ttft_ns: 10_000_000,
-            itl_ns: 5_000_000,
+            ttft_ns: 10_000_000_000, // 10 s TTFT: no turn completes inside the window
+            itl_ns: 1_000_000_000,
             seen: RefCell::new(Vec::new()),
         });
         let seen_handle = dispatcher.clone();
-        // Bound the recycle-sustained profiling run with a virtual duration budget.
-        let stop = StopConfig { expected_duration_ns: Some(300_000_000), ..StopConfig::default() };
-        let report = run(clock, workload, dispatcher, stop, true);
+        // Drive through the FULL phase runner so the phase's duration deadline cancels
+        // pending issuance (the production agentic termination path), rather than the
+        // bare workload driver which cannot cancel scheduled recycles at a time bound.
+        let phase = PhaseConfig::new(
+            "profiling",
+            PhaseKind::Profiling,
+            StopConfig { expected_duration_ns: Some(deadline_ns), ..StopConfig::default() },
+        )
+        .with_grace_period(GracePeriod::Disabled)
+        .with_runtime_intervals(1_000_000, 1_000_000);
+        // Agentic phases own their dispatch timing (enforce_stop=false, exactly as
+        // `lower_legacy_agentic` lowers them); the phase's duration+grace lifecycle
+        // cancels pending issuance at the deadline.
+        let plan = ScheduledPhasePlan::new(phase, workload, PhaseAncillary::default())
+            .with_enforce_stop(false);
+        let dispatcher_dyn: Rc<dyn TurnDispatcher> = dispatcher;
+        let clock_dyn2: Rc<dyn Clock> = clock.clone();
+        let observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
+        let phase_report = Rc::new(RefCell::new(None));
+        let out = phase_report.clone();
+        let outcome = drive_sim(clock, move |_h| async move {
+            let r = run_scheduled_phases(vec![plan], clock_dyn2, dispatcher_dyn, observer)
+                .await
+                .unwrap();
+            *out.borrow_mut() = Some(r);
+        });
+        assert!(!outcome.deadlocked, "profiling phase must drain");
         // (d) aggregate metrics present and clean completion (no slot panic reached here).
-        assert!(!report.turns.is_empty(), "profiling produced timing records");
+        let report = Rc::try_unwrap(phase_report).ok().unwrap().into_inner().unwrap();
+        assert_eq!(report.reports.len(), 1, "one profiling phase report");
         seen_handle.seen.borrow().clone()
     };
 
-    // (b) Lanes a,b resume at their TRUE next turn index (2, not 0) with residual offset.
+    // (b) Real resume dispatch: lanes a,b fire at turn index 2 (NOT 0), at a residual
+    //     offset, under their original correlation id, with the recorded output cap.
     for id in ["a", "b"] {
-        let first = profiling_seen
+        let resume = profiling_seen
             .iter()
-            .find(|s| s.conversation_id == id)
-            .unwrap_or_else(|| panic!("lane {id} dispatched in profiling"));
-        assert_eq!(first.turn_index, 2, "lane {id} resumes at recorded next turn index 2, not 0");
-        assert!(
-            first.dispatch_ms > 1.0,
-            "lane {id} resumes at a residual offset (>0 ms), got {}",
-            first.dispatch_ms
-        );
-        // Recorded output cap restored in profiling (not the warmup max_tokens=1).
-        assert_eq!(first.max_output_tokens, 4, "profiling restores the recorded output cap");
+            .find(|s| s.conversation_id == id && s.x_correlation_id == id)
+            .unwrap_or_else(|| panic!("lane {id} resumed in profiling"));
+        assert_eq!(resume.turn_index, 2, "lane {id} resumes at recorded next turn index 2, not 0");
+        assert!(resume.dispatch_ms > 1.0, "lane {id} resumes at residual offset, got {}", resume.dispatch_ms);
+        assert_eq!(resume.max_output_tokens, 4, "profiling restores the recorded output cap");
     }
-
-    // (c) The single-turn lane "c" fully drained during warmup, so profiling recycles a
-    //     FRESH root at turn 0 (dispatched at zero residual offset).
-    let c_first = profiling_seen
+    // (c) Real recycle dispatch: the drained lane's fresh root fires at turn 0, ~zero offset.
+    let recycled = profiling_seen
         .iter()
-        .find(|s| s.conversation_id == "c")
-        .expect("recycled lane c dispatched in profiling");
-    assert_eq!(c_first.turn_index, 0, "recycled drained lane starts a fresh root at turn 0");
-    assert!(c_first.dispatch_ms.abs() < 1.0, "recycled fresh root fires at ~zero offset");
+        .find(|s| s.x_correlation_id.contains("#w"))
+        .expect("drained lane recycled a fresh root in profiling");
+    assert_eq!(recycled.turn_index, 0, "recycled drained lane starts a fresh root at turn 0");
+    assert!(recycled.dispatch_ms.abs() < 1.0, "recycled fresh root fires at ~zero offset");
 }
 
 /// Regression guard: with NO accelerated duration and an empty carrier, the profiling

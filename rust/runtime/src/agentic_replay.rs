@@ -550,6 +550,7 @@ impl AgenticReplayWorkload {
         let accel = AccelCtx {
             draining: Rc::new(Cell::new(false)),
             zero_idle: true,
+            max_tokens_override: cfg.max_tokens_override,
         };
         let defer_queue: Rc<RefCell<Vec<PendingJoin>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -865,6 +866,9 @@ struct AccelCtx {
     /// Accelerated pressure fires continuations at zero idle delay (Python
     /// compressed traffic), overriding the recorded inter-turn cadence.
     zero_idle: bool,
+    /// Per-credit `max_tokens` override applied to EVERY pressure turn, including
+    /// chained continuations (Python `_WARMUP_MAX_TOKENS=1` on every credit).
+    max_tokens_override: Option<u32>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1010,10 +1014,12 @@ fn schedule_agentic_turn(
                                 Ok(meta) => meta,
                                 Err(_) => return,
                             };
-                            let next = match src.next_turn(&credit, outcome.to_turn_response()) {
+                            let mut next = match src.next_turn(&credit, outcome.to_turn_response()) {
                                 Ok(Some(turn)) => turn,
                                 _ => return,
                             };
+                            // Force the pressure output cap on every chained credit.
+                            apply_max_tokens_override(&mut next, accel_c.max_tokens_override);
                             (meta.delay_ms.unwrap_or(0.0), next)
                         };
                         // Accelerated pressure fires continuations at zero idle;
