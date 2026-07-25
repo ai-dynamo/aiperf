@@ -32,6 +32,9 @@ pub mod plan;
 pub mod prepass;
 pub mod prompt;
 pub mod replay_dependencies;
+/// Byte-exact port of the Python replay interval-barrier coordinator
+/// (`ReplayBarrierCoordinator`); single-central-driver, no async/I/O.
+pub mod replay_gate;
 pub mod replay;
 pub mod rng;
 pub mod switch;

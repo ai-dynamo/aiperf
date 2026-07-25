@@ -1,0 +1,51 @@
+{
+  "_provenance": "aiperf.timing.replay_dependencies.ReplayBarrierCoordinator driven through a fixed scripted submit/complete/seed/pause scenario",
+  "completed_prefixes": {
+    "r1_final": [
+      [
+        "A",
+        2
+      ],
+      [
+        "B",
+        1
+      ]
+    ],
+    "r2_after_seed": [
+      [
+        "D",
+        2
+      ]
+    ]
+  },
+  "pending_turns_by_root": {
+    "root-3": [
+      [
+        "F",
+        0
+      ],
+      [
+        "G",
+        0
+      ]
+    ]
+  },
+  "release_order": [
+    [
+      "A",
+      0
+    ],
+    [
+      "A",
+      1
+    ],
+    [
+      "B",
+      0
+    ],
+    [
+      "C",
+      0
+    ]
+  ]
+}
