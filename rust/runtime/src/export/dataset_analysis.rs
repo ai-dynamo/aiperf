@@ -12,11 +12,24 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::dataset::analysis::{DatasetAnalysis, StatSummary};
+use crate::metrics_core::definition::definition;
 
 /// Distribution stat-key columns, matching the genai_perf CSV schema.
 const STAT_KEYS: &[&str] = &[
     "avg", "min", "max", "sum", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "std",
 ];
+
+/// Return the CSV row-name token for an analyzer base concept, read from the
+/// metric registry rather than a hardcoded literal.
+///
+/// The token is the base def's `short_header` (e.g. `analyzer.per_turn_isl` →
+/// `isl`); the concrete emitted names (`isl`, `turn0_isl`, `conv[a]_osl`, …) are
+/// composed from these tokens so the CSV stays byte-compatible with prior output.
+fn token(id: &str) -> &'static str {
+    definition(id)
+        .and_then(|d| d.short_header)
+        .unwrap_or_else(|| panic!("analyzer base definition {id} missing short_header"))
+}
 
 /// Write the analysis as pretty-printed JSON to `path`.
 ///
@@ -36,46 +49,49 @@ pub fn write_dataset_analysis_json(a: &DatasetAnalysis, path: &Path) -> std::io:
 pub fn write_dataset_analysis_csv(a: &DatasetAnalysis, path: &Path) -> std::io::Result<()> {
     let mut rows: Vec<(String, &StatSummary)> = Vec::new();
     if let Some(s) = a.shape.turns_per_conversation.as_ref() {
-        rows.push(("turns_per_conversation".to_string(), s));
+        rows.push((token("analyzer.turns_per_conversation").to_string(), s));
     }
     if let Some(s) = a.lengths.isl.as_ref() {
-        rows.push(("isl".to_string(), s));
+        rows.push((token("analyzer.isl").to_string(), s));
     }
     if let Some(s) = a.lengths.osl.as_ref() {
-        rows.push(("osl".to_string(), s));
+        rows.push((token("analyzer.osl").to_string(), s));
     }
     if let Some(s) = a.lengths.total.as_ref() {
-        rows.push(("total".to_string(), s));
+        rows.push((token("analyzer.total").to_string(), s));
     }
     if let Some(s) = a.lengths.isl_osl_ratio.as_ref() {
-        rows.push(("isl_osl_ratio".to_string(), s));
+        rows.push((token("analyzer.isl_osl_ratio").to_string(), s));
     }
     for row in &a.turns.by_index {
         let ti = row.turn_index;
         if let Some(s) = row.isl.as_ref() {
-            rows.push((format!("turn{ti}_isl"), s));
+            rows.push((format!("turn{ti}_{}", token("analyzer.per_turn_isl")), s));
         }
         if let Some(s) = row.osl.as_ref() {
-            rows.push((format!("turn{ti}_osl"), s));
+            rows.push((format!("turn{ti}_{}", token("analyzer.per_turn_osl")), s));
         }
         if let Some(s) = row.authored_think_time_ms.as_ref() {
-            rows.push((format!("turn{ti}_think_time_ms"), s));
+            rows.push((
+                format!("turn{ti}_{}", token("analyzer.per_turn_think_time_ms")),
+                s,
+            ));
         }
     }
     if let Some(t) = a.timeline.as_ref()
         && let Some(s) = t.queue.queue_delay_ms.as_ref()
     {
-        rows.push(("queue_delay_ms".to_string(), s));
+        rows.push((token("analyzer.queue_delay_ms").to_string(), s));
     }
     // Per-conversation length rows, emitted only when the breakdown was requested.
     if let Some(conversations) = a.conversations.as_ref() {
         for summary in conversations {
             let id = &summary.conversation_id;
             if let Some(s) = summary.lengths.isl.as_ref() {
-                rows.push((format!("conv[{id}]_isl"), s));
+                rows.push((format!("conv[{id}]_{}", token("analyzer.isl")), s));
             }
             if let Some(s) = summary.lengths.osl.as_ref() {
-                rows.push((format!("conv[{id}]_osl"), s));
+                rows.push((format!("conv[{id}]_{}", token("analyzer.osl")), s));
             }
         }
     }

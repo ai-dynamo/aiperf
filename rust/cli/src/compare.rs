@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use aiperf_runtime::metrics_core::catalog::plot_direction_for;
 use aiperf_runtime::metrics_core::{CATALOG, PlotMetricDirection};
 
 /// Stat compared by default. `avg` is the scalar summary present for every metric
@@ -149,7 +150,7 @@ fn collect_stats(summary: &Value, stat: &str) -> BTreeMap<String, Stat> {
 fn direction_by_tag() -> BTreeMap<&'static str, PlotMetricDirection> {
     CATALOG
         .iter()
-        .map(|spec| (spec.tag.as_str(), spec.plot_direction))
+        .map(|spec| (spec.tag.as_str(), plot_direction_for(&spec.def)))
         .collect()
 }
 

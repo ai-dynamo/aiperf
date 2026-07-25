@@ -11,13 +11,13 @@
 
 pub mod accuracy;
 pub mod adaptive;
-/// Always-compiled subagent tree-spec side channel (`TreeSpec`) for the
-/// `agentic_replay` timing mode.
-pub mod agentic_tree;
 /// AgentX agentic-replay timing mode (scheduled-runtime Workload). Requires the
 /// `agentx` feature.
 #[cfg(feature = "agentx")]
 pub mod agentic_replay;
+/// Always-compiled subagent tree-spec side channel (`TreeSpec`) for the
+/// `agentic_replay` timing mode.
+pub mod agentic_tree;
 #[cfg(feature = "agentx")]
 pub mod agentx;
 #[cfg(feature = "dynamo-aic-forward-pass")]
@@ -59,6 +59,11 @@ pub mod graph;
 pub mod hub;
 pub mod metrics_core;
 pub mod network_latency;
+
+/// Unified definition facade: `Definition`, lookups, and the per-tag metric
+/// lookup resolve through one path (`aiperf_runtime::definitions`).
+pub use crate::metrics_core::definition as definitions;
+
 pub mod rng;
 pub mod server_metrics;
 pub mod timing;

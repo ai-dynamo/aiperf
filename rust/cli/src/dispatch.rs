@@ -3,8 +3,8 @@
 //! Top-level command routing.
 
 use crate::{
-    analyze_trace, cellular_role, chat, compare, config, delegate, profile, results_sidecar, slurm,
-    speed_bench, synthesize, validate,
+    analyze_trace, cellular_role, chat, compare, config, delegate, metrics_list, profile,
+    results_sidecar, slurm, speed_bench, synthesize, validate,
 };
 
 /// Route arguments with the program name removed and return the process exit code.
@@ -28,6 +28,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         Some("validate") => validate::run(&argv[1..]),
         Some("speed-bench-report") => speed_bench::run(&argv[1..]),
         Some("synthesize") => synthesize::run(&argv[1..]),
+        Some("metrics") => metrics_list::run(&argv[1..]),
         _ => delegate::exec_python(argv),
     }
 }

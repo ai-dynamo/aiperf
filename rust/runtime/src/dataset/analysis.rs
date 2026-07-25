@@ -11,6 +11,146 @@ pub mod prefix_cache;
 
 pub use prefix_cache::{IdealReuse, IdentitySource, RequestBlocks, ideal_reuse};
 
+use crate::metrics_core::definition::{Definition, DefinitionGroup};
+use crate::metrics_core::units::{MetricValueType, Unit};
+
+/// Base-concept [`Definition`]s for the `--dry-run` dataset analysis outputs.
+///
+/// Each id is fully namespaced under `analyzer.*` and is registered verbatim in
+/// the metric registry (see `metrics_core::definition`). The dataset-analysis CSV
+/// writer composes concrete row names (e.g. `turn0_isl`, `conv[a]_osl`) from these
+/// base concepts and reads their `short_header`/`unit`/`header` from here rather
+/// than hardcoding literals. The per-turn concepts back the parameterized
+/// `turn<N>_<suffix>` resolution rule in `resolve`.
+pub static ANALYZER_DEFINITIONS: &[Definition] = &[
+    Definition {
+        id: "analyzer.isl",
+        header: "Input Sequence Length",
+        short_header: Some("isl"),
+        short_header_hide_unit: true,
+        unit: Unit::Token,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Int,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.osl",
+        header: "Output Sequence Length",
+        short_header: Some("osl"),
+        short_header_hide_unit: true,
+        unit: Unit::Token,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Int,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.total",
+        header: "Total Sequence Length",
+        short_header: Some("total"),
+        short_header_hide_unit: true,
+        unit: Unit::Token,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Int,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.isl_osl_ratio",
+        header: "Input/Output Sequence Length Ratio",
+        short_header: Some("isl_osl_ratio"),
+        short_header_hide_unit: true,
+        unit: Unit::Ratio,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Float,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.turns_per_conversation",
+        header: "Turns Per Conversation",
+        short_header: Some("turns_per_conversation"),
+        short_header_hide_unit: true,
+        unit: Unit::Count,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Int,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.per_turn_isl",
+        header: "Per-Turn Input Sequence Length",
+        short_header: Some("isl"),
+        short_header_hide_unit: true,
+        unit: Unit::Token,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Int,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.per_turn_osl",
+        header: "Per-Turn Output Sequence Length",
+        short_header: Some("osl"),
+        short_header_hide_unit: true,
+        unit: Unit::Token,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Int,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.per_turn_think_time_ms",
+        header: "Per-Turn Authored Think Time",
+        short_header: Some("think_time_ms"),
+        short_header_hide_unit: true,
+        unit: Unit::Millisecond,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Float,
+        aliases: &[],
+        deprecated_since: None,
+    },
+    Definition {
+        id: "analyzer.queue_delay_ms",
+        header: "Queue Delay",
+        short_header: Some("queue_delay_ms"),
+        short_header_hide_unit: true,
+        unit: Unit::Millisecond,
+        display_unit: None,
+        display_order: None,
+        group: DefinitionGroup::Named("Analysis"),
+        larger_is_better: false,
+        value_type: MetricValueType::Float,
+        aliases: &[],
+        deprecated_since: None,
+    },
+];
+
 /// A single observed request record, expressed in transport-neutral terms.
 #[derive(Debug, Clone)]
 pub struct AnalyzedRecord {
@@ -785,6 +925,24 @@ fn sanitize_analysis(a: &mut DatasetAnalysis) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analyzer_definitions_registered_and_resolvable() {
+        use crate::metrics_core::definition::{definition, resolve};
+        // Base concepts are registered under their fully-namespaced ids.
+        assert!(definition("analyzer.isl").is_some());
+        assert!(definition("analyzer.osl").is_some());
+        assert!(definition("analyzer.per_turn_isl").is_some());
+        // The parameterized turn<N>_<suffix> rule maps to the per-turn base def.
+        assert_eq!(
+            resolve("turn0_isl").unwrap().id,
+            "analyzer.per_turn_isl"
+        );
+        assert_eq!(
+            resolve("turn12_osl").unwrap().id,
+            "analyzer.per_turn_osl"
+        );
+    }
 
     #[test]
     fn stat_summary_matches_hand_computed() {
