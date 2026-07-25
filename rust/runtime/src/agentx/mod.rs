@@ -19,6 +19,7 @@ pub mod cache_bust;
 pub mod chains;
 pub mod config;
 pub mod corpus;
+pub mod export;
 pub mod loader;
 pub mod metrics;
 pub mod plan;
