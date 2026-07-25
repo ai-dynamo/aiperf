@@ -22,7 +22,8 @@ use crate::rng::compat::python_random::PythonRandomGenerator;
 /// NOT thread-safe (mirrors the Python contract): each worker owns an instance.
 /// The base `seed` and `trace_id` are fixed for a trace; `reseed_for_hash_id`
 /// installs a fresh CPython-MT stream before generating that hash id's tokens.
-#[derive(Debug, Clone)]
+// Not `Clone`/`Debug`: the underlying `PythonMt19937` is neither, and the Python
+// generator is likewise a single-owner mutable stream.
 pub struct HashIdRandomGenerator {
     seed: u64,
     trace_id: String,
