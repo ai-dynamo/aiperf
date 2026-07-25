@@ -24,8 +24,10 @@ pub mod runtime;
 pub mod telemetry;
 pub mod tokenizer;
 pub mod transport;
+pub mod workload_kind;
 
 pub use config::BenchmarkConfig;
 pub use dispatch::DispatchMode;
 pub use resolved::Resolved;
 pub use run::BenchmarkRun;
+pub use workload_kind::{workload_kind, WorkloadKind};
