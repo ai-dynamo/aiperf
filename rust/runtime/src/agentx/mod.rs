@@ -27,6 +27,7 @@ pub mod replay_dependencies;
 pub mod rng;
 pub mod synth;
 pub mod tool_shape;
+pub mod scenario;
 pub mod selection;
 pub mod session_tree;
 pub mod subagent;
