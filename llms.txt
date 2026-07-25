@@ -417,11 +417,11 @@ Whole system:
   doubled-back edges; opt-in via `PipelineCanvas`'s `layout` prop / `AutoLayoutFlow`,
   adopted by `rust-port-flow` first then rolled out to the rest.
 - [`docs/specs/2026-07-25-hf-generic-datasets-design.md`](docs/specs/2026-07-25-hf-generic-datasets-design.md)
-  — design (unbuilt) for generic HuggingFace-dataset-by-ID input: a `--hf-dataset
-  <id>` CLI/YAML passthrough that bypasses the hard-coded public catalog, plus a
-  new source-agnostic `hf` composer that auto-detects prompt/completion columns
-  (chat/text/combined) with explicit overrides — parity with vLLM's Rust bench
-  `--dataset-name hf` on top of AIPerf's existing HF transport.
+  — built generic HuggingFace-dataset-by-ID input: a `--hf-dataset <id>` CLI/YAML
+  passthrough that bypasses the hard-coded public catalog, plus a source-agnostic
+  `hf` composer whose `infer_row_layout` auto-detects prompt/completion fields
+  (message-array / flat / `context`+`input`) with explicit overrides and `/info`
+  split-config resolution, on top of AIPerf's existing HF transport.
 
 Execution and scheduling:
 

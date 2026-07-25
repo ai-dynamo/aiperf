@@ -15,8 +15,8 @@ closes the one dataset-input UX gap against vLLM's Rust benchmark tool
 HF transport (parquet/JSONL/CSV shard streaming, revision pinning, token-file auth)
 underneath.
 
-This is a design record for **unbuilt** work. The current state and the exact code
-seams it builds on are in [dataset.md](dataset.md) and
+This subsystem is **built**. The current state and the exact code seams it
+composes over are in [dataset.md](dataset.md) and
 [runner-protocol.md](runner-protocol.md).
 
 ## Built (today, for context)
@@ -48,7 +48,7 @@ catalog name), and — because HF sources return an **empty probe** with no fetc
 so a column-auto-detecting loader must be reached by an explicit `format` and do its
 own inference inside compose.
 
-## Future requirements (this design)
+## Built (this change)
 
 ### Scope
 
@@ -67,8 +67,10 @@ it turns already-fetched `RawRow`s into requests by inspecting their keys, so th
 same logic runs over HF-fetched rows *and* a local JSONL fixture (the property that
 makes it offline-testable — see Testing).
 
-**Detection** (on the first row, priority order, a port of vLLM's
-`detect_column_format`):
+**Detection** — `hf_detect::infer_row_layout` inspects the first row and returns a
+`RowLayout` (on the first row, priority order; the column families themselves are
+the conventional Hub field names, the same functional set vLLM's benchmark
+recognises):
 
 1. **Chat** — a column named `conversation` / `conversations` / `messages` whose
    value is an array of chat messages (`{role, content}` or ShareGPT `{from, value}`).
@@ -160,8 +162,8 @@ entirely**. Relax `parse_dataset_filters` so `--dataset-filter` is accepted with
 
 Per the project's per-record E2E requirement, but network-free:
 
-- **Unit tests** for `detect_column_format` + `HfAutoComposer` over fixture
-  `RawRow`s — port vLLM's ~30 cases (chat role/content, ShareGPT from/value, combined
+- **Unit tests** for `infer_row_layout` + `HfAutoComposer` over fixture
+  `RawRow`s — the ~30 detection cases (chat role/content, ShareGPT from/value, combined
   context+input, turns[], answers[], user override, missing column, output-len
   derivation, short-prompt filtering, oversample, disable-shuffle).
 - **Offline E2E** against the in-repo `aiperf-mock-server`: because the composer is
@@ -180,7 +182,7 @@ vLLM's `rust/src/bench/src/datasets/hf_dataset.rs` (`--dataset-name hf
 |---|---|---|
 | Arbitrary HF ID, no catalog/code change | ✓ | ✓ (`--hf-dataset`) |
 | Auto config/split resolution (`/info`) | ✓ (`train>test>validation>first`) | ✓ (same) |
-| Column auto-detection | `detect_column_format` | `HfAutoComposer` (port) |
+| Column auto-detection | `detect_column_format` | `infer_row_layout` (independent impl) |
 | Chat detect (role/content + from/value) | ✓ | ✓ |
 | Combined `context`+`input` | ✓ | ✓ |
 | Text/output column priority lists | ✓ | same lists |
@@ -203,19 +205,23 @@ detection heuristic plus CLI/YAML plumbing that skips the catalog.
 
 ## Source anchors
 
-- `rust/runtime/src/dataset/loader/public.rs` — HF fetch + composers; `HfAutoComposer`
-  lands here.
+- `rust/runtime/src/dataset/loader/hf_detect.rs` — `RowLayout`, `infer_row_layout`,
+  `first_user_message` / `first_assistant_message` (pure layout inference).
+- `rust/runtime/src/dataset/loader/public.rs` — `HfAutoDatasetLoader` + `HfAutoComposer`
+  (the `hf` format), and `resolve_hf_coordinates` / `pick_hf_coordinates` (`/info`
+  split/config resolution).
 - `rust/runtime/src/dataset/loader/mod.rs` — `DatasetSource`, `DatasetLoader`,
-  `register_builtin_formats` (register `hf`), `probe`/`detect` (empty-probe constraint
-  at :520).
+  `register_builtin_formats` (registers `hf`), `probe`/`detect` (empty-probe constraint
+  that forces the explicit `hf` format).
 - `rust/runtime/src/engine/execute/dataset_build.rs` — `build_public_dataset` lowering
-  (accepts arbitrary source, no catalog).
+  (accepts an arbitrary source, no catalog).
 - `rust/runtime/src/engine/dataset_input.rs` — `PublicDatasetSpec` /
   `PublicDatasetSourceSpec` wire shape (`deny_unknown_fields`).
-- `rust/cli/src/load.rs` — `Inputs`, the dataset-kind selection chain (:931),
-  `parse_dataset_filters` (:1681).
-- `rust/cli/src/flags.rs` — new `--hf-*` flags.
-- `rust/cli/src/yaml.rs` — `DatasetSection`, public-form parse + `ensure!` relaxation
-  (:1266–1302).
+- `rust/cli/src/load.rs` — `Inputs`, the `--hf-dataset` branch in the dataset-kind
+  selection chain, `parse_dataset_filters`.
+- `rust/cli/src/flags.rs` — the `--hf-*` flags.
+- `rust/cli/src/yaml.rs` — `DatasetSection` `hf_dataset` fields + relaxed public-form
+  `ensure!`.
+- `rust/e2e/tests/test_hf_auto_dataset.rs` — offline per-record E2E over a local JSONL.
 - `rust/cli/resources/public_datasets.json` + `rust/cli/src/model/public_catalog.rs` —
   the catalog the passthrough intentionally bypasses (unchanged).
