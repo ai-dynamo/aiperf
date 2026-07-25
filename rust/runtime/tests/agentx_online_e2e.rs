@@ -37,7 +37,7 @@ impl TokenSynth for StubSynth {
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_dispatch_plan_lands_byte_exact_over_real_http() {
     // In-process inference server recording every received request body.
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
