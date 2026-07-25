@@ -792,11 +792,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .clone()
             .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
-    validate_baseten_extra_input_collisions(flags)?;
     build(inputs)
 }
 
-/// Reject `--extra-inputs` keys the baseten_trace loader injects per-turn.
+/// Reject `extra`-input keys the baseten_trace loader injects per-turn.
 ///
 /// Ports Python's `_reject_baseten_trace_extra_input_collisions`:
 /// loader-injected per-turn values (`min_tokens` from the recorded output
@@ -804,21 +803,21 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
 /// extras, so the user's value would be silently clobbered on the wire.
 /// `max_tokens` is not guarded: user extras win over the loader for that key.
 ///
-/// Scope cut: only covers the CLI-flags path (`--extra-inputs`), not
-/// `endpoint.extra` authored in a YAML config -- the shared `Inputs` bag
-/// `build()` receives doesn't currently carry raw extra-inputs pairs, and
-/// threading that through the YAML path safely wasn't done here.
-fn validate_baseten_extra_input_collisions(flags: &ProfileFlags) -> anyhow::Result<()> {
-    if flags.custom_dataset_type.as_deref() != Some("baseten_trace") {
+/// Operates on the shared [`Inputs`] bag (`inputs.extra`,
+/// `inputs.custom_dataset_type`, `inputs.force_min_tokens`,
+/// `inputs.omit_kv_hints`) so both the `--extra-inputs` flags path and the
+/// YAML `endpoint.extra` path enforce it identically — it is the single source
+/// of truth, called from `build()`.
+fn validate_baseten_extra_input_collisions(inputs: &Inputs) -> anyhow::Result<()> {
+    if inputs.custom_dataset_type.as_deref() != Some("baseten_trace") {
         return Ok(());
     }
-    let extra = parse_extra_inputs(&flags.extra_inputs)?;
+    let extra = &inputs.extra;
     let mut collisions: Vec<(&str, &str)> = Vec::new();
-    let force_min_tokens = flags.force_min_tokens && !flags.no_force_min_tokens;
-    if force_min_tokens && extra.contains_key("min_tokens") {
+    if inputs.force_min_tokens && extra.contains_key("min_tokens") {
         collisions.push(("min_tokens", "--no-force-min-tokens"));
     }
-    if !flags.omit_kv_hints {
+    if !inputs.omit_kv_hints {
         for key in ["hash_ids", "block_size"] {
             if extra.contains_key(key) {
                 collisions.push((key, "--omit-kv-hints"));
@@ -894,6 +893,7 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
 
 pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
+    validate_baseten_extra_input_collisions(&inputs)?;
     // Resolve legacy-AgentX scenario locks (`--scenario`) while `inputs` is still
     // whole (later lowering partially moves it). A no-op without the `agentx`
     // feature. A hard scenario-lock conflict fails resolution here.

@@ -2227,6 +2227,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_baseten_extra_input_collision_from_yaml() {
+        // The baseten_trace loader injects `min_tokens` per-turn from the recorded
+        // output length, silently clobbering an endpoint-level `extra.min_tokens`.
+        // This guard must fire on the YAML `endpoint.extra` path exactly as it does
+        // on the `--extra-inputs` flags path (shared through `load::build`).
+        let cfg = "schemaVersion: \"2.0\"\n\
+             benchmark:\n\
+             \x20 model: m\n\
+             \x20 endpoint: {type: chat, url: 127.0.0.1:8000, extra: {min_tokens: 5}}\n\
+             \x20 dataset: {type: file, format: baseten_trace, path: /tmp/x.jsonl}\n\
+             \x20 phases: {type: concurrency, requests: 1, concurrency: 1}\n";
+        let e = resolve_str(cfg, Some("/tmp/x".into()))
+            .expect_err("expected a baseten extra-input collision error")
+            .to_string();
+        assert!(e.contains("overwritten per-turn"), "{e}");
+        assert!(e.contains("min_tokens"), "{e}");
+    }
+
+    #[test]
     fn rejects_unknown_phase_type() {
         let e = err("  dataset: {prompts: {isl: 128}}\n  phases: {type: bogus, requests: 1}\n");
         assert!(e.contains("unknown phase type"), "{e}");
