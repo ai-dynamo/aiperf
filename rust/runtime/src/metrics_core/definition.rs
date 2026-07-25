@@ -138,6 +138,12 @@ static REGISTRY: LazyLock<HashMap<String, &'static Definition>> = LazyLock::new(
     // Task 9 insertion point: register analyzer base-concept definitions here.
     // Their `def.id` is already fully namespaced (`analyzer.*`), so insert each
     // under `def.id` directly (plus any aliases), without the `aiperf.` prefix.
+    for def in crate::dataset::analysis::ANALYZER_DEFINITIONS {
+        map.insert(def.id.to_string(), def);
+        for alias in def.aliases {
+            map.insert((*alias).to_string(), def);
+        }
+    }
 
     map
 });
