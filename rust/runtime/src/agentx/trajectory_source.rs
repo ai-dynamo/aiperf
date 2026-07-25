@@ -104,6 +104,31 @@ pub fn legacy_start_turn_candidates(n: i64, start_min_ratio: f64, start_max_rati
     (k_min..=k_max).collect()
 }
 
+/// Pick the legacy timestamp-less start turn `k_i` from `candidates` using a
+/// numpy `default_rng(seed).choice(candidates)` draw (Python
+/// `_build_trajectory_for_lane`'s `rng.choice`). `choice` on a 1-d array reduces
+/// to `candidates[integers(0, len)]`, reproduced bit-for-bit via the runtime's
+/// numpy compat. `None` for an empty candidate list.
+pub fn legacy_pick_start_turn(seed: u64, candidates: &[i64]) -> Option<i64> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let mut rng = crate::rng::compat::numpy_generator::NumpyGenerator::from_seed(seed);
+    let idx = rng.integers(0, candidates.len() as i64) as usize;
+    Some(candidates[idx])
+}
+
+/// Sample the timestamped-trace t* in `[lo, hi]` via numpy
+/// `default_rng(seed).uniform(lo, hi)` (Python `_build_timestamped_trajectory`),
+/// reproduced as `lo + random()*(hi-lo)`. Returns `lo` when `hi == lo`.
+pub fn timestamped_t_star_ms(seed: u64, lo: f64, hi: f64) -> f64 {
+    if hi == lo {
+        return lo;
+    }
+    let mut rng = crate::rng::compat::numpy_generator::NumpyGenerator::from_seed(seed);
+    lo + rng.random() * (hi - lo)
+}
+
 /// First turn index whose recorded timestamp is at/after `t_star_ms` (Python
 /// `_next_turn_index_at_or_after`) — the PROFILING resume index. `None` when no
 /// turn starts at/after t* (the whole stream is pre-t* history).
@@ -142,6 +167,19 @@ pub fn offset_ms(timestamp_ms: Option<f64>, t_star_ms: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn t_star_rng_pick_matches_numpy() {
+        // seed = seed_for_trace_lane(42, "trace_x", 0).
+        let seed = seed_for_trace_lane(42, "trace_x", 0);
+        // np.random.default_rng(seed).choice([2..7]) == 4.
+        assert_eq!(legacy_pick_start_turn(seed, &[2, 3, 4, 5, 6, 7]), Some(4));
+        // np.random.default_rng(seed).uniform(1000, 2000) == 1430.3229154123997.
+        let t = timestamped_t_star_ms(seed, 1000.0, 2000.0);
+        assert!((t - 1430.3229154123997).abs() < 1e-9, "got {t}");
+        // hi == lo short-circuits to lo (no draw).
+        assert_eq!(timestamped_t_star_ms(seed, 500.0, 500.0), 500.0);
+    }
 
     #[test]
     fn t_star_split_and_offsets() {
