@@ -165,18 +165,40 @@ struct AuthoringWireV2 {
     trial: u32,
 }
 
-/// Decode the authoring execute-mode stdin payload into a resolved
-/// [`BenchmarkRunWireV2`].
+/// Decode the execute-mode stdin payload into a resolved [`BenchmarkRunWireV2`].
 ///
-/// The payload is always an authoring envelope `{"authoring": <Inputs>}` (single
-/// runs, flag/YAML sweeps, and adaptive-search / recipe sweeps alike): the runtime
-/// resolves it here through the shared [`crate::config::resolve::resolve`] and
-/// re-projects the resolved [`crate::config::model::BenchmarkRun`] onto the wire
-/// shape. The CLI never lowers before the child launch — every path ships authoring
-/// and the runtime performs the sole authoritative resolution. The re-projection
-/// round-trips the resolved run through bytes, which preserves factory-owned
-/// [`RawValue`] config that `serde_json::from_value` cannot reconstruct.
+/// Two wire shapes are accepted:
+///
+/// - The **authoring envelope** `{"authoring": <Inputs>}` (single runs, flag/YAML
+///   sweeps, and adaptive-search / recipe sweeps alike): every CLI-side profile path
+///   ships this shape, and the runtime performs the sole authoritative resolution
+///   here through the shared [`crate::config::resolve::resolve`], re-projecting the
+///   resolved [`crate::config::model::BenchmarkRun`] onto the wire shape. The
+///   re-projection round-trips the resolved run through bytes, which preserves
+///   factory-owned [`RawValue`] config that `serde_json::from_value` cannot
+///   reconstruct.
+/// - A **bare resolved run** (`BenchmarkRunWireV2` directly, with no `authoring`
+///   tag): the pre-collapse internal `--execute` contract. No CLI sender emits this,
+///   but the documented `--execute` stdin protocol and external harnesses (and the
+///   e2e reachability test) still feed an already-resolved run directly. The runtime
+///   accepts and returns it unchanged.
+///
+/// The two shapes are disjoint at the top level: the authoring envelope is tagged by
+/// an `authoring` key, which the bare run's `deny_unknown_fields` contract forbids.
+/// We branch on the presence of that key so a malformed authoring payload reports an
+/// authoring error rather than being misread as a bare run.
 pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
+    // Probe the top-level JSON for the `authoring` tag; a bare resolved run has no
+    // such key (and `BenchmarkRunWireV2` rejects it via `deny_unknown_fields`).
+    let has_authoring = serde_json::from_slice::<Value>(input)
+        .ok()
+        .and_then(|value| value.get("authoring").map(|_| ()))
+        .is_some();
+    if !has_authoring {
+        // Pre-collapse contract: an already-resolved run projected onto the wire.
+        return serde_json::from_slice(input)
+            .map_err(|error| anyhow!("invalid resolved run: {error}"));
+    }
     let envelope: AuthoringWireV2 = serde_json::from_slice(input)
         .map_err(|error| anyhow!("invalid authoring inputs: {error}"))?;
     let mut run = crate::config::resolve::resolve(envelope.authoring)?;
@@ -1346,6 +1368,48 @@ mod dispatch_mode_tests {
             "cfg": base_cfg(synthetic_ds(), serde_json::json!({"type": "http"}), runtime),
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn execute_wire_accepts_bare_run_and_authoring_envelope_shapes() {
+        // A **bare** resolved `BenchmarkRunWireV2` (no `authoring` tag) is the
+        // pre-collapse internal `--execute` contract that the documented stdin
+        // protocol, external harnesses, and the e2e reachability test still feed.
+        // The runtime must accept it unchanged and project it to the same
+        // `AuthoredRunSpecV2` as a direct decode + `into_authored`.
+        let bare = serde_json::json!({
+            "benchmark_id": "run-1",
+            "artifact_dir": "/tmp/not-created",
+            "cfg": base_cfg(synthetic_ds(), serde_json::json!({"type": "http"}), rt(1, 1)),
+        });
+        let bare_bytes = serde_json::to_vec(&bare).unwrap();
+        let via_execute = decode_execute_wire(&bare_bytes)
+            .expect("bare resolved run must be accepted")
+            .into_authored()
+            .expect("project bare run");
+        let via_direct = serde_json::from_value::<BenchmarkRunWireV2>(bare)
+            .expect("decode bare run")
+            .into_authored()
+            .expect("project bare run directly");
+        assert_eq!(via_execute.identity.benchmark_id, via_direct.identity.benchmark_id);
+        assert_eq!(via_execute.transport.id, via_direct.transport.id);
+        assert_eq!(via_execute.workload.id, via_direct.workload.id);
+        assert_eq!(via_execute.dispatch, via_direct.dispatch);
+
+        // An `{"authoring": ...}` payload is routed to the authoring resolver, not
+        // misread as a bare run: an inner-inputs failure surfaces the authoring
+        // decode error (proving the envelope branch is taken). The positive
+        // resolve-to-identical-run path is pinned end-to-end in `aiperf-cli`'s
+        // `authoring_wire_matches_cli_resolved`.
+        let envelope = serde_json::to_vec(&serde_json::json!({ "authoring": {} })).unwrap();
+        let error = decode_execute_wire(&envelope)
+            .err()
+            .expect("empty authoring inputs must fail")
+            .to_string();
+        assert!(
+            error.contains("invalid authoring inputs"),
+            "authoring payload must route to the authoring path, got: {error}"
+        );
     }
 
     #[test]
