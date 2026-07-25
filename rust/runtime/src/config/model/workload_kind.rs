@@ -113,6 +113,7 @@ mod tests {
                 sequence_distribution: None,
                 prefix_reuse_fraction: None,
                 prefix_reuse_ratio: None,
+                cache_bust: None,
             },
             prefix_prompts: None,
             images: None,
@@ -140,6 +141,7 @@ mod tests {
             prompts: None,
             records: None,
             synthesis: None,
+            cache_bust: None,
             prefetch_media_urls: false,
         })
     }

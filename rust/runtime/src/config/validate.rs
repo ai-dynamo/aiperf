@@ -12,7 +12,7 @@
 use anyhow::{bail, Result};
 
 use super::model::config::BenchmarkConfig;
-use super::model::dataset::Dataset;
+use super::model::dataset::{CacheBustTarget, Dataset};
 use super::model::phase::{Phase, PhaseKind, PhaseRole};
 
 /// Validate the cross-field invariants of a lowered [`BenchmarkConfig`].
@@ -21,12 +21,6 @@ use super::model::phase::{Phase, PhaseKind, PhaseRole};
 /// the violated invariant. Ordering mirrors the Python validator ordering so
 /// error messages are stable across the two implementations.
 pub fn validate(cfg: &BenchmarkConfig) -> Result<()> {
-    // NOTE: the Python `validate_cache_bust_compatibility` and
-    // `validate_agentic_cache_warmup` raise-only invariants are not portable
-    // until the typed model grows (a) a per-phase `timing_mode` override field,
-    // (b) a `cache_bust` target on the config, and (c) scenario-registry /
-    // agentic-timing-mode resolution — none of which exist on the typed
-    // `BenchmarkConfig`/`Phase` today. Port them once those land.
     validate_phase_names_unique(cfg)?;
     validate_profiling_phase_required(cfg)?;
     validate_phase_stops(cfg)?;
@@ -34,6 +28,8 @@ pub fn validate(cfg: &BenchmarkConfig) -> Result<()> {
     validate_prefill_requires_streaming(cfg)?;
     validate_endpoint_profile_names(cfg)?;
     validate_phase_dataset_compatibility(cfg)?;
+    validate_cache_bust_compatibility(cfg)?;
+    validate_agentic_cache_warmup(cfg)?;
     Ok(())
 }
 
@@ -201,6 +197,153 @@ fn validate_phase_dataset_compatibility(cfg: &BenchmarkConfig) -> Result<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+/// The agentic-replay timing-mode identifier (Python `TimingMode.AGENTIC_REPLAY`).
+const AGENTIC_REPLAY: &str = "agentic_replay";
+
+/// Resolve the default dataset's cache-bust target.
+///
+/// Mirrors Python `BenchmarkConfig.get_cache_bust_target`: for a synthetic
+/// dataset the target lives at `prompts.cache_bust.target`; for a file-backed
+/// dataset it lives at the dataset-level `cache_bust.target`. Any other dataset
+/// kind (or an absent dataset section) resolves to `None`.
+fn cache_bust_target(cfg: &BenchmarkConfig) -> CacheBustTarget {
+    let Some(dataset) = cfg.datasets.as_ref().and_then(|d| d.first()) else {
+        return CacheBustTarget::None;
+    };
+    match dataset {
+        Dataset::Synthetic(s) => s
+            .prompts
+            .cache_bust
+            .map(|cb| cb.target)
+            .unwrap_or(CacheBustTarget::None),
+        Dataset::File(f) => f
+            .cache_bust
+            .map(|cb| cb.target)
+            .unwrap_or(CacheBustTarget::None),
+        Dataset::Public(p) => p
+            .cache_bust
+            .map(|cb| cb.target)
+            .unwrap_or(CacheBustTarget::None),
+    }
+}
+
+/// The profiling-kind phases, in authored order.
+fn profiling_phases(cfg: &BenchmarkConfig) -> impl Iterator<Item = &Phase> {
+    phases(cfg).iter().filter(|p| is_profiling(p))
+}
+
+/// Refuse cache-bust on incompatible timing modes / endpoint types.
+///
+/// Ported from Python `validate_cache_bust_compatibility`. Marker minting only
+/// fires in the agentic-replay strategy, and only the chat / responses endpoint
+/// formatters consume the system-message field that hosts the marker; any other
+/// combination silently drops the marker, so we refuse loudly at config time.
+///
+/// Deferral cases (the lockdown does NOT fire, exactly as in Python):
+/// * a config carrying a `scenario` is governed by that scenario's own
+///   invariant locks (applied post-construction, which never re-triggers this
+///   pass), so we skip;
+/// * no profiling phase carries an EXPLICIT `timing_mode` override — the
+///   effective mode is derived at runtime from the phase type, so agentic-ness
+///   is not yet knowable here. The lockdown only fires once a phase has
+///   explicitly declared a (non-agentic) timing mode incompatible with the
+///   requested cache-bust.
+fn validate_cache_bust_compatibility(cfg: &BenchmarkConfig) -> Result<()> {
+    if cfg.scenario.is_some() {
+        return Ok(());
+    }
+    if cache_bust_target(cfg) == CacheBustTarget::None {
+        return Ok(());
+    }
+
+    let explicit: Vec<&str> = profiling_phases(cfg)
+        .filter_map(|p| p.common.timing_mode.as_deref())
+        .collect();
+    if explicit.is_empty() {
+        return Ok(());
+    }
+    if !explicit
+        .iter()
+        .any(|m| m.eq_ignore_ascii_case(AGENTIC_REPLAY))
+    {
+        bail!(
+            "cache-bust requires the agentic_replay timing mode \
+             (set today by --scenario inferencex-agentx-mvp); the profiling \
+             phase(s) are not agentic_replay. Cache-bust marker minting is only \
+             implemented for agentic_replay."
+        );
+    }
+
+    let endpoint_type = cfg
+        .endpoint
+        .as_ref()
+        .map(|e| e.endpoint_type.0.as_str())
+        .unwrap_or("");
+    if !endpoint_type.eq_ignore_ascii_case("chat")
+        && !endpoint_type.eq_ignore_ascii_case("responses")
+    {
+        bail!(
+            "cache-bust requires --endpoint-type chat or responses; got {}. \
+             Other endpoint formatters do not consume the system message field \
+             that hosts the marker.",
+            endpoint_type
+        );
+    }
+    Ok(())
+}
+
+/// Whether the profiling phases resolve to the agentic-replay timing mode.
+///
+/// Mirrors Python `_is_agentic_replay` / `_phase_timing_mode`: the first
+/// profiling phase's EXPLICIT `timing_mode` override wins; otherwise the
+/// phase-type mapping is consulted — and no phase type ever maps to
+/// agentic_replay, so a config without an explicit override is never agentic.
+fn profiling_is_agentic_replay(cfg: &BenchmarkConfig) -> bool {
+    match profiling_phases(cfg).next() {
+        Some(first) => match first.common.timing_mode.as_deref() {
+            Some(mode) => mode.eq_ignore_ascii_case(AGENTIC_REPLAY),
+            // The phase-type mapping never yields agentic_replay.
+            None => false,
+        },
+        None => false,
+    }
+}
+
+/// Restrict accelerated cache warmup to the agentic_replay timing mode.
+///
+/// Ported from Python `validate_agentic_cache_warmup`.
+/// `agentic_cache_warmup_duration` is consumed solely by the agentic-replay
+/// warmup builder, so an unguarded flag on any other run is a silent no-op — we
+/// raise instead.
+///
+/// NOTE (ported-partial): Python resolves a named scenario's declared
+/// `timing_mode` through the scenario registry (`get_scenario(...).timing_mode`)
+/// and rejects the flag when that lock is not agentic_replay. That resolution is
+/// a runtime-only registry lookup with no representation in the typed config, so
+/// the scenario branch is DEFERRED here: when a `scenario` is set we return
+/// `Ok`, leaving the scenario-lock check to the runtime scenario resolver. The
+/// no-scenario branch (the fully config-time-checkable case) is ported exactly.
+fn validate_agentic_cache_warmup(cfg: &BenchmarkConfig) -> Result<()> {
+    let uses_warmup =
+        profiling_phases(cfg).any(|p| p.common.agentic_cache_warmup_duration.is_some());
+    if !uses_warmup {
+        return Ok(());
+    }
+    // Scenario-locked timing_mode is resolved from the scenario registry at
+    // runtime, not at config time; defer that branch to the runtime resolver.
+    if cfg.scenario.is_some() {
+        return Ok(());
+    }
+    if !profiling_is_agentic_replay(cfg) {
+        bail!(
+            "--agentic-cache-warmup-duration requires the agentic_replay timing \
+             mode (set today by --scenario inferencex-agentx-mvp); the profiling \
+             phase(s) are not agentic_replay."
+        );
     }
     Ok(())
 }
@@ -430,6 +573,102 @@ mod tests {
             {"name": "profiling", "kind": "profiling", "exclude_from_results": false,
              "seamless": false, "requests": 1, "type": "user_centric", "rate": 1.0, "users": 4}
         ]);
+        assert!(validate(&cfg(v)).is_ok());
+    }
+
+    // ---- validate_cache_bust_compatibility ---------------------------------
+
+    /// A synthetic dataset carrying a cache-bust target.
+    fn synthetic_with_cache_bust(target: &str) -> serde_json::Value {
+        json!([{
+            "type": "synthetic",
+            "prompts": {
+                "batch_size": 1,
+                "isl": {"mean": 128.0},
+                "cache_bust": {"target": target}
+            },
+            "sampling": "sequential",
+            "turn_delay_ratio": 1.0
+        }])
+    }
+
+    #[test]
+    fn cache_bust_with_non_agentic_explicit_timing_mode_rejected() {
+        let mut v = valid_value();
+        v["datasets"] = synthetic_with_cache_bust("system_prefix");
+        // Explicit non-agentic timing mode + cache-bust is the loud-refuse case.
+        v["phases"][0]["timing_mode"] = json!("request_rate");
+        let err = validate(&cfg(v)).unwrap_err().to_string();
+        assert!(err.contains("agentic_replay"), "{err}");
+    }
+
+    #[test]
+    fn cache_bust_agentic_but_wrong_endpoint_rejected() {
+        let mut v = valid_value();
+        v["endpoint"]["type"] = json!("completions");
+        v["datasets"] = synthetic_with_cache_bust("system_prefix");
+        v["phases"][0]["timing_mode"] = json!("agentic_replay");
+        let err = validate(&cfg(v)).unwrap_err().to_string();
+        assert!(err.contains("chat or responses"), "{err}");
+    }
+
+    #[test]
+    fn cache_bust_agentic_chat_endpoint_ok() {
+        let mut v = valid_value();
+        v["datasets"] = synthetic_with_cache_bust("system_prefix");
+        v["phases"][0]["timing_mode"] = json!("agentic_replay");
+        assert!(validate(&cfg(v)).is_ok());
+    }
+
+    #[test]
+    fn cache_bust_deferred_without_explicit_timing_mode() {
+        // No explicit timing_mode → agentic-ness resolved later; do not refuse.
+        let mut v = valid_value();
+        v["datasets"] = synthetic_with_cache_bust("system_prefix");
+        assert!(validate(&cfg(v)).is_ok());
+    }
+
+    #[test]
+    fn cache_bust_skipped_when_scenario_set() {
+        let mut v = valid_value();
+        v["scenario"] = json!("inferencex-agentx-mvp");
+        v["datasets"] = synthetic_with_cache_bust("system_prefix");
+        v["phases"][0]["timing_mode"] = json!("request_rate");
+        assert!(validate(&cfg(v)).is_ok());
+    }
+
+    #[test]
+    fn cache_bust_none_target_ok() {
+        let mut v = valid_value();
+        v["datasets"] = synthetic_with_cache_bust("none");
+        v["phases"][0]["timing_mode"] = json!("request_rate");
+        assert!(validate(&cfg(v)).is_ok());
+    }
+
+    // ---- validate_agentic_cache_warmup -------------------------------------
+
+    #[test]
+    fn agentic_warmup_without_agentic_timing_mode_rejected() {
+        let mut v = valid_value();
+        v["phases"][0]["agentic_cache_warmup_duration"] = json!(30.0);
+        let err = validate(&cfg(v)).unwrap_err().to_string();
+        assert!(err.contains("agentic_replay"), "{err}");
+    }
+
+    #[test]
+    fn agentic_warmup_with_agentic_timing_mode_ok() {
+        let mut v = valid_value();
+        v["phases"][0]["agentic_cache_warmup_duration"] = json!(30.0);
+        v["phases"][0]["timing_mode"] = json!("agentic_replay");
+        assert!(validate(&cfg(v)).is_ok());
+    }
+
+    #[test]
+    fn agentic_warmup_deferred_when_scenario_set() {
+        // Scenario-locked timing_mode is resolved at runtime; defer (do not raise).
+        let mut v = valid_value();
+        v["scenario"] = json!("inferencex-agentx-mvp");
+        v["phases"][0]["agentic_cache_warmup_duration"] = json!(30.0);
         assert!(validate(&cfg(v)).is_ok());
     }
 }
