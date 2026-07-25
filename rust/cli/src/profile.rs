@@ -32,6 +32,39 @@ fn run_benchmark_child(
     execute::run_once(runner, &payload, child_pid)
 }
 
+/// Authoring-tagged single-run `--execute` wire body.
+///
+/// The single-run path sends normalized authoring [`load::Inputs`] under an
+/// `authoring` tag so the runtime resolves them at `--execute` (matching the runtime
+/// [`decode_execute_wire`](aiperf_runtime::engine::protocol_v2::decode_execute_wire)
+/// union). The CLI single-run path therefore no longer resolves before the child
+/// launch — except that a configured `reset_kv_cache` / `server_profiler` endpoint
+/// control hook is a live pre-flight action that still needs the resolved endpoint,
+/// so that (rare) case resolves locally purely to run the hook.
+#[derive(serde::Serialize)]
+struct AuthoringWire<'a> {
+    authoring: &'a load::Inputs,
+}
+
+/// Drive one single-run child from authoring [`load::Inputs`], sending the authoring
+/// wire body so the runtime performs the authoritative resolution at `--execute`.
+fn run_benchmark_child_authoring(
+    inputs: &load::Inputs,
+    runner: &Path,
+    child_pid: &crate::signals::ChildPid,
+) -> anyhow::Result<crate::execute::Terminal> {
+    // A live endpoint control hook (reset_kv_cache / server_profiler) must run before
+    // the child launches and needs the resolved endpoint; resolve locally only then.
+    if inputs.reset_kv_cache.is_some() || inputs.server_profiler.is_some() {
+        let run = load::build(inputs.clone())?;
+        crate::control_hooks::run_reset_kv_cache_before_run(&run)?;
+    }
+    clear_prior_report(&inputs.artifact_dir);
+    let payload = serde_json::to_vec(&AuthoringWire { authoring: inputs })
+        .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
+    execute::run_once(runner, &payload, child_pid)
+}
+
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let flags = match ProfileFlags::parse_from_args(args) {
@@ -53,8 +86,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             return run_yaml_sweep(&flags, base, sweep);
         }
         let expanded = crate::expand::render_with_context(base)?;
-        let run = yaml::resolve_expanded_value(expanded, flags.artifact_dir.clone(), Some(&flags))?;
-        return run_single(run);
+        let inputs =
+            yaml::resolve_expanded_inputs(expanded, flags.artifact_dir.clone(), Some(&flags))?;
+        return run_single(inputs);
     }
 
     // `max-concurrency-under-sla --search-style monotonic` runs a dynamic
@@ -110,7 +144,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let expansion = sweep::expand(&flags, sweep_type)?;
     let trials = flags.num_profile_runs.unwrap_or(1);
     if !expansion.is_sweep && trials <= 1 {
-        return run_single(load::resolve(&flags)?);
+        return run_single(load::resolve_inputs(&flags)?);
     }
     let order = match flags.parameter_sweep_mode.as_str() {
         "independent" => IterationOrder::Independent,
@@ -168,14 +202,17 @@ fn validate_multi_run(flags: &ProfileFlags) -> anyhow::Result<()> {
 
 /// Execute one built run through the runner and map its terminal outcome, echoing
 /// the runner's console summary to stdout on success.
-fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
-    let artifact_dir = run.artifact_dir.clone();
+///
+/// The single-run path sends authoring [`load::Inputs`] on the wire; the runtime
+/// resolves them at `--execute`.
+fn run_single(inputs: load::Inputs) -> anyhow::Result<i32> {
+    let artifact_dir = inputs.artifact_dir.clone();
     // Bind logging before execution so startup events reach the run artifact.
     crate::logging::set_log_file(&artifact_dir);
     tracing::info!("Starting native AIPerf run");
     let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
-    let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
+    let terminal = run_benchmark_child_authoring(&inputs, &runner, &child_pid)?;
     if terminal.success {
         tracing::info!("Native AIPerf run completed");
         if let Some(path) = &terminal.report_path {
@@ -1038,7 +1075,9 @@ fn run_sweep(
     order: IterationOrder,
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
-    let disable_warmup = !flags.no_profile_run_disable_warmup_after_first.unwrap_or(false)
+    let disable_warmup = !flags
+        .no_profile_run_disable_warmup_after_first
+        .unwrap_or(false)
         && flags.profile_run_disable_warmup_after_first.unwrap_or(true);
     let cells = sweep_run::plan_cells(
         flags,
@@ -1055,11 +1094,13 @@ fn run_sweep(
 
 /// Resolve per-variation seed policy from sweep seed flags.
 pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
-    let consistent = flags.set_consistent_seed.unwrap_or(true) && !flags.no_set_consistent_seed.unwrap_or(false);
+    let consistent =
+        flags.set_consistent_seed.unwrap_or(true) && !flags.no_set_consistent_seed.unwrap_or(false);
     let base = flags
         .random_seed
         .or_else(|| consistent.then_some(sweep_run::DEFAULT_SWEEP_SEED));
-    let same_seed = flags.parameter_sweep_same_seed.unwrap_or(false) && !flags.no_parameter_sweep_same_seed.unwrap_or(false);
+    let same_seed = flags.parameter_sweep_same_seed.unwrap_or(false)
+        && !flags.no_parameter_sweep_same_seed.unwrap_or(false);
     sweep_run::SeedPolicy { base, same_seed }
 }
 
@@ -1145,4 +1186,95 @@ fn run_cells(
         tracing::warn!("{failed}/{total} sweep cells failed");
     }
     Ok(exit_code)
+}
+
+#[cfg(test)]
+mod authoring_wire_tests {
+    use aiperf_runtime::engine::protocol_v2::decode_execute_wire;
+
+    /// The single-run authoring wire (`{"authoring": <Inputs>}`) and the resolved
+    /// wire the sweep/search paths send must resolve to the same run: the runtime
+    /// union decoder resolves the authoring envelope through the same
+    /// `aiperf_runtime::config::resolve::resolve` the CLI used, so both project to an
+    /// identical `AuthoredRunSpecV2`. This pins the phase-5 wire change (single-run
+    /// now ships authoring `Inputs`; the runtime resolves at `--execute`).
+    #[test]
+    fn authoring_wire_matches_resolved_wire() {
+        // `resolve` builds the large `BenchmarkConfig` on the stack, which overflows
+        // the default test-thread stack; run the body on a generous one.
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(authoring_wire_matches_resolved_wire_body)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    fn authoring_wire_matches_resolved_wire_body() {
+        use crate::flags::ProfileFlags;
+
+        let args = [
+            "-m",
+            "mock-model",
+            "--url",
+            "http://localhost:8000",
+            "--endpoint-type",
+            "chat",
+            "--concurrency",
+            "4",
+            "--request-count",
+            "8",
+            "--isl",
+            "128",
+            "--osl",
+            "16",
+            "--streaming",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+        let flags = ProfileFlags::parse_from_args(&args).expect("parse flags");
+
+        let inputs = crate::load::resolve_inputs(&flags).expect("normalize inputs");
+        // The resolved wire body (what sweeps ship) and the authoring wire body (what
+        // the single-run path now ships) originate from the same normalized inputs.
+        let resolved = crate::load::build(inputs.clone()).expect("resolve run");
+        let resolved_bytes = serde_json::to_vec(&resolved).expect("serialize resolved run");
+        let authoring_bytes = serde_json::to_vec(&super::AuthoringWire { authoring: &inputs })
+            .expect("serialize authoring wire");
+
+        let via_resolved = decode_execute_wire(&resolved_bytes)
+            .expect("decode resolved wire")
+            .into_authored()
+            .expect("project resolved run");
+        let via_authoring = decode_execute_wire(&authoring_bytes)
+            .expect("decode authoring wire")
+            .into_authored()
+            .expect("project authoring run");
+
+        assert_eq!(
+            via_authoring.transport.id, via_resolved.transport.id,
+            "transport selection must match across the union wire"
+        );
+        assert_eq!(
+            via_authoring.workload.id, via_resolved.workload.id,
+            "workload selection must match across the union wire"
+        );
+        assert_eq!(
+            via_authoring.dispatch, via_resolved.dispatch,
+            "dispatch default must match across the union wire"
+        );
+        assert_eq!(
+            via_authoring.artifact_target, via_resolved.artifact_target,
+            "artifact target must match across the union wire"
+        );
+        // `benchmark_id` is a fresh UUID per `resolve` (random by design), so the two
+        // resolutions differ there; every other identity field must match.
+        assert_eq!(via_authoring.identity.label, via_resolved.identity.label);
+        assert_eq!(via_authoring.identity.trial, via_resolved.identity.trial);
+        assert_eq!(
+            via_authoring.identity.random_seed,
+            via_resolved.identity.random_seed
+        );
+    }
 }

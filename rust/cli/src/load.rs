@@ -13,7 +13,9 @@ use std::path::PathBuf;
 // The normalized-inputs types and the resolution moved into the runtime; re-export
 // them so `crate::load::{Inputs, Warmup, DatasetAnalysisInputs}` and `load::build`
 // call sites in the flag and YAML authoring paths resolve unchanged.
-pub use aiperf_runtime::config::resolve::{DatasetAnalysisInputs, Inputs, Warmup, resolve as build};
+pub use aiperf_runtime::config::resolve::{
+    DatasetAnalysisInputs, Inputs, Warmup, resolve as build,
+};
 
 use crate::flags::ProfileFlags;
 use crate::model::BenchmarkRun;
@@ -120,6 +122,15 @@ pub(crate) fn overlay_server_profiler_config(
 }
 
 pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
+    build(resolve_inputs(flags)?)
+}
+
+/// Normalize profile flags into authoring [`Inputs`] without resolving them.
+///
+/// The single-run path serializes these authoring inputs onto the `--execute` wire
+/// so the runtime performs the authoritative resolution; [`resolve`] additionally
+/// builds the run for callers (sweeps, searches) that resolve CLI-side.
+pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
     reject_sweep("--request-rate", flags.request_rate.as_deref())?;
@@ -425,10 +436,12 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         uuid_and_strip: flags.uuid_and_strip.unwrap_or(false),
         replay_speedup: flags.replay_speedup,
         max_idle_gap_cap_seconds: flags.max_idle_gap_cap_seconds,
-        open_loop_replay: flags.open_loop_replay.unwrap_or(true) && !flags.no_open_loop_replay.unwrap_or(false),
+        open_loop_replay: flags.open_loop_replay.unwrap_or(true)
+            && !flags.no_open_loop_replay.unwrap_or(false),
         open_loop_strict: flags.open_loop_strict.unwrap_or(false),
         omit_kv_hints: flags.omit_kv_hints.unwrap_or(false),
-        force_min_tokens: flags.force_min_tokens.unwrap_or(true) && !flags.no_force_min_tokens.unwrap_or(false),
+        force_min_tokens: flags.force_min_tokens.unwrap_or(true)
+            && !flags.no_force_min_tokens.unwrap_or(false),
         fixed_schedule,
         fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
         fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
@@ -462,12 +475,12 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         synthesis: build_synthesis(flags)?,
         dataset_filters: parse_dataset_filters(flags)?,
         // Dry-run emits the dataset-analysis artifact family unless suppressed.
-        dataset_analysis: (flags.dry_run.unwrap_or(false) && !flags.no_dataset_analysis.unwrap_or(false)).then(|| {
-            DatasetAnalysisInputs {
-                block_size: flags.kv_block_size,
-                cache_blocks: flags.kv_cache_blocks,
-                per_conversation: flags.dataset_analysis_per_conversation.unwrap_or(false),
-            }
+        dataset_analysis: (flags.dry_run.unwrap_or(false)
+            && !flags.no_dataset_analysis.unwrap_or(false))
+        .then(|| DatasetAnalysisInputs {
+            block_size: flags.kv_block_size,
+            cache_blocks: flags.kv_cache_blocks,
+            per_conversation: flags.dataset_analysis_per_conversation.unwrap_or(false),
         }),
         phases_override: None,
         artifact_dir: flags
@@ -475,7 +488,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .clone()
             .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
-    build(inputs)
+    Ok(inputs)
 }
 
 /// Resolve `--request-rate-series` against mutually exclusive scalar rate flags.

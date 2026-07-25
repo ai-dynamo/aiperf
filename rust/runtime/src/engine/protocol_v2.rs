@@ -21,8 +21,8 @@ use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::config::model::workload_kind::{workload_kind, WorkloadKind};
 use crate::config::model::BenchmarkConfig;
+use crate::config::model::workload_kind::{WorkloadKind, workload_kind};
 use crate::engine::protocol::{
     DispatchMode, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
 };
@@ -138,6 +138,50 @@ impl EnvelopeV2 {
     }
 }
 
+/// Authoring-tagged execute-mode stdin payload.
+///
+/// The single-run profile path serializes normalized authoring [`Inputs`] under an
+/// `authoring` tag so the runtime performs the authoritative `Inputs -> BenchmarkRun`
+/// resolution at `--execute`, rather than the CLI resolving before the child launch.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthoringWireV2 {
+    /// Normalized profile inputs the runtime resolves through the shared `resolve`.
+    authoring: crate::config::resolve::Inputs,
+}
+
+/// Decode the union execute-mode stdin payload into a resolved [`BenchmarkRunWireV2`].
+///
+/// Two payload shapes are accepted:
+/// - an authoring envelope `{"authoring": <Inputs>}` (the single-run profile path):
+///   the runtime resolves it here through the shared
+///   [`crate::config::resolve::resolve`] and re-projects the resolved
+///   [`crate::config::model::BenchmarkRun`] onto the wire shape, and
+/// - a bare resolved [`BenchmarkRunWireV2`] (the sweep/search paths): decoded
+///   directly, exactly as before.
+///
+/// The two are disjoint by construction — a resolved run never carries a top-level
+/// `authoring` key — so detection is a single key probe. The authoring branch
+/// re-projects by round-tripping the resolved run through bytes, which mirrors the
+/// CLI sweep-path serialization and preserves factory-owned [`RawValue`] config that
+/// `serde_json::from_value` cannot reconstruct.
+pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
+    let probe: Value = serde_json::from_slice(input)
+        .map_err(|error| anyhow!("invalid protocol-v2 request: {error}"))?;
+    if probe.get("authoring").is_some() {
+        let envelope: AuthoringWireV2 = serde_json::from_slice(input)
+            .map_err(|error| anyhow!("invalid authoring inputs: {error}"))?;
+        let run = crate::config::resolve::resolve(envelope.authoring)?;
+        let bytes = serde_json::to_vec(&run)
+            .map_err(|error| anyhow!("re-serializing the resolved run: {error}"))?;
+        serde_json::from_slice(&bytes)
+            .map_err(|error| anyhow!("resolved run failed the wire contract: {error}"))
+    } else {
+        serde_json::from_slice(input)
+            .map_err(|error| anyhow!("invalid protocol-v2 request: {error}"))
+    }
+}
+
 /// Default thread-per-core worker count when `runtime.workers` is unset: the
 /// machine's available parallelism, so a load run uses every core. Falls back to
 /// `1` when the platform cannot report parallelism.
@@ -236,7 +280,7 @@ impl BenchmarkRunWireV2 {
     }
 
     /// Adapt canonical Config nesting to the linked preparation seam.
-    pub(crate) fn into_authored(self) -> Result<AuthoredRunSpecV2> {
+    pub fn into_authored(self) -> Result<AuthoredRunSpecV2> {
         self.validate_outer()?;
         // Classify the workload from the typed config before consuming it, so the
         // graph-format set stays sourced from `config::model::workload_kind`.
@@ -317,7 +361,10 @@ impl BenchmarkRunWireV2 {
             .map_err(|error| anyhow!("run.cfg.models: {error}"))?;
         let endpoint = serde_json::to_value(&cfg.endpoint)
             .map_err(|error| anyhow!("run.cfg.endpoint: {error}"))?;
-        let additional_profiles = cfg.endpoint_profiles.into_iter().collect::<BTreeMap<_, _>>();
+        let additional_profiles = cfg
+            .endpoint_profiles
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
         let metrics = serde_json::to_value(&cfg.metrics)
             .map_err(|error| anyhow!("run.cfg.metrics: {error}"))?;
         let artifacts = serde_json::to_value(&cfg.artifacts)

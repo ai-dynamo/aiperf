@@ -45,6 +45,18 @@ pub(crate) fn resolve_expanded_value(
     artifact_dir: Option<PathBuf>,
     overrides: Option<&crate::flags::ProfileFlags>,
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
+    load::build(resolve_expanded_inputs(expanded, artifact_dir, overrides)?)
+}
+
+/// Normalize an already-expanded config value into authoring [`Inputs`] without
+/// resolving. The single-run path serializes these onto the `--execute` wire so the
+/// runtime resolves; [`resolve_expanded_value`] additionally builds the run for the
+/// YAML `sweep:` path, which resolves CLI-side.
+pub(crate) fn resolve_expanded_inputs(
+    expanded: serde_json::Value,
+    artifact_dir: Option<PathBuf>,
+    overrides: Option<&crate::flags::ProfileFlags>,
+) -> anyhow::Result<Inputs> {
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
@@ -54,7 +66,7 @@ pub(crate) fn resolve_expanded_value(
     }
     let mut inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
     apply_cli_overrides(&mut inputs, overrides)?;
-    load::build(inputs)
+    Ok(inputs)
 }
 
 /// Overlay an explicitly-set `Option<bool>` flag onto a config-derived `bool`.
@@ -87,7 +99,10 @@ fn apply_cli_overrides(
     // compound toggles (steady_state windowing, dataset-analysis knobs) resolve
     // bespoke below and are intentionally not folded here.
     overlay_bool(&mut inputs.streaming, flags.streaming);
-    overlay_bool(&mut inputs.use_legacy_max_tokens, flags.use_legacy_max_tokens);
+    overlay_bool(
+        &mut inputs.use_legacy_max_tokens,
+        flags.use_legacy_max_tokens,
+    );
     overlay_bool(
         &mut inputs.use_server_token_count,
         flags.use_server_token_count,
