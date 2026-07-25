@@ -216,6 +216,31 @@ mod tests {
     }
 
     #[test]
+    fn slice_excludes_history_and_emits_warmup_at_n_minus_1() {
+        // Turns at ts 0/100/200; ratios 0.5/0.5 -> t* = min + 0.5*dur = 100
+        // (hi==lo, so no RNG). next_idx = first ts>=100 = 1. warmup = turn 0.
+        let conv = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![turn(0.0, "a"), turn(100.0, "b"), turn(200.0, "c")],
+        };
+        let out = slice_trajectories_at_tstar(vec![conv], 0, 0.5, 0.5, None);
+        // One warmup conv (turn n-1) + one profiling conv (turns from t*).
+        assert_eq!(out.len(), 2);
+        let warm = out.iter().find(|c| c.session_id.ends_with(WARMUP_SUFFIX)).unwrap();
+        assert_eq!(warm.turns.len(), 1);
+        assert_eq!(warm.turns[0].max_tokens, 1); // _WARMUP_MAX_TOKENS
+        assert_eq!(warm.turns[0].timestamp_ms, Some(100.0)); // lead = t* - warm_ts = 100
+        assert_eq!(warm.parent_conversation_id.as_deref(), Some("t")); // shared tree marker
+        let prof = out.iter().find(|c| !c.session_id.ends_with(WARMUP_SUFFIX)).unwrap();
+        // History (turn 0) excluded; profiling turns rebased to t*-relative offsets.
+        assert_eq!(prof.turns.len(), 2);
+        assert_eq!(prof.turns[0].timestamp_ms, Some(0.0)); // ts 100 - t* 100
+        assert_eq!(prof.turns[1].timestamp_ms, Some(100.0)); // ts 200 - t* 100
+    }
+
+    #[test]
     fn composes_verbatim_turns_with_timestamps_and_marker() {
         let conv = ReconstructedConversation {
             session_id: "t".into(),
