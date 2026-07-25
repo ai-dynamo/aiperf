@@ -164,6 +164,40 @@ pub fn offset_ms(timestamp_ms: Option<f64>, t_star_ms: f64) -> f64 {
     }
 }
 
+/// Excess to subtract uniformly from every PROFILING dispatch offset so a
+/// trajectory's leading idle (t* → its earliest post-t* request) is capped
+/// (Python `_leading_idle_shift_ms`). `max(0, min(offsets) - cap)`; 0 when no cap
+/// or already within it. A single uniform shift preserves relative spacing.
+pub fn leading_idle_shift_ms(offsets: &[f64], cap_ms: Option<f64>) -> f64 {
+    match cap_ms {
+        None => 0.0,
+        Some(cap) => {
+            if offsets.is_empty() {
+                0.0
+            } else {
+                (offsets.iter().copied().fold(f64::INFINITY, f64::min) - cap).max(0.0)
+            }
+        }
+    }
+}
+
+/// Per-stream PROFILING dispatch delays from profiling-start (Python's
+/// phase-start anchoring around `_dispatch_profiling`): apply the leading-idle
+/// shift, then anchor at t0 = the lane's min shifted offset under
+/// `--burst-phase-starts` (lane bursts together) or 0 under spread (each lane
+/// waits its recorded gap). Delays are floored at 0 (a non-positive delay fires
+/// immediately).
+pub fn profiling_dispatch_delays_ms(offsets: &[f64], burst: bool, cap_ms: Option<f64>) -> Vec<f64> {
+    let shift = leading_idle_shift_ms(offsets, cap_ms);
+    let shifted: Vec<f64> = offsets.iter().map(|o| o - shift).collect();
+    let t0 = if burst && !shifted.is_empty() {
+        shifted.iter().copied().fold(f64::INFINITY, f64::min)
+    } else {
+        0.0
+    };
+    shifted.iter().map(|s| (s - t0).max(0.0)).collect()
+}
+
 /// A stream turn's replay phase under a sampled t*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayPhase {
@@ -229,6 +263,22 @@ pub fn replay_schedule(turn_timestamps_ms: &[Option<f64>], t_star_ms: f64) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profiling_phase_start_anchoring() {
+        let offs = [500.0, 50.0, 650.0];
+        // spread, no cap -> unchanged.
+        assert_eq!(profiling_dispatch_delays_ms(&offs, false, None), vec![500.0, 50.0, 650.0]);
+        // burst, no cap -> anchor at min(50) -> [450, 0, 600].
+        assert_eq!(profiling_dispatch_delays_ms(&offs, true, None), vec![450.0, 0.0, 600.0]);
+        // cap 30 -> shift = min(50)-30 = 20; spread -> [480, 30, 630].
+        assert_eq!(leading_idle_shift_ms(&offs, Some(30.0)), 20.0);
+        assert_eq!(profiling_dispatch_delays_ms(&offs, false, Some(30.0)), vec![480.0, 30.0, 630.0]);
+        // cap 30 + burst -> t0 = 30 -> [450, 0, 600].
+        assert_eq!(profiling_dispatch_delays_ms(&offs, true, Some(30.0)), vec![450.0, 0.0, 600.0]);
+        // cap above the leading idle -> no shift.
+        assert_eq!(leading_idle_shift_ms(&offs, Some(100.0)), 0.0);
+    }
 
     #[test]
     fn replay_schedule_matches_python_golden() {
