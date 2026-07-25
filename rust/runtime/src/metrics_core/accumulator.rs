@@ -11,6 +11,7 @@ use crate::metrics_core::catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
     spec_for, validate_catalog,
 };
+use crate::metrics_core::definition::{Definition, Native, metric_definition};
 use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest};
 use crate::metrics_core::kernel::{DistributionStats, linear_distribution, nearest_distribution};
 use crate::metrics_core::sidecar::SidecarMetric;
@@ -101,6 +102,10 @@ pub struct SloThreshold {
     /// better) versus `<=` it. Resolved from the static catalog at construction so
     /// the per-record good-request path never re-scans it.
     pub larger_is_better: bool,
+    /// The metric's static definition, captured once at construction (config-time)
+    /// so the per-record path can route through the shared
+    /// [`Definition::passes_threshold`] direction logic without a registry lookup.
+    pub definition: &'static Definition,
 }
 
 impl SloThreshold {
@@ -110,6 +115,7 @@ impl SloThreshold {
             tag,
             native_value,
             larger_is_better: tag_is_larger_is_better(tag),
+            definition: metric_definition(tag),
         }
     }
 
@@ -121,7 +127,17 @@ impl SloThreshold {
             tag,
             native_value: display_unit.convert_value(display_value, spec.unit)?,
             larger_is_better: spec.flags.contains(MetricFlags::LARGER_IS_BETTER),
+            definition: metric_definition(tag),
         })
+    }
+
+    /// Whether a per-record native `value` satisfies this threshold. Routes through
+    /// the shared [`Definition::passes_threshold`] logic with typed [`Native`] units,
+    /// using the definition captured at construction (no per-record registry lookup).
+    #[inline]
+    pub fn passes(&self, value: f64) -> bool {
+        self.definition
+            .passes_threshold(Native::new(value), Native::new(self.native_value))
     }
 }
 
@@ -1033,11 +1049,10 @@ impl MetricsAccumulator {
             let Some(value) = self.store.metric_f64(row, slo.tag) else {
                 return false;
             };
-            if slo.larger_is_better {
-                value >= slo.native_value
-            } else {
-                value <= slo.native_value
-            }
+            // Direction logic is the shared `Definition::passes_threshold` over typed
+            // `Native` units; `slo.definition` was captured at construction, so this
+            // per-record path performs no registry lookup.
+            slo.passes(value)
         });
         self.store
             .set_metric_f64(row, MetricTag::GoodRequestCount, f64::from(passes));
@@ -2198,6 +2213,28 @@ mod tests {
             SloThreshold::from_display(MetricTag::OutputSequenceLength, 1.0)
                 .unwrap()
                 .larger_is_better
+        );
+    }
+
+    #[test]
+    fn slo_threshold_passes_via_native_units_both_directions() {
+        // Larger-is-better metric: passes when value >= threshold.
+        let lib = SloThreshold::native(MetricTag::OutputSequenceLength, 100.0);
+        assert!(lib.passes(100.0));
+        assert!(lib.passes(150.0));
+        assert!(!lib.passes(99.0));
+
+        // Smaller-is-better metric: passes when value <= threshold.
+        let sib = SloThreshold::native(MetricTag::RequestLatency, 150_000_000.0);
+        assert!(sib.passes(150_000_000.0));
+        assert!(sib.passes(100_000_000.0));
+        assert!(!sib.passes(150_000_001.0));
+
+        // Routed through the shared Definition::passes_threshold with typed Native.
+        assert_eq!(
+            sib.passes(120_000_000.0),
+            sib.definition
+                .passes_threshold(Native::new(120_000_000.0), Native::new(sib.native_value))
         );
     }
 
