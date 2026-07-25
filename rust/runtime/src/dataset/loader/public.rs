@@ -939,10 +939,101 @@ pub(crate) async fn load_public_rows(config: &LoadConfig) -> Result<Vec<RawRow>>
                 load_hugging_face_revision_rows(config, dataset, subset, split, *max_rows, revision)
                     .await
             }
-            None => load_hugging_face_rows(config, dataset, subset, split, *max_rows).await,
+            None => {
+                let (subset, split) =
+                    resolve_hf_coordinates(config, dataset, subset, split).await?;
+                load_hugging_face_rows(config, dataset, &subset, &split, *max_rows).await
+            }
         },
         source => jsonl_or_json_rows(source),
     }
+}
+
+/// Pick concrete (config, split) from a parsed `/info` `dataset_info` map,
+/// resolving empty user inputs. Config: explicit if present (else `default`, else
+/// first key). Split: explicit if present (else train > test > validation > first).
+fn pick_hf_coordinates(
+    dataset_info: &serde_json::Map<String, Value>,
+    want_subset: &str,
+    want_split: &str,
+) -> Result<(String, String)> {
+    let config = if !want_subset.is_empty() {
+        if !dataset_info.contains_key(want_subset) {
+            return Err(DatasetError::Validation(format!(
+                "config {want_subset:?} not found; available: {}",
+                dataset_info.keys().cloned().collect::<Vec<_>>().join(", ")
+            )));
+        }
+        want_subset.to_string()
+    } else if dataset_info.contains_key("default") {
+        "default".to_string()
+    } else {
+        dataset_info
+            .keys()
+            .next()
+            .cloned()
+            .ok_or_else(|| DatasetError::Validation("dataset has no configs".into()))?
+    };
+
+    let splits = dataset_info
+        .get(&config)
+        .and_then(|c| c.get("splits"))
+        .and_then(Value::as_object);
+    let split = if !want_split.is_empty() {
+        if let Some(s) = splits
+            && !s.contains_key(want_split)
+        {
+            return Err(DatasetError::Validation(format!(
+                "split {want_split:?} not found in config {config:?}; available: {}",
+                s.keys().cloned().collect::<Vec<_>>().join(", ")
+            )));
+        }
+        want_split.to_string()
+    } else if let Some(s) = splits {
+        ["train", "test", "validation"]
+            .iter()
+            .find(|p| s.contains_key(**p))
+            .map(|p| (*p).to_string())
+            .or_else(|| s.keys().next().cloned())
+            .unwrap_or_else(|| "train".to_string())
+    } else {
+        "train".to_string()
+    };
+    Ok((config, split))
+}
+
+/// Resolve HF coordinates, calling the Dataset Viewer `/info` endpoint only when
+/// subset or split is empty. Pinned revisions never reach this path.
+async fn resolve_hf_coordinates(
+    config: &LoadConfig,
+    dataset: &str,
+    subset: &str,
+    split: &str,
+) -> Result<(String, String)> {
+    if !subset.is_empty() && !split.is_empty() {
+        return Ok((subset.to_string(), split.to_string()));
+    }
+    let encoded: String = url::form_urlencoded::byte_serialize(dataset.as_bytes()).collect();
+    let info_url = format!("https://datasets-server.huggingface.co/info?dataset={encoded}");
+    let bytes = config
+        .fetcher
+        .fetch(
+            &info_url,
+            &format!("hf-info:{dataset}"),
+            config.bearer_token.as_deref(),
+        )
+        .await?;
+    let info: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| DatasetError::Validation(format!("HF /info for {dataset} is invalid: {e}")))?;
+    let dataset_info = info
+        .get("dataset_info")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            DatasetError::Validation(format!(
+                "HF /info for {dataset} has no dataset_info (missing/gated?)"
+            ))
+        })?;
+    pick_hf_coordinates(dataset_info, subset, split)
 }
 
 async fn load_hugging_face_revision_rows(
@@ -2340,6 +2431,33 @@ mod tests {
 
     fn hf_auto_options(value: Value) -> Map<String, Value> {
         value.as_object().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn pick_hf_coordinates_picks_default_config_and_train_split() {
+        let info = json!({"default": {"splits": {"train": {}, "test": {}}}});
+        let (c, s) = pick_hf_coordinates(info.as_object().unwrap(), "", "").unwrap();
+        assert_eq!((c.as_str(), s.as_str()), ("default", "train"));
+    }
+
+    #[test]
+    fn pick_hf_coordinates_falls_back_to_test_when_no_train() {
+        let info = json!({"main": {"splits": {"validation": {}, "test": {}}}});
+        let (c, s) = pick_hf_coordinates(info.as_object().unwrap(), "", "").unwrap();
+        assert_eq!((c.as_str(), s.as_str()), ("main", "test"));
+    }
+
+    #[test]
+    fn pick_hf_coordinates_honors_explicit_subset_and_split() {
+        let info = json!({"a": {"splits": {"train": {}}}, "b": {"splits": {"x": {}}}});
+        let (c, s) = pick_hf_coordinates(info.as_object().unwrap(), "b", "x").unwrap();
+        assert_eq!((c.as_str(), s.as_str()), ("b", "x"));
+    }
+
+    #[test]
+    fn pick_hf_coordinates_unknown_explicit_subset_errors() {
+        let info = json!({"a": {"splits": {"train": {}}}});
+        assert!(pick_hf_coordinates(info.as_object().unwrap(), "missing", "").is_err());
     }
 
     #[tokio::test]
