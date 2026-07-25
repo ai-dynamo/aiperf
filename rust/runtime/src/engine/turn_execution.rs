@@ -462,7 +462,7 @@ fn argmin(inflight: &[usize]) -> usize {
     inflight
         .iter()
         .enumerate()
-        .min_by_key(|(index, &depth)| (depth, *index))
+        .min_by_key(|&(index, &depth)| (depth, index))
         .map(|(index, _)| index)
         .unwrap_or(0)
 }
