@@ -6,6 +6,7 @@
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use std::cell::Cell;
 use std::convert::Infallible;
@@ -320,6 +321,17 @@ fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
     if let Some(prepared) = &client.prepared_tls {
         return prepared.rustls_config();
     }
+    // The non-prepared config depends only on `ssl_verify` (roots, provider, and
+    // ALPN are fixed), so memoize the two variants instead of rebuilding the
+    // aws-lc provider and re-extending the full webpki root store per connection.
+    static CACHE: [OnceLock<Arc<rustls::ClientConfig>>; 2] = [OnceLock::new(), OnceLock::new()];
+    CACHE[usize::from(client.ssl_verify)]
+        .get_or_init(|| build_non_prepared_rustls_config(client.ssl_verify))
+        .clone()
+}
+
+/// Build the non-prepared client TLS config for one `ssl_verify` mode.
+fn build_non_prepared_rustls_config(ssl_verify: bool) -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     // Feature unification links multiple crypto providers, so select one
@@ -330,7 +342,7 @@ fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
         .expect("aws-lc supports rustls safe default protocol versions")
         .with_root_certificates(roots)
         .with_no_client_auth();
-    if !client.ssl_verify {
+    if !ssl_verify {
         cfg.dangerous()
             .set_certificate_verifier(Arc::new(NoCertificateVerification { provider }));
     }
@@ -584,7 +596,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{establish_with_resolver, with_timeout};
+    use super::{establish_with_resolver, rustls_config, with_timeout};
     use crate::clock::{Clock, SimClock, drive_sim};
     use crate::transport::core::{ErrorDetails, ErrorKind, TraceData};
     use crate::transport::http::client::resolver::DnsResolver;
@@ -593,6 +605,25 @@ mod tests {
     use std::cell::Cell;
     use std::net::SocketAddr;
     use std::rc::Rc;
+    use std::sync::Arc;
+
+    #[test]
+    fn non_prepared_rustls_config_is_memoized_per_verify_mode() {
+        let verify = ClientConfig {
+            ssl_verify: true,
+            ..ClientConfig::default()
+        };
+        let insecure = ClientConfig {
+            ssl_verify: false,
+            ..ClientConfig::default()
+        };
+        // Repeated non-prepared builds return the same cached Arc, not a fresh
+        // aws-lc provider + webpki root store each time.
+        assert!(Arc::ptr_eq(&rustls_config(&verify), &rustls_config(&verify)));
+        assert!(Arc::ptr_eq(&rustls_config(&insecure), &rustls_config(&insecure)));
+        // The two verify modes are distinct configs.
+        assert!(!Arc::ptr_eq(&rustls_config(&verify), &rustls_config(&insecure)));
+    }
 
     /// A resolver that fails the connect phase for its first `fail_first`
     /// invocations, then resolves. Used to exercise connect-retry policy
