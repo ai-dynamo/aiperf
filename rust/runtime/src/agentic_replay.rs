@@ -532,10 +532,24 @@ pub use crate::agentic_tree::TreeSpec;
 /// turns.
 ///
 /// A root is a conversation with `parent_conversation_id == None`; its children
-/// are conversations whose `parent_conversation_id` names that root. WARMUP
-/// conversations (the `::warmup` turn-(n-1) primes, which also carry a parent
-/// id) are excluded — they are dispatch primes, not tree members. A root with
-/// no surviving children yields no spec (the gate stays a pass-through).
+/// are the **full transitive descendant set** — every conversation whose
+/// `parent_conversation_id` chain walks up to that root, at any depth. A depth>1
+/// subagent (whose immediate parent is another subagent rather than the root) is
+/// flattened into its root's `children` so nested descendants gate the root join
+/// and hold recycle, matching Python's recursive `session_tree` descendant
+/// registration. WARMUP conversations (the `::warmup` turn-(n-1) primes, which
+/// also carry a parent id) are excluded — they are dispatch primes, not tree
+/// members. A root with no surviving descendants yields no spec (the gate stays a
+/// pass-through).
+///
+/// Descendants are grouped by walking the explicit `parent_conversation_id`
+/// chain (via an `id -> parent_id` map). If that chain is broken (a parent id
+/// that names no known conversation), the walk falls back to
+/// [`crate::agentx::cache_bust::base_trace_id`] — which strips `::`-suffixes to
+/// the root base — to recover the root base id. A conversation whose chain
+/// neither terminates at a `None`-parent root nor resolves via the base id is
+/// treated as its own root (safe: it forms no spurious join membership) and, if
+/// childless, yields no spec.
 ///
 /// `join_turns` are read from each surviving root turn's `join_prerequisite`.
 /// **Callers must pass the already-sliced profiling conversations**
@@ -550,18 +564,70 @@ pub fn build_tree_specs(
 ) -> Vec<TreeSpec> {
     let is_warmup = |id: &str| id.ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX);
 
-    // Group surviving (non-warmup) children by their parent conversation id.
-    let mut children_by_parent: HashMap<String, Vec<String>> = HashMap::new();
+    // `id -> parent_id` over surviving (non-warmup) conversations, plus the set
+    // of known session ids and the roots (parent_conversation_id == None), for
+    // O(1) chain-walking.
+    let mut parent_of: HashMap<&str, &str> = HashMap::new();
+    let mut known: HashSet<&str> = HashSet::new();
+    let mut is_root: HashSet<&str> = HashSet::new();
     for conv in convs {
         if is_warmup(&conv.session_id) {
             continue;
         }
-        if let Some(parent) = &conv.parent_conversation_id {
-            children_by_parent
-                .entry(parent.clone())
-                .or_default()
-                .push(conv.session_id.clone());
+        known.insert(conv.session_id.as_str());
+        match &conv.parent_conversation_id {
+            Some(parent) => {
+                parent_of.insert(conv.session_id.as_str(), parent.as_str());
+            }
+            None => {
+                is_root.insert(conv.session_id.as_str());
+            }
         }
+    }
+
+    // Resolve the tree root of a conversation by walking the explicit
+    // parent_conversation_id chain to the `None`-parent ancestor. If the chain
+    // breaks (a parent id that names no known conversation), fall back to the
+    // `::`-stripped base id. Guard cycles / missing parents with a visited set +
+    // a hard step bound; an unresolvable conversation is treated as its own root
+    // (safe — it forms no spurious membership under an unrelated tree).
+    let resolve_root = |start: &str| -> String {
+        let mut cur = start;
+        let mut visited: HashSet<&str> = HashSet::new();
+        loop {
+            if is_root.contains(cur) {
+                return cur.to_string();
+            }
+            if !visited.insert(cur) {
+                break; // cycle
+            }
+            match parent_of.get(cur) {
+                Some(&parent) if known.contains(parent) => cur = parent,
+                _ => break, // broken chain (parent unknown or absent)
+            }
+        }
+        // Fallback: `::`-stripped base id, if it names a known root.
+        let base = crate::agentx::cache_bust::base_trace_id(cur);
+        if is_root.contains(base) {
+            return base.to_string();
+        }
+        cur.to_string() // treat as its own root
+    };
+
+    // Group the full transitive descendant set under each resolved tree root.
+    let mut children_by_parent: HashMap<String, Vec<String>> = HashMap::new();
+    for conv in convs {
+        if is_warmup(&conv.session_id) || conv.parent_conversation_id.is_none() {
+            continue; // roots contribute no membership to themselves
+        }
+        let root = resolve_root(&conv.session_id);
+        if root == conv.session_id {
+            continue; // unresolved / self-root descendant: no membership
+        }
+        children_by_parent
+            .entry(root)
+            .or_default()
+            .push(conv.session_id.clone());
     }
 
     let mut specs = Vec::new();
@@ -834,6 +900,58 @@ mod tree_gate_tests {
         assert_eq!(specs[0].root, "t");
         assert_eq!(specs[0].children, vec!["t::sa:a".to_string()]);
         assert_eq!(specs[0].join_turns, vec![(2usize, vec!["t::sa:a".to_string()])]);
+    }
+
+    #[test]
+    fn build_tree_specs_flattens_nested_subagents() {
+        use crate::agentx::loader::{ReconstructedConversation, ReconstructedTurn};
+
+        let turn = || ReconstructedTurn {
+            timestamp_ms: Some(0.0),
+            delay_ms: None,
+            api_time_ms: None,
+            source_trace_id: "t".into(),
+            source_outer_idx: 0,
+            source_kind: "weka_main".into(),
+            model: "m".into(),
+            max_tokens: 1,
+            raw_messages: vec![],
+            reset_context: false,
+            theoretical_prefix_cache_hit_blocks: 0,
+            theoretical_prefix_cache_total_blocks: 0,
+            input_kind: None,
+            spawn_branch: None,
+            join_prerequisite: None,
+        };
+        // root "t" -> child "t::sa:a" (parent "t") -> grandchild
+        // "t::sa:a:fa:0" (parent "t::sa:a", a depth-2 descendant).
+        let root = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![turn()],
+        };
+        let child = ReconstructedConversation {
+            session_id: "t::sa:a".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: Some("t".into()),
+            turns: vec![turn()],
+        };
+        let grandchild = ReconstructedConversation {
+            session_id: "t::sa:a:fa:0".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: Some("t::sa:a".into()),
+            turns: vec![turn()],
+        };
+        let specs = build_tree_specs(&[root, child, grandchild]);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].root, "t");
+        let mut children = specs[0].children.clone();
+        children.sort();
+        assert_eq!(
+            children,
+            vec!["t::sa:a".to_string(), "t::sa:a:fa:0".to_string()]
+        );
     }
 
     #[test]
