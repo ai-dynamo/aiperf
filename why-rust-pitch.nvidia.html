@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<!--
+  The Case for Rust — AIPerf executive pitch deck, in the NVIDIA slide style
+  (1280x720, #76B900 accent), converted from the /rust-port-why React deck.
+  Self-contained: no build step, no local assets. Open directly in a browser;
+  print to PDF at 1280x720 (16:9) for distribution.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Case for Rust · AIPerf</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root { --green:#76B900; --tint:#F2F7EA; --line:#E4E4E4; --ink:#111; --sub:#333; --mut:#8A8A8A; --foot:#C4C4C4; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:#3a3a3a; }
+  .deck { display:flex; flex-direction:column; align-items:center; gap:24px; padding:40px 0; }
+  .slide {
+    width:1280px; height:720px; position:relative; overflow:hidden; flex:none; background:#fff;
+    font-family:"NVIDIA Sans","Manrope",Arial,sans-serif; color:var(--ink);
+    box-shadow:0 20px 60px rgba(0,0,0,.4);
+  }
+  .mono { font-family:"Roboto Mono",monospace; }
+  .wordmark {
+    position:absolute; top:52px; right:64px; font-family:"Roboto Mono",monospace; font-weight:700;
+    font-size:20px; letter-spacing:.16em; color:var(--green);
+  }
+  .pad { position:absolute; inset:0; padding:88px 96px 0; display:flex; flex-direction:column; }
+  .eyebrow { font-family:"Roboto Mono",monospace; font-size:16px; letter-spacing:.2em; text-transform:uppercase; color:var(--green); margin-bottom:24px; }
+  h2 { font-weight:500; font-size:48px; line-height:1.14; letter-spacing:-.015em; margin:0; color:#000; max-width:1080px; }
+  h2 .g, .g { color:var(--green); }
+  .lead { font-size:23px; line-height:1.5; color:var(--sub); max-width:1040px; }
+  .foot { position:absolute; left:96px; right:64px; bottom:34px; display:flex; justify-content:space-between; align-items:center; }
+  .foot span { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--foot); }
+  strong { font-weight:700; color:#000; }
+
+  /* pipeline row */
+  .pipe { display:flex; align-items:stretch; gap:0; }
+  .pipe .cell { flex:1; border:1px solid var(--line); padding:14px 14px; text-align:center; }
+  .pipe .cell.accent { border-color:var(--green); background:var(--tint); }
+  .pipe .cell.dark { border-color:#111; }
+  .pipe .cell .t { font-family:"Roboto Mono",monospace; font-size:14px; color:#000; }
+  .pipe .cell .s { font-size:11px; color:#999; margin-top:3px; }
+  .arrow { color:var(--green); padding:0 10px; align-self:center; font-size:20px; }
+
+  /* note columns */
+  .notes { display:grid; gap:36px; }
+  .note { border-top:2px solid var(--green); padding-top:16px; font-size:21px; line-height:1.45; color:var(--sub); }
+  .note .h { font-family:"Roboto Mono",monospace; font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--green); margin-bottom:10px; }
+
+  /* stat tiles */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:20px; }
+  .stat { border:1px solid var(--line); border-top:3px solid var(--green); padding:20px 20px 18px; }
+  .stat .v { font-size:46px; font-weight:700; letter-spacing:-.02em; color:#000; line-height:1; }
+  .stat .l { font-size:14px; color:var(--mut); margin-top:12px; line-height:1.3; }
+  .stat .k { font-family:"Roboto Mono",monospace; font-size:12px; color:var(--green); margin-top:6px; }
+
+  /* two big drivers */
+  .cols2 { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+  .card { border:1px solid var(--line); padding:26px 26px; height:100%; }
+  .card.accent { border-color:var(--green); background:var(--tint); }
+  .card .num { font-family:"Roboto Mono",monospace; font-size:13px; letter-spacing:.14em; color:var(--green); }
+  .card .ti { font-size:27px; font-weight:600; color:#000; margin:8px 0 12px; letter-spacing:-.01em; }
+  .card .bd { font-size:19px; line-height:1.45; color:var(--sub); }
+
+  ul.tight { margin:8px 0 0; padding-left:20px; }
+  ul.tight li { font-size:18px; line-height:1.5; color:var(--sub); margin-bottom:7px; }
+
+  /* comparison table */
+  table.perf { border-collapse:collapse; width:100%; max-width:1088px; font-size:18px; }
+  table.perf th, table.perf td { border:1px solid var(--line); padding:11px 16px; text-align:left; }
+  table.perf thead th { border-top:3px solid var(--green); font-family:"Roboto Mono",monospace; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:#000; background:#fafafa; }
+  table.perf td.n { text-align:right; font-family:"Roboto Mono",monospace; }
+  table.perf tr.win td { background:var(--tint); }
+  table.perf td .rs { color:var(--green); font-weight:700; }
+
+  .callout { border-left:4px solid var(--green); background:#fafcf6; padding:16px 20px; font-size:19px; line-height:1.5; color:var(--sub); }
+  .callout .h { font-weight:700; color:#000; }
+
+  @media print {
+    html, body { background:#fff; }
+    .deck { gap:0; padding:0; }
+    .slide { box-shadow:none; page-break-after:always; }
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+
+  <!-- ============================ 01 · COVER ============================ -->
+  <section class="slide" aria-label="Cover">
+    <div style="position:absolute;inset:0;background:linear-gradient(120deg,#0f0f0f 0%,#1c1c1c 46%,#242424 100%);"></div>
+    <div style="position:absolute;right:-120px;top:-120px;width:620px;height:620px;border:2px solid rgba(118,185,0,.35);border-radius:50%;"></div>
+    <div style="position:absolute;right:10px;top:40px;width:460px;height:460px;border:1px solid rgba(118,185,0,.18);border-radius:50%;"></div>
+    <div class="mono" style="position:absolute;top:56px;left:64px;font-weight:700;font-size:22px;letter-spacing:.16em;color:var(--green);">NVIDIA</div>
+    <div style="position:absolute;left:64px;bottom:104px;max-width:960px;">
+      <div class="mono" style="font-size:18px;letter-spacing:.24em;text-transform:uppercase;color:var(--green);margin-bottom:22px;">Engineering Proposal</div>
+      <h1 style="font-weight:500;font-size:76px;line-height:1.03;letter-spacing:-.02em;margin:0;color:#fff;">The Case for Rust</h1>
+      <div style="margin-top:24px;font-size:26px;line-height:1.35;color:#d6d6d6;max-width:820px;">
+        Reimplementing AIPerf — NVIDIA's server-agnostic GenAI benchmarking tool — on a single-binary Rust core
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;margin-top:40px;">
+        <div style="width:36px;height:3px;background:var(--green);"></div>
+        <div style="font-weight:500;font-size:22px;color:#eee;">Anthony Casagrande</div>
+        <div style="font-size:20px;color:#9a9a9a;">· AIPerf Tech Lead · 2026</div>
+      </div>
+    </div>
+    <div class="mono" style="position:absolute;right:64px;bottom:44px;font-size:13px;letter-spacing:.18em;color:#6f6f6f;">perf_analyzer → GenAI-Perf → AIPerf (Py) → AIPerf (Rust)</div>
+  </section>
+
+  <!-- ============================ 02 · THESIS ============================ -->
+  <section class="slide" aria-label="Thesis">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad" style="justify-content:center;">
+      <div class="eyebrow">The whole case in one slide</div>
+      <h2>Retire a distributed system AIPerf never wanted — and <span class="g">share a core with Dynamo</span></h2>
+      <div class="lead" style="margin-top:26px;">
+        Python AIPerf runs a ~10-service, ZeroMQ, multiprocess control plane that <strong>exists only to work
+        around the GIL</strong>. Porting to Rust collapses it to one process, unlocks <strong>bidirectional code
+        reuse with Dynamo</strong>, matches Python's measurements on real runs, and pulls several-fold ahead only
+        where the client — not the inference server — is the limit.
+      </div>
+      <div class="notes" style="grid-template-columns:repeat(3,1fr);margin-top:40px;max-width:1040px;">
+        <div class="note"><div class="h">Driver 1 · Strategic</div>One Rust codebase feeds AIPerf <em>and</em> Dynamo. The Dynamo team asked for it.</div>
+        <div class="note"><div class="h">Driver 2 · Architecture</div>One multithreaded process replaces the GIL-era service mesh.</div>
+        <div class="note"><div class="h">The bonus</div>Parity on real runs; ~2× Python at the byte-exact ceiling (measured); whole workloads simulated in seconds.</div>
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>02</span></div>
+  </section>
+
+  <!-- ============================ 03 · NUMBERS ============================ -->
+  <section class="slide" aria-label="Headline numbers">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">The shape of the win</div>
+      <h2>Four numbers, honestly scoped</h2>
+      <div class="stats" style="margin-top:44px;">
+        <div class="stat"><div class="v">~45k</div><div class="l">Byte-exact req/s ceiling (measured, c4-144)</div><div class="k">~2× Python · 61k opt-in (sharded)</div></div>
+        <div class="stat"><div class="v">±0.3%</div><div class="l">Metric drift vs Python at 250 concurrency</div><div class="k">indistinguishable</div></div>
+        <div class="stat"><div class="v">1</div><div class="l">Processes for a single-node run</div><div class="k">was ~10 services</div></div>
+        <div class="stat"><div class="v">sec</div><div class="l">To simulate any workload offline</div><div class="k">virtual clock, no GPUs</div></div>
+      </div>
+      <div class="callout" style="margin-top:40px;max-width:1088px;">
+        <span class="h">Read these honestly.</span> The ~45k figure is the <strong>byte-exact</strong> client ceiling (default
+        `global` dispatch, parity-preserving), measured on a 144-core node — <strong>~2× Python</strong>. An opt-in
+        <strong>`sharded`</strong> mode hits ~61k (~3×) by trading byte-exact parity for throughput. On a normal,
+        server-bound LLM run the two clients are statistically indistinguishable (throughput = concurrency ÷ latency,
+        so the server sets the pace). The value is a <strong>simpler system with headroom</strong> — it uses under half
+        the node's cores at the ceiling — not faster customer numbers.
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>03</span></div>
+  </section>
+
+  <!-- ============================ 04 · TWO DRIVERS ============================ -->
+  <section class="slide" aria-label="Two primary drivers">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Why — the two drivers that carry the case</div>
+      <h2>Strategic reuse, and deleting accidental complexity</h2>
+      <div class="cols2" style="margin-top:40px;">
+        <div class="card accent">
+          <div class="num">DRIVER 01</div>
+          <div class="ti">Shared core with Dynamo</div>
+          <div class="bd">AIPerf and Dynamo reuse each other's Rust code — bidirectionally. Dynamo maintainers asked for this; the Dynamo mocker was built partly as a stand-in engine for AIPerf. One codebase, two products.</div>
+        </div>
+        <div class="card">
+          <div class="num">DRIVER 02</div>
+          <div class="ti">One process, not ten services</div>
+          <div class="bd">To use a single machine, Python needs ~10 services, a ZeroMQ bus, proxies, and mmap dataset sharing — almost all of it only to escape the GIL. A single-node Rust run is one thread-per-core process.</div>
+        </div>
+      </div>
+      <div class="notes" style="grid-template-columns:repeat(3,1fr);margin-top:30px;max-width:1088px;">
+        <div class="note"><div class="h">Consequence</div><strong>Headroom:</strong> ~45k req/s byte-exact on a 144-core node (~2× Python), using under half its cores; ~61k opt-in.</div>
+        <div class="note"><div class="h">Consequence</div><strong>One front-end, three modes:</strong> online · mock · offline, over one {transport, clock} seam.</div>
+        <div class="note"><div class="h">Consequence</div><strong>Simpler ops &amp; instant cold start:</strong> no bus to babysit; native binary ready in ms.</div>
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>04</span></div>
+  </section>
+
+  <!-- ============================ 05 · COMPLEXITY ============================ -->
+  <section class="slide" aria-label="Where the complexity went">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Where the complexity went</div>
+      <h2>Python distributes to <span class="g">use</span> one box; Rust distributes only to <span class="g">exceed</span> one</h2>
+      <div class="cols2" style="margin-top:34px;">
+        <div class="card">
+          <div class="num" style="color:#c0392b;">PYTHON · MANDATORY, EVERY RUN</div>
+          <div class="ti" style="font-size:24px;">A distributed system just to fill one machine</div>
+          <ul class="tight">
+            <li>~10 services (controller, workers, records manager, timing, …)</li>
+            <li>ZeroMQ message bus + ZMQ proxies for routing</li>
+            <li>mmap dataset sharing to dodge per-process copies</li>
+            <li>multiprocess service managers to fan out past the GIL — on one host</li>
+            <li>per-service CPU tuning at high load (records-manager starvation &gt; 500k)</li>
+          </ul>
+        </div>
+        <div class="card accent">
+          <div class="num">RUST · DELIBERATE, OPT-IN</div>
+          <div class="ti" style="font-size:24px;">One process by default; cells only for true scale-out</div>
+          <ul class="tight">
+            <li>Single-node run: one binary, worker-local state, no cross-process bus</li>
+            <li>Shared {transport, clock} seams instead of a service mesh</li>
+            <li>Dataset in-process — no mmap, no serialization hop</li>
+            <li>Cellular multi-node behind a trait boundary — to pass the OS connection ceiling</li>
+            <li>You pay for distribution only when you genuinely outgrow one host</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:24px;max-width:1088px;">
+        <span class="h">“But aren't we going distributed too, with cellular?”</span> Yes — and that is the distinction, not a
+        contradiction. Python's fan-out is <strong>mandatory to use one machine</strong> (the GIL forces it). Rust's
+        cellular is <strong>opt-in scale-out</strong> that engages only past one host's ~15–28k connection ceiling.
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>05</span></div>
+  </section>
+
+  <!-- ============================ 06 · PERFORMANCE ============================ -->
+  <section class="slide" aria-label="Performance, honestly">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Performance, without the spin</div>
+      <h2>Parity on real runs; the win is at the ceiling</h2>
+      <table class="perf" style="margin-top:34px;">
+        <thead>
+          <tr><th>Scenario</th><th style="text-align:right;">Rust</th><th style="text-align:right;">Python</th><th>What it means</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Real server, 250 concurrency — req/s</td><td class="n">7.24</td><td class="n">7.26</td><td>Tied — the server, not the client, sets the pace.</td></tr>
+          <tr><td>Real server, 250 concurrency — TTFT p50</td><td class="n">25,072 ms</td><td class="n">25,138 ms</td><td>Within noise. Every latency metric matches.</td></tr>
+          <tr class="win"><td>Fast target, c4-144 — <strong>byte-exact</strong> ceiling (default)</td><td class="n"><span class="rs">~45,000 req/s</span></td><td class="n">~21,000 req/s</td><td>~2× — parity preserved (`global` dispatch). Measured, 0 errors.</td></tr>
+          <tr><td>Fast target, c4-144 — opt-in `sharded` (not byte-exact)</td><td class="n"><span class="rs">~61,000 req/s</span></td><td class="n">—</td><td>~3×, when reproducible parity isn't required.</td></tr>
+          <tr class="win"><td>Client-side latency (p50) at the ceiling</td><td class="n"><span class="rs">~7 ms</span></td><td class="n">~40 ms</td><td>~5–7× lower — Python pays per-request asyncio/GC overhead.</td></tr>
+        </tbody>
+      </table>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:26px;max-width:1088px;">
+        <div class="callout"><span class="h">The integrity caveat we lead with.</span> On a normal LLM run the inference server is the bottleneck, not the client — which is <em>why</em> the two are indistinguishable at 250 concurrency. Same numbers, simpler system, more headroom.</div>
+        <div class="callout" style="border-left-color:#8A8A8A;background:#fafafa;"><span class="h">And what we do NOT claim.</span> The ~64k concurrent-connection limit (HTTP/1.1, one source-IP→endpoint 4-tuple) is an <strong>OS/TCP ephemeral-port fact, not a language advantage</strong> — HTTP/2 multiplexing decouples it (~1M in-flight over ~5–10k connections). Rust hits the same wall; it is not part of the case.</div>
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>06</span></div>
+  </section>
+
+  <!-- ============================ 07 · MARQUEE SIM ============================ -->
+  <section class="slide" aria-label="Simulate any workload in seconds">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Marquee capability</div>
+      <h2>Simulate <span class="g">any</span> AIPerf workload in <span class="g">seconds</span> — no GPUs, no network</h2>
+      <div class="pipe" style="margin-top:34px;max-width:1040px;">
+        <div class="cell"><div class="t">any workload</div><div class="s">arrival · datasets · multi-turn</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="cell accent"><div class="t">SimClock</div><div class="s">virtual time, discrete hops</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="cell dark"><div class="t">Dynamo mocker</div><div class="s">co-simulated in-process</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="cell"><div class="t">full report</div><div class="s">deterministic, seconds</div></div>
+      </div>
+      <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:40px;max-width:1088px;gap:28px;">
+        <div class="note"><div class="h">Free, because it's one front-end</div>Every feature — arrival patterns, datasets, multi-turn, tokenization, metrics, exporters — runs <strong>unchanged</strong> in sim mode. Nothing to re-author per workload.</div>
+        <div class="note"><div class="h">Runs in CI, not a GPU cluster</div>The virtual clock removes real waiting, so minutes of wall-clock collapse to seconds. Scheduler/timing regression tests and design-space sweeps run in continuous integration.</div>
+        <div class="note"><div class="h">Deterministic — structurally, not by luck</div>Rust drives the virtual clock from <strong>one single-threaded reactor</strong> (~80 lines). Python's co-simulation crossed a thread boundary <em>per event</em> (lock + marshal + wake) — slow — and leaned on asyncio's non-deterministic wake ordering, so bit-identical reruns were fragile. Rust gets the guarantee without the machinery.</div>
+        <div class="note"><div class="h">Subsumes Dynamo Replay</div>This is what Replay does today — now available for the entire AIPerf workload surface, and it replaces that separate front-end.</div>
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>07</span></div>
+  </section>
+
+  <!-- ============================ 08 · OBJECTIONS ============================ -->
+  <section class="slide" aria-label="Objections answered">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">The hard questions, answered</div>
+      <h2>“Won't <span class="g">free-threaded (no-GIL)</span> Python make this moot?”</h2>
+      <div class="lead" style="margin-top:22px;">The strongest objection — and it dents one pillar, not the case. Free-threaded CPython is real and maturing, so we meet it directly:</div>
+      <div class="cols2" style="margin-top:26px;">
+        <div class="card">
+          <div class="num">IT DOESN'T MOVE THE MAIN CASE</div>
+          <ul class="tight">
+            <li><strong>Nothing for Driver 1</strong> — a shared Rust core with Dynamo. No-GIL Python gives zero reuse with a Rust project.</li>
+            <li>Removes <strong>serialization, not slowness</strong> — CPython's per-request/per-token cost, asyncio, and GC remain; N threads still pay the slow primitive N times.</li>
+          </ul>
+        </div>
+        <div class="card accent">
+          <div class="num">AND IT ARGUES FOR RUST</div>
+          <ul class="tight">
+            <li>Collapsing the mesh into one free-threaded process is a rewrite of similar magnitude — that buys <strong>data races</strong> (parallelism without safety), the exact bug class Rust rejects at compile time.</li>
+            <li>Still maturing (single-thread penalty; consolidating free-threaded C-extension ecosystem); startup, single-binary distribution, and the connection ceiling are unchanged.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:24px;max-width:1088px;">
+        <span class="h">Net:</span> no-GIL narrows the complexity argument slightly — and strengthens the safety one. If we rewrite the concurrency model anyway, do it where the concurrency is <strong>provably correct</strong>.
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>08</span></div>
+  </section>
+
+  <!-- ============================ 09 · WHY NOW ============================ -->
+  <section class="slide" aria-label="Why now">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Timing</div>
+      <h2>Why Rust, why <span class="g">now</span></h2>
+      <div class="notes" style="grid-template-columns:repeat(3,1fr);margin-top:44px;max-width:1088px;gap:32px;">
+        <div class="note"><div class="h">A · The first call was right</div>Python was chosen for reach — accessibility and contribution speed. Correct for AIPerf's first generation.</div>
+        <div class="note"><div class="h">B · The barrier is already broken</div>Not a forecast — the proof. An AI-assisted, spec-driven effort reproduced a mature Python codebase in Rust, at parity. The port existing is the evidence.</div>
+        <div class="note"><div class="h">C · Feasibility is not a guess</div>A working prototype already reaches byte-exact config parity and an indistinguishable live A-B — a de-risked investment, with Python as the reference oracle throughout.</div>
+      </div>
+      <div class="callout" style="margin-top:44px;max-width:1088px;">
+        <span class="h">The accessibility reason that favored Python has fallen.</span> AI-assisted, spec-driven development makes Rust approachable to write and review — and the port proves it in this codebase, not in theory.
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>09</span></div>
+  </section>
+
+  <!-- ============================ 10 · PRECEDENT (vLLM) ============================ -->
+  <section class="slide" aria-label="Industry precedent: vLLM">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad" style="padding-top:70px;">
+      <div class="eyebrow" style="margin-bottom:18px;">We are not alone — industry precedent</div>
+      <h2>vLLM already <span class="g">reached the same conclusion</span></h2>
+      <div class="cols2" style="margin-top:28px;">
+        <div class="card accent">
+          <div class="num">THEIR FRONTEND · vllm-frontend-rs</div>
+          <div class="ti" style="font-size:26px;">1 Rust process ≥ 32 Python API servers</div>
+          <div class="bd">A drop-in, OpenAI-compatible Rust replacement for vLLM's Python FastAPI server — opt-in via <span class="mono">VLLM_USE_RUST_FRONTEND=1</span>, now vendored in the main vLLM repo (0.24.0). Default Python saturates at <strong>~19%</strong> of Rust throughput, with <strong>~10× worse P50 TTFT</strong>.</div>
+        </div>
+        <div class="card">
+          <div class="num">THEIR CLIENT · vllm-bench</div>
+          <div class="ti" style="font-size:26px;">A Rust benchmark client — AIPerf's category</div>
+          <div class="bd">vLLM also ships a high-performance <strong>Rust benchmark client</strong> for serving endpoints, using the same techniques AIPerf does — sending token-ID arrays to skip server-side tokenization, and caching token-length verification per model+server.</div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:22px;max-width:1088px;">
+        <span class="h">Their motivation is our argument, verbatim.</span> Python was chosen for accessibility and the ML
+        ecosystem — reasonable while GPUs were the bottleneck. As GPUs got faster, the asyncio frontend became a real
+        share of CPU time, and more Python processes <em>“add operational complexity and still hit a ceiling.”</em>
+      </div>
+      <div style="margin-top:12px;font-size:15px;line-height:1.45;color:var(--mut);white-space:nowrap;">
+        <strong style="color:#000;">Honest scope:</strong> vLLM kept its Python GPU engine and ZMQ seam; AIPerf's runner is already all-Rust on the product path — a step further than vLLM took it.
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>10</span></div>
+  </section>
+
+  <!-- ============================ 11 · THE ASK ============================ -->
+  <section class="slide" aria-label="The ask">
+    <div style="position:absolute;inset:0;background:linear-gradient(120deg,#0f0f0f 0%,#1c1c1c 52%,#232323 100%);"></div>
+    <div class="mono" style="position:absolute;top:52px;right:64px;font-weight:700;font-size:20px;letter-spacing:.16em;color:var(--green);">NVIDIA</div>
+    <div style="position:absolute;left:64px;top:150px;max-width:1000px;">
+      <div class="mono" style="font-size:16px;letter-spacing:.22em;text-transform:uppercase;color:var(--green);margin-bottom:22px;">The ask</div>
+      <h2 style="color:#fff;font-size:52px;max-width:1040px;">Greenlight the Rust port</h2>
+      <div style="font-size:23px;line-height:1.5;color:#d6d6d6;max-width:1000px;margin-top:26px;">
+        The case rests on <span class="g" style="font-weight:600;">strategic reuse with Dynamo</span> and on
+        <span class="g" style="font-weight:600;">retiring the GIL-driven distributed system</span> AIPerf never wanted —
+        replacing mandatory single-host fan-out with one process and opt-in cellular scale-out. Performance is a real
+        but bounded bonus: parity where the server dominates, ~3× at the client ceiling, and any workload simulated in
+        seconds. Because a prototype already demonstrates parity, this is a low-risk investment — not a research bet.
+      </div>
+      <div style="display:flex;gap:14px;margin-top:34px;flex-wrap:wrap;">
+        <span class="mono" style="border:1px solid var(--green);color:var(--green);padding:8px 14px;font-size:14px;letter-spacing:.06em;">SHARED CORE WITH DYNAMO</span>
+        <span class="mono" style="border:1px solid #555;color:#cfcfcf;padding:8px 14px;font-size:14px;letter-spacing:.06em;">ONE PROCESS, NOT TEN</span>
+        <span class="mono" style="border:1px solid #555;color:#cfcfcf;padding:8px 14px;font-size:14px;letter-spacing:.06em;">SECONDS-FAST OFFLINE SIM</span>
+        <span class="mono" style="border:1px solid #555;color:#cfcfcf;padding:8px 14px;font-size:14px;letter-spacing:.06em;">PROVEN FEASIBLE</span>
+      </div>
+    </div>
+    <div class="mono" style="position:absolute;left:64px;bottom:44px;font-size:12px;letter-spacing:.1em;color:#6f6f6f;max-width:1120px;line-height:1.6;">
+      Sources: AIPerf Tech Lead design notes and live A-B benchmarks (Jul 2026) — 250-concurrency parity run (2026-07-19),
+      100k-request ceiling run (2026-07-20), single-process ~40k req/s microbench (2026-07-13). Honest snapshots, not projections.
+      &nbsp;·&nbsp; vLLM precedent: vllm-project/vllm Rust frontend (RFC #40846, PR #40848; vendored in vLLM 0.24.0) and vllm-bench Rust client.
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

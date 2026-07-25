@@ -308,8 +308,14 @@ export function RustPortWhyDeck(): React.JSX.Element {
                     </li>
                     <li>
                       The virtual clock removes real waiting: a run spanning minutes of wall-clock finishes
-                      in <span className={inkClassName("primary")}>seconds</span>, deterministically and
-                      reproducibly.
+                      in <span className={inkClassName("primary")}>seconds</span>.
+                    </li>
+                    <li>
+                      <span className={inkClassName("primary")}>Deterministic structurally, not by luck.</span>{" "}
+                      Rust drives the virtual clock from one single-threaded reactor (~80 lines). Python's
+                      co-simulation crossed a thread boundary <em>per event</em> (lock + marshal + wake) —
+                      slow — and leaned on asyncio's non-deterministic wake ordering, so bit-identical
+                      reruns were fragile. Rust gets the guarantee without the machinery.
                     </li>
                     <li>
                       No hardware — the Dynamo mocker is co-simulated in-process, so scheduler/timing
