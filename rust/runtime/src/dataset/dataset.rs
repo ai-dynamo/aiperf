@@ -15,7 +15,9 @@ use crate::dataset::model::{
     Conversation, ConversationBranchMode, ConversationContextMode, ConversationMetadata,
     DispatchTiming, MediaKind, PrerequisiteKind, SessionId, Turn,
 };
-use crate::dataset::request::{raw_body_handle, resolve_prompt, resolve_turn, token_ids_handle};
+use crate::dataset::request::{
+    raw_body_handle, resolve_prompt, resolve_turn, split_snapshot, token_ids_handle,
+};
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::{
     CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn,
@@ -292,12 +294,18 @@ impl Dataset {
                     ConversationContextMode::MessageArrayWithResponses
                         | ConversationContextMode::DeltasWithResponses
                 );
+                // Both WithoutResponses modes precompute their first turn (no
+                // captured replies yet); later continuation turns stay on the live
+                // path. `static_endpoint_turns` replicates each mode's live turn-0
+                // builder, so the cached plan is byte-identical to dispatch.
+                let cache_first_dynamic_turn = matches!(
+                    mode,
+                    ConversationContextMode::DeltasWithoutResponses
+                        | ConversationContextMode::MessageArrayWithoutResponses
+                );
                 // Graph/DAG conversations dispatch through a separate execution
-                // path; never cache their turns here. Static modes precompute every
-                // turn; dynamic (WithoutResponses) modes precompute only the first
-                // turn, whose body carries no captured replies and so is identical
-                // to dispatch — later dynamic turns interleave live responses.
-                if conversation.dag.is_none() {
+                // path; never cache their turns here.
+                if (static_mode || cache_first_dynamic_turn) && conversation.dag.is_none() {
                     let system = resolve_prompt(store, conversation.system)?;
                     let user_context = resolve_prompt(store, conversation.user_context)?;
                     let conversation_id = conversation.session_id.as_str().to_string();
@@ -307,7 +315,8 @@ impl Dataset {
                         .zip(turn_plans.iter_mut())
                         .enumerate()
                     {
-                        // Dynamic continuation turns depend on live replies.
+                        // In the precomputable dynamic mode, only the first turn is
+                        // response-independent; continuation deltas take the live path.
                         if !static_mode && turn_index != 0 {
                             continue;
                         }
@@ -714,20 +723,24 @@ fn static_endpoint_turns(
             .iter()
             .map(|turn| resolve_turn(store, turn))
             .collect(),
-        // The dynamic modes interleave live replies for continuation turns, but the
-        // first turn carries no prior responses, so its body is response-independent
-        // and identical to what dispatch emits — precompute it. Later turns still
-        // depend on captured replies and are never precomputed.
-        ConversationContextMode::DeltasWithoutResponses
-        | ConversationContextMode::MessageArrayWithoutResponses => {
-            if current == 0 {
-                Ok(vec![resolve_turn(store, &conversation.turns[0])?])
-            } else {
-                Err(DatasetError::Validation(
-                    "static_endpoint_turns called for a dynamic continuation turn".into(),
-                ))
-            }
+        // Both WithoutResponses modes carry no captured replies at the first turn,
+        // so its body is response-independent and precomputable. Each replicates the
+        // live turn-0 builder exactly so the cached plan is byte-identical to
+        // dispatch: `DeltasWithoutResponses` emits `[resolve_turn(turn0)]`
+        // (`endpoint_turns`), and `MessageArrayWithoutResponses` emits
+        // `split_snapshot(resolve_turn(turn0))` (`merge_message_array_snapshots`
+        // with an empty prefix). Continuation turns interleave live replies and are
+        // never precomputed.
+        ConversationContextMode::DeltasWithoutResponses if current == 0 => {
+            Ok(vec![resolve_turn(store, &conversation.turns[0])?])
         }
+        ConversationContextMode::MessageArrayWithoutResponses if current == 0 => {
+            Ok(split_snapshot(resolve_turn(store, &conversation.turns[0])?))
+        }
+        ConversationContextMode::DeltasWithoutResponses
+        | ConversationContextMode::MessageArrayWithoutResponses => Err(DatasetError::Validation(
+            "static_endpoint_turns called for a dynamic continuation turn".into(),
+        )),
     }
 }
 

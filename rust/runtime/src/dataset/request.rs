@@ -1118,7 +1118,7 @@ fn checked_add(left: u64, right: u64) -> Result<u64> {
         .ok_or_else(|| DatasetError::Validation("request input token count overflowed u64".into()))
 }
 
-fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
+pub(crate) fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
     match turn.raw_messages.take() {
         Some(messages) if !messages.is_empty() => messages
             .into_iter()
@@ -2382,28 +2382,9 @@ mod tests {
 
     #[test]
     fn ineligible_turns_and_endpoints_are_never_cached() {
-        for mode in [
-            ConversationContextMode::MessageArrayWithoutResponses,
-            ConversationContextMode::DeltasWithoutResponses,
-        ] {
-            let mut pool = SegmentPool::new();
-            let turn = text_turn(&mut pool, b"dyn", true, false);
-            let mut dataset = single_conversation_dataset(mode, vec![turn], pool);
-            let endpoint = prepare_endpoint("chat");
-            let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
-            dataset.lower_messages_for_endpoint(&lowerer).unwrap();
-            dataset
-                .precompute_body_plans(endpoint.as_ref(), "primary-model")
-                .unwrap();
-            assert!(
-                dataset
-                    .cached_body_plan(&SessionId::from("session"), 0)
-                    .is_none(),
-                "dynamic mode {mode:?} must not be cached"
-            );
-        }
-
-        for endpoint_id in ["vllm_generate", "completions", "embeddings", "raw"] {
+        // Token-native dispatch has no reusable message-array body plan to cache
+        // (`precomputable_body() == false`).
+        for endpoint_id in ["vllm_generate"] {
             let mut pool = SegmentPool::new();
             let turn = text_turn(&mut pool, b"x", true, false);
             let mut dataset = single_conversation_dataset(
@@ -2501,6 +2482,72 @@ mod tests {
                 .is_none(),
             "graph/DAG conversation must not be cached"
         );
+    }
+
+    #[test]
+    fn cached_first_turn_byte_identical_for_input_array_and_without_responses_modes() {
+        // Input-array dialects (embeddings, image_retrieval) and both WithoutResponses
+        // context modes now precompute their response-independent first turn. The
+        // cached plan must dispatch byte-identically to per-request formatting.
+        fn check(endpoint_id: &str, mode: ConversationContextMode, pool: SegmentPool, turn: Turn) {
+            let base = single_conversation_dataset(mode, vec![turn], pool);
+            let endpoint = prepare_endpoint(endpoint_id);
+
+            let mut cached_ds = base.clone();
+            if let Some(lowerer) = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id) {
+                cached_ds.lower_messages_for_endpoint(&lowerer).unwrap();
+            }
+            cached_ds
+                .precompute_body_plans(endpoint.as_ref(), "primary-model")
+                .unwrap();
+
+            let mut uncached_ds = base;
+            if let Some(lowerer) = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id) {
+                uncached_ds.lower_messages_for_endpoint(&lowerer).unwrap();
+            }
+
+            let cached = Arc::new(cached_ds);
+            let uncached = Arc::new(uncached_ds);
+            assert!(
+                cached
+                    .cached_body_plan(&SessionId::from("session"), 0)
+                    .is_some(),
+                "expected cached first-turn plan: endpoint={endpoint_id} mode={mode:?}"
+            );
+            assert_eq!(
+                dispatch_turn(cached, endpoint.as_ref(), 0, &Overrides::new()),
+                dispatch_turn(uncached, endpoint.as_ref(), 0, &Overrides::new()),
+                "cached first-turn body must match live formatting: endpoint={endpoint_id} mode={mode:?}"
+            );
+        }
+
+        for mode in [
+            ConversationContextMode::MessageArrayWithResponses,
+            ConversationContextMode::DeltasWithoutResponses,
+            ConversationContextMode::MessageArrayWithoutResponses,
+        ] {
+            let mut pool = SegmentPool::new();
+            let turn = text_turn(&mut pool, b"embed me", false, false);
+            check("embeddings", mode, pool, turn);
+
+            let mut pool = SegmentPool::new();
+            let text = pool
+                .intern_text(
+                    None,
+                    Role::from("user"),
+                    Bytes::from_static(b"look"),
+                    vec![9],
+                )
+                .unwrap();
+            let image = pool
+                .intern_media(None, MediaKind::Image, Bytes::from_static(b"http://a"))
+                .unwrap();
+            check("image_retrieval", mode, pool, content_turn(text, Some(image)));
+
+            let mut pool = SegmentPool::new();
+            let turn = text_turn(&mut pool, b"chat me", false, false);
+            check("chat", mode, pool, turn);
+        }
     }
 
     #[test]
