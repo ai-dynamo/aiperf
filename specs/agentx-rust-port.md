@@ -44,10 +44,16 @@ counterparts with unit tests (golden values captured from CPython where relevant
   diff).
 - `tool_shape.rs` — OpenAI tool-call wire shaping (`demote_unpaired_tool_marks`,
   `tool_shape_segment_messages`), wired into `turn_delta`.
+- `chains.rs` — flat-agent chain detection (`detect_agent_chains` two-phase greedy
+  build + seam splicing, `is_aux_chain`/`is_reduction_chain`). **Proven byte-exact
+  against Python** by `tools/agentx_chains_golden.py` +
+  `rust/runtime/tests/agentx_chains_parity.rs` (6 scenarios, full partition diff).
+  Grouping helpers (`worker_group_assignment`, `compute_chain_prefix_blocks`) pending.
 
-Remaining Slice 1 (see below): `chains.rs` (flat-agent detection), `loader.rs`
-(the hub producing `ReconstructedConversation`s), and the full-loader golden-diff
-A/B harness over the `tests/fixtures/weka_traces/` files.
+Remaining Slice 1 (see below): `chains.rs` grouping helpers, `loader.rs` (the
+hub producing `ReconstructedConversation`s — wires the Qwen tokenizer into
+`TokenSynth`, runs prepass + chains + synth), and the full-loader golden-diff A/B
+harness over the `tests/fixtures/weka_traces/` files.
 
 ## Future requirements
 
