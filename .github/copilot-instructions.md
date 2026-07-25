@@ -126,6 +126,21 @@ Other active implementation seams include `SegmentStore`, `PromptMaterializer`, 
 - Comments explain non-obvious constraints and interactions, not syntax.
 - Prefer minimal diffs and preserve existing public wire and artifact contracts unless the task changes them explicitly.
 
+Review standards enforced on the hot path (`transport/`, `dispatch/`, `clock/`, `timing/`, `scheduler.rs`, `scheduled.rs`, `request_rate.rs`, `phase_runtime.rs`, `graph/`, `engine/`, `metrics_core/`) and on any networking or performance-critical code; suggestions elsewhere, and `aiperf-mock-server` is a bench/test target reviewed as suggestions:
+
+- No `unwrap()`/`expect()` in production code; if unavoidable, comment why it cannot fail.
+- Use `tracing`, never `log`; never `use tracing as log`. Emit structured fields (`error = %e, component`, `%` for `Display`, `?` for `Debug`), not formatted strings.
+- Right log level: `info!` is for end-users; routine internal events are `debug!`; hot paths are `trace!` or removed. Logging takes an output lock and is not free.
+- No reflexive `Arc<Mutex<_>>`: single-threaded worker-local state needs no synchronization; owners decide their own synchronization, so don't pre-wrap shared state in a constructor. `Arc`+`Box` together needs a justifying comment.
+- Don't re-wrap cheaply-`Clone` handles (`Clock` is already `Rc<dyn Clock>`, registries, `Arc<dyn SegmentStore>`, endpoint runtimes) in another `Arc`/`Rc`. Drop unnecessary `.clone()`; pass a reference, move, or use `Copy` — `Copy` types never need `.clone()`.
+- Prefer `parking_lot::RwLock` over `tokio::sync::RwLock` for short critical sections with no `.await` held across the lock. Never hold a lock across `.await`. Use `Drop`/RAII for cleanup, not manual unlock paths.
+- Question `tokio::spawn` (sometimes the work belongs inline) and `Unbounded*` channels (they can OOM — bounded channels are defense-in-depth, justify unbounded). Prefer stdlib/tokio primitives over new dependencies.
+- Boolean names get `is_`/`has_`/`needs_` prefixes. Names must not imply more than they do (`serve` implies a long-running server). Don't keep `_`-prefixes on variables that are used.
+- Fully qualify `tokio::time::sleep`; write stdlib sleep as plain `sleep` with `use std::thread::sleep`.
+- Copyright header is the two SPDX lines only — trim anything more. `///` is public docs, `//` is internal; don't mix unintentionally. Delete comments that repeat the code or record history (that's `git`); obvious/verbose AI-generated comments are a smell.
+- Tests cover behavior, not exhaustive input enumeration; prefer the three most important cases over long AI-generated lists.
+- One PR does one thing; call out scope creep and unrelated changes.
+
 ## Build, test, package, and run
 
 Activate the project environment before repository commands:
