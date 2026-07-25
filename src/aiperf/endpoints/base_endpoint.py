@@ -104,6 +104,33 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         )
         return parsed_responses, assistant_turn
 
+    @staticmethod
+    def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
+        """Capture the raw ``choices[0]`` speculative-decoding payload, if any.
+
+        vLLM attaches ``speculative_decoding_stats`` per choice (the finish-reason
+        chunk in streaming). Captured verbatim and uninterpreted so a
+        ``SpecDecodeAdapterProtocol`` owns the engine-specific interpretation
+        downstream; None when absent.
+
+        A response with more than one choice is an ``n > 1`` non-streaming
+        request; its record is suppressed (None) because a single per-request
+        record can't attribute request-level usage to one sequence -- reporting
+        one choice's acceptance alongside all choices' token count would be a
+        mixed, misleading record. (``n > 1`` streaming is suppressed in the
+        parser, where each sequence's stats arrive on separate chunks.)
+        """
+        choices = json_obj.get("choices")
+        if (
+            not isinstance(choices, list)
+            or not choices
+            or not isinstance(choices[0], dict)
+        ):
+            return None
+        if len(choices) > 1:
+            return None
+        return choices[0].get("speculative_decoding_stats")
+
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.
 

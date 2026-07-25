@@ -1493,6 +1493,16 @@ gpu_telemetry_collector:
 # Accuracy graders evaluate LLM responses against ground truth answers.
 # One-to-one mapping based on grader configuration or benchmark default.
 # =============================================================================
+spec_decode_adapter:
+  vllm:
+    class: aiperf.spec_decode.vllm_adapter:VLLMSpecDecodeAdapter
+    description: |
+      Reads vLLM's per-choice ``speculative_decoding_stats`` (emitted when the
+      server runs with ``--per-request-spec-decode-stats``) and fills the
+      engine-neutral SpecDecodeAcceptanceRecord. Handles chat and completions,
+      streaming and non-streaming; int-casts the string histogram keys.
+    metadata: {}
+
 accuracy_grader:
   exact_match:
     class: aiperf.accuracy.graders.exact_match:ExactMatchGrader
