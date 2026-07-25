@@ -84,6 +84,7 @@ pub struct GrpcSinkBuilder {
     transport: TransportSinkConfig,
     prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
     bindings: GrpcBindingRegistry,
+    raw_enabled: bool,
 }
 
 impl GrpcSinkBuilder {
@@ -94,6 +95,7 @@ impl GrpcSinkBuilder {
             transport: config.transport.clone(),
             prepared_endpoints: config.prepared_endpoints.clone(),
             bindings,
+            raw_enabled: config.raw_enabled,
         }
     }
 }
@@ -114,6 +116,7 @@ impl ExecutionSinkBuilder for GrpcSinkBuilder {
             self.transport.clone(),
             self.prepared_endpoints.as_deref(),
             self.bindings.clone(),
+            self.raw_enabled,
         )
     }
 }
@@ -153,6 +156,7 @@ fn prepare_grpc_sink(
     transport: crate::transport::http::TransportSinkConfig,
     prepared_endpoints: Option<&dyn PreparedEndpointTableFactory>,
     bindings: GrpcBindingRegistry,
+    capture_raw: bool,
 ) -> Result<GrpcTransportSink> {
     let endpoints = prepared_endpoints
         .ok_or_else(|| anyhow!("gRPC execution requires a prepared endpoint table factory"))?
@@ -165,6 +169,7 @@ fn prepare_grpc_sink(
         transport,
         bindings,
         Rc::new(endpoints),
+        capture_raw,
     )
 }
 
@@ -179,6 +184,7 @@ pub(crate) fn grpc_sink_with_endpoints(
     transport: crate::transport::http::TransportSinkConfig,
     bindings: GrpcBindingRegistry,
     endpoints: Rc<PreparedEndpointTable>,
+    capture_raw: bool,
 ) -> Result<GrpcTransportSink> {
     GrpcTransportSink::new(
         clock,
@@ -200,6 +206,7 @@ pub(crate) fn grpc_sink_with_endpoints(
             },
             connection_reuse: grpc_reuse(transport.connection_reuse),
             session_header: transport.session_header,
+            capture_raw,
         },
         bindings,
     )?

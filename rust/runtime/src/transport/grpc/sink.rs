@@ -54,6 +54,10 @@ pub struct GrpcTransportSinkConfig {
     pub connection_reuse: GrpcConnectionReuseStrategy,
     /// Optional additional correlation metadata name.
     pub session_header: Option<String>,
+    /// Whether a raw artifact will consume the HTTP-compatibility record for each
+    /// dispatch. When false, [`compatibility_record`] skips re-serializing every
+    /// response into the record that would only be discarded.
+    pub capture_raw: bool,
 }
 
 /// A [`RequestSink`] request retaining its prepared endpoint binding.
@@ -94,6 +98,7 @@ impl Default for GrpcTransportSinkConfig {
             client: GrpcClientConfig::default(),
             connection_reuse: GrpcConnectionReuseStrategy::Pooled,
             session_header: None,
+            capture_raw: false,
         }
     }
 }
@@ -109,6 +114,8 @@ pub struct GrpcTransportSink {
     binding_registry: GrpcBindingRegistry,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
     prepared_bindings: Vec<Box<dyn crate::transport::grpc::GrpcEndpointBinding>>,
+    /// Whether the run retains raw HTTP-compatibility records (raw artifacts on).
+    capture_raw: bool,
     /// Worker-local metric accumulator, unset until `configure_measurement`.
     measurement: WorkerMeasurement,
 }
@@ -161,6 +168,7 @@ impl GrpcTransportSink {
             binding_registry,
             prepared_endpoints: None,
             prepared_bindings: Vec::new(),
+            capture_raw: config.capture_raw,
             measurement: WorkerMeasurement::default(),
         })
     }
@@ -480,7 +488,7 @@ impl GrpcTransportSink {
             http: grpc_metrics_trace(&record),
         };
         let request_payload = Bytes::from(serde_json::to_vec(&body)?);
-        let compatibility_record = compatibility_http_record(&record);
+        let compatibility_record = compatibility_record(&record, self.capture_raw);
         Ok(DispatchResult {
             outcome,
             request_payload,
@@ -620,6 +628,26 @@ fn grpc_metrics_trace(record: &GrpcRequestRecord) -> RequestTrace {
     }
 }
 
+/// Build the HTTP-compatibility [`RequestRecord`] for a gRPC dispatch **only**
+/// when a raw artifact will consume it.
+///
+/// The record is consumed by exactly two callers, both gated on the run's
+/// `raw_enabled` flag: `record_http_exchange` early-returns when raw capture is
+/// off, and graph execution wraps the record in `raw_enabled.then_some(..)`. So
+/// on the default (no-raw) run the record is discarded unread. Because building
+/// it re-serializes every decoded response `Value` (KServe tensor outputs, Riva
+/// transcripts, generated text — multi-KB/MB per response) and then copies the
+/// bytes again into a `String`, doing that work unconditionally is per-request,
+/// per-response waste. When `capture_raw` is false we return an empty record
+/// that the (also-gated) consumers never read; when true the record is
+/// byte-identical to the unconditional build.
+fn compatibility_record(record: &GrpcRequestRecord, capture_raw: bool) -> RequestRecord {
+    if !capture_raw {
+        return RequestRecord::default();
+    }
+    compatibility_http_record(record)
+}
+
 fn compatibility_http_record(record: &GrpcRequestRecord) -> RequestRecord {
     let responses = record
         .responses
@@ -699,6 +727,49 @@ mod tests {
     use super::*;
     use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
     use crate::transport::reduce::absorb_response_data;
+
+    fn record_with_responses(count: usize) -> GrpcRequestRecord {
+        let mut record = GrpcRequestRecord::started(1);
+        record.end_ns = Some(2);
+        record.status = Some(200);
+        for i in 0..count {
+            record.responses.push(crate::transport::grpc::models::GrpcResponse {
+                perf_ns: i as i64,
+                json: serde_json::json!({ "index": i, "text": "hello" }),
+                wire_size: 8,
+            });
+        }
+        record
+    }
+
+    #[test]
+    fn compatibility_record_skips_response_reserialization_when_raw_off() {
+        let record = record_with_responses(3);
+        // Raw capture off: the record is discarded unread by both consumers
+        // (record_http_exchange early-returns, graph_execution's raw.then_some),
+        // so no response JSON is re-serialized into it.
+        let off = compatibility_record(&record, false);
+        assert!(
+            off.responses.is_empty(),
+            "raw-off compatibility record must not re-serialize responses"
+        );
+    }
+
+    #[test]
+    fn compatibility_record_retains_every_response_when_raw_on() {
+        let record = record_with_responses(3);
+        let on = compatibility_record(&record, true);
+        assert_eq!(
+            on.responses.len(),
+            3,
+            "raw-on compatibility record retains every response"
+        );
+        // Byte-exact with the unconditional builder it replaces.
+        let direct = compatibility_http_record(&record);
+        assert_eq!(on.responses.len(), direct.responses.len());
+        assert_eq!(on.status, direct.status);
+        assert_eq!(on.start_ns, direct.start_ns);
+    }
 
     #[test]
     fn riva_tts_audio_is_meaningful_without_becoming_model_text() {

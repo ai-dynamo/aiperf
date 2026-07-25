@@ -249,6 +249,7 @@ pub(crate) async fn execute_native_inner(
             base_urls: endpoint_urls.clone(),
             model: primary_model.clone(),
             transport: transport_config,
+            raw_enabled: request.artifacts.raw_path.is_some(),
             prepared_endpoints,
         })?;
         let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);

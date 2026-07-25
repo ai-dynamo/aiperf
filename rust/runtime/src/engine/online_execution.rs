@@ -79,6 +79,10 @@ impl NativeTransportExecution for HttpNativeExecution {
         model: &str,
         transport_config: crate::transport::http::TransportSinkConfig,
         endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+        // The HTTP sink's compatibility record already carries `Bytes` bodies
+        // (cheap refcount clones), so it is built unconditionally regardless of
+        // raw capture; the flag only matters to the gRPC sink.
+        _capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         Ok(Rc::new(
             crate::transport::http::TransportSink::new_multi_configured(

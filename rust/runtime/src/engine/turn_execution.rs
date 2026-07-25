@@ -51,6 +51,10 @@ pub struct ExecutionBackendConfig {
     pub model: String,
     /// Fully resolved transport policy.
     pub transport: TransportSinkConfig,
+    /// Whether the run retains raw HTTP-exchange artifacts. The gRPC sink uses
+    /// this to skip building the per-request HTTP-compatibility record when no
+    /// raw artifact will consume it.
+    pub raw_enabled: bool,
     /// Optional worker-local endpoint preparation.
     ///
     /// Each worker receives an independent dense-key table.
@@ -1008,6 +1012,7 @@ mod tests {
                 base_urls: vec![url],
                 model: "fixture-model".to_string(),
                 transport: TransportSinkConfig::default(),
+                raw_enabled: false,
                 prepared_endpoints: Some(table_factory),
             })
             .unwrap();

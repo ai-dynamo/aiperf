@@ -400,6 +400,7 @@ pub(crate) async fn execute_graph_native(
             input_token_counter.clone(),
             transport,
             content_server_media_base(&request)?,
+            request.artifacts.raw_path.is_some(),
         )?)
     };
     let real_clock_anchor = sidecars.real_clock_anchor;

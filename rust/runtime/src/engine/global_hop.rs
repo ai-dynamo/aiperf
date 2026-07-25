@@ -115,6 +115,7 @@ pub(crate) async fn run_global_hop(
         base_urls: shared.endpoint_urls.clone(),
         model: shared.primary_model.clone(),
         transport: shared.transport_config.clone(),
+        raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
     })?;
 

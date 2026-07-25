@@ -394,6 +394,7 @@ impl NativeTransportExecution for DryRunNativeExecution {
         model: &str,
         _transport_config: crate::transport::http::TransportSinkConfig,
         _endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+        _capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         Ok(Rc::new(FakeDispatcher::new(FakeFabricator::new(
             clock,
@@ -831,6 +832,7 @@ mod tests {
                 base_urls: vec!["http://dry-run.invalid".to_string()],
                 model: "fixture-model".to_string(),
                 transport: TransportSinkConfig::default(),
+                raw_enabled: false,
                 prepared_endpoints: None,
             })
             .expect("build fake executor");
