@@ -104,9 +104,62 @@ pub fn legacy_start_turn_candidates(n: i64, start_min_ratio: f64, start_max_rati
     (k_min..=k_max).collect()
 }
 
+/// First turn index whose recorded timestamp is at/after `t_star_ms` (Python
+/// `_next_turn_index_at_or_after`) — the PROFILING resume index. `None` when no
+/// turn starts at/after t* (the whole stream is pre-t* history).
+pub fn next_turn_index_at_or_after(turn_timestamps_ms: &[Option<f64>], t_star_ms: f64) -> Option<i64> {
+    for (idx, ts) in turn_timestamps_ms.iter().enumerate() {
+        if let Some(t) = ts {
+            if t.is_finite() && *t >= t_star_ms {
+                return Some(idx as i64);
+            }
+        }
+    }
+    None
+}
+
+/// The turn to warm for a stream (Python `ConversationState.warmup_turn_index`):
+/// the last request before t* (`next_turn_index - 1`), or `None` when the
+/// stream's first request is at/after t* (nothing to warm).
+pub fn warmup_turn_index(next_turn_index: i64) -> Option<i64> {
+    if next_turn_index >= 1 {
+        Some(next_turn_index - 1)
+    } else {
+        None
+    }
+}
+
+/// A PROFILING turn's dispatch offset from t* (Python `_offset_ms`): the
+/// recorded gap after t*, floored at 0 (a turn recorded before t* dispatches
+/// immediately). Missing timestamp → 0.
+pub fn offset_ms(timestamp_ms: Option<f64>, t_star_ms: f64) -> f64 {
+    match timestamp_ms {
+        Some(ts) => (ts - t_star_ms).max(0.0),
+        None => 0.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn t_star_split_and_offsets() {
+        // Turn timestamps (ms): [0, 100, 250, 400]; t* = 200.
+        let ts = [Some(0.0), Some(100.0), Some(250.0), Some(400.0)];
+        // First turn at/after 200 -> index 2 (t=250).
+        assert_eq!(next_turn_index_at_or_after(&ts, 200.0), Some(2));
+        // Warmup turn = resume - 1 = 1.
+        assert_eq!(warmup_turn_index(2), Some(1));
+        // A stream entirely at/after t* (resume 0) has nothing to warm.
+        assert_eq!(warmup_turn_index(0), None);
+        // Profiling offsets from t*: turn 2 -> 50, turn 3 -> 200; a pre-t* turn -> 0.
+        assert_eq!(offset_ms(Some(250.0), 200.0), 50.0);
+        assert_eq!(offset_ms(Some(400.0), 200.0), 200.0);
+        assert_eq!(offset_ms(Some(100.0), 200.0), 0.0);
+        // t* past every turn -> whole stream is history.
+        assert_eq!(next_turn_index_at_or_after(&ts, 500.0), None);
+    }
 
     #[test]
     fn seed_helpers_match_python() {
