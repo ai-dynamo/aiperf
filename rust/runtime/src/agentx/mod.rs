@@ -15,5 +15,7 @@
 //! `(seed, trace)`, and every module is cross-checked byte-for-byte against its
 //! Python counterpart's output over the in-repo `tests/fixtures/weka_traces*/`.
 
+pub mod prepass;
 pub mod rng;
+pub mod selection;
 pub mod trace;
