@@ -234,7 +234,7 @@ pub fn apply_scenario_locks(
 ) -> Result<ScenarioOutcome, ScenarioLockError> {
     let mut violations: Vec<ScenarioViolation> = Vec::new();
     let mut applied: Vec<String> = Vec::new();
-    let mut record = |r: LockResult, lock: &str, v: &mut Vec<ScenarioViolation>, a: &mut Vec<String>| {
+    let record = |r: LockResult, lock: &str, v: &mut Vec<ScenarioViolation>, a: &mut Vec<String>| {
         match r {
             LockResult::Satisfied | LockResult::Applied => a.push(lock.to_string()),
             LockResult::Violated(viol) => v.push(viol),
