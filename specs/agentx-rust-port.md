@@ -151,10 +151,21 @@ that plan over **real HTTP** at an in-process endpoint and asserts the server
 receives the **byte-exact** request bodies (streaming + ignore_eos + reconstructed
 content) in dispatch order — an actual online run landing content + timing on the wire.
 
+**Switchable both-arms e2e (GREEN):** `agentx_switch_e2e` runs BOTH semantics on
+WEKA input — `run_graph_ir` executes `graph::recorded::compile_weka_trace_input`
+(→ a lowered `GraphInputBundle`, root+child nodes) and the legacy arm reconstructs
+(→ `ReconstructedConversation`s). Both produce output; the switch is wired to two
+live parallel paths, not a hand-off.
+
+**Streaming online e2e (GREEN):** `agentx_online_e2e` fires the dispatch plan at a
+streaming SSE endpoint and captures observed **TTFT/ITL + response content** into
+export-level raw records: byte-exact request content + dispatch timing combined with
+observed response timing (within transport-overhead tolerance, per the project's
+generated-token-timing contract).
+
 Remaining frontier: firing the plan through the runtime's *own* Hyper transport
-sink + credit pipeline (capturing observed response TTFT/ITL as records) rather than
-a raw client; the `apply_scenario` wiring into Config-v2 `BenchmarkRun`; the HF
-network download; and executing the `graph-ir` switch arm through `graph::recorded`.
+sink + credit pipeline (the production dispatch stack) rather than a raw client, and
+wiring `apply_scenario` into Config-v2 `BenchmarkRun` + the HF network download.
 
 ## Future requirements
 
