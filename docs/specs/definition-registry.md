@@ -73,8 +73,11 @@ The three consumer questions are centralized as methods:
   place SLA direction logic lives (`larger_is_better ? value >= threshold : value <=
   threshold`). Both operands are native-unit newtypes, so a mixed-scale comparison is
   a **compile error**.
-- `format_value(&self, value: f64) -> String` — the single renderer (unit +
-  `value_type` + precision policy) every sink uses.
+- `format_value(&self, value: f64) -> String` — (unit + `value_type` + precision
+  policy) backs the new `aiperf metrics list/describe` command and provides a shared
+  render seam for future sinks; the existing exporters (console, CSV, JSON, OTLP,
+  W&B, etc.) intentionally retain their current byte-identical rendering and were not
+  migrated in this change.
 
 `MetricValueType` carries an `Int` variant alongside the float/duration cases so
 count-typed metrics render without a spurious decimal.
