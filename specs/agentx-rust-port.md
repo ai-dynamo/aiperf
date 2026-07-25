@@ -163,9 +163,16 @@ export-level raw records: byte-exact request content + dispatch timing combined 
 observed response timing (within transport-overhead tolerance, per the project's
 generated-token-timing contract).
 
-Remaining frontier: firing the plan through the runtime's *own* Hyper transport
-sink + credit pipeline (the production dispatch stack) rather than a raw client, and
-wiring `apply_scenario` into Config-v2 `BenchmarkRun` + the HF network download.
+**Production-transport e2e (GREEN):** `agentx_production_transport_e2e` fires the
+legacy dispatch plan through the runtime's OWN clock-injected Hyper client
+(`transport::http::HttpClient`) at a streaming endpoint and asserts each returned
+`RequestRecord` (the export raw record) carries status 200, streamed response
+tokens, captured TTFT, and request timing (start/recv_start/end ns).
+
+Remaining frontier (other-crate / network only): wiring `apply_scenario_locks` into
+the **aiperf-cli** Config-v2 `BenchmarkRun` (a different crate's config model), and
+the HuggingFace **network fetch** adapter (`load_hf_traces_from_rows` already does
+parse+select+delegate; only the download itself is IO).
 
 ## Future requirements
 
