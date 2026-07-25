@@ -336,7 +336,9 @@ pub fn base_delay_ms(inputs: &HandoffBaseDelayInputs) -> f64 {
         as_timestamp_ms(inputs.next_timestamp_ms),
     ) {
         (Some(prev_ts), Some(next_ts)) => {
-            let prev_duration = as_timestamp_ms(inputs.prev_api_time_ms).unwrap_or(0.0).max(0.0);
+            let prev_duration = as_timestamp_ms(inputs.prev_api_time_ms)
+                .unwrap_or(0.0)
+                .max(0.0);
             (next_ts - prev_ts - prev_duration).max(0.0)
         }
         _ => 0.0,
@@ -539,8 +541,7 @@ fn build_handoff_replay_boundaries(
     let mut next_turn_by_conversation: BTreeMap<String, i64> = BTreeMap::new();
     for state in states {
         if state.next_turn_index > 0 {
-            next_turn_by_conversation
-                .insert(state.conversation_id.clone(), state.next_turn_index);
+            next_turn_by_conversation.insert(state.conversation_id.clone(), state.next_turn_index);
         }
     }
     if !states.is_empty()
@@ -581,8 +582,7 @@ where
     PrefixFn: Fn(&str) -> Vec<ReplayResumeBoundary>,
     RecycleFn: FnMut() -> Option<RecycleDraw>,
 {
-    let mut states_by_lane: Vec<Vec<HandoffConversationState>> =
-        vec![Vec::new(); inputs.num_lanes];
+    let mut states_by_lane: Vec<Vec<HandoffConversationState>> = vec![Vec::new(); inputs.num_lanes];
     let mut seen: BTreeSet<(String, String, i64)> = BTreeSet::new();
 
     // Returned mid-flight credits (recorder map is sorted by correlation id).

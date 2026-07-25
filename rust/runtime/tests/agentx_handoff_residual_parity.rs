@@ -98,9 +98,7 @@ fn finalize_rebuild_matches_python_trajectory_oracle() {
         let lane = state["lane"].as_u64().unwrap() as usize;
         let next_turn_index = state["next_turn_index"].as_i64().unwrap();
         let x_correlation_id = state["x_correlation_id"].as_str().unwrap().to_string();
-        let root_correlation_id = state["root_correlation_id"]
-            .as_str()
-            .map(|s| s.to_string());
+        let root_correlation_id = state["root_correlation_id"].as_str().map(|s| s.to_string());
         let credit = HandoffCredit {
             conversation_id: state["conversation_id"].as_str().unwrap().to_string(),
             x_correlation_id: x_correlation_id.clone(),
@@ -168,7 +166,10 @@ fn finalize_rebuild_matches_python_trajectory_oracle() {
         completed_prefixes: |root: &str| completed.get(root).cloned().unwrap_or_default(),
         recycle_draw: || {
             if draw_idx < recycle_convs.len() {
-                let draw = (recycle_convs[draw_idx].clone(), recycle_corrs[draw_idx].clone());
+                let draw = (
+                    recycle_convs[draw_idx].clone(),
+                    recycle_corrs[draw_idx].clone(),
+                );
                 draw_idx += 1;
                 Some(draw)
             } else {
@@ -199,7 +200,10 @@ fn finalize_rebuild_matches_python_trajectory_oracle() {
                 )
             })
             .collect();
-        assert_eq!(got_order, expected_order, "state order mismatch lane {lane}");
+        assert_eq!(
+            got_order, expected_order,
+            "state order mismatch lane {lane}"
+        );
 
         let got_bounds: Vec<(String, i64)> = got
             .boundaries
