@@ -571,14 +571,6 @@ custom_dataset_loader:
     metadata:
       is_trace: true
 
-  weka_trace:
-    class: aiperf.dataset.loader.recorded_graph:WekaTraceNativeLoader
-    description: |
-      WEKA nested-agent trace compiled directly to Graph-IR by the native
-      runner. Python retains only the configuration/plugin identity.
-    metadata:
-      is_trace: true
-
   sagemaker_data_capture:
     class: aiperf.dataset.loader.sagemaker_data_capture:SageMakerDataCaptureLoader
     description: |
