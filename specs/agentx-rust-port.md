@@ -85,14 +85,20 @@ corpus itself (a leaf util).
   `weka_main` + `weka_subagent` children + `weka_flat` chains), and
   `build_model_map`. Composed from byte-exact-proven pieces; unit-tested.
 
-**Corpus-generator finding (blocks the real-fixture e2e):** Python's
-`PromptGenerator` corpus for weka (`coding`) comes from the AgentX-added
-`dataset/generator/coding_content.py`; the runtime's `dataset::coding::build_coding_corpus`
-is the *graph-ir* procedural corpus. Whether they are byte-identical is unverified —
-the real-fixture golden diff must first establish that `build_coding_corpus`
-reproduces `PromptGenerator._tokenized_corpus` for `coding`, or port
-`coding_content.py` separately. Token-level sampling (`CorpusTokenSynth`) is already
-proven byte-exact given an identical corpus.
+**Corpus-generator finding — RESOLVED (GREEN):** `dataset::coding::build_coding_corpus(qwen, 42)`
+reproduces Python `CodingContentGenerator._tokenized_corpus` (the weka `coding`
+corpus) **byte-for-byte** (len 276439 + prefix/mid golden;
+`corpus.rs::build_coding_corpus_matches_python_agentx_corpus`). The AgentX legacy
+corpus is therefore reusable from the runtime leaf util — no separate port needed.
+
+**REAL-CORPUS END-TO-END — GREEN:** `convert_trace_to_conversations` reconstructs
+`simple.json`'s main conversation with the ACTUAL Qwen3-0.6B tokenizer +
+`build_coding_corpus` + `CorpusTokenSynth`, and every turn's real decoded
+`raw_messages` content + timing + `reset_context` + prefix-cache + `max_tokens`
+matches the real-Python golden byte-for-byte
+(`tools/agentx_realcorpus_golden.py` + `loader.rs::realcorpus_main_conversation_matches_python`).
+The hash-id base seed is `derive_child_seed(42, "dataset.coding_content.corpus")`.
+This is the authentic fixture-level e2e for reconstruction content.
 
 Remaining Slice 1 (see below): idle-gap time-warp timing; SPAWN/JOIN branch
 metadata; and the real-corpus e2e (pending the corpus-generator match above). The
