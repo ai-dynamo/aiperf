@@ -20,6 +20,7 @@ pub mod chains;
 pub mod config;
 pub mod corpus;
 pub mod loader;
+pub mod metrics;
 pub mod plan;
 pub mod prepass;
 pub mod prompt;
