@@ -122,10 +122,10 @@ impl SloThreshold {
     /// Converts a display-unit threshold into native units using the catalog.
     pub fn from_display(tag: MetricTag, display_value: f64) -> Result<Self, UnitConversionError> {
         let spec = spec_for(tag).expect("SLO tags must resolve in the static catalog");
-        let display_unit = spec.display_unit.unwrap_or(spec.unit);
+        let display_unit = spec.display_unit().unwrap_or(spec.unit());
         Ok(Self {
             tag,
-            native_value: display_unit.convert_value(display_value, spec.unit)?,
+            native_value: display_unit.convert_value(display_value, spec.unit())?,
             larger_is_better: spec.flags.contains(MetricFlags::LARGER_IS_BETTER),
             definition: metric_definition(tag),
         })
@@ -256,46 +256,46 @@ impl MetricResult {
     }
 
     fn scalar_from_spec(spec: &MetricSpec, value: MetricValue) -> Self {
-        let display_unit = spec.display_unit.unwrap_or(spec.unit);
+        let display_unit = spec.display_unit().unwrap_or(spec.unit());
         Self {
             tag: spec.tag.as_str().to_string(),
             source_tag: Some(spec.tag),
-            header: spec.header.to_string(),
+            header: spec.header().to_string(),
             unit: display_unit.as_str().to_string(),
             console_group: spec.console_group,
             data: MetricResultData::Scalar {
-                value: convert_metric_value(value, spec.unit, display_unit),
+                value: convert_metric_value(value, spec.unit(), display_unit),
             },
         }
     }
 
     fn distribution_from_spec(spec: &MetricSpec, stats: DistributionStats) -> Self {
-        let display_unit = spec.display_unit.unwrap_or(spec.unit);
+        let display_unit = spec.display_unit().unwrap_or(spec.unit());
         Self {
             tag: spec.tag.as_str().to_string(),
             source_tag: Some(spec.tag),
-            header: spec.header.to_string(),
+            header: spec.header().to_string(),
             unit: display_unit.as_str().to_string(),
             console_group: spec.console_group,
             data: MetricResultData::Distribution(convert_distribution(
                 stats,
-                spec.unit,
+                spec.unit(),
                 display_unit,
             )),
         }
     }
 
     fn adjusted_from_parent(spec: &MetricSpec, stats: DistributionStats) -> Self {
-        let display_unit = spec.display_unit.unwrap_or(spec.unit);
+        let display_unit = spec.display_unit().unwrap_or(spec.unit());
         Self {
             tag: format!("adj_{}", spec.tag.as_str()),
             source_tag: Some(spec.tag),
-            header: format!("{} (error-adjusted)", spec.header),
+            header: format!("{} (error-adjusted)", spec.header()),
             unit: display_unit.as_str().to_string(),
             console_group: spec.console_group,
             data: MetricResultData::Distribution(convert_distribution(
                 stats,
-                spec.unit,
+                spec.unit(),
                 display_unit,
             )),
         }

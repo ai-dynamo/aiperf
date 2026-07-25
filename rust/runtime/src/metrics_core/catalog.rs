@@ -338,6 +338,23 @@ pub enum MetricConsoleGroup {
     Active,
 }
 
+impl MetricConsoleGroup {
+    /// Stable snake-case name used as the definition group key.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Default => "default",
+            Self::Usage => "usage",
+            Self::Cache => "cache",
+            Self::Prediction => "prediction",
+            Self::Audio => "audio",
+            Self::Reasoning => "reasoning",
+            Self::Effective => "effective",
+            Self::Active => "active",
+        }
+    }
+}
+
 /// Direction used by plot/threshold consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlotMetricDirection {
@@ -421,19 +438,12 @@ impl MetricFlags {
 #[derive(Debug, Clone, Copy)]
 pub struct MetricSpec {
     pub tag: MetricTag,
-    /// Embedded portable definition (dual-write with the legacy presentation
-    /// fields below; later tasks remove the legacy fields).
+    /// Embedded portable definition; the source of truth for all presentation
+    /// (header, units, short header, display order, value type).
     pub def: Definition,
-    pub header: &'static str,
-    pub short_header: Option<&'static str>,
-    pub short_header_hide_unit: bool,
-    pub unit: Unit,
-    pub display_unit: Option<Unit>,
-    pub display_order: Option<u32>,
     pub flags: MetricFlags,
     pub console_group: MetricConsoleGroup,
     pub required: &'static [MetricTag],
-    pub value_type: MetricValueType,
     pub kind: MetricType,
     pub aggregation: Option<AggregationKind>,
 }
@@ -462,6 +472,17 @@ impl MetricSpec {
     /// Optional display order, delegating to the embedded [`Definition`].
     pub fn display_order(&self) -> Option<u32> {
         self.def.display_order
+    }
+
+    /// Value type, delegating to the embedded [`Definition`].
+    pub fn value_type(&self) -> MetricValueType {
+        self.def.value_type
+    }
+
+    /// Whether the short header omits the unit suffix, delegating to the
+    /// embedded [`Definition`].
+    pub fn short_header_hide_unit(&self) -> bool {
+        self.def.short_header_hide_unit
     }
 }
 
@@ -932,22 +953,15 @@ macro_rules! spec {
                 unit: Unit::$unit,
                 display_unit: cfg_display_unit(MetricTag::$tag),
                 display_order: cfg_display_order(MetricTag::$tag),
-                group: DefinitionGroup::Default,
+                group: DefinitionGroup::Named(cfg_console_group(MetricTag::$tag).as_str()),
                 larger_is_better: $flags.contains(MetricFlags::LARGER_IS_BETTER),
                 value_type: cfg_value_type(MetricTag::$tag),
                 aliases: &[],
                 deprecated_since: None,
             },
-            header: $header,
-            short_header: cfg_short_header(MetricTag::$tag),
-            short_header_hide_unit: cfg_short_header_hide_unit(MetricTag::$tag),
-            unit: Unit::$unit,
-            display_unit: cfg_display_unit(MetricTag::$tag),
-            display_order: cfg_display_order(MetricTag::$tag),
             flags: $flags,
             console_group: cfg_console_group(MetricTag::$tag),
             required: &[$(MetricTag::$req),*],
-            value_type: cfg_value_type(MetricTag::$tag),
             kind: MetricType::$kind,
             aggregation: $agg,
         }
@@ -2183,8 +2197,8 @@ pub fn record_metric_columns() -> Vec<RecordMetricColumn> {
         .filter(|spec| spec.kind == MetricType::Record && !spec.flags.intersects(hidden))
         .map(|spec| RecordMetricColumn {
             tag: spec.tag.as_str().to_string(),
-            header: spec.header.to_string(),
-            unit: spec.display_unit.unwrap_or(spec.unit).as_str().to_string(),
+            header: spec.header().to_string(),
+            unit: spec.display_unit().unwrap_or(spec.unit()).as_str().to_string(),
         })
         .collect()
 }
@@ -2247,22 +2261,22 @@ mod tests {
         let mut hash = 0xcbf29ce484222325;
         for spec in specs {
             feed(&mut hash, spec.tag.as_str().as_bytes());
-            feed(&mut hash, spec.header.as_bytes());
-            feed(&mut hash, spec.short_header.unwrap_or("").as_bytes());
+            feed(&mut hash, spec.def.header.as_bytes());
+            feed(&mut hash, spec.def.short_header.unwrap_or("").as_bytes());
             feed(
                 &mut hash,
-                spec.short_header_hide_unit.to_string().as_bytes(),
+                spec.def.short_header_hide_unit.to_string().as_bytes(),
             );
-            feed(&mut hash, format!("{:?}", spec.unit).as_bytes());
-            feed(&mut hash, format!("{:?}", spec.display_unit).as_bytes());
-            feed(&mut hash, format!("{:?}", spec.display_order).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.def.unit).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.def.display_unit).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.def.display_order).as_bytes());
             feed(&mut hash, spec.flags.bits().to_string().as_bytes());
             feed(&mut hash, format!("{:?}", spec.console_group).as_bytes());
             feed(&mut hash, format!("{:?}", spec.def.larger_is_better).as_bytes());
             for dependency in spec.required {
                 feed(&mut hash, dependency.as_str().as_bytes());
             }
-            feed(&mut hash, format!("{:?}", spec.value_type).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.def.value_type).as_bytes());
             feed(&mut hash, format!("{:?}", spec.kind).as_bytes());
             feed(&mut hash, format!("{:?}", spec.aggregation).as_bytes());
         }
