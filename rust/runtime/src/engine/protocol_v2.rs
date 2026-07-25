@@ -21,6 +21,7 @@ use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
+use crate::config::model::workload_kind::{is_graph_format, WorkloadKind};
 use crate::engine::protocol::{
     DispatchMode, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
 };
@@ -307,15 +308,12 @@ impl BenchmarkRunWireV2 {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("run.cfg.datasets must contain one dataset"))?;
-        let workload_id = dataset_type(&dataset)
-            .is_some_and(|kind| {
-                matches!(
-                    kind,
-                    "dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace"
-                )
-            })
-            .then_some("graph")
-            .unwrap_or("scheduled");
+        let workload_kind = if is_graph_format(dataset_type(&dataset)) {
+            WorkloadKind::Graph
+        } else {
+            WorkloadKind::Scheduled
+        };
+        let workload_id = workload_kind.workload_id();
         let transport = component_from_inline(self.cfg.transport, "run.cfg.transport")?;
         let worker_count = self
             .cfg
@@ -342,7 +340,7 @@ impl BenchmarkRunWireV2 {
         // only on the graph workload's config DTO. The scheduled workload DTO is
         // strict (`deny_unknown_fields`), so emitting the field there — even as
         // `null` — fails decode. Only attach it to the graph workload.
-        if workload_id == "graph" {
+        if workload_kind == WorkloadKind::Graph {
             workload_config["weka_semantics"] = serde_json::json!(self.cfg.weka_semantics);
         }
         let workload = NamedRunnerComponentSpecV2 {
