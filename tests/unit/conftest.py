@@ -312,6 +312,33 @@ def reset_random_generator() -> Generator[None, None, None]:
 
 
 @pytest.fixture(autouse=True)
+def _disable_weka_parallel_reconstruction(monkeypatch):
+    """Force WekaTraceLoader serial reconstruction across ALL unit tests.
+
+    Any unit test that drives ``create_dataset()`` / ``convert_to_conversations()``
+    over a weka_trace fixture with >= ``WEKA_PARALLEL_THRESHOLD`` (default 8) traces
+    triggers the parallel path, which spawns a real multiprocessing Pool. Those
+    workers load a real tokenizer via ``Tokenizer.from_pretrained`` -- but unit
+    tests stub the tokenizer with a MagicMock that doesn't survive the process
+    boundary, so the workers never produce results and ``pool.imap`` hangs forever.
+    Under ``pytest -n auto`` this wedges the whole xdist worker ("node down: Not
+    properly terminated") and the run stalls until CI's 45-minute timeout, leaving
+    orphaned pool processes. Weka-pool callers are spread across ``dataset/``,
+    ``config/``, and ``common/scenario/``, so the guard must live at the unit-test
+    root, not in a per-subdir conftest.
+
+    Uses ``monkeypatch`` rather than manual save/restore so a per-test override of
+    the same setting unwinds LIFO through the one function-scoped monkeypatch (a
+    manual ``finally`` restore racing a per-test monkeypatch of the same global
+    leaked stale values across tests under xdist sharding). Tests that specifically
+    exercise the parallel path re-enable it via their own ``monkeypatch``.
+    """
+    from aiperf.common import environment as env_mod
+
+    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
+
+
+@pytest.fixture(autouse=True)
 def reset_singleton_factories():
     """Reset singleton factory instances between tests to prevent state leakage.
 
