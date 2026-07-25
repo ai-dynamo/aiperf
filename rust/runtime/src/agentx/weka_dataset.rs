@@ -242,6 +242,53 @@ mod tests {
         assert_eq!(prof.turns[1].timestamp_ms, Some(100.0)); // ts 200 - t* 100
     }
 
+    fn opts() -> WekaComposeOptions {
+        WekaComposeOptions {
+            streaming: true,
+            ignore_eos: true,
+            benchmark_id: "bench".into(),
+            cache_bust_target: CacheBustTarget::FirstTurnPrefix,
+        }
+    }
+
+    #[test]
+    fn composer_preserves_spawn_join_metadata() {
+        use crate::agentx::loader::{JoinPrerequisite, SpawnBranch};
+        let mut t0 = turn(0.0, "a");
+        t0.spawn_branch = Some(SpawnBranch {
+            branch_id: "br:a".into(),
+            child_session_ids: vec!["t::sa:a".into()],
+            background: false,
+            mode_fork: false,
+        });
+        let t1 = turn(1000.0, "b");
+        let mut t2 = turn(2000.0, "c");
+        t2.join_prerequisite = Some(JoinPrerequisite {
+            branch_id: "br:a".into(),
+            child_session_ids: vec!["t::sa:a".into()],
+        });
+        let c = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![t0, t1, t2],
+        };
+        let ds = compose_weka_agentic_dataset(std::slice::from_ref(&c), &opts()).unwrap();
+        let conv = &ds.conversations()[0];
+        assert!(!conv.turns[0].branch_ids.is_empty());
+        assert_eq!(conv.turns[0].branch_ids[0].as_str(), "br:a");
+        // The spawn branch is attached to the conversation DAG.
+        let dag = conv.dag.as_ref().expect("dag present");
+        assert_eq!(dag.branches.len(), 1);
+        assert_eq!(dag.branches[0].mode, crate::dataset::model::ConversationBranchMode::Spawn);
+        let pre = &conv.turns[2].prerequisites[0];
+        assert_eq!(pre.kind, crate::dataset::model::PrerequisiteKind::SpawnJoin);
+        assert_eq!(
+            pre.child_conversation_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            vec!["t::sa:a"]
+        );
+    }
+
     #[test]
     fn composes_verbatim_turns_with_timestamps_and_marker() {
         let conv = ReconstructedConversation {
