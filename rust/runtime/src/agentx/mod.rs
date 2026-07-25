@@ -19,5 +19,6 @@ pub mod prepass;
 pub mod prompt;
 pub mod rng;
 pub mod synth;
+pub mod tool_shape;
 pub mod selection;
 pub mod trace;

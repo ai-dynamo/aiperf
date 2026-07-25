@@ -78,13 +78,43 @@ pub struct RoleSegment {
     pub tool_result_turn: Option<i64>,
 }
 
-/// One OpenAI-style chat message `{role, content}`.
+/// One synthetic OpenAI tool call attached to an assistant message during
+/// tool-shaping. `function.name`/`arguments` are fixed placeholders; the `id`
+/// keys the paired tool result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCall {
+    /// Deterministic call id (`call_turn_<n>`).
+    pub id: String,
+    /// Synthetic tool name (`recorded_tool`).
+    pub name: String,
+    /// Synthetic arguments (`{}`).
+    pub arguments: String,
+}
+
+/// One OpenAI-style chat message. `tool_calls`/`tool_call_id` are populated only
+/// by tool-shaping (see [`crate::agentx::tool_shape`]); otherwise `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatMessage {
-    /// Role wire string.
+    /// Role wire string (`system`/`user`/`assistant`/`tool`).
     pub role: String,
     /// Message content.
     pub content: String,
+    /// Synthetic tool calls (assistant messages, tool-shaped only).
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// Paired call id (tool messages, tool-shaped only).
+    pub tool_call_id: Option<String>,
+}
+
+impl ChatMessage {
+    /// A plain `{role, content}` message with no tool fields.
+    pub fn plain(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
 }
 
 /// Per-turn emission for delta-encoded reconstruction (Python `TurnDelta`).
@@ -337,27 +367,30 @@ impl ConversationReconstructor {
             self.last_disturbance_at,
             Some(d) if d < self.emitted_segment_count
         );
-        let (source, reset): (&[RoleSegment], bool) =
-            if self.emitted_segment_count == 0 || disturbed_emitted {
-                (
-                    &self.segments[..],
-                    self.emitted_segment_count != 0 && disturbed_emitted,
-                )
-            } else {
-                (&self.segments[self.emitted_segment_count..], false)
-            };
+        // Case 1 (first emission) / case 3 (a previously-emitted segment was
+        // disturbed): emit the whole buffer; `reset` only in case 3. Case 2
+        // (strict append): emit the tail past the emitted count, no reset.
+        let full_window = self.emitted_segment_count == 0 || disturbed_emitted;
+        let reset = self.emitted_segment_count != 0 && disturbed_emitted;
+        let start = if full_window {
+            0
+        } else {
+            self.emitted_segment_count
+        };
 
-        let messages: Vec<ChatMessage> = source
+        let mut messages: Vec<ChatMessage> = self.segments[start..]
             .iter()
-            .map(|s| ChatMessage {
-                role: s.role.as_str().to_string(),
-                content: s.content.clone(),
-            })
+            .map(|s| ChatMessage::plain(s.role.as_str(), s.content.clone()))
             .collect();
-        assert!(
-            !self.tool_shaped_messages,
-            "agentx: tool_shaped_messages not yet ported (weka_tool_shape.rs pending)"
-        );
+        if self.tool_shaped_messages {
+            // A mark that cannot pair in THIS window ships plain and must stay
+            // plain on every later re-emission — demote it now (in place on the
+            // reconstructor's own segments) so reset full re-emits cannot
+            // retroactively shape already-sent context.
+            let window = &mut self.segments[start..];
+            crate::agentx::tool_shape::demote_unpaired_tool_marks(window);
+            messages = crate::agentx::tool_shape::tool_shape_segment_messages(messages, window);
+        }
 
         self.emitted_segment_count = self.segments.len();
         self.last_disturbance_at = None;
@@ -371,10 +404,7 @@ impl ConversationReconstructor {
     pub fn snapshot_messages(&self) -> Vec<ChatMessage> {
         self.segments
             .iter()
-            .map(|s| ChatMessage {
-                role: s.role.as_str().to_string(),
-                content: s.content.clone(),
-            })
+            .map(|s| ChatMessage::plain(s.role.as_str(), s.content.clone()))
             .collect()
     }
 }
