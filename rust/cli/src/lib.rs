@@ -29,13 +29,11 @@ pub mod k8s;
 pub mod load;
 pub mod logging;
 pub mod model;
-pub mod phase_validate;
 pub mod profile;
 #[cfg(feature = "search-pyo3")]
 pub mod pyfit;
 #[cfg(feature = "search-pyo3")]
 pub mod pyopt;
-pub mod redact;
 pub mod render;
 pub mod results_sidecar;
 pub mod search;
