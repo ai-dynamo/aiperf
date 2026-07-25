@@ -67,6 +67,7 @@ read the record for the subsystem you are touching.
 | [graph-runtime.md](graph-runtime.md) | The Graph-IR runtime: deterministic async dataflow, the `dag_jsonl`/`weka_trace`/`dynamo_trace` compilers, and the trajectory-snapshot/warmup-priming subsystem. |
 | [conditional-graph-lowering.md](conditional-graph-lowering.md) | The model-independent-branching contract: how pinned/recorded/weighted conditional branching and recorded non-LLM content resolve and fold into the flat `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden (branch-on-live-output) line, and the built `conditional_graph` eager-conditional compiler. |
 | [agentx-rust-port.md](agentx-rust-port.md) | The standalone, feature-gated byte-exact Rust port of the Python AgentX (WEKA replay + agentic-replay timing), switchable against graph-ir and proven by raw-export A/B parity. Transitional; deleted once graph-ir supersedes it. |
+| [agentic-replay-join-gating.md](agentic-replay-join-gating.md) | Cross-lane subagent spawn/join gating and tree-gated recycle for the `agentic_replay` timing mode — the remaining byte-exact-parity piece for subagent trajectory trees. Forward-looking design record for planned work. |
 
 ### Measurement and output
 

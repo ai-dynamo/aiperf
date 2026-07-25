@@ -512,6 +512,11 @@ Inputs, endpoints, and graph:
   agentic-replay timing + scenario locks); parallel to and switchable against
   graph-ir, proven by raw-export A/B parity under SimClock. Transitional
   (`rust/runtime/src/agentx/`), deleted once graph-ir supersedes it.
+- [`docs/specs/agentic-replay-join-gating.md`](docs/specs/agentic-replay-join-gating.md) —
+  forward-looking design record for cross-lane subagent spawn/join gating and
+  tree-gated recycle in the `agentic_replay` timing mode (`rust/runtime/src/agentic_replay.rs`),
+  the remaining byte-exact-parity piece for subagent trajectory trees, driven by the
+  ported `agentx::session_tree` registry over `Turn.prerequisites`/`ConversationBranch`.
 
 Measurement and output:
 
