@@ -605,7 +605,7 @@ pub fn build_model_map(
     let mut ordered: Vec<String> = vec![main_model.clone()];
     let mut seen: HashSet<String> = HashSet::new();
     seen.insert(main_model);
-    let mut push = |m: String, ordered: &mut Vec<String>, seen: &mut HashSet<String>| {
+    let push = |m: String, ordered: &mut Vec<String>, seen: &mut HashSet<String>| {
         if seen.insert(m.clone()) {
             ordered.push(m);
         }
