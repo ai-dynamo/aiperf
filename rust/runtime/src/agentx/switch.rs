@@ -76,6 +76,29 @@ where
     }
 }
 
+/// Run the complete **legacy** WEKA replay pipeline for one trace and emit its
+/// export-level raw records: reconstruct (root + subagent children + flat chains)
+/// → annotate with the agentic-replay dispatch schedule (when `t_star_ms` is
+/// given) → serialize to the `export.records` shape. This is the end-to-end
+/// legacy path from trace to export artifact, composed from byte-exact units.
+pub fn run_legacy_pipeline<S>(
+    trace_id: &str,
+    trace: &WekaTrace,
+    synth: &mut S,
+    model_map: &HashMap<String, String>,
+    cfg: &WekaConfig,
+    opts: &MainReconstructOptions,
+    t_star_ms: Option<f64>,
+) -> Result<Vec<serde_json::Value>, crate::agentx::synth::PrefixTooTruncated>
+where
+    S: TokenSynth,
+{
+    let convs = crate::agentx::loader::convert_trace_to_conversations(
+        trace_id, trace, synth, model_map, cfg, opts,
+    )?;
+    Ok(crate::agentx::export::raw_export_trace(&convs, t_star_ms))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +167,65 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].as_ref().unwrap()[0].turns.len(), 1);
+    }
+
+    #[test]
+    fn full_legacy_pipeline_emits_scheduled_export_records() {
+        // Two timestamped turns; the pipeline reconstructs, schedules at t*, and
+        // serializes to export records carrying timing + content + phase.
+        let trace = WekaTrace {
+            id: "t".into(),
+            models: vec!["m".into()],
+            block_size: 4,
+            hash_id_scope: HashIdScope::Local,
+            tool_tokens: 0,
+            system_tokens: 0,
+            requests: vec![
+                WekaRequest::Normal(WekaNormalRequest {
+                    t: 0.0,
+                    model: "m".into(),
+                    input_length: 8,
+                    output_length: 4,
+                    hash_ids: vec![1, 2],
+                    input_types: vec![],
+                    output_types: vec![],
+                    stop: String::new(),
+                    api_time: Some(0.1),
+                    think_time: None,
+                }),
+                WekaRequest::Normal(WekaNormalRequest {
+                    t: 1.0,
+                    model: "m".into(),
+                    input_length: 12,
+                    output_length: 4,
+                    hash_ids: vec![1, 2, 3],
+                    input_types: vec![],
+                    output_types: vec![],
+                    stop: String::new(),
+                    api_time: Some(0.1),
+                    think_time: None,
+                }),
+            ],
+            totals: None,
+        };
+        let mut synth = StubSynth { bs: 4 };
+        // t* = 500ms -> turn0 (t=0) warmup, turn1 (t=1000) profiling @ offset 500.
+        let records = run_legacy_pipeline(
+            "t",
+            &trace,
+            &mut synth,
+            &HashMap::new(),
+            &WekaConfig { split_flattened_agents: false, ..WekaConfig::default() },
+            &MainReconstructOptions::default(),
+            Some(500.0),
+        )
+        .unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["phase"], serde_json::json!("warmup"));
+        assert_eq!(records[1]["phase"], serde_json::json!("profiling"));
+        assert_eq!(records[1]["dispatch_offset_ms"], serde_json::json!(500.0));
+        // Content + timing present on the export records.
+        assert_eq!(records[1]["delay_ms"], serde_json::json!(900.0));
+        assert!(records[0]["raw_messages"].as_array().unwrap().len() >= 1);
     }
 }
