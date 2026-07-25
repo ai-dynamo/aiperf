@@ -2208,7 +2208,10 @@ mod tests {
         assert_eq!(ds["name"], serde_json::json!("allenai/WildChat"));
         assert_eq!(ds["format"], serde_json::json!("hf"));
         assert_eq!(ds["source"]["type"], serde_json::json!("hugging_face"));
-        assert_eq!(ds["source"]["dataset"], serde_json::json!("allenai/WildChat"));
+        assert_eq!(
+            ds["source"]["dataset"],
+            serde_json::json!("allenai/WildChat")
+        );
         assert_eq!(ds["source"]["split"], serde_json::json!("train"));
     }
 
