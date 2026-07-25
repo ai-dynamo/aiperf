@@ -9,6 +9,7 @@ resolver = "3"
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
     "runtime",
+    "config",
     "cli",
     "mock-server",
     "e2e",
