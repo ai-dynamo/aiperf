@@ -5,29 +5,31 @@
 
 Covers the in-process helpers that don't need a real sandbox
 (``_decode_private_test_cases``, which translates LCB's upstream-encoded
-``private_test_cases`` blob: base64 → zlib → pickle → json) plus the
-daemon-flag handling in ``grade`` (with ``codegen_metrics`` mocked).
+``private_test_cases`` blob: base64 -> zlib -> pickle -> json; and
+``_derive_grade_timeout``) plus ``grade``'s delegation to the out-of-process
+codegen worker (with ``CodegenGradingWorker.grade_codegen`` mocked at the
+client boundary).
 
-The real daemon-fork path — spawning a ``ProcessPoolExecutor`` from a
-daemon process, which is what actually broke LCB grading — is guarded in
-``tests/component_integration/test_code_execution_daemon_grading.py``.
+The real fork-based sandbox now lives in the worker subprocess and is
+exercised by ``tests/component_integration/test_code_execution_daemon_grading.py``.
 """
 
 from __future__ import annotations
 
 import base64
-import multiprocessing as mp
 import pickle
 import zlib
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
 
 import aiperf.accuracy.graders.code_execution as code_execution
+from aiperf.accuracy.graders._codegen_worker_client import CodegenWorkerError
 from aiperf.accuracy.graders.code_execution import (
     CodeExecutionGrader,
     _decode_private_test_cases,
+    _derive_grade_timeout,
 )
 
 
@@ -94,74 +96,64 @@ class TestDecodePrivateTestCases:
         assert _decode_private_test_cases([]) == []
 
 
+class TestDeriveGradeTimeout:
+    """``_derive_grade_timeout`` sizes the client-side wall-clock ceiling to the
+    test-case count and hard-caps it so a single wedged worker can't stall the
+    run without firing on merely slow grades."""
+
+    def test_scales_with_cases_and_caps_at_5_min(self) -> None:
+        assert _derive_grade_timeout(1) < _derive_grade_timeout(10)
+        assert _derive_grade_timeout(100000) == 300.0
+
+    def test_cap_is_configurable_via_env(self, monkeypatch) -> None:
+        """The hard cap reads AIPERF_ACCURACY_LCB_GRADE_TIMEOUT_MAX_S so a slow
+        large-problem grade need not be prematurely failed by the default 300s."""
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.ACCURACY, "LCB_GRADE_TIMEOUT_MAX_S", 60.0)
+        assert _derive_grade_timeout(100000) == 60.0
+        # Small problems stay below the cap regardless.
+        assert _derive_grade_timeout(1) == 7.0 + 5.0 + 30.0
+
+
 @pytest.mark.asyncio
-class TestGradeClearsDaemonFlag:
-    """Regression: AIPerf runs the record processor as a daemon (every service
-    is spawned ``daemon=True``). ``codegen_metrics`` fans out to a
-    ProcessPoolExecutor, which Python forbids from a daemon process. Before the
-    fix, grading died with "daemonic processes are not allowed to have children"
-    and was silently mislabeled ``unparsed``. ``grade`` must clear the daemon
-    flag around the ``codegen_metrics`` call.
-    """
+class TestGradeDelegatesToWorker:
+    """``grade`` delegates sandboxed execution to the out-of-process worker via
+    ``CodegenGradingWorker`` and maps its result / errors onto ``GradingResult``."""
 
-    def _set_daemon(self, value: bool) -> None:
-        try:
-            mp.current_process().daemon = value
-        except AssertionError:
-            mp.current_process()._config["daemon"] = value
-
-    async def test_codegen_metrics_runs_with_daemon_cleared(self, monkeypatch) -> None:
-        # Record the daemon flag as seen from inside codegen_metrics.
-        seen: dict[str, bool] = {}
-
-        def fake_codegen_metrics(*_args, **_kwargs):
-            seen["daemon"] = mp.current_process().daemon
-            return {"pass@1": 1.0}, {}
-
+    async def test_grade_uses_worker_and_maps_pass_at_1(self, monkeypatch) -> None:
         monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
-        monkeypatch.setattr(code_execution, "codegen_metrics", fake_codegen_metrics)
-        monkeypatch.setattr(code_execution, "extract_code", lambda _text: "print(1)")
-
+        monkeypatch.setattr(code_execution, "extract_code", lambda _t: "print(1)")
         grader = CodeExecutionGrader(run=MagicMock())
+        grader._worker.grade_codegen = AsyncMock(return_value={"pass@1": 1.0})
+
         payload = orjson.dumps(
             {"public_test_cases": [{"input": "1", "output": "1"}], "metadata": ""}
         ).decode()
-
-        original = mp.current_process().daemon
-        try:
-            self._set_daemon(True)
-            result = await grader.grade("```python\nprint(1)\n```", payload)
-        finally:
-            self._set_daemon(original)
-
-        # codegen_metrics saw a non-daemon process (the fix), and the daemon
-        # flag was restored afterward.
-        assert seen["daemon"] is False
-        assert mp.current_process().daemon == original
-        # Grading ran to completion instead of being mislabeled unparsed.
-        assert result.unparsed is False
+        result = await grader.grade("```python\nprint(1)\n```", payload)
         assert result.correct is True
+        assert result.unparsed is False
+        grader._worker.grade_codegen.assert_awaited_once()
 
-    async def test_codegen_metrics_exception_becomes_grading_failure(
-        self, monkeypatch
-    ) -> None:
-        """If sandboxed execution raises (e.g. the daemon-fork error), grade()
-        must return a clean failure result — not propagate and crash the
-        record processor."""
-
-        def _boom(*_args, **_kwargs):
-            raise RuntimeError("daemonic processes are not allowed to have children")
-
+    async def test_worker_error_becomes_grading_failure(self, monkeypatch) -> None:
         monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
-        monkeypatch.setattr(code_execution, "codegen_metrics", _boom)
-        monkeypatch.setattr(code_execution, "extract_code", lambda _text: "print(1)")
-
+        monkeypatch.setattr(code_execution, "extract_code", lambda _t: "print(1)")
         grader = CodeExecutionGrader(run=MagicMock())
+        grader._worker.grade_codegen = AsyncMock(side_effect=CodegenWorkerError("boom"))
+
         payload = orjson.dumps(
             {"public_test_cases": [{"input": "1", "output": "1"}], "metadata": ""}
         ).decode()
-
         result = await grader.grade("```python\nprint(1)\n```", payload)
         assert result.correct is False
         assert result.unparsed is True
         assert "sandboxed exec failed" in result.reasoning
+
+    async def test_aclose_terminates_worker(self, monkeypatch) -> None:
+        # Graceful shutdown must tear down the worker subprocess (the record
+        # processor's @on_stop calls grader.aclose()).
+        monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
+        grader = CodeExecutionGrader(run=MagicMock())
+        grader._worker.aclose = AsyncMock()
+        await grader.aclose()
+        grader._worker.aclose.assert_awaited_once()
