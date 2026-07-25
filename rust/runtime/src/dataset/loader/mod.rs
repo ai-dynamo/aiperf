@@ -23,6 +23,7 @@ use crate::extensions::RegistryId;
 pub mod asr;
 pub mod baseten;
 pub mod exgentic;
+pub(crate) mod hf_detect;
 pub mod public;
 pub mod random_pool;
 pub mod raw_payload;
