@@ -35,11 +35,11 @@ pub use asr::{HfAsrComposer, HfAsrDatasetLoader};
 pub use baseten::{BasetenTraceComposer, BasetenTraceDatasetLoader};
 pub use exgentic::{ExgenticComposer, ExgenticDatasetLoader, ExgenticV2DatasetLoader};
 pub use public::{
-    AccuracyComposer, AccuracyDatasetLoader, HfConversationComposer, HfConversationDatasetLoader,
-    HfInstructionComposer, HfInstructionDatasetLoader, MmvuComposer, MmvuDatasetLoader,
-    MtBenchComposer, MtBenchDatasetLoader, ShareGptComposer, ShareGptDatasetLoader,
-    SpecBenchComposer, SpecBenchDatasetLoader, SpeedBenchComposer, SpeedBenchDatasetLoader,
-    load_raw_rows,
+    AccuracyComposer, AccuracyDatasetLoader, HfAutoComposer, HfAutoDatasetLoader,
+    HfConversationComposer, HfConversationDatasetLoader, HfInstructionComposer,
+    HfInstructionDatasetLoader, MmvuComposer, MmvuDatasetLoader, MtBenchComposer,
+    MtBenchDatasetLoader, ShareGptComposer, ShareGptDatasetLoader, SpecBenchComposer,
+    SpecBenchDatasetLoader, SpeedBenchComposer, SpeedBenchDatasetLoader, load_raw_rows,
 };
 pub use random_pool::{RandomPoolComposer, RandomPoolDatasetLoader};
 pub use raw_payload::{InputsJsonPayloadLoader, RawPayloadComposer, RawPayloadDatasetLoader};
@@ -397,6 +397,10 @@ impl LoaderRegistry {
             DatasetFormatRegistration::new(
                 Arc::new(HfConversationDatasetLoader),
                 Arc::new(HfConversationComposer),
+            ),
+            DatasetFormatRegistration::new(
+                Arc::new(HfAutoDatasetLoader),
+                Arc::new(HfAutoComposer),
             ),
             DatasetFormatRegistration::new(
                 Arc::new(MtBenchDatasetLoader),
