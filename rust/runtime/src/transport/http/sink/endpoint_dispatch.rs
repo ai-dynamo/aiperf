@@ -272,7 +272,6 @@ impl TransportSink {
         };
         let prepared = prepare_request(
             binding,
-            &self.transport,
             HttpEndpointRequest {
                 body,
                 headers,

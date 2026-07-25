@@ -29,9 +29,6 @@ use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
 };
 use crate::transport::http::transport::http_transport::HttpTransport;
-use crate::transport::http::transport::inline_media::{
-    HttpMediaFetcher, ImageDataUrlEncoder, inline_image_urls,
-};
 use crate::transport::http::transport::polling::{
     JsonVideoPollingProtocol, PollingOptions, submit_and_poll,
 };
@@ -280,7 +277,6 @@ pub trait HttpEndpointBinding: fmt::Debug {
 /// remains monomorphized and does not allocate an `async_trait` future.
 pub async fn prepare_request<B>(
     binding: &B,
-    transport: &HttpTransport,
     request: HttpEndpointRequest,
 ) -> Result<PreparedHttpEndpointRequest, HttpEndpointBindingError>
 where
@@ -301,44 +297,25 @@ where
     } = request;
     let policy = binding.request_policy(endpoint_path.as_deref(), streaming, url_index)?;
     let canonical_body = body.clone();
-    // Inline-media lowering exists to fetch remote HTTP(S) image URLs and splice
-    // them back as data URLs. That requires a full parse → walk → re-serialize of
-    // the (potentially multi-MB) body, which dominates dispatch for large inlined
-    // image batches. Only pay it when the body actually carries a fetchable URL: a
-    // `://` scheme marker cannot appear inside base64 data (no `:`) or a `data:`
-    // URL (no `//`), so its absence proves every image is already inline. Multipart
-    // always re-encodes (it rebuilds a form body), so it is unconditional.
-    let needs_inline_pass = policy.inline_media && body.windows(3).any(|w| w == b"://");
-    let wire_body = if needs_inline_pass
-        || matches!(policy.content_type, RequestContentType::MultipartFormData)
-    {
-        let mut payload = serde_json::from_slice::<Value>(&body).map_err(|error| {
+    // Media is resolved to its final wire form during dataset generation: local
+    // files are encoded to `data:` URLs, and remote HTTP(S) URLs are either sent
+    // to the server as-is (the server fetches them) or pre-fetched and inlined up
+    // front under `--prefetch-media-urls`. Dispatch therefore never fetches or
+    // re-serializes the body — the only per-request transform is the multipart
+    // form re-encode, which restructures an already-inlined payload into form
+    // parts (e.g. image_edit) and cannot be precomputed as raw JSON bytes.
+    let wire_body = if matches!(policy.content_type, RequestContentType::MultipartFormData) {
+        let payload = serde_json::from_slice::<Value>(&body).map_err(|error| {
             HttpEndpointBindingError::new(format!(
                 "decode endpoint {:?} request before applying its HTTP lifecycle: {error}",
                 binding.endpoint_id()
             ))
         })?;
-        if policy.inline_media {
-            inline_image_urls(
-                &mut payload,
-                &HttpMediaFetcher::new(transport),
-                &ImageDataUrlEncoder,
-            )
-            .await?;
-        }
         let encoded = binding.encode_body(&payload, policy.content_type)?;
         headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
         headers.insert("Content-Type".into(), encoded.content_type);
         encoded.bytes
     } else {
-        // Inline-media JSON endpoints that skipped the round-trip still get the
-        // content type the encode path would have set, so the wire headers are
-        // identical whether or not any URL needed fetching. Non-inline endpoints
-        // keep their own headers untouched (unchanged behavior).
-        if policy.inline_media {
-            headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
-            headers.insert("Content-Type".into(), "application/json".into());
-        }
         body
     };
 
@@ -700,7 +677,7 @@ mod tests {
         let binding =
             MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &base_urls, "fixture-model");
         let body = Bytes::from_static(br#"{"model":"m","messages":[]}"#);
-        let request = prepare_request(&binding, &transport, endpoint_request(body.clone()))
+        let request = prepare_request(&binding, endpoint_request(body.clone()))
             .await
             .unwrap();
         assert_eq!(request.canonical_body, body);
@@ -716,7 +693,7 @@ mod tests {
         let body = Bytes::from_static(
             br#"{"prompt":"edit","image":{"b64_data":"aGVsbG8=","filename":"in.txt","content_type":"text/plain"}}"#,
         );
-        let request = prepare_request(&binding, &transport, endpoint_request(body.clone()))
+        let request = prepare_request(&binding, endpoint_request(body.clone()))
             .await
             .unwrap();
         assert_eq!(request.canonical_body, body);

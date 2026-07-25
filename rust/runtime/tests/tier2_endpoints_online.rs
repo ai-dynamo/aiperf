@@ -539,7 +539,7 @@ async fn media_inference(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn image_edit_is_multipart_and_retrieval_downloads_deduplicates_and_inlines_media() {
+async fn image_edit_is_multipart_and_retrieval_sends_urls_by_default() {
     let state = MediaState::default();
     let app = Router::new()
         .route("/asset.png", get(media_asset))
@@ -570,17 +570,20 @@ async fn image_edit_is_multipart_and_retrieval_downloads_deduplicates_and_inline
     let report = run(address, source, table).await;
     server.abort();
     assert_completed(&report, 2);
-    assert_eq!(state.asset_hits.load(Ordering::SeqCst), 1);
+    // Default: aiperf never fetches remote media on the dispatch path — the server
+    // receives the URLs and resolves them itself, so aiperf never hit /asset.png.
+    assert_eq!(state.asset_hits.load(Ordering::SeqCst), 0);
     // Averaged over both requests: the image_edit turn carries 1 image and the
     // image_retrieval turn carries 2, so (1 + 2) / 2 = 1.5. The image_edit image is
-    // now counted from the composition-known image count; its multipart/form-data
-    // body is not JSON, so the wire-parse path alone could never have counted it.
+    // counted from the composition-known image count; its multipart/form-data body
+    // is not JSON, so the wire-parse path alone could never have counted it.
     assert_eq!(
         report.native_metrics.finite_value(MetricTag::NumImages),
         Some(1.5)
     );
 
     let requests = state.captured.by_path();
+    // image_edit still lowers its inline data-URL image into a multipart form body.
     let edit = &requests["/v1/images/edits"];
     assert!(
         edit.content_type
@@ -598,6 +601,9 @@ async fn image_edit_is_multipart_and_retrieval_downloads_deduplicates_and_inline
             .any(|window| window == b"\x89PNG\r\n\x1a\n")
     );
 
+    // image_retrieval sends the authored URLs straight through — no download, no
+    // client-side inlining. (Fetch-and-inline is opt-in via --prefetch-media-urls,
+    // performed during dataset generation.)
     let retrieval: Value = serde_json::from_slice(&requests["/v1/infer"].body).unwrap();
     let urls = retrieval["input"]
         .as_array()
@@ -607,7 +613,7 @@ async fn image_edit_is_multipart_and_retrieval_downloads_deduplicates_and_inline
         .collect::<Vec<_>>();
     assert_eq!(urls.len(), 2);
     assert_eq!(urls[0], urls[1]);
-    assert!(urls[0].starts_with("data:image/png;base64,"));
+    assert_eq!(urls[0], asset_url);
 }
 
 #[derive(Clone, Default)]
