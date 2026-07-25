@@ -430,6 +430,10 @@ pub(crate) async fn build_file_dataset(
     compose.output_length_distribution = spec.osl.as_ref().map(distribution).transpose()?;
     compose.format_options = spec.options.clone();
     compose.trace_prompt_storage = trace_prompt_storage;
+    if spec.prefetch_media_urls {
+        // Fetch remote image URLs once, now, before any credits are issued.
+        compose.media_resolver = Arc::new(PrefetchMediaResolver::new());
+    }
     if let Some(generator) = authored_prompt_generator(spec.prompts.as_ref())? {
         compose.prompt_generator = generator;
     }
@@ -556,6 +560,10 @@ pub(crate) async fn build_public_dataset(
     let mut compose = compose_config(models, rng_root)?;
     compose.requires_raw_token_ids = requires_raw_token_ids;
     compose.format_options = spec.options.clone();
+    if spec.prefetch_media_urls {
+        // Fetch remote image URLs once, now, before any credits are issued.
+        compose.media_resolver = Arc::new(PrefetchMediaResolver::new());
+    }
     if let Some(generator) = authored_prompt_generator(spec.prompts.as_ref())? {
         compose.prompt_generator = generator;
     }

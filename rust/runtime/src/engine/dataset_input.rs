@@ -46,6 +46,10 @@ pub struct PublicDatasetSpec {
     /// Shared prompt-source selection for synthesized prompt content.
     #[serde(default)]
     pub prompts: Option<PromptSelectionSpec>,
+    /// Fetch remote `http(s)://` image URLs at dataset generation and inline
+    /// them as `data:` URLs, for servers that cannot resolve URLs themselves.
+    #[serde(default)]
+    pub prefetch_media_urls: bool,
     /// Validated loader/composer options from plugin metadata and Config v2.
     #[serde(default)]
     pub options: Map<String, Value>,
@@ -114,6 +118,11 @@ pub struct FileDatasetSpec {
     /// Optional native trace transformation and caps.
     #[serde(default)]
     pub synthesis: Option<TraceSynthesisSpec>,
+    /// Fetch remote `http(s)://` image URLs at dataset generation and inline
+    /// them as `data:` URLs, for servers that cannot resolve URLs themselves.
+    /// Default keeps authored URLs unchanged (dispatch sends them as-is).
+    #[serde(default)]
+    pub prefetch_media_urls: bool,
     /// Loader/composer-specific options after Config-v2 validation.
     #[serde(default)]
     pub options: Map<String, Value>,
