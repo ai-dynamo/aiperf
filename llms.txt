@@ -532,6 +532,12 @@ Inputs, endpoints, and graph:
   terminal parity subsystem (built; residual/handoff golden-verified against the real
   Python methods, live global-hop clean on `weka_cc_traces_062126`), mining the graph
   path's Clock-derived `chop_trie_at_frontier`/`GraphWarmupHandoff` reference.
+- [`docs/specs/global-hop-worker-routing.md`](docs/specs/global-hop-worker-routing.md) —
+  forward-looking design record for pluggable worker-assignment routing in the
+  multi-worker `global-hop` dispatcher (`--hop-routing round-robin|sticky|least-loaded`,
+  applied at `ThreadPerCoreExecutor::execute_command`); makes `StickyUserSessions`
+  connection reuse honored per session (hash-by-correlation) instead of fragmented,
+  auto-defaulting to sticky under sticky reuse.
 
 Measurement and output:
 

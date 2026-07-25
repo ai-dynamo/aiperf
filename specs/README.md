@@ -69,6 +69,7 @@ read the record for the subsystem you are touching.
 | [agentx-rust-port.md](agentx-rust-port.md) | The standalone, feature-gated byte-exact Rust port of the Python AgentX (WEKA replay + agentic-replay timing), switchable against graph-ir and proven by raw-export A/B parity. Transitional; deleted once graph-ir supersedes it. |
 | [agentic-replay-join-gating.md](agentic-replay-join-gating.md) | Cross-lane subagent spawn/join gating and tree-gated recycle for the `agentic_replay` timing mode — the remaining byte-exact-parity piece for subagent trajectory trees. Forward-looking design record for planned work. |
 | [agentic-accelerated-cache-warmup.md](agentic-accelerated-cache-warmup.md) | Gated accelerated cache-pressure warmup + warmup→profiling residual-delay handoff for the legacy `agentic_replay` timing mode (`--agentic-cache-warmup-duration`) — the terminal byte-exact-parity subsystem (built; golden-verified against the real Python methods, live global-hop clean on `weka_cc_traces_062126`), mining the graph path's Clock-derived handoff reference. |
+| [global-hop-worker-routing.md](global-hop-worker-routing.md) | Pluggable worker-assignment routing for the multi-worker `global-hop` dispatcher (`--hop-routing round-robin\|sticky\|least-loaded`), so `StickyUserSessions` connection reuse is honored per session instead of fragmented across workers; auto-defaults to sticky under sticky reuse. Forward-looking design record for planned work. |
 
 ### Measurement and output
 
