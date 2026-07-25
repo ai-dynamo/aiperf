@@ -370,7 +370,10 @@ struct PendingJoin {
 /// [`TreeGate::is_waiting`] no longer holds for that coordinate. Generic over
 /// the item type so the decision logic is unit-testable without a full
 /// [`TurnToSend`](crate::multiturn::TurnToSend).
-fn take_ready<T>(
+///
+/// Exposed (`pub`) so integration tests can drive the real deferral/release
+/// decision under simulated live-child latency rather than reimplementing it.
+pub fn take_ready<T>(
     queue: &RefCell<Vec<T>>,
     gate: &TreeGate,
     key: impl for<'a> Fn(&'a T) -> (&'a str, usize),
