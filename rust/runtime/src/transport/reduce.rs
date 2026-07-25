@@ -103,10 +103,10 @@ pub(crate) fn token_kind(data: &ResponseData) -> ObservedTokenKind {
 
 /// Fold one decoded response's textual/token payload into the aggregated model
 /// response, returning the plain text it contributed.
-pub(crate) fn absorb_response_data(
-    data: &ResponseData,
+pub(crate) fn absorb_response_data<'a>(
+    data: &'a ResponseData,
     metadata: &mut ModelResponseMetadata,
-) -> Cow<'_, str> {
+) -> Cow<'a, str> {
     match data {
         ResponseData::Text { text } => append_text(&mut metadata.content, text),
         ResponseData::Reasoning { content, reasoning } => {
