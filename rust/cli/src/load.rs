@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use aiperf_runtime::engine::protocol::DispatchMode;
+use aiperf_runtime::engine::protocol::{DispatchMode, HopRouting};
 
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
@@ -229,6 +229,11 @@ pub(crate) struct Inputs {
     /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`
     /// / `--dispatch`). `None` omits the wire field, decoded as `Global`.
     pub runtime_dispatch: Option<DispatchMode>,
+    /// Explicit `--hop-routing` worker-assignment policy for `global-hop`
+    /// (`workers > 1`). `None` lets resolution derive it from the resolved
+    /// connection-reuse strategy (`sticky` under `sticky-user-sessions`, else
+    /// `round-robin`).
+    pub runtime_hop_routing: Option<HopRouting>,
     pub random_seed: Option<u64>,
     /// Per-dataset sampling seed (`dataset.random_seed`). The `--random-seed`
     /// flag sets both this and `random_seed`; a YAML top-level `randomSeed` sets
@@ -725,6 +730,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .is_some()
             .then(|| flags.dispatch_mode())
             .transpose()?,
+        runtime_hop_routing: flags.hop_routing()?,
         input_file: flags.input_file.clone(),
         inline_records: None,
         custom_dataset_type: flags.custom_dataset_type.clone(),
@@ -970,6 +976,21 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
 
     let endpoint_type_for_dataset_validation = inputs.endpoint_type.clone();
+    // Resolve the effective connection-reuse strategy once so the hop-routing
+    // default can derive from it (see `resolved_hop_routing`).
+    let resolved_connection_reuse = inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled);
+    // Effective global-hop worker-assignment policy: an explicit
+    // `--hop-routing`/`runtime.hop_routing` always wins; absent, sticky
+    // per-session connection reuse makes `Sticky` the sensible default (one
+    // worker per session keeps the sticky pool warm), otherwise `RoundRobin`.
+    // Inert unless the run is `global-hop` with `workers > 1`.
+    let resolved_hop_routing = inputs.runtime_hop_routing.unwrap_or({
+        if resolved_connection_reuse == ConnectionReuse::StickyUserSessions {
+            HopRouting::Sticky
+        } else {
+            HopRouting::RoundRobin
+        }
+    });
     let endpoint = Endpoint {
         urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
         endpoint_type: EndpointType(inputs.endpoint_type),
@@ -977,7 +998,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         use_legacy_max_tokens: inputs.use_legacy_max_tokens,
         use_server_token_count: inputs.use_server_token_count,
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
-        connection_reuse: inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled),
+        connection_reuse: resolved_connection_reuse,
         ssl_verify: true,
         connection_limit: DEFAULT_CONNECTION_LIMIT,
         keepalive_timeout: DEFAULT_KEEPALIVE_TIMEOUT,
@@ -1429,6 +1450,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             workers_max: None,
             cells: inputs.runtime_cells,
             dispatch: inputs.runtime_dispatch,
+            hop_routing: Some(resolved_hop_routing),
         }),
         metrics: Some(Metrics {
             slos: inputs.slos.clone(),

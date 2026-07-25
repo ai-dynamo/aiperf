@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::engine::protocol::{
-    DispatchMode, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
+    DispatchMode, HopRouting, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
 };
 use crate::engine::sidecar_input::{
     AuthoredSidecarInput, CONTENT_SERVER_SIDECAR_ID, GPU_TELEMETRY_SIDECAR_ID,
@@ -173,6 +173,23 @@ fn parse_dispatch_mode(runtime: &Value) -> Result<DispatchMode> {
         }
         Some(value) => serde_json::from_value(value.clone())
             .map_err(|error| anyhow!("run.cfg.runtime.dispatch: {error}")),
+    }
+}
+
+/// Decode the optional `runtime.hop_routing` worker-assignment selector.
+///
+/// Only meaningful for a [`DispatchMode::GlobalHop`] run with `workers > 1`,
+/// where it chooses which worker thread executes each already-issued request
+/// (see [`HopRouting`]). Absent (`None`) leaves the runtime on its
+/// [`HopRouting::default`] (`RoundRobin`) placement; an unrecognized string is a
+/// hard decode error rather than a silent fallback. The value is inert under any
+/// other dispatch mode or `workers == 1`.
+fn parse_hop_routing(runtime: &Value) -> Result<Option<HopRouting>> {
+    match runtime.get("hop_routing") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| anyhow!("run.cfg.runtime.hop_routing: {error}")),
     }
 }
 
@@ -331,6 +348,7 @@ impl BenchmarkRunWireV2 {
             "run.cfg.runtime.workers must be a positive usize"
         );
         let dispatch = parse_dispatch_mode(&self.cfg.runtime)?;
+        let hop_routing = parse_hop_routing(&self.cfg.runtime)?;
         let mut workload_config = serde_json::json!({
             "worker_count": worker_count,
             "dataset": dataset,
@@ -391,6 +409,7 @@ impl BenchmarkRunWireV2 {
             export: serde_json::from_value(self.cfg.export).unwrap_or_default(),
             sidecars,
             dispatch,
+            hop_routing,
             resource_presence: ResourcePresenceV2 {
                 models: true,
                 endpoints: true,
@@ -504,6 +523,11 @@ pub struct AuthoredRunSpecV2 {
     /// (`runtime.dispatch`; defaults to [`DispatchMode::Global`]). Config
     /// surface only: not yet wired into execution behavior.
     pub dispatch: DispatchMode,
+    /// Worker-assignment policy for `DispatchMode::GlobalHop` with `workers > 1`
+    /// (`runtime.hop_routing`). `None` leaves the runtime on its
+    /// [`HopRouting::default`] (`RoundRobin`) placement; inert under any other
+    /// dispatch mode or `workers == 1`.
+    pub hop_routing: Option<HopRouting>,
     resource_presence: ResourcePresenceV2,
 }
 
@@ -539,6 +563,8 @@ struct AuthoredRunWireV2 {
     resources: AuthoredRunResourcesV2,
     #[serde(default)]
     dispatch: DispatchMode,
+    #[serde(default)]
+    hop_routing: Option<HopRouting>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -575,6 +601,7 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             sidecars: wire.resources.sidecars.unwrap_or_default(),
             export: crate::export::ExportConfig::default(),
             dispatch: wire.dispatch,
+            hop_routing: wire.hop_routing,
             resource_presence,
         })
     }
@@ -1380,5 +1407,49 @@ mod dispatch_mode_tests {
             let authored = minimal_wire(runtime).into_authored().unwrap();
             assert_eq!(authored.dispatch, expected, "{wire_value}");
         }
+    }
+
+    #[test]
+    fn runtime_hop_routing_absent_is_none() {
+        let runtime = serde_json::json!({"workers": 4, "cells": 1});
+        assert_eq!(parse_hop_routing(&runtime).unwrap(), None);
+        let authored = minimal_wire(runtime).into_authored().unwrap();
+        assert_eq!(authored.hop_routing, None);
+    }
+
+    #[test]
+    fn runtime_hop_routing_parses_sticky() {
+        let runtime = serde_json::json!({"workers": 4, "cells": 1, "hop_routing": "sticky"});
+        assert_eq!(parse_hop_routing(&runtime).unwrap(), Some(HopRouting::Sticky));
+        let authored = minimal_wire(runtime).into_authored().unwrap();
+        assert_eq!(authored.hop_routing, Some(HopRouting::Sticky));
+    }
+
+    #[test]
+    fn runtime_hop_routing_accepts_every_kebab_case_variant() {
+        for (wire_value, expected) in [
+            ("round-robin", HopRouting::RoundRobin),
+            ("sticky", HopRouting::Sticky),
+            ("least-loaded", HopRouting::LeastLoaded),
+        ] {
+            let runtime =
+                serde_json::json!({"workers": 1, "cells": 1, "hop_routing": wire_value});
+            assert_eq!(
+                parse_hop_routing(&runtime).unwrap(),
+                Some(expected),
+                "{wire_value}"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_hop_routing_rejects_unknown_variant() {
+        let runtime = serde_json::json!({"workers": 1, "cells": 1, "hop_routing": "bogus"});
+        assert!(parse_hop_routing(&runtime).is_err());
+        let error = match minimal_wire(runtime).into_authored() {
+            Ok(_) => panic!("expected an unknown-hop-routing-variant error"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("run.cfg.runtime.hop_routing"), "{error}");
     }
 }

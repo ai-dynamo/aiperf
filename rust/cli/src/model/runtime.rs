@@ -4,7 +4,7 @@
 //!
 //! `workers` and `workers_min` emit null when unset; `workers_max` is omitted.
 
-use aiperf_runtime::engine::protocol::DispatchMode;
+use aiperf_runtime::engine::protocol::{DispatchMode, HopRouting};
 use serde::{Deserialize, Serialize};
 
 /// The typed worker/cell runtime policy.
@@ -24,6 +24,11 @@ pub struct Runtime {
     /// [`DispatchMode::default`] (`Global`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatch: Option<DispatchMode>,
+    /// Worker-assignment policy for `dispatch == global-hop` with `workers > 1`
+    /// (`runtime.hop_routing`). Absent (`None`) omits the wire field, decoded as
+    /// [`HopRouting::default`] (`RoundRobin`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hop_routing: Option<HopRouting>,
 }
 
 impl Default for Runtime {
@@ -34,6 +39,7 @@ impl Default for Runtime {
             workers_max: None,
             cells: 1,
             dispatch: None,
+            hop_routing: None,
         }
     }
 }

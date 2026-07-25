@@ -61,6 +61,9 @@ pub struct ExecutionBackendConfig {
     ///
     /// Each worker receives an independent dense-key table.
     pub prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+    /// Worker-assignment policy applied by the `workers > 1` hop executor. Inert
+    /// for `workers == 1` (co-located sink, no hop).
+    pub hop_routing: HopRouting,
 }
 
 /// Constructs worker-local prepared endpoint tables.
@@ -215,6 +218,7 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
     workers: usize,
     coordinator_clock: Rc<dyn Clock>,
     real_clock_anchor: RealClockAnchor,
+    hop_routing: HopRouting,
 ) -> Result<Rc<dyn RequestExecutor>> {
     ensure!(workers > 0, "execution workers must be positive");
     if workers == 1 {
@@ -225,7 +229,7 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
         workers,
         coordinator_clock,
         real_clock_anchor,
-        HopRouting::RoundRobin,
+        hop_routing,
     )?))
 }
 
@@ -238,11 +242,13 @@ impl RequestExecutorFactory for HttpExecutionFactory {
         let workers = config.workers;
         let coordinator_clock = config.coordinator_clock.clone();
         let anchor = config.real_clock_anchor;
+        let hop_routing = config.hop_routing;
         build_native(
             HttpSinkBuilder::from_config(&config),
             workers,
             coordinator_clock,
             anchor,
+            hop_routing,
         )
     }
 }
@@ -1231,6 +1237,7 @@ mod tests {
                 transport: TransportSinkConfig::default(),
                 raw_enabled: false,
                 prepared_endpoints: Some(table_factory),
+                hop_routing: HopRouting::RoundRobin,
             })
             .unwrap();
         let origin_ns = clock.now_ns();
