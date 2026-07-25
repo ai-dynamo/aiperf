@@ -110,9 +110,12 @@ fn build_api() -> Result<Api, String> {
 fn select_parquet_files(files: &[String], subset: Option<&str>, split: &str) -> Vec<String> {
     let is_parquet = |f: &&String| f.ends_with(".parquet");
     // A path "contains" a token when the token appears as a `/`-, `-`, or `.`-
-    // delimited component (so `train` does not match `retrained`).
+    // delimited component (so `train` does not match `retrained`). `_` is NOT a
+    // delimiter: subset/config names embed underscores (`sub_a`, and the
+    // `semianalysis_cc_traces_weka_*` corpora), so splitting on it would prevent
+    // the subset token from ever matching a directory segment.
     let contains_token = |path: &str, token: &str| {
-        path.split(['/', '-', '.', '_'])
+        path.split(['/', '-', '.'])
             .any(|seg| seg.eq_ignore_ascii_case(token))
     };
 
