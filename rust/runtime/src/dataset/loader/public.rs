@@ -289,9 +289,7 @@ impl Composer for ShareGptComposer {
         tokenizer: &dyn TextTokenizer,
         segments: &mut SegmentPool,
     ) -> Result<Vec<Conversation>> {
-        let min_length = usize_option(config, "min_sequence_tokens", 4)?;
-        let max_prompt = usize_option(config, "max_prompt_tokens", 1024)?;
-        let max_total = usize_option(config, "max_total_tokens", 2048)?;
+        let budget = TokenBudget::from_config(config)?;
         let skip_min_output = config.output_length_distribution.is_some();
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
@@ -318,11 +316,11 @@ impl Composer for ShareGptComposer {
                 for (prompt, completion) in pairs {
                     let prompt_tokens = tokenizer.encode(&prompt)?;
                     let completion_tokens = tokenizer.encode(&completion)?;
-                    if prompt_tokens.len() < min_length
-                        || prompt_tokens.len() > max_prompt
-                        || (!skip_min_output && completion_tokens.len() < min_length)
-                        || prompt_tokens.len() + completion_tokens.len() > max_total
-                    {
+                    if !budget.pair_ok(
+                        prompt_tokens.len(),
+                        completion_tokens.len(),
+                        skip_min_output,
+                    ) {
                         return Ok(None);
                     }
                     let completion_tokens =
@@ -498,9 +496,7 @@ impl Composer for HfAutoComposer {
                     .filter(|n| *n > 0)
                     .map(|n| n as u32)
             });
-        let min_length = usize_option(config, "min_sequence_tokens", 4)?;
-        let max_prompt = usize_option(config, "max_prompt_tokens", 1024)?;
-        let max_total = usize_option(config, "max_total_tokens", 2048)?;
+        let budget = TokenBudget::from_config(config)?;
 
         // Output length used when a row has no reference completion (none pinned).
         const DEFAULT_OUTPUT_TOKENS: u32 = 128;
@@ -586,7 +582,7 @@ impl Composer for HfAutoComposer {
                     return Ok(None);
                 }
                 let prompt_tokens = tokenizer.encode(&prompt)?;
-                if prompt_tokens.len() < min_length || prompt_tokens.len() > max_prompt {
+                if !budget.prompt_ok(prompt_tokens.len()) {
                     return Ok(None);
                 }
                 let output_tokens: u32 = if let Some(n) = fixed_output {
@@ -601,7 +597,7 @@ impl Composer for HfAutoComposer {
                 } else {
                     DEFAULT_OUTPUT_TOKENS
                 };
-                if prompt_tokens.len() + output_tokens as usize > max_total {
+                if !budget.total_ok(prompt_tokens.len(), output_tokens as usize) {
                     return Ok(None);
                 }
                 Ok(Some((prompt, prompt_tokens, output_tokens)))
@@ -664,9 +660,7 @@ impl Composer for HfConversationComposer {
             string_option(config, "message_content_key").unwrap_or_else(|| "content".into());
         let image_column = string_option(config, "image_column");
         let multi_turn = bool_option(config, "multi_turn", false)?;
-        let min_length = usize_option(config, "min_sequence_tokens", 4)?;
-        let max_prompt = usize_option(config, "max_prompt_tokens", 1024)?;
-        let max_total = usize_option(config, "max_total_tokens", 2048)?;
+        let budget = TokenBudget::from_config(config)?;
         let skip_min_output = config.output_length_distribution.is_some();
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
@@ -690,11 +684,7 @@ impl Composer for HfConversationComposer {
                     for (prompt, completion) in hf_message_pairs(&normalized, &content_key) {
                         let prompt_tokens = tokenizer.encode(&prompt)?.len();
                         let completion_tokens = tokenizer.encode(&completion)?.len();
-                        if prompt_tokens < min_length
-                            || prompt_tokens > max_prompt
-                            || (!skip_min_output && completion_tokens < min_length)
-                            || prompt_tokens + completion_tokens > max_total
-                        {
+                        if !budget.pair_ok(prompt_tokens, completion_tokens, skip_min_output) {
                             return Ok(None);
                         }
                         prepared.push((
@@ -2321,6 +2311,44 @@ fn usize_option(config: &ComposeConfig, key: &str, default: usize) -> Result<usi
         })
         .transpose()
         .map(|value| value.unwrap_or(default))
+}
+
+/// Per-row token-length admission bounds shared by the public HF composers.
+/// Rows whose prompt (and, for pair formats, completion) fall outside these are
+/// dropped. Defaults match the historical per-composer literals: 4 / 1024 / 2048.
+struct TokenBudget {
+    min_length: usize,
+    max_prompt: usize,
+    max_total: usize,
+}
+
+impl TokenBudget {
+    fn from_config(config: &ComposeConfig) -> Result<Self> {
+        Ok(Self {
+            min_length: usize_option(config, "min_sequence_tokens", 4)?,
+            max_prompt: usize_option(config, "max_prompt_tokens", 1024)?,
+            max_total: usize_option(config, "max_total_tokens", 2048)?,
+        })
+    }
+
+    /// Whether the prompt length is within `[min_length, max_prompt]`.
+    fn prompt_ok(&self, prompt_len: usize) -> bool {
+        prompt_len >= self.min_length && prompt_len <= self.max_prompt
+    }
+
+    /// Whether prompt + output stays within `max_total`.
+    fn total_ok(&self, prompt_len: usize, output_len: usize) -> bool {
+        prompt_len + output_len <= self.max_total
+    }
+
+    /// Full prompt/completion-pair admission (ShareGPT / multi-turn semantics):
+    /// prompt bounds, the total cap, and — unless `skip_min_output` (an authored
+    /// output-length distribution overrides it) — a completion minimum length.
+    fn pair_ok(&self, prompt_len: usize, completion_len: usize, skip_min_output: bool) -> bool {
+        self.prompt_ok(prompt_len)
+            && (skip_min_output || completion_len >= self.min_length)
+            && self.total_ok(prompt_len, completion_len)
+    }
 }
 
 #[cfg(test)]
