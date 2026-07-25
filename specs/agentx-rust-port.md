@@ -24,8 +24,21 @@ Python AgentX output over identical deterministic (SimClock) virtual time.
 
 ## Built
 
-(Bootstrapping — see `## Future requirements`. Modules land incrementally under
-`rust/runtime/src/agentx/`, feature-gated by `agentx`, off by default.)
+The `agentx` feature and module tree exist under `rust/runtime/src/agentx/`, off by
+default. Slice 1 is in progress; these units are byte-exact against their Python
+counterparts with unit tests (golden values captured from CPython where relevant):
+
+- `rng.rs` — `HashIdRandomGenerator`, reusing the runtime CPython-MT compat; golden
+  parity against `random.Random(sha256-derived-seed).randrange`.
+- `trace.rs` — the `WekaTrace` serde schema; parses every in-repo
+  `tests/fixtures/weka_traces/` file and rejects unknown fields.
+- `selection.rs` — `filter_then_cap` selection with stats.
+- `prepass.rs` — the shared per-trace theoretical prefix-cache prepass.
+- `prompt.rs` — `compose_weka_prompt_tokens` (three ISL layouts, callback-injected
+  token generation).
+
+Remaining Slice 1 (see below): `synth.rs`, `chains.rs`, `tool_shape.rs`,
+`loader.rs`, and the Python golden-diff A/B harness.
 
 ## Future requirements
 
