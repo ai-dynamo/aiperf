@@ -715,54 +715,72 @@ mod tests {
         // Derive the hash-id base seed exactly as Python's CodingContentGenerator.
         let hash_base_seed =
             PythonRandomGenerator::derive_child_seed(42, crate::rng::namespace::DATASET_CODING_CONTENT_CORPUS);
-        assert_eq!(
-            hash_base_seed,
-            golden["hash_base_seed"].as_u64().unwrap(),
-            "hash_base_seed derivation"
-        );
 
-        let trace_id = golden["trace_id"].as_str().unwrap();
-        let bs = golden["block_size"].as_i64().unwrap();
-        let trace_bytes =
-            std::fs::read(repo.join("tests/fixtures/weka_traces/simple.json")).unwrap();
-        let trace = WekaTrace::from_json_bytes(&trace_bytes).unwrap();
-
-        let mut synth = CorpusTokenSynth::new(corpus, bs, hash_base_seed, trace_id, |t: &[u32]| {
-            tok.decode(t).unwrap()
-        });
-        // No flat-chain split for this fixture (matches the golden's direct path).
+        // build_coding_corpus is deterministic given seed 42 -> reuse across fixtures.
         let cfg = WekaConfig {
             split_flattened_agents: false,
             ..WekaConfig::default()
         };
-        let convs = convert_trace_to_conversations(
-            trace_id,
-            &trace,
-            &mut synth,
-            &HashMap::new(),
-            &cfg,
-            &MainReconstructOptions::default(),
-        )
-        .unwrap();
-        let root = &convs[0];
-
-        let want_turns = golden["turns"].as_array().unwrap();
-        assert_eq!(root.turns.len(), want_turns.len(), "turn count");
-        for (i, (t, w)) in root.turns.iter().zip(want_turns).enumerate() {
-            assert_eq!(t.timestamp_ms, w["timestamp_ms"].as_f64(), "t{i} timestamp");
-            assert_eq!(t.delay_ms, w["delay_ms"].as_f64(), "t{i} delay");
-            assert_eq!(t.reset_context, w["reset_context"].as_bool().unwrap(), "t{i} reset");
-            assert_eq!(t.max_tokens, w["max_tokens"].as_i64().unwrap(), "t{i} max_tokens");
+        for fixture in golden.as_array().unwrap() {
             assert_eq!(
-                t.theoretical_prefix_cache_hit_blocks,
-                w["hit"].as_i64().unwrap(),
-                "t{i} hit"
+                hash_base_seed,
+                fixture["hash_base_seed"].as_u64().unwrap(),
+                "hash_base_seed"
             );
-            let wm = w["raw_messages"].as_array().unwrap();
-            assert_eq!(t.raw_messages.len(), wm.len(), "t{i} msg count");
-            for (m, w) in t.raw_messages.iter().zip(wm) {
-                assert_eq!(m.role, w["role"].as_str().unwrap(), "t{i} role");
-                assert_eq!(m.content, w["content"].as_str().unwrap(), "t{i} content (real Qwen text)");
+            let trace_id = fixture["trace_id"].as_str().unwrap();
+            let bs = fixture["block_size"].as_i64().unwrap();
+            let fpath = repo.join(fixture["fixture"].as_str().unwrap());
+            let trace = WekaTrace::from_json_bytes(&std::fs::read(&fpath).unwrap()).unwrap();
+
+            let mut synth =
+                CorpusTokenSynth::new(corpus.clone(), bs, hash_base_seed, trace_id, |t: &[u32]| {
+                    tok.decode(t).unwrap()
+                });
+            let convs = convert_trace_to_conversations(
+                trace_id,
+                &trace,
+                &mut synth,
+                &HashMap::new(),
+                &cfg,
+                &MainReconstructOptions::default(),
+            )
+            .unwrap();
+            let by_sid: HashMap<&str, &ReconstructedConversation> =
+                convs.iter().map(|c| (c.session_id.as_str(), c)).collect();
+
+            for wc in fixture["conversations"].as_array().unwrap() {
+                let sid = wc["session_id"].as_str().unwrap();
+                let conv = by_sid
+                    .get(sid)
+                    .unwrap_or_else(|| panic!("{fixture:?}: missing conversation {sid}"));
+                let want_turns = wc["turns"].as_array().unwrap();
+                assert_eq!(conv.turns.len(), want_turns.len(), "{sid} turn count");
+                for (i, (t, w)) in conv.turns.iter().zip(want_turns).enumerate() {
+                    assert_eq!(t.timestamp_ms, w["timestamp_ms"].as_f64(), "{sid} t{i} timestamp");
+                    assert_eq!(t.delay_ms, w["delay_ms"].as_f64(), "{sid} t{i} delay");
+                    assert_eq!(t.source_kind, wc["source_kind"].as_str().unwrap(), "{sid} t{i} kind");
+                    assert_eq!(
+                        t.reset_context,
+                        w["reset_context"].as_bool().unwrap(),
+                        "{sid} t{i} reset"
+                    );
+                    assert_eq!(t.max_tokens, w["max_tokens"].as_i64().unwrap(), "{sid} t{i} max_tokens");
+                    assert_eq!(
+                        t.theoretical_prefix_cache_hit_blocks,
+                        w["hit"].as_i64().unwrap(),
+                        "{sid} t{i} hit"
+                    );
+                    let wm = w["raw_messages"].as_array().unwrap();
+                    assert_eq!(t.raw_messages.len(), wm.len(), "{sid} t{i} msg count");
+                    for (m, w) in t.raw_messages.iter().zip(wm) {
+                        assert_eq!(m.role, w["role"].as_str().unwrap(), "{sid} t{i} role");
+                        assert_eq!(
+                            m.content,
+                            w["content"].as_str().unwrap(),
+                            "{sid} t{i} content (real Qwen text)"
+                        );
+                    }
+                }
             }
         }
     }
