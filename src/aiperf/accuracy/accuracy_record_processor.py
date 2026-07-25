@@ -10,6 +10,7 @@ from aiperf.accuracy.models import (
     GradingResult,
 )
 from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.hooks import on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.models.record_models import (
@@ -64,6 +65,14 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         self._verbose = acc_cfg.verbose
         self._ground_truths: list[str] | None = None
         self._tasks: list[str] | None = None
+
+    @on_stop
+    async def _close_grader(self) -> None:
+        # Graceful shutdown: release the grader's resources (e.g. the LCB
+        # code-execution worker subprocess and its process group). The abrupt
+        # os._exit force-kill path — where @on_stop never runs — is handled
+        # worker-side by a death-pipe watcher.
+        await self.grader.aclose()
 
     def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
         """Receive ground-truth answers from the DatasetConfiguredNotification.
