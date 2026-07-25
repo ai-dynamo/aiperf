@@ -301,7 +301,15 @@ where
     } = request;
     let policy = binding.request_policy(endpoint_path.as_deref(), streaming, url_index)?;
     let canonical_body = body.clone();
-    let wire_body = if policy.inline_media
+    // Inline-media lowering exists to fetch remote HTTP(S) image URLs and splice
+    // them back as data URLs. That requires a full parse → walk → re-serialize of
+    // the (potentially multi-MB) body, which dominates dispatch for large inlined
+    // image batches. Only pay it when the body actually carries a fetchable URL: a
+    // `://` scheme marker cannot appear inside base64 data (no `:`) or a `data:`
+    // URL (no `//`), so its absence proves every image is already inline. Multipart
+    // always re-encodes (it rebuilds a form body), so it is unconditional.
+    let needs_inline_pass = policy.inline_media && body.windows(3).any(|w| w == b"://");
+    let wire_body = if needs_inline_pass
         || matches!(policy.content_type, RequestContentType::MultipartFormData)
     {
         let mut payload = serde_json::from_slice::<Value>(&body).map_err(|error| {
@@ -323,6 +331,14 @@ where
         headers.insert("Content-Type".into(), encoded.content_type);
         encoded.bytes
     } else {
+        // Inline-media JSON endpoints that skipped the round-trip still get the
+        // content type the encode path would have set, so the wire headers are
+        // identical whether or not any URL needed fetching. Non-inline endpoints
+        // keep their own headers untouched (unchanged behavior).
+        if policy.inline_media {
+            headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
+            headers.insert("Content-Type".into(), "application/json".into());
+        }
         body
     };
 
