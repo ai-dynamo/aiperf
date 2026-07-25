@@ -485,6 +485,9 @@ Inputs, endpoints, and graph:
 
 - [`docs/specs/dataset.md`](docs/specs/dataset.md) — the content-addressed segment store and
   the loader→compose→store→sampler→materializer pipeline.
+- [`docs/specs/prompt-corpus.md`](docs/specs/prompt-corpus.md) — the shared `prompts.corpus`
+  seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over
+  the `sonnet`, `coding`, and exact-length `random` corpora.
 - [`docs/specs/endpoint-body-construction.md`](docs/specs/endpoint-body-construction.md) —
   `format_payload → BodyPlan` and the two shared materializers that turn segment
   handles into wire bytes.
