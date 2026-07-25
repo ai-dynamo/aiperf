@@ -318,12 +318,14 @@ class TestAMDSMITelemetry:
         )
 
         export_file = result.artifacts_dir / "custom_amd_gpu_telemetry.jsonl"
-        if export_file.exists():
-            lines = export_file.read_text(encoding="utf-8").splitlines()
-            assert len(lines) > 0, "Export file should contain telemetry records"
-            first = TelemetryRecord.model_validate_json(lines[0])
-            assert first.timestamp_ns > 0
-            assert first.dcgm_url == AMDSMI_SOURCE_IDENTIFIER
+        assert export_file.exists(), (
+            "Custom-prefix GPU telemetry export file should exist"
+        )
+        lines = export_file.read_text(encoding="utf-8").splitlines()
+        assert len(lines) > 0, "Export file should contain telemetry records"
+        first = TelemetryRecord.model_validate_json(lines[0])
+        assert first.timestamp_ns > 0
+        assert first.dcgm_url == AMDSMI_SOURCE_IDENTIFIER
 
     async def test_amd_gpu_telemetry_disabled(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
