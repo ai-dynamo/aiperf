@@ -1423,9 +1423,17 @@ fn lower_legacy_agentic(
             .map(|p| agentic_replay_phase(p.common().clone())),
     );
 
+    // The agentic-replay timing mode is a single coherent driver: one workload
+    // instance owns the whole dataset, the per-tree join gate, the session-tree
+    // registry, and the recycle cursor. Sharding conversations across workers
+    // (`workers > 1`, per-thread partition) or cells would split a trajectory
+    // tree's root and its subagent children into different partitions — breaking
+    // join gating and recycle, and tripping the "partition owns no sampleable
+    // sessions" guard. So the mode runs global-dispatch, non-cellular, single
+    // worker. (Cellular `cells > 1` is rejected upstream at run selection.)
     build_common_plan(
         run,
-        workload.worker_count,
+        1,
         NativeDatasetPlan::PreparedLinear(prepared),
         tokenizer,
         &agentic_phases,
