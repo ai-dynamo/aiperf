@@ -96,6 +96,10 @@ fn apply_cli_overrides(
     if flags.dispatch.is_some() {
         inputs.runtime_dispatch = Some(flags.dispatch_mode()?);
     }
+    // An explicit `--hop-routing` wins over an authored `runtime.hop_routing`.
+    if flags.hop_routing.is_some() {
+        inputs.runtime_hop_routing = flags.hop_routing()?;
+    }
     // CLI random seed governs both run and dataset sampling.
     if let Some(seed) = flags.random_seed {
         inputs.random_seed = Some(seed);
@@ -400,6 +404,12 @@ struct RuntimeSection {
     /// identically instead of duplicating the accepted-value list here.
     #[serde(default)]
     dispatch: Option<aiperf_runtime::engine::protocol::DispatchMode>,
+    /// Worker-assignment policy for `dispatch == global-hop` with `workers > 1`
+    /// (`round-robin`/`sticky`/`least-loaded`). Absent lets resolution derive it
+    /// from the connection-reuse strategy; reuses `HopRouting`'s own
+    /// `Deserialize` impl so YAML and `--hop-routing` validate identically.
+    #[serde(default, alias = "hopRouting")]
+    hop_routing: Option<aiperf_runtime::engine::protocol::HopRouting>,
 }
 
 /// A full models mapping or shorthand sequence of model names or item maps.
@@ -1565,12 +1575,26 @@ impl Benchmark {
                 tags: Vec::new(),
             });
 
-        // Runtime worker/cell/dispatch policy.
-        let (runtime_workers, runtime_workers_min, runtime_cells, runtime_dispatch) = self
+        // Runtime worker/cell/dispatch/hop-routing policy.
+        let (
+            runtime_workers,
+            runtime_workers_min,
+            runtime_cells,
+            runtime_dispatch,
+            runtime_hop_routing,
+        ) = self
             .runtime
             .as_ref()
-            .map(|r| (r.workers, r.workers_min, r.cells.unwrap_or(1), r.dispatch))
-            .unwrap_or((None, None, 1, None));
+            .map(|r| {
+                (
+                    r.workers,
+                    r.workers_min,
+                    r.cells.unwrap_or(1),
+                    r.dispatch,
+                    r.hop_routing,
+                )
+            })
+            .unwrap_or((None, None, 1, None, None));
 
         // Timeslice window (`artifacts.slice_duration`).
         let slice_duration = self.artifacts.as_ref().and_then(|a| a.slice_duration);
@@ -1740,6 +1764,7 @@ impl Benchmark {
             runtime_workers_min,
             runtime_cells,
             runtime_dispatch,
+            runtime_hop_routing,
             random_seed,
             dataset_random_seed,
             input_file,
