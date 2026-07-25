@@ -501,6 +501,56 @@ pub fn convert_trace_to_conversations(
     Ok(out)
 }
 
+/// One trace's conversion result: its trace id and the reconstructed
+/// conversations (or the turn-0 prefix error).
+pub type TraceConversions = Result<Vec<ReconstructedConversation>, PrefixTooTruncated>;
+
+/// Reconstruct many traces **serially** (Slice 2 reference path). `make_synth`
+/// builds a fresh, trace-scoped [`TokenSynth`] for each `(trace_id, block_size)`.
+pub fn convert_traces_serial<S, MK>(
+    traces: &[(String, crate::agentx::trace::WekaTrace)],
+    model_map: &HashMap<String, String>,
+    cfg: &crate::agentx::config::WekaConfig,
+    opts: &MainReconstructOptions,
+    make_synth: MK,
+) -> Vec<TraceConversions>
+where
+    S: TokenSynth,
+    MK: Fn(&str, i64) -> S,
+{
+    traces
+        .iter()
+        .map(|(tid, trace)| {
+            let mut synth = make_synth(tid, trace.block_size);
+            convert_trace_to_conversations(tid, trace, &mut synth, model_map, cfg, opts)
+        })
+        .collect()
+}
+
+/// Reconstruct many traces **in parallel** (Slice 2, `rayon`). Each trace is
+/// self-contained (own trace-scoped synth + hash namespace), so the output is
+/// **byte-identical to [`convert_traces_serial`]** regardless of thread count.
+pub fn convert_traces_parallel<S, MK>(
+    traces: &[(String, crate::agentx::trace::WekaTrace)],
+    model_map: &HashMap<String, String>,
+    cfg: &crate::agentx::config::WekaConfig,
+    opts: &MainReconstructOptions,
+    make_synth: MK,
+) -> Vec<TraceConversions>
+where
+    S: TokenSynth + Send,
+    MK: Fn(&str, i64) -> S + Sync,
+{
+    use rayon::prelude::*;
+    traces
+        .par_iter()
+        .map(|(tid, trace)| {
+            let mut synth = make_synth(tid, trace.block_size);
+            convert_trace_to_conversations(tid, trace, &mut synth, model_map, cfg, opts)
+        })
+        .collect()
+}
+
 /// Map trace-side model names to configured `endpoint.model_names` (Python
 /// `_build_model_map`).
 ///
@@ -783,6 +833,57 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn parallel_reconstruction_is_byte_identical_to_serial() {
+        use crate::agentx::config::WekaConfig;
+        use crate::agentx::trace::{HashIdScope, WekaNormalRequest, WekaRequest, WekaTrace};
+
+        let norm = |t: f64, hs: &[i64], in_len: i64| {
+            WekaRequest::Normal(WekaNormalRequest {
+                t,
+                model: "m".into(),
+                input_length: in_len,
+                output_length: 4,
+                hash_ids: hs.to_vec(),
+                input_types: vec![],
+                output_types: vec![],
+                stop: String::new(),
+                api_time: Some(0.1),
+                think_time: None,
+            })
+        };
+        // Several distinct traces (varying turns/prefixes).
+        let mut traces: Vec<(String, WekaTrace)> = Vec::new();
+        for i in 0..8 {
+            let base = (i as i64) * 100;
+            traces.push((
+                format!("trace_{i}"),
+                WekaTrace {
+                    id: format!("trace_{i}"),
+                    models: vec!["m".into()],
+                    block_size: 4,
+                    hash_id_scope: HashIdScope::Local,
+                    tool_tokens: 0,
+                    system_tokens: 0,
+                    requests: vec![
+                        norm(0.0, &[base, base + 1], 8),
+                        norm(1.0, &[base, base + 1, base + 2], 12),
+                        norm(2.0, &[base, base + 1, base + 2, base + 3], 16),
+                    ],
+                    totals: None,
+                },
+            ));
+        }
+
+        let make = |_tid: &str, bs: i64| StubSynth { bs };
+        let cfg = WekaConfig::default();
+        let opts = MainReconstructOptions::default();
+        let serial = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, make);
+        let parallel = convert_traces_parallel(&traces, &HashMap::new(), &cfg, &opts, make);
+        assert_eq!(serial, parallel, "parallel must be byte-identical to serial");
+        assert_eq!(serial.len(), 8);
     }
 
     #[test]
