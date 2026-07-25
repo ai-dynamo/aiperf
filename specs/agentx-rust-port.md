@@ -1,0 +1,112 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# AgentX Rust port (legacy-parity, switchable)
+
+## Purpose
+
+Port the Python **AgentX v1.0** feature (WEKA trace replay + agentic-replay timing
++ scenario locks; PR #1165) to Rust as a **standalone, self-contained subsystem**
+that reproduces the Python behavior **byte-for-byte**. It is deliberately parallel
+to — and shares no logic with — the next-gen graph-ir recorded path
+(`graph/recorded/`). The two are **switchable** at runtime (`agentx` semantics vs
+`graph-ir` semantics) so a run can be executed either way and the outputs compared.
+
+This subsystem is **transitional**: once graph-ir supersedes AgentX it is deleted
+wholesale. It therefore lives behind a Cargo feature and never entangles the rest
+of the runtime.
+
+Parity is *proven*, not asserted: the `raw` export level emits per-request
+byte-exact timing and content, and an A/B harness diffs the Rust output against the
+Python AgentX output over identical deterministic (SimClock) virtual time.
+
+## Built
+
+(Bootstrapping — see `## Future requirements`. Modules land incrementally under
+`rust/runtime/src/agentx/`, feature-gated by `agentx`, off by default.)
+
+## Future requirements
+
+Delivered in dependency order as separate implementation slices. Each slice is
+byte-exact vs its Python counterpart and lands with tests before the next begins.
+
+### Slice 1 — WEKA reconstruction core (loader foundation)
+
+Deterministic, clock-free reconstruction of a `WekaTrace` JSON into
+`ReconstructedConversation`s (root + one child per `subagent` entry), byte-identical
+to Python `WekaTraceLoader` (serial path).
+
+Modules (`rust/runtime/src/agentx/`):
+
+- `trace.rs` — serde schema for `WekaTrace` / `WekaNormalRequest` /
+  `WekaStreamingRequest` / `WekaSubagentEntry` (`deny_unknown_fields`, `in`/`out`
+  aliases, `type` discriminator, `hash_id_scope: "local"` only).
+- `rng.rs` — `HashIdRandomGenerator`: `sha256("{seed}:{trace_id}:{hash_id}")`,
+  first 8 bytes big-endian → seed the ported CPython Mersenne-Twister
+  (`rng::compat::python_random`). The #1 byte-exact hazard.
+- `prompt.rs` — `compose_weka_prompt_tokens` (hash-id blocks + sha256-keyed partial
+  tail, three ISL layouts) and the hash-ids→prompt synthesis pipeline.
+- `synth.rs` — `ConversationReconstructor`: the LCP-driven per-turn state machine
+  (`RoleSegment` of exact token IDs, `TurnDelta { delta_messages, reset_context }`).
+  The correctness heart.
+- `chains.rs` — flat-agent chain detection over hash-id LCP evidence
+  (join-seam vs spawn classification, same-model rule).
+- `prepass.rs` — theoretical prefix-cache prepass:
+  `{(session_id, k): (hit_blocks, total_blocks)}` over one shared per-trace seen-set
+  in global time order.
+- `tool_shape.rs` — optional OpenAI tool-call wire shaping.
+- `selection.rs` — filter-by-`max_context_length`-then-cap-N.
+- `loader.rs` — the `WekaTraceLoader` hub producing `ReconstructedConversation`s.
+
+Byte-exact substrate: reuse `rng::compat::python_random` (CPython MT), the Qwen3-0.6B
+tokenizer via the `tokenizers` crate, `serde_json`, `sha2`.
+
+Validation: a Python dumper emits canonical JSON (conversations → ordered turns →
+messages + per-turn token IDs + prefix-cache tallies) over the in-repo fixtures
+(`tests/fixtures/weka_traces*/`); the Rust loader emits identical canonical JSON;
+parity = byte-identical diff. Secondary: the existing per-turn ISL-drift bound.
+
+### Slice 2 — parallel reconstruction
+
+Byte-identical multithreaded (`rayon`) reconstruction: one trace-scoped
+`HashIdRandomGenerator` per trace, shared token corpus via `Arc`. Output must equal
+slice 1 exactly.
+
+### Slice 3 — agentic-replay runtime (timing)
+
+`trajectory_source` (t* sampling, alive-at-t* reconstruction, recycle),
+`session_tree` (one slot per live tree), `replay_dependencies` (recorded interval
+gating), `cache_bust` (per-tree deterministic marker), and the `agentic_replay`
+strategy (WARMUP prime-to-t* then PROFILING resume). Clock-driven via `Clock`
+(SimClock in A/B, RealClock online).
+
+### Slice 4 — scenario locks + config + metrics glue
+
+`ScenarioSpec`/validator, `is_context_overflow_response` + `ContextOverflowCount`
+metric, `TheoreticalPrefixCache` accumulator, and the AgentX config/enum surface
+(`--scenario`, `--cache-bust`, trajectory ratios, agentic warmup, etc.).
+
+### Slice 5 — HF-backed loader
+
+`semianalysis_cc_traces_weka` HuggingFace download wrapper (`hf-hub`), delegating
+reconstruction to slice 1.
+
+### Switchable semantics + raw-export parity gate
+
+A run selects `agentx` (this port) or `graph-ir` semantics. The `raw` export level
+emits per-request byte-exact timing + content. The A/B harness runs both the Python
+AgentX and the Rust port over identical SimClock virtual time and asserts a
+byte-identical raw export — the definition of done for parity.
+
+## Source anchors
+
+- `rust/runtime/src/agentx/` — the subsystem (feature `agentx`).
+- `rust/runtime/src/rng/compat/python_random.rs` — reused CPython MT.
+- Python reference: `src/aiperf/dataset/loader/weka_*.py`,
+  `src/aiperf/timing/strategies/agentic_replay.py`,
+  `src/aiperf/timing/{trajectory_source,session_tree,replay_dependencies}.py`,
+  `src/aiperf/common/scenario/*`.
+- Fixtures: `tests/fixtures/weka_traces*/`; drift contract:
+  `tests/component_integration/dataset/test_weka_trace_byte_exact_drift.py`.

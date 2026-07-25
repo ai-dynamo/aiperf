@@ -507,6 +507,11 @@ Inputs, endpoints, and graph:
   `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden
   (branch-on-live-output) line, and the built `conditional_graph` eager-conditional
   compiler (`rust/runtime/src/graph/conditional/`).
+- [`docs/specs/agentx-rust-port.md`](docs/specs/agentx-rust-port.md) — the standalone,
+  feature-gated (`agentx`) byte-exact Rust port of the Python AgentX (WEKA replay +
+  agentic-replay timing + scenario locks); parallel to and switchable against
+  graph-ir, proven by raw-export A/B parity under SimClock. Transitional
+  (`rust/runtime/src/agentx/`), deleted once graph-ir supersedes it.
 
 Measurement and output:
 
