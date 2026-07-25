@@ -111,7 +111,17 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     shared: &NativeScheduledResources,
     adaptive_record_source: Option<Rc<dyn AdaptiveTerminalRecordSource>>,
     on_failure: OnFailure,
+    // Side-channel subagent join-gate specs (empty for every non-agentic run).
+    // Consumed only by the `agentic_replay` phase branch below.
+    agentic_trees: std::sync::Arc<Vec<crate::agentic_tree::TreeSpec>>,
+    // Cross-phase accelerated cache-warmup handoff carrier (empty for every
+    // non-accelerated run). Consumed only by the `agentic_replay` phase branch.
+    warmup_handoff: crate::agentic_tree::WarmupHandoffCarrierAny,
 ) -> Result<ScheduledPhasePlan> {
+    // Silence the unused-binding warning on builds without the `agentx` feature
+    // (the only consumer is the feature-gated agentic_replay branch below).
+    let _ = &agentic_trees;
+    let _ = &warmup_handoff;
     let phase_rng =
         RngRoot::new(dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
     let phase_dataset = match phase {
@@ -279,6 +289,101 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                 Rc::new(crate::phase_runtime::NoopScheduledPhaseResources),
                 None,
             )
+        }
+        PhaseSpec::AgenticReplay {
+            start_min_ratio,
+            start_max_ratio,
+            idle_gap_cap_seconds,
+            burst_phase_starts,
+            ..
+        } => {
+            ensure!(
+                phase.common().concurrency_ramp.is_none()
+                    && phase.common().prefill_ramp.is_none()
+                    && phase.common().rate_ramp.is_none(),
+                "agentic_replay phases own their dispatch timing and do not accept ramps"
+            );
+            #[cfg(feature = "agentx")]
+            {
+                use crate::agentic_replay::{
+                    AgenticPhase, AgenticReplayConfig, AgenticReplayWorkload,
+                };
+                let agentic_phase = match phase.common().semantic_role() {
+                    crate::engine::protocol::PhaseRoleSpec::Warmup => AgenticPhase::Warmup,
+                    crate::engine::protocol::PhaseRoleSpec::Profiling => AgenticPhase::Profiling,
+                };
+                let config = AgenticReplayConfig {
+                    phase: agentic_phase,
+                    start_min_ratio: *start_min_ratio,
+                    start_max_ratio: *start_max_ratio,
+                    idle_gap_cap_ms: idle_gap_cap_seconds.map(|s| s * 1000.0),
+                    burst_phase_starts: *burst_phase_starts,
+                    // Base t\* seed is dataset-level (phase-independent) so the
+                    // WARMUP and PROFILING instances sample the SAME t\* per lane.
+                    random_seed: dataset_rng_root
+                        .derive_seed_or_entropy("agentic_replay.tstar_base"),
+                    benchmark_id: benchmark_id.to_string(),
+                    cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
+                    // Gating is a profiling concern; the warmup instance carries
+                    // no trees (it primes turn n-1 and drains, never joins).
+                    trees: match agentic_phase {
+                        AgenticPhase::Profiling => Rc::new(agentic_trees.as_ref().clone()),
+                        AgenticPhase::Warmup => Rc::new(Vec::new()),
+                    },
+                    // Accelerated cache-warmup is a WARMUP-phase concern; the
+                    // authored `agentic_cache_warmup_duration` is threaded onto
+                    // the warmup phase's common by `lower_legacy_agentic`. The
+                    // PROFILING instance never drives the substage.
+                    cache_warmup_duration_s: match agentic_phase {
+                        AgenticPhase::Warmup => phase.common().agentic_cache_warmup_duration,
+                        AgenticPhase::Profiling => None,
+                    },
+                    // Force `max_tokens=1` on the WARMUP instance when accelerated
+                    // cache-warmup is armed (Python `_WARMUP_MAX_TOKENS=1`); the
+                    // PROFILING instance and non-accelerated warmup keep recorded caps.
+                    max_tokens_override: match agentic_phase {
+                        AgenticPhase::Warmup
+                            if phase.common().agentic_cache_warmup_duration.is_some() =>
+                        {
+                            Some(1)
+                        }
+                        _ => None,
+                    },
+                    // Shared cross-phase handoff carrier: both agentic instances
+                    // downcast the SAME type-erased carrier so WARMUP's finalize is
+                    // visible to PROFILING's resume. A non-agentic/empty carrier
+                    // downcasts to `None` and leaves profiling as the non-accel path.
+                    warmup_handoff: crate::agentic_replay::downcast_warmup_handoff_carrier(
+                        &warmup_handoff,
+                    )
+                    .unwrap_or_else(crate::agentic_replay::new_warmup_handoff_carrier),
+                };
+                let workload =
+                    Rc::new(AgenticReplayWorkload::new(source, config)?) as Rc<dyn Workload>;
+                let intervals = Rc::new(RefCell::new(make_interval_generator(
+                    crate::timing::ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    arrival_seed,
+                )));
+                (
+                    workload,
+                    intervals,
+                    None,
+                    None,
+                    // enforce_stop=false: the agentic mode owns its dispatch timing
+                    // (no rate/concurrency gate). The phase runtime still enforces
+                    // the duration budget and cancels pending recycles at expiry;
+                    // recycle re-draws until then to sustain the run.
+                    false,
+                    Rc::new(crate::phase_runtime::NoopScheduledPhaseResources),
+                    None,
+                )
+            }
+            #[cfg(not(feature = "agentx"))]
+            {
+                anyhow::bail!("agentic_replay timing mode requires the `agentx` feature");
+            }
         }
     };
     let policies = ancillary_policies(
@@ -965,8 +1070,21 @@ pub(crate) fn phase_config(spec: &PhaseSpec, seamless_to_next: bool) -> Result<P
     } else {
         PhaseKind::Profiling
     };
+    // The accelerated cache-warmup phase (`--agentic-cache-warmup-duration`) is
+    // duration-driven: its own `execute` arms a Clock drain timer and self-drains,
+    // issuing MANY pressure turns (live-trajectory replay under compression), not a
+    // fixed count. Its `common.requests` carries the static-prime count SOLELY to
+    // offset the following PROFILING phase's ordinal base (see
+    // `compute_phase_ordinal_bases`), NOT as a send bound. Passing it through as
+    // `total_expected_requests` would freeze the phase's progress tracker after that
+    // many sends (independent of `enforce_stop`), and the next pressure turn would
+    // hit `record a send after sending complete`. Drop the count bound for this phase
+    // (the ordinal reservation still reads `common.requests`).
+    let accelerated_warmup = matches!(spec, PhaseSpec::AgenticReplay { .. })
+        && common.is_warmup()
+        && common.agentic_cache_warmup_duration.is_some();
     let stop = StopConfig {
-        total_expected_requests: common.requests,
+        total_expected_requests: if accelerated_warmup { None } else { common.requests },
         expected_num_sessions: common.sessions,
         expected_duration_ns: common.duration.map(seconds_to_ns).transpose()?,
     };
@@ -1019,6 +1137,39 @@ mod tests {
 
     fn synthetic(value: serde_json::Value) -> SyntheticDatasetSpec {
         serde_json::from_value(value).unwrap()
+    }
+
+    fn agentic_warmup_spec(cache_warmup_duration: Option<f64>) -> PhaseSpec {
+        let common: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(json!({
+            "name": "warmup",
+            "kind": "warmup",
+            "exclude_from_results": true,
+            "requests": 8,
+            "agentic_cache_warmup_duration": cache_warmup_duration,
+        }))
+        .unwrap();
+        PhaseSpec::AgenticReplay {
+            common,
+            start_min_ratio: 0.0,
+            start_max_ratio: 1.0,
+            idle_gap_cap_seconds: Some(10.0),
+            burst_phase_starts: false,
+        }
+    }
+
+    #[test]
+    fn accelerated_warmup_phase_drops_the_count_stop_bound() {
+        // Accelerated cache-warmup is duration-driven and emits many pressure turns;
+        // its `requests` reserves ordinal space only, so `phase_config` must NOT turn
+        // it into a send bound (which would freeze the tracker mid-pressure).
+        let accel = phase_config(&agentic_warmup_spec(Some(3.0)), false).unwrap();
+        assert_eq!(
+            accel.stop.total_expected_requests, None,
+            "accelerated warmup must not carry a request stop bound"
+        );
+        // A non-accelerated agentic warmup keeps its authored request bound.
+        let plain = phase_config(&agentic_warmup_spec(None), false).unwrap();
+        assert_eq!(plain.stop.total_expected_requests, Some(8));
     }
 
     fn models() -> ModelsSpec {

@@ -1,0 +1,46 @@
+{
+  "_provenance": "aiperf.timing.trajectory_source.TrajectorySource._snapshot_for (via TrajectorySource construction), t* window collapsed to a point",
+  "gating_children": {
+    "trace": [
+      "trace::sa:agent_0"
+    ]
+  },
+  "release_order": [
+    "trace::sa:agent_0"
+  ],
+  "t_star_ms": 13500.0,
+  "trace": {
+    "children": [
+      {
+        "conversation_id": "trace::sa:agent_0",
+        "parent_conversation_id": "trace",
+        "turns_ms": [
+          13000.0,
+          14000.0,
+          17000.0
+        ]
+      }
+    ],
+    "root": {
+      "conversation_id": "trace",
+      "join": {
+        "branch_id": "br:agent_0",
+        "child_conversation_ids": [
+          "trace::sa:agent_0"
+        ],
+        "turn_index": 2
+      },
+      "turns_ms": [
+        0.0,
+        12000.0,
+        20000.0
+      ]
+    }
+  },
+  "waiting_before": [
+    [
+      "trace",
+      2
+    ]
+  ]
+}

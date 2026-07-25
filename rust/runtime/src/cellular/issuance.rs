@@ -109,10 +109,23 @@ impl CellularAutonomousIssuer {
 impl IssuanceAuthority for CellularAutonomousIssuer {
     fn global_ordinal(
         &self,
-        _flat_local: usize,
+        flat_local: usize,
         phase_ordinal_base: usize,
         within_phase_local: usize,
     ) -> usize {
+        // Single cell: the run's own dispatch is already globally dense, so the flat
+        // cumulative index IS the absolute slot. The strided `phase_base +
+        // within_phase_local` form below assumes each prior phase emitted EXACTLY its
+        // reserved `phase_ordinal_base` span — true for count/duration phases, but the
+        // accelerated cache-warmup phase emits a runtime-determined number of pressure
+        // records far exceeding its static prime reservation, which would overflow the
+        // next phase's base and collide. The flat index is byte-identical to the strided
+        // form whenever a prior phase emits exactly its reservation, so this only
+        // changes (and fixes) the over-emitting case. Multi-cell tiling still needs the
+        // strided form (each cell owns a disjoint round-robin residue class).
+        if self.partition.cell_count() == 1 {
+            return flat_local;
+        }
         phase_ordinal_base
             + within_phase_local * self.partition.cell_count() as usize
             + self.partition.cell_id() as usize
@@ -169,12 +182,18 @@ mod tests {
             let profiling_per_cell = 250usize;
             let warmup_total = cell_count as usize * warmup_per_cell;
             let mut ordinals: Vec<usize> = Vec::new();
+            // `flat` is the run's cumulative dispatch index; the multi-cell strided form
+            // ignores it, the single-cell form uses it. Feed the true running index so
+            // the single-cell (cell_count == 1) case tiles densely off the flat ordinal.
+            let mut flat = 0usize;
             for issuer in &issuers {
                 for within in 0..warmup_per_cell {
-                    ordinals.push(issuer.global_ordinal(9999, 0, within));
+                    ordinals.push(issuer.global_ordinal(flat, 0, within));
+                    flat += 1;
                 }
                 for within in 0..profiling_per_cell {
-                    ordinals.push(issuer.global_ordinal(9999, warmup_total, within));
+                    ordinals.push(issuer.global_ordinal(flat, warmup_total, within));
+                    flat += 1;
                 }
             }
             ordinals.sort_unstable();
@@ -187,6 +206,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn single_cell_uses_flat_ordinal_so_an_over_emitting_warmup_never_collides() {
+        // Regression for the accelerated cache-warmup path: the WARMUP phase reserves a
+        // small static prime span (here `warmup_reservation = 8`) but actually emits far
+        // more pressure records (`warmup_actual = 722`). The strided `phase_base +
+        // within` form would place profiling records at `8 + within`, colliding with the
+        // warmup records already at `8..722`. The single-cell issuer instead uses the
+        // flat cumulative dispatch index, so every record lands at a unique dense slot.
+        let issuer = CellularAutonomousIssuer::new(ModuloCellPartition::direct());
+        let warmup_reservation = 8usize;
+        let warmup_actual = 722usize;
+        let profiling = 214usize;
+        let mut slots = Vec::new();
+        let mut flat = 0usize;
+        for within in 0..warmup_actual {
+            slots.push(issuer.global_ordinal(flat, 0, within));
+            flat += 1;
+        }
+        for within in 0..profiling {
+            slots.push(issuer.global_ordinal(flat, warmup_reservation, within));
+            flat += 1;
+        }
+        // Dense, unique, no collision: exactly `0..warmup_actual + profiling`.
+        let mut sorted = slots.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..warmup_actual + profiling).collect::<Vec<_>>());
     }
 
     #[test]

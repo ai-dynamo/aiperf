@@ -203,7 +203,7 @@ pub(crate) fn slice_phase_for_thread(
                 *cap = owned_cap(*cap);
             }
         }
-        PhaseSpec::FixedSchedule { .. } => {}
+        PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. } => {}
     }
     sliced
 }

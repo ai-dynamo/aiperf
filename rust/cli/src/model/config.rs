@@ -103,6 +103,11 @@ pub struct BenchmarkConfig {
     /// Named submission scenario (`cfg.scenario`; `--scenario`).
     #[serde(default)]
     pub scenario: Option<String>,
+    /// Resolved WEKA reconstruction semantics (`legacy`|`graph-ir`); authored into
+    /// the graph workload config so the engine selects the legacy agentic path or
+    /// the graph-ir path. Unset defers to the graph-ir default.
+    #[serde(default)]
+    pub weka_semantics: Option<String>,
     /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
     #[serde(default)]
     pub trajectory_start_max_ratio: f64,

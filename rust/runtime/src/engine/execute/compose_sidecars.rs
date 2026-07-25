@@ -115,6 +115,19 @@ pub(crate) async fn execute_native_inner(
             }
         }
     };
+    // Side-channel subagent join-gate specs (empty for every non-agentic run),
+    // carried alongside the composed dataset and threaded into the agentic phase
+    // plan below.
+    let agentic_trees = match &request.dataset {
+        NativeDatasetPlan::PreparedLinear(dataset) => dataset.agentic_trees.clone(),
+        _ => std::sync::Arc::default(),
+    };
+    // Cross-phase accelerated cache-warmup handoff carrier (empty for every
+    // non-accelerated run), threaded into both agentic phase instances.
+    let warmup_handoff = match &request.dataset {
+        NativeDatasetPlan::PreparedLinear(dataset) => dataset.warmup_handoff.clone(),
+        _ => crate::agentic_tree::empty_warmup_handoff_carrier(),
+    };
     let default_output_tokens = if accuracy.is_some() {
         dataset_default_output_tokens(&dataset)?
     } else {
@@ -186,10 +199,12 @@ pub(crate) async fn execute_native_inner(
     // would then over-include). Either case keeps inputs.json on the during-run capture
     // path, which still disqualifies exact-fold.
     let inputs_up_front_ok = dataset_supports_up_front_inputs(&dataset)
-        && !request
-            .phases
-            .iter()
-            .any(|phase| matches!(phase, PhaseSpec::FixedSchedule { .. }));
+        && !request.phases.iter().any(|phase| {
+            matches!(
+                phase,
+                PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
+            )
+        });
     let inputs_need_retain = request.artifacts.inputs_path.is_some() && !inputs_up_front_ok;
     let exact_fold = exact_fold_enabled_by_env()
         && exact_fold_eligible(ExactFoldInputs {
@@ -328,7 +343,9 @@ pub(crate) async fn execute_native_inner(
                 && request.phases.iter().any(|phase| {
                     matches!(
                         phase,
-                        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
+                        PhaseSpec::UserCentric { .. }
+                            | PhaseSpec::FixedSchedule { .. }
+                            | PhaseSpec::AgenticReplay { .. }
                     )
                 })
             {
@@ -362,6 +379,8 @@ pub(crate) async fn execute_native_inner(
                     wants_adaptive_record
                         .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
                     on_failure,
+                    agentic_trees.clone(),
+                    warmup_handoff.clone(),
                 )?;
                 let profiling_idx = if phase.common().exclude_from_results {
                     None
@@ -376,7 +395,10 @@ pub(crate) async fn execute_native_inner(
                         capture: capture.clone(),
                         phase: metrics_phase(phase)?,
                         identity,
-                        has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                        has_credit_timestamp: !matches!(
+                            phase,
+                            PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
+                        ),
                         live_sink: live_sink.clone(),
                         heartbeat: heartbeat_lane.clone(),
                     });
@@ -590,6 +612,8 @@ pub(crate) async fn execute_native_inner(
             table_factory,
             samplers: registry.samplers().clone(),
             dataset: dataset.clone(),
+            agentic_trees: agentic_trees.clone(),
+            warmup_handoff: warmup_handoff.clone(),
             primary_model: primary_model.clone(),
             metrics_config: metrics_config.clone(),
             tokenizer: tokenizer.clone(),

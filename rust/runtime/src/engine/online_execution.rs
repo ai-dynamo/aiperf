@@ -273,6 +273,21 @@ impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
     }
 }
 
+/// Whether a graph weka run selects the legacy AgentX agentic pipeline.
+///
+/// `None`/`graph-ir` (any spelling) uses the graph-ir path; `legacy`/`agentx`
+/// selects the byte-exact legacy path; any other value is rejected. Kept
+/// feature-independent so a lean build still parses and rejects the selector.
+fn weka_wants_legacy(semantics: Option<&str>) -> Result<bool> {
+    match semantics.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") | Some("graph-ir") | Some("graphir") | Some("graph_ir") => Ok(false),
+        Some("legacy") | Some("agentx") => Ok(true),
+        Some(other) => Err(anyhow!(
+            "unknown weka semantics {other:?}; expected 'legacy' or 'graph-ir'"
+        )),
+    }
+}
+
 /// Built-in Graph-IR workload for native and dynosim transports.
 struct GraphWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
@@ -321,6 +336,11 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
                     "online graph execution requires exactly one default model"
                 );
                 validate_authored_tokenizer(&workload.tokenizer)?;
+                // The legacy AgentX path owns its own loader (weka reconstruction),
+                // so it does not go through the graph-input identity validation.
+                if weka_wants_legacy(workload.weka_semantics.as_deref())? {
+                    return Ok(());
+                }
                 context
                     .graph_inputs()
                     .validate_identity(&workload.dataset)?;
@@ -349,6 +369,28 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
             Some(binding) => {
                 let workload =
                     workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), "graph")?;
+                // Legacy AgentX agentic weka path: a separate loader+runtime,
+                // selected by `--weka-semantics legacy` (default under an
+                // agentic-replay scenario). Graph-ir stays the fall-through.
+                if weka_wants_legacy(workload.weka_semantics.as_deref())? {
+                    #[cfg(feature = "agentx")]
+                    {
+                        let plan = lower_legacy_agentic(
+                            run,
+                            context,
+                            workload,
+                            self.tokenizers.as_ref(),
+                            binding.clone(),
+                        )?;
+                        return prepare_native_operation(run, context, plan, binding);
+                    }
+                    #[cfg(not(feature = "agentx"))]
+                    {
+                        anyhow::bail!(
+                            "--weka-semantics legacy requires a build with the `agentx` feature"
+                        );
+                    }
+                }
                 let plan = lower_graph(
                     run,
                     context,
@@ -1220,6 +1262,268 @@ fn lower_graph(
     )
 }
 
+/// Recover the authored accelerated cache-warmup duration
+/// (`--agentic-cache-warmup-duration`) from a legacy-weka run's authored phases.
+///
+/// The CLI stamps the flag onto a phase's `agentic_cache_warmup_duration`; the
+/// legacy path synthesizes its own WARMUP phase and replaces the authored ones,
+/// so the value is recovered here (first authored phase carrying it) and threaded
+/// onto the synthesized warmup phase. Returns `None` when unset.
+#[cfg(feature = "agentx")]
+fn warmup_agentic_cache_duration(phases: &[PhaseSpec]) -> Option<f64> {
+    phases
+        .iter()
+        .find_map(|phase| phase.common().agentic_cache_warmup_duration)
+}
+
+/// Lower a legacy-AgentX weka run into a scheduled `NativeRunSpec` driven by the
+/// `agentic_replay` timing mode. Reconstructs the WEKA trajectories with the
+/// byte-exact AgentX loader, composes them into a verbatim-replay linear dataset,
+/// translates the phases to `agentic_replay`, and reuses the shared scheduled
+/// execution (`prepare_native_operation`) for transport/metrics/records/report.
+#[cfg(feature = "agentx")]
+fn lower_legacy_agentic(
+    run: &AuthoredRunSpecV2,
+    context: &RunContext,
+    workload: &GraphWorkloadConfigV2,
+    tokenizers: &dyn OnlineTokenizerSourceResolver,
+    transport: Arc<dyn crate::engine::registry::NativeTransportExecution>,
+) -> Result<NativeRunSpec> {
+    use crate::agentx::config::WekaConfig;
+    use crate::agentx::corpus::CorpusTokenSynth;
+    use crate::agentx::hf_dataset::{HfDatasetRef, load_hf_weka_traces};
+    use crate::agentx::loader::{MainReconstructOptions, convert_traces_serial};
+    use crate::agentx::weka_dataset::{WekaComposeOptions, compose_weka_agentic_dataset};
+    use crate::rng::compat::python_random::PythonRandomGenerator;
+    use std::collections::HashMap;
+
+    // Defense-in-depth, fail-closed: agentic_replay's join-gating + cross-lane
+    // alignment assume a single global issuance order. The CLI already forces
+    // global-hop dispatch (and non-cellular execution) for this workload, but do
+    // not trust that guard here — reject any run that reaches lowering with a
+    // different dispatch mode. (Cell count is not readable at this lowering point
+    // — it lives in the `cfg.runtime.cells` envelope, not on `AuthoredRunSpecV2`
+    // or `RunContext` — so the non-cellular half stays enforced at the CLI.)
+    ensure!(
+        run.dispatch == crate::engine::protocol::DispatchMode::GlobalHop,
+        "agentic_replay requires global-hop dispatch (runtime.dispatch = global-hop)"
+    );
+
+    let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
+    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+
+    // Decode the HuggingFace weka source from the authored dataset descriptor.
+    let dataset_json: serde_json::Value = serde_json::from_str(workload.dataset.get())
+        .context("decoding legacy weka dataset descriptor")?;
+    let source = dataset_json
+        .get("source")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let hf_name = source
+        .get("dataset")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("legacy weka requires a hugging_face dataset source"))?;
+    let subset = source
+        .get("subset")
+        .and_then(|v| v.as_str())
+        .filter(|s| *s != "default")
+        .map(str::to_string);
+    let split = source
+        .get("split")
+        .and_then(|v| v.as_str())
+        .unwrap_or("train")
+        .to_string();
+    let revision = source
+        .get("revision")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let entries = dataset_json
+        .get("entries")
+        .and_then(serde_json::Value::as_u64)
+        .map(|n| n as usize);
+
+    // Reconstruct: HF load (async) → agentx byte-exact reconstruction.
+    let root_seed = run.identity.random_seed.unwrap_or(0);
+    let hash_base_seed = PythonRandomGenerator::derive_child_seed(
+        root_seed,
+        crate::rng::namespace::DATASET_CODING_CONTENT_CORPUS,
+    );
+    let corpus = crate::dataset::coding::build_coding_corpus(tokenizer_impl.as_ref(), root_seed)
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let corpus = std::rc::Rc::new(corpus);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating legacy weka reconstruction runtime")?;
+    let local = tokio::task::LocalSet::new();
+    let (traces, _stats) = local
+        .block_on(
+            &rt,
+            load_hf_weka_traces(
+                HfDatasetRef {
+                    name: hf_name.to_string(),
+                    subset,
+                    split,
+                    revision,
+                    max_rows: entries,
+                },
+                entries,
+                None,
+                None,
+            ),
+        )
+        .map_err(|error| anyhow!(error))?;
+
+    let cfg = WekaConfig::default();
+    let opts = MainReconstructOptions::default();
+    let results = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
+        let tok = tokenizer_impl.clone();
+        CorpusTokenSynth::new(
+            (*corpus).clone(),
+            bs,
+            hash_base_seed,
+            tid,
+            move |t: &[u32]| tok.decode(t).unwrap_or_default(),
+        )
+    });
+    let convs: Vec<_> = results
+        .into_iter()
+        .filter_map(Result::ok)
+        .flatten()
+        .collect();
+    ensure!(
+        !convs.is_empty(),
+        "legacy weka reconstruction produced no conversations"
+    );
+    // Apply the per-lane t\* snapshot slice (Python `AgenticReplayStrategy`): sample
+    // t\* once over each lane's full recorded span, EXCLUDE history (turns before
+    // the profiling resume point), and rebase each retained turn's `timestamp_ms`
+    // to its t\*-relative dispatch offset. The `agentic_replay` workload then owns
+    // only the cross-lane phase-start alignment + dispatch.
+    let convs = crate::agentx::weka_dataset::slice_trajectories_at_tstar(
+        convs,
+        root_seed,
+        0.0,
+        1.0,
+        Some(10_000.0),
+    );
+    ensure!(
+        !convs.is_empty(),
+        "legacy weka trajectories produced no profiling turns at t*"
+    );
+
+    // Compose the verbatim-replay linear dataset.
+    let dataset = compose_weka_agentic_dataset(
+        &convs,
+        &WekaComposeOptions {
+            streaming: true,
+            ignore_eos: true,
+            benchmark_id: run.identity.benchmark_id.clone(),
+            cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
+        },
+    )?;
+    // Build the DAG-free subagent join-gate side channel from the SLICED
+    // profiling conversations: the slice preserves each surviving turn's
+    // `join_prerequisite` and reindexes turn indices to their profiling
+    // (post-t\*, history-excluded) position, so `build_tree_specs` reads the
+    // exact index the workload gate consults — no manual remap needed. Empty
+    // for a root-only run (the workload gate then stays a pass-through).
+    let agentic_trees = std::sync::Arc::new(crate::agentic_replay::build_tree_specs(&convs));
+
+    // Install a live cross-phase accelerated cache-warmup carrier only when the
+    // run authored `--agentic-cache-warmup-duration`; otherwise an empty carrier
+    // keeps profiling on the exact non-accelerated path. The typed carrier is
+    // stored type-erased so the non-`agentx` phase-plan plumbing can thread it.
+    let warmup_handoff: crate::agentic_tree::WarmupHandoffCarrierAny =
+        if warmup_agentic_cache_duration(&workload.phases).is_some() {
+            crate::agentic_replay::new_warmup_handoff_carrier()
+        } else {
+            crate::agentic_tree::empty_warmup_handoff_carrier()
+        };
+    let prepared = crate::engine::dataset_input::PreparedDatasetInput {
+        dataset,
+        random_seed: run.identity.random_seed,
+        default_output_tokens: 1,
+        agentic_trees,
+        warmup_handoff,
+    };
+
+    // Translate each authored phase to the agentic_replay timing mode, and
+    // prepend a WARMUP phase (Python runs warmup as a separate barrier before
+    // profiling) so the turn-(n-1) primes dispatch and drain first. The warmup
+    // phase excludes itself from results and carries no stop bound (it drains).
+    let profiling_common = workload
+        .phases
+        .first()
+        .map(|p| p.common().clone())
+        .ok_or_else(|| anyhow!("legacy weka run has no authored phase to profile"))?;
+    let mut warmup_common = profiling_common.clone();
+    warmup_common.name = "warmup".to_string();
+    warmup_common.kind = Some(crate::engine::protocol::PhaseRoleSpec::Warmup);
+    warmup_common.exclude_from_results = true;
+    // Thread the accelerated cache-warmup duration onto the synthesized WARMUP
+    // phase (`--agentic-cache-warmup-duration`). The CLI stamps it on an authored
+    // phase's common; this synthesized warmup replaces those, so recover the
+    // authored value from any authored phase and carry it forward so
+    // `dataset_build` can populate `AgenticReplayConfig.cache_warmup_duration_s`.
+    warmup_common.agentic_cache_warmup_duration = warmup_agentic_cache_duration(&workload.phases);
+    // The warmup phase dispatches each warmup conversation exactly once (no
+    // recycle), so its record count is known. Set `requests` to that count so the
+    // per-phase record-ordinal base of the following PROFILING phase is offset past
+    // the warmup range (`compute_phase_ordinal_bases` strides by `requests`);
+    // otherwise both phases get base 0 and their records collide at absolute slot 0
+    // under the striding issuer (global-hop / cellular). `enforce_stop=false` means
+    // this does not gate warmup dispatch — it only offsets the ordinal space.
+    let warmup_count = convs
+        .iter()
+        .filter(|c| {
+            c.session_id
+                .ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX)
+        })
+        .count();
+    warmup_common.requests = Some(warmup_count as u64);
+    warmup_common.sessions = None;
+    warmup_common.duration = None;
+    let agentic_replay_phase =
+        |common: crate::engine::protocol::PhaseCommonSpec| PhaseSpec::AgenticReplay {
+            common,
+            start_min_ratio: 0.0,
+            start_max_ratio: 1.0,
+            idle_gap_cap_seconds: Some(10.0),
+            burst_phase_starts: false,
+        };
+    let mut agentic_phases: Vec<PhaseSpec> = vec![agentic_replay_phase(warmup_common)];
+    // Extend with the authored PROFILING phases only. `--agentic-cache-warmup-duration`
+    // makes the CLI author its own warmup phase (named "warmup"); the synthesized
+    // warmup above already represents the warmup barrier and carries the recovered
+    // duration, so re-emitting an authored warmup here would produce a duplicate
+    // phase id "warmup". Drop any authored warmup-role phase; keep profiling.
+    agentic_phases.extend(
+        workload
+            .phases
+            .iter()
+            .filter(|p| !p.common().is_warmup())
+            .map(|p| agentic_replay_phase(p.common().clone())),
+    );
+
+    // agentic_replay runs under `global-hop` (forced at CLI resolution): ONE
+    // coordinator scheduling loop is the single central driver, and `worker_count`
+    // is the size of the transport-thread pool it hops requests to. Cellular
+    // (`cells > 1`) and non-global-hop dispatch are rejected at CLI resolution.
+    build_common_plan(
+        run,
+        workload.worker_count,
+        NativeDatasetPlan::PreparedLinear(prepared),
+        tokenizer,
+        &agentic_phases,
+        NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
+        NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
+        workload.failure_policy,
+        Some(transport),
+    )
+}
+
 fn lower_static_accuracy(
     run: &AuthoredRunSpecV2,
     context: &RunContext,
@@ -1424,6 +1728,51 @@ mod tests {
                 "optional fixture file is absent".into(),
             ))
         }
+    }
+
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn warmup_agentic_cache_duration_recovers_authored_value() {
+        // The CLI stamps `--agentic-cache-warmup-duration` onto an authored
+        // phase's common; the legacy path recovers it to thread onto its
+        // synthesized WARMUP phase so `dataset_build` populates
+        // `AgenticReplayConfig.cache_warmup_duration_s`.
+        let phases: Vec<PhaseSpec> = serde_json::from_str(
+            r#"[
+                {
+                    "type": "concurrency",
+                    "name": "warmup",
+                    "exclude_from_results": true,
+                    "concurrency": 1,
+                    "agentic_cache_warmup_duration": 5.0
+                },
+                {
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "concurrency": 1
+                }
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(warmup_agentic_cache_duration(&phases), Some(5.0));
+    }
+
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn warmup_agentic_cache_duration_absent_when_unset() {
+        let phases: Vec<PhaseSpec> = serde_json::from_str(
+            r#"[
+                {
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "concurrency": 1
+                }
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(warmup_agentic_cache_duration(&phases), None);
     }
 
     #[test]

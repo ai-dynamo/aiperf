@@ -1,0 +1,150 @@
+[
+ {
+  "fixture": "tests/fixtures/weka_traces/simple.json",
+  "trace_id": "trace_simple",
+  "block_size": 64,
+  "tool_tokens": 100,
+  "system_tokens": 50,
+  "run_seed": 42,
+  "hash_base_seed": 5261745454011363258,
+  "conversations": [
+   {
+    "session_id": "trace_simple",
+    "parent_conversation_id": null,
+    "source_kind": "weka_main",
+    "turns": [
+     {
+      "timestamp_ms": 0.0,
+      "delay_ms": null,
+      "source_outer_idx": 0,
+      "source_kind": "weka_main",
+      "max_tokens": 30,
+      "raw_messages": [
+       {
+        "role": "system",
+        "content": "39)\n\n\n# AuthorizationError\n\n## Overview\n\nThe `AuthorizationError` class provides heal and split operations for the `telemetry` module.\n\n## Usage\n\n```python\nfrom telemetry import AuthorizationError\n\ninstance = AuthorizationError(data=\"value\")\nresult = await instance.heal()\n```\n\n## Configuration\n\n| Parameter | exhausted\n\n\nuse axum::{extract::{Path, State}, http::StatusCode, Json};\nuse serde::{Deserialize, Serialize};\nuse std::sync::Arc;\n\nuse crate::connection_pool::IndexBuilder;\n\n#[derive(Debug, Deserialize)]\npub struct PruneRequest {{\n    generation: String,\n    timeout: Option<i6max_seq_length\": 2048,\n  \"training\": {{\n    \"num_train_epochs\": 9,\n    \"per_device_train_batch_size\": 1,\n    \"gradient_accumulation_steps\": 1,\n    \"learning_rate\": 0.0001,\n    \"weight_decay\": "
+       },
+       {
+        "role": "user",
+        "content": "auto\",\n)\n\ntrain_dataset = datasets.load"
+       }
+      ],
+      "reset_context": false,
+      "hit": 0,
+      "total": 3,
+      "input_kind": "user_input"
+     },
+     {
+      "timestamp_ms": 5000.0,
+      "delay_ms": 4000.0,
+      "source_outer_idx": 1,
+      "source_kind": "weka_main",
+      "max_tokens": 40,
+      "raw_messages": [
+       {
+        "role": "system",
+        "content": "39)\n\n\n# AuthorizationError\n\n## Overview\n\nThe `AuthorizationError` class provides heal and split operations for the `telemetry` module.\n\n## Usage\n\n```python\nfrom telemetry import AuthorizationError\n\ninstance = AuthorizationError(data=\"value\")\nresult = await instance.heal()\n```\n\n## Configuration\n\n| Parameter | exhausted\n\n\nuse axum::{extract::{Path, State}, http::StatusCode, Json};\nuse serde::{Deserialize, Serialize};\nuse std::sync::Arc;\n\nuse crate::connection_pool::IndexBuilder;\n\n#[derive(Debug, Deserialize)]\npub struct PruneRequest {{\n    generation: String,\n    timeout: Option<i6max_seq_length\": 2048,\n  \"training\": {{\n    \"num_train_epochs\": 9,\n    \"per_device_train_batch_size\": 1,\n    \"gradient_accumulation_steps\": 1,\n    \"learning_rate\": 0.0001,\n    \"weight_decay\": "
+       },
+       {
+        "role": "user",
+        "content": "result>\n    28\texport class MessageBroker {\n    29\t  private channel: float;\n    30\t  private rate: Sequence | null = null;\n    31\t  private initialized = false;\n    32\t\n    33\t  constructor(channel:"
+       }
+      ],
+      "reset_context": true,
+      "hit": 3,
+      "total": 4,
+      "input_kind": "user_input"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "fixture": "tests/fixtures/weka_traces/one_subagent.json",
+  "trace_id": "trace_sa",
+  "block_size": 64,
+  "tool_tokens": 0,
+  "system_tokens": 0,
+  "run_seed": 42,
+  "hash_base_seed": 5261745454011363258,
+  "conversations": [
+   {
+    "session_id": "trace_sa",
+    "parent_conversation_id": null,
+    "source_kind": "weka_main",
+    "turns": [
+     {
+      "timestamp_ms": 0.0,
+      "delay_ms": null,
+      "source_outer_idx": 0,
+      "source_kind": "weka_main",
+      "max_tokens": 30,
+      "raw_messages": [
+       {
+        "role": "user",
+        "content": "$ git log --oneline -3\n057a5e8 feat: handshake backoff in transport\n07b36c4 fix: maximum recursion depth exceeded\n\n\n{{\n  \"model_name_or_path\": \"meta-llama/Llama-3.1-8B\",\n  \" = true;\n        let result = svc.scrub().await;\n        assert!(result.is_ok(), \"expected Ok, got {:?}\", result);\n    }}\n\n    #[tokio::test]\n    async fn test_scrub_not_initialized() {{\n        let mut svc = make_changestream();\n        let err = svcard_key = true\n\n</result>\n\n[Assistant]\nLet me look at the file to see the current state.\n\n<tool_name>search</tool_name>\n<parameter name=\"pattern\">QueryExecutor</parameter>\n<result>\nFound 29 matches in 10 files:\n\nsrc/config.rs:487.Error(w, \"lock timeout after "
+       }
+      ],
+      "reset_context": false,
+      "hit": 0,
+      "total": 3,
+      "input_kind": "user_input"
+     },
+     {
+      "timestamp_ms": 6000.0,
+      "delay_ms": 5000.0,
+      "source_outer_idx": 2,
+      "source_kind": "weka_main",
+      "max_tokens": 40,
+      "raw_messages": [
+       {
+        "role": "user",
+        "content": "$ git log --oneline -3\n057a5e8 feat: handshake backoff in transport\n07b36c4 fix: maximum recursion depth exceeded\n\n\n{{\n  \"model_name_or_path\": \"meta-llama/Llama-3.1-8B\",\n  \" = true;\n        let result = svc.scrub().await;\n        assert!(result.is_ok(), \"expected Ok, got {:?}\", result);\n    }}\n\n    #[tokio::test]\n    async fn test_scrub_not_initialized() {{\n        let mut svc = make_changestream();\n        let err = svcard_key = true\n\n</result>\n\n[Assistant]\nLet me look at the file to see the current state.\n\n<tool_name>search</tool_name>\n<parameter name=\"pattern\">QueryExecutor</parameter>\n<result>\nFound 29 matches in 10 files:\n\nsrc/config.rs:487"
+       },
+       {
+        "role": "assistant",
+        "content": "();\n   109\t        match existing {\n   110\t            Some(val) if !val.is_empty() => {\n   111\t                self.session = Some(val);\n   112\t            }\n   113\t            _ => {\n   114\t                observer::initialize"
+       },
+       {
+        "role": "user",
+        "content": "Path, State}, http::StatusCode, Json};\nuse serde::{Deserialize, Serialize};\nuse std::sync::Arc;\n\nuse crate::middleware::DataLoader;\n\n#[derive(Debug, Deserialize)]\npub struct RebalanceRequest {{\n    checkpoint_id: String,\n    drift: Option<i64>,\n}}\n\n#[derive(Debug, Serialize = \"3.31\"\n\n[tool.transformers]\nmessage = 69\ndigest = \"scheduler\"\ninterval = true\n\n\n$ pip install -e '.[dev]'\n$ pytest tests/ -x\n  108 passed, 2 failed in 8.0s\n$ echo $?\n1\n\n\n$ git checkout -b indexer/unseal-shard_key\nSwitch"
+       }
+      ],
+      "reset_context": true,
+      "hit": 3,
+      "total": 5,
+      "input_kind": "tool_result"
+     }
+    ]
+   },
+   {
+    "session_id": "trace_sa::sa:agent_001",
+    "parent_conversation_id": "trace_sa",
+    "source_kind": "weka_subagent",
+    "turns": [
+     {
+      "timestamp_ms": 2000.0,
+      "delay_ms": null,
+      "source_outer_idx": 1,
+      "source_kind": "weka_subagent",
+      "max_tokens": 50,
+      "raw_messages": [
+       {
+        "role": "system",
+        "content": ": std::panicking::begin_panic\n   1: monitor::CorsMiddleware::publish\n             at src/config.py:213\n   2: redis::CorsMiddleware::snapshot\n             at src/database.py:21\n   3: firewall::CorsMiddleware::resume\n             at"
+       },
+       {
+        "role": "user",
+        "content": " struct {{\n    Items []map[string]any `json:\"items\"`\n    Total int              `json:\"total\"`\n}}\n\nfunc (h *ShardRouter) TrainHandler(w http"
+       }
+      ],
+      "reset_context": false,
+      "hit": 0,
+      "total": 2,
+      "input_kind": "user_input"
+     }
+    ]
+   }
+  ]
+ }
+]

@@ -1114,7 +1114,7 @@ fn validate_offline_scheduled_phases(phases: &[PhaseSpec]) -> Result<()> {
                 );
                 ensure!(*users > 0, "user_centric users must be positive");
             }
-            PhaseSpec::FixedSchedule { .. } => {}
+            PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. } => {}
         }
     }
     Ok(())
@@ -1267,6 +1267,10 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                             None,
                             // Co-simulation uses its configured resilient failure policy.
                             OnFailure::for_scheduled_default(),
+                            // Dynamo co-simulation is never agentic: no join trees.
+                            std::sync::Arc::default(),
+                            // ...and no accelerated cache-warmup carrier either.
+                            crate::agentic_tree::empty_warmup_handoff_carrier(),
                         )?
                         .with_metrics_config(metrics.clone())
                         .with_performance_record_capture(false)

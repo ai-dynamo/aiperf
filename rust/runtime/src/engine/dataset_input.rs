@@ -625,6 +625,17 @@ pub struct PreparedDatasetInput {
     pub random_seed: Option<u64>,
     /// Fallback requested output length for rows without one.
     pub default_output_tokens: usize,
+    /// Side-channel subagent join-gate specs for the `agentic_replay` timing
+    /// mode (empty for every non-agentic dataset). Carried alongside the
+    /// intentionally DAG-free composed dataset and threaded into
+    /// `AgenticReplayConfig` at phase-plan build time.
+    pub agentic_trees: std::sync::Arc<Vec<crate::agentic_tree::TreeSpec>>,
+    /// Type-erased cross-phase accelerated cache-warmup handoff carrier (Python
+    /// warmup→profiling `ConversationState` handoff). Empty for every non-agentic
+    /// or non-accelerated dataset; `lower_legacy_agentic` installs a live carrier
+    /// only when `--agentic-cache-warmup-duration` is set. Threaded into both
+    /// agentic `AgenticReplayConfig` instances at phase-plan build time.
+    pub warmup_handoff: crate::agentic_tree::WarmupHandoffCarrierAny,
 }
 
 /// Inputs shared by all backend-neutral dataset source adapters.
@@ -819,6 +830,8 @@ impl DatasetInputAdapter for SyntheticDatasetInputAdapter {
             dataset,
             random_seed: spec.random_seed,
             default_output_tokens,
+            agentic_trees: std::sync::Arc::default(),
+            warmup_handoff: crate::agentic_tree::empty_warmup_handoff_carrier(),
         })
     }
 }
@@ -860,6 +873,8 @@ impl DatasetInputAdapter for FileDatasetInputAdapter {
             dataset,
             random_seed: spec.random_seed,
             default_output_tokens,
+            agentic_trees: std::sync::Arc::default(),
+            warmup_handoff: crate::agentic_tree::empty_warmup_handoff_carrier(),
         })
     }
 }
@@ -898,6 +913,8 @@ impl DatasetInputAdapter for PublicDatasetInputAdapter {
             dataset,
             random_seed: spec.random_seed,
             default_output_tokens: 1,
+            agentic_trees: std::sync::Arc::default(),
+            warmup_handoff: crate::agentic_tree::empty_warmup_handoff_carrier(),
         })
     }
 }

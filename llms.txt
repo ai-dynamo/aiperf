@@ -516,6 +516,22 @@ Inputs, endpoints, and graph:
   `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden
   (branch-on-live-output) line, and the built `conditional_graph` eager-conditional
   compiler (`rust/runtime/src/graph/conditional/`).
+- [`docs/specs/agentx-rust-port.md`](docs/specs/agentx-rust-port.md) — the standalone,
+  feature-gated (`agentx`) byte-exact Rust port of the Python AgentX (WEKA replay +
+  agentic-replay timing + scenario locks); parallel to and switchable against
+  graph-ir, proven by raw-export A/B parity under SimClock. Transitional
+  (`rust/runtime/src/agentx/`), deleted once graph-ir supersedes it.
+- [`docs/specs/agentic-replay-join-gating.md`](docs/specs/agentic-replay-join-gating.md) —
+  forward-looking design record for cross-lane subagent spawn/join gating and
+  tree-gated recycle in the `agentic_replay` timing mode (`rust/runtime/src/agentic_replay.rs`),
+  the remaining byte-exact-parity piece for subagent trajectory trees, driven by the
+  ported `agentx::session_tree` registry over `Turn.prerequisites`/`ConversationBranch`.
+- [`docs/specs/agentic-accelerated-cache-warmup.md`](docs/specs/agentic-accelerated-cache-warmup.md) —
+  the gated accelerated cache-pressure warmup + warmup→profiling residual-delay handoff
+  in the legacy `agentic_replay` timing mode (`--agentic-cache-warmup-duration`); the
+  terminal parity subsystem (built; residual/handoff golden-verified against the real
+  Python methods, live global-hop clean on `weka_cc_traces_062126`), mining the graph
+  path's Clock-derived `chop_trie_at_frontier`/`GraphWarmupHandoff` reference.
 
 Measurement and output:
 

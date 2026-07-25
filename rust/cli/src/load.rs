@@ -241,6 +241,8 @@ pub(crate) struct Inputs {
     pub inline_records: Option<serde_json::Value>,
     /// Named submission scenario (`--scenario`; `cfg.scenario`).
     pub scenario: Option<String>,
+    /// WEKA reconstruction semantics (`--weka-semantics`; legacy|graph-ir).
+    pub weka_semantics: Option<String>,
     /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
     pub trajectory_start_min_ratio: f64,
     /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
@@ -767,6 +769,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         adaptive_scale: build_adaptive_scale(flags, concurrency)?,
         prefix_prompts: build_prefix_prompts(flags),
         scenario: flags.scenario.clone(),
+        weka_semantics: flags.weka_semantics.clone(),
         trajectory_start_min_ratio: flags.trajectory_start_min_ratio.unwrap_or(0.0),
         trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
         unsafe_override: flags.unsafe_override,
@@ -891,6 +894,63 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
 
 pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
+    // Resolve legacy-AgentX scenario locks (`--scenario`) while `inputs` is still
+    // whole (later lowering partially moves it). A no-op without the `agentx`
+    // feature. A hard scenario-lock conflict fails resolution here.
+    let scenario_outcome = resolve_scenario_outcome(&inputs)?;
+    // Effective weka semantics, resolved while `inputs` is still whole.
+    let weka_semantics = resolve_weka_semantics(&inputs);
+    // The agentic_replay (legacy weka) timing mode is a single coherent driver:
+    // one workload instance owns the per-tree join gate, session-tree registry,
+    // and recycle cursor. It runs global-dispatch, single-worker, non-cellular.
+    // Cellular execution (`--cells > 1`) would partition a trajectory tree's root
+    // and subagent children across cell processes, breaking join gating — reject
+    // it with a clear error (use `--weka-semantics graph-ir` for cellular weka).
+    if matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx")) {
+        if inputs.runtime_cells > 1 {
+            anyhow::bail!(
+                "the agentic_replay (legacy weka) timing mode does not support cellular \
+                 execution (--cells {}); it runs non-cellular. Use --weka-semantics \
+                 graph-ir for cellular weka replay.",
+                inputs.runtime_cells
+            );
+        }
+        // agentic_replay mirrors Python's `1 strategy : 1 router : N workers`: ONE
+        // central driver computes the whole dispatch schedule (t*, warmup, profiling
+        // offsets, recycle, join-gating) and issues each request to a shared worker
+        // pool. `global-hop` is that model in the Rust runtime — one coordinator
+        // scheduling loop hops each request round-robin to a pool of worker transport
+        // threads. `sharded`/`global` instead run N independent per-worker pipelines
+        // (each with its own conversation partition + metrics slot space), which
+        // splits trajectory trees and collides slots. Force `global-hop`; reject an
+        // explicit conflicting mode so the choice is visible.
+        match inputs.runtime_dispatch {
+            None | Some(DispatchMode::GlobalHop) => {
+                inputs.runtime_dispatch = Some(DispatchMode::GlobalHop);
+            }
+            Some(other) => anyhow::bail!(
+                "the agentic_replay (legacy weka) timing mode requires --dispatch global-hop \
+                 (a single central issuer over a shared worker pool); got {other:?}. Omit \
+                 --dispatch (it defaults to global-hop here) or pass --dispatch global-hop."
+            ),
+        }
+    }
+    // Restrict `--agentic-cache-warmup-duration` to the agentic_replay (legacy
+    // weka) timing mode. The accelerated cache-warmup substage is consumed solely
+    // by the agentic_replay lowering; on any other run the value is silently
+    // dropped, so an unguarded flag is an invisible no-op. Reject it instead
+    // (ports Python's `validate_agentic_cache_warmup`). The resolved timing mode
+    // is agentic_replay exactly when `weka_semantics` is legacy/agentx (the
+    // scenario-declared or `--weka-semantics`-forced legacy path).
+    if inputs.agentic_cache_warmup_duration.is_some()
+        && !matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx"))
+    {
+        anyhow::bail!(
+            "--agentic-cache-warmup-duration requires the agentic_replay timing mode \
+             (set by --scenario inferencex-agentx-mvp or --weka-semantics legacy); \
+             the resolved timing mode is not agentic_replay."
+        );
+    }
     let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);
     if let Some(ref mut phases) = inputs.phases_override {
         apply_cli_loadgen_overlays(phases, &loadgen_overlay)?;
@@ -1430,6 +1490,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         endpoint_profiles: serde_json::Map::new(),
         failure_policy: None,
         scenario: inputs.scenario.clone(),
+        weka_semantics,
         trajectory_start_max_ratio: inputs.trajectory_start_max_ratio,
         trajectory_start_min_ratio: inputs.trajectory_start_min_ratio,
         unsafe_override: inputs.unsafe_override,
@@ -1479,6 +1540,11 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     export.parquet = crate::model::export::ParquetExport::build(&sm_formats, server_enabled);
     cfg.export = Some(export);
 
+    let resolved = Resolved {
+        scenario_outcome,
+        ..Resolved::default()
+    };
+
     Ok(BenchmarkRun {
         benchmark_id,
         artifact_dir: inputs.artifact_dir,
@@ -1489,9 +1555,97 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         sweep_id: None,
         trial: 0,
         variation: None,
-        resolved: Resolved::default(),
+        resolved,
         variables: serde_json::Map::new(),
     })
+}
+
+/// Resolve the legacy-AgentX submission scenario locks (`--scenario`) against the
+/// resolved run config, returning the serialized [`ScenarioOutcome`] for the
+/// run's `resolved` projection.
+///
+/// Compiled only under the `agentx` feature; a hard [`ScenarioLockError`]
+/// (non-overridable conflict, or violations without `--unsafe-override`) fails
+/// the resolution. Without the feature this is a no-op returning `None`, so a
+/// lean build silently ignores `--scenario`.
+#[cfg(feature = "agentx")]
+fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
+    use aiperf_runtime::agentx::scenario::{apply_scenario_locks, get_scenario, RunLockInputs};
+
+    let Some(name) = inputs.scenario.as_deref() else {
+        return Ok(None);
+    };
+    let spec = get_scenario(name)
+        .ok_or_else(|| anyhow::anyhow!("unknown --scenario {name:?}"))?;
+
+    // Project the resolved run config onto the fields the invariants read. The
+    // CLI does not track per-flag "explicitly set" state, so an unset field is
+    // reported as non-explicit — the resolver then auto-applies the scenario
+    // default rather than raising a (spurious) violation.
+    let ignore_eos = inputs
+        .extra
+        .get("ignore_eos")
+        .and_then(serde_json::Value::as_bool);
+    // The detected loader is the dataset *format* (`weka_trace`, ...), which is
+    // what `require_loader` keys off — not the catalog entry name. A public
+    // dataset resolves through the catalog to its format; a file/inline dataset
+    // uses its explicit `custom_dataset_type`. A synthetic default has neither
+    // (flagged so `require_loader` can reject it).
+    let loader = if let Some(name) = inputs.public_dataset.as_deref() {
+        crate::model::public_catalog::lookup(name).map(|meta| meta.format.clone())
+    } else {
+        inputs.custom_dataset_type.clone()
+    };
+    let synthetic_default_dataset =
+        loader.is_none() && inputs.public_dataset.is_none() && inputs.input_file.is_none();
+
+    let lock_inputs = RunLockInputs {
+        streaming: inputs.streaming,
+        streaming_explicit: inputs.streaming,
+        ignore_eos,
+        ignore_trace_delays: false,
+        ignore_trace_delays_explicit: false,
+        loader,
+        cache_bust: None,
+        cache_bust_explicit: false,
+        unsafe_override: inputs.unsafe_override,
+        synthetic_default_dataset,
+    };
+
+    let outcome = apply_scenario_locks(&spec, &lock_inputs)?;
+    Ok(Some(serde_json::to_value(&outcome)?))
+}
+
+/// No-op scenario resolution for lean builds without the `agentx` feature.
+#[cfg(not(feature = "agentx"))]
+fn resolve_scenario_outcome(_inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
+    Ok(None)
+}
+
+/// Resolve the effective WEKA reconstruction semantics for the run: an explicit
+/// `--weka-semantics` flag always wins; otherwise an agentic-replay scenario
+/// selects `legacy` (the byte-exact AgentX path), and everything else defers to
+/// the graph-ir default (`None`). Authored onto the config so the engine's graph
+/// workload factory can branch. Only the `agentx` build can select `legacy`.
+#[cfg(feature = "agentx")]
+fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
+    if let Some(flag) = inputs.weka_semantics.as_deref() {
+        return Some(flag.to_string());
+    }
+    if let Some(name) = inputs.scenario.as_deref()
+        && let Some(spec) = aiperf_runtime::agentx::scenario::get_scenario(name)
+        && spec.timing_mode == "agentic_replay"
+    {
+        return Some("legacy".to_string());
+    }
+    None
+}
+
+/// Without the `agentx` feature, only an explicit flag threads through (the
+/// engine rejects `legacy` at selection since the legacy path is compiled out).
+#[cfg(not(feature = "agentx"))]
+fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
+    inputs.weka_semantics.clone()
 }
 
 /// Build one phase from resolved axes. A request rate selects a Poisson arrival
@@ -2742,6 +2896,125 @@ mod tests {
                 Some("/start_profile")
             );
             assert_eq!(server_profiler.stop_path.as_deref(), Some("/stop_profile"));
+        });
+    }
+
+    /// Without `--scenario`, resolution leaves `resolved.scenario_outcome` unset.
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn no_scenario_leaves_outcome_unset() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            assert!(run.resolved.scenario_outcome.is_none());
+        });
+    }
+
+    /// `--scenario inferencex-agentx-mvp` on the synthetic-default dataset is a
+    /// non-overridable lock failure (`require_loader` forbids the synthetic
+    /// default), so resolution fails — proving the scenario resolver is wired
+    /// into the CLI Config-v2 pipeline.
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn scenario_hard_fails_on_synthetic_default_dataset() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--streaming",
+                "--scenario",
+                "inferencex-agentx-mvp",
+            ]);
+            let err = super::resolve(&flags).expect_err("scenario lock must fail");
+            assert!(
+                err.to_string().contains("scenario lock failure"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    /// `--agentic-cache-warmup-duration` on a non-agentic run (no scenario / no
+    /// `--weka-semantics legacy`) is rejected: the accelerated cache-warmup
+    /// substage would be silently dropped, so the flag is an invisible no-op.
+    #[test]
+    fn agentic_cache_warmup_rejected_without_agentic_replay() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--agentic-cache-warmup-duration",
+                "5",
+            ]);
+            let err = super::resolve(&flags).expect_err("guard must reject non-agentic run");
+            assert!(
+                err.to_string()
+                    .contains("--agentic-cache-warmup-duration requires the agentic_replay"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    /// Under `--weka-semantics legacy` the run resolves to the agentic_replay
+    /// timing mode, so `--agentic-cache-warmup-duration` passes the guard (any
+    /// failure must not be the guard's own rejection).
+    #[test]
+    fn agentic_cache_warmup_accepted_under_legacy_weka() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--streaming",
+                "--weka-semantics",
+                "legacy",
+                "--agentic-cache-warmup-duration",
+                "5",
+            ]);
+            if let Err(err) = super::resolve(&flags) {
+                assert!(
+                    !err.to_string()
+                        .contains("--agentic-cache-warmup-duration requires the agentic_replay"),
+                    "guard must not fire under legacy weka: {err}"
+                );
+            }
+        });
+    }
+
+    /// An unknown `--scenario` name is rejected during resolution.
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn unknown_scenario_rejected() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--scenario",
+                "does-not-exist",
+            ]);
+            let err = super::resolve(&flags).expect_err("unknown scenario must fail");
+            assert!(err.to_string().contains("unknown --scenario"), "got: {err}");
         });
     }
 }

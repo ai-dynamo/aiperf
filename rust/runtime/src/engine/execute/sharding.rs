@@ -75,6 +75,14 @@ pub(crate) struct ShardedShared {
     pub(crate) samplers: crate::dataset::SamplerRegistry,
     /// The composed dataset every thread partitions.
     pub(crate) dataset: Dataset,
+    /// Side-channel subagent join-gate specs for the `agentic_replay` timing
+    /// mode (empty for every non-agentic run). `Send + Sync` plain data, cloned
+    /// per shard and threaded into the agentic phase plan.
+    pub(crate) agentic_trees: std::sync::Arc<Vec<crate::agentic_tree::TreeSpec>>,
+    /// Type-erased cross-phase accelerated cache-warmup handoff carrier for the
+    /// `agentic_replay` timing mode (empty for every non-accelerated run).
+    /// `Send + Sync`; cloned per shard and threaded into both agentic phase plans.
+    pub(crate) warmup_handoff: crate::agentic_tree::WarmupHandoffCarrierAny,
     /// Effective primary model.
     pub(crate) primary_model: String,
     /// Resolved native metrics policy.
@@ -459,6 +467,8 @@ pub(crate) async fn execute_scheduled_pipeline(
                     .wants_adaptive_record
                     .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
                 shared.on_failure,
+                shared.agentic_trees.clone(),
+                shared.warmup_handoff.clone(),
             )?;
             let profiling_idx = if phase.common().exclude_from_results {
                 None
@@ -472,7 +482,10 @@ pub(crate) async fn execute_scheduled_pipeline(
                 capture: capture.clone(),
                 phase: metrics_phase(phase)?,
                 identity,
-                has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                has_credit_timestamp: !matches!(
+                    phase,
+                    PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
+                ),
                 // Once-per-cell on the main thread; a worker never feeds them.
                 live_sink: None,
                 heartbeat: None,

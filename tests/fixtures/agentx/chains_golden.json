@@ -1,0 +1,451 @@
+[
+ {
+  "name": "single_chain_extension",
+  "normals": [
+   {
+    "outer": 0,
+    "t": 0.0,
+    "model": "m",
+    "hash_ids": [
+     1
+    ],
+    "in": 4,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 1,
+    "t": 1.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 2,
+    "t": 2.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3
+    ],
+    "in": 12,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "result": {
+   "main_index": 0,
+   "worker_indices": [],
+   "seams_merged": 0,
+   "unclassified_empty_hash": 0,
+   "chains": [
+    {
+     "requests": [
+      0,
+      1,
+      2
+     ],
+     "spliced_into": null,
+     "fork": null
+    }
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
+  }
+ },
+ {
+  "name": "seam_no_pullback",
+  "normals": [
+   {
+    "outer": 0,
+    "t": 0.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 1,
+    "t": 1.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     9
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "result": {
+   "main_index": 0,
+   "worker_indices": [],
+   "seams_merged": 1,
+   "unclassified_empty_hash": 0,
+   "chains": [
+    {
+     "requests": [
+      0,
+      1
+     ],
+     "spliced_into": null,
+     "fork": null
+    },
+    {
+     "requests": [
+      1
+     ],
+     "spliced_into": 0,
+     "fork": {
+      "parent_chain": 0,
+      "fork_outer_idx": 0,
+      "depth": 1
+     }
+    }
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
+  }
+ },
+ {
+  "name": "spawn_future_pullback",
+  "normals": [
+   {
+    "outer": 0,
+    "t": 0.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 1,
+    "t": 1.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     9
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 2,
+    "t": 2.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3
+    ],
+    "in": 12,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "result": {
+   "main_index": 0,
+   "worker_indices": [
+    1
+   ],
+   "seams_merged": 0,
+   "unclassified_empty_hash": 0,
+   "chains": [
+    {
+     "requests": [
+      0,
+      2
+     ],
+     "spliced_into": null,
+     "fork": null
+    },
+    {
+     "requests": [
+      1
+     ],
+     "spliced_into": null,
+     "fork": {
+      "parent_chain": 0,
+      "fork_outer_idx": 0,
+      "depth": 1
+     }
+    }
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1,
+    "1": 1
+   }
+  }
+ },
+ {
+  "name": "cross_model_spawn",
+  "normals": [
+   {
+    "outer": 0,
+    "t": 0.0,
+    "model": "opus",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 1,
+    "t": 1.0,
+    "model": "haiku",
+    "hash_ids": [
+     1,
+     2,
+     3
+    ],
+    "in": 12,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "result": {
+   "main_index": 0,
+   "worker_indices": [
+    1
+   ],
+   "seams_merged": 0,
+   "unclassified_empty_hash": 0,
+   "chains": [
+    {
+     "requests": [
+      0
+     ],
+     "spliced_into": null,
+     "fork": null
+    },
+    {
+     "requests": [
+      1
+     ],
+     "spliced_into": null,
+     "fork": {
+      "parent_chain": 0,
+      "fork_outer_idx": 0,
+      "depth": 2
+     }
+    }
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 2,
+    "1": 2
+   }
+  }
+ },
+ {
+  "name": "empty_hash_on_main",
+  "normals": [
+   {
+    "outer": 0,
+    "t": 0.0,
+    "model": "m",
+    "hash_ids": [
+     1
+    ],
+    "in": 4,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 1,
+    "t": 1.0,
+    "model": "m",
+    "hash_ids": [],
+    "in": 0,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 2,
+    "t": 2.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "result": {
+   "main_index": 0,
+   "worker_indices": [],
+   "seams_merged": 0,
+   "unclassified_empty_hash": 1,
+   "chains": [
+    {
+     "requests": [
+      0,
+      1,
+      2
+     ],
+     "spliced_into": null,
+     "fork": null
+    }
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
+  }
+ },
+ {
+  "name": "parallel_fanout",
+  "normals": [
+   {
+    "outer": 0,
+    "t": 0.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3
+    ],
+    "in": 12,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 1,
+    "t": 1.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3,
+     10
+    ],
+    "in": 16,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 2,
+    "t": 1.1,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3,
+     20
+    ],
+    "in": 16,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 3,
+    "t": 1.2,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3,
+     30
+    ],
+    "in": 16,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "outer": 4,
+    "t": 5.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3,
+     4
+    ],
+    "in": 16,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "result": {
+   "main_index": 0,
+   "worker_indices": [],
+   "seams_merged": 3,
+   "unclassified_empty_hash": 0,
+   "chains": [
+    {
+     "requests": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "spliced_into": null,
+     "fork": null
+    },
+    {
+     "requests": [
+      2
+     ],
+     "spliced_into": 0,
+     "fork": {
+      "parent_chain": 0,
+      "fork_outer_idx": 1,
+      "depth": 3
+     }
+    },
+    {
+     "requests": [
+      3
+     ],
+     "spliced_into": 0,
+     "fork": {
+      "parent_chain": 0,
+      "fork_outer_idx": 2,
+      "depth": 3
+     }
+    },
+    {
+     "requests": [
+      4
+     ],
+     "spliced_into": 0,
+     "fork": {
+      "parent_chain": 0,
+      "fork_outer_idx": 3,
+      "depth": 3
+     }
+    }
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
+  }
+ }
+]

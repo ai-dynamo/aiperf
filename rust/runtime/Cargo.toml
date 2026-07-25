@@ -15,6 +15,11 @@ default = ["parquet", "cellular", "grpc"]
 # and other library consumers build without it, so the gated module and its
 # dependency surface stay out of their builds.
 engine = []
+# Standalone, transitional byte-exact Rust port of the Python AgentX (WEKA replay
+# + agentic-replay timing + scenario locks) under `src/agentx/`. Shares no logic
+# with the graph-ir recorded path; deleted once graph-ir supersedes AgentX. Off by
+# default so its surface stays out of every build that does not opt in.
+agentx = []
 # Native gRPC transport (Clock-injected Tonic HTTP/2 channels): the
 # `transport_grpc` prepared-sink stack, the engine's `grpc`/`grpc_execution`
 # placement path, the `grpc` runner transport factory, and the KServe OIP v2 /

@@ -854,6 +854,11 @@ pub struct GraphWorkloadConfigV2 {
     /// (fail-fast — abort the run on the first non-cancellation failure).
     #[serde(default)]
     pub failure_policy: Option<OnFailure>,
+    /// WEKA reconstruction semantics selector (`legacy`|`graph-ir`); absent/`graph-ir`
+    /// uses the graph-ir path, `legacy` routes weka runs to the byte-exact AgentX
+    /// agentic pipeline (requires the `agentx` feature).
+    #[serde(default)]
+    pub weka_semantics: Option<String>,
 }
 
 impl Debug for GraphWorkloadConfigV2 {

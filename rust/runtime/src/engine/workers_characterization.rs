@@ -277,6 +277,8 @@ mod tests {
             dataset,
             random_seed: Some(7),
             default_output_tokens: FIXED_OSL,
+            agentic_trees: std::sync::Arc::default(),
+            warmup_handoff: crate::agentic_tree::empty_warmup_handoff_carrier(),
         }
     }
 
@@ -313,6 +315,8 @@ mod tests {
             dataset,
             random_seed: Some(7),
             default_output_tokens: FIXED_OSL,
+            agentic_trees: std::sync::Arc::default(),
+            warmup_handoff: crate::agentic_tree::empty_warmup_handoff_carrier(),
         }
     }
 
