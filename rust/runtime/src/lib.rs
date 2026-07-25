@@ -11,6 +11,8 @@
 
 pub mod accuracy;
 pub mod adaptive;
+#[cfg(feature = "agentx")]
+pub mod agentx;
 #[cfg(feature = "dynamo-aic-forward-pass")]
 pub mod aic_runtime;
 pub mod ancillary;
