@@ -666,6 +666,107 @@ mod tests {
         }
     }
 
+    /// The real-corpus end-to-end gate: reconstruct `simple.json`'s main
+    /// conversation with the ACTUAL Qwen3-0.6B tokenizer + `build_coding_corpus`
+    /// + `CorpusTokenSynth` + `convert_trace_to_conversations`, and diff every
+    /// turn's `raw_messages` (real decoded text) + timing + prefix-cache against
+    /// the real-Python golden (`tools/agentx_realcorpus_golden.py`). Skips when
+    /// Qwen or the golden is absent.
+    #[test]
+    fn realcorpus_main_conversation_matches_python() {
+        use crate::agentx::config::WekaConfig;
+        use crate::agentx::corpus::CorpusTokenSynth;
+        use crate::agentx::trace::WekaTrace;
+        use crate::dataset::tokenizer::TextTokenizer;
+        use crate::rng::compat::python_random::PythonRandomGenerator;
+
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo = manifest.join("../..");
+        let golden_path = repo.join("tests/fixtures/agentx/realcorpus_golden.json");
+        let golden_raw = match std::fs::read(&golden_path) {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skip: realcorpus golden absent");
+                return;
+            }
+        };
+        let golden: serde_json::Value = serde_json::from_slice(&golden_raw).unwrap();
+
+        // Load Qwen from the HF cache (skip if absent).
+        let home = std::env::var("HOME").unwrap_or_default();
+        let base =
+            format!("{home}/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots");
+        let snap = std::fs::read_dir(&base).ok().and_then(|d| {
+            d.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .find(|p| p.join("tokenizer.json").exists())
+        });
+        let snap = match snap {
+            Some(s) => s,
+            None => {
+                eprintln!("skip: Qwen not cached");
+                return;
+            }
+        };
+        let tok = crate::dataset::tokenizer::HuggingFaceTokenizer::from_directory(&snap)
+            .expect("load qwen");
+        let corpus = crate::dataset::coding::build_coding_corpus(&tok, 42).expect("corpus");
+
+        // Derive the hash-id base seed exactly as Python's CodingContentGenerator.
+        let hash_base_seed =
+            PythonRandomGenerator::derive_child_seed(42, crate::rng::namespace::DATASET_CODING_CONTENT_CORPUS);
+        assert_eq!(
+            hash_base_seed,
+            golden["hash_base_seed"].as_u64().unwrap(),
+            "hash_base_seed derivation"
+        );
+
+        let trace_id = golden["trace_id"].as_str().unwrap();
+        let bs = golden["block_size"].as_i64().unwrap();
+        let trace_bytes =
+            std::fs::read(repo.join("tests/fixtures/weka_traces/simple.json")).unwrap();
+        let trace = WekaTrace::from_json_bytes(&trace_bytes).unwrap();
+
+        let mut synth = CorpusTokenSynth::new(corpus, bs, hash_base_seed, trace_id, |t: &[u32]| {
+            tok.decode(t).unwrap()
+        });
+        // No flat-chain split for this fixture (matches the golden's direct path).
+        let cfg = WekaConfig {
+            split_flattened_agents: false,
+            ..WekaConfig::default()
+        };
+        let convs = convert_trace_to_conversations(
+            trace_id,
+            &trace,
+            &mut synth,
+            &HashMap::new(),
+            &cfg,
+            &MainReconstructOptions::default(),
+        )
+        .unwrap();
+        let root = &convs[0];
+
+        let want_turns = golden["turns"].as_array().unwrap();
+        assert_eq!(root.turns.len(), want_turns.len(), "turn count");
+        for (i, (t, w)) in root.turns.iter().zip(want_turns).enumerate() {
+            assert_eq!(t.timestamp_ms, w["timestamp_ms"].as_f64(), "t{i} timestamp");
+            assert_eq!(t.delay_ms, w["delay_ms"].as_f64(), "t{i} delay");
+            assert_eq!(t.reset_context, w["reset_context"].as_bool().unwrap(), "t{i} reset");
+            assert_eq!(t.max_tokens, w["max_tokens"].as_i64().unwrap(), "t{i} max_tokens");
+            assert_eq!(
+                t.theoretical_prefix_cache_hit_blocks,
+                w["hit"].as_i64().unwrap(),
+                "t{i} hit"
+            );
+            let wm = w["raw_messages"].as_array().unwrap();
+            assert_eq!(t.raw_messages.len(), wm.len(), "t{i} msg count");
+            for (m, w) in t.raw_messages.iter().zip(wm) {
+                assert_eq!(m.role, w["role"].as_str().unwrap(), "t{i} role");
+                assert_eq!(m.content, w["content"].as_str().unwrap(), "t{i} content (real Qwen text)");
+            }
+        }
+    }
+
     #[test]
     fn model_map_main_first_then_appearance_with_wrap() {
         use crate::agentx::trace::{HashIdScope, WekaNormalRequest, WekaRequest, WekaTrace};
