@@ -55,3 +55,17 @@ pub use slots::{
 pub use stop::{RunState, StopChecker, StopCondition, StopConfig};
 pub use url_selection::{RoundRobinUrlSelector, UrlSelectionError, UrlSelector};
 pub use user_centric::{InitialUser, UserCentricPlan, plan_user_centric};
+
+/// Nanoseconds per second, as `f64`, for seconds↔nanoseconds conversions across
+/// the timing plane. Single definition so every module rounds against the same
+/// constant.
+pub(crate) const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+
+/// Convert a non-negative interval in seconds to integer nanoseconds with
+/// ties-away-from-zero rounding. Non-finite or negative inputs clamp to 0.
+pub(crate) fn secs_to_ns(secs: f64) -> i64 {
+    if !secs.is_finite() || secs <= 0.0 {
+        return 0;
+    }
+    (secs * NANOS_PER_SECOND).round() as i64
+}
