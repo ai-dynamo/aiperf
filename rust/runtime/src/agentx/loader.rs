@@ -630,6 +630,59 @@ pub fn build_model_map(
         .collect()
 }
 
+/// Peak requested context length across a trace's parent and subagent requests
+/// (Python `_trace_peak_context_length`): `input + capped_output`. Parent turns
+/// honor `max_osl`; subagent child turns use the uncapped recorded output.
+pub fn trace_peak_context_length(
+    trace: &crate::agentx::trace::WekaTrace,
+    max_osl: Option<i64>,
+) -> i64 {
+    use crate::agentx::trace::{WekaInnerRequest, WekaRequest};
+    let mut peak = 0i64;
+    for req in &trace.requests {
+        match req {
+            WekaRequest::Normal(n) => {
+                peak = peak.max(n.input_length + cap_output(n.output_length, max_osl));
+            }
+            WekaRequest::Streaming(s) => {
+                peak = peak.max(s.input_length + cap_output(s.output_length, max_osl));
+            }
+            WekaRequest::Subagent(entry) => {
+                for child in &entry.requests {
+                    let (in_len, out_len) = match child {
+                        WekaInnerRequest::Normal(n) => (n.input_length, n.output_length),
+                        WekaInnerRequest::Streaming(s) => (s.input_length, s.output_length),
+                    };
+                    // Subagent children are NOT subject to max_osl (uncapped output).
+                    peak = peak.max(in_len + cap_output(out_len, None));
+                }
+            }
+        }
+    }
+    peak
+}
+
+/// Filter-then-cap selection over HF/loaded traces by peak context length
+/// (Python `SemiAnalysisCCTracesWekaLoader._validate_rows` selection, delegating
+/// to `filter_then_cap`). Drops traces whose peak context exceeds
+/// `max_context_length` without consuming a slot, then keeps the first
+/// `num_dataset_entries` eligible.
+pub fn hf_select_traces(
+    traces: Vec<(String, crate::agentx::trace::WekaTrace)>,
+    num_dataset_entries: Option<usize>,
+    max_context_length: Option<i64>,
+    max_osl: Option<i64>,
+) -> (
+    Vec<(String, crate::agentx::trace::WekaTrace)>,
+    crate::agentx::selection::SelectionStats,
+) {
+    let candidates = traces.into_iter().map(|(id, trace)| {
+        let peak = trace_peak_context_length(&trace, max_osl);
+        ((id, trace), peak)
+    });
+    crate::agentx::selection::filter_then_cap(candidates, num_dataset_entries, max_context_length)
+}
+
 /// Build a [`NormalReq`] from a wire normal request.
 pub fn normal_req_from_normal(n: &crate::agentx::trace::WekaNormalRequest) -> NormalReq {
     NormalReq {
@@ -833,6 +886,51 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn hf_peak_context_and_selection() {
+        use crate::agentx::trace::{HashIdScope, WekaNormalRequest, WekaRequest, WekaTrace};
+        let mk = |id: &str, in_out: &[(i64, i64)]| {
+            (
+                id.to_string(),
+                WekaTrace {
+                    id: id.into(),
+                    models: vec!["m".into()],
+                    block_size: 4,
+                    hash_id_scope: HashIdScope::Local,
+                    tool_tokens: 0,
+                    system_tokens: 0,
+                    requests: in_out
+                        .iter()
+                        .map(|&(i, o)| {
+                            WekaRequest::Normal(WekaNormalRequest {
+                                t: 0.0,
+                                model: "m".into(),
+                                input_length: i,
+                                output_length: o,
+                                hash_ids: vec![1],
+                                input_types: vec![],
+                                output_types: vec![],
+                                stop: String::new(),
+                                api_time: None,
+                                think_time: None,
+                            })
+                        })
+                        .collect(),
+                    totals: None,
+                },
+            )
+        };
+        // peak = max(input + capped_output). a: 100+4=104; b: 900+50=950; c: 200+4=204.
+        let a = mk("a", &[(100, 4)]);
+        assert_eq!(trace_peak_context_length(&a.1, None), 104);
+        let traces = vec![a, mk("b", &[(900, 50)]), mk("c", &[(200, 4)])];
+        // max_context 500 drops b; cap 2 keeps a, c.
+        let (kept, stats) = hf_select_traces(traces, Some(2), Some(500), None);
+        assert_eq!(kept.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), vec!["a", "c"]);
+        assert_eq!(stats.rejected_by_maxctx, 1);
+        assert_eq!(stats.largest_observed, 950);
     }
 
     #[test]
