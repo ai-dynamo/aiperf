@@ -97,12 +97,20 @@ pub struct SloThreshold {
     pub tag: MetricTag,
     /// Threshold converted to the metric's native unit.
     pub native_value: f64,
+    /// Whether the metric passes when the value is `>=` the threshold (larger is
+    /// better) versus `<=` it. Resolved from the static catalog at construction so
+    /// the per-record good-request path never re-scans it.
+    pub larger_is_better: bool,
 }
 
 impl SloThreshold {
     /// Builds a threshold already expressed in native units.
-    pub const fn native(tag: MetricTag, native_value: f64) -> Self {
-        Self { tag, native_value }
+    pub fn native(tag: MetricTag, native_value: f64) -> Self {
+        Self {
+            tag,
+            native_value,
+            larger_is_better: tag_is_larger_is_better(tag),
+        }
     }
 
     /// Converts a display-unit threshold into native units using the catalog.
@@ -112,8 +120,14 @@ impl SloThreshold {
         Ok(Self {
             tag,
             native_value: display_unit.convert_value(display_value, spec.unit)?,
+            larger_is_better: spec.flags.contains(MetricFlags::LARGER_IS_BETTER),
         })
     }
+}
+
+/// Whether a metric's catalog spec marks it larger-is-better (absent spec defaults false).
+fn tag_is_larger_is_better(tag: MetricTag) -> bool {
+    spec_for(tag).is_some_and(|spec| spec.flags.contains(MetricFlags::LARGER_IS_BETTER))
 }
 
 /// Runtime-independent configuration for the metrics engine.
@@ -1019,9 +1033,7 @@ impl MetricsAccumulator {
             let Some(value) = self.store.metric_f64(row, slo.tag) else {
                 return false;
             };
-            let larger_is_better = spec_for(slo.tag)
-                .is_some_and(|spec| spec.flags.contains(MetricFlags::LARGER_IS_BETTER));
-            if larger_is_better {
+            if slo.larger_is_better {
                 value >= slo.native_value
             } else {
                 value <= slo.native_value
@@ -2175,6 +2187,18 @@ mod tests {
         assert_eq!(summary.timeslices().len(), 2);
         assert_eq!(summary.timeslices()[1].end_ns, 1_700_000_000);
         assert_eq!(summary.timeslices()[1].complete, Some(false));
+    }
+
+    #[test]
+    fn slo_threshold_caches_catalog_direction() {
+        // OutputSequenceLength is LARGER_IS_BETTER; RequestLatency is smaller-is-better.
+        assert!(SloThreshold::native(MetricTag::OutputSequenceLength, 1.0).larger_is_better);
+        assert!(!SloThreshold::native(MetricTag::RequestLatency, 1.0).larger_is_better);
+        assert!(
+            SloThreshold::from_display(MetricTag::OutputSequenceLength, 1.0)
+                .unwrap()
+                .larger_is_better
+        );
     }
 
     #[test]
