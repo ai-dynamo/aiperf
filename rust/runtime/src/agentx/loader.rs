@@ -592,6 +592,7 @@ mod tests {
                 }),
                 WekaRequest::Normal(norm(2.0, &[1, 2, 3], 12)),
             ],
+            totals: None,
         };
         let mut synth = StubSynth { bs: 4 };
         let convs = convert_trace_to_conversations(
