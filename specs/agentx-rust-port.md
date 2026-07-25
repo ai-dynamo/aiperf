@@ -131,9 +131,22 @@ Python's `PromptGenerator._tokenized_corpus`, then the full-loader golden-diff o
   `resolve(flag)` + `reconstruct_legacy` dispatch. Legacy arm fully wired to the
   ported pipeline; graph-ir arm hands off to `graph::recorded`.
 
-Remaining frontier: live-runtime integration (the dispatch loop that emits
-execution-order timing → raw-export **timing** e2e), the scenario validator, and
-the HF download wrapper.
+Additional byte-exact units since: full **t\* sampling** (numpy-RNG pick via the
+runtime compat), the **`replay_schedule`** execution-order timing schedule
+(history/warmup/profiling + dispatch offsets) with a Python golden e2e, the
+scenario **invariant-lock decision core**, and the **HF trace-selection core**
+(`trace_peak_context_length` + `hf_select_traces`).
+
+**Both halves of "raw byte-exact timing and content" are proven at computation
+level:** content via the real-corpus e2e (Qwen); timing via per-turn inter-turn
+delays (loader e2e) + the `replay_schedule` execution-order e2e (phase + offsets,
+t\* itself byte-exact).
+
+Remaining frontier — **live-runtime / IO wiring only** (no byte-exact algorithm
+work left): the async dispatch machinery that fires `replay_schedule` through the
+Clock/scheduler/credit pipeline; the `apply_scenario` config-resolver wiring into
+`BenchmarkRun`; and the HF network download. The `graph-ir` switch arm hands off to
+`graph::recorded` (a separate, already-present subsystem).
 
 ## Future requirements
 
