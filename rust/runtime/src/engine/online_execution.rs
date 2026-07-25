@@ -1403,7 +1403,18 @@ fn lower_legacy_agentic(
     warmup_common.name = "warmup".to_string();
     warmup_common.kind = Some(crate::engine::protocol::PhaseRoleSpec::Warmup);
     warmup_common.exclude_from_results = true;
-    warmup_common.requests = None;
+    // The warmup phase dispatches each warmup conversation exactly once (no
+    // recycle), so its record count is known. Set `requests` to that count so the
+    // per-phase record-ordinal base of the following PROFILING phase is offset past
+    // the warmup range (`compute_phase_ordinal_bases` strides by `requests`);
+    // otherwise both phases get base 0 and their records collide at absolute slot 0
+    // under the striding issuer (global-hop / cellular). `enforce_stop=false` means
+    // this does not gate warmup dispatch — it only offsets the ordinal space.
+    let warmup_count = convs
+        .iter()
+        .filter(|c| c.session_id.ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX))
+        .count();
+    warmup_common.requests = Some(warmup_count as u64);
     warmup_common.sessions = None;
     warmup_common.duration = None;
     let agentic_replay_phase = |common: crate::engine::protocol::PhaseCommonSpec| {
