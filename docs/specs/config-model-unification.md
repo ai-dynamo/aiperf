@@ -66,8 +66,11 @@ model crosses the parent→child boundary unchanged.
 
 The convergence target and its migration. None of this is built yet.
 
-**Target shape.** A leaf `aiperf-config` crate (both `aiperf-cli` and
-`aiperf-runtime` depend on it) owns:
+**Target shape.** An `aiperf_runtime::config` module (an always-compiled module
+in the runtime crate — `aiperf-cli` consumes it through its existing
+`aiperf-runtime` dependency, so no separate crate is introduced; a leaf crate was
+tried first and reverted because it bought no isolation cli didn't already have
+and forced a `DispatchMode` dependency cycle) owns:
 
 - `AiperfConfig` (envelope: `schema_version`, `benchmark`, `sweep`, `multi_run`,
   `variables`, `random_seed`).
@@ -94,8 +97,8 @@ unknown tag.
 
 **Migration (each step ships green):**
 
-1. **Unify the wire type.** Move `BenchmarkConfig`/`BenchmarkRun` to the shared
-   crate; the runtime deserializes that type. Delete the reshape, the `json!` blob,
+1. **Unify the wire type.** Move `BenchmarkConfig`/`BenchmarkRun` into the
+   `aiperf_runtime::config` module; the runtime deserializes that type directly. Delete the reshape, the `json!` blob,
    the graph-guard, and the fragmented DTOs; replace with typed access +
    `workload_kind()`. Guard with wire round-trip tests (CLI serialize ==
    runtime deserialize, byte-identical). This step alone eliminates the
