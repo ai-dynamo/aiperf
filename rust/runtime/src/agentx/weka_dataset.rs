@@ -38,6 +38,55 @@ pub struct WekaComposeOptions {
     pub cache_bust_target: CacheBustTarget,
 }
 
+/// Apply the per-lane t\* snapshot slice to reconstructed trajectories, porting
+/// Python `AgenticReplayStrategy`'s snapshot construction.
+///
+/// For each lane (in stable order, the seed's lane index): sample t\* uniformly
+/// over `[min_ts + min_ratio·dur, min_ts + max_ratio·dur)` from the lane's
+/// recorded turn timestamps (numpy PCG64, matched to Python), find the first turn
+/// at/after t\* (the PROFILING resume point), DROP the earlier history turns, and
+/// rebase each retained turn's `timestamp_ms` to its t\*-relative dispatch offset
+/// (`max(0, ts − t*)`). Lanes with no post-t\* turn are dropped. The result feeds
+/// [`compose_weka_agentic_dataset`]; the workload then only aligns lanes and
+/// dispatches — history exclusion and t\* live here.
+pub fn slice_trajectories_at_tstar(
+    convs: Vec<ReconstructedConversation>,
+    base_seed: u64,
+    start_min_ratio: f64,
+    start_max_ratio: f64,
+) -> Vec<ReconstructedConversation> {
+    use crate::agentx::trajectory_source::{
+        next_turn_index_at_or_after, seed_for_trace_lane, timestamped_t_star_ms,
+    };
+    let mut out = Vec::with_capacity(convs.len());
+    for (lane_index, conv) in convs.into_iter().enumerate() {
+        let ts: Vec<Option<f64>> = conv.turns.iter().map(|t| t.timestamp_ms).collect();
+        let known: Vec<f64> = ts.iter().filter_map(|x| *x).collect();
+        let t_star = if known.is_empty() {
+            0.0
+        } else {
+            let mn = known.iter().copied().fold(f64::INFINITY, f64::min);
+            let mx = known.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let dur = mx - mn;
+            let seed = seed_for_trace_lane(base_seed, &conv.session_id, lane_index as i64);
+            timestamped_t_star_ms(seed, mn + start_min_ratio * dur, mn + start_max_ratio * dur)
+        };
+        let Some(next_idx) = next_turn_index_at_or_after(&ts, t_star) else {
+            continue; // no post-t* (profiling) turn on this lane
+        };
+        let mut sliced = conv;
+        sliced.turns.drain(0..next_idx as usize); // exclude history
+        for turn in &mut sliced.turns {
+            // Rebase to t*-relative offset; the workload aligns across lanes.
+            turn.timestamp_ms = Some(turn.timestamp_ms.map_or(0.0, |ts| (ts - t_star).max(0.0)));
+        }
+        if !sliced.turns.is_empty() {
+            out.push(sliced);
+        }
+    }
+    out
+}
+
 /// Compose reconstructed conversations into a verbatim-replay [`Dataset`].
 ///
 /// Turns carry their exact chat body as a `Raw` segment (byte-for-byte replay,

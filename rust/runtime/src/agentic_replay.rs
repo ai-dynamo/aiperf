@@ -24,8 +24,7 @@ use async_trait::async_trait;
 
 use crate::agentx::cache_bust::CacheBustTarget;
 use crate::agentx::trajectory_source::{
-    capped_warmup_lead_ms, next_turn_index_at_or_after, offset_ms, profiling_dispatch_delays_ms,
-    seed_for_trace_lane, timestamped_t_star_ms, warmup_dispatch_offsets_ms,
+    profiling_dispatch_delays_ms, warmup_dispatch_offsets_ms,
 };
 use crate::multiturn::ConversationSource;
 use crate::scheduled::{ScheduledRuntime, Workload};
@@ -118,66 +117,44 @@ impl Workload for AgenticReplayWorkload {
 
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
         let cfg = &self.config;
-        // 1) Per-lane t\* sampling + turn classification from recorded timestamps.
+        // 1) Read each lane's t\*-relative dispatch offsets. The snapshot slice
+        // ([`crate::agentx::weka_dataset::slice_trajectories_at_tstar`]) already
+        // sampled t\*, excluded history, and rebased `timestamp_ms` to the offset
+        // from t\* — so the lane's first turn's timestamp is its phase-start offset.
         let lanes: Vec<LaneDispatch> = {
             let source = self.source.borrow();
             source
                 .conversations()
                 .iter()
-                .enumerate()
-                .map(|(lane_index, meta)| {
-                    let ts: Vec<Option<f64>> =
-                        meta.turns.iter().map(|t| t.timestamp_ms).collect();
-                    let seed =
-                        seed_for_trace_lane(cfg.random_seed, &meta.conversation_id, lane_index as i64);
-                    // t\* is uniform over [lo, hi) in wall-clock time (Python parity).
-                    let known: Vec<f64> = ts.iter().filter_map(|x| *x).collect();
-                    let (lo, hi) = if known.is_empty() {
-                        (0.0, 0.0)
-                    } else {
-                        let mn = known.iter().copied().fold(f64::INFINITY, f64::min);
-                        let mx = known.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-                        let dur = mx - mn;
-                        (mn + cfg.start_min_ratio * dur, mn + cfg.start_max_ratio * dur)
-                    };
-                    let t_star = timestamped_t_star_ms(seed, lo, hi);
-                    let next_idx = next_turn_index_at_or_after(&ts, t_star);
-                    let has_warmup = next_idx.is_some_and(|n| n >= 1) || (next_idx.is_none() && ts.len() >= 2);
-                    let (has_profiling, first_profiling_offset_ms) = match next_idx {
-                        Some(n) => (
-                            true,
-                            offset_ms(ts.get(n as usize).copied().flatten(), t_star),
-                        ),
-                        None => (false, 0.0),
-                    };
-                    // Warmup turn's lead = t\* - its recorded timestamp, capped.
-                    let warm_lead_ms = next_idx.and_then(|n| {
-                        (n >= 1)
-                            .then(|| ts.get((n - 1) as usize).copied().flatten())
-                            .flatten()
-                            .map(|warm_ts| capped_warmup_lead_ms(t_star - warm_ts, cfg.idle_gap_cap_ms))
-                    });
+                .map(|meta| {
+                    let first_offset = meta
+                        .turns
+                        .first()
+                        .and_then(|t| t.timestamp_ms)
+                        .unwrap_or(0.0);
                     LaneDispatch {
                         conversation_id: meta.conversation_id.clone(),
-                        warm_lead_ms,
-                        first_profiling_offset_ms,
-                        has_profiling,
-                        has_warmup,
+                        warm_lead_ms: None,
+                        first_profiling_offset_ms: first_offset,
+                        has_profiling: !meta.turns.is_empty(),
+                        has_warmup: !meta.turns.is_empty(),
                     }
                 })
                 .collect()
         };
 
-        // 2) Cross-lane phase-start offsets (ms) via the ported timing kernel.
+        // 2) Cross-lane phase-start alignment (ms) via the ported timing kernel:
+        // profiling applies the leading-idle cap + burst/spread t0; warmup uses the
+        // global t\*-alignment (largest lead at 0). The per-lane offsets are the
+        // pre-baked t\*-relative first-turn offsets.
+        let raw: Vec<f64> = lanes.iter().map(|l| l.first_profiling_offset_ms).collect();
         let offsets_ms: Vec<f64> = match cfg.phase {
             AgenticPhase::Warmup => {
                 let leads: Vec<Option<f64>> =
-                    lanes.iter().map(|l| l.warm_lead_ms).collect();
+                    lanes.iter().map(|l| Some(l.first_profiling_offset_ms)).collect();
                 warmup_dispatch_offsets_ms(&leads)
             }
             AgenticPhase::Profiling => {
-                let raw: Vec<f64> =
-                    lanes.iter().map(|l| l.first_profiling_offset_ms).collect();
                 profiling_dispatch_delays_ms(&raw, cfg.burst_phase_starts, cfg.idle_gap_cap_ms)
             }
         };

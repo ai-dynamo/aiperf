@@ -1361,6 +1361,18 @@ fn lower_legacy_agentic(
         !convs.is_empty(),
         "legacy weka reconstruction produced no conversations"
     );
+    // Apply the per-lane t\* snapshot slice (Python `AgenticReplayStrategy`): sample
+    // t\* once over each lane's full recorded span, EXCLUDE history (turns before
+    // the profiling resume point), and rebase each retained turn's `timestamp_ms`
+    // to its t\*-relative dispatch offset. The `agentic_replay` workload then owns
+    // only the cross-lane phase-start alignment + dispatch.
+    let convs = crate::agentx::weka_dataset::slice_trajectories_at_tstar(
+        convs, root_seed, 0.0, 1.0,
+    );
+    ensure!(
+        !convs.is_empty(),
+        "legacy weka trajectories produced no profiling turns at t*"
+    );
 
     // Compose the verbatim-replay linear dataset.
     let dataset = compose_weka_agentic_dataset(
