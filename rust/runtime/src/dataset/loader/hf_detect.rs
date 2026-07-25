@@ -167,26 +167,24 @@ fn message_text(message: &Value) -> Option<&str> {
         .or_else(|| message.get("value").and_then(Value::as_str))
 }
 
-/// Text of the first requester turn (`user`/`human`) in a message array.
-pub(crate) fn first_user_message(messages: &[Value]) -> Option<String> {
+/// Text of the first message whose role is in `roles`, in a message array.
+fn first_message_for_roles(messages: &[Value], roles: &[&str]) -> Option<String> {
     messages.iter().find_map(
         |message| match (message_role(message), message_text(message)) {
-            (Some(role), Some(text)) if role == "user" || role == "human" => Some(text.to_string()),
+            (Some(role), Some(text)) if roles.contains(&role) => Some(text.to_string()),
             _ => None,
         },
     )
 }
 
+/// Text of the first requester turn (`user`/`human`) in a message array.
+pub(crate) fn first_user_message(messages: &[Value]) -> Option<String> {
+    first_message_for_roles(messages, &["user", "human"])
+}
+
 /// Text of the first responder turn (`assistant`/`gpt`) in a message array.
 pub(crate) fn first_assistant_message(messages: &[Value]) -> Option<String> {
-    messages.iter().find_map(
-        |message| match (message_role(message), message_text(message)) {
-            (Some(role), Some(text)) if role == "assistant" || role == "gpt" => {
-                Some(text.to_string())
-            }
-            _ => None,
-        },
-    )
+    first_message_for_roles(messages, &["assistant", "gpt"])
 }
 
 #[cfg(test)]

@@ -21,13 +21,7 @@
 //!
 //! All times use integer nanoseconds.
 
-const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
-
-/// Convert a non-negative interval in seconds to integer nanoseconds using
-/// half-to-even rounding.
-fn secs_to_ns(secs: f64) -> i64 {
-    (secs * NANOS_PER_SECOND).round() as i64
-}
+use crate::timing::secs_to_ns;
 
 /// Greatest common divisor via the Euclidean algorithm.
 fn gcd(mut a: usize, mut b: usize) -> usize {

@@ -6,6 +6,34 @@
 use num_bigint::BigInt;
 use serde_json::Value;
 
+use crate::graph::recorded::RecordedTraceError;
+
+/// Coerce `value` to a string, labelling any type mismatch with the calling
+/// parser's `source` (e.g. `"Dynamo"`, `"WEKA"`) and field `label`. Shared by
+/// the recorded-schema parsers so the strict "must be a string" accessor lives
+/// in one place while each parser keeps its own source prefix and error wording.
+pub(super) fn string(
+    value: &Value,
+    source: &str,
+    label: &str,
+) -> Result<String, RecordedTraceError> {
+    value
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| RecordedTraceError(format!("{source} {label} must be a string")))
+}
+
+/// Coerce `value` to a `BigInt` through the Pydantic-compatible [`integer`]
+/// path, labelling any failure with the calling parser's `source` and field
+/// `label`. Shared by the recorded-schema parsers (see [`string`]).
+pub(super) fn integer_labeled(
+    value: &Value,
+    source: &str,
+    label: &str,
+) -> Result<BigInt, RecordedTraceError> {
+    integer(value).ok_or_else(|| RecordedTraceError(format!("{source} {label} must be an integer")))
+}
+
 /// Parse a raw JSON number token (as emitted by a serde_json [`RawValue`]) into
 /// an `i128` hash without ever coercing through `f64`.
 ///

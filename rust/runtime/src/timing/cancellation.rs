@@ -13,8 +13,7 @@ use std::fmt::{Display, Formatter};
 
 use crate::rng::namespace::TIMING_REQUEST_CANCELLATION;
 use crate::rng::{ConfiguredRandomGenerator, RandomGenerator, RngRoot};
-
-const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+use crate::timing::NANOS_PER_SECOND;
 
 /// Benchmark phase relevant to ancillary timing policies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

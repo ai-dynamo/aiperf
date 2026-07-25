@@ -20,6 +20,18 @@ use crate::dataset::model::{ConversationMetadata, SessionId};
 pub trait Sampler {
     /// Return the next identifier, recycling indefinitely.
     fn next(&mut self) -> SessionId;
+
+    /// Advance the sampler's internal state by one draw without materializing the
+    /// identifier. The default recycles through [`Self::next`] and discards the
+    /// clone; samplers whose draw clones an owned [`SessionId`] override this to
+    /// skip that allocation. [`PartitionedSampler`] uses it to consume the draws
+    /// this cell does not own without heap-allocating an id it immediately drops.
+    ///
+    /// The advance MUST be state-identical to one [`Self::next`] call so
+    /// partitioned draw ordering stays byte-exact.
+    fn advance(&mut self) {
+        let _ = self.next();
+    }
 }
 
 /// Factory for one named sampler strategy.
@@ -198,6 +210,11 @@ impl Sampler for RandomSampler {
             .expect("constructor rejects an empty sampler")
             .clone()
     }
+
+    fn advance(&mut self) {
+        // Mirror `next`'s single rng draw exactly, skipping only the clone.
+        let _ = self.rng.choice(&self.ids);
+    }
 }
 
 /// Insertion-order sampling with indefinite wraparound.
@@ -229,6 +246,13 @@ impl Sampler for SequentialSampler {
         let id = self.ids[self.index].clone();
         self.index += 1;
         id
+    }
+
+    fn advance(&mut self) {
+        if self.index == self.ids.len() {
+            self.index = 0;
+        }
+        self.index += 1;
     }
 }
 
@@ -263,6 +287,14 @@ impl Sampler for ShuffleSampler {
         let id = self.ids[self.index].clone();
         self.index += 1;
         id
+    }
+
+    fn advance(&mut self) {
+        if self.index == self.ids.len() {
+            self.rng.shuffle(&mut self.ids);
+            self.index = 0;
+        }
+        self.index += 1;
     }
 }
 
@@ -315,12 +347,13 @@ impl PartitionedSampler {
 impl Sampler for PartitionedSampler {
     fn next(&mut self) -> SessionId {
         loop {
-            let id = self.inner.next();
             let owned = self.partition.owns(self.position);
             self.position += 1;
             if owned {
-                return id;
+                return self.inner.next();
             }
+            // Skip the unowned draw without cloning the id it would yield.
+            self.inner.advance();
         }
     }
 }

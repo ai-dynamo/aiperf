@@ -360,10 +360,7 @@ fn required<'a>(
 }
 
 fn string(value: &Value, label: &str) -> Result<String, RecordedTraceError> {
-    value
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| RecordedTraceError(format!("Dynamo {label} must be a string")))
+    super::super::scalar::string(value, "Dynamo", label)
 }
 
 fn optional_string(
@@ -429,8 +426,7 @@ fn integer_i64(value: &Value, label: &str) -> Result<i64, RecordedTraceError> {
 }
 
 fn bigint(value: &Value, label: &str) -> Result<BigInt, RecordedTraceError> {
-    super::super::scalar::integer(value)
-        .ok_or_else(|| RecordedTraceError(format!("Dynamo {label} must be an integer")))
+    super::super::scalar::integer_labeled(value, "Dynamo", label)
 }
 
 #[cfg(test)]

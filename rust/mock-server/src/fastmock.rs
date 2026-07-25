@@ -142,18 +142,55 @@ fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8
     }
 }
 
-/// The kernel serializes concurrent `accept` calls on the shared listener.
-fn accept_loop_tcp(listener: Arc<TcpListener>, resp: &Responses) {
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+/// A blocking stream listener the fastmock accept loop can run over, abstracting
+/// `TcpListener`/`UnixListener` so the accept and serve logic is written once.
+/// Each implementation applies its own transport tuning (TCP sets
+/// `TCP_NODELAY`; the Unix socket has no such knob) inside [`accept_conn`].
+///
+/// [`accept_conn`]: FastListener::accept_conn
+trait FastListener: Send + Sync + 'static {
+    /// The accepted connection stream type (`TcpStream` / `UnixStream`).
+    type Stream: Read + Write + Send + 'static;
+
+    /// Accept the next connection, applying transport tuning. Errors are
+    /// returned so the caller can skip a failed accept and keep looping, exactly
+    /// as `Incoming` iteration did.
+    fn accept_conn(&self) -> std::io::Result<Self::Stream>;
+}
+
+impl FastListener for TcpListener {
+    type Stream = std::net::TcpStream;
+
+    fn accept_conn(&self) -> std::io::Result<Self::Stream> {
+        let (stream, _peer) = self.accept()?;
         stream.set_nodelay(true).ok();
+        Ok(stream)
+    }
+}
+
+#[cfg(unix)]
+impl FastListener for std::os::unix::net::UnixListener {
+    type Stream = std::os::unix::net::UnixStream;
+
+    fn accept_conn(&self) -> std::io::Result<Self::Stream> {
+        let (stream, _peer) = self.accept()?;
+        Ok(stream)
+    }
+}
+
+/// The kernel serializes concurrent `accept` calls on the shared listener.
+fn accept_loop<L: FastListener>(listener: Arc<L>, resp: &Responses) {
+    loop {
+        let Ok(stream) = listener.accept_conn() else {
+            continue;
+        };
         let chat = resp.chat.clone();
         let models = resp.models.clone();
         thread::spawn(move || handle(stream, chat, models));
     }
 }
 
-fn serve_tcp(listener: TcpListener, threads: usize) {
+fn serve<L: FastListener>(listener: L, threads: usize) {
     let listener = Arc::new(listener);
     let resp = Arc::new(build_responses());
     let threads = threads.max(1);
@@ -161,33 +198,7 @@ fn serve_tcp(listener: TcpListener, threads: usize) {
     for _ in 0..threads {
         let l = listener.clone();
         let r = resp.clone();
-        handles.push(thread::spawn(move || accept_loop_tcp(l, &r)));
-    }
-    for h in handles {
-        let _ = h.join();
-    }
-}
-
-#[cfg(unix)]
-fn accept_loop_unix(listener: Arc<std::os::unix::net::UnixListener>, resp: &Responses) {
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let chat = resp.chat.clone();
-        let models = resp.models.clone();
-        thread::spawn(move || handle(stream, chat, models));
-    }
-}
-
-#[cfg(unix)]
-fn serve_unix(listener: std::os::unix::net::UnixListener, threads: usize) {
-    let listener = Arc::new(listener);
-    let resp = Arc::new(build_responses());
-    let threads = threads.max(1);
-    let mut handles = Vec::with_capacity(threads);
-    for _ in 0..threads {
-        let l = listener.clone();
-        let r = resp.clone();
-        handles.push(thread::spawn(move || accept_loop_unix(l, &r)));
+        handles.push(thread::spawn(move || accept_loop(l, &r)));
     }
     for h in handles {
         let _ = h.join();
@@ -247,7 +258,7 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
         }
         let listener = std::os::unix::net::UnixListener::bind(&uds_path)?;
         println!("fastmock listening on uds:{uds_path} ({threads} accept threads)");
-        serve_unix(listener, threads);
+        serve(listener, threads);
         return Ok(());
     }
 
@@ -256,6 +267,6 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
         "fastmock listening on {}:{} ({threads} accept threads)",
         config.host, config.port
     );
-    serve_tcp(listener, threads);
+    serve(listener, threads);
     Ok(())
 }

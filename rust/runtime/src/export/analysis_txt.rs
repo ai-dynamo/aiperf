@@ -33,6 +33,9 @@ pub fn render_analysis_txt(a: &DatasetAnalysis) -> String {
     if let Some(timeline) = timeline_table(a) {
         blocks.push(timeline);
     }
+    if let Some(conversations) = per_conversation_table(a) {
+        blocks.push(conversations);
+    }
     blocks.join("\n")
 }
 
@@ -132,6 +135,46 @@ fn lengths_table(a: &DatasetAnalysis) -> String {
         WIDTH,
     );
     format!("{lengths}\n{budget}")
+}
+
+/// Per-conversation length breakdown, rendered only when the analysis carries
+/// one (i.e. `--dataset-analysis-per-conversation`). One row per conversation
+/// with its turn count and input/output length means.
+fn per_conversation_table(a: &DatasetAnalysis) -> Option<String> {
+    let conversations = a.conversations.as_ref()?;
+    let rows: Vec<Vec<String>> = conversations
+        .iter()
+        .map(|c| {
+            let isl_avg = c
+                .lengths
+                .isl
+                .as_ref()
+                .map_or_else(|| "-".to_string(), |s| num(s.mean));
+            let osl_avg = c
+                .lengths
+                .osl
+                .as_ref()
+                .map_or_else(|| "-".to_string(), |s| num(s.mean));
+            vec![
+                c.conversation_id.clone(),
+                c.turns.to_string(),
+                isl_avg,
+                osl_avg,
+            ]
+        })
+        .collect();
+    Some(render_table(
+        "NVIDIA AIPerf | Per-Conversation Lengths",
+        &["conversation", "turns", "isl avg", "osl avg"],
+        &rows,
+        &[
+            Justify::Left,
+            Justify::Right,
+            Justify::Right,
+            Justify::Right,
+        ],
+        WIDTH,
+    ))
 }
 
 /// Per-turn-index breakdown: reach, ISL/OSL, history growth, think time.

@@ -7,6 +7,7 @@
 
 use serde_json::{Map, Value};
 
+use crate::jsonnum::num;
 use crate::search::{SlaFilter, op_str};
 
 /// Read one metric value from either sweep-aggregate layout:
@@ -31,13 +32,6 @@ fn read_metric_value(metrics: &Map<String, Value>, metric_tag: &str, stat: &str)
         }
     }
     None
-}
-
-/// A finite `f64` as a JSON number, else JSON `null`.
-fn num(v: f64) -> Value {
-    serde_json::Number::from_f64(v)
-        .map(Value::Number)
-        .unwrap_or(Value::Null)
 }
 
 /// Per-filter breach records for one row, preserving filter order. A filter

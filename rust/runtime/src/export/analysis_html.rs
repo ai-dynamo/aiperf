@@ -214,6 +214,12 @@ function pctfmt(x){
   if (x === null || x === undefined || !isFinite(x)) return '—';
   return (x * 100).toFixed(1) + '%';
 }
+// Escape text destined for innerHTML (conversation ids are endpoint-provided).
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
 function mutedNote(sel, msg){
   d3.select(sel).html('<div class="muted-note">' + msg + '</div>');
 }
@@ -871,6 +877,22 @@ function renderRawTables(){
         '<td>' + (r.osl ? num(r.osl.p50, 1) : '—') + '</td>' +
         '<td>' + (r.mean_history_growth == null ? '—' : num(r.mean_history_growth, 1)) + '</td>' +
         '<td>' + (r.authored_think_time_ms ? num(r.authored_think_time_ms.p50, 1) : '—') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  // Per-conversation table, present only when the breakdown was requested
+  // (`--dataset-analysis-per-conversation`).
+  const conv = DATA.conversations || [];
+  if (conv.length){
+    html += '<table style="margin-top:14px;"><thead><tr><th>conversation</th><th>turns</th>' +
+      '<th>ISL mean</th><th>OSL mean</th><th>total tokens</th></tr></thead><tbody>';
+    conv.forEach(function(c){
+      const cl = c.lengths || {};
+      html += '<tr><td>' + esc(c.conversation_id) + '</td><td>' + intfmt(c.turns) + '</td>' +
+        '<td>' + (cl.isl ? num(cl.isl.mean, 1) : '—') + '</td>' +
+        '<td>' + (cl.osl ? num(cl.osl.mean, 1) : '—') + '</td>' +
+        '<td>' + intfmt(cl.grand_total_tokens) + '</td></tr>';
     });
     html += '</tbody></table>';
   }

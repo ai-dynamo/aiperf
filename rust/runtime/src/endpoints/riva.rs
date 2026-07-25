@@ -288,14 +288,6 @@ impl PreparedEndpoint for PreparedRivaEndpoint {
         self.behavior.extract_payload_inputs(body)
     }
 
-    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
-        record
-            .responses
-            .iter()
-            .filter_map(|response| self.parse_response(response).transpose())
-            .collect()
-    }
-
     fn build_assistant_turn(&self, _record: &RequestRecord) -> EndpointResult<Option<Turn>> {
         Ok(None)
     }

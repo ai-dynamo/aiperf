@@ -591,7 +591,9 @@ fn decode_error(label: &str, error: prost::DecodeError) -> CodecError {
     CodecError::new(format!("decode {label}: {error}"))
 }
 
-fn finite_number(value: f64, label: &str) -> Result<Value, CodecError> {
+/// Wrap a finite float as a JSON number, labeling the source for the
+/// non-finite error. Shared with the KServe tensor codec ([`super::codec`]).
+pub(super) fn finite_number(value: f64, label: &str) -> Result<Value, CodecError> {
     Number::from_f64(value)
         .map(Value::Number)
         .ok_or_else(|| CodecError::new(format!("{label} is non-finite")))

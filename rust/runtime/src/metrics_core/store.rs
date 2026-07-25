@@ -1459,12 +1459,21 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             // change OSL/TPOT/throughput but never pads this timestamp vector;
             // ICL is defined by adjacent content responses.
             let arrivals = token_arrivals_ns;
-            if arrivals.windows(2).all(|pair| pair[1] >= pair[0]) {
-                self.set_ragged_values_iter(
-                    row,
-                    MetricTag::InterChunkLatency,
-                    arrivals.windows(2).map(|pair| (pair[1] - pair[0]) as f64),
-                );
+            // Single pass over adjacent arrivals: collect the inter-chunk deltas
+            // while verifying the timestamps are non-decreasing, bailing on the
+            // first inversion. ICL is only defined for monotonic content-chunk
+            // arrivals, so an out-of-order pair suppresses the metric entirely.
+            let mut deltas = Vec::with_capacity(arrivals.len().saturating_sub(1));
+            let mut monotonic = true;
+            for pair in arrivals.windows(2) {
+                if pair[1] < pair[0] {
+                    monotonic = false;
+                    break;
+                }
+                deltas.push((pair[1] - pair[0]) as f64);
+            }
+            if monotonic {
+                self.set_ragged_values_iter(row, MetricTag::InterChunkLatency, deltas);
             }
             self.populate_usage_metrics(row, record.usage);
             self.populate_http_metrics(row, record.http);

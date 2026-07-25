@@ -297,34 +297,27 @@ fn metric_label(name: &str, entry: &MetricEntry) -> String {
     }
 }
 
-/// Extract one stat key from the type-specific report statistics.
+/// Extract one stat key from the type-specific report statistics. The four
+/// report-stat variants are matched once in the shared
+/// [`crate::export::flatten_stats`]; the single-valued scalar/counter variants
+/// broadcast their lone value across the avg/min/max/p50/p90/p99 columns.
 fn stat_value(stats: &ReportStats, key: &str) -> Option<f64> {
-    let val = |v: &ReportValue| match v {
-        ReportValue::Finite(f) => Some(*f),
-        ReportValue::NonFinite => None,
-    };
-    match stats {
-        ReportStats::Distribution(d) => match key {
-            "avg" => d.avg.as_ref().and_then(val),
-            "min" => d.min.as_ref().and_then(val),
-            "max" => d.max.as_ref().and_then(val),
-            "std" => d.std.as_ref().and_then(val),
-            "p50" | "p90" | "p99" => d.percentiles.get(key).and_then(val),
+    let canonical = crate::export::flatten_stats(stats);
+    let get = |value: Option<ReportValue>| value.and_then(crate::export::finite_passthrough);
+    if canonical.single_value {
+        match key {
+            "avg" | "min" | "max" | "p50" | "p90" | "p99" => get(canonical.avg),
             _ => None,
-        },
-        ReportStats::Scalar(s) => match key {
-            "avg" | "min" | "max" | "p50" | "p90" | "p99" => val(&s.value),
+        }
+    } else {
+        match key {
+            "avg" => get(canonical.avg),
+            "min" => get(canonical.min),
+            "max" => get(canonical.max),
+            "std" => get(canonical.std),
+            "p50" | "p90" | "p99" => get(canonical.percentiles.get(key).copied()),
             _ => None,
-        },
-        ReportStats::Counter(c) => match key {
-            "avg" | "min" | "max" | "p50" | "p90" | "p99" => val(&c.total),
-            _ => None,
-        },
-        ReportStats::Histogram(h) => match key {
-            "avg" => h.avg.as_ref().and_then(val),
-            "p50" | "p90" | "p99" => h.percentiles.get(key).and_then(val),
-            _ => None,
-        },
+        }
     }
 }
 
@@ -452,13 +445,7 @@ fn round2(value: f64) -> f64 {
 
 /// Default run name `aiperf-<benchmark_id[:8]>`, or `aiperf-run` when no id.
 fn default_run_name(benchmark_id: Option<&str>) -> String {
-    match benchmark_id {
-        Some(id) if !id.is_empty() => {
-            let id8: String = id.chars().take(8).collect();
-            format!("aiperf-{id8}")
-        }
-        _ => "aiperf-run".to_string(),
-    }
+    crate::export::default_run_name(benchmark_id, || "aiperf-run".to_string())
 }
 
 /// Per-record routing info stamped with the run/stream id.

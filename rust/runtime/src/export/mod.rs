@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::extensions::{DuplicateName, RegistryId};
 use crate::metrics_core::NativeReport;
-use crate::metrics_core::report::{MetricSeries, ReportValue};
+use crate::metrics_core::report::{MetricSeries, ReportStats, ReportValue};
 
 /// Classification of a metric's series for summary selection.
 ///
@@ -114,6 +114,108 @@ pub(crate) fn finite_guarded(value: ReportValue) -> Option<f64> {
     match value {
         ReportValue::Finite(value) if value.is_finite() => Some(value),
         _ => None,
+    }
+}
+
+/// Empty percentile table borrowed by the scalar-shaped [`CanonicalStats`]
+/// variants, which carry no `pN` map of their own.
+static EMPTY_PERCENTILES: std::sync::LazyLock<BTreeMap<String, ReportValue>> =
+    std::sync::LazyLock::new(BTreeMap::new);
+
+/// A metric's type-specific statistics projected into one flat, exporter-neutral
+/// shape.
+///
+/// Every [`Exporter`] that emits per-stat values builds this once via
+/// [`flatten_stats`] instead of re-matching [`ReportStats`]'s four variants, so a
+/// newly added stat field is surfaced to all consumers in one place rather than
+/// silently dropped by an out-of-date per-exporter match arm.
+///
+/// Values are the raw [`ReportValue`]s — finiteness is each sink's own policy.
+/// The borrowed `percentiles` table is the variant's own `pN` map (empty for the
+/// single-valued scalar/counter variants).
+pub(crate) struct CanonicalStats<'a> {
+    /// Representative value: distribution/histogram average, or scalar value /
+    /// counter total. The bare-tag value, and the lone value `single_value`
+    /// emitters broadcast across their columns.
+    pub avg: Option<ReportValue>,
+    /// Minimum observation (distribution only).
+    pub min: Option<ReportValue>,
+    /// Maximum observation (distribution only).
+    pub max: Option<ReportValue>,
+    /// Population standard deviation (distribution only).
+    pub std: Option<ReportValue>,
+    /// Observation count (distribution/histogram).
+    pub count: Option<u64>,
+    /// Sum of observations (histogram only).
+    pub sum: Option<ReportValue>,
+    /// Percentile table keyed by `pN`.
+    pub percentiles: &'a BTreeMap<String, ReportValue>,
+    /// True for the single-valued variants (scalar/counter): the representative
+    /// stands in for the min/max/percentile columns.
+    pub single_value: bool,
+}
+
+/// Project a [`ReportStats`] into the flat [`CanonicalStats`] shape shared by the
+/// exporters. This is the single place the four report-stat variants are matched.
+pub(crate) fn flatten_stats(stats: &ReportStats) -> CanonicalStats<'_> {
+    match stats {
+        ReportStats::Distribution(dist) => CanonicalStats {
+            avg: dist.avg,
+            min: dist.min,
+            max: dist.max,
+            std: dist.std,
+            count: dist.count.map(|count| count as u64),
+            sum: None,
+            percentiles: &dist.percentiles,
+            single_value: false,
+        },
+        ReportStats::Scalar(scalar) => CanonicalStats {
+            avg: Some(scalar.value),
+            min: None,
+            max: None,
+            std: None,
+            count: None,
+            sum: None,
+            percentiles: &EMPTY_PERCENTILES,
+            single_value: true,
+        },
+        ReportStats::Counter(counter) => CanonicalStats {
+            avg: Some(counter.total),
+            min: None,
+            max: None,
+            std: None,
+            count: None,
+            sum: None,
+            percentiles: &EMPTY_PERCENTILES,
+            single_value: true,
+        },
+        ReportStats::Histogram(hist) => CanonicalStats {
+            avg: hist.avg,
+            min: None,
+            max: None,
+            std: None,
+            count: Some(hist.count),
+            sum: Some(hist.sum),
+            percentiles: &hist.percentiles,
+            single_value: false,
+        },
+    }
+}
+
+/// Derive a default run name `aiperf-<benchmark_id[:8]>` from a benchmark id,
+/// truncating on a character boundary (never byte-slicing, which panics on a
+/// multibyte id). When the id is absent or empty, `fallback` supplies the name;
+/// each exporter passes its own no-id fallback.
+pub(crate) fn default_run_name(
+    benchmark_id: Option<&str>,
+    fallback: impl FnOnce() -> String,
+) -> String {
+    match benchmark_id {
+        Some(id) if !id.is_empty() => {
+            let id8: String = id.chars().take(8).collect();
+            format!("aiperf-{id8}")
+        }
+        _ => fallback(),
     }
 }
 

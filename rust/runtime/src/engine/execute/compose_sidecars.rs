@@ -837,8 +837,8 @@ pub(crate) async fn execute_native_inner(
                         options: crate::dataset::analysis::AnalysisOptions {
                             block_size: request.artifacts.dataset_analysis_block_size.unwrap_or(16),
                             explicit_cache_blocks: request.artifacts.dataset_analysis_cache_blocks,
+                            per_conversation: request.artifacts.dataset_analysis_per_conversation,
                         },
-                        per_conversation: request.artifacts.dataset_analysis_per_conversation,
                     };
                 crate::engine::dataset_analysis_writer::write_dataset_analysis_from_records(
                     &analysis_request,

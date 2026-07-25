@@ -19,9 +19,9 @@ use std::rc::Rc;
 use crate::clock::Clock;
 use crate::rng::namespace::TIMING_RAMP_POISSON;
 use crate::rng::{ConfiguredRandomGenerator, RandomGenerator, RngRoot};
+use crate::timing::NANOS_PER_SECOND;
 use tokio::task::JoinHandle;
 
-const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 const DEFAULT_STEP_SIZE: f64 = 1.0;
 const DEFAULT_EXPONENT: f64 = 2.0;
 

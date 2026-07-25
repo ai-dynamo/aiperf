@@ -8,6 +8,13 @@
 //! can hold an [`SseMessage`] without creating a `core → http` dependency; the SSE
 //! *reader* that produces them stays in `transport::http::sse`.
 
+use smallvec::SmallVec;
+
+/// Inline capacity for an SSE message's fields. Almost every frame carries a
+/// single `data:` field; `event`/`id`/comment stay inline too, so the common
+/// per-token frame parses without a heap allocation for the field list.
+type SseFields = SmallVec<[SseField; 4]>;
+
 /// A named SSE field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SseFieldName {
@@ -45,7 +52,7 @@ pub struct SseMessage {
     /// Clock-nanoseconds when this message arrived.
     pub perf_ns: i64,
     /// Parsed fields, in order.
-    pub packets: Vec<SseField>,
+    pub packets: SseFields,
 }
 
 impl SseMessage {
@@ -55,7 +62,7 @@ impl SseMessage {
     /// a colon-less line is name-only. A continuation after an unterminated
     /// `data: {` value is appended with a literal `\n`.
     pub fn parse(raw: &str, perf_ns: i64) -> Self {
-        let mut packets: Vec<SseField> = Vec::new();
+        let mut packets: SseFields = SmallVec::new();
         for line in raw.lines() {
             let line = line.trim();
             if line.is_empty() {

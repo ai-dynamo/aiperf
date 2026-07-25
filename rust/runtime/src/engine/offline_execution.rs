@@ -862,6 +862,23 @@ pub fn validated_dynosim_transport(
         .ok_or_else(|| anyhow!("dynosim pair received a different transport config type"))
 }
 
+/// Reject a dynosim run that authored common (non-backend) artifacts.
+///
+/// dynosim paths project no request/raw/output/user-file artifacts of their own;
+/// callers supply the path-specific `rejection` message so the scheduled and
+/// direct-graph sites keep their distinct wording while sharing one predicate.
+fn ensure_no_common_artifacts(run: &AuthoredRunSpecV2, rejection: &str) -> Result<()> {
+    ensure!(
+        run.artifacts.records_path.is_none()
+            && run.artifacts.raw_path.is_none()
+            && run.artifacts.outputs_path.is_none()
+            && !run.artifacts.trace
+            && run.artifacts.user_files.is_empty(),
+        "{rejection}"
+    );
+    Ok(())
+}
+
 /// Run-level validation for a dynosim scheduled run.
 ///
 /// Called by the scheduled workload factory when the resolved transport is a
@@ -882,14 +899,10 @@ pub(crate) fn dynosim_scheduled_validate_run(
         context.sidecar_inputs().is_empty(),
         "dynosim scheduled execution does not support online sidecars"
     );
-    ensure!(
-        run.artifacts.records_path.is_none()
-            && run.artifacts.raw_path.is_none()
-            && run.artifacts.outputs_path.is_none()
-            && !run.artifacts.trace
-            && run.artifacts.user_files.is_empty(),
-        "dynosim scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
-    );
+    ensure_no_common_artifacts(
+        run,
+        "dynosim scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them",
+    )?;
     // The artifact directory may already exist because the parent creates it for
     // logging. Backend artifacts still reject pre-existing output files.
     Ok(())
@@ -1467,14 +1480,10 @@ pub(crate) fn prepare_dynosim_graph(
             && matches!(run.models.strategy, ModelSelectionStrategy::RoundRobin),
         "dynosim direct graph requires exactly one round_robin model"
     );
-    ensure!(
-        run.artifacts.records_path.is_none()
-            && run.artifacts.raw_path.is_none()
-            && run.artifacts.outputs_path.is_none()
-            && !run.artifacts.trace
-            && run.artifacts.user_files.is_empty(),
-        "dynosim direct graph rejects common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
-    );
+    ensure_no_common_artifacts(
+        run,
+        "dynosim direct graph rejects common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them",
+    )?;
     // The artifact directory may already exist because the parent creates it for
     // logging. Backend artifacts still reject pre-existing output files.
     let model = run.models.items[0].name.clone();

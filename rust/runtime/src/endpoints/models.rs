@@ -3,6 +3,7 @@
 
 //! Shared endpoint request, response, and error models.
 
+use std::borrow::Cow;
 use std::fmt::{self, Display};
 
 use bytes::Bytes;
@@ -247,6 +248,33 @@ impl ResponseData {
             | Self::Images(_)
             | Self::Audio(_)
             | Self::Video(_) => String::new(),
+        }
+    }
+
+    /// Borrowing form of [`Self::get_text`] that avoids cloning when the text is
+    /// a single owned field. Combined-field variants (reasoning+content,
+    /// tool-call+content) still allocate the concatenation.
+    pub fn get_text_cow(&self) -> Cow<'_, str> {
+        match self {
+            Self::Text { text } => Cow::Borrowed(text),
+            Self::TokenIds { .. } => Cow::Borrowed(""),
+            Self::Reasoning { content, reasoning } => match content {
+                Some(content) => Cow::Owned(format!("{reasoning}{content}")),
+                None => Cow::Borrowed(reasoning),
+            },
+            Self::ToolCall {
+                tool_call_text,
+                content,
+            } => match content {
+                Some(content) => Cow::Owned(format!("{content}{tool_call_text}")),
+                None => Cow::Borrowed(tool_call_text),
+            },
+            Self::Embeddings { .. }
+            | Self::Rankings { .. }
+            | Self::ImageRetrieval { .. }
+            | Self::Images(_)
+            | Self::Audio(_)
+            | Self::Video(_) => Cow::Borrowed(""),
         }
     }
 

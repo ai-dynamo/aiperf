@@ -13,16 +13,14 @@
 //! `clock.sleep`s to it — identical code on real and virtual clocks.
 
 use crate::rng::{ConfiguredRandomGenerator, RandomGenerator};
+use crate::timing::secs_to_ns;
 
-const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
-
-/// Convert a non-negative interval in seconds to integer nanoseconds with
-/// ties-away-from-zero rounding. Non-finite or negative inputs clamp to 0.
-fn secs_to_ns(secs: f64) -> i64 {
-    if !secs.is_finite() || secs <= 0.0 {
-        return 0;
-    }
-    (secs * NANOS_PER_SECOND).round() as i64
+/// Assert a positive average request rate, panicking with a generator-named
+/// message otherwise. Every rate-driven generator requires `rate > 0` both at
+/// construction and on `set_rate`.
+#[inline]
+fn assert_positive_rate(name: &str, rate: f64) {
+    assert!(rate > 0.0, "{name} rate must be > 0, got {rate}");
 }
 
 /// Arrival pattern selecting the inter-arrival distribution.
@@ -59,7 +57,7 @@ pub struct Poisson {
 impl Poisson {
     /// Requires `rate > 0`.
     pub fn new(rate: f64, seed: u64) -> Self {
-        assert!(rate > 0.0, "Poisson rate must be > 0, got {rate}");
+        assert_positive_rate("Poisson", rate);
         Self {
             rate,
             rng: ConfiguredRandomGenerator::from_seed_or_entropy(Some(seed)),
@@ -73,7 +71,7 @@ impl IntervalGenerator for Poisson {
         secs_to_ns(self.rng.expovariate(self.rate))
     }
     fn set_rate(&mut self, rate: f64) {
-        assert!(rate > 0.0, "Poisson rate must be > 0, got {rate}");
+        assert_positive_rate("Poisson", rate);
         self.rate = rate;
     }
     fn rate(&self) -> f64 {
@@ -98,7 +96,7 @@ pub struct GammaProcess {
 impl GammaProcess {
     /// Requires `rate > 0` and `smoothness > 0`. `smoothness = 1` == Poisson.
     pub fn new(rate: f64, smoothness: f64, seed: u64) -> Self {
-        assert!(rate > 0.0, "Gamma rate must be > 0, got {rate}");
+        assert_positive_rate("Gamma", rate);
         assert!(
             smoothness > 0.0,
             "Gamma smoothness must be > 0, got {smoothness}"
@@ -126,7 +124,7 @@ impl IntervalGenerator for GammaProcess {
         )
     }
     fn set_rate(&mut self, rate: f64) {
-        assert!(rate > 0.0, "Gamma rate must be > 0, got {rate}");
+        assert_positive_rate("Gamma", rate);
         self.rate = rate;
         self.scale = Self::scale(rate, self.smoothness);
     }
@@ -144,7 +142,7 @@ pub struct Constant {
 impl Constant {
     /// Requires `rate > 0`.
     pub fn new(rate: f64) -> Self {
-        assert!(rate > 0.0, "Constant rate must be > 0, got {rate}");
+        assert_positive_rate("Constant", rate);
         Self {
             rate,
             period_ns: secs_to_ns(1.0 / rate),
@@ -157,7 +155,7 @@ impl IntervalGenerator for Constant {
         self.period_ns
     }
     fn set_rate(&mut self, rate: f64) {
-        assert!(rate > 0.0, "Constant rate must be > 0, got {rate}");
+        assert_positive_rate("Constant", rate);
         self.rate = rate;
         self.period_ns = secs_to_ns(1.0 / rate);
     }

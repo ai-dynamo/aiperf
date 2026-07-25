@@ -14,6 +14,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+use crate::jsonnum::num as scrub;
 use crate::model::export::AIPERF_V1_VERSION;
 
 /// Per-metric statistic keys pooled across runs in artifact order. In the native v1
@@ -66,13 +67,6 @@ impl ConfidenceMetric {
         m.insert("unit".into(), Value::String(self.unit.clone()));
         Value::Object(m)
     }
-}
-
-/// Wrap an `f64` as a JSON number, coercing non-finite (NaN/±inf) to `null`
-fn scrub(v: f64) -> Value {
-    serde_json::Number::from_f64(v)
-        .map(Value::Number)
-        .unwrap_or(Value::Null)
 }
 
 /// Compute the confidence statistics for one metric's run-level values.

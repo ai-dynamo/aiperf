@@ -426,9 +426,7 @@ impl Composer for SingleTurnComposer {
     ) -> Result<Vec<Conversation>> {
         let mut state = config.state(tokenizer, segments)?;
         let mut generator = SessionIdGenerator::new(config.rng_root.seed(), "session");
-        let mut conversations = Vec::<Conversation>::new();
-        let mut positions = HashMap::<SessionId, usize>::new();
-        let mut parents = Vec::<Option<Handle>>::new();
+        let mut acc = ConversationAccumulator::new();
         let uuid_and_strip = config
             .format_options
             .get("uuid_and_strip")
@@ -449,28 +447,17 @@ impl Composer for SingleTurnComposer {
                     seen_uuids.entry(session_id.clone()).or_default(),
                 );
             }
-            let position = match positions.get(&session_id).copied() {
-                Some(position) => position,
-                None => {
-                    let position = conversations.len();
-                    let (conversation, parent) =
-                        start_conversation(session_id.clone(), position, &mut state)?;
-                    conversations.push(conversation);
-                    parents.push(parent);
-                    positions.insert(session_id, position);
-                    position
-                }
-            };
-            let turn = compose_simple_turn(row, &mut parents[position], &mut state)?;
-            conversations[position].turns.push(turn);
+            let position = acc.ensure_conversation(session_id, &mut state, || {})?;
+            let turn = compose_simple_turn(row, &mut acc.parents[position], &mut state)?;
+            acc.conversations[position].turns.push(turn);
         }
-        for conversation in &mut conversations {
+        for conversation in &mut acc.conversations {
             if conversation.turns.len() > 1 {
                 conversation.context_mode =
                     Some(ConversationContextMode::MessageArrayWithResponses);
             }
         }
-        Ok(conversations)
+        Ok(acc.conversations)
     }
 }
 
@@ -484,9 +471,7 @@ impl Composer for MultiTurnComposer {
     ) -> Result<Vec<Conversation>> {
         let mut state = config.state(tokenizer, segments)?;
         let mut generator = SessionIdGenerator::new(config.rng_root.seed(), "session");
-        let mut conversations = Vec::<Conversation>::new();
-        let mut positions = HashMap::<SessionId, usize>::new();
-        let mut parents = Vec::<Option<Handle>>::new();
+        let mut acc = ConversationAccumulator::new();
         // A leading authored `system` turn eligible for hoisting is held here
         // (not yet interned) until the NEXT turn of its session decides its
         // fate: a following non-system turn commits the hoist into
@@ -495,7 +480,7 @@ impl Composer for MultiTurnComposer {
         // (matching Python, which only merges `system_message` as a leading
         // rendered system message during warmup). Deferring avoids interning
         // then having to unwind the segment parent chain. Indexed by conversation
-        // position, parallel to `parents`.
+        // position, parallel to `acc.parents`.
         let mut pending_system = Vec::<Option<SingleTurnRow>>::new();
 
         for raw in rows {
@@ -505,19 +490,8 @@ impl Composer for MultiTurnComposer {
                 .as_deref()
                 .map(SessionId::from)
                 .unwrap_or_else(|| generator.next_id());
-            let position = match positions.get(&session_id).copied() {
-                Some(position) => position,
-                None => {
-                    let position = conversations.len();
-                    let (conversation, parent) =
-                        start_conversation(session_id.clone(), position, &mut state)?;
-                    conversations.push(conversation);
-                    parents.push(parent);
-                    pending_system.push(None);
-                    positions.insert(session_id, position);
-                    position
-                }
-            };
+            let position =
+                acc.ensure_conversation(session_id, &mut state, || pending_system.push(None))?;
             for authored_turn in row.turns {
                 if state.config.hoist_leading_system_message {
                     if let Some(pending) = pending_system[position].take() {
@@ -526,22 +500,25 @@ impl Composer for MultiTurnComposer {
                             // Second consecutive leading system turn: un-hoist the
                             // deferred one as a normal turn, then fall through so
                             // this one dispatches normally too.
-                            let turn =
-                                compose_simple_turn(pending, &mut parents[position], &mut state)?;
-                            conversations[position].turns.push(turn);
+                            let turn = compose_simple_turn(
+                                pending,
+                                &mut acc.parents[position],
+                                &mut state,
+                            )?;
+                            acc.conversations[position].turns.push(turn);
                         } else {
                             // Commit the hoist: intern the deferred system text at
                             // the conversation level, then fall through to dispatch
                             // this (non-system) turn normally.
                             commit_system_hoist(
-                                &mut conversations[position],
+                                &mut acc.conversations[position],
                                 &pending,
-                                &mut parents[position],
+                                &mut acc.parents[position],
                                 &mut state,
                             )?;
                         }
-                    } else if conversations[position].turns.is_empty()
-                        && conversations[position].system.is_none()
+                    } else if acc.conversations[position].turns.is_empty()
+                        && acc.conversations[position].system.is_none()
                         && hoistable_system_text(&authored_turn).is_some()
                     {
                         // Defer this leading, text-only system turn.
@@ -549,21 +526,25 @@ impl Composer for MultiTurnComposer {
                         continue;
                     }
                 }
-                let turn = compose_simple_turn(authored_turn, &mut parents[position], &mut state)?;
-                conversations[position].turns.push(turn);
+                let turn =
+                    compose_simple_turn(authored_turn, &mut acc.parents[position], &mut state)?;
+                acc.conversations[position].turns.push(turn);
             }
         }
 
         // Flush any still-deferred leading system turn: it was the session's only
         // turn, so a conversation-level system message would leave it
         // undispatchable. Restore it as a normal turn (pre-hoist behavior).
-        for position in 0..conversations.len() {
+        // Indexes three parallel arrays (`pending_system`, `acc.parents`,
+        // `acc.conversations`) by the same position, so a range loop is required.
+        #[allow(clippy::needless_range_loop)]
+        for position in 0..acc.conversations.len() {
             if let Some(pending) = pending_system[position].take() {
-                let turn = compose_simple_turn(pending, &mut parents[position], &mut state)?;
-                conversations[position].turns.push(turn);
+                let turn = compose_simple_turn(pending, &mut acc.parents[position], &mut state)?;
+                acc.conversations[position].turns.push(turn);
             }
         }
-        Ok(conversations)
+        Ok(acc.conversations)
     }
 }
 
@@ -629,6 +610,56 @@ fn commit_system_hoist(
     conversation.system = Some(handle);
     *parent = Some(handle);
     Ok(())
+}
+
+/// Per-session conversation accumulator shared by the single- and multi-turn
+/// composers.
+///
+/// Both composers grow one [`Conversation`] per distinct session id while
+/// tracking the live segment parent [`Handle`] in a `parents` array parallel to
+/// `conversations`, indexed through `positions`. Centralizing the first-sight
+/// bookkeeping here keeps those two arrays and the index in lockstep — the wiring
+/// is written once rather than duplicated (and risked) per composer.
+struct ConversationAccumulator {
+    /// Growing conversations, one per session position.
+    conversations: Vec<Conversation>,
+    /// Live segment parent handle per conversation, parallel to `conversations`.
+    parents: Vec<Option<Handle>>,
+    /// Session id to its position in `conversations`.
+    positions: HashMap<SessionId, usize>,
+}
+
+impl ConversationAccumulator {
+    /// An empty accumulator.
+    fn new() -> Self {
+        Self {
+            conversations: Vec::new(),
+            parents: Vec::new(),
+            positions: HashMap::new(),
+        }
+    }
+
+    /// Return the position of `session_id`'s conversation, starting a new one the
+    /// first time a session is seen. `on_new` runs exactly once per created
+    /// conversation, letting a caller extend its own parallel per-conversation
+    /// array (e.g. the multi-turn `pending_system`) in lockstep with this one.
+    fn ensure_conversation(
+        &mut self,
+        session_id: SessionId,
+        state: &mut ComposeState<'_>,
+        on_new: impl FnOnce(),
+    ) -> Result<usize> {
+        if let Some(position) = self.positions.get(&session_id).copied() {
+            return Ok(position);
+        }
+        let position = self.conversations.len();
+        let (conversation, parent) = start_conversation(session_id.clone(), position, state)?;
+        self.conversations.push(conversation);
+        self.parents.push(parent);
+        self.positions.insert(session_id, position);
+        on_new();
+        Ok(position)
+    }
 }
 
 fn start_conversation(

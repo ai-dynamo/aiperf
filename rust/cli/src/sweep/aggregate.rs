@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use crate::flags::ProfileFlags;
+use crate::jsonnum::num as f;
+use crate::stats::percentile_linear;
 use crate::sweep::artifact_dir::IterationOrder;
 use crate::sweep::confidence::{self, ConfidenceMetric};
 
@@ -556,14 +558,6 @@ fn json_metric_stats(
         m.insert("sum".into(), f(s));
     }
     Some(m)
-}
-
-/// Wrap an f64 as a JSON number (finite; NaN/inf never reach here for the
-/// single-trial constants and report values are validated numeric).
-fn f(v: f64) -> Value {
-    serde_json::Number::from_f64(v)
-        .map(Value::Number)
-        .unwrap_or(Value::Null)
 }
 
 /// Collect distinct parameter values in first-seen order.
@@ -1559,23 +1553,4 @@ fn load_jsonl_metrics(dir: &Path) -> Vec<(String, Vec<f64>)> {
         }
     }
     out
-}
-
-/// Linear-interpolation percentile over a sorted slice.
-fn percentile_linear(sorted: &[f64], p: f64) -> f64 {
-    let n = sorted.len();
-    if n == 0 {
-        return 0.0;
-    }
-    if n == 1 {
-        return sorted[0];
-    }
-    let idx = p / 100.0 * (n - 1) as f64;
-    let lo = idx.floor() as usize;
-    let hi = idx.ceil() as usize;
-    if lo == hi {
-        sorted[lo]
-    } else {
-        sorted[lo] + (idx - lo as f64) * (sorted[hi] - sorted[lo])
-    }
 }

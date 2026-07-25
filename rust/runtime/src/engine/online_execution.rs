@@ -144,6 +144,19 @@ macro_rules! dynosim_or_unsupported {
     }};
 }
 
+/// Emit the `Debug` impl every built-in workload factory shares: the bare type
+/// name, since these factories carry only injected collaborators with no
+/// inspectable state worth formatting.
+macro_rules! workload_factory_debug {
+    ($ty:ident) => {
+        impl fmt::Debug for $ty {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(stringify!($ty))
+            }
+        }
+    };
+}
+
 /// Register the built-in executable workloads (`scheduled`, `graph`).
 pub fn register_online_workloads(registry: &mut crate::extensions::AIPerfRegistry) -> Result<()> {
     let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
@@ -183,11 +196,7 @@ struct ScheduledWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-impl fmt::Debug for ScheduledWorkloadFactoryV2 {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ScheduledWorkloadFactoryV2")
-    }
-}
+workload_factory_debug!(ScheduledWorkloadFactoryV2);
 
 impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
     fn descriptor(&self) -> &'static WorkloadDescriptor {
@@ -269,11 +278,7 @@ struct GraphWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-impl fmt::Debug for GraphWorkloadFactoryV2 {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("GraphWorkloadFactoryV2")
-    }
-}
+workload_factory_debug!(GraphWorkloadFactoryV2);
 
 impl WorkloadFactory for GraphWorkloadFactoryV2 {
     fn descriptor(&self) -> &'static WorkloadDescriptor {
@@ -375,11 +380,7 @@ struct StaticAccuracyWorkloadFactoryV2 {
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 }
 
-impl fmt::Debug for StaticAccuracyWorkloadFactoryV2 {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("StaticAccuracyWorkloadFactoryV2")
-    }
-}
+workload_factory_debug!(StaticAccuracyWorkloadFactoryV2);
 
 impl WorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
     fn descriptor(&self) -> &'static WorkloadDescriptor {

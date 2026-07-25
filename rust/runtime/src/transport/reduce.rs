@@ -8,9 +8,11 @@
 //! parses those items, reconciles usage, accumulates response data and endpoint
 //! metrics, emits token observations, and reconstructs assistant turns.
 
+use std::borrow::Cow;
 use std::cell::Cell;
 
 use serde_json::Value;
+use smallvec::SmallVec;
 use uuid::Uuid;
 
 use crate::dispatch::sink::{
@@ -72,7 +74,11 @@ pub(crate) fn reduce_parsed_response(
             if !emit.first_token_released.replace(true) {
                 (emit.on_first_token)(at_ns.saturating_sub(emit.start_ns));
             }
-            let timestamps = vec![(emit.to_ms)(at_ns); token_ids.len()];
+            // All token ids in one chunk share the same arrival instant; keep a
+            // stack-inline buffer so the common single-token streaming chunk
+            // avoids a heap allocation. Observed metrics are identical.
+            let at_ms = (emit.to_ms)(at_ns);
+            let timestamps: SmallVec<[f64; 8]> = smallvec::smallvec![at_ms; token_ids.len()];
             emit.obs.on_output_tokens(emit.uuid, &timestamps);
         } else if !text.is_empty() {
             if !emit.first_token_released.replace(true) {
@@ -97,10 +103,10 @@ pub(crate) fn token_kind(data: &ResponseData) -> ObservedTokenKind {
 
 /// Fold one decoded response's textual/token payload into the aggregated model
 /// response, returning the plain text it contributed.
-pub(crate) fn absorb_response_data(
-    data: &ResponseData,
+pub(crate) fn absorb_response_data<'a>(
+    data: &'a ResponseData,
     metadata: &mut ModelResponseMetadata,
-) -> String {
+) -> Cow<'a, str> {
     match data {
         ResponseData::Text { text } => append_text(&mut metadata.content, text),
         ResponseData::Reasoning { content, reasoning } => {
@@ -132,7 +138,7 @@ pub(crate) fn absorb_response_data(
         | ResponseData::Audio(_)
         | ResponseData::Video(_) => {}
     }
-    data.get_text()
+    data.get_text_cow()
 }
 
 fn append_text(target: &mut Option<String>, text: &str) {

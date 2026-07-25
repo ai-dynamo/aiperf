@@ -48,11 +48,10 @@ pub struct DatasetAnalysisRequest {
     /// Base output path; the four artifacts are written beside it using the fixed
     /// `dataset_analysis.*` file names (so `path`'s directory is what matters).
     pub path: PathBuf,
-    /// Analysis tuning (block size, explicit LRU capacity point).
+    /// Analysis tuning (block size, explicit LRU capacity point, and the
+    /// per-conversation-breakdown toggle honored by
+    /// [`crate::dataset::analysis::analyze`]).
     pub options: AnalysisOptions,
-    /// Reserved: emit per-conversation breakdowns. Not yet consumed by the pure
-    /// analysis; retained so the request shape is stable across wiring tasks.
-    pub per_conversation: bool,
 }
 
 /// Stable conversation identity for a captured record.
@@ -414,7 +413,6 @@ mod tests {
         let req = DatasetAnalysisRequest {
             path: dir.path().join("dataset_analysis"),
             options: AnalysisOptions::default(),
-            per_conversation: false,
         };
 
         write_dataset_analysis(&req, &records, &input).expect("write dataset analysis");
@@ -454,7 +452,6 @@ mod tests {
         let req = DatasetAnalysisRequest {
             path: dir.path().join("dataset_analysis"),
             options: AnalysisOptions::default(),
-            per_conversation: false,
         };
 
         write_dataset_analysis_from_records(&req, &records)
@@ -514,5 +511,46 @@ mod tests {
         assert_eq!(mapped[0].input_tokens, 42);
         assert_eq!(mapped[0].output_tokens, 7);
         assert_eq!(mapped[0].admit_ns, Some(10));
+    }
+
+    #[test]
+    fn per_conversation_flag_controls_breakdown_emission() {
+        // Two conversations so a per-conversation breakdown is non-trivial.
+        let records = vec![
+            captured("conv-a", 0, 0, 1_000_000_000, 64, 16),
+            captured("conv-a", 1, 1_000_000_000, 2_000_000_000, 96, 16),
+            captured("conv-b", 0, 0, 1_000_000_000, 32, 8),
+        ];
+
+        // Flag off (default): no per-conversation section.
+        let off = crate::dataset::analysis::analyze(
+            &analyzed_turns_from_records(&records),
+            &analyzed_from_records(&records),
+            &AnalysisOptions::default(),
+        );
+        assert!(
+            off.conversations.is_none(),
+            "breakdown must be absent unless requested"
+        );
+
+        // Flag on: one summary per distinct conversation, each carrying its own
+        // length distribution and turn count.
+        let on = crate::dataset::analysis::analyze(
+            &analyzed_turns_from_records(&records),
+            &analyzed_from_records(&records),
+            &AnalysisOptions {
+                per_conversation: true,
+                ..AnalysisOptions::default()
+            },
+        );
+        let conversations = on.conversations.expect("breakdown requested");
+        assert_eq!(conversations.len(), 2, "one summary per conversation");
+        assert_eq!(conversations[0].conversation_id, "conv-a");
+        assert_eq!(conversations[0].turns, 2);
+        assert_eq!(conversations[1].conversation_id, "conv-b");
+        assert_eq!(conversations[1].turns, 1);
+        // conv-b's ISL sum (32) is scoped to conv-b alone, not the dataset total.
+        let isl = conversations[1].lengths.isl.as_ref().expect("isl summary");
+        assert_eq!(isl.sum, 32.0);
     }
 }

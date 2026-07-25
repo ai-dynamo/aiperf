@@ -165,10 +165,7 @@ fn resolve_run_name(cfg: &MlflowExportConfig) -> String {
 }
 
 fn derive_default_run_name(benchmark_id: Option<&str>) -> String {
-    match benchmark_id {
-        Some(id) if !id.is_empty() => format!("aiperf-{}", &id[..id.len().min(8)]),
-        _ => format!("aiperf-{}", unix_seconds()),
-    }
+    crate::export::default_run_name(benchmark_id, || format!("aiperf-{}", unix_seconds()))
 }
 
 /// Emit a bare metric tag for the representative value and `tag.stat` for other
@@ -200,48 +197,32 @@ fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTre
 }
 
 /// Emit selected finite stats using a bare tag for the representative value and
-/// `tag.stat` otherwise.
+/// `tag.stat` otherwise. The four report-stat variants are matched once in the
+/// shared [`crate::export::flatten_stats`]; this only maps the flat fields to the
+/// MLflow key layout.
 fn push_stat_fields(payload: &mut BTreeMap<String, f64>, tag: &str, stats: &ReportStats) {
-    match stats {
-        ReportStats::Distribution(dist) => {
-            if let Some(avg) = dist.avg {
-                put(payload, tag, None, avg);
-            }
-            if let Some(min) = dist.min {
-                put(payload, tag, Some("min"), min);
-            }
-            if let Some(max) = dist.max {
-                put(payload, tag, Some("max"), max);
-            }
-            if let Some(std) = dist.std {
-                put(payload, tag, Some("std"), std);
-            }
-            if let Some(count) = dist.count {
-                payload.insert(format!("{tag}.count"), count as f64);
-            }
-            for stat in PERCENTILE_STAT_KEYS {
-                if let Some(value) = dist.percentiles.get(*stat) {
-                    put(payload, tag, Some(stat), *value);
-                }
-            }
-        }
-        // Scalar values use the bare metric tag.
-        ReportStats::Scalar(scalar) => put(payload, tag, None, scalar.value),
-        // Counters (request_count/good_request_count) log their total in the
-        // `avg` slot; `rate` is not a `_STAT_FIELD` and is never suffixed.
-        ReportStats::Counter(counter) => put(payload, tag, None, counter.total),
-        // Server-telemetry histograms expose avg/count/sum/percentiles.
-        ReportStats::Histogram(hist) => {
-            if let Some(avg) = hist.avg {
-                put(payload, tag, None, avg);
-            }
-            put(payload, tag, Some("sum"), hist.sum);
-            payload.insert(format!("{tag}.count"), hist.count as f64);
-            for stat in PERCENTILE_STAT_KEYS {
-                if let Some(value) = hist.percentiles.get(*stat) {
-                    put(payload, tag, Some(stat), *value);
-                }
-            }
+    let canonical = crate::export::flatten_stats(stats);
+    if let Some(avg) = canonical.avg {
+        put(payload, tag, None, avg);
+    }
+    if let Some(min) = canonical.min {
+        put(payload, tag, Some("min"), min);
+    }
+    if let Some(max) = canonical.max {
+        put(payload, tag, Some("max"), max);
+    }
+    if let Some(std) = canonical.std {
+        put(payload, tag, Some("std"), std);
+    }
+    if let Some(sum) = canonical.sum {
+        put(payload, tag, Some("sum"), sum);
+    }
+    if let Some(count) = canonical.count {
+        payload.insert(format!("{tag}.count"), count as f64);
+    }
+    for stat in PERCENTILE_STAT_KEYS {
+        if let Some(value) = canonical.percentiles.get(*stat) {
+            put(payload, tag, Some(stat), *value);
         }
     }
 }
@@ -261,12 +242,7 @@ fn put(payload: &mut BTreeMap<String, f64>, tag: &str, field: Option<&str>, valu
 /// total/`avg`), used for `aiperf.completed_requests`.
 fn representative_value(entry: &MetricEntry) -> Option<f64> {
     let stats = entry.series.first().map(|series| &series.stats)?;
-    match stats {
-        ReportStats::Distribution(dist) => dist.avg.and_then(finite),
-        ReportStats::Scalar(scalar) => finite(scalar.value),
-        ReportStats::Counter(counter) => finite(counter.total),
-        ReportStats::Histogram(hist) => hist.avg.and_then(finite),
-    }
+    crate::export::flatten_stats(stats).avg.and_then(finite)
 }
 
 fn finite(value: ReportValue) -> Option<f64> {

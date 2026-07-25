@@ -9,6 +9,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+use crate::jsonnum::num;
 use crate::search::SlaFilter;
 
 /// One recorded search iteration (a single `aiperf --execute` probe).
@@ -51,13 +52,6 @@ pub struct HistoryConfig {
     pub swept_dim_path: String,
     /// Search random seed, if any.
     pub random_seed: Option<u64>,
-}
-
-/// A finite `f64` as a JSON number, else JSON `null`.
-fn num(v: f64) -> Value {
-    serde_json::Number::from_f64(v)
-        .map(Value::Number)
-        .unwrap_or(Value::Null)
 }
 
 /// `[objective]` as a JSON array (`objective_values` vector form), or `null`.
