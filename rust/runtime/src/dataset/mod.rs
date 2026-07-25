@@ -53,7 +53,7 @@ pub use materialize::{
     AssemblyItem, MessageSpliceResolver, Overrides, SegmentItemsMaterializer,
     build_message_body_from_wire_parts, build_message_body_from_wires,
 };
-pub use media::{InlineMediaResolver, MediaResolver};
+pub use media::{InlineMediaResolver, MediaResolver, PrefetchMediaResolver};
 pub use model::{
     AccuracyAssociation, BranchId, ContentGroup, Conversation, ConversationBranch,
     ConversationBranchMode, ConversationContextMode, ConversationMetadata, CorrelationId,
