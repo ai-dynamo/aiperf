@@ -64,7 +64,9 @@ model crosses the parent→child boundary unchanged.
 
 ## Future requirements
 
-The convergence target and its migration. None of this is built yet.
+The convergence target and its migration. Steps 1 and 4 are built (branch
+`ajc/config-model-unification`); steps 2 and 3 are partially built with the
+structural remainder blocked as noted.
 
 **Target shape.** An `aiperf_runtime::config` module (an always-compiled module
 in the runtime crate — `aiperf-cli` consumes it through its existing
@@ -97,20 +99,28 @@ unknown tag.
 
 **Migration (each step ships green):**
 
-1. **Unify the wire type.** Move `BenchmarkConfig`/`BenchmarkRun` into the
+1. **Unify the wire type.** *(Built.)* Move `BenchmarkConfig`/`BenchmarkRun` into the
    `aiperf_runtime::config` module; the runtime deserializes that type directly. Delete the reshape, the `json!` blob,
    the graph-guard, and the fragmented DTOs; replace with typed access +
    `workload_kind()`. Guard with wire round-trip tests (CLI serialize ==
    runtime deserialize, byte-identical). This step alone eliminates the
    `weka_semantics` bug class.
-2. **Collapse the producer front-end.** Delete `Inputs` and the two mappers +
+2. **Collapse the producer front-end.** *(Partial: flags↔YAML drift unified and the
+   YAML→typed contract locked by tests; the full `Inputs`/`load::build` deletion
+   remains, blocked on the `BenchmarkConfig`-serde vs YAML-shorthand mismatch.)*
+   Delete `Inputs` and the two mappers +
    imperative `build`. YAML deserializes directly into `BenchmarkConfig`; flags
    become an override partial deep-merged then validated once. Hardcoded defaults
    become serde model defaults.
-3. **One sweep plan.** Replace the three override mechanisms with
+3. **One sweep plan.** *(Partial: typed `build_benchmark_plan` grid/zip/magic-list
+   seam built and tested; retiring the live override mechanisms remains, sequenced
+   after the producer collapse.)* Replace the three override mechanisms with
    `build_benchmark_plan` over the typed model (dotted-path apply, alpha-sorted
    keys, `base+N` seed derivation). Adaptive search stays a runtime ask-tell loop.
-4. **Validators as offline passes.** Port the raise-only cross-field invariants
+4. **Validators as offline passes.** *(Built: the seven raise-only invariants ported
+   to `config::validate`; two scenario/timing-mode-dependent invariants noted as
+   not portable until that infra exists on the typed model.)* Port the raise-only
+   cross-field invariants
    (phase↔dataset compatibility, prefill⇒streaming, cache-bust, agentic-warmup) as
    validate-time functions; keep the mutating ones (tokenizer/seed defaults) as
    resolution passes; wire `aiperf config validate` to run them offline.
