@@ -369,7 +369,7 @@ struct PendingJoin {
 fn take_ready<T>(
     queue: &RefCell<Vec<T>>,
     gate: &TreeGate,
-    key: impl Fn(&T) -> (&str, usize),
+    key: impl for<'a> Fn(&'a T) -> (&'a str, usize),
 ) -> Vec<T> {
     let mut q = queue.borrow_mut();
     let mut ready = Vec::new();
