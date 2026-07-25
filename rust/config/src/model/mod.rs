@@ -8,6 +8,7 @@
 //! them so its existing call sites are unchanged.
 
 pub mod artifacts;
+pub mod config;
 pub mod dataset;
 pub mod endpoint;
 pub mod export;
@@ -17,9 +18,12 @@ pub mod phase;
 pub mod public_catalog;
 pub mod rate_series;
 pub mod resolved;
+pub mod run;
 pub mod runtime;
 pub mod telemetry;
 pub mod tokenizer;
 pub mod transport;
 
+pub use config::BenchmarkConfig;
 pub use resolved::Resolved;
+pub use run::BenchmarkRun;

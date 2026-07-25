@@ -118,3 +118,31 @@ pub struct BenchmarkConfig {
     #[serde(default)]
     pub unsafe_override: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_config_serde_round_trips() {
+        // A minimal, mostly-default config exercises both the omitted-when-None
+        // sections and the always-emitted defaulted fields through a full
+        // serialize → value → deserialize → serialize cycle.
+        let cfg = BenchmarkConfig {
+            scenario: Some("smoke".to_string()),
+            trajectory_start_min_ratio: 0.25,
+            trajectory_start_max_ratio: 0.75,
+            unsafe_override: true,
+            ..BenchmarkConfig::default()
+        };
+        let value = serde_json::to_value(&cfg).expect("serialize BenchmarkConfig");
+        let back: BenchmarkConfig =
+            serde_json::from_value(value.clone()).expect("deserialize BenchmarkConfig");
+        let value_again = serde_json::to_value(&back).expect("re-serialize BenchmarkConfig");
+        assert_eq!(value, value_again);
+        assert_eq!(back.scenario.as_deref(), Some("smoke"));
+        assert!(back.unsafe_override);
+        assert_eq!(back.trajectory_start_min_ratio, 0.25);
+        assert_eq!(back.trajectory_start_max_ratio, 0.75);
+    }
+}
