@@ -100,10 +100,13 @@ pub struct ReconstructedTurn {
 /// A reconstructed conversation (projection of AIPerf `Conversation`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReconstructedConversation {
-    /// Conversation / session id (the trace id for the main conversation).
+    /// Conversation / session id (the trace id for the main conversation, the
+    /// child session id for a subagent/flat chain).
     pub session_id: String,
-    /// Replay scope id (the trace id).
+    /// Replay scope id (the root trace id).
     pub replay_scope_id: String,
+    /// Parent conversation id (`None` for the main conversation).
+    pub parent_conversation_id: Option<String>,
     /// Turns in order.
     pub turns: Vec<ReconstructedTurn>,
 }
@@ -213,14 +216,7 @@ pub fn reconstruct_main_conversation(
     model_map: &HashMap<String, String>,
     opts: &MainReconstructOptions,
 ) -> Result<ReconstructedConversation, PrefixTooTruncated> {
-    // Per-turn assistant block caps (Pass-1 planner) and shared prefix-cache
-    // metrics (single-conversation seen-set in time order).
-    let cap_input: Vec<(Vec<i64>, i64)> = normals
-        .iter()
-        .map(|(_, r)| (r.hash_ids.clone(), r.input_length))
-        .collect();
-    let asst_block_caps = compute_asst_block_caps(&cap_input, block_size);
-
+    // Single-conversation shared prefix-cache metrics (seen-set in time order).
     let metric_records: Vec<MetricRecord> = normals
         .iter()
         .enumerate()
@@ -238,12 +234,58 @@ pub fn reconstruct_main_conversation(
         .collect();
     let metric_values = compute_shared_prefix_cache_metrics(metric_records);
 
-    let mut recon = ConversationReconstructor::new(block_size, opts.tool_shaped_messages);
-    let mut turns: Vec<ReconstructedTurn> = Vec::with_capacity(normals.len());
+    reconstruct_conversation(
+        trace_id,
+        trace_id,
+        None,
+        trace_id,
+        "weka_main",
+        block_size,
+        tool_tokens,
+        system_tokens,
+        normals,
+        synth,
+        model_map,
+        &metric_values,
+        opts,
+    )
+}
 
-    for (k, (outer_idx, req)) in normals.iter().enumerate() {
-        let seed = format!("{trace_id}:turn_{k}:partial_tail");
-        let prev = if k > 0 { Some(&normals[k - 1].1) } else { None };
+/// Reconstruct one conversation (main or child) by driving the synth over its
+/// requests. Shared by the main-conversation and subagent/flat-chain paths.
+///
+/// `requests` is `(source_outer_idx, request)`; the outer index is stamped on
+/// each turn (per-request for the main conversation, the spawn-marker index for
+/// a child). `metric_values` is the trace-wide prefix-cache map (keyed by
+/// `(session_id, k)`). `synth` must already be scoped to the root trace id.
+#[allow(clippy::too_many_arguments)]
+pub fn reconstruct_conversation(
+    session_id: &str,
+    replay_scope_id: &str,
+    parent_conversation_id: Option<&str>,
+    source_trace_id: &str,
+    source_kind: &str,
+    block_size: i64,
+    init_tool_tokens: i64,
+    init_system_tokens: i64,
+    requests: &[(i64, NormalReq)],
+    synth: &mut dyn TokenSynth,
+    model_map: &HashMap<String, String>,
+    metric_values: &HashMap<(String, i64), (i64, i64)>,
+    opts: &MainReconstructOptions,
+) -> Result<ReconstructedConversation, PrefixTooTruncated> {
+    let cap_input: Vec<(Vec<i64>, i64)> = requests
+        .iter()
+        .map(|(_, r)| (r.hash_ids.clone(), r.input_length))
+        .collect();
+    let asst_block_caps = compute_asst_block_caps(&cap_input, block_size);
+
+    let mut recon = ConversationReconstructor::new(block_size, opts.tool_shaped_messages);
+    let mut turns: Vec<ReconstructedTurn> = Vec::with_capacity(requests.len());
+
+    for (k, (outer_idx, req)) in requests.iter().enumerate() {
+        let seed = format!("{session_id}:turn_{k}:partial_tail");
+        let prev = if k > 0 { Some(&requests[k - 1].1) } else { None };
         let input_kind = classify_turn_input(req, prev);
         let is_tool_result = input_kind == Some(TurnInputKind::ToolResult);
 
@@ -252,8 +294,8 @@ pub fn reconstruct_main_conversation(
                 synth,
                 &req.hash_ids,
                 req.input_length,
-                tool_tokens,
-                system_tokens,
+                init_tool_tokens,
+                init_system_tokens,
                 &seed,
             )?;
         } else {
@@ -286,7 +328,7 @@ pub fn reconstruct_main_conversation(
 
         let delta = recon.turn_delta();
         let (hit, total) = metric_values
-            .get(&(trace_id.to_string(), k as i64))
+            .get(&(session_id.to_string(), k as i64))
             .copied()
             .unwrap_or((0, 0));
 
@@ -298,9 +340,9 @@ pub fn reconstruct_main_conversation(
             } else {
                 api_time_ms(req.api_time)
             },
-            source_trace_id: trace_id.to_string(),
+            source_trace_id: source_trace_id.to_string(),
             source_outer_idx: *outer_idx,
-            source_kind: "weka_main".to_string(),
+            source_kind: source_kind.to_string(),
             model: model_map.get(&req.model).cloned().unwrap_or(req.model.clone()),
             max_tokens: cap_output(req.output_length, opts.max_osl),
             raw_messages: delta.delta_messages,
@@ -312,8 +354,9 @@ pub fn reconstruct_main_conversation(
     }
 
     Ok(ReconstructedConversation {
-        session_id: trace_id.to_string(),
-        replay_scope_id: trace_id.to_string(),
+        session_id: session_id.to_string(),
+        replay_scope_id: replay_scope_id.to_string(),
+        parent_conversation_id: parent_conversation_id.map(str::to_string),
         turns,
     })
 }
