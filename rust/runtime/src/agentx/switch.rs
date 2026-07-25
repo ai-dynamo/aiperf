@@ -76,6 +76,18 @@ where
     }
 }
 
+/// Execute the **graph-ir** arm: compile a WEKA trace into the next-gen Graph-IR
+/// input bundle via the runtime's `graph::recorded` weka compiler. Unlike a
+/// hand-off, this actually *runs* the graph-ir path end-to-end, producing the
+/// `GraphInputBundle` the graph engine executes. The output model differs from
+/// the legacy `ReconstructedConversation`s — the two semantics are parallel.
+pub async fn run_graph_ir(
+    config: crate::graph::recorded::RecordedTraceInputConfig,
+    tokenizer: &dyn crate::dataset::tokenizer::TextTokenizer,
+) -> Result<crate::graph::input::GraphInputBundle, crate::graph::recorded::RecordedTraceError> {
+    crate::graph::recorded::compile_weka_trace_input(config, tokenizer).await
+}
+
 /// Run the complete **legacy** WEKA replay pipeline for one trace and emit its
 /// export-level raw records: reconstruct (root + subagent children + flat chains)
 /// → annotate with the agentic-replay dispatch schedule (when `t_star_ms` is
