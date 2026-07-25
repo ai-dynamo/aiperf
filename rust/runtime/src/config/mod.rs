@@ -8,6 +8,7 @@
 //! anchor, [`schema_version`], alongside the [`model`] submodules.
 
 pub mod model;
+pub mod validate;
 
 /// Returns the Config-v2 schema version string this module targets.
 ///
