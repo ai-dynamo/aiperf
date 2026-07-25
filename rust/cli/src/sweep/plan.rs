@@ -239,6 +239,7 @@ mod tests {
         use crate::model::phase::{Phase, PhaseCommon, PhaseKind, PhaseRole};
         let phase = Phase {
             common: PhaseCommon {
+                timing_mode: None,
                 name: "profiling".into(),
                 kind: Some(PhaseRole::Profiling),
                 exclude_from_results: false,
@@ -312,6 +313,7 @@ mod tests {
     fn base_two_field_cfg() -> BenchmarkConfig {
         use crate::model::phase::{Phase, PhaseCommon, PhaseKind, PhaseRole};
         let common = PhaseCommon {
+            timing_mode: None,
             name: "profiling".into(),
             kind: Some(PhaseRole::Profiling),
             exclude_from_results: false,

@@ -373,7 +373,7 @@ pub(crate) fn export_level_formats(level: Option<&str>) -> anyhow::Result<(Vec<S
 }
 
 pub(crate) fn reset_kv_cache_from_flags(flags: &ProfileFlags) -> Option<ResetKvCacheConfig> {
-    (flags.reset_kv_cache
+    (flags.reset_kv_cache.unwrap_or(false)
         || flags.reset_kv_cache_timeout_seconds.is_some()
         || flags.reset_kv_cache_path.is_some())
     .then(|| ResetKvCacheConfig {
@@ -383,7 +383,7 @@ pub(crate) fn reset_kv_cache_from_flags(flags: &ProfileFlags) -> Option<ResetKvC
 }
 
 pub(crate) fn server_profiler_from_flags(flags: &ProfileFlags) -> Option<ServerProfilerConfig> {
-    (flags.server_profiler
+    (flags.server_profiler.unwrap_or(false)
         || flags.server_profiler_timeout_seconds.is_some()
         || flags.server_profiler_start_path.is_some()
         || flags.server_profiler_stop_path.is_some())
@@ -451,7 +451,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     // A dry run opens no sockets, so a real endpoint URL is not required — default
     // a sentinel so the endpoint/profile lowering (which still wants some URL) is
     // satisfied. The fake transport never dials it.
-    let urls = if flags.urls.is_empty() && flags.dry_run {
+    let urls = if flags.urls.is_empty() && flags.dry_run.unwrap_or(false) {
         vec!["http://dry-run.invalid".to_string()]
     } else {
         flags.urls.clone()
@@ -490,7 +490,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let (records_formats, export_raw) = export_level_formats(flags.export_level.as_deref())?;
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
-    let (fixed_schedule, request_count) = if flags.fixed_schedule {
+    let (fixed_schedule, request_count) = if flags.fixed_schedule.unwrap_or(false) {
         let path = flags
             .input_file
             .as_ref()
@@ -554,7 +554,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         model_names: flags.model_names.clone(),
         urls,
         endpoint_type,
-        transport: if flags.dry_run {
+        transport: if flags.dry_run.unwrap_or(false) {
             Transport::DryRun(crate::model::transport::DryRunConfig {
                 ttft_ms: flags.dry_run_ttft_ms,
                 itl_ms: flags.dry_run_itl_ms,
@@ -572,11 +572,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         } else {
             Transport::Http
         },
-        streaming: flags.streaming,
+        streaming: flags.streaming.unwrap_or(false),
         timeout_seconds: flags.request_timeout_seconds,
-        use_legacy_max_tokens: flags.use_legacy_max_tokens,
-        use_server_token_count: flags.use_server_token_count,
-        download_video_content: flags.download_video_content,
+        use_legacy_max_tokens: flags.use_legacy_max_tokens.unwrap_or(false),
+        use_server_token_count: flags.use_server_token_count.unwrap_or(false),
+        download_video_content: flags.download_video_content.unwrap_or(false),
         extra: parse_extra_inputs(&flags.extra_inputs)?,
         // Flag URLs normalize here; YAML values remain authored until sidecar construction.
         server_metrics_urls: flags
@@ -601,10 +601,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .map(parse_wait_mode)
             .transpose()?,
         wait_for_model_interval: flags.wait_for_model_interval,
-        apply_chat_template: flags.apply_chat_template,
+        apply_chat_template: flags.apply_chat_template.unwrap_or(false),
         prefill_concurrency: flags.prefill_concurrency,
         prefill_ramp: flags.prefill_concurrency_ramp_duration,
-        gpu_telemetry_enabled: !flags.no_gpu_telemetry,
+        gpu_telemetry_enabled: !flags.no_gpu_telemetry.unwrap_or(false),
         // A `.csv` value selects custom metrics; all other values are scrape URLs.
         gpu_telemetry_urls: flags
             .gpu_telemetry
@@ -618,13 +618,14 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .rev()
             .find(|item| item.to_ascii_lowercase().ends_with(".csv"))
             .cloned(),
-        server_metrics_enabled: !flags.no_server_metrics,
+        server_metrics_enabled: !flags.no_server_metrics.unwrap_or(false),
         server_metrics_formats: (!flags.server_metrics_formats.is_empty())
             .then(|| flags.server_metrics_formats.clone()),
         slos: parse_goodput(flags.goodput.as_deref())?,
         network_latency_mean: flags.network_latency_mean,
         network_latency_probe: flags
             .network_latency_automatic
+            .unwrap_or(false)
             .then(|| flags.network_latency_ping_interval.unwrap_or(1.0)),
         otel_url: flags.otel_url.clone(),
         otel_provider: flags.gen_ai_provider.clone(),
@@ -649,7 +650,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
         tokenizer_revision: flags.tokenizer_revision.clone(),
-        tokenizer_trust: flags.tokenizer_trust_remote_code,
+        tokenizer_trust: flags.tokenizer_trust_remote_code.unwrap_or(false),
         server_tokenizer_url: flags.server_tokenizer_url.clone(),
         isl: match isl_mean {
             Some(mean) => Distribution {
@@ -669,13 +670,13 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         turn_delay_ms,
         session_header: flags.session_header.clone(),
         proxy: flags.proxy.clone(),
-        proxy_from_env: flags.proxy_from_env,
+        proxy_from_env: flags.proxy_from_env.unwrap_or(false),
         endpoint_path: flags.custom_endpoint.clone(),
         reset_kv_cache: reset_kv_cache_from_flags(flags),
         server_profiler: server_profiler_from_flags(flags),
         records_formats,
         export_raw,
-        export_trace: flags.export_http_trace,
+        export_trace: flags.export_http_trace.unwrap_or(false),
         export_outputs_json: false,
         sequence_distribution: flags.seq_dist.as_deref().map(parse_seq_dist).transpose()?,
         batch_size: flags.batch_size.unwrap_or(1),
@@ -738,14 +739,14 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         hf_output_len: flags.hf_output_len,
         hf_format: flags.hf_format.clone(),
         inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
-        prefetch_media_urls: flags.prefetch_media_urls,
-        uuid_and_strip: flags.uuid_and_strip,
+        prefetch_media_urls: flags.prefetch_media_urls.unwrap_or(false),
+        uuid_and_strip: flags.uuid_and_strip.unwrap_or(false),
         replay_speedup: flags.replay_speedup,
         max_idle_gap_cap_seconds: flags.max_idle_gap_cap_seconds,
-        open_loop_replay: flags.open_loop_replay && !flags.no_open_loop_replay,
-        open_loop_strict: flags.open_loop_strict,
-        omit_kv_hints: flags.omit_kv_hints,
-        force_min_tokens: flags.force_min_tokens && !flags.no_force_min_tokens,
+        open_loop_replay: flags.open_loop_replay.unwrap_or(true) && !flags.no_open_loop_replay.unwrap_or(false),
+        open_loop_strict: flags.open_loop_strict.unwrap_or(false),
+        omit_kv_hints: flags.omit_kv_hints.unwrap_or(false),
+        force_min_tokens: flags.force_min_tokens.unwrap_or(true) && !flags.no_force_min_tokens.unwrap_or(false),
         fixed_schedule,
         fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
         fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
@@ -759,10 +760,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         prefix_reuse_fraction: flags.prefix_reuse_fraction,
         prefix_reuse_ratio: flags.prefix_reuse_ratio,
         prompt_corpus: flags.prompt_corpus.clone(),
-        sketch_metrics: flags.sketch_metrics,
-        steady_state: flags.steady_state,
+        sketch_metrics: flags.sketch_metrics.unwrap_or(false),
+        steady_state: flags.steady_state.unwrap_or(false),
         steady_state_fraction: flags.steady_state_fraction,
-        steady_state_hybrid: flags.steady_state_hybrid,
+        steady_state_hybrid: flags.steady_state_hybrid.unwrap_or(false),
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
@@ -772,18 +773,18 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         weka_semantics: flags.weka_semantics.clone(),
         trajectory_start_min_ratio: flags.trajectory_start_min_ratio.unwrap_or(0.0),
         trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
-        unsafe_override: flags.unsafe_override,
+        unsafe_override: flags.unsafe_override.unwrap_or(false),
         agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
         rankings: build_rankings(flags),
         accuracy: build_accuracy(flags),
         synthesis: build_synthesis(flags)?,
         dataset_filters: parse_dataset_filters(flags)?,
         // Dry-run emits the dataset-analysis artifact family unless suppressed.
-        dataset_analysis: (flags.dry_run && !flags.no_dataset_analysis).then(|| {
+        dataset_analysis: (flags.dry_run.unwrap_or(false) && !flags.no_dataset_analysis.unwrap_or(false)).then(|| {
             DatasetAnalysisInputs {
                 block_size: flags.kv_block_size,
                 cache_blocks: flags.kv_cache_blocks,
-                per_conversation: flags.dataset_analysis_per_conversation,
+                per_conversation: flags.dataset_analysis_per_conversation.unwrap_or(false),
             }
         }),
         phases_override: None,
@@ -1052,6 +1053,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             source.insert("revision".to_string(), serde_json::json!(rev));
         }
         Dataset::Public(crate::model::dataset::PublicDataset {
+            cache_bust: None,
             name: id.clone(),
             format: inputs.hf_format.clone().unwrap_or_else(|| "hf".to_string()),
             source: serde_json::Value::Object(source),
@@ -1091,6 +1093,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             obj.insert("subset".to_string(), serde_json::json!(subset));
         }
         Dataset::Public(crate::model::dataset::PublicDataset {
+            cache_bust: None,
             name: name.clone(),
             format: meta.format.clone(),
             source,
@@ -1106,6 +1109,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             anyhow::bail!("--uuid-and-strip requires endpoint type 'chat'");
         }
         Dataset::File(crate::model::dataset::FileDataset {
+            cache_bust: None,
             // Path-backed inputs are auto-detected; inline records require a format.
             format: inputs.custom_dataset_type.clone().or_else(|| {
                 inputs
@@ -1184,6 +1188,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     } else {
         Dataset::Synthetic(Synthetic {
             prompts: Prompts {
+                cache_bust: None,
                 batch_size: inputs.batch_size,
                 isl: inputs.isl.clone(),
                 osl: inputs.osl.clone(),
@@ -1225,6 +1230,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     let profiling = if let Some((rate, users)) = inputs.user_centric {
         Phase {
             common: PhaseCommon {
+                timing_mode: None,
                 name: "profiling".to_string(),
                 kind: Some(PhaseRole::Profiling),
                 exclude_from_results: false,
@@ -1251,6 +1257,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     } else if let Some(auto_offset) = inputs.fixed_schedule {
         Phase {
             common: PhaseCommon {
+                timing_mode: None,
                 name: "profiling".to_string(),
                 kind: Some(PhaseRole::Profiling),
                 exclude_from_results: false,
@@ -1687,6 +1694,7 @@ fn build_phase(
     };
     Phase {
         common: PhaseCommon {
+            timing_mode: None,
             name: name.to_string(),
             kind: Some(role),
             exclude_from_results,
@@ -1787,7 +1795,7 @@ fn build_adaptive_scale(
     flags: &ProfileFlags,
     concurrency: Option<u32>,
 ) -> anyhow::Result<Option<AdaptiveScale>> {
-    if !flags.adaptive_scale {
+    if !flags.adaptive_scale.unwrap_or(false) {
         return Ok(None);
     }
     let sustain = flags
@@ -2014,9 +2022,9 @@ fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<serde_json::Va
 /// Build accuracy configuration when `--accuracy-benchmark` is set.
 fn build_accuracy(flags: &ProfileFlags) -> Option<crate::model::config::Accuracy> {
     let benchmark = flags.accuracy_benchmark.clone()?;
-    let enable_cot = if flags.accuracy_enable_cot {
+    let enable_cot = if flags.accuracy_enable_cot.unwrap_or(false) {
         Some(true)
-    } else if flags.accuracy_no_enable_cot {
+    } else if flags.accuracy_no_enable_cot.unwrap_or(false) {
         Some(false)
     } else {
         None
@@ -2028,7 +2036,7 @@ fn build_accuracy(flags: &ProfileFlags) -> Option<crate::model::config::Accuracy
         n_shots: flags.accuracy_n_shots,
         system_prompt: flags.accuracy_system_prompt.clone(),
         tasks: flags.accuracy_tasks.clone(),
-        verbose: flags.accuracy_verbose,
+        verbose: flags.accuracy_verbose.unwrap_or(false),
     })
 }
 

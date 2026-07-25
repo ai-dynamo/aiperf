@@ -291,6 +291,7 @@ mod tests {
     fn concurrency_phase(name: &str, kind: Option<PhaseRole>) -> Phase {
         Phase {
             common: PhaseCommon {
+                timing_mode: None,
                 name: name.into(),
                 kind,
                 exclude_from_results: kind == Some(PhaseRole::Warmup),

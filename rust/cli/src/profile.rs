@@ -1038,8 +1038,8 @@ fn run_sweep(
     order: IterationOrder,
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
-    let disable_warmup = !flags.no_profile_run_disable_warmup_after_first
-        && flags.profile_run_disable_warmup_after_first;
+    let disable_warmup = !flags.no_profile_run_disable_warmup_after_first.unwrap_or(false)
+        && flags.profile_run_disable_warmup_after_first.unwrap_or(true);
     let cells = sweep_run::plan_cells(
         flags,
         expansion,
@@ -1055,11 +1055,11 @@ fn run_sweep(
 
 /// Resolve per-variation seed policy from sweep seed flags.
 pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
-    let consistent = flags.set_consistent_seed && !flags.no_set_consistent_seed;
+    let consistent = flags.set_consistent_seed.unwrap_or(true) && !flags.no_set_consistent_seed.unwrap_or(false);
     let base = flags
         .random_seed
         .or_else(|| consistent.then_some(sweep_run::DEFAULT_SWEEP_SEED));
-    let same_seed = flags.parameter_sweep_same_seed && !flags.no_parameter_sweep_same_seed;
+    let same_seed = flags.parameter_sweep_same_seed.unwrap_or(false) && !flags.no_parameter_sweep_same_seed.unwrap_or(false);
     sweep_run::SeedPolicy { base, same_seed }
 }
 

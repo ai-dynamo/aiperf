@@ -106,13 +106,13 @@ fn apply_cli_overrides(
     }
     // Steady-state windowing: `--steady-state` (+ optional `--steady-state-fraction`)
     // layers over a config-authored run.
-    if flags.steady_state {
+    if flags.steady_state.unwrap_or(false) {
         inputs.steady_state = true;
     }
     if let Some(fraction) = flags.steady_state_fraction {
         inputs.steady_state_fraction = Some(fraction);
     }
-    if flags.steady_state_hybrid {
+    if flags.steady_state_hybrid.unwrap_or(false) {
         inputs.steady_state_hybrid = true;
     }
     // Explicit CLI loadgen axes overlay onto a unique profiling phase when the
@@ -155,7 +155,7 @@ fn apply_cli_overrides(
     // Dry-run dataset-analysis toggles: `--no-dataset-analysis` suppresses the
     // family; the `--kv-*` / `--dataset-analysis-per-conversation` knobs layer
     // over the config-derived defaults when the analysis is active.
-    if flags.no_dataset_analysis {
+    if flags.no_dataset_analysis.unwrap_or(false) {
         inputs.dataset_analysis = None;
     } else if let Some(analysis) = inputs.dataset_analysis.as_mut() {
         // `--kv-block-size` carries its default (16); only override when authored.
@@ -165,7 +165,7 @@ fn apply_cli_overrides(
         if let Some(cache_blocks) = flags.kv_cache_blocks {
             analysis.cache_blocks = Some(cache_blocks);
         }
-        if flags.dataset_analysis_per_conversation {
+        if flags.dataset_analysis_per_conversation.unwrap_or(false) {
             analysis.per_conversation = true;
         }
     }
@@ -1986,6 +1986,7 @@ fn yaml_phase_to_model(section: &PhaseSection) -> anyhow::Result<crate::model::p
     };
     Ok(Phase {
         common: PhaseCommon {
+            timing_mode: None,
             name,
             kind: Some(role),
             exclude_from_results: role == PhaseRole::Warmup,
