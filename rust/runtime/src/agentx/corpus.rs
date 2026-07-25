@@ -169,6 +169,59 @@ mod tests {
         );
     }
 
+    /// The AgentX corpus-equivalence gate: `dataset::coding::build_coding_corpus`
+    /// must reproduce Python `CodingContentGenerator._tokenized_corpus` (the weka
+    /// `coding` corpus) byte-for-byte at seed 42 with Qwen3-0.6B. Golden captured
+    /// from the real Python generator. Skips when Qwen is not in the local HF cache.
+    #[test]
+    fn build_coding_corpus_matches_python_agentx_corpus() {
+        let home = match std::env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        let base = format!(
+            "{home}/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots"
+        );
+        let snap = match std::fs::read_dir(&base) {
+            Ok(d) => d
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .find(|p| p.join("tokenizer.json").exists()),
+            Err(_) => {
+                eprintln!("skip: Qwen3-0.6B not in local HF cache");
+                return;
+            }
+        };
+        let snap = match snap {
+            Some(s) => s,
+            None => {
+                eprintln!("skip: no Qwen snapshot with tokenizer.json");
+                return;
+            }
+        };
+        let tok = crate::dataset::tokenizer::HuggingFaceTokenizer::from_directory(&snap)
+            .expect("load Qwen tokenizer");
+        let corpus = crate::dataset::coding::build_coding_corpus(&tok, 42)
+            .expect("build coding corpus");
+        assert_eq!(corpus.len(), 276439, "corpus length");
+        assert_eq!(
+            &corpus[..20],
+            &[
+                90, 515, 220, 330, 2829, 788, 330, 562, 756, 220, 330, 691, 788, 80505, 262,
+                330, 17437, 788, 330, 69134
+            ],
+            "corpus prefix"
+        );
+        assert_eq!(
+            &corpus[100000..100020],
+            &[
+                741, 262, 220, 20, 19, 1572, 262, 220, 20, 20, 2760, 3312, 707, 49304, 1193,
+                11, 897, 25, 1140, 8
+            ],
+            "corpus mid"
+        );
+    }
+
     #[test]
     fn partial_tail_is_deterministic_and_sized() {
         let corpus: Vec<u32> = (0..100).collect();
