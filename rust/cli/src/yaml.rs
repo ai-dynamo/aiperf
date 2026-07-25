@@ -2412,8 +2412,9 @@ benchmark:
         // Model selection is populated from the `model:` shorthand.
         let models = c.models.as_ref().expect("models present");
         let models_v = serde_json::to_value(models).unwrap();
-        assert!(
-            models_v.to_string().contains('m'),
+        assert_eq!(
+            models_v["items"][0]["name"],
+            serde_json::json!("m"),
             "model name should survive into typed models: {models_v}"
         );
         // Exactly one canonical dataset, synthetic.

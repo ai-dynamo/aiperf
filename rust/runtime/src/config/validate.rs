@@ -21,6 +21,12 @@ use super::model::phase::{Phase, PhaseKind, PhaseRole};
 /// the violated invariant. Ordering mirrors the Python validator ordering so
 /// error messages are stable across the two implementations.
 pub fn validate(cfg: &BenchmarkConfig) -> Result<()> {
+    // NOTE: the Python `validate_cache_bust_compatibility` and
+    // `validate_agentic_cache_warmup` raise-only invariants are not portable
+    // until the typed model grows (a) a per-phase `timing_mode` override field,
+    // (b) a `cache_bust` target on the config, and (c) scenario-registry /
+    // agentic-timing-mode resolution — none of which exist on the typed
+    // `BenchmarkConfig`/`Phase` today. Port them once those land.
     validate_phase_names_unique(cfg)?;
     validate_profiling_phase_required(cfg)?;
     validate_phase_stops(cfg)?;
@@ -78,9 +84,12 @@ fn validate_profiling_phase_required(cfg: &BenchmarkConfig) -> Result<()> {
 /// Require each phase to declare a generic stop condition.
 ///
 /// Every phase needs one of `requests`/`duration`/`sessions`, unless a named
-/// `scenario` supplies the bound later, the phase is a self-bounding
-/// agentic-cache warmup, or the phase carries an adaptive-scale controller
-/// (which owns its own stop policy).
+/// `scenario` supplies the bound later, or the phase is a self-bounding
+/// agentic-cache warmup. The requirement is gated on the phase type: it applies
+/// to every phase EXCEPT `fixed_schedule`, whose replay schedule is itself the
+/// stop condition. This mirrors the Python `phase._stop_condition_required`
+/// ClassVar (`True` for every phase type except `FixedSchedulePhase`), which is
+/// unrelated to whether the phase carries an adaptive-scale controller.
 fn validate_phase_stops(cfg: &BenchmarkConfig) -> Result<()> {
     // A named scenario owns the benchmark invariants and auto-fills the phase
     // stop condition at resolution time, which runs after this pass.
@@ -89,7 +98,7 @@ fn validate_phase_stops(cfg: &BenchmarkConfig) -> Result<()> {
     }
     for phase in phases(cfg) {
         let c = &phase.common;
-        if c.adaptive_scale.is_none()
+        if !matches!(phase.kind, PhaseKind::FixedSchedule { .. })
             && c.requests.is_none()
             && c.duration.is_none()
             && c.sessions.is_none()
@@ -291,6 +300,48 @@ mod tests {
              "seamless": false, "type": "concurrency", "concurrency": 8}
         ]);
         assert!(validate(&cfg(v)).is_ok());
+    }
+
+    #[test]
+    fn fixed_schedule_profiling_phase_without_stop_allowed() {
+        // FixedSchedule's replay schedule is its own stop condition, so a
+        // profiling fixed_schedule phase with no requests/duration/sessions is
+        // valid (Python `_stop_condition_required` is False for this type).
+        let mut v = valid_value();
+        v["datasets"] = json!([
+            {"type": "file", "sampling": "sequential", "options": {}, "path": "/tmp/t.jsonl"}
+        ]);
+        v["phases"] = json!([
+            {"name": "profiling", "kind": "profiling", "exclude_from_results": false,
+             "seamless": false, "type": "fixed_schedule", "auto_offset": true}
+        ]);
+        assert!(validate(&cfg(v)).is_ok());
+    }
+
+    #[test]
+    fn adaptive_scale_phase_without_stop_rejected() {
+        // adaptive_scale does NOT exempt a phase from the stop-condition
+        // requirement; the gate is purely the phase type (Python invariant).
+        let mut v = valid_value();
+        v["phases"] = json!([
+            {"name": "profiling", "kind": "profiling", "exclude_from_results": false,
+             "seamless": false, "type": "concurrency", "concurrency": 8,
+             "adaptive_scale": {
+                 "control_variable": "concurrency",
+                 "minimum": 1, "maximum": 64,
+                 "assessment_period_seconds": 10.0,
+                 "sustain_duration_seconds": 5.0,
+                 "min_completed_requests": 100,
+                 "strategy_type": "sla",
+                 "step_policy": "linear",
+                 "base_step": 1,
+                 "max_step_multiplier": 4,
+                 "step_percent": 10.0,
+                 "sla_filters": []
+             }}
+        ]);
+        let err = validate(&cfg(v)).unwrap_err().to_string();
+        assert!(err.contains("requests"), "{err}");
     }
 
     #[test]
