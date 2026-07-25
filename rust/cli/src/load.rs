@@ -868,6 +868,22 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     let scenario_outcome = resolve_scenario_outcome(&inputs)?;
     // Effective weka semantics, resolved while `inputs` is still whole.
     let weka_semantics = resolve_weka_semantics(&inputs);
+    // The agentic_replay (legacy weka) timing mode is a single coherent driver:
+    // one workload instance owns the per-tree join gate, session-tree registry,
+    // and recycle cursor. It runs global-dispatch, single-worker, non-cellular.
+    // Cellular execution (`--cells > 1`) would partition a trajectory tree's root
+    // and subagent children across cell processes, breaking join gating — reject
+    // it with a clear error (use `--weka-semantics graph-ir` for cellular weka).
+    if matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx"))
+        && inputs.runtime_cells > 1
+    {
+        anyhow::bail!(
+            "the agentic_replay (legacy weka) timing mode does not support cellular \
+             execution (--cells {}); it runs as a single non-cellular driver. Use \
+             --weka-semantics graph-ir for cellular weka replay.",
+            inputs.runtime_cells
+        );
+    }
     let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);
     if let Some(ref mut phases) = inputs.phases_override {
         apply_cli_loadgen_overlays(phases, &loadgen_overlay)?;
