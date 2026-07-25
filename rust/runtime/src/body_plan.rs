@@ -74,6 +74,14 @@ pub enum BodyPlan {
     Raw(Handle),
     /// An ordered named-field JSON object.
     Fields(SmallVec<[(FieldName, FieldValue); 8]>),
+    /// A complete body serialized once at lowering into inline bytes, cloned
+    /// whole at dispatch. Produced by [`BodyPlan::prebuilt_if_static`] for turns
+    /// whose materialization carries no per-dispatch field (no `model`/`stream`/
+    /// `max_tokens` tail and no overrides on the scheduled path), so dispatch is
+    /// a refcount clone — no buffer allocation, no content memcpy. Distinct from
+    /// [`Raw`](BodyPlan::Raw) only in that it holds inline bytes rather than a
+    /// frozen-store handle, so it can be built after the segment store is frozen.
+    Prebuilt(Bytes),
 }
 
 impl BodyPlan {
@@ -195,7 +203,44 @@ impl BodyPlan {
                 FieldValue::Literal(literal) if field == name => Some(literal),
                 _ => None,
             }),
-            Self::Raw(_) => None,
+            Self::Raw(_) | Self::Prebuilt(_) => None,
+        }
+    }
+
+    /// Field names whose value can differ per dispatch (`effective_from_plan`
+    /// reads these out of the plan literals). A plan carrying any of them cannot
+    /// be collapsed to a single prebuilt body.
+    const PER_DISPATCH_LITERALS: [&'static str; 5] = [
+        "model",
+        "stream",
+        "max_tokens",
+        "max_completion_tokens",
+        "max_output_tokens",
+    ];
+
+    /// Collapse a fully-static `Fields` plan into a single [`Prebuilt`](BodyPlan::Prebuilt)
+    /// body, serialized once here, so dispatch clones it instead of re-splicing.
+    ///
+    /// Returns `self` unchanged when collapsing would not be byte-exact: a
+    /// streaming-capable endpoint (whose `stream` flag `effective_from_plan` may
+    /// toggle per dispatch), a plan carrying any [`PER_DISPATCH_LITERALS`]
+    /// (`model`/`max_tokens`/…), or a non-`Fields` plan. The scheduled path that
+    /// consumes precomputed plans always dispatches with empty overrides, so a
+    /// collapsed body needs no per-dispatch mutation.
+    pub fn prebuilt_if_static(self, supports_streaming: bool) -> Self {
+        let collapsible = !supports_streaming
+            && matches!(&self, Self::Fields(_))
+            && Self::PER_DISPATCH_LITERALS
+                .iter()
+                .all(|field| self.literal_field(field).is_none());
+        if !collapsible {
+            return self;
+        }
+        match self.materialize_standalone() {
+            Ok(bytes) => Self::Prebuilt(bytes),
+            // A body that will not materialize now would fail identically at
+            // dispatch; leave the plan so the live path surfaces the error.
+            Err(_) => self,
         }
     }
 
@@ -261,6 +306,9 @@ impl JsonBodyMaterializer {
                 }),
             },
             BodyPlan::Fields(fields) => materialize_fields(fields, store, overrides),
+            // Already a complete object; splice applies any (rare) override tail
+            // and otherwise clones the prebuilt bytes without a store lookup.
+            BodyPlan::Prebuilt(bytes) => splice_raw_object(bytes, overrides),
         }
     }
 }

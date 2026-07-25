@@ -341,8 +341,16 @@ impl Dataset {
                         );
                         // Non-fatal: an unrenderable turn simply stays uncached and
                         // surfaces its identical error at dispatch.
+                        //
+                        // When the body carries no per-dispatch field (image
+                        // retrieval, embeddings, rankings — no model/stream/
+                        // max_tokens tail), collapse it to a single prebuilt
+                        // blob now so dispatch clones it instead of re-splicing a
+                        // multi-MB buffer every request.
                         if let Ok(plan) = endpoint.format_payload(&request) {
-                            *slot = Some(plan);
+                            *slot = Some(
+                                plan.prebuilt_if_static(endpoint.descriptor().supports_streaming),
+                            );
                         }
                     }
                 }
