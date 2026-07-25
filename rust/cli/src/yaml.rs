@@ -2186,7 +2186,7 @@ fn clone_num_or_dist(n: &NumOrDist) -> Distribution {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_str;
+    use super::{resolve_expanded_value, resolve_str};
 
     /// A minimal valid config with the given `dataset:`/`phases:` bodies spliced in.
     fn cfg(body: &str) -> String {
@@ -2399,5 +2399,86 @@ benchmark:
             Some("/start_profile")
         );
         assert_eq!(server_profiler.stop_path.as_deref(), Some("/stop_profile"));
+    }
+
+    /// Task 1 guard: a representative benchmark YAML resolves into a typed
+    /// `BenchmarkConfig` carrying all four core sections (model, one dataset,
+    /// one phase, endpoint). This locks in the YAML -> typed contract that the
+    /// producer collapse must preserve byte-for-byte on the `--execute` wire.
+    #[test]
+    fn representative_yaml_populates_typed_benchmark_config() {
+        let run = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 2, concurrency: 4}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("valid config resolves");
+        let c = &run.cfg;
+        // Model selection is populated from the `model:` shorthand.
+        let models = c.models.as_ref().expect("models present");
+        let models_v = serde_json::to_value(models).unwrap();
+        assert!(
+            models_v.to_string().contains('m'),
+            "model name should survive into typed models: {models_v}"
+        );
+        // Exactly one canonical dataset, synthetic.
+        let datasets = c.datasets.as_ref().expect("datasets present");
+        assert_eq!(datasets.len(), 1, "one canonical dataset");
+        let ds_v = serde_json::to_value(&datasets[0]).unwrap();
+        assert_eq!(ds_v["type"], serde_json::json!("synthetic"));
+        // Exactly one phase, concurrency-shaped.
+        let phases = c.phases.as_ref().expect("phases present");
+        assert_eq!(phases.len(), 1, "one phase");
+        let ph_v = serde_json::to_value(&phases[0]).unwrap();
+        assert_eq!(ph_v["concurrency"], serde_json::json!(4));
+        // Endpoint profile is present with the authored type.
+        let ep_v = serde_json::to_value(c.endpoint.as_ref().expect("endpoint present")).unwrap();
+        assert_eq!(ep_v["type"], serde_json::json!("chat"));
+    }
+
+    /// Task 2 guard: an explicit CLI loadgen flag overrides the YAML-authored
+    /// value, while an unset flag leaves the YAML value intact. This pins the
+    /// flag-overlay-then-validate-once semantics the collapse must retain.
+    #[test]
+    fn cli_flag_overlay_wins_over_yaml_unset_flags_leave_yaml() {
+        // `ProfileFlags` (clap derive) overflows the default test-thread stack;
+        // run the parse+resolve on a generous worker stack (see flags.rs tests).
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let yaml = cfg(
+                    "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 2, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+                let flags = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--concurrency".to_string(),
+                    "8".to_string(),
+                ])
+                .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&flags),
+                )
+                .expect("overlay resolves");
+                let ph_v = serde_json::to_value(&run.cfg.phases.as_ref().unwrap()[0]).unwrap();
+                // Overlaid `--concurrency 8` wins over the authored `concurrency: 1`.
+                assert_eq!(
+                    ph_v["concurrency"],
+                    serde_json::json!(8),
+                    "explicit --concurrency must override YAML"
+                );
+                // An unset flag (request rate) leaves the phase rate-free.
+                assert!(
+                    ph_v.get("request_rate").is_none()
+                        || ph_v["request_rate"].is_null(),
+                    "unset --request-rate must not inject a rate: {ph_v}"
+                );
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
     }
 }
