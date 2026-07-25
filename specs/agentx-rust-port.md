@@ -50,10 +50,24 @@ counterparts with unit tests (golden values captured from CPython where relevant
   `rust/runtime/tests/agentx_chains_parity.rs` (6 scenarios, full partition diff).
   Grouping helpers (`worker_group_assignment`, `compute_chain_prefix_blocks`) pending.
 
+- `corpus.rs` — `CorpusTokenSynth`, the token-generation bridge (rng → corpus →
+  synth): per-hash-id `randrange(corpus_size)` block window (no separator token,
+  unlike the graph-ir `content.rs` scheme) + sha256-offset partial tail. **Proven
+  byte-exact against the real Python `HashIdRandomGenerator`** (embedded golden).
+
+Note (separation confirmed): AgentX legacy block tokens are `corpus[start..start+bs]`
+with NO block-separation token; the graph-ir recorded path
+(`graph/recorded/content.rs`) uses `[sep] + corpus[start..]`. The two schemes
+differ, so `agentx` must not reuse `content.rs` — it reuses only the tokenized
+corpus itself (a leaf util).
+
 Remaining Slice 1 (see below): `chains.rs` grouping helpers, `loader.rs` (the
-hub producing `ReconstructedConversation`s — wires the Qwen tokenizer into
-`TokenSynth`, runs prepass + chains + synth), and the full-loader golden-diff A/B
-harness over the `tests/fixtures/weka_traces/` files.
+hub producing `ReconstructedConversation`s — the turn loop is understood; it wires
+the real Qwen corpus into `CorpusTokenSynth`, runs prepass + chains + subagent
+expansion + synth, and assembles per-turn `raw_messages` + timing), and the
+full-loader golden-diff A/B harness over the `tests/fixtures/weka_traces/` files.
+Gating dependency: wiring the real Qwen-tokenized corpus (reused from the runtime)
+so it byte-matches Python's `PromptGenerator._tokenized_corpus`.
 
 ## Future requirements
 
