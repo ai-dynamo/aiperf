@@ -20,6 +20,9 @@ pub mod chains;
 pub mod config;
 pub mod corpus;
 pub mod export;
+/// Warmup-to-profile handoff observation for the accelerated cache-warmup
+/// substage (pure recorder + gate/recorder observer bundle).
+pub mod handoff;
 /// HuggingFace-hosted WEKA trace dataset download (JSON/JSONL always; Parquet
 /// under the `parquet` feature).
 pub mod hf_dataset;
