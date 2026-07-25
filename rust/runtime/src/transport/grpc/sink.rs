@@ -373,7 +373,14 @@ impl GrpcTransportSink {
         let mut response_text = String::new();
         let mut model_response = ModelResponseMetadata::default();
         let mut usage = ObservedUsage::default();
-        let mut endpoint_responses = Vec::with_capacity(record.responses.len());
+        // Assistant-turn capture is the only consumer of `endpoint_responses`; skip the
+        // per-response retain (and its clone) entirely when the endpoint does not capture.
+        let captures_turn = endpoint.captures_assistant_turn();
+        let mut endpoint_responses = if captures_turn {
+            Vec::with_capacity(record.responses.len())
+        } else {
+            Vec::new()
+        };
         let to_ms = |ns| self.ms(ns);
         let emitter = TokenEmitter {
             uuid,
@@ -388,18 +395,28 @@ impl GrpcTransportSink {
             let server_response = ServerResponse {
                 perf_ns: u64::try_from(response.perf_ns).unwrap_or(u64::MAX),
                 json: Some(response.json.clone()),
-                raw: serde_json::to_string(&response.json).ok(),
+                // `raw` is only consulted as a fallback when `json` is `None`
+                // (see `parse_flexible_response`); on the gRPC path `json` is always
+                // `Some`, so reconstructing it here is pure per-token waste.
+                raw: None,
             };
-            endpoint_responses.push(server_response.clone());
             let parsed = match endpoint.parse_response(&server_response) {
                 Ok(parsed) => parsed,
                 Err(error) => {
                     tracing::warn!(uuid = %uuid, error = %error, "gRPC endpoint response parsing failed");
                     parse_failed = true;
+                    if captures_turn {
+                        endpoint_responses.push(server_response);
+                    }
                     continue;
                 }
             };
-            let Some(parsed) = parsed else { continue };
+            let Some(parsed) = parsed else {
+                if captures_turn {
+                    endpoint_responses.push(server_response);
+                }
+                continue;
+            };
             let carried_content = reduce_parsed_response(
                 &parsed,
                 &emitter,
@@ -411,8 +428,12 @@ impl GrpcTransportSink {
                 },
             );
             parsed_content |= carried_content;
+            // Retain the response only for assistant-turn replay; move rather than clone.
+            if captures_turn {
+                endpoint_responses.push(server_response);
+            }
         }
-        if endpoint.captures_assistant_turn() {
+        if captures_turn {
             match endpoint.build_assistant_turn(&EndpointRequestRecord {
                 responses: endpoint_responses,
             }) {
