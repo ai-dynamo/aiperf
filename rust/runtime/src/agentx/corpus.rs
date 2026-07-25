@@ -143,6 +143,32 @@ mod tests {
         assert!(a.iter().all(|&t| t < 10));
     }
 
+    /// Golden values captured from the real Python `HashIdRandomGenerator` +
+    /// the `_decode_block_tokens` / `sample_partial_tail_tokens` formulas over a
+    /// `0..corpus_size` integer corpus.
+    #[test]
+    fn matches_python_block_and_tail_golden() {
+        // block_tokens(base_seed=42, tid="t", corpus_size=50, bs=4, [7,1,7,3])
+        let mut s = CorpusTokenSynth::new((0..50).collect(), 4, 42, "t", ids_text);
+        assert_eq!(
+            s.decode_block_tokens(&[7, 1, 7, 3]),
+            vec![22, 23, 24, 25, 34, 35, 36, 37, 22, 23, 24, 25, 23, 24, 25, 26]
+        );
+        // block_tokens(1234567890, "trace_0012", 30, 3, [99999, 0])
+        let mut s2 =
+            CorpusTokenSynth::new((0..30).collect(), 3, 1234567890, "trace_0012", ids_text);
+        assert_eq!(s2.decode_block_tokens(&[99999, 0]), vec![9, 10, 11, 9, 10, 11]);
+        // tail(corpus_size=100, n=5, "seed-x")
+        let mut s3 = CorpusTokenSynth::new((0..100).collect(), 4, 0, "t", ids_text);
+        assert_eq!(s3.sample_partial_tail_tokens(5, "seed-x"), vec![84, 85, 86, 87, 88]);
+        // tail(64, 10, "call_turn_3")
+        let mut s4 = CorpusTokenSynth::new((0..64).collect(), 4, 0, "t", ids_text);
+        assert_eq!(
+            s4.sample_partial_tail_tokens(10, "call_turn_3"),
+            vec![35, 36, 37, 38, 39, 40, 41, 42, 43, 44]
+        );
+    }
+
     #[test]
     fn partial_tail_is_deterministic_and_sized() {
         let corpus: Vec<u32> = (0..100).collect();
