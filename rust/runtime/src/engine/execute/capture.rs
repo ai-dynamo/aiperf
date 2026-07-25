@@ -528,9 +528,13 @@ impl RunCapture {
     pub(crate) fn record_http_exchange(
         &self,
         uuid: Uuid,
-        request_payload: Vec<u8>,
+        request_payload: bytes::Bytes,
         record: crate::transport::core::RequestRecord,
     ) -> Result<()> {
+        // Copy the (potentially multi-MB) body into an owned buffer ONLY when a
+        // raw artifact will consume it. On the default path this returns before
+        // touching the bytes, so a 24 MB image body stays a shared refcount and
+        // is never duplicated per request.
         if !self.raw_enabled {
             return Ok(());
         }
@@ -540,7 +544,7 @@ impl RunCapture {
                 .insert(
                     uuid,
                     CapturedHttpExchange {
-                        request_payload,
+                        request_payload: request_payload.to_vec(),
                         record,
                     },
                 )
@@ -1125,7 +1129,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
                 )?;
                 self.capture.record_http_exchange(
                     uuid,
-                    collected.request_payload.to_vec(),
+                    collected.request_payload,
                     collected.record,
                 )?;
                 self.capture.record_model_output(
