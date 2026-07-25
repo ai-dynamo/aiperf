@@ -284,6 +284,15 @@ impl TurnFinalizer<'_> {
         if let (Some(value), Some(cap)) = (turn.max_tokens, self.config.max_output_tokens) {
             turn.max_tokens = Some(value.min(cap));
         }
+        // A turn that composed content but no text — an image/audio/video-only turn
+        // such as image_retrieval or image_edit — has zero composed input *text*
+        // tokens. Record that explicitly so the delta/message-array context-mode
+        // validation (which requires a composed count on every non-opaque turn)
+        // accepts it. Raw-payload and token-native turns carry empty `content` and
+        // their own token accounting, so they are left untouched (stay `None`).
+        if turn.input_tokens.is_none() && !turn.content.is_empty() {
+            turn.input_tokens = Some(0);
+        }
         Ok(())
     }
 }

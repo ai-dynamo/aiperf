@@ -571,9 +571,13 @@ async fn image_edit_is_multipart_and_retrieval_downloads_deduplicates_and_inline
     server.abort();
     assert_completed(&report, 2);
     assert_eq!(state.asset_hits.load(Ordering::SeqCst), 1);
+    // Averaged over both requests: the image_edit turn carries 1 image and the
+    // image_retrieval turn carries 2, so (1 + 2) / 2 = 1.5. The image_edit image is
+    // now counted from the composition-known image count; its multipart/form-data
+    // body is not JSON, so the wire-parse path alone could never have counted it.
     assert_eq!(
         report.native_metrics.finite_value(MetricTag::NumImages),
-        Some(2.0)
+        Some(1.5)
     );
 
     let requests = state.captured.by_path();
