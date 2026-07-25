@@ -71,7 +71,6 @@ path = "src/lib.rs"
 
 [dependencies]
 # External deps consolidated from the 16 absorbed aiperf-* library crates.
-aiperf-config = { workspace = true }
 anyhow.workspace = true
 arrow = { workspace = true, optional = true }
 async-trait.workspace = true

@@ -8,7 +8,7 @@
 //! Relocated verbatim from `aiperf-config`'s `public_catalog` unit tests when
 //! `DispatchMode` moved into the leaf crate and the config→runtime edge was cut.
 
-use aiperf_config::model::public_catalog::catalog_entries;
+use aiperf_runtime::config::model::public_catalog::catalog_entries;
 use aiperf_runtime::dataset::loader::LoaderRegistry;
 
 /// Guard the stringly-typed YAML catalog: every entry must name a format that

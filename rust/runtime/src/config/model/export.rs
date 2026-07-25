@@ -69,7 +69,7 @@ struct StaticMeta {
 }
 
 static META: LazyLock<StaticMeta> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../resources/metric_metadata.json"))
+    serde_json::from_str(include_str!("../../../resources/metric_metadata.json"))
         .expect("embedded metric_metadata.json is valid")
 });
 

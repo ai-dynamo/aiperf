@@ -8,10 +8,10 @@
 // Leaf model modules, `BenchmarkConfig`, and `BenchmarkRun` now live in
 // `aiperf-config`; re-export them so `crate::model::…` call sites (and intra-model
 // `super::…` paths) resolve unchanged.
-pub use aiperf_config::model::{
+pub use aiperf_runtime::config::model::{
     artifacts, config, dataset, endpoint, export, metrics, models, phase, public_catalog,
     rate_series, resolved, run, runtime, telemetry, tokenizer, transport,
 };
 
-pub use aiperf_config::model::resolved::Resolved;
-pub use aiperf_config::model::{BenchmarkConfig, BenchmarkRun};
+pub use aiperf_runtime::config::model::resolved::Resolved;
+pub use aiperf_runtime::config::model::{BenchmarkConfig, BenchmarkRun};

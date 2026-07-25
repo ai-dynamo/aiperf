@@ -65,7 +65,6 @@ dependencies = [
 name = "aiperf-cli"
 version = "0.0.0"
 dependencies = [
- "aiperf-config",
  "aiperf-runtime",
  "anyhow",
  "async-trait",
@@ -103,16 +102,6 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots 0.26.11",
-]
-
-[[package]]
-name = "aiperf-config"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "serde_yaml",
 ]
 
 [[package]]
@@ -190,7 +179,6 @@ name = "aiperf-runtime"
 version = "0.0.0"
 dependencies = [
  "aiconfigurator-core",
- "aiperf-config",
  "anyhow",
  "arrow",
  "async-trait",

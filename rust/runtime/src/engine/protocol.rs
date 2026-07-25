@@ -36,7 +36,7 @@ use crate::extensions::AIPerfRegistry;
 /// config model and runtime share one serde-stable type without a cycle) and
 /// re-exported here to keep `crate::engine::protocol::DispatchMode` call sites
 /// unchanged.
-pub use aiperf_config::model::DispatchMode;
+pub use crate::config::model::DispatchMode;
 
 /// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]
 /// pick site (`ThreadPerCoreExecutor::execute_command`) when `workers > 1`.

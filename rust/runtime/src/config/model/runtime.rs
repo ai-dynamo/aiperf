@@ -4,7 +4,7 @@
 //!
 //! `workers` and `workers_min` emit null when unset; `workers_max` is omitted.
 
-use crate::model::DispatchMode;
+use crate::config::model::DispatchMode;
 use serde::{Deserialize, Serialize};
 
 /// The typed worker/cell runtime policy.

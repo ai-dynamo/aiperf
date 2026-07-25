@@ -9,7 +9,6 @@ resolver = "3"
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
     "runtime",
-    "config",
     "cli",
     "mock-server",
     "e2e",
@@ -30,7 +29,6 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # internal crates
 aiperf-runtime = { path = "runtime" }
-aiperf-config = { path = "config" }
 
 # external (shared versions)
 anyhow = "1"

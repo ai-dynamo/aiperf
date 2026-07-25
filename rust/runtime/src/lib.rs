@@ -48,6 +48,7 @@ pub mod adaptive_core;
 pub mod body_plan;
 pub mod cellular;
 pub mod clock;
+pub mod config;
 pub mod content_server;
 pub mod dataset;
 pub mod dispatch;
