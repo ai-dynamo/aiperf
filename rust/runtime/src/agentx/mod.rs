@@ -16,3 +16,4 @@
 //! Python counterpart's output over the in-repo `tests/fixtures/weka_traces*/`.
 
 pub mod rng;
+pub mod trace;
