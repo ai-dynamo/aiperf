@@ -1,0 +1,620 @@
+[
+ {
+  "name": "turn0_partial_tail",
+  "block_size": 4,
+  "steps_input": [
+   {
+    "op": "init",
+    "hash_ids": [
+     0,
+     1
+    ],
+    "in": 10,
+    "tool": 0,
+    "system": 0,
+    "seed": "s0"
+   }
+  ],
+  "steps_output": [
+   {
+    "delta_messages": [
+     {
+      "role": "user",
+      "content": "0 1 2 3 1000 1001 1002 1003 900000 900001"
+     }
+    ],
+    "reset_context": false,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003,
+       900000,
+       900001
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003 900000 900001",
+      "tool_result_turn": null
+     }
+    ]
+   }
+  ],
+  "trailing_non_user_turns": []
+ },
+ {
+  "name": "turn0_system_prefix",
+  "block_size": 4,
+  "steps_input": [
+   {
+    "op": "init",
+    "hash_ids": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "in": 16,
+    "tool": 4,
+    "system": 4,
+    "seed": "s0"
+   }
+  ],
+  "steps_output": [
+   {
+    "delta_messages": [
+     {
+      "role": "system",
+      "content": "0 1 2 3 1000 1001 1002 1003"
+     },
+     {
+      "role": "user",
+      "content": "2000 2001 2002 2003 3000 3001 3002 3003"
+     }
+    ],
+    "reset_context": false,
+    "segments": [
+     {
+      "role": "system",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "user",
+      "block_start": 2,
+      "block_count": 2,
+      "tokens": [
+       2000,
+       2001,
+       2002,
+       2003,
+       3000,
+       3001,
+       3002,
+       3003
+      ],
+      "content": "2000 2001 2002 2003 3000 3001 3002 3003",
+      "tool_result_turn": null
+     }
+    ]
+   }
+  ],
+  "trailing_non_user_turns": []
+ },
+ {
+  "name": "append_only",
+  "block_size": 4,
+  "steps_input": [
+   {
+    "op": "init",
+    "hash_ids": [
+     0,
+     1
+    ],
+    "in": 8,
+    "tool": 0,
+    "system": 0,
+    "seed": "s0"
+   },
+   {
+    "op": "advance",
+    "prev_hash_ids": [
+     0,
+     1
+    ],
+    "prev_out": 4,
+    "hash_ids": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "in": 16,
+    "seed": "s1",
+    "is_tool_result": false,
+    "max_asst_blocks": null
+   },
+   {
+    "op": "advance",
+    "prev_hash_ids": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "prev_out": 8,
+    "hash_ids": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "in": 24,
+    "seed": "s2",
+    "is_tool_result": false,
+    "max_asst_blocks": null
+   }
+  ],
+  "steps_output": [
+   {
+    "delta_messages": [
+     {
+      "role": "user",
+      "content": "0 1 2 3 1000 1001 1002 1003"
+     }
+    ],
+    "reset_context": false,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003",
+      "tool_result_turn": null
+     }
+    ]
+   },
+   {
+    "delta_messages": [
+     {
+      "role": "assistant",
+      "content": "2000 2001 2002 2003"
+     },
+     {
+      "role": "user",
+      "content": "3000 3001 3002 3003"
+     }
+    ],
+    "reset_context": false,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "assistant",
+      "block_start": 2,
+      "block_count": 1,
+      "tokens": [
+       2000,
+       2001,
+       2002,
+       2003
+      ],
+      "content": "2000 2001 2002 2003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "user",
+      "block_start": 3,
+      "block_count": 1,
+      "tokens": [
+       3000,
+       3001,
+       3002,
+       3003
+      ],
+      "content": "3000 3001 3002 3003",
+      "tool_result_turn": null
+     }
+    ]
+   },
+   {
+    "delta_messages": [
+     {
+      "role": "assistant",
+      "content": "4000 4001 4002 4003"
+     },
+     {
+      "role": "user",
+      "content": "5000 5001 5002 5003"
+     }
+    ],
+    "reset_context": false,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "assistant",
+      "block_start": 2,
+      "block_count": 1,
+      "tokens": [
+       2000,
+       2001,
+       2002,
+       2003
+      ],
+      "content": "2000 2001 2002 2003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "user",
+      "block_start": 3,
+      "block_count": 1,
+      "tokens": [
+       3000,
+       3001,
+       3002,
+       3003
+      ],
+      "content": "3000 3001 3002 3003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "assistant",
+      "block_start": 4,
+      "block_count": 1,
+      "tokens": [
+       4000,
+       4001,
+       4002,
+       4003
+      ],
+      "content": "4000 4001 4002 4003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "user",
+      "block_start": 5,
+      "block_count": 1,
+      "tokens": [
+       5000,
+       5001,
+       5002,
+       5003
+      ],
+      "content": "5000 5001 5002 5003",
+      "tool_result_turn": null
+     }
+    ]
+   }
+  ],
+  "trailing_non_user_turns": []
+ },
+ {
+  "name": "pull_back_midseq_replace",
+  "block_size": 4,
+  "steps_input": [
+   {
+    "op": "init",
+    "hash_ids": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "in": 16,
+    "tool": 0,
+    "system": 0,
+    "seed": "s0"
+   },
+   {
+    "op": "advance",
+    "prev_hash_ids": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "prev_out": 8,
+    "hash_ids": [
+     0,
+     1,
+     9,
+     10
+    ],
+    "in": 16,
+    "seed": "s1",
+    "is_tool_result": false,
+    "max_asst_blocks": null
+   }
+  ],
+  "steps_output": [
+   {
+    "delta_messages": [
+     {
+      "role": "user",
+      "content": "0 1 2 3 1000 1001 1002 1003 2000 2001 2002 2003 3000 3001 3002 3003"
+     }
+    ],
+    "reset_context": false,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 4,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003,
+       2000,
+       2001,
+       2002,
+       2003,
+       3000,
+       3001,
+       3002,
+       3003
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003 2000 2001 2002 2003 3000 3001 3002 3003",
+      "tool_result_turn": null
+     }
+    ]
+   },
+   {
+    "delta_messages": [
+     {
+      "role": "user",
+      "content": "0 1 2 3 1000 1001 1002 1003"
+     },
+     {
+      "role": "assistant",
+      "content": "9000 9001 9002 9003"
+     },
+     {
+      "role": "user",
+      "content": "10000 10001 10002 10003"
+     }
+    ],
+    "reset_context": true,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "assistant",
+      "block_start": 2,
+      "block_count": 1,
+      "tokens": [
+       9000,
+       9001,
+       9002,
+       9003
+      ],
+      "content": "9000 9001 9002 9003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "user",
+      "block_start": 3,
+      "block_count": 1,
+      "tokens": [
+       10000,
+       10001,
+       10002,
+       10003
+      ],
+      "content": "10000 10001 10002 10003",
+      "tool_result_turn": null
+     }
+    ]
+   }
+  ],
+  "trailing_non_user_turns": []
+ },
+ {
+  "name": "tool_result_and_partials",
+  "block_size": 4,
+  "steps_input": [
+   {
+    "op": "init",
+    "hash_ids": [
+     0,
+     1
+    ],
+    "in": 10,
+    "tool": 0,
+    "system": 0,
+    "seed": "s0"
+   },
+   {
+    "op": "advance",
+    "prev_hash_ids": [
+     0,
+     1
+    ],
+    "prev_out": 3,
+    "hash_ids": [
+     0,
+     1,
+     2
+    ],
+    "in": 14,
+    "seed": "s1",
+    "is_tool_result": true,
+    "max_asst_blocks": null
+   }
+  ],
+  "steps_output": [
+   {
+    "delta_messages": [
+     {
+      "role": "user",
+      "content": "0 1 2 3 1000 1001 1002 1003 900000 900001"
+     }
+    ],
+    "reset_context": false,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003,
+       900000,
+       900001
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003 900000 900001",
+      "tool_result_turn": null
+     }
+    ]
+   },
+   {
+    "delta_messages": [
+     {
+      "role": "user",
+      "content": "0 1 2 3 1000 1001 1002 1003"
+     },
+     {
+      "role": "assistant",
+      "content": "2000 2001 2002 2003"
+     },
+     {
+      "role": "user",
+      "content": "900000 900001"
+     }
+    ],
+    "reset_context": true,
+    "segments": [
+     {
+      "role": "user",
+      "block_start": 0,
+      "block_count": 2,
+      "tokens": [
+       0,
+       1,
+       2,
+       3,
+       1000,
+       1001,
+       1002,
+       1003
+      ],
+      "content": "0 1 2 3 1000 1001 1002 1003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "assistant",
+      "block_start": 2,
+      "block_count": 1,
+      "tokens": [
+       2000,
+       2001,
+       2002,
+       2003
+      ],
+      "content": "2000 2001 2002 2003",
+      "tool_result_turn": null
+     },
+     {
+      "role": "user",
+      "block_start": 3,
+      "block_count": 0,
+      "tokens": [
+       900000,
+       900001
+      ],
+      "content": "900000 900001",
+      "tool_result_turn": 1
+     }
+    ]
+   }
+  ],
+  "trailing_non_user_turns": []
+ }
+]
