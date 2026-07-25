@@ -26,6 +26,7 @@ pub mod prepass;
 pub mod prompt;
 pub mod replay_dependencies;
 pub mod rng;
+pub mod switch;
 pub mod synth;
 pub mod tool_shape;
 pub mod scenario;
