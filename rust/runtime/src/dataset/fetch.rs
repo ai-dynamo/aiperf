@@ -115,8 +115,16 @@ fn fetch_on_local_runtime(url: String, bearer_token: Option<String>) -> Result<B
     let local = tokio::task::LocalSet::new();
     runtime.block_on(local.run_until(async move {
         let clock: Rc<dyn Clock> = RealClock::new();
+        // Dataset downloads are external and may sit behind a forward proxy, so
+        // honor the proxy environment (loopback always excluded). This never
+        // touches the benchmark transport, whose ClientConfig leaves proxy None.
+        let mut client_config = ClientConfig::default();
+        if let Ok(parsed) = url::Url::parse(&url) {
+            client_config.proxy =
+                crate::transport::http::client::proxy::ProxyConfig::from_env_for(&parsed);
+        }
         let transport =
-            HttpTransport::new(clock, ClientConfig::default()).with_user_agent("aiperf-dataset/0");
+            HttpTransport::new(clock, client_config).with_user_agent("aiperf-dataset/0");
         fetch_following_redirects(&transport, url, bearer_token).await
     }))
 }

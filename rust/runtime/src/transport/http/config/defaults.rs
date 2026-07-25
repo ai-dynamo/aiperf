@@ -213,6 +213,10 @@ pub struct ClientConfig {
     /// (co-located high-throughput: bypasses the TCP/IP loopback softirq tax).
     /// HTTP/1.1 is used over UDS. The request URL still supplies the path + Host.
     pub uds_path: Option<String>,
+    /// When set, tunnel TCP through this forward proxy via HTTP `CONNECT` before
+    /// TLS. Only dataset/tokenizer downloads set it (from the proxy environment);
+    /// the measured benchmark path leaves it `None` so its connect is unchanged.
+    pub proxy: Option<crate::transport::http::client::proxy::ProxyConfig>,
 }
 
 impl Default for ClientConfig {
@@ -233,6 +237,7 @@ impl Default for ClientConfig {
             dns_cache_ttl_ns: Some(300_000_000_000),
             collect_trace_chunks: false,
             uds_path: None,
+            proxy: None,
         }
     }
 }

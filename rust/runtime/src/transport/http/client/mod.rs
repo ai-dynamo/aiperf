@@ -7,4 +7,5 @@ pub mod cancellation;
 pub mod connection;
 pub mod http_client;
 pub mod pool;
+pub mod proxy;
 pub mod resolver;

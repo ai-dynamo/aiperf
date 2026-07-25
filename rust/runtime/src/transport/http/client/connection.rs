@@ -488,12 +488,24 @@ async fn establish_inner(
         .port_or_known_default()
         .unwrap_or(if is_tls { 443 } else { 80 });
 
-    let remote = resolver.resolve(host, port, cfg, &clock, trace).await?;
-
-    trace.tcp_connect_start_ns = Some(clock.now_ns());
-    let tcp = TcpStream::connect(remote)
-        .await
-        .map_err(ErrorDetails::from)?;
+    // When a proxy is configured (dataset/tokenizer downloads only), tunnel via
+    // HTTP CONNECT: the proxy resolves the origin, so we must not resolve it
+    // locally. Otherwise resolve and connect to the origin directly, unchanged —
+    // DNS stays outside the TCP-connect span exactly as before.
+    let (tcp, remote) = if let Some(proxy) = &cfg.proxy {
+        trace.tcp_connect_start_ns = Some(clock.now_ns());
+        let stream =
+            crate::transport::http::client::proxy::connect_via_proxy(proxy, host, port).await?;
+        let peer = stream.peer_addr().map_err(ErrorDetails::from)?;
+        (stream, peer)
+    } else {
+        let remote = resolver.resolve(host, port, cfg, &clock, trace).await?;
+        trace.tcp_connect_start_ns = Some(clock.now_ns());
+        let stream = TcpStream::connect(remote)
+            .await
+            .map_err(ErrorDetails::from)?;
+        (stream, remote)
+    };
     let local = tcp.local_addr().map_err(ErrorDetails::from)?;
     // Apply low-latency socket options through a borrowed socket2 ref.
     {
