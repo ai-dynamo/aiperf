@@ -1326,6 +1326,7 @@ mod tests {
                 prompts: Some(PromptSelectionSpec {
                     corpus: Some("random".into()),
                 }),
+                synthesis: None,
                 prefetch_media_urls: false,
             },
             "weka_trace",
