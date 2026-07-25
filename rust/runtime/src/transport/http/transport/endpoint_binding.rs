@@ -96,8 +96,6 @@ pub struct HttpEndpointPolicy {
     pub url: String,
     /// Wire content type and body encoder selection.
     pub content_type: RequestContentType,
-    /// Whether remote media URLs must be fetched and inlined before encoding.
-    pub inline_media: bool,
     /// Submit/poll/download lifecycle policy, when required.
     pub polling: Option<PollingOptions>,
 }
@@ -502,7 +500,6 @@ impl<C: HttpEndpointConfigView + ?Sized> HttpEndpointBinding
         Ok(HttpEndpointPolicy {
             url: self.endpoint_url(endpoint_path, streaming, url_index)?,
             content_type,
-            inline_media: self.descriptor.requires_inline_media,
             polling: self.polling_options()?,
         })
     }
