@@ -67,6 +67,18 @@ pub fn write_dataset_analysis_csv(a: &DatasetAnalysis, path: &Path) -> std::io::
     {
         rows.push(("queue_delay_ms".to_string(), s));
     }
+    // Per-conversation length rows, emitted only when the breakdown was requested.
+    if let Some(conversations) = a.conversations.as_ref() {
+        for summary in conversations {
+            let id = &summary.conversation_id;
+            if let Some(s) = summary.lengths.isl.as_ref() {
+                rows.push((format!("conv[{id}]_isl"), s));
+            }
+            if let Some(s) = summary.lengths.osl.as_ref() {
+                rows.push((format!("conv[{id}]_osl"), s));
+            }
+        }
+    }
 
     let file = std::fs::File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);

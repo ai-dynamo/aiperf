@@ -466,7 +466,26 @@ pub struct DatasetAnalysis {
     pub cache: Option<CacheReuseAnalysis>,
     /// Execution-timeline summary, when records are present.
     pub timeline: Option<TimelineStats>,
+    /// Per-conversation length breakdown, emitted only when
+    /// [`AnalysisOptions::per_conversation`] is set. `None` when the breakdown
+    /// was not requested; empty vector when requested over an empty dataset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversations: Option<Vec<ConversationSummary>>,
 }
+
+/// Length breakdown for a single conversation, emitted under the
+/// `--dataset-analysis-per-conversation` knob.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConversationSummary {
+    /// Stable conversation identity (endpoint `conversation_id` or a synthesized
+    /// session key), matching the ids used elsewhere in the analysis.
+    pub conversation_id: String,
+    /// Number of turns planned for this conversation.
+    pub turns: u64,
+    /// Sequence-length summary restricted to this conversation's turns.
+    pub lengths: LengthStats,
+}
+
 
 /// Options controlling dataset analysis.
 #[derive(Debug, Clone)]
@@ -476,6 +495,9 @@ pub struct AnalysisOptions {
     /// When set, an additional realized-curve point at this explicit LRU
     /// capacity (in blocks) is appended to the sweep.
     pub explicit_cache_blocks: Option<u64>,
+    /// When set, [`analyze`] emits a per-conversation length breakdown
+    /// ([`DatasetAnalysis::conversations`]). Off by default.
+    pub per_conversation: bool,
 }
 
 impl Default for AnalysisOptions {
@@ -483,6 +505,7 @@ impl Default for AnalysisOptions {
         Self {
             block_size: 16,
             explicit_cache_blocks: None,
+            per_conversation: false,
         }
     }
 }
@@ -641,9 +664,36 @@ pub fn analyze(
         turns: turns_stats,
         cache,
         timeline,
+        conversations: opts.per_conversation.then(|| per_conversation_summaries(turns)),
     };
     sanitize_analysis(&mut analysis);
     analysis
+}
+
+/// Group `turns` by conversation id and compute a [`LengthStats`] per group.
+///
+/// Conversations are emitted in ascending id order for stable output. Each
+/// group's length distribution is the same computation as the dataset-wide
+/// [`length_stats`], restricted to that conversation's turns.
+fn per_conversation_summaries(turns: &[AnalyzedTurn]) -> Vec<ConversationSummary> {
+    use std::collections::BTreeMap;
+
+    let mut by_conversation: BTreeMap<&str, Vec<AnalyzedTurn>> = BTreeMap::new();
+    for turn in turns {
+        by_conversation
+            .entry(turn.conversation_id.as_str())
+            .or_default()
+            .push(turn.clone());
+    }
+
+    by_conversation
+        .into_iter()
+        .map(|(conversation_id, group)| ConversationSummary {
+            conversation_id: conversation_id.to_string(),
+            turns: group.len() as u64,
+            lengths: length_stats(&group),
+        })
+        .collect()
 }
 
 /// Replace a non-finite value (NaN/Inf) with `0.0`; pass finite values through.
@@ -682,6 +732,20 @@ fn sanitize_analysis(a: &mut DatasetAnalysis) {
     ] {
         if let Some(s) = opt.as_mut() {
             sanitize_stat(s);
+        }
+    }
+    if let Some(conversations) = a.conversations.as_mut() {
+        for summary in conversations.iter_mut() {
+            for opt in [
+                &mut summary.lengths.isl,
+                &mut summary.lengths.osl,
+                &mut summary.lengths.total,
+                &mut summary.lengths.isl_osl_ratio,
+            ] {
+                if let Some(s) = opt.as_mut() {
+                    sanitize_stat(s);
+                }
+            }
         }
     }
     for row in &mut a.turns.by_index {
