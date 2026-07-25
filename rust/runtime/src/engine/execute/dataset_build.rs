@@ -328,11 +328,11 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                     intervals,
                     None,
                     None,
-                    // enforce_stop=true (with no slot pools) gives count/duration
-                    // stop WITHOUT a rate/concurrency gate — the agentic mode owns
-                    // its dispatch timing but must honor the phase budget so it can
-                    // recycle trajectories to sustain a duration run.
-                    true,
+                    // enforce_stop=false: the agentic mode owns its dispatch timing
+                    // (no rate/concurrency gate). The phase runtime still enforces
+                    // the duration budget and cancels pending recycles at expiry;
+                    // recycle re-draws until then to sustain the run.
+                    false,
                     Rc::new(crate::phase_runtime::NoopScheduledPhaseResources),
                     None,
                 )
