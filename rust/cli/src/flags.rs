@@ -108,11 +108,15 @@ pub struct ProfileFlags {
     #[arg(long = "cells")]
     pub cells: Option<u32>,
 
-    /// Admission strategy for `workers>1` (`--dispatch`): `sharded` (static
-    /// per-thread partition), `global` (default; shared cross-thread
-    /// admission, byte-exact against Python), or `global-hop` (full
-    /// per-request coordinator dispatch). Config surface only: selecting a
-    /// mode does not yet change execution behavior.
+    /// Admission strategy for `workers>1` (`--dispatch`): `global` (default;
+    /// one shared cross-thread admission gate — byte-exact against Python,
+    /// the parity-preserving default), `sharded` (static per-worker
+    /// partition with no shared gate — higher throughput, but aggregate
+    /// concurrency/rate are only approximate, so NOT byte-exact), or
+    /// `global-hop` (every request routed through one coordinator-owned
+    /// dispatcher — exact global issuance order, lowest throughput). The
+    /// mode changes execution behavior: on a fast target, `sharded` runs
+    /// materially faster than `global`, which runs faster than `global-hop`.
     #[arg(long = "dispatch")]
     pub dispatch: Option<String>,
 
