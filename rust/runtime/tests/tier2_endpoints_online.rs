@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use aiperf_runtime::clock::{Clock, RealClock};
 use aiperf_runtime::dataset::{
-    ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, MediaResolver,
-    PrefetchMediaResolver, TiktokenTokenizer,
+    ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, MediaResolver, PrefetchMediaResolver,
+    TiktokenTokenizer,
 };
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
 use aiperf_runtime::endpoints::{

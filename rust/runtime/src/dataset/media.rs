@@ -138,9 +138,9 @@ impl PrefetchMediaResolver {
             DatasetError::Validation("media prefetch worker is unavailable".into())
         })?;
         let (reply_tx, reply_rx) = mpsc::channel();
-        request_tx.send((url.to_string(), reply_tx)).map_err(|_| {
-            DatasetError::Validation("media prefetch worker has stopped".into())
-        })?;
+        request_tx
+            .send((url.to_string(), reply_tx))
+            .map_err(|_| DatasetError::Validation("media prefetch worker has stopped".into()))?;
         let data_url = match reply_rx.recv() {
             Ok(Ok(data_url)) => data_url,
             Ok(Err(message)) => {
@@ -343,7 +343,10 @@ mod tests {
     /// synchronous, blocking [`PrefetchMediaResolver::resolve`] call cannot
     /// deadlock the server. Returns the bound address and a per-request hit
     /// counter.
-    fn spawn_png_server() -> (std::net::SocketAddr, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    fn spawn_png_server() -> (
+        std::net::SocketAddr,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
         use std::sync::Arc;
         use std::sync::atomic::AtomicUsize;
 
