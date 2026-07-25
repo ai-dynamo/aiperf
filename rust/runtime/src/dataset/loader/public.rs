@@ -2380,6 +2380,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hf_auto_composer_chat_format_uses_user_and_assistant() {
+        let dataset = build(
+            Arc::new(HfAutoDatasetLoader),
+            Arc::new(HfAutoComposer),
+            json!([{
+                "conversation": [
+                    {"role": "user", "content": "What is the meaning of life, the universe, and everything today?"},
+                    {"role": "assistant", "content": "42, per Douglas Adams and his famous novel."}
+                ]
+            }]),
+            hf_auto_options(json!({})),
+        )
+        .await
+        .unwrap();
+        let convos = dataset.conversations();
+        assert_eq!(convos.len(), 1);
+        assert_eq!(convos[0].turns.len(), 1);
+        assert!(convos[0].turns[0].max_tokens.unwrap() > 0);
+    }
+
+    #[tokio::test]
     async fn hf_instruction_template_and_media_are_composed() {
         let mut options = Map::new();
         options.insert("prompt_column".into(), Value::String("question".into()));
