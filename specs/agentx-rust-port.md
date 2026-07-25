@@ -72,9 +72,15 @@ corpus itself (a leaf util).
   (`classify_turn_input`, `end_to_start_delay_ms`, `api_time_ms`, `clamp_delay_ms`,
   `cap_output`) and `ReconstructedConversation`/`ReconstructedTurn`.
 
-Remaining Slice 1 (see below): subagent expansion (child conversations +
-SPAWN/JOIN prerequisites) and flat-chain splitting in `loader.rs`; the idle-gap
-time-warp timing; `chains.rs` grouping helpers; model mapping; and — the gating
+- `config.rs` / `subagent.rs` — the `WEKA_*` config defaults (`WekaConfig`) and
+  subagent expansion (`expand_subagent_to_child_plans` + `split_off_preamble`,
+  `chain_init_tokens`, `worker_suffix`). **Proven byte-exact against Python**
+  (`tools/agentx_subagent_golden.py` + `agentx_subagent_parity.rs`, 4 scenarios:
+  single-chain / spawn-worker / cross-model-aux / relative-timestamp).
+
+Remaining Slice 1 (see below): child-conversation reconstruction (drive the synth
+per child plan with SPAWN/JOIN prerequisites); flat-chain splitting; the idle-gap
+time-warp timing; model mapping; and — the gating
 dependency for a real fixture-level diff — wiring the real Qwen-tokenized corpus
 (reused from the runtime as a leaf util) into `CorpusTokenSynth` so it byte-matches
 Python's `PromptGenerator._tokenized_corpus`, then the full-loader golden-diff over
