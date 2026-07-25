@@ -63,7 +63,11 @@ pub fn execute_replay_sim(dispatches: Vec<(i64, Value)>) -> Vec<(i64, Value)> {
 /// warmup turn(s) fire at t=0, profiling turns fire at their phase-start-anchored
 /// delay (`profiling_dispatch_delays_ms`, honoring `burst` / `cap_ms`), history
 /// turns are omitted. Returns `(dispatch_ns, export_record)` in true fired order.
-pub fn run_replay_sim(
+/// Compute the dispatch schedule for one conversation at `t_star_ms`
+/// synchronously (no clock): `(dispatch_ns, export_record)` per dispatched turn
+/// (warmup@0, profiling at phase-start-anchored delays), sorted into fire order.
+/// This is the deterministic plan `run_replay_sim` then executes under the clock.
+pub fn computed_dispatch(
     conv: &ReconstructedConversation,
     t_star_ms: f64,
     burst: bool,
@@ -73,7 +77,6 @@ pub fn run_replay_sim(
     let schedule = replay_schedule(&ts, t_star_ms);
     let records = raw_export_records(conv, Some(t_star_ms));
 
-    // Anchor the profiling turns' offsets across the lane.
     let prof_offsets: Vec<f64> = schedule
         .iter()
         .filter(|st| st.phase == ReplayPhase::Profiling)
@@ -81,20 +84,34 @@ pub fn run_replay_sim(
         .collect();
     let prof_delays = profiling_dispatch_delays_ms(&prof_offsets, burst, cap_ms);
 
-    let mut dispatches: Vec<(i64, Value)> = Vec::new();
+    let mut dispatches: Vec<(i64, usize, Value)> = Vec::new();
     let mut prof_i = 0usize;
     for (k, st) in schedule.iter().enumerate() {
         match st.phase {
-            ReplayPhase::Warmup => dispatches.push((0, records[k].clone())),
+            ReplayPhase::Warmup => dispatches.push((0, k, records[k].clone())),
             ReplayPhase::Profiling => {
                 let delay_ms = prof_delays[prof_i];
                 prof_i += 1;
-                dispatches.push(((delay_ms * NS_PER_MS as f64) as i64, records[k].clone()));
+                dispatches.push(((delay_ms * NS_PER_MS as f64) as i64, k, records[k].clone()));
             }
             ReplayPhase::History => {}
         }
     }
-    execute_replay_sim(dispatches)
+    dispatches.sort_by_key(|(ns, i, _)| (*ns, *i));
+    dispatches.into_iter().map(|(ns, _, rec)| (ns, rec)).collect()
+}
+
+/// Execute one conversation's agentic replay ACTUALLY under the SimClock at
+/// `t_star_ms`: the computed dispatch schedule is fired through
+/// [`execute_replay_sim`], returning records in true clock-fired order. Must not
+/// be called from within an async runtime (the virtual driver owns its own).
+pub fn run_replay_sim(
+    conv: &ReconstructedConversation,
+    t_star_ms: f64,
+    burst: bool,
+    cap_ms: Option<f64>,
+) -> Vec<(i64, Value)> {
+    execute_replay_sim(computed_dispatch(conv, t_star_ms, burst, cap_ms))
 }
 
 /// The complete clock-driven legacy replay: reconstruct a trace, then execute
@@ -157,7 +174,9 @@ pub fn build_dispatch_plan(
     use crate::agentx::synth::ChatMessage;
     let mut plan: Vec<DispatchItem> = Vec::new();
     for conv in convs {
-        for (dispatch_ns, rec) in run_replay_sim(conv, t_star_ms, burst, cap_ms) {
+        // Synchronous schedule computation (no clock driver) so the plan can be
+        // built inside an async transport context without a nested runtime.
+        for (dispatch_ns, rec) in computed_dispatch(conv, t_star_ms, burst, cap_ms) {
             let messages: Vec<ChatMessage> = rec["raw_messages"]
                 .as_array()
                 .unwrap()
