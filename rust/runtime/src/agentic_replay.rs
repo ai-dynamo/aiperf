@@ -41,20 +41,26 @@ const SCHEDULE_START_LEAD_NS: i64 = 25_000_000;
 /// (Python `next_recycle_conversation_id` with the `sequential` sampler) and
 /// dispatched immediately to sustain a duration run.
 struct RecycleState {
-    /// Profiling conversation ids in dataset order.
+    /// Profiling conversation ids (templates) in dataset order.
     ids: Vec<String>,
     /// Next index to draw.
     cursor: Cell<usize>,
 }
 
 impl RecycleState {
-    fn next_id(&self) -> Option<String> {
+    /// Draw the next `(template_id, fresh_correlation_id)`. The correlation is
+    /// unique per recycle instance (Python's double-recycle guard) so a lane that
+    /// recycles while a prior instance is still in flight does not collide on
+    /// sticky routing / record correlation.
+    fn next_draw(&self) -> Option<(String, String)> {
         if self.ids.is_empty() {
             return None;
         }
         let i = self.cursor.get();
         self.cursor.set(i + 1);
-        Some(self.ids[i % self.ids.len()].clone())
+        let template = self.ids[i % self.ids.len()].clone();
+        let correlation = format!("{template}#r{i}");
+        Some((template, correlation))
     }
 }
 
@@ -277,11 +283,11 @@ fn schedule_agentic_turn(
                             // sustain the run while the phase budget permits.
                             if let Some(recycle) = &recycle
                                 && runtime_c.can_issue(true)
-                                && let Some(next_id) = recycle.next_id()
+                                && let Some((template, correlation)) = recycle.next_draw()
                             {
                                 let session = source_c
                                     .borrow()
-                                    .session_for(&next_id, next_id.clone());
+                                    .session_for(&template, correlation);
                                 if let Ok(session) = session
                                     && let Ok(first) = session.build_first_turn(None)
                                 {
