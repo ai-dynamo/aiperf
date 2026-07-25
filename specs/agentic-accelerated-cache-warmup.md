@@ -9,9 +9,13 @@ SPDX-License-Identifier: Apache-2.0
 
 Close the final byte-exact-parity gap with Python `AgenticReplayStrategy` for the
 Rust legacy `agentic_replay` timing mode: the **gated accelerated cache-pressure
-warmup** and the **warmup→profiling residual-delay handoff**. This is the one
-Python-behavior feature that the legacy path (`rust/runtime/src/agentic_replay.rs`,
-lowered by `lower_legacy_agentic`) does not yet implement.
+warmup** and the **warmup→profiling residual-delay handoff**. The legacy path
+(`rust/runtime/src/agentic_replay.rs`, lowered by `lower_legacy_agentic`)
+implements this: `AgenticReplayWorkload::execute` runs the accelerated substage
+(`execute_accelerated_warmup`) and the carrier-driven profiling resume
+(`execute_profiling_resume`), and `lower_legacy_agentic` threads the cross-phase
+[`WarmupHandoffCarrier`](../rust/runtime/src/agentic_replay.rs) between the two
+agentic phase instances.
 
 When `--agentic-cache-warmup-duration <sec>` is set, the WARMUP phase does not stop
 after the static turn-(n-1) prime. Instead it **continues replaying the sampled
@@ -65,8 +69,10 @@ Port `validate_agentic_cache_warmup` (`src/aiperf/config/config.py:689`):
 `--agentic-cache-warmup-duration` is rejected unless the resolved profiling timing
 mode is `agentic_replay` (scenario-declared or phase-resolved). The field already
 threads CLI→`PhaseCommonSpec.agentic_cache_warmup_duration` (`protocol.rs:453`);
-`lower_legacy_agentic` currently ignores it. The guard belongs in
-`cli/src/load.rs`/`phase_validate.rs` alongside the existing weka-semantics guard.
+`lower_legacy_agentic` reads it onto the synthesized WARMUP phase and installs a
+live [`WarmupHandoffCarrier`](../rust/runtime/src/agentic_replay.rs) when present.
+The guard belongs in `cli/src/load.rs`/`phase_validate.rs` alongside the existing
+weka-semantics guard.
 
 ## Architecture
 
@@ -174,9 +180,12 @@ cap present?         delay = min(delay, idle_gap_cap_ms)   # idle-gap cap, NOT 6
 
 ## Out of scope
 
-Nothing further — this is the terminal parity subsystem. After it lands, the legacy
-`agentic_replay` mode reaches full byte-exact parity (under `SimClock`) with Python
-`AgenticReplayStrategy`.
+Nothing further — this is the terminal parity subsystem. The legacy `agentic_replay`
+mode reaches full byte-exact parity (under `SimClock`) with Python
+`AgenticReplayStrategy`. The linear-lane MVP populates the DAG fields
+(`agent_depth`, `parent_correlation_id`, `root_correlation_id`, `branch_mode`) with
+their tree-root defaults; full subagent-depth population across the handoff waits on
+the WEKA loader emitting those onto each turn (a separate loader-seam task).
 
 ## Source anchors
 
