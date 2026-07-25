@@ -254,4 +254,25 @@ mod tests {
         // Confirms the unified facade re-export compiles and points at the same data.
         assert!(crate::definitions::definition("aiperf.request_latency").is_some());
     }
+
+    /// Pins the full public definition-id set (metric `aiperf.*` ids plus
+    /// `analyzer.*` ids) as an accepted `insta` snapshot. This is the id
+    /// contract: any addition, removal, or rename of a registered id changes
+    /// the snapshot and fails review.
+    ///
+    /// CI LOCK: run the suite with `INSTA_UPDATE=no` so drift FAILS the test
+    /// rather than silently rewriting the accepted `.snap`. The committed
+    /// `.snap` is the source of truth; regenerate deliberately with
+    /// `cargo insta review`/`accept` only when an id change is intended.
+    ///
+    /// SPDX NOTE: the generated `.snap` carries NO SPDX header — insta's
+    /// snapshot parser does not tolerate leading comment lines before its
+    /// `---` metadata block (it treats the file as empty and the test fails).
+    /// The license attribution lives here, on the generating test, instead.
+    /// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION &
+    /// AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0
+    #[test]
+    fn definition_ids_snapshot() {
+        insta::assert_json_snapshot!(crate::metrics_core::definition::ids_sorted());
+    }
 }

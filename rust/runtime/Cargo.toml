@@ -163,6 +163,9 @@ parking_lot = { version = "0.12", optional = true }
 # monocrate's normal deps already cover most needs; these add the extra feature
 # surface the integration tests require.
 [dev-dependencies]
+# Snapshot testing for the public definition-id contract (`definition_ids_snapshot`).
+# `json` feature enables `assert_json_snapshot!`. CI must run with `INSTA_UPDATE=no`.
+insta = { version = "1", features = ["json"] }
 # Statistics-driven benchmark harness for the synthetic prompt generator
 # (`benches/prompt_gen.rs`). Dev-only: the shipped runner links no criterion.
 criterion = { workspace = true }
