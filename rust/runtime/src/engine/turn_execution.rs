@@ -8,6 +8,7 @@
 //! and drain remain transport-independent.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::future::poll_fn;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -19,6 +20,7 @@ use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::engine::protocol::HopRouting;
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
 use crate::transport::core::{
@@ -223,6 +225,7 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
         workers,
         coordinator_clock,
         real_clock_anchor,
+        HopRouting::RoundRobin,
     )?))
 }
 
@@ -377,9 +380,105 @@ impl Drop for PlacementCancellationGuard {
 struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     senders: RefCell<Option<Vec<mpsc::Sender<WorkerMessage>>>>,
     threads: RefCell<Vec<JoinHandle<Result<()>>>>,
+    /// Worker-assignment policy applied at the single pick site.
+    routing: HopRouting,
+    /// Round-robin cursor; also the fallback for correlation-less sticky turns.
     next_worker: Cell<usize>,
+    /// Per-worker in-flight command count (`+1` on send, `-1` on reply), read by
+    /// [`HopRouting::LeastLoaded`]. Single-threaded coordinator, so plain `Cell`.
+    inflight: Vec<Cell<usize>>,
+    /// `correlation_id` → bound worker, so [`HopRouting::LeastLoaded`]
+    /// continuations stay on the worker their session was first placed on.
+    sticky: RefCell<HashMap<String, usize>>,
     run_origin_ns: Cell<Option<i64>>,
     dimension_sink: B::Sink,
+}
+
+/// Decrements a worker's in-flight counter on drop, so a cancelled or
+/// early-returning command still releases its [`HopRouting::LeastLoaded`] slot.
+struct InflightGuard<'a> {
+    slot: &'a Cell<usize>,
+}
+
+impl<'a> InflightGuard<'a> {
+    fn new(slot: &'a Cell<usize>) -> Self {
+        slot.set(slot.get().saturating_add(1));
+        Self { slot }
+    }
+}
+
+impl Drop for InflightGuard<'_> {
+    fn drop(&mut self) {
+        self.slot.set(self.slot.get().saturating_sub(1));
+    }
+}
+
+/// Pure worker-assignment decision for one dispatched turn.
+///
+/// Factored out of [`ThreadPerCoreExecutor::execute_command`] so the routing
+/// policy is unit-testable without a live executor. `rr_cursor` is the
+/// round-robin cursor (advanced only when a round-robin pick is made), `inflight`
+/// is the per-worker in-flight snapshot, and `sticky` holds
+/// `correlation_id`→worker bindings for [`HopRouting::LeastLoaded`].
+fn pick_worker(
+    routing: HopRouting,
+    workers: usize,
+    correlation: Option<&str>,
+    inflight: &[usize],
+    sticky: &mut HashMap<String, usize>,
+    rr_cursor: &mut usize,
+) -> usize {
+    debug_assert!(workers > 0, "worker count must be positive");
+    match routing {
+        HopRouting::RoundRobin => round_robin(workers, rr_cursor),
+        HopRouting::Sticky => match correlation {
+            Some(id) => (fnv1a64(id.as_bytes()) % workers as u64) as usize,
+            None => round_robin(workers, rr_cursor),
+        },
+        HopRouting::LeastLoaded => {
+            if let Some(id) = correlation
+                && let Some(&bound) = sticky.get(id)
+            {
+                return bound;
+            }
+            let worker = argmin(inflight);
+            if let Some(id) = correlation {
+                sticky.insert(id.to_owned(), worker);
+            }
+            worker
+        }
+    }
+}
+
+/// Advance and return the round-robin worker index.
+fn round_robin(workers: usize, rr_cursor: &mut usize) -> usize {
+    let worker = *rr_cursor % workers;
+    *rr_cursor = rr_cursor.wrapping_add(1);
+    worker
+}
+
+/// Index of the shallowest in-flight worker; ties resolve to the lowest index.
+fn argmin(inflight: &[usize]) -> usize {
+    inflight
+        .iter()
+        .enumerate()
+        .min_by_key(|(index, &depth)| (depth, *index))
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+/// Fixed, seed-free FNV-1a 64-bit hash. Unlike
+/// [`std::collections::hash_map::DefaultHasher`] this is stable across processes
+/// and runs, so the same `correlation_id` always maps to the same worker.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET_BASIS;
+    for &byte in bytes {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }
 
 impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
@@ -388,6 +487,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         workers: usize,
         coordinator_clock: Rc<dyn Clock>,
         real_clock_anchor: RealClockAnchor,
+        routing: HopRouting,
     ) -> Result<Self> {
         ensure!(
             workers > 1,
@@ -452,7 +552,10 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         Ok(Self {
             senders: RefCell::new(Some(senders)),
             threads: RefCell::new(threads),
+            routing,
             next_worker: Cell::new(0),
+            inflight: (0..workers).map(|_| Cell::new(0)).collect(),
+            sticky: RefCell::new(HashMap::new()),
             run_origin_ns: Cell::new(None),
             dimension_sink,
         })
@@ -612,14 +715,27 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<WorkerReply> {
         let _run_origin_ns = self.origin()?;
-        let sender = {
+        let (sender, _inflight_guard) = {
             let senders = self.senders.borrow();
             let senders = senders
                 .as_ref()
                 .ok_or_else(|| anyhow!("execution backend is shut down"))?;
-            let index = self.next_worker.get() % senders.len();
-            self.next_worker.set(index.wrapping_add(1));
-            senders[index].clone()
+            let inflight: Vec<usize> = self.inflight.iter().map(Cell::get).collect();
+            let mut rr_cursor = self.next_worker.get();
+            let index = pick_worker(
+                self.routing,
+                senders.len(),
+                context.metadata.correlation_id.as_deref(),
+                &inflight,
+                &mut self.sticky.borrow_mut(),
+                &mut rr_cursor,
+            );
+            self.next_worker.set(rr_cursor);
+            // Hold the slot from send through reply; the guard decrements on any
+            // return path (completion, cancellation, error) so LeastLoaded depth
+            // stays accurate.
+            let guard = InflightGuard::new(&self.inflight[index]);
+            (senders[index].clone(), guard)
         };
         let (first_token_tx, mut first_token_rx) = oneshot::channel();
         let (response_tx, mut response_rx) = mpsc::channel(WORKER_RESPONSE_CAPACITY);
@@ -938,6 +1054,107 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    #[test]
+    fn pick_worker_round_robin_cycles_in_issue_order() {
+        let inflight = [0usize; 3];
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        let picks: Vec<usize> = (0..7)
+            .map(|_| {
+                pick_worker(
+                    HopRouting::RoundRobin,
+                    3,
+                    Some("ignored-under-round-robin"),
+                    &inflight,
+                    &mut sticky,
+                    &mut cursor,
+                )
+            })
+            .collect();
+        assert_eq!(picks, vec![0, 1, 2, 0, 1, 2, 0]);
+        assert!(sticky.is_empty(), "round-robin never binds correlations");
+    }
+
+    #[test]
+    fn pick_worker_sticky_maps_correlation_stably() {
+        let inflight = [0usize; 3];
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        // Pin the concrete FNV-1a placement so a hash change is caught.
+        assert_eq!((fnv1a64(b"conv-A") % 3) as usize, 1);
+        let first = pick_worker(
+            HopRouting::Sticky,
+            3,
+            Some("conv-A"),
+            &inflight,
+            &mut sticky,
+            &mut cursor,
+        );
+        assert_eq!(first, 2);
+        // Same correlation → same worker, and repeated picks do not advance the
+        // round-robin cursor.
+        for _ in 0..4 {
+            assert_eq!(
+                pick_worker(
+                    HopRouting::Sticky,
+                    3,
+                    Some("conv-A"),
+                    &inflight,
+                    &mut sticky,
+                    &mut cursor,
+                ),
+                2
+            );
+        }
+        assert_eq!(cursor, 0, "sticky hits do not touch the round-robin cursor");
+    }
+
+    #[test]
+    fn pick_worker_sticky_falls_back_to_round_robin_without_correlation() {
+        let inflight = [0usize; 3];
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        let picks: Vec<usize> = (0..4)
+            .map(|_| {
+                pick_worker(
+                    HopRouting::Sticky,
+                    3,
+                    None,
+                    &inflight,
+                    &mut sticky,
+                    &mut cursor,
+                )
+            })
+            .collect();
+        assert_eq!(picks, vec![0, 1, 2, 0]);
+    }
+
+    #[test]
+    fn pick_worker_least_loaded_picks_shallowest_then_binds() {
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        // Shallowest queue wins (ties → lowest index).
+        let worker = pick_worker(
+            HopRouting::LeastLoaded,
+            3,
+            Some("conv-A"),
+            &[2, 0, 1],
+            &mut sticky,
+            &mut cursor,
+        );
+        assert_eq!(worker, 1);
+        // Continuations stay bound to worker 1 even after it becomes the deepest.
+        let worker = pick_worker(
+            HopRouting::LeastLoaded,
+            3,
+            Some("conv-A"),
+            &[0, 3, 0],
+            &mut sticky,
+            &mut cursor,
+        );
+        assert_eq!(worker, 1);
+    }
 
     /// Coordinator-known arrival facts for a fixture turn. `MeasuredContext`
     /// has no `Default`, so the tests build the same all-neutral context the
