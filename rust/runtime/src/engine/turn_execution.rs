@@ -430,7 +430,7 @@ fn pick_worker(
     routing: HopRouting,
     workers: usize,
     correlation: Option<&str>,
-    inflight: &[usize],
+    inflight: &[Cell<usize>],
     sticky: &mut HashMap<String, usize>,
     rr_cursor: &mut usize,
 ) -> usize {
@@ -464,11 +464,11 @@ fn round_robin(workers: usize, rr_cursor: &mut usize) -> usize {
 }
 
 /// Index of the shallowest in-flight worker; ties resolve to the lowest index.
-fn argmin(inflight: &[usize]) -> usize {
+fn argmin(inflight: &[Cell<usize>]) -> usize {
     inflight
         .iter()
         .enumerate()
-        .min_by_key(|&(index, &depth)| (depth, index))
+        .min_by_key(|(index, cell)| (cell.get(), *index))
         .map(|(index, _)| index)
         .unwrap_or(0)
 }
@@ -726,13 +726,15 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             let senders = senders
                 .as_ref()
                 .ok_or_else(|| anyhow!("execution backend is shut down"))?;
-            let inflight: Vec<usize> = self.inflight.iter().map(Cell::get).collect();
             let mut rr_cursor = self.next_worker.get();
+            // Pass the live `Cell` slice, not an eager snapshot: only `LeastLoaded`
+            // reads worker depths, so RoundRobin/Sticky avoid a per-request W-sized
+            // heap allocation on the coordinator hot path.
             let index = pick_worker(
                 self.routing,
                 senders.len(),
                 context.metadata.correlation_id.as_deref(),
-                &inflight,
+                &self.inflight,
                 &mut self.sticky.borrow_mut(),
                 &mut rr_cursor,
             );
@@ -1074,7 +1076,7 @@ mod tests {
 
     #[test]
     fn pick_worker_round_robin_cycles_in_issue_order() {
-        let inflight = [0usize; 3];
+        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         let picks: Vec<usize> = (0..7)
@@ -1095,7 +1097,7 @@ mod tests {
 
     #[test]
     fn pick_worker_sticky_maps_correlation_stably() {
-        let inflight = [0usize; 3];
+        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         // Pin the concrete FNV-1a placement so a hash change is caught.
@@ -1129,7 +1131,7 @@ mod tests {
 
     #[test]
     fn pick_worker_sticky_falls_back_to_round_robin_without_correlation() {
-        let inflight = [0usize; 3];
+        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         let picks: Vec<usize> = (0..4)
@@ -1156,7 +1158,7 @@ mod tests {
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
-            &[2, 0, 1],
+            &[Cell::new(2), Cell::new(0), Cell::new(1)],
             &mut sticky,
             &mut cursor,
         );
@@ -1166,7 +1168,7 @@ mod tests {
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
-            &[0, 3, 0],
+            &[Cell::new(0), Cell::new(3), Cell::new(0)],
             &mut sticky,
             &mut cursor,
         );
