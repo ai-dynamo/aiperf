@@ -346,6 +346,15 @@ pub enum PlotMetricDirection {
     Neutral,
 }
 
+/// Derives the plot direction from a [`Definition`]'s `larger_is_better` flag.
+pub const fn plot_direction_for(def: &Definition) -> PlotMetricDirection {
+    if def.larger_is_better {
+        PlotMetricDirection::LargerIsBetter
+    } else {
+        PlotMetricDirection::SmallerIsBetter
+    }
+}
+
 bitflags! {
     /// Applicability and presentation flags. Bit 3 is intentionally reserved.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -423,7 +432,6 @@ pub struct MetricSpec {
     pub display_order: Option<u32>,
     pub flags: MetricFlags,
     pub console_group: MetricConsoleGroup,
-    pub plot_direction: PlotMetricDirection,
     pub required: &'static [MetricTag],
     pub value_type: MetricValueType,
     pub kind: MetricType,
@@ -938,7 +946,6 @@ macro_rules! spec {
             display_order: cfg_display_order(MetricTag::$tag),
             flags: $flags,
             console_group: cfg_console_group(MetricTag::$tag),
-            plot_direction: if $flags.contains(MetricFlags::LARGER_IS_BETTER) { PlotMetricDirection::LargerIsBetter } else { PlotMetricDirection::SmallerIsBetter },
             required: &[$(MetricTag::$req),*],
             value_type: cfg_value_type(MetricTag::$tag),
             kind: MetricType::$kind,
@@ -2251,7 +2258,7 @@ mod tests {
             feed(&mut hash, format!("{:?}", spec.display_order).as_bytes());
             feed(&mut hash, spec.flags.bits().to_string().as_bytes());
             feed(&mut hash, format!("{:?}", spec.console_group).as_bytes());
-            feed(&mut hash, format!("{:?}", spec.plot_direction).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.def.larger_is_better).as_bytes());
             for dependency in spec.required {
                 feed(&mut hash, dependency.as_str().as_bytes());
             }
@@ -2322,7 +2329,29 @@ mod tests {
         // image-sample rate), EffectiveImageSamplesPerSecond, ActiveImageSamplesPerSecond,
         // and EffectiveImageSamplesPerSecondPerUser (sweep-line effective, active, and
         // per-user variants; per-user divides by overall concurrency per design 0006).
-        assert_eq!(catalog_fingerprint(), 7_024_082_593_996_193_480);
+        // Updated 2026-07-25: removed the legacy `plot_direction` MetricSpec field;
+        // direction now derives from `def.larger_is_better`, which the fingerprint
+        // hashes in its place (Task 7 of the definition-registry feature).
+        assert_eq!(catalog_fingerprint(), 8_467_953_495_543_639_765);
+    }
+
+    #[test]
+    fn plot_direction_derives_from_larger_is_better() {
+        // Direction is no longer a stored field; it is computed from the
+        // embedded definition's `larger_is_better` flag.
+        let bigger = spec_for(MetricTag::OutputSequenceLength).unwrap();
+        assert!(bigger.def.larger_is_better);
+        assert_eq!(
+            super::plot_direction_for(&bigger.def),
+            super::PlotMetricDirection::LargerIsBetter
+        );
+
+        let smaller = spec_for(MetricTag::RequestLatency).unwrap();
+        assert!(!smaller.def.larger_is_better);
+        assert_eq!(
+            super::plot_direction_for(&smaller.def),
+            super::PlotMetricDirection::SmallerIsBetter
+        );
     }
 
     #[test]
