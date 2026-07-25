@@ -148,9 +148,6 @@ fn strip_rid_prefix(content: &str) -> &str {
 struct LaneDispatch {
     /// The conversation/session template id.
     conversation_id: String,
-    /// The lane's phase-start dispatch offset in ms (warmup lead-aligned or
-    /// profiling t\*-relative), before cross-lane alignment.
-    warm_lead_ms: Option<f64>,
     /// The first post-t\* turn's offset from t\* (profiling), or 0 when none.
     first_profiling_offset_ms: f64,
     /// Whether the lane has any post-t\* (profiling) turn.
@@ -253,7 +250,6 @@ impl Workload for AgenticReplayWorkload {
                         .unwrap_or(0.0);
                     LaneDispatch {
                         conversation_id: meta.conversation_id.clone(),
-                        warm_lead_ms: None,
                         first_profiling_offset_ms: first_offset,
                         has_profiling: !meta.turns.is_empty(),
                         has_warmup: !meta.turns.is_empty(),
@@ -291,8 +287,11 @@ impl Workload for AgenticReplayWorkload {
         // with no subagent trees carries an empty `Vec`, so the gate is a
         // pass-through (`None`) that never defers and recycles as before.
         let tree_specs = &cfg.trees;
-        let gate: Option<Rc<TreeGate>> = (!tree_specs.is_empty())
-            .then(|| Rc::new(TreeGate::new(tree_specs)));
+        let gate: Option<Rc<TreeGate>> = if tree_specs.is_empty() {
+            None
+        } else {
+            Some(Rc::new(TreeGate::try_new(tree_specs)?))
+        };
         // Per-run deferral queue for gated join turns (drained on child terminal).
         let defer_queue: Rc<RefCell<Vec<PendingJoin>>> = Rc::new(RefCell::new(Vec::new()));
         // Profiling recycles exhausted trajectories to sustain a duration run;

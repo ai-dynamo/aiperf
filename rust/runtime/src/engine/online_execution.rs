@@ -1282,6 +1282,18 @@ fn lower_legacy_agentic(
     use crate::rng::compat::python_random::PythonRandomGenerator;
     use std::collections::HashMap;
 
+    // Defense-in-depth, fail-closed: agentic_replay's join-gating + cross-lane
+    // alignment assume a single global issuance order. The CLI already forces
+    // global-hop dispatch (and non-cellular execution) for this workload, but do
+    // not trust that guard here — reject any run that reaches lowering with a
+    // different dispatch mode. (Cell count is not readable at this lowering point
+    // — it lives in the `cfg.runtime.cells` envelope, not on `AuthoredRunSpecV2`
+    // or `RunContext` — so the non-cellular half stays enforced at the CLI.)
+    ensure!(
+        run.dispatch == crate::engine::protocol::DispatchMode::GlobalHop,
+        "agentic_replay requires global-hop dispatch (runtime.dispatch = global-hop)"
+    );
+
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
 
