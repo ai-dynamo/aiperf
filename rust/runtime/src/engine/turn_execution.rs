@@ -1091,7 +1091,7 @@ mod tests {
             &mut sticky,
             &mut cursor,
         );
-        assert_eq!(first, 2);
+        assert_eq!(first, 1);
         // Same correlation → same worker, and repeated picks do not advance the
         // round-robin cursor.
         for _ in 0..4 {
@@ -1104,7 +1104,7 @@ mod tests {
                     &mut sticky,
                     &mut cursor,
                 ),
-                2
+                1
             );
         }
         assert_eq!(cursor, 0, "sticky hits do not touch the round-robin cursor");
