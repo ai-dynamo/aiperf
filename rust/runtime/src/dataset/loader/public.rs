@@ -641,6 +641,11 @@ impl Composer for HfAutoComposer {
                 "no valid samples after processing HF dataset; try --hf-text-column or a different subset/split".into(),
             ));
         }
+        tracing::debug!(
+            kept = conversations.len(),
+            total = rows.len(),
+            "composed HF auto-detected dataset"
+        );
         Ok(conversations)
     }
 }

@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Structural layout inference for arbitrary Hugging Face dataset rows.
 //!
-//! Public datasets on the Hub do not share a schema: some carry a chat-message
-//! array, some a flat prompt/answer pair, some split a task into a context field
-//! plus a question field. When a run points at a dataset by id without naming its
-//! columns, [`infer_row_layout`] inspects one representative row and decides which
-//! field supplies the prompt, whether that field is a message array, and which
-//! field (if any) supplies the reference completion. The logic is intentionally
-//! pure `serde_json` — it holds no loader or compose state — so every branch is
-//! covered by unit tests below.
+//! Public datasets on the Hub share no schema, so when a run names a dataset by id
+//! without naming its fields, [`infer_row_layout`] inspects one row and decides
+//! which field carries the prompt (and whether it is a message array) and which
+//! field, if any, carries the reference completion. Pure `serde_json` — no loader
+//! or compose state — so every branch is unit-tested below.
 
 use serde_json::Value;
 
@@ -44,16 +41,12 @@ pub(crate) enum RowLayout {
     Messages(String),
     /// A single prompt field, optionally paired with a completion field.
     Prompt {
-        /// Field holding the prompt text.
         prompt_field: String,
-        /// Field holding the reference completion, when one was found.
         completion_field: Option<String>,
     },
     /// Several fields concatenated (blank-line separated) into one prompt.
     Joined {
-        /// Fields concatenated, in order, to form the prompt.
         fields: Vec<String>,
-        /// Field holding the reference completion, when one was found.
         completion_field: Option<String>,
     },
 }
@@ -202,43 +195,28 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn message_array_field_wins_over_flat_fields() {
-        let row = json!({
-            "id": 7,
+    fn message_arrays_detected_under_both_shapes_and_win_over_flat_fields() {
+        // role/content, and preferred over a sibling flat prompt field.
+        let role_content = json!({
+            "prompt": "ignored",
             "conversation": [
                 {"role": "user", "content": "Which crate owns the clock seam?"},
                 {"role": "assistant", "content": "aiperf_runtime::clock"}
             ]
         });
-        assert!(matches!(infer_row_layout(&row, None).unwrap(),
+        assert!(matches!(infer_row_layout(&role_content, None).unwrap(),
             RowLayout::Messages(field) if field == "conversation"));
-    }
 
-    #[test]
-    fn sharegpt_from_value_array_is_messages() {
-        let row = json!({"conversations": [
+        // ShareGPT from/value.
+        let from_value = json!({"conversations": [
             {"from": "human", "value": "ping"}, {"from": "gpt", "value": "pong"}]});
-        assert!(matches!(infer_row_layout(&row, None).unwrap(),
+        assert!(matches!(infer_row_layout(&from_value, None).unwrap(),
             RowLayout::Messages(field) if field == "conversations"));
     }
 
     #[test]
-    fn flat_prompt_and_completion_pair() {
-        let row = json!({"prompt": "Summarise the dispatch seam.", "completion": "It is transport-neutral."});
-        match infer_row_layout(&row, None).unwrap() {
-            RowLayout::Prompt {
-                prompt_field,
-                completion_field,
-            } => {
-                assert_eq!(prompt_field, "prompt");
-                assert_eq!(completion_field.as_deref(), Some("completion"));
-            }
-            other => panic!("expected Prompt, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn question_field_maps_to_prompt_with_answer_completion() {
+    fn flat_prompt_pairs_with_a_completion_field() {
+        // `question`/`answer` also exercises picking a non-first field from each list.
         let row = json!({"question": "What does SimClock provide?", "answer": "Virtual nanosecond time."});
         match infer_row_layout(&row, None).unwrap() {
             RowLayout::Prompt {
@@ -272,9 +250,9 @@ mod tests {
     }
 
     #[test]
-    fn override_forces_a_named_field() {
-        let row = json!({"body": "custom prompt body", "answer": "reply"});
-        match infer_row_layout(&row, Some("body")).unwrap() {
+    fn override_forces_a_field_flat_or_message() {
+        let flat = json!({"body": "custom prompt body", "answer": "reply"});
+        match infer_row_layout(&flat, Some("body")).unwrap() {
             RowLayout::Prompt {
                 prompt_field,
                 completion_field,
@@ -284,54 +262,48 @@ mod tests {
             }
             other => panic!("expected Prompt, got {other:?}"),
         }
-    }
 
-    #[test]
-    fn override_on_message_field_is_messages() {
-        let row = json!({"dialog": [
+        let chat = json!({"dialog": [
             {"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]});
-        assert!(matches!(infer_row_layout(&row, Some("dialog")).unwrap(),
+        assert!(matches!(infer_row_layout(&chat, Some("dialog")).unwrap(),
             RowLayout::Messages(field) if field == "dialog"));
     }
 
     #[test]
-    fn override_naming_absent_field_errors() {
-        let row = json!({"text": "hello"});
-        assert!(infer_row_layout(&row, Some("absent")).is_err());
+    fn errors_name_the_available_fields() {
+        let absent = infer_row_layout(&json!({"text": "hello"}), Some("absent")).unwrap_err();
+        assert!(absent.contains("text"));
+
+        let unrecognised =
+            infer_row_layout(&json!({"identifier": 1, "sentiment": "positive"}), None).unwrap_err();
+        assert!(unrecognised.contains("identifier") && unrecognised.contains("sentiment"));
     }
 
     #[test]
-    fn unrecognised_row_lists_its_fields() {
-        let row = json!({"identifier": 1, "sentiment": "positive"});
-        let message = infer_row_layout(&row, None).unwrap_err();
-        assert!(message.contains("identifier") && message.contains("sentiment"));
-    }
-
-    #[test]
-    fn picks_first_requester_and_responder_turns() {
-        let messages = vec![
+    fn extracts_first_requester_and_responder_under_both_shapes() {
+        let role_content = vec![
             json!({"role": "system", "content": "stay terse"}),
             json!({"role": "user", "content": "define TTFT"}),
             json!({"role": "assistant", "content": "first token observation"}),
         ];
         assert_eq!(
-            first_user_message(&messages),
+            first_user_message(&role_content),
             Some("define TTFT".to_string())
         );
         assert_eq!(
-            first_assistant_message(&messages),
+            first_assistant_message(&role_content),
             Some("first token observation".to_string())
         );
-    }
 
-    #[test]
-    fn requester_and_responder_under_from_value() {
-        let messages = vec![
+        let from_value = vec![
             json!({"from": "human", "value": "ping"}),
             json!({"from": "gpt", "value": "pong"}),
         ];
-        assert_eq!(first_user_message(&messages), Some("ping".to_string()));
-        assert_eq!(first_assistant_message(&messages), Some("pong".to_string()));
+        assert_eq!(first_user_message(&from_value), Some("ping".to_string()));
+        assert_eq!(
+            first_assistant_message(&from_value),
+            Some("pong".to_string())
+        );
     }
 
     #[test]
