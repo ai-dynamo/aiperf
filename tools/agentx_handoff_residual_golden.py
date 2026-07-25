@@ -267,12 +267,185 @@ def _trajectory_scenario():
     }
 
 
+def _pending_scenario():
+    """Oracle for the PENDING builder path (Finding 2).
+
+    Drives the REAL ``_build_handoff_states`` (returned + pending) plus
+    ``_build_handoff_replay_boundaries`` so the fixture exercises: (a) a
+    returned mid-flight credit at residual offset, (b) barrier-pending turns at
+    offset ``0.0``, (c) returned-vs-pending dedup, and (d) two pending turns that
+    share an effective-root where the SECOND resolves its lane only via the
+    intra-finalize ``_root_to_lane`` mutation written by the FIRST (Finding 1).
+    """
+    from aiperf.timing.trajectory_source import ConversationBranchMode
+
+    fork = ConversationBranchMode.FORK
+
+    def _credit(**kw):
+        ns = SimpleNamespace(branch_mode=fork, **kw)
+        ns.effective_root_correlation_id = (
+            kw.get("root_correlation_id") or kw["x_correlation_id"]
+        )
+        return ns
+
+    # Returned mid-flight credit on lane 0 (turn 0 of 3 -> resumes at turn 1).
+    returned = _credit(
+        conversation_id="conv-a",
+        x_correlation_id="x-a",
+        turn_index=0,
+        num_turns=3,
+        agent_depth=0,
+        parent_correlation_id=None,
+        root_correlation_id=None,
+    )
+    returned_ns = 1_000_000  # 1ms
+    finalized_ns = 4_000_000  # 3ms elapsed
+    # base delay for the returned credit, served via the fake source below.
+    returned_next_delay_ms = 30.0
+
+    # Pending turns. turnA resolves via correlation_to_lane[parent]; it writes
+    # _root_to_lane["shared-root"]=1. turnB (grouped under its own root key
+    # "grp2") can ONLY resolve via that write -> exercises Finding 1.
+    turn_a = _credit(
+        conversation_id="conv-A",
+        x_correlation_id="x-A",
+        turn_index=1,
+        num_turns=3,
+        agent_depth=1,
+        parent_correlation_id="x-A-parent",
+        root_correlation_id="shared-root",
+    )
+    turn_b = _credit(
+        conversation_id="conv-B",
+        x_correlation_id="x-B",
+        turn_index=0,
+        num_turns=2,
+        agent_depth=0,
+        parent_correlation_id=None,
+        root_correlation_id="shared-root",
+    )
+    # A pending turn that duplicates the returned state key (conv-a, x-a, 1):
+    # deduped away by seen_states (returned processed first).
+    turn_dup = _credit(
+        conversation_id="conv-a",
+        x_correlation_id="x-a",
+        turn_index=1,
+        num_turns=3,
+        agent_depth=0,
+        parent_correlation_id=None,
+        root_correlation_id=None,
+    )
+
+    pending_by_root = {
+        "grp1": (turn_a,),
+        "grp2": (turn_b,),
+        "x-a": (turn_dup,),
+    }
+
+    class _Gate:
+        def pending_turns_by_root(self):
+            return dict(pending_by_root)
+
+        def completed_prefixes(self, root_correlation_id):
+            if root_correlation_id == "x-a":
+                return [ReplayResumeBoundary("conv-a", 2)]
+            return []
+
+    class _Source:
+        def __init__(self):
+            # length == num_lanes; content unused by _build_handoff_states.
+            self.trajectories = [None, None]
+
+        def get_next_turn_metadata(self, credit):
+            # Only the returned credit needs a base delay; pending turns use 0.0.
+            return SimpleNamespace(delay_ms=returned_next_delay_ms)
+
+        def get_metadata(self, conversation_id):
+            raise KeyError(conversation_id)
+
+    strat = object.__new__(AgenticReplayStrategy)
+    strat.conversation_source = _Source()
+    strat.credit_issuer = SimpleNamespace(replay_gate=_Gate())
+    strat.branch_orchestrator = None
+    strat._handoff_credits = {"x-a": returned}
+    strat._handoff_returned_at_ns = {"x-a": returned_ns}
+    strat._phase_offset_cap_ms = None
+    strat._root_to_lane = {"x-a": 0}
+    strat._correlation_to_lane = {"x-A-parent": 1}
+
+    states_by_lane = strat._build_handoff_states(finalized_at_ns=finalized_ns)
+    boundaries_by_lane = {
+        lane: strat._build_handoff_replay_boundaries(states)
+        for lane, states in states_by_lane.items()
+    }
+
+    def _emit_state(s):
+        return {
+            "conversation_id": s.conversation_id,
+            "x_correlation_id": s.x_correlation_id,
+            "next_turn_index": s.next_turn_index,
+            "next_dispatch_offset_ms": s.next_dispatch_offset_ms,
+            "agent_depth": s.agent_depth,
+            "parent_correlation_id": s.parent_correlation_id,
+            "root_correlation_id": s.root_correlation_id,
+        }
+
+    expected_lanes = []
+    for lane in sorted(states_by_lane):
+        # Match the Rust finalize per-lane sort (agent_depth, x_correlation_id).
+        sorted_states = sorted(
+            states_by_lane[lane],
+            key=lambda s: (s.agent_depth, s.x_correlation_id),
+        )
+        expected_lanes.append({
+            "lane": lane,
+            "states": [_emit_state(s) for s in sorted_states],
+            "boundaries": [
+                [b.conversation_id, b.next_turn_index]
+                for b in boundaries_by_lane[lane]
+            ],
+        })
+
+    def _emit_turn(t):
+        return {
+            "conversation_id": t.conversation_id,
+            "x_correlation_id": t.x_correlation_id,
+            "turn_index": t.turn_index,
+            "num_turns": t.num_turns,
+            "agent_depth": t.agent_depth,
+            "parent_correlation_id": t.parent_correlation_id,
+            "root_correlation_id": t.root_correlation_id,
+        }
+
+    return {
+        "num_lanes": 2,
+        "finalized_ns": finalized_ns,
+        "cap_ms": None,
+        "returned_credits": [
+            {
+                **_emit_turn(returned),
+                "returned_ns": returned_ns,
+                "base_delay_inputs": {"next_delay_ms": returned_next_delay_ms},
+            }
+        ],
+        "root_to_lane": {"x-a": 0},
+        "correlation_to_lane": {"x-A-parent": 1},
+        "pending_by_root": [
+            {"root": root, "turns": [_emit_turn(t) for t in turns]}
+            for root, turns in pending_by_root.items()
+        ],
+        "completed_prefixes": {"x-a": [["conv-a", 2]]},
+        "expected_lanes": expected_lanes,
+    }
+
+
 def main():
     fixture = {
         "_comment": "Generated by tools/agentx_handoff_residual_golden.py from the "
         "real AgenticReplayStrategy oracle. Do not edit by hand.",
         "residual_rows": _residual_rows(),
         "trajectory": _trajectory_scenario(),
+        "pending": _pending_scenario(),
     }
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps(fixture, indent=2) + "\n")

@@ -225,5 +225,134 @@
         "boundaries": []
       }
     ]
+  },
+  "pending": {
+    "num_lanes": 2,
+    "finalized_ns": 4000000,
+    "cap_ms": null,
+    "returned_credits": [
+      {
+        "conversation_id": "conv-a",
+        "x_correlation_id": "x-a",
+        "turn_index": 0,
+        "num_turns": 3,
+        "agent_depth": 0,
+        "parent_correlation_id": null,
+        "root_correlation_id": null,
+        "returned_ns": 1000000,
+        "base_delay_inputs": {
+          "next_delay_ms": 30.0
+        }
+      }
+    ],
+    "root_to_lane": {
+      "x-a": 0
+    },
+    "correlation_to_lane": {
+      "x-A-parent": 1
+    },
+    "pending_by_root": [
+      {
+        "root": "grp1",
+        "turns": [
+          {
+            "conversation_id": "conv-A",
+            "x_correlation_id": "x-A",
+            "turn_index": 1,
+            "num_turns": 3,
+            "agent_depth": 1,
+            "parent_correlation_id": "x-A-parent",
+            "root_correlation_id": "shared-root"
+          }
+        ]
+      },
+      {
+        "root": "grp2",
+        "turns": [
+          {
+            "conversation_id": "conv-B",
+            "x_correlation_id": "x-B",
+            "turn_index": 0,
+            "num_turns": 2,
+            "agent_depth": 0,
+            "parent_correlation_id": null,
+            "root_correlation_id": "shared-root"
+          }
+        ]
+      },
+      {
+        "root": "x-a",
+        "turns": [
+          {
+            "conversation_id": "conv-a",
+            "x_correlation_id": "x-a",
+            "turn_index": 1,
+            "num_turns": 3,
+            "agent_depth": 0,
+            "parent_correlation_id": null,
+            "root_correlation_id": null
+          }
+        ]
+      }
+    ],
+    "completed_prefixes": {
+      "x-a": [
+        [
+          "conv-a",
+          2
+        ]
+      ]
+    },
+    "expected_lanes": [
+      {
+        "lane": 0,
+        "states": [
+          {
+            "conversation_id": "conv-a",
+            "x_correlation_id": "x-a",
+            "next_turn_index": 1,
+            "next_dispatch_offset_ms": 27.0,
+            "agent_depth": 0,
+            "parent_correlation_id": null,
+            "root_correlation_id": null
+          }
+        ],
+        "boundaries": [
+          [
+            "conv-a",
+            2
+          ]
+        ]
+      },
+      {
+        "lane": 1,
+        "states": [
+          {
+            "conversation_id": "conv-B",
+            "x_correlation_id": "x-B",
+            "next_turn_index": 0,
+            "next_dispatch_offset_ms": 0.0,
+            "agent_depth": 0,
+            "parent_correlation_id": null,
+            "root_correlation_id": "shared-root"
+          },
+          {
+            "conversation_id": "conv-A",
+            "x_correlation_id": "x-A",
+            "next_turn_index": 1,
+            "next_dispatch_offset_ms": 0.0,
+            "agent_depth": 1,
+            "parent_correlation_id": "x-A-parent",
+            "root_correlation_id": "shared-root"
+          }
+        ],
+        "boundaries": [
+          [
+            "conv-A",
+            1
+          ]
+        ]
+      }
+    ]
   }
 }

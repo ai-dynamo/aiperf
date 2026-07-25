@@ -23,8 +23,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use aiperf_runtime::agentx::handoff::{
-    BranchMode, FinalizeInputs, HandoffBaseDelayInputs, HandoffCredit, base_delay_ms, finalize,
-    residual_delay_ms,
+    BranchMode, FinalizeInputs, HandoffBaseDelayInputs, HandoffCredit, PendingHandoffTurn,
+    base_delay_ms, finalize, residual_delay_ms,
 };
 use aiperf_runtime::agentx::replay_dependencies::ReplayResumeBoundary;
 use serde_json::Value;
@@ -204,6 +204,164 @@ fn finalize_rebuild_matches_python_trajectory_oracle() {
             got_order, expected_order,
             "state order mismatch lane {lane}"
         );
+
+        let got_bounds: Vec<(String, i64)> = got
+            .boundaries
+            .iter()
+            .map(|b| (b.conversation_id.clone(), b.next_turn_index))
+            .collect();
+        let expected_bounds: Vec<(String, i64)> = expected_lane["boundaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                let pair = p.as_array().unwrap();
+                (
+                    pair[0].as_str().unwrap().to_string(),
+                    pair[1].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(got_bounds, expected_bounds, "boundary mismatch lane {lane}");
+    }
+}
+
+/// Drive the PENDING builder path through the real Python
+/// `_build_handoff_states` oracle: a returned mid-flight credit (residual
+/// offset), barrier-pending turns (offset `0.0`), returned-vs-pending dedup, and
+/// two pending turns sharing an effective-root where the second resolves its
+/// lane only via the intra-finalize `_root_to_lane` mutation (Finding 1).
+#[test]
+fn finalize_pending_path_matches_python_oracle() {
+    let golden = load();
+    let pending = &golden["pending"];
+    let num_lanes = pending["num_lanes"].as_u64().unwrap() as usize;
+    let finalized_ns = pending["finalized_ns"].as_i64().unwrap();
+
+    // Returned mid-flight credits, plus their base-delay inputs keyed by corr id.
+    let mut handoff_credits: BTreeMap<String, HandoffCredit> = BTreeMap::new();
+    let mut return_wall_ns: BTreeMap<String, i64> = BTreeMap::new();
+    let mut base_inputs_by_corr: BTreeMap<String, HandoffBaseDelayInputs> = BTreeMap::new();
+    for c in pending["returned_credits"].as_array().unwrap() {
+        let x = c["x_correlation_id"].as_str().unwrap().to_string();
+        let credit = HandoffCredit {
+            conversation_id: c["conversation_id"].as_str().unwrap().to_string(),
+            x_correlation_id: x.clone(),
+            turn_index: c["turn_index"].as_u64().unwrap() as usize,
+            num_turns: c["num_turns"].as_u64().unwrap() as usize,
+            agent_depth: c["agent_depth"].as_i64().unwrap(),
+            parent_correlation_id: c["parent_correlation_id"].as_str().map(|s| s.to_string()),
+            root_correlation_id: c["root_correlation_id"].as_str().map(|s| s.to_string()),
+            branch_mode: BranchMode::default(),
+        };
+        return_wall_ns.insert(x.clone(), c["returned_ns"].as_i64().unwrap());
+        base_inputs_by_corr.insert(
+            x.clone(),
+            HandoffBaseDelayInputs {
+                next_delay_ms: decode_f64(&c["base_delay_inputs"]["next_delay_ms"]),
+                ..Default::default()
+            },
+        );
+        handoff_credits.insert(x, credit);
+    }
+
+    // Barrier-pending turns grouped by runtime root id.
+    let mut pending_by_root: BTreeMap<String, Vec<PendingHandoffTurn>> = BTreeMap::new();
+    for group in pending["pending_by_root"].as_array().unwrap() {
+        let root = group["root"].as_str().unwrap().to_string();
+        let turns = group["turns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| PendingHandoffTurn {
+                conversation_id: t["conversation_id"].as_str().unwrap().to_string(),
+                x_correlation_id: t["x_correlation_id"].as_str().unwrap().to_string(),
+                turn_index: t["turn_index"].as_i64().unwrap(),
+                num_turns: t["num_turns"].as_i64().unwrap(),
+                agent_depth: t["agent_depth"].as_i64().unwrap(),
+                parent_correlation_id: t["parent_correlation_id"].as_str().map(|s| s.to_string()),
+                root_correlation_id: t["root_correlation_id"].as_str().map(|s| s.to_string()),
+                branch_mode: BranchMode::default(),
+            })
+            .collect();
+        pending_by_root.insert(root, turns);
+    }
+
+    let mut root_to_lane: BTreeMap<String, usize> = BTreeMap::new();
+    for (k, v) in pending["root_to_lane"].as_object().unwrap() {
+        root_to_lane.insert(k.clone(), v.as_u64().unwrap() as usize);
+    }
+    let mut correlation_to_lane: BTreeMap<String, usize> = BTreeMap::new();
+    for (k, v) in pending["correlation_to_lane"].as_object().unwrap() {
+        correlation_to_lane.insert(k.clone(), v.as_u64().unwrap() as usize);
+    }
+
+    let mut completed: BTreeMap<String, Vec<ReplayResumeBoundary>> = BTreeMap::new();
+    for (root, boundaries) in pending["completed_prefixes"].as_object().unwrap() {
+        let bs = boundaries
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                let pair = b.as_array().unwrap();
+                ReplayResumeBoundary {
+                    conversation_id: pair[0].as_str().unwrap().to_string(),
+                    next_turn_index: pair[1].as_i64().unwrap(),
+                }
+            })
+            .collect();
+        completed.insert(root.clone(), bs);
+    }
+
+    let handoff = finalize(FinalizeInputs {
+        handoff_credits: &handoff_credits,
+        return_wall_ns: &return_wall_ns,
+        pending_by_root: &pending_by_root,
+        root_to_lane: &root_to_lane,
+        correlation_to_lane: &correlation_to_lane,
+        num_lanes,
+        finalized_ns,
+        cap_ms: decode_f64(&pending["cap_ms"]),
+        base_delay_inputs: |c: &HandoffCredit| {
+            base_inputs_by_corr
+                .get(&c.x_correlation_id)
+                .copied()
+                .unwrap_or_default()
+        },
+        completed_prefixes: |root: &str| completed.get(root).cloned().unwrap_or_default(),
+        recycle_draw: || None,
+        prev_lanes: &[],
+    });
+
+    for expected_lane in pending["expected_lanes"].as_array().unwrap() {
+        let lane = expected_lane["lane"].as_u64().unwrap() as usize;
+        let got = handoff.lanes.get(&lane).expect("lane present");
+
+        // Full per-state comparison (identity, resume index, residual offset, DAG).
+        let got_states: Vec<Value> = got
+            .states
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "conversation_id": s.conversation_id,
+                    "x_correlation_id": s.x_correlation_id,
+                    "next_turn_index": s.next_turn_index,
+                    "next_dispatch_offset_ms": s.next_dispatch_offset_ms,
+                    "agent_depth": s.agent_depth,
+                    "parent_correlation_id": s.parent_correlation_id,
+                    "root_correlation_id": s.root_correlation_id,
+                })
+            })
+            .collect();
+        let expected_states = expected_lane["states"].as_array().unwrap();
+        assert_eq!(
+            got_states.len(),
+            expected_states.len(),
+            "state count mismatch lane {lane}"
+        );
+        for (got_s, exp_s) in got_states.iter().zip(expected_states) {
+            assert_eq!(got_s, exp_s, "state mismatch lane {lane}");
+        }
 
         let got_bounds: Vec<(String, i64)> = got
             .boundaries
