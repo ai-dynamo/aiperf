@@ -859,6 +859,10 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
 
 pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
+    // Resolve legacy-AgentX scenario locks (`--scenario`) while `inputs` is still
+    // whole (later lowering partially moves it). A no-op without the `agentx`
+    // feature. A hard scenario-lock conflict fails resolution here.
+    let scenario_outcome = resolve_scenario_outcome(&inputs)?;
     let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);
     if let Some(ref mut phases) = inputs.phases_override {
         apply_cli_loadgen_overlays(phases, &loadgen_overlay)?;
@@ -1403,9 +1407,6 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     export.parquet = crate::model::export::ParquetExport::build(&sm_formats, server_enabled);
     cfg.export = Some(export);
 
-    // Resolve the legacy AgentX scenario locks (`--scenario`) into the run's
-    // resolved projection. A no-op unless the `agentx` feature is compiled in.
-    let scenario_outcome = resolve_scenario_outcome(&inputs)?;
     let resolved = Resolved {
         scenario_outcome,
         ..Resolved::default()
