@@ -17,12 +17,14 @@
 //! them against the [`crate::multiturn::ConversationSource`] seam.
 
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::agentx::cache_bust::CacheBustTarget;
+use crate::agentx::session_tree::{PhaseKey, SessionTreeRegistry, SlotReleaser};
 use crate::agentx::trajectory_source::{
     profiling_dispatch_delays_ms, warmup_dispatch_offsets_ms,
 };
@@ -415,4 +417,187 @@ fn schedule_agentic_turn(
             );
         }),
     );
+}
+
+/// Declarative description of one session tree used to build a [`TreeGate`].
+///
+/// - `root` is the depth-0 root conversation/correlation id.
+/// - `children` are the recursive descendant (subagent/spawn) correlation ids
+///   owned by this tree.
+/// - `join_turns` are the root turn indices that must block until a specified
+///   set of children have terminated (a "join"): each entry pairs a
+///   `turn_index` with the child ids required to be terminal before that turn
+///   may dispatch.
+#[derive(Debug, Clone)]
+pub struct TreeSpec {
+    /// Depth-0 root correlation id.
+    pub root: String,
+    /// Recursive descendant correlation ids owned by this tree.
+    pub children: Vec<String>,
+    /// Root join points: `(turn_index, required_child_ids)`.
+    pub join_turns: Vec<(usize, Vec<String>)>,
+}
+
+/// No-op [`SlotReleaser`]: the [`TreeGate`] uses [`SessionTreeRegistry`] purely
+/// for tree-drain accounting and does not itself release concurrency slots.
+struct NoopReleaser;
+
+impl SlotReleaser for NoopReleaser {
+    fn release_session_slot(&mut self, _phase: &PhaseKey) {}
+}
+
+/// The phase key under which the gate opens every tree. The gate does not model
+/// per-phase slot release, so a single opaque key suffices.
+const GATE_PHASE: &str = "profiling";
+
+/// Pure subagent join-gate + tree-drain accounting over
+/// [`SessionTreeRegistry`], driven by the workload through `&self` (shared,
+/// current-thread `!Send`) via interior mutability. No `Arc<Mutex>`.
+///
+/// Construction ([`TreeGate::new`] / [`TreeGate::try_new`]) opens one tree per
+/// [`TreeSpec`] with `root_pending=true` and registers each spec's descendants.
+/// [`TreeGate::is_waiting`] defers a root join turn until all its required
+/// children are terminal; [`TreeGate::on_child_terminal`] records a child
+/// terminal and accounts it against the owning tree; [`TreeGate::on_lane_terminal`]
+/// accounts a root's or child's terminal turn and reports whether the whole tree
+/// has drained.
+pub struct TreeGate {
+    /// Tree-drain accounting registry (interior-mutable for `&self` driving).
+    registry: RefCell<SessionTreeRegistry<NoopReleaser>>,
+    /// Per root: its join points as `turn_index -> required child ids`.
+    joins: HashMap<String, HashMap<usize, Vec<String>>>,
+    /// Every child id -> the root id of the tree that owns it.
+    child_root: HashMap<String, String>,
+    /// Children observed as terminated (idempotent guard + join satisfaction).
+    terminated: RefCell<HashSet<String>>,
+}
+
+impl TreeGate {
+    /// Build a gate from `specs`, panicking on an invalid spec.
+    ///
+    /// A join that references a child id absent from that tree's `children` is a
+    /// construction-time (fail-closed) error; this constructor `.expect`s
+    /// [`TreeGate::try_new`]. Prefer `try_new` where a `Result` is usable.
+    pub fn new(specs: &[TreeSpec]) -> Self {
+        Self::try_new(specs).expect("TreeGate::new: invalid TreeSpec (dangling join child)")
+    }
+
+    /// Build a gate from `specs`, failing closed on an invalid spec.
+    ///
+    /// Returns an error if any `join_turns` entry references a child id not
+    /// present in the owning tree's `children`.
+    pub fn try_new(specs: &[TreeSpec]) -> Result<Self> {
+        let mut registry = SessionTreeRegistry::new(NoopReleaser);
+        let mut joins: HashMap<String, HashMap<usize, Vec<String>>> = HashMap::new();
+        let mut child_root: HashMap<String, String> = HashMap::new();
+
+        for spec in specs {
+            let child_set: HashSet<&str> = spec.children.iter().map(|c| c.as_str()).collect();
+            for (turn_index, required) in &spec.join_turns {
+                for child in required {
+                    if !child_set.contains(child.as_str()) {
+                        anyhow::bail!(
+                            "TreeSpec for root {:?} join turn {} references child {:?} \
+                             not in its children",
+                            spec.root,
+                            turn_index,
+                            child
+                        );
+                    }
+                }
+            }
+
+            registry.open_tree(&spec.root, GATE_PHASE.to_string(), true);
+            registry.register_descendants(&spec.root, spec.children.len() as i64);
+
+            for child in &spec.children {
+                child_root.insert(child.clone(), spec.root.clone());
+            }
+            let entry = joins.entry(spec.root.clone()).or_default();
+            for (turn_index, required) in &spec.join_turns {
+                entry.entry(*turn_index).or_default().extend(required.iter().cloned());
+            }
+        }
+
+        Ok(Self {
+            registry: RefCell::new(registry),
+            joins,
+            child_root,
+            terminated: RefCell::new(HashSet::new()),
+        })
+    }
+
+    /// True iff `conversation_id` is a root with a join at `turn_index` whose
+    /// required children are not all terminated yet.
+    pub fn is_waiting(&self, conversation_id: &str, turn_index: usize) -> bool {
+        let Some(root_joins) = self.joins.get(conversation_id) else {
+            return false;
+        };
+        let Some(required) = root_joins.get(&turn_index) else {
+            return false;
+        };
+        let terminated = self.terminated.borrow();
+        required.iter().any(|c| !terminated.contains(c))
+    }
+
+    /// Record `child_id` as terminal and account it against the owning tree
+    /// (idempotent: a repeat is ignored).
+    pub fn on_child_terminal(&self, child_id: &str) {
+        if !self.terminated.borrow_mut().insert(child_id.to_string()) {
+            return;
+        }
+        if let Some(root) = self.child_root.get(child_id) {
+            self.registry.borrow_mut().on_descendant_done(root);
+        }
+    }
+
+    /// Account a lane's terminal turn. For a root, clears root-pending; for a
+    /// child, folds in as [`Self::on_child_terminal`]. Returns `true` only when
+    /// the whole tree has drained (root terminal AND all descendants done).
+    pub fn on_lane_terminal(&self, conversation_id: &str) -> bool {
+        if self.joins.contains_key(conversation_id)
+            || self.registry.borrow().has_tree(conversation_id)
+        {
+            // A root lane (either it declared joins or is a tracked tree).
+            return self.registry.borrow_mut().on_root_terminal(conversation_id);
+        }
+        // Otherwise treat as a child terminal; report drain of the owning tree.
+        let first_time = self.terminated.borrow_mut().insert(conversation_id.to_string());
+        if let Some(root) = self.child_root.get(conversation_id).cloned() {
+            if first_time {
+                return self.registry.borrow_mut().on_descendant_done(&root);
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tree_gate_tests {
+    use super::*;
+
+    #[test]
+    fn tree_gate_defers_join_until_children_terminal() {
+        let spec = TreeSpec {
+            root: "t".into(),
+            children: vec!["t::sa:a".into()],
+            join_turns: vec![(2usize, vec!["t::sa:a".into()])],
+        };
+        let gate = TreeGate::new(&[spec]);
+        assert!(gate.is_waiting("t", 2));
+        gate.on_child_terminal("t::sa:a");
+        assert!(!gate.is_waiting("t", 2));
+        assert!(!gate.on_lane_terminal("t::sa:a"));
+        assert!(gate.on_lane_terminal("t")); // whole tree drained
+    }
+
+    #[test]
+    fn tree_gate_fails_closed_on_dangling_join_child() {
+        let spec = TreeSpec {
+            root: "t".into(),
+            children: vec!["t::sa:a".into()],
+            join_turns: vec![(2usize, vec!["t::sa:missing".into()])],
+        };
+        assert!(TreeGate::try_new(&[spec]).is_err());
+    }
 }
