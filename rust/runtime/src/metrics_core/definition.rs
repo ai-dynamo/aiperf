@@ -4,6 +4,12 @@
 //! Unit newtypes for native and display metric values, plus metric definitions.
 
 use crate::metrics_core::units::{MetricValueType, Unit};
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+// Re-export the O(1) exhaustive per-tag lookup so the unified `definitions`
+// facade exposes both the tag-keyed and the id-keyed lookup from one path.
+pub use crate::metrics_core::catalog::metric_definition;
 
 /// A value in a metric's native (math/SLA) unit.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -109,6 +115,77 @@ impl Definition {
     }
 }
 
+/// Registry of every [`Definition`] keyed by its public, namespaced id.
+///
+/// Built once (config/render-time only; never touched on a per-record path) from
+/// the static metric `CATALOG`. Metric ids are namespaced `aiperf.<tag>` at
+/// map-build time; each alias is inserted verbatim (metrics declare none today,
+/// but the loop is wired). A later task registers analyzer definitions here —
+/// their `def.id` is already fully namespaced (e.g. `analyzer.isl`), so they are
+/// inserted under their own key with no extra prefix. See the marked insertion
+/// point below.
+static REGISTRY: LazyLock<HashMap<String, &'static Definition>> = LazyLock::new(|| {
+    let mut map: HashMap<String, &'static Definition> = HashMap::new();
+    for spec in crate::metrics_core::catalog::CATALOG.iter() {
+        // Metric ids are the bare tag key (e.g. "request_latency"); namespace them.
+        map.insert(format!("aiperf.{}", spec.def.id), &spec.def);
+        // Aliases are inserted verbatim (full string). Metrics have none yet.
+        for alias in spec.def.aliases {
+            map.insert((*alias).to_string(), &spec.def);
+        }
+    }
+
+    // Task 9 insertion point: register analyzer base-concept definitions here.
+    // Their `def.id` is already fully namespaced (`analyzer.*`), so insert each
+    // under `def.id` directly (plus any aliases), without the `aiperf.` prefix.
+
+    map
+});
+
+/// Looks up a [`Definition`] by its exact public id (namespaced id or alias).
+///
+/// Config/render-time only — never called on a per-record or per-token path.
+pub fn definition(id: &str) -> Option<&'static Definition> {
+    REGISTRY.get(id).copied()
+}
+
+/// Resolves a concrete output name to its [`Definition`].
+///
+/// First tries an exact [`definition`] lookup. Otherwise, if `name` matches the
+/// parameterized `turn<N>_<suffix>` shape (N = digits), it maps to the analyzer
+/// base concept `analyzer.per_turn_<suffix>`. That base def is registered by a
+/// later task, so the parameterized branch returns `None` until then — the rule
+/// is implemented now regardless. Config/render-time only.
+pub fn resolve(name: &str) -> Option<&'static Definition> {
+    if let Some(def) = definition(name) {
+        return Some(def);
+    }
+    if let Some(rest) = name.strip_prefix("turn") {
+        if let Some(us) = rest.find('_') {
+            let (digits, suffix) = (&rest[..us], &rest[us + 1..]);
+            if !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && !suffix.is_empty()
+            {
+                return definition(&format!("analyzer.per_turn_{suffix}"));
+            }
+        }
+    }
+    None
+}
+
+/// Returns every registered [`Definition`] (unordered).
+pub fn all_definitions() -> Vec<&'static Definition> {
+    REGISTRY.values().copied().collect()
+}
+
+/// Returns every registered public id, sorted.
+pub fn ids_sorted() -> Vec<String> {
+    let mut ids: Vec<String> = REGISTRY.keys().cloned().collect();
+    ids.sort();
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +233,19 @@ mod tests {
     fn effective_display_unit_falls_back_to_native() {
         let d = def_fixture();
         assert_eq!(d.effective_display_unit(), d.unit);
+    }
+
+    #[test]
+    fn definition_lookup_by_namespaced_id_and_alias() {
+        use crate::metrics_core::MetricTag;
+        let d = definition("aiperf.request_latency").expect("known id");
+        assert_eq!(d.header, metric_definition(MetricTag::RequestLatency).header);
+        assert!(definition("does.not.exist").is_none());
+    }
+
+    #[test]
+    fn facade_path_resolves() {
+        // Confirms the unified facade re-export compiles and points at the same data.
+        assert!(crate::definitions::definition("aiperf.request_latency").is_some());
     }
 }
