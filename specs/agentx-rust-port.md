@@ -36,9 +36,18 @@ counterparts with unit tests (golden values captured from CPython where relevant
 - `prepass.rs` — the shared per-trace theoretical prefix-cache prepass.
 - `prompt.rs` — `compose_weka_prompt_tokens` (three ISL layouts, callback-injected
   token generation).
+- `synth.rs` — the LCP-driven `ConversationReconstructor` (init_turn_0, advance_turn,
+  turn_delta, block geometry, `compute_asst_block_caps`, `truncate_synth_buf_at_block`),
+  token generation injected via the `TokenSynth` trait. **Proven byte-exact against
+  the real Python reconstructor** by `tools/agentx_synth_golden.py` +
+  `rust/runtime/tests/agentx_synth_parity.rs` (5 scenarios, full segment + TurnDelta
+  diff).
+- `tool_shape.rs` — OpenAI tool-call wire shaping (`demote_unpaired_tool_marks`,
+  `tool_shape_segment_messages`), wired into `turn_delta`.
 
-Remaining Slice 1 (see below): `synth.rs`, `chains.rs`, `tool_shape.rs`,
-`loader.rs`, and the Python golden-diff A/B harness.
+Remaining Slice 1 (see below): `chains.rs` (flat-agent detection), `loader.rs`
+(the hub producing `ReconstructedConversation`s), and the full-loader golden-diff
+A/B harness over the `tests/fixtures/weka_traces/` files.
 
 ## Future requirements
 
