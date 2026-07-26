@@ -59,66 +59,87 @@ pub fn slice_trajectories_at_tstar(
         capped_warmup_lead_ms, next_turn_index_at_or_after, seed_for_trace_lane,
         timestamped_t_star_ms,
     };
-    let mut out = Vec::with_capacity(convs.len());
-    for (lane_index, conv) in convs.into_iter().enumerate() {
-        let ts: Vec<Option<f64>> = conv.turns.iter().map(|t| t.timestamp_ms).collect();
-        let known: Vec<f64> = ts.iter().filter_map(|x| *x).collect();
-        let t_star = if known.is_empty() {
+    use std::collections::BTreeMap;
+    // Group conversations into trace-trees keyed by `replay_scope_id` (the root
+    // trace id; subagents reconstruct with the same scope). The Python oracle
+    // samples ONE t* per trace-tree and snapshots the whole tree together, so
+    // subagents share the root's t* and dispatch at their parent-relative spawn
+    // offsets (child turn timestamps are already in root-trace coordinates) —
+    // join-gated behind the parent instead of firing free from an independent t*.
+    let mut trees: BTreeMap<String, Vec<ReconstructedConversation>> = BTreeMap::new();
+    for conv in convs {
+        trees.entry(conv.replay_scope_id.clone()).or_default().push(conv);
+    }
+
+    let mut out = Vec::new();
+    for (tree_index, (scope, members)) in trees.into_iter().enumerate() {
+        // One t* for the whole tree, sampled from the ROOT's recorded turn span.
+        let root_ts: Vec<f64> = members
+            .iter()
+            .find(|c| c.parent_conversation_id.is_none())
+            .map(|r| r.turns.iter().filter_map(|t| t.timestamp_ms).collect())
+            .unwrap_or_default();
+        let t_star = if root_ts.is_empty() {
             0.0
         } else {
-            let mn = known.iter().copied().fold(f64::INFINITY, f64::min);
-            let mx = known.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let mn = root_ts.iter().copied().fold(f64::INFINITY, f64::min);
+            let mx = root_ts.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let dur = mx - mn;
-            let seed = seed_for_trace_lane(base_seed, &conv.session_id, lane_index as i64);
+            let seed = seed_for_trace_lane(base_seed, &scope, tree_index as i64);
             timestamped_t_star_ms(seed, mn + start_min_ratio * dur, mn + start_max_ratio * dur)
         };
-        let Some(next_idx) = next_turn_index_at_or_after(&ts, t_star) else {
-            continue; // no post-t* (profiling) turn on this lane
-        };
-        let base_id = conv.session_id.clone();
 
-        // WARMUP slice: the last pre-t* turn (n-1), a single 1-token prime whose
-        // dispatch offset is its capped lead (t* − warm_ts). Shares the tree's
-        // root correlation (via parent id) so it reuses the same cache-bust marker.
-        // Its messages are the FULL back-seeded prefix (turns 0..=n-1 flattened)
-        // so one prime warms the whole recorded prefix, matching the Python oracle.
-        if next_idx >= 1 {
-            let warm_i = (next_idx - 1) as usize;
-            let mut warm_turn = conv.turns[warm_i].clone();
-            warm_turn.raw_messages = flatten_prefix(&conv.turns[0..=warm_i]);
-            let lead = capped_warmup_lead_ms(t_star - warm_turn.timestamp_ms.unwrap_or(t_star), idle_gap_cap_ms);
-            warm_turn.timestamp_ms = Some(lead.max(0.0));
-            warm_turn.max_tokens = 1; // Python `_WARMUP_MAX_TOKENS`
-            // The warmup prime is a standalone 1-token request; it is NOT a
-            // spawn/join point. Strip any inherited branch/join metadata so the
-            // warmup conversation is not misread as a Spawn parent by validate_dag.
-            warm_turn.spawn_branch = None;
-            warm_turn.join_prerequisite = None;
-            out.push(ReconstructedConversation {
-                session_id: format!("{base_id}{WARMUP_SUFFIX}"),
-                replay_scope_id: conv.replay_scope_id.clone(),
-                parent_conversation_id: Some(base_id.clone()),
-                turns: vec![warm_turn],
-            });
+        // ONE warmup prime per tree: the root's last pre-t* boundary turn carrying
+        // the full flattened root prefix. Subagents share the primed prefix under
+        // the shared hash-id scope, so no per-subagent warmup is emitted.
+        if let Some(root) = members.iter().find(|c| c.parent_conversation_id.is_none()) {
+            let rts: Vec<Option<f64>> = root.turns.iter().map(|t| t.timestamp_ms).collect();
+            if let Some(root_next) = next_turn_index_at_or_after(&rts, t_star)
+                && root_next >= 1
+            {
+                let warm_i = (root_next - 1) as usize;
+                let mut warm_turn = root.turns[warm_i].clone();
+                warm_turn.raw_messages = flatten_prefix(&root.turns[0..=warm_i]);
+                let lead = capped_warmup_lead_ms(
+                    t_star - warm_turn.timestamp_ms.unwrap_or(t_star),
+                    idle_gap_cap_ms,
+                );
+                warm_turn.timestamp_ms = Some(lead.max(0.0));
+                warm_turn.max_tokens = 1; // Python `_WARMUP_MAX_TOKENS`
+                warm_turn.spawn_branch = None;
+                warm_turn.join_prerequisite = None;
+                out.push(ReconstructedConversation {
+                    session_id: format!("{}{WARMUP_SUFFIX}", root.session_id),
+                    replay_scope_id: root.replay_scope_id.clone(),
+                    parent_conversation_id: Some(root.session_id.clone()),
+                    turns: vec![warm_turn],
+                });
+            }
         }
 
-        // PROFILING slice: resume at the first turn at/after t*. Back-seed the full
-        // pre-t* prefix (turns 0..=next_idx flattened) into that first retained
-        // turn's messages so profiling resumes with the WHOLE conversation history
-        // in context — the Python oracle back-seeds the earlier turns rather than
-        // dropping them. Later turns keep their per-turn deltas (the accumulating
-        // dispatch folds in live replies). Timestamps rebase to t*-relative.
-        let mut prof = conv;
-        let seed_prefix = flatten_prefix(&prof.turns[0..=next_idx as usize]);
-        prof.turns.drain(0..next_idx as usize);
-        if let Some(first) = prof.turns.first_mut() {
-            first.raw_messages = seed_prefix;
-        }
-        for turn in &mut prof.turns {
-            turn.timestamp_ms = Some(turn.timestamp_ms.map_or(0.0, |ts| (ts - t_star).max(0.0)));
-        }
-        if !prof.turns.is_empty() {
-            out.push(prof);
+        // PROFILING slice: every tree member (root + subagents) resumes at the
+        // SHARED t*. Back-seed the flattened pre-t* prefix into the first retained
+        // turn (folding a subagent's inherited parent context into its resume turn)
+        // and rebase timestamps to the shared t*, so a subagent dispatches at
+        // `spawn_ms − t*` — after the parent reaches the spawn point (join-gated).
+        for conv in members {
+            let ts: Vec<Option<f64>> = conv.turns.iter().map(|t| t.timestamp_ms).collect();
+            let Some(next_idx) = next_turn_index_at_or_after(&ts, t_star) else {
+                continue; // entirely pre-t* (already-drained history)
+            };
+            let mut prof = conv;
+            let seed_prefix = flatten_prefix(&prof.turns[0..=next_idx as usize]);
+            prof.turns.drain(0..next_idx as usize);
+            if let Some(first) = prof.turns.first_mut() {
+                first.raw_messages = seed_prefix;
+            }
+            for turn in &mut prof.turns {
+                turn.timestamp_ms =
+                    Some(turn.timestamp_ms.map_or(0.0, |ts| (ts - t_star).max(0.0)));
+            }
+            if !prof.turns.is_empty() {
+                out.push(prof);
+            }
         }
     }
     out
