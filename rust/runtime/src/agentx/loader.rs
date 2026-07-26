@@ -474,35 +474,11 @@ pub fn convert_trace_to_conversations(
         }
     }
 
-    // Idle-gap time-warp (Python `_build_trace_idle_timing`): collect every
-    // request-start timestamp (parent normals + all subagent chain requests),
-    // compress gaps larger than the cap, and map ALL timing onto the warped
-    // timeline BEFORE reconstruction derives per-turn delays and before t* is
-    // sampled. Without this, a long dead-air gap inflates the raw span and t*
-    // lands on a different turn than the oracle.
-    if let Some(cap) = opts.idle_gap_cap_seconds {
-        let mut starts: Vec<f64> = normals.iter().map(|(_, n)| n.t).collect();
-        for c in &children {
-            starts.extend(c.requests.iter().map(|r| r.t));
-        }
-        let warp = crate::agentx::idle_gap::IdleGapTimeWarp::new(starts, cap);
-        for (_, n) in &mut normals {
-            n.t = warp.map(n.t);
-        }
-        for c in &mut children {
-            for r in &mut c.requests {
-                r.t = warp.map(r.t);
-            }
-        }
-        for s in &mut spawns {
-            s.spawn_t = warp.map(s.spawn_t);
-            s.completion_t = warp.map(s.completion_t);
-        }
-    }
-
     // Flat-chain splitting: partition the top-level requests into the main
     // chain + detected flat worker chains (only when enabled and >1 normal).
-    let (main_normals, flat_plans) = if cfg.split_flattened_agents && normals.len() > 1 {
+    // NOTE: this runs on RAW timestamps — the chain detection's extension/seam
+    // logic keys on request `t` (Python detects chains before the idle-gap warp).
+    let (mut main_normals, mut flat_plans) = if cfg.split_flattened_agents && normals.len() > 1 {
         detect_and_split_flat_chains(
             trace_id,
             &normals,
@@ -514,6 +490,40 @@ pub fn convert_trace_to_conversations(
     } else {
         (normals.clone(), Vec::new())
     };
+
+    // Idle-gap time-warp (Python `_build_trace_idle_timing`), applied AFTER chain
+    // detection: collect every request-start (main normals + flat-chain requests +
+    // all subagent chain requests), compress gaps larger than the cap, and map all
+    // timing onto the warped timeline before reconstruction derives per-turn delays
+    // and before t* is sampled. Applying it here (not before the split) keeps the
+    // chain detection on raw timestamps, matching the oracle.
+    if let Some(cap) = opts.idle_gap_cap_seconds {
+        let mut starts: Vec<f64> = main_normals.iter().map(|(_, n)| n.t).collect();
+        for fp in &flat_plans {
+            starts.extend(fp.requests.iter().map(|(_, r)| r.t));
+        }
+        for c in &children {
+            starts.extend(c.requests.iter().map(|r| r.t));
+        }
+        let warp = crate::agentx::idle_gap::IdleGapTimeWarp::new(starts, cap);
+        for (_, n) in &mut main_normals {
+            n.t = warp.map(n.t);
+        }
+        for fp in &mut flat_plans {
+            for (_, r) in &mut fp.requests {
+                r.t = warp.map(r.t);
+            }
+        }
+        for c in &mut children {
+            for r in &mut c.requests {
+                r.t = warp.map(r.t);
+            }
+        }
+        for s in &mut spawns {
+            s.spawn_t = warp.map(s.spawn_t);
+            s.completion_t = warp.map(s.completion_t);
+        }
+    }
 
     let parent = ParentPlan {
         trace_id: trace_id.to_string(),
@@ -631,6 +641,14 @@ pub fn convert_trace_to_conversations(
             opts,
         )?);
     }
+    tracing::debug!(
+        trace_id,
+        main_turns = main_normals.len(),
+        flat_chains = flat_plans.len(),
+        children = children.len(),
+        total_conversations = out.len(),
+        "weka reconstruction breakdown"
+    );
     Ok(out)
 }
 
