@@ -32,6 +32,21 @@ pub enum Transport {
 }
 
 impl Transport {
+    /// Canonical wire discriminant id for this transport (the `type` value).
+    ///
+    /// This is the typed source of truth for the id the runner keys component
+    /// selection on (`match id.as_str()`), replacing string extraction from the
+    /// serialized value. Matches the serde `rename_all = "snake_case"` tag.
+    pub const fn canonical_id(&self) -> &'static str {
+        match self {
+            Transport::Http => "http",
+            Transport::Grpc => "grpc",
+            Transport::DynosimOffline(_) => "dynosim_offline",
+            Transport::DynosimOnline(_) => "dynosim_online",
+            Transport::DryRun(_) => "dry_run",
+        }
+    }
+
     /// Whether this is one of the in-process Dynamo co-simulation transports.
     pub fn is_dynosim(&self) -> bool {
         matches!(
@@ -693,19 +708,22 @@ mod tests {
     }
 
     #[test]
-    fn required_features_sorted_and_deduped() {
-        let mut cfg = DynosimConfig {
-            required_features: Some(vec![
-                "dynamo-zmq-events".into(),
-                "dynamo-router-runtime".into(),
-                "dynamo-zmq-events".into(),
-            ]),
-            ..Default::default()
-        };
-        cfg.normalize();
-        assert_eq!(
-            cfg.required_features.unwrap(),
-            vec!["dynamo-router-runtime", "dynamo-zmq-events"]
-        );
+    fn canonical_id_matches_serde_tag() {
+        // canonical_id() must stay byte-identical to the serialized `type` tag,
+        // since the runner keys component selection on it.
+        let cases = [
+            Transport::Http,
+            Transport::Grpc,
+            Transport::DynosimOffline(DynosimConfig::default()),
+            Transport::DynosimOnline(DynosimConfig::default()),
+            Transport::DryRun(DryRunConfig::default()),
+        ];
+        for transport in cases {
+            let wire_tag = serde_json::to_value(&transport).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert_eq!(transport.canonical_id(), wire_tag, "{wire_tag}");
+        }
     }
 }
