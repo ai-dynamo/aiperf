@@ -118,6 +118,59 @@ fn apply_cli_overrides(
     overlay_bool(&mut inputs.omit_kv_hints, flags.omit_kv_hints);
     overlay_bool(&mut inputs.open_loop_strict, flags.open_loop_strict);
     overlay_bool(&mut inputs.unsafe_override, flags.unsafe_override);
+    overlay_bool(&mut inputs.export_outputs_json, flags.export_outputs_json);
+    overlay_bool(&mut inputs.show_trace_timing, flags.show_trace_timing);
+    overlay_bool(&mut inputs.use_think_time_only, flags.use_think_time_only);
+    overlay_bool(&mut inputs.burst_phase_starts, flags.burst_phase_starts);
+    if flags.show_trace_timing.unwrap_or(false) {
+        inputs.export_trace = true;
+    }
+    if let Some(prefix) = flags.profile_export_prefix.clone() {
+        inputs.profile_export_prefix = Some(prefix);
+    }
+    if let Some(v) = flags.max_context_length {
+        inputs.max_context_length = Some(v);
+    }
+    if let Some(v) = flags.trace_idle_gap_cap_seconds {
+        inputs.trace_idle_gap_cap_seconds = Some(v);
+    }
+    if let Some(v) = flags.cache_bust.clone().filter(|t| t != "none") {
+        inputs.cache_bust = Some(v);
+    }
+    if flags.allow_dataset_wrap.unwrap_or(false) {
+        inputs.allow_dataset_wrap = Some(true);
+    } else if flags.no_allow_dataset_wrap.unwrap_or(false) {
+        inputs.allow_dataset_wrap = Some(false);
+    }
+    if let Some(repo) = flags.hf_weka_dataset.clone() {
+        if let Some(name) = inputs.public_dataset.as_deref()
+            && name != "weka_hf"
+        {
+            anyhow::bail!(
+                "--hf-weka-dataset cannot be combined with --public-dataset {name}; omit --public-dataset or set it to weka_hf"
+            );
+        }
+        inputs.public_dataset = Some("weka_hf".to_string());
+        inputs.hf_weka_dataset = Some(repo);
+    }
+    if flags.trace_session_sample_ratio.is_some() {
+        anyhow::bail!(
+            "--trace-session-sample-ratio is not yet supported by the native profile engine"
+        );
+    }
+    if flags.agentic_warmup_grace_period.is_some() {
+        anyhow::bail!(
+            "--agentic-warmup-grace-period is not yet supported by the native profile engine"
+        );
+    }
+    if flags.failed_request_threshold.is_some() {
+        anyhow::bail!(
+            "--failed-request-threshold is not yet supported by the native profile engine"
+        );
+    }
+    if flags.use_think_time_only.unwrap_or(false) && flags.ignore_trace_delays.unwrap_or(false) {
+        anyhow::bail!("--use-think-time-only and --ignore-trace-delays are mutually exclusive");
+    }
     if let Some(name) = flags.tokenizer.clone() {
         inputs.tokenizer_name = Some(name);
     }
@@ -382,6 +435,12 @@ struct ArtifactsSection {
     /// Emit the per-request outputs JSON.
     #[serde(default, alias = "exportOutputsJson")]
     export_outputs_json: bool,
+    /// Show per-request trace timing in the console.
+    #[serde(default, alias = "showTraceTiming")]
+    show_trace_timing: bool,
+    /// Base filename stem for exported artifacts (`artifacts.prefix`).
+    #[serde(default)]
+    prefix: Option<String>,
 }
 
 /// `artifacts.records`: a format list, or `false` to disable per-record export.
@@ -1655,7 +1714,11 @@ impl Benchmark {
             None => vec!["jsonl".to_string()],
         };
         let export_raw = self.artifacts.as_ref().is_some_and(|a| a.raw);
-        let export_trace = self.artifacts.as_ref().is_some_and(|a| a.trace);
+        let show_trace_timing = self
+            .artifacts
+            .as_ref()
+            .is_some_and(|a| a.show_trace_timing);
+        let export_trace = self.artifacts.as_ref().is_some_and(|a| a.trace) || show_trace_timing;
         let export_outputs_json = self
             .artifacts
             .as_ref()
@@ -1745,6 +1808,18 @@ impl Benchmark {
             export_raw,
             export_trace,
             export_outputs_json,
+            show_trace_timing,
+            profile_export_prefix: self.artifacts.as_ref().and_then(|a| a.prefix.clone()),
+            use_think_time_only: false,
+            max_context_length: None,
+            allow_dataset_wrap: None,
+            cache_bust: None,
+            burst_phase_starts: false,
+            trace_idle_gap_cap_seconds: None,
+            hf_weka_dataset: None,
+            trace_session_sample_ratio: None,
+            agentic_warmup_grace_period: None,
+            failed_request_threshold: None,
             sequence_distribution: None,
             batch_size: batch_size.unwrap_or(1),
             sampling,

@@ -420,10 +420,27 @@ impl BenchmarkRunWireV2 {
             .collect::<BTreeMap<_, _>>();
         let metrics = serde_json::to_value(&cfg.metrics)
             .map_err(|error| anyhow!("run.cfg.metrics: {error}"))?;
-        let artifacts = serde_json::to_value(&cfg.artifacts)
-            .map_err(|error| anyhow!("run.cfg.artifacts: {error}"))?;
-        let export = serde_json::to_value(&cfg.export)
-            .map_err(|error| anyhow!("run.cfg.export: {error}"))?;
+        let artifacts_spec: ArtifactSpecV2 = serde_json::from_value(
+            serde_json::to_value(&cfg.artifacts)
+                .map_err(|error| anyhow!("run.cfg.artifacts: {error}"))?,
+        )
+        .unwrap_or_default();
+        let mut export_cfg: crate::export::ExportConfig = serde_json::from_value(
+            serde_json::to_value(&cfg.export).map_err(|error| anyhow!("run.cfg.export: {error}"))?,
+        )
+        .unwrap_or_default();
+        // Derive the summary stem from the per-record path so
+        // `--profile-export-prefix` / `artifacts.prefix` renames
+        // `*_aiperf.{json,csv}` together with the jsonl.
+        if let Some(path) = artifacts_spec.records_path.as_ref()
+            && let Some(name) = path.file_name().and_then(|s| s.to_str())
+        {
+            let stem = name.strip_suffix(".jsonl").unwrap_or(name);
+            if !stem.is_empty() {
+                export_cfg.genai_perf.stem = stem.to_string();
+                export_cfg.timeslice.stem = Some(format!("{stem}_aiperf"));
+            }
+        }
         Ok(AuthoredRunSpecV2 {
             identity: RunIdentitySpecV2 {
                 benchmark_id: self.benchmark_id,
@@ -439,8 +456,8 @@ impl BenchmarkRunWireV2 {
             transport,
             workload,
             metrics: serde_json::from_value(metrics).unwrap_or_default(),
-            artifacts: serde_json::from_value(artifacts).unwrap_or_default(),
-            export: serde_json::from_value(export).unwrap_or_default(),
+            artifacts: artifacts_spec,
+            export: export_cfg,
             sidecars,
             dispatch,
             hop_routing,

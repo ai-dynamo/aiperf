@@ -92,7 +92,10 @@ pub fn set_log_file(artifact_dir: &Path) {
 const DEFAULT_LEVEL: &str = "info";
 
 fn level_directive_from_argv(argv: &[String]) -> String {
-    if argv.iter().any(|arg| arg == "--extra-verbose") {
+    if argv
+        .iter()
+        .any(|arg| arg == "--extra-verbose" || arg == "-vv" || arg == "--vv")
+    {
         return "trace".to_owned();
     }
     if argv.iter().any(|arg| arg == "--verbose" || arg == "-v") {

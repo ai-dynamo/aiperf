@@ -81,6 +81,108 @@ fn authored_prompt_selection(corpus: Option<&str>) -> Option<PromptSelection> {
     })
 }
 
+/// Parse `--cache-bust` / `Inputs.cache_bust` into the typed wire policy.
+fn cache_bust_from_inputs(inputs: &Inputs) -> Option<crate::config::model::dataset::CacheBust> {
+    use crate::config::model::dataset::{CacheBust, CacheBustTarget};
+    let raw = inputs.cache_bust.as_deref()?;
+    let target = match raw {
+        "none" => return None,
+        "system_prefix" => CacheBustTarget::SystemPrefix,
+        "system_suffix" => CacheBustTarget::SystemSuffix,
+        "first_turn_prefix" => CacheBustTarget::FirstTurnPrefix,
+        "first_turn_suffix" => CacheBustTarget::FirstTurnSuffix,
+        other => {
+            tracing::warn!(target = %other, "unknown cache_bust target; ignoring");
+            return None;
+        }
+    };
+    Some(CacheBust { target })
+}
+
+/// Merge CLI/YAML synthesis knobs onto `Inputs.synthesis` for the dataset wire.
+fn resolve_synthesis(inputs: &Inputs) -> Option<serde_json::Value> {
+    let mut map = match &inputs.synthesis {
+        Some(serde_json::Value::Object(m)) => m.clone(),
+        Some(other) => {
+            let mut m = serde_json::Map::new();
+            m.insert("_base".into(), other.clone());
+            m
+        }
+        None => serde_json::Map::new(),
+    };
+    let mut touched = inputs.synthesis.is_some();
+    if let Some(wrap) = inputs.allow_dataset_wrap {
+        map.insert("allow_dataset_wrap".into(), serde_json::Value::Bool(wrap));
+        touched = true;
+    }
+    if let Some(cap) = inputs.trace_idle_gap_cap_seconds
+        && let Some(n) = serde_json::Number::from_f64(cap)
+    {
+        map.insert("idle_gap_cap_seconds".into(), serde_json::Value::Number(n));
+        touched = true;
+    }
+    if let Some(v) = inputs.max_context_length {
+        map.insert("max_context_length".into(), serde_json::Value::from(v));
+        touched = true;
+    }
+    if let Some(target) = &inputs.cache_bust {
+        map.insert(
+            "cache_bust_target".into(),
+            serde_json::Value::String(target.clone()),
+        );
+        touched = true;
+    }
+    if inputs.use_think_time_only {
+        map.insert("use_think_time_only".into(), serde_json::Value::Bool(true));
+        touched = true;
+    }
+    if inputs.burst_phase_starts {
+        map.insert("burst_phase_starts".into(), serde_json::Value::Bool(true));
+        touched = true;
+    }
+    touched.then(|| serde_json::Value::Object(map))
+}
+
+/// Normalize `--profile-export-prefix` like Python `ArtifactsConfig`: strip a
+/// directory component and known export suffixes, defaulting to `profile_export`.
+fn artifact_export_stem(prefix: Option<&str>) -> String {
+    const SUFFIXES: &[&str] = &[
+        "_aiperf_timeslices.csv",
+        "_aiperf_timeslices.json",
+        "_aiperf.csv",
+        "_aiperf.json",
+        "_records.csv",
+        "_raw.jsonl",
+        "_server_metrics.parquet",
+        "_server_metrics.jsonl",
+        "_server_metrics.json",
+        "_server_metrics.csv",
+        ".jsonl",
+        ".parquet",
+        ".csv",
+        ".json",
+    ];
+    let Some(raw) = prefix.map(str::trim).filter(|s| !s.is_empty()) else {
+        return "profile_export".to_string();
+    };
+    let name = std::path::Path::new(raw)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(raw);
+    let mut stem = name.to_string();
+    for suffix in SUFFIXES {
+        if let Some(stripped) = stem.strip_suffix(suffix) {
+            stem = stripped.to_string();
+            break;
+        }
+    }
+    if stem.is_empty() {
+        "profile_export".to_string()
+    } else {
+        stem
+    }
+}
+
 /// A leading warmup phase's axes.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Warmup {
@@ -191,6 +293,31 @@ pub struct Inputs {
     pub export_trace: bool,
     /// Emit the per-request outputs JSON (`artifacts.export_outputs_json`).
     pub export_outputs_json: bool,
+    /// Show per-request HTTP trace timing in the console (`--show-trace-timing`).
+    pub show_trace_timing: bool,
+    /// Base filename stem for exported artifacts (`--profile-export-prefix`).
+    pub profile_export_prefix: Option<String>,
+    /// Weka: emit turn delays from recorded think_time only (`--use-think-time-only`).
+    pub use_think_time_only: bool,
+    /// Maximum peak prompt+output context length for Weka traces.
+    pub max_context_length: Option<u32>,
+    /// Allow dataset wrap when concurrency exceeds the loaded pool.
+    /// `None` leaves the engine default; `Some(false)` matches Python default.
+    pub allow_dataset_wrap: Option<bool>,
+    /// Cache-bust target snake_case name (`none` / `first_turn_prefix` / …).
+    pub cache_bust: Option<String>,
+    /// AGENTIC_REPLAY synchronized phase-start bursts.
+    pub burst_phase_starts: bool,
+    /// Per-trace idle-gap cap, seconds (`--trace-idle-gap-cap-seconds`).
+    pub trace_idle_gap_cap_seconds: Option<f64>,
+    /// HuggingFace repo for generic Weka loader (`--hf-weka-dataset`).
+    pub hf_weka_dataset: Option<String>,
+    /// Baseten whole-session sample ratio (fail-closed until implemented).
+    pub trace_session_sample_ratio: Option<f64>,
+    /// Agentic warmup barrier grace (fail-closed until implemented).
+    pub agentic_warmup_grace_period: Option<f64>,
+    /// Abort-on-failure-ratio threshold (fail-closed until implemented).
+    pub failed_request_threshold: Option<f64>,
     /// Mixed ISL/OSL sequence distribution (`--seq-dist`).
     pub sequence_distribution: Option<Vec<crate::config::model::dataset::SeqDistEntry>>,
     pub batch_size: u32,
@@ -477,6 +604,9 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // whole (later lowering partially moves it). A hard scenario-lock conflict
     // fails resolution here.
     let scenario_outcome = resolve_scenario_outcome(&inputs)?;
+    // Capture synthesis / cache-bust before later partial moves of `inputs`.
+    let synthesis = resolve_synthesis(&inputs);
+    let cache_bust = cache_bust_from_inputs(&inputs);
     // The agentic_replay (legacy weka) timing mode is a single coherent driver:
     // one workload instance owns the per-tree join gate, session-tree registry,
     // and recycle cursor. It runs global-dispatch, single-worker, non-cellular.
@@ -639,7 +769,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             source.insert("revision".to_string(), serde_json::json!(rev));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
-            cache_bust: None,
+            cache_bust,
             name: id.clone(),
             format: inputs.hf_format.clone().unwrap_or_else(|| "hf".to_string()),
             source: serde_json::Value::Object(source),
@@ -648,7 +778,39 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
-            synthesis: inputs.synthesis.clone(),
+            synthesis: synthesis.clone(),
+            prefetch_media_urls: inputs.prefetch_media_urls,
+        })
+    } else if inputs.public_dataset.as_deref() == Some("weka_hf") {
+        let repo = inputs.hf_weka_dataset.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("--hf-weka-dataset is required with --public-dataset weka_hf")
+        })?;
+        let mut source = serde_json::Map::new();
+        source.insert("type".to_string(), serde_json::json!("hugging_face"));
+        source.insert("dataset".to_string(), serde_json::json!(repo));
+        source.insert("subset".to_string(), serde_json::json!("default"));
+        source.insert(
+            "split".to_string(),
+            serde_json::json!(inputs.hf_split.clone().unwrap_or_else(|| "train".into())),
+        );
+        if let Some(rev) = &inputs.hf_revision {
+            source.insert("revision".to_string(), serde_json::json!(rev));
+        }
+        let options = inputs.dataset_filters.clone().unwrap_or_default();
+        if let Some(subset) = &inputs.hf_subset {
+            source.insert("subset".to_string(), serde_json::json!(subset));
+        }
+        Dataset::Public(crate::config::model::dataset::PublicDataset {
+            cache_bust,
+            name: "weka_hf".to_string(),
+            format: "weka_trace".to_string(),
+            source: serde_json::Value::Object(source),
+            options,
+            sampling: Sampling(inputs.sampling.clone()),
+            entries: inputs.dataset_entries,
+            random_seed: inputs.dataset_random_seed,
+            prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
+            synthesis: synthesis.clone(),
             prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else if let Some(name) = &inputs.public_dataset {
@@ -687,7 +849,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             obj.insert("subset".to_string(), serde_json::json!(subset));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
-            cache_bust: None,
+            cache_bust,
             name: name.clone(),
             format: meta.format.clone(),
             source,
@@ -696,7 +858,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
-            synthesis: inputs.synthesis.clone(),
+            synthesis: synthesis.clone(),
             prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
@@ -704,7 +866,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             anyhow::bail!("--uuid-and-strip requires endpoint type 'chat'");
         }
         Dataset::File(crate::config::model::dataset::FileDataset {
-            cache_bust: None,
+            cache_bust,
             // Path-backed inputs are auto-detected; inline records require a format.
             format: inputs.custom_dataset_type.clone().or_else(|| {
                 inputs
@@ -777,13 +939,13 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             osl: inputs.osl.clone(),
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
             records: inputs.inline_records.clone(),
-            synthesis: inputs.synthesis.clone(),
+            synthesis,
             prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else {
         Dataset::Synthetic(Synthetic {
             prompts: Prompts {
-                cache_bust: None,
+                cache_bust,
                 batch_size: inputs.batch_size,
                 isl: inputs.isl.clone(),
                 osl: inputs.osl.clone(),
@@ -1049,18 +1211,19 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             // Sketch retention and DynoSim do not provide per-record values.
             let per_record = !sketch_metrics && !is_dynosim;
             let has = |f: &str| inputs.records_formats.iter().any(|x| x == f);
+            let stem = artifact_export_stem(inputs.profile_export_prefix.as_deref());
             Artifacts {
-                trace: inputs.export_trace && per_record,
+                trace: (inputs.export_trace || inputs.show_trace_timing) && per_record,
                 inputs_path: "inputs.json".to_string(),
                 // `raw` forces the base JSONL on even when the format list omits it.
                 records_path: (per_record && (has("jsonl") || inputs.export_raw))
-                    .then(|| "profile_export.jsonl".to_string()),
+                    .then(|| format!("{stem}.jsonl")),
                 records_csv_path: (per_record && has("csv"))
-                    .then(|| "profile_export_records.csv".to_string()),
+                    .then(|| format!("{stem}_records.csv")),
                 records_parquet_path: (per_record && has("parquet"))
-                    .then(|| "profile_export.parquet".to_string()),
+                    .then(|| format!("{stem}.parquet")),
                 raw_path: (per_record && inputs.export_raw)
-                    .then(|| "profile_export_raw.jsonl".to_string()),
+                    .then(|| format!("{stem}_raw.jsonl")),
                 outputs_path: (per_record && inputs.export_outputs_json)
                     .then(|| "outputs.json".to_string()),
                 // Dry-run dataset analysis: emit beside this run-relative base path.
@@ -1192,7 +1355,9 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
     // dataset resolves through the catalog to its format; a file/inline dataset
     // uses its explicit `custom_dataset_type`. A synthetic default has neither
     // (flagged so `require_loader` can reject it).
-    let loader = if let Some(name) = inputs.public_dataset.as_deref() {
+    let loader = if inputs.public_dataset.as_deref() == Some("weka_hf") {
+        Some("weka_trace".to_string())
+    } else if let Some(name) = inputs.public_dataset.as_deref() {
         crate::config::model::public_catalog::lookup(name).map(|meta| meta.format.clone())
     } else {
         inputs.custom_dataset_type.clone()
@@ -1207,8 +1372,19 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
         ignore_trace_delays: inputs.ignore_trace_delays,
         ignore_trace_delays_explicit: inputs.ignore_trace_delays_explicit,
         loader,
-        cache_bust: None,
-        cache_bust_explicit: false,
+        cache_bust: inputs.cache_bust.as_deref().and_then(|raw| match raw {
+            "system_prefix" => Some(crate::agentx::cache_bust::CacheBustTarget::SystemPrefix),
+            "system_suffix" => Some(crate::agentx::cache_bust::CacheBustTarget::SystemSuffix),
+            "first_turn_prefix" => {
+                Some(crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix)
+            }
+            "first_turn_suffix" => {
+                Some(crate::agentx::cache_bust::CacheBustTarget::FirstTurnSuffix)
+            }
+            "none" => Some(crate::agentx::cache_bust::CacheBustTarget::None),
+            _ => None,
+        }),
+        cache_bust_explicit: inputs.cache_bust.is_some(),
         unsafe_override: inputs.unsafe_override,
         synthetic_default_dataset,
     };

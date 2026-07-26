@@ -137,6 +137,26 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
     reject_sweep("--benchmark-duration", flags.benchmark_duration.as_deref())?;
     reject_sweep("--num-conversations", flags.num_conversations.as_deref())?;
 
+    // Fail closed: accepted for clap parity, not yet implemented natively.
+    if flags.trace_session_sample_ratio.is_some() {
+        anyhow::bail!(
+            "--trace-session-sample-ratio is not yet supported by the native profile engine"
+        );
+    }
+    if flags.agentic_warmup_grace_period.is_some() {
+        anyhow::bail!(
+            "--agentic-warmup-grace-period is not yet supported by the native profile engine"
+        );
+    }
+    if flags.failed_request_threshold.is_some() {
+        anyhow::bail!(
+            "--failed-request-threshold is not yet supported by the native profile engine"
+        );
+    }
+    if flags.use_think_time_only.unwrap_or(false) && flags.ignore_trace_delays.unwrap_or(false) {
+        anyhow::bail!("--use-think-time-only and --ignore-trace-delays are mutually exclusive");
+    }
+
     anyhow::ensure!(
         !flags.model_names.is_empty(),
         "at least one --model is required"
@@ -181,9 +201,36 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
     )?;
 
     let (records_formats, export_raw) = export_level_formats(flags.export_level.as_deref())?;
+    let show_trace_timing = flags.show_trace_timing.unwrap_or(false);
+    let export_trace = flags.export_http_trace.unwrap_or(false) || show_trace_timing;
+
+    // `--hf-weka-dataset` auto-selects public dataset `weka_hf`.
+    let hf_weka_dataset = flags.hf_weka_dataset.clone();
+    let public_dataset = match (&flags.public_dataset, &hf_weka_dataset) {
+        (Some(name), Some(_)) if name != "weka_hf" => {
+            anyhow::bail!(
+                "--hf-weka-dataset cannot be combined with --public-dataset {name}; omit --public-dataset or set it to weka_hf"
+            );
+        }
+        (_, Some(_)) => Some("weka_hf".to_string()),
+        (other, None) => other.clone(),
+    };
+
+    let allow_dataset_wrap = if flags.allow_dataset_wrap.unwrap_or(false) {
+        Some(true)
+    } else if flags.no_allow_dataset_wrap.unwrap_or(false) {
+        Some(false)
+    } else {
+        None
+    };
+    let cache_bust = flags.cache_bust.clone().filter(|t| t != "none");
+
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
-    let (fixed_schedule, request_count) = if flags.fixed_schedule.unwrap_or(false) {
+    // `--no-fixed-schedule` wins over `--fixed-schedule` (clap overrides_with).
+    let want_fixed =
+        flags.fixed_schedule.unwrap_or(false) && !flags.no_fixed_schedule.unwrap_or(false);
+    let (fixed_schedule, request_count) = if want_fixed {
         let path = flags
             .input_file
             .as_ref()
@@ -369,8 +416,20 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         server_profiler: server_profiler_from_flags(flags),
         records_formats,
         export_raw,
-        export_trace: flags.export_http_trace.unwrap_or(false),
-        export_outputs_json: false,
+        export_trace,
+        export_outputs_json: flags.export_outputs_json.unwrap_or(false),
+        show_trace_timing,
+        profile_export_prefix: flags.profile_export_prefix.clone(),
+        use_think_time_only: flags.use_think_time_only.unwrap_or(false),
+        max_context_length: flags.max_context_length,
+        allow_dataset_wrap,
+        cache_bust,
+        burst_phase_starts: flags.burst_phase_starts.unwrap_or(false),
+        trace_idle_gap_cap_seconds: flags.trace_idle_gap_cap_seconds,
+        hf_weka_dataset,
+        trace_session_sample_ratio: flags.trace_session_sample_ratio,
+        agentic_warmup_grace_period: flags.agentic_warmup_grace_period,
+        failed_request_threshold: flags.failed_request_threshold,
         sequence_distribution: flags.seq_dist.as_deref().map(parse_seq_dist).transpose()?,
         batch_size: flags.batch_size.unwrap_or(1),
         sampling: flags
@@ -423,7 +482,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         input_file: flags.input_file.clone(),
         inline_records: None,
         custom_dataset_type: flags.custom_dataset_type.clone(),
-        public_dataset: flags.public_dataset.clone(),
+        public_dataset,
         hf_subset: flags.hf_subset.clone(),
         hf_dataset: flags.hf_dataset.clone(),
         hf_split: flags.hf_split.clone(),
@@ -723,6 +782,14 @@ fn parse_dataset_filters(
 
 /// Build recorded-graph synthesis configuration when any synthesis flag is set.
 fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<serde_json::Value>> {
+    let allow_wrap = if flags.allow_dataset_wrap.unwrap_or(false) {
+        Some(true)
+    } else if flags.no_allow_dataset_wrap.unwrap_or(false) {
+        Some(false)
+    } else {
+        None
+    };
+    let cache_bust = flags.cache_bust.clone().filter(|t| t != "none");
     let any = flags.synthesis_speedup_ratio.is_some()
         || flags.synthesis_prefix_len_multiplier.is_some()
         || flags.synthesis_prefix_root_multiplier.is_some()
@@ -730,7 +797,11 @@ fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<serde_json::Va
         || flags.synthesis_output_len_multiplier.is_some()
         || flags.synthesis_max_isl.is_some()
         || flags.synthesis_max_osl.is_some()
-        || flags.synthesis_idle_gap_cap.is_some();
+        || flags.synthesis_idle_gap_cap.is_some()
+        || flags.trace_idle_gap_cap_seconds.is_some()
+        || flags.max_context_length.is_some()
+        || allow_wrap.is_some()
+        || cache_bust.is_some();
     if !any {
         return Ok(None);
     }
@@ -769,10 +840,24 @@ fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<serde_json::Va
     if let Some(v) = flags.synthesis_max_osl {
         m.insert("max_osl".into(), serde_json::Value::from(v));
     }
-    m.insert(
-        "idle_gap_cap_seconds".into(),
-        f(flags.synthesis_idle_gap_cap.unwrap_or(60.0))?,
-    );
+    // Prefer `--trace-idle-gap-cap-seconds` over `--synthesis-idle-gap-cap`.
+    let idle_gap = flags
+        .trace_idle_gap_cap_seconds
+        .or(flags.synthesis_idle_gap_cap)
+        .unwrap_or(60.0);
+    m.insert("idle_gap_cap_seconds".into(), f(idle_gap)?);
+    if let Some(v) = flags.max_context_length {
+        m.insert("max_context_length".into(), serde_json::Value::from(v));
+    }
+    if let Some(wrap) = allow_wrap {
+        m.insert("allow_dataset_wrap".into(), serde_json::Value::Bool(wrap));
+    }
+    if let Some(target) = cache_bust {
+        m.insert(
+            "cache_bust_target".into(),
+            serde_json::Value::String(target),
+        );
+    }
     m.insert(
         "dataset_sampling_strategy".into(),
         serde_json::Value::String(
@@ -1145,35 +1230,40 @@ where
 mod tests {
     #[test]
     fn synthesis_rejects_non_finite_value() {
-        use crate::flags::ProfileFlags;
-        use clap::Parser;
+        run_on_big_stack(|| {
+            use crate::flags::ProfileFlags;
+            use clap::Parser;
 
-        for bad in ["nan", "inf", "-inf"] {
-            let flags = ProfileFlags::try_parse_from([
-                "profile",
-                &format!("--synthesis-speedup-ratio={bad}"),
-            ])
-            .expect("flags parse");
-            let err = super::build_synthesis(&flags)
-                .expect_err("non-finite synthesis value must be a clean error, not a panic");
-            assert!(
-                err.to_string().contains("finite"),
-                "expected a finiteness error for {bad:?}, got: {err}"
-            );
-        }
+            for bad in ["nan", "inf", "-inf"] {
+                let flags = ProfileFlags::try_parse_from([
+                    "profile",
+                    &format!("--synthesis-speedup-ratio={bad}"),
+                ])
+                .expect("flags parse");
+                let err = super::build_synthesis(&flags)
+                    .expect_err("non-finite synthesis value must be a clean error, not a panic");
+                assert!(
+                    err.to_string().contains("finite"),
+                    "expected a finiteness error for {bad:?}, got: {err}"
+                );
+            }
+        });
     }
 
     #[test]
     fn synthesis_accepts_finite_values() {
-        use crate::flags::ProfileFlags;
-        use clap::Parser;
+        run_on_big_stack(|| {
+            use crate::flags::ProfileFlags;
+            use clap::Parser;
 
-        let flags = ProfileFlags::try_parse_from(["profile", "--synthesis-speedup-ratio", "2.5"])
-            .expect("flags parse");
-        let value = super::build_synthesis(&flags)
-            .expect("finite value builds")
-            .expect("synthesis flag set yields Some");
-        assert_eq!(value["speedup_ratio"], serde_json::json!(2.5));
+            let flags =
+                ProfileFlags::try_parse_from(["profile", "--synthesis-speedup-ratio", "2.5"])
+                    .expect("flags parse");
+            let value = super::build_synthesis(&flags)
+                .expect("finite value builds")
+                .expect("synthesis flag set yields Some");
+            assert_eq!(value["speedup_ratio"], serde_json::json!(2.5));
+        });
     }
 
     /// `--dry-run` projects the dataset-analysis artifact toggle and threads the
@@ -1749,6 +1839,175 @@ mod tests {
             ]);
             let err = super::resolve(&flags).expect_err("unknown scenario must fail");
             assert!(err.to_string().contains("unknown --scenario"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn export_outputs_json_projects() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--export-outputs-json",
+            ]);
+            let inputs = super::resolve_inputs(&flags).expect("inputs");
+            assert!(inputs.export_outputs_json);
+            let run = super::resolve(&flags).expect("resolve");
+            let arts = run.cfg.artifacts.expect("artifacts");
+            assert_eq!(arts.outputs_path.as_deref(), Some("outputs.json"));
+        });
+    }
+
+    #[test]
+    fn hard_trio_flags_fail_closed() {
+        run_on_big_stack(|| {
+            for (flag, value) in [
+                ("--trace-session-sample-ratio", "0.5"),
+                ("--agentic-warmup-grace-period", "1.0"),
+                ("--failed-request-threshold", "0.1"),
+            ] {
+                let flags = parse(&[
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "--dry-run",
+                    flag,
+                    value,
+                ]);
+                let err = super::resolve_inputs(&flags).expect_err("must fail closed");
+                assert!(
+                    err.to_string()
+                        .contains("is not yet supported by the native profile engine"),
+                    "{flag}: {err}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn use_think_time_only_mutex_with_ignore_trace_delays() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--use-think-time-only",
+                "--ignore-trace-delays",
+            ]);
+            let err = super::resolve_inputs(&flags).expect_err("mutex");
+            assert!(err.to_string().contains("mutually exclusive"), "{err}");
+        });
+    }
+
+    #[test]
+    fn hf_weka_dataset_auto_selects_public_weka_hf() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--hf-weka-dataset",
+                "org/weka-traces",
+            ]);
+            let inputs = super::resolve_inputs(&flags).expect("inputs");
+            assert_eq!(inputs.public_dataset.as_deref(), Some("weka_hf"));
+            assert_eq!(inputs.hf_weka_dataset.as_deref(), Some("org/weka-traces"));
+            let run = super::resolve(&flags).expect("resolve");
+            let ds = &serde_json::to_value(&run).unwrap()["cfg"]["datasets"][0];
+            assert_eq!(ds["type"], "public");
+            assert_eq!(ds["name"], "weka_hf");
+            assert_eq!(ds["format"], "weka_trace");
+            assert_eq!(ds["source"]["dataset"], "org/weka-traces");
+        });
+    }
+
+    #[test]
+    fn allow_dataset_wrap_projects_into_synthesis() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--allow-dataset-wrap",
+            ]);
+            let inputs = super::resolve_inputs(&flags).expect("inputs");
+            assert_eq!(inputs.allow_dataset_wrap, Some(true));
+            let synth = inputs.synthesis.expect("synthesis");
+            assert_eq!(synth["allow_dataset_wrap"], true);
+        });
+    }
+
+    #[test]
+    fn no_fixed_schedule_disables_fixed_schedule() {
+        run_on_big_stack(|| {
+            use std::io::Write;
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("sched.jsonl");
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, r#"{{"timestamp":0,"text":"a"}}"#).unwrap();
+            writeln!(f, r#"{{"timestamp":1,"text":"b"}}"#).unwrap();
+            let path_str = path.to_string_lossy().to_string();
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                &path_str,
+                "--fixed-schedule",
+                "--no-fixed-schedule",
+            ]);
+            let inputs = super::resolve_inputs(&flags).expect("inputs");
+            assert!(inputs.fixed_schedule.is_none());
+        });
+    }
+
+    #[test]
+    fn profile_export_prefix_rewrites_artifact_stem() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--profile-export-prefix",
+                "myrun",
+            ]);
+            let run = super::resolve(&flags).expect("resolve");
+            let arts = run.cfg.artifacts.expect("artifacts");
+            assert_eq!(arts.records_path.as_deref(), Some("myrun.jsonl"));
+        });
+    }
+
+    #[test]
+    fn vary_seed_per_trial_offsets_trial_seed() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--random-seed",
+                "10",
+                "--vary-seed-per-trial",
+            ]);
+            let policy = crate::profile::seed_policy(&flags);
+            assert_eq!(policy.seed(0, 0), Some(10));
+            assert_eq!(policy.seed(0, 1), Some(11));
+            assert_eq!(policy.seed(2, 1), Some(13));
         });
     }
 }

@@ -159,6 +159,38 @@ pub struct ProfileFlags {
     #[arg(long = "ignore-trace-delays", num_args = 0..=1, default_missing_value = "true")]
     pub ignore_trace_delays: Option<bool>,
 
+    /// Weka: emit turn delays from recorded `think_time` only (`--use-think-time-only`).
+    /// Mutually exclusive with `--ignore-trace-delays`.
+    #[arg(long = "use-think-time-only", num_args = 0..=1, default_missing_value = "true")]
+    pub use_think_time_only: Option<bool>,
+
+    /// Maximum peak prompt+output context length (tokens) per Weka root trace
+    /// (`--max-context-length`).
+    #[arg(long = "max-context-length")]
+    pub max_context_length: Option<u32>,
+
+    /// Allow weka/agentic replay to wrap traces when concurrency exceeds the
+    /// loaded pool (`--allow-dataset-wrap`). Default off.
+    #[arg(
+        long = "allow-dataset-wrap",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        overrides_with = "no_allow_dataset_wrap"
+    )]
+    pub allow_dataset_wrap: Option<bool>,
+    /// Disable dataset wrapping (`--no-allow-dataset-wrap`).
+    #[arg(long = "no-allow-dataset-wrap", num_args = 0..=1, default_missing_value = "true")]
+    pub no_allow_dataset_wrap: Option<bool>,
+
+    /// Fraction of baseten_trace sessions to keep (`--trace-session-sample-ratio`).
+    #[arg(long = "trace-session-sample-ratio")]
+    pub trace_session_sample_ratio: Option<f64>,
+
+    /// Hard ceiling (seconds) for idle gaps within each Weka trace
+    /// (`--trace-idle-gap-cap-seconds`).
+    #[arg(long = "trace-idle-gap-cap-seconds")]
+    pub trace_idle_gap_cap_seconds: Option<f64>,
+
     /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
     #[arg(long = "trajectory-start-min-ratio")]
     pub trajectory_start_min_ratio: Option<f64>,
@@ -166,6 +198,28 @@ pub struct ProfileFlags {
     /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
     #[arg(long = "trajectory-start-max-ratio")]
     pub trajectory_start_max_ratio: Option<f64>,
+
+    /// AGENTIC_REPLAY: synchronized burst at warmup/profiling phase starts
+    /// (`--burst-phase-starts`).
+    #[arg(long = "burst-phase-starts", num_args = 0..=1, default_missing_value = "true")]
+    pub burst_phase_starts: Option<bool>,
+
+    /// Abort when profiling failure ratio exceeds this threshold
+    /// (`--failed-request-threshold`).
+    #[arg(long = "failed-request-threshold")]
+    pub failed_request_threshold: Option<f64>,
+
+    /// Agentic warmup barrier grace period, seconds
+    /// (`--agentic-warmup-grace-period`).
+    #[arg(long = "agentic-warmup-grace-period")]
+    pub agentic_warmup_grace_period: Option<f64>,
+
+    /// Where to inject a per-conversation cache-bust marker (`--cache-bust`).
+    #[arg(
+        long = "cache-bust",
+        value_parser = ["none", "system_prefix", "system_suffix", "first_turn_prefix", "first_turn_suffix"]
+    )]
+    pub cache_bust: Option<String>,
 
     /// Relax cross-field config validation (`--unsafe-override`).
     #[arg(long = "unsafe-override", num_args = 0..=1, default_missing_value = "true")]
@@ -290,7 +344,12 @@ pub struct ProfileFlags {
     #[arg(long = "url-strategy")]
     pub url_strategy: Option<String>,
     /// Disable auto fixed-schedule detection (`--no-fixed-schedule`).
-    #[arg(long = "no-fixed-schedule", num_args = 0..=1, default_missing_value = "true")]
+    #[arg(
+        long = "no-fixed-schedule",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        overrides_with = "fixed_schedule"
+    )]
     pub no_fixed_schedule: Option<bool>,
 
     /// Public-dataset loader filters as `key=value` (`--dataset-filter`, repeatable).
@@ -442,8 +501,13 @@ pub struct ProfileFlags {
     /// Verbose logging (`--verbose`).
     #[arg(long = "verbose", num_args = 0..=1, default_missing_value = "true", short = 'v')]
     pub verbose: Option<bool>,
-    /// Extra-verbose logging (`--extra-verbose`).
-    #[arg(long = "extra-verbose", num_args = 0..=1, default_missing_value = "true")]
+    /// Extra-verbose logging (`--extra-verbose` / `-vv`).
+    #[arg(
+        long = "extra-verbose",
+        visible_alias = "vv",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     pub extra_verbose: Option<bool>,
     /// UI type (`--ui-type` / `--ui`).
     #[arg(long = "ui-type", visible_alias = "ui")]
@@ -463,6 +527,9 @@ pub struct ProfileFlags {
     /// Show per-request trace timing (`--show-trace-timing`).
     #[arg(long = "show-trace-timing", num_args = 0..=1, default_missing_value = "true")]
     pub show_trace_timing: Option<bool>,
+    /// Emit per-request outputs JSON (`--export-outputs-json`).
+    #[arg(long = "export-outputs-json", num_args = 0..=1, default_missing_value = "true")]
+    pub export_outputs_json: Option<bool>,
     /// Auto-generate plots after the run (`--auto-plot` / `--no-auto-plot`).
     #[arg(
         long = "auto-plot", num_args = 0..=1, default_missing_value = "true",
@@ -785,6 +852,11 @@ pub struct ProfileFlags {
     #[arg(long = "public-dataset")]
     pub public_dataset: Option<String>,
 
+    /// HuggingFace dataset repo for the generic Weka loader (`--hf-weka-dataset`).
+    /// Auto-selects `--public-dataset weka_hf` when unset.
+    #[arg(long = "hf-weka-dataset")]
+    pub hf_weka_dataset: Option<String>,
+
     /// Input trace/dataset file or directory (`--input-file`).
     #[arg(long = "input-file")]
     pub input_file: Option<PathBuf>,
@@ -945,7 +1017,12 @@ pub struct ProfileFlags {
     pub video_audio_sample_rate: Option<f64>,
 
     /// Replay requests by their timestamps (`--fixed-schedule`).
-    #[arg(long = "fixed-schedule", num_args = 0..=1, default_missing_value = "true")]
+    #[arg(
+        long = "fixed-schedule",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        overrides_with = "no_fixed_schedule"
+    )]
     pub fixed_schedule: Option<bool>,
 
     /// Auto-normalize fixed-schedule timestamps (`--fixed-schedule-auto-offset`).
@@ -1256,7 +1333,15 @@ impl ProfileFlags {
     /// i.e. the tokens after `aiperf profile`).
     pub fn parse_from_args(args: &[String]) -> Result<Self, clap::Error> {
         let mut argv = vec!["profile".to_string()];
-        argv.extend_from_slice(args);
+        // Python exposes `-vv` as the short form of `--extra-verbose`. Clap
+        // cannot take a multi-character short, so rewrite before parse.
+        argv.extend(args.iter().map(|a| {
+            if a == "-vv" {
+                "--extra-verbose".to_string()
+            } else {
+                a.clone()
+            }
+        }));
         Self::try_parse_from(argv)
     }
 

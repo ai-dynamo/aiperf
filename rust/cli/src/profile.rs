@@ -379,7 +379,7 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             &label,
             dir,
             value,
-            seed.seed(iter as usize),
+            seed.seed(iter as usize, 0),
             &runner,
             &child_pid,
         )?;
@@ -566,7 +566,7 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             &label,
             dir,
             value,
-            seed.seed(iter as usize),
+            seed.seed(iter as usize, 0),
             &runner,
             &child_pid,
         )?;
@@ -731,7 +731,7 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             &label,
             dir,
             value,
-            seed.seed(iter as usize),
+            seed.seed(iter as usize, 0),
             &runner,
             &child_pid,
         )?;
@@ -908,7 +908,7 @@ fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             &label,
             dir,
             value,
-            seed.seed(iter as usize),
+            seed.seed(iter as usize, 0),
             &runner,
             &child_pid,
         )?;
@@ -1038,13 +1038,13 @@ pub fn plan_recipe_cells(
             "label": v.label,
             "values": values,
         }));
-        run.random_seed = seed.seed(v.index);
+        run.random_seed = seed.seed(v.index, 0);
         run.trial = 0;
         run.artifact_dir = dir.clone();
         // Mirror the per-cell artifact dir + run seed onto the authoring inputs so the
         // runtime's resolution reproduces the CLI-side run byte-for-byte.
         inputs.artifact_dir = dir;
-        inputs.random_seed = seed.seed(v.index);
+        inputs.random_seed = seed.seed(v.index, 0);
         cells.push(sweep_run::Cell {
             index: v.index,
             trial: 0,
@@ -1077,6 +1077,7 @@ pub fn plan_yaml_cells(
                 .unwrap_or(sweep_run::DEFAULT_SWEEP_SEED),
         ),
         same_seed: false,
+        vary_per_trial: false,
     };
 
     let mut cells = Vec::with_capacity(variations.len());
@@ -1106,13 +1107,13 @@ pub fn plan_yaml_cells(
             "label": v.label,
             "values": values,
         }));
-        run.random_seed = seed.seed(v.index);
+        run.random_seed = seed.seed(v.index, 0);
         run.trial = 0;
         run.artifact_dir = dir.clone();
         // Mirror the per-cell artifact dir + run seed onto the authoring inputs so the
         // runtime's resolution reproduces the CLI-side run byte-for-byte.
         inputs.artifact_dir = dir;
-        inputs.random_seed = seed.seed(v.index);
+        inputs.random_seed = seed.seed(v.index, 0);
         cells.push(sweep_run::Cell {
             index: v.index,
             trial: 0,
@@ -1159,7 +1160,13 @@ pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
         .or_else(|| consistent.then_some(sweep_run::DEFAULT_SWEEP_SEED));
     let same_seed = flags.parameter_sweep_same_seed.unwrap_or(false)
         && !flags.no_parameter_sweep_same_seed.unwrap_or(false);
-    sweep_run::SeedPolicy { base, same_seed }
+    let vary_per_trial = flags.vary_seed_per_trial.unwrap_or(false)
+        && !flags.no_vary_seed_per_trial.unwrap_or(false);
+    sweep_run::SeedPolicy {
+        base,
+        same_seed,
+        vary_per_trial,
+    }
 }
 
 /// Run every planned cell in turn (with an optional inter-cell cooldown), render

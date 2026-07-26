@@ -1364,7 +1364,11 @@ fn lower_legacy_agentic(
                     max_rows: entries,
                 },
                 entries,
-                None,
+                dataset_json
+                    .get("synthesis")
+                    .and_then(|s| s.get("max_context_length"))
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|n| n as i64),
                 None,
             ),
         )
@@ -1376,11 +1380,42 @@ fn lower_legacy_agentic(
     // the main normals into its own `::fa:`/`::wg:` lane). Use the Rust default
     // (also true) so the main-conversation turn sequence matches byte-for-byte.
     let cfg = WekaConfig::default();
-    // The agentic-replay scenario caps per-trace idle gaps at 10s (Python
-    // `trace_idle_gap_cap_seconds`); apply it during reconstruction so t* and
-    // dispatch timing match the oracle's warped timeline.
+    // Prefer authored synthesis idle-gap / think-time knobs; preserve the
+    // historical agentic default of 10s when unset.
+    let synth = dataset_json.get("synthesis");
+    let idle_gap_cap_seconds = synth
+        .and_then(|s| s.get("idle_gap_cap_seconds"))
+        .and_then(serde_json::Value::as_f64)
+        .or(Some(10.0));
+    let think_time_only = synth
+        .and_then(|s| s.get("use_think_time_only"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let burst_phase_starts = synth
+        .and_then(|s| s.get("burst_phase_starts"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let cache_bust_target = match synth
+        .and_then(|s| s.get("cache_bust_target"))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            dataset_json
+                .get("cache_bust")
+                .and_then(|c| c.get("target"))
+                .and_then(serde_json::Value::as_str)
+        }) {
+        Some("none") => crate::agentx::cache_bust::CacheBustTarget::None,
+        Some("system_prefix") => crate::agentx::cache_bust::CacheBustTarget::SystemPrefix,
+        Some("system_suffix") => crate::agentx::cache_bust::CacheBustTarget::SystemSuffix,
+        Some("first_turn_suffix") => crate::agentx::cache_bust::CacheBustTarget::FirstTurnSuffix,
+        Some("first_turn_prefix") | None => {
+            crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix
+        }
+        Some(_) => crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
+    };
     let opts = MainReconstructOptions {
-        idle_gap_cap_seconds: Some(10.0),
+        idle_gap_cap_seconds,
+        think_time_only,
         ..MainReconstructOptions::default()
     };
     let results = convert_traces_parallel(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
@@ -1427,7 +1462,7 @@ fn lower_legacy_agentic(
             streaming: true,
             ignore_eos: true,
             benchmark_id: run.identity.benchmark_id.clone(),
-            cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
+            cache_bust_target,
         },
         &count_tokens,
     )?;
@@ -1498,8 +1533,8 @@ fn lower_legacy_agentic(
             common,
             start_min_ratio: 0.0,
             start_max_ratio: 1.0,
-            idle_gap_cap_seconds: Some(10.0),
-            burst_phase_starts: false,
+            idle_gap_cap_seconds,
+            burst_phase_starts,
         };
     let mut agentic_phases: Vec<PhaseSpec> = vec![agentic_replay_phase(warmup_common)];
     // Extend with the authored PROFILING phases only. `--agentic-cache-warmup-duration`

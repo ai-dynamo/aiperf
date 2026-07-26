@@ -65,6 +65,7 @@ fn sweep_cells_match_oracle() {
             run::SeedPolicy {
                 base: Some(run::DEFAULT_SWEEP_SEED),
                 same_seed: false,
+                vary_per_trial: false,
             },
             true,
             load::resolve,
@@ -306,6 +307,7 @@ fn multi_run_cells_match_oracle() {
             run::SeedPolicy {
                 base: Some(run::DEFAULT_SWEEP_SEED),
                 same_seed: false,
+                vary_per_trial: false,
             },
             true,
             load::resolve,

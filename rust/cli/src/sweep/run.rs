@@ -23,13 +23,24 @@ pub struct SeedPolicy {
     /// When true, every variation shares `base` (`--parameter-sweep-same-seed`);
     /// otherwise variation N gets `base + N`.
     pub same_seed: bool,
+    /// When true, trial T additionally offsets the seed by `T`
+    /// (`--vary-seed-per-trial`).
+    pub vary_per_trial: bool,
 }
 
 impl SeedPolicy {
-    /// The seed for variation `index` (`None` when seeding is disabled).
-    pub fn seed(&self, index: usize) -> Option<u64> {
-        self.base
-            .map(|b| if self.same_seed { b } else { b + index as u64 })
+    /// The seed for variation `index` and trial `trial` (`None` when seeding is
+    /// disabled).
+    pub fn seed(&self, index: usize, trial: u32) -> Option<u64> {
+        self.base.map(|b| {
+            let variation = if self.same_seed { 0 } else { index as u64 };
+            let trial_offset = if self.vary_per_trial {
+                u64::from(trial)
+            } else {
+                0
+            };
+            b + variation + trial_offset
+        })
     }
 }
 
@@ -92,7 +103,7 @@ pub fn plan_cells(
             // Mirror the per-cell artifact dir + run seed onto the authoring inputs so
             // the runtime's resolution reproduces the CLI-side run byte-for-byte.
             inputs.artifact_dir = dir;
-            inputs.random_seed = seed.seed(variation.index);
+            inputs.random_seed = seed.seed(variation.index, trial);
             if trial > 0 && disable_warmup_after_first {
                 drop_warmup(&mut run);
                 // Match the resolved run's dropped warmup phase on the authoring side.
@@ -160,7 +171,7 @@ fn stamp(
         "label": variation.label,
         "values": values,
     }));
-    run.random_seed = seed.seed(variation.index);
+    run.random_seed = seed.seed(variation.index, trial);
     run.trial = trial;
     run.artifact_dir = dir.to_path_buf();
     if let Some(cfg_artifacts) = run.cfg.artifacts.as_mut() {

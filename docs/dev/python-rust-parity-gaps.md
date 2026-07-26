@@ -367,7 +367,22 @@ before execution.
 
 ## P1.4 Native profile accepts dead or differently defined flags
 
-Examples include:
+Wired in a dedicated pass (CLI clap + `Inputs` / resolve projection):
+
+- `--export-outputs-json`, `--allow-dataset-wrap` / `--no-allow-dataset-wrap`,
+  `--cache-bust`, `--max-context-length`, `--use-think-time-only`,
+  `--trace-idle-gap-cap-seconds`, `--burst-phase-starts`, `--hf-weka-dataset`,
+  `-vv` / `--extra-verbose`
+- `--vary-seed-per-trial`, `--no-fixed-schedule`, `--profile-export-prefix`,
+  `--show-trace-timing`
+
+Fail-closed until runtime exists (clear error, no silent ignore):
+
+- `--trace-session-sample-ratio`
+- `--agentic-warmup-grace-period`
+- `--failed-request-threshold`
+
+Still dead / differently defined (intentionally retired or unfinished):
 
 - `--stream` as Python domain selection versus a native boolean with no
   equivalent live-streaming projection;
@@ -382,7 +397,7 @@ Examples include:
 `rust/cli/src/flags.rs`, `rust/cli/src/load.rs`,
 `rust/cli/src/profile.rs`.
 
-**Target:** remove obsolete flags, wire supported flags, and generate a
+**Target:** remove obsolete flags, wire remaining supported flags, and generate a
 flag-to-resolved-field parity test.
 
 ## P1.5 Feature-blind validation can approve unavailable capabilities
