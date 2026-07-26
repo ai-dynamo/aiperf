@@ -19,7 +19,7 @@ use anyhow::Result;
 use bytes::Bytes;
 
 use crate::agentx::cache_bust::{resolve_tree_marker, CacheBustLedger, CacheBustTarget};
-use crate::agentx::loader::ReconstructedConversation;
+use crate::agentx::loader::{ReconstructedConversation, ReconstructedTurn};
 use crate::dataset::Dataset;
 use crate::dataset::model::{Conversation, ConversationContextMode, SessionId, Turn};
 use crate::dataset::segment::{Role, SegmentPool};
@@ -80,9 +80,12 @@ pub fn slice_trajectories_at_tstar(
         // WARMUP slice: the last pre-t* turn (n-1), a single 1-token prime whose
         // dispatch offset is its capped lead (t* − warm_ts). Shares the tree's
         // root correlation (via parent id) so it reuses the same cache-bust marker.
+        // Its messages are the FULL back-seeded prefix (turns 0..=n-1 flattened)
+        // so one prime warms the whole recorded prefix, matching the Python oracle.
         if next_idx >= 1 {
             let warm_i = (next_idx - 1) as usize;
             let mut warm_turn = conv.turns[warm_i].clone();
+            warm_turn.raw_messages = flatten_prefix(&conv.turns[0..=warm_i]);
             let lead = capped_warmup_lead_ms(t_star - warm_turn.timestamp_ms.unwrap_or(t_star), idle_gap_cap_ms);
             warm_turn.timestamp_ms = Some(lead.max(0.0));
             warm_turn.max_tokens = 1; // Python `_WARMUP_MAX_TOKENS`
@@ -99,10 +102,18 @@ pub fn slice_trajectories_at_tstar(
             });
         }
 
-        // PROFILING slice: turns from the resume point, rebased to t*-relative
-        // offsets (history excluded).
+        // PROFILING slice: resume at the first turn at/after t*. Back-seed the full
+        // pre-t* prefix (turns 0..=next_idx flattened) into that first retained
+        // turn's messages so profiling resumes with the WHOLE conversation history
+        // in context — the Python oracle back-seeds the earlier turns rather than
+        // dropping them. Later turns keep their per-turn deltas (the accumulating
+        // dispatch folds in live replies). Timestamps rebase to t*-relative.
         let mut prof = conv;
+        let seed_prefix = flatten_prefix(&prof.turns[0..=next_idx as usize]);
         prof.turns.drain(0..next_idx as usize);
+        if let Some(first) = prof.turns.first_mut() {
+            first.raw_messages = seed_prefix;
+        }
         for turn in &mut prof.turns {
             turn.timestamp_ms = Some(turn.timestamp_ms.map_or(0.0, |ts| (ts - t_star).max(0.0)));
         }
@@ -111,6 +122,18 @@ pub fn slice_trajectories_at_tstar(
         }
     }
     out
+}
+
+/// Flatten the strict-append per-turn deltas of `turns` into the full accumulated
+/// OpenAI message array (`user0, asst0, user1, asst1, … user_k`). Weka multi-turn
+/// deltas strictly append (one assistant reply + one user message per turn), so
+/// concatenation reproduces the recorded conversation prefix — the back-seeded
+/// history the Python oracle sends on resume.
+fn flatten_prefix(turns: &[ReconstructedTurn]) -> Vec<crate::agentx::synth::ChatMessage> {
+    turns
+        .iter()
+        .flat_map(|t| t.raw_messages.iter().cloned())
+        .collect()
 }
 
 /// Session-id suffix marking a warmup-phase conversation (turn n-1 prime). The

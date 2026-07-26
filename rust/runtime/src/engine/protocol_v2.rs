@@ -1418,7 +1418,10 @@ mod dispatch_mode_tests {
             .expect("decode bare run")
             .into_authored()
             .expect("project bare run directly");
-        assert_eq!(via_execute.identity.benchmark_id, via_direct.identity.benchmark_id);
+        assert_eq!(
+            via_execute.identity.benchmark_id,
+            via_direct.identity.benchmark_id
+        );
         assert_eq!(via_execute.transport.id, via_direct.transport.id);
         assert_eq!(via_execute.workload.id, via_direct.workload.id);
         assert_eq!(via_execute.dispatch, via_direct.dispatch);
@@ -1598,7 +1601,10 @@ mod dispatch_mode_tests {
     #[test]
     fn runtime_hop_routing_parses_sticky() {
         let runtime = serde_json::json!({"workers": 4, "cells": 1, "hop_routing": "sticky"});
-        assert_eq!(parse_hop_routing(&runtime).unwrap(), Some(HopRouting::Sticky));
+        assert_eq!(
+            parse_hop_routing(&runtime).unwrap(),
+            Some(HopRouting::Sticky)
+        );
         let authored = minimal_wire(runtime).into_authored().unwrap();
         assert_eq!(authored.hop_routing, Some(HopRouting::Sticky));
     }
@@ -1610,8 +1616,7 @@ mod dispatch_mode_tests {
             ("sticky", HopRouting::Sticky),
             ("least-loaded", HopRouting::LeastLoaded),
         ] {
-            let runtime =
-                serde_json::json!({"workers": 1, "cells": 1, "hop_routing": wire_value});
+            let runtime = serde_json::json!({"workers": 1, "cells": 1, "hop_routing": wire_value});
             assert_eq!(
                 parse_hop_routing(&runtime).unwrap(),
                 Some(expected),
@@ -1622,12 +1627,22 @@ mod dispatch_mode_tests {
 
     #[test]
     fn runtime_hop_routing_rejects_unknown_variant() {
+        // The raw hop-routing parser still rejects an unknown selector.
         let runtime = serde_json::json!({"workers": 1, "cells": 1, "hop_routing": "bogus"});
         assert!(parse_hop_routing(&runtime).is_err());
-        let error = match minimal_wire(runtime).into_authored() {
-            Ok(_) => panic!("expected an unknown-hop-routing-variant error"),
-            Err(error) => error.to_string(),
-        };
-        assert!(error.contains("run.cfg.runtime.hop_routing"), "{error}");
+
+        // With the typed wire, `runtime.hop_routing` is a strict `HopRouting`, so an
+        // unknown variant now fails closed at wire-decode (before `into_authored`).
+        let mut runtime = rt(1, 1);
+        runtime["hop_routing"] = serde_json::json!("bogus");
+        let wire = serde_json::from_value::<BenchmarkRunWireV2>(serde_json::json!({
+            "benchmark_id": "run-1",
+            "artifact_dir": "/tmp/not-created",
+            "cfg": base_cfg(synthetic_ds(), serde_json::json!({"type": "http"}), runtime),
+        }));
+        assert!(
+            wire.is_err(),
+            "unknown runtime.hop_routing variant must be rejected at wire decode"
+        );
     }
 }

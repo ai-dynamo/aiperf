@@ -30,4 +30,4 @@ pub use config::BenchmarkConfig;
 pub use dispatch::{DispatchMode, HopRouting};
 pub use resolved::Resolved;
 pub use run::BenchmarkRun;
-pub use workload_kind::{workload_kind, WorkloadKind};
+pub use workload_kind::{WorkloadKind, workload_kind};

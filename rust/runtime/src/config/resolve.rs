@@ -10,7 +10,6 @@
 
 use std::path::PathBuf;
 
-use crate::config::model::{DispatchMode, HopRouting};
 use crate::config::model::artifacts::Artifacts;
 use crate::config::model::dataset::{
     AudioSpec, Dataset, Distribution, ImageSpec, PrefixPrompts, PromptSelection, Prompts, Sampling,
@@ -27,6 +26,7 @@ use crate::config::model::rate_series::RateSeries;
 use crate::config::model::runtime::Runtime;
 use crate::config::model::tokenizer::Tokenizer;
 use crate::config::model::{BenchmarkConfig, BenchmarkRun, Resolved};
+use crate::config::model::{DispatchMode, HopRouting};
 use crate::config::phase_validate::{apply_cli_loadgen_overlays, normalize_and_validate_phases};
 
 /// Exact-match placeholder words used as an entire model name.
@@ -960,9 +960,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     } else if let Some(mean_ms) = inputs.network_latency_mean {
         network_latency_cfg.enabled = true;
         network_latency_cfg.mean_ms = Some(mean_ms);
-        Some(crate::config::model::telemetry::NetworkLatencySidecar::fixed(
-            mean_ms,
-        ))
+        Some(crate::config::model::telemetry::NetworkLatencySidecar::fixed(mean_ms))
     } else if let Some(ping) = inputs.network_latency_probe {
         network_latency_cfg.enabled = true;
         network_latency_cfg.ping_interval = ping;
@@ -980,7 +978,9 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         server_metrics: server_enabled.then(|| {
             let mut all_urls = endpoint_urls.clone();
             all_urls.extend(inputs.server_metrics_urls.iter().cloned());
-            let sc = crate::config::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&all_urls);
+            let sc = crate::config::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(
+                &all_urls,
+            );
             match &inputs.server_metrics_formats {
                 Some(formats) => sc.with_formats(formats.clone()),
                 None => sc,
@@ -1002,10 +1002,9 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         enabled: inputs.server_metrics_enabled,
         // Config preserves authored URLs; sidecar construction normalizes them.
         urls: inputs.server_metrics_urls.clone(),
-        formats: inputs
-            .server_metrics_formats
-            .clone()
-            .unwrap_or_else(|| crate::config::model::telemetry::ServerMetricsConfig::default().formats),
+        formats: inputs.server_metrics_formats.clone().unwrap_or_else(|| {
+            crate::config::model::telemetry::ServerMetricsConfig::default().formats
+        }),
         ..Default::default()
     };
     let mut cfg = BenchmarkConfig {
@@ -1112,7 +1111,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             &inputs.otel_resource_attributes,
         ));
     }
-    export.mlflow = crate::config::model::export::MlflowExport::build(&inputs.mlflow, &benchmark_id);
+    export.mlflow =
+        crate::config::model::export::MlflowExport::build(&inputs.mlflow, &benchmark_id);
     export.wandb = crate::config::model::export::WandbExport::build(&inputs.wandb, &benchmark_id);
     // Export formats use server-metrics config before export insertion.
     let sm_formats = cfg
@@ -1128,7 +1128,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         &benchmark_id,
         sm_input_config,
     );
-    export.parquet = crate::config::model::export::ParquetExport::build(&sm_formats, server_enabled);
+    export.parquet =
+        crate::config::model::export::ParquetExport::build(&sm_formats, server_enabled);
     cfg.export = Some(export);
 
     let resolved = Resolved {
@@ -1161,13 +1162,12 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
 /// lean build silently ignores `--scenario`.
 #[cfg(feature = "agentx")]
 fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
-    use crate::agentx::scenario::{apply_scenario_locks, get_scenario, RunLockInputs};
+    use crate::agentx::scenario::{RunLockInputs, apply_scenario_locks, get_scenario};
 
     let Some(name) = inputs.scenario.as_deref() else {
         return Ok(None);
     };
-    let spec = get_scenario(name)
-        .ok_or_else(|| anyhow::anyhow!("unknown --scenario {name:?}"))?;
+    let spec = get_scenario(name).ok_or_else(|| anyhow::anyhow!("unknown --scenario {name:?}"))?;
 
     // Project the resolved run config onto the fields the invariants read. The
     // CLI does not track per-flag "explicitly set" state, so an unset field is
@@ -1506,7 +1506,10 @@ mod tests {
     #[test]
     fn hop_routing_explicit_wins_over_sticky_default() {
         assert_eq!(
-            resolve_hop_routing(Some(HopRouting::RoundRobin), ConnectionReuse::StickyUserSessions),
+            resolve_hop_routing(
+                Some(HopRouting::RoundRobin),
+                ConnectionReuse::StickyUserSessions
+            ),
             HopRouting::RoundRobin
         );
     }

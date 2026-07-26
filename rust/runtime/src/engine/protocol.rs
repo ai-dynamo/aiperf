@@ -670,9 +670,9 @@ impl PhaseSpec {
             Self::Constant { rate, .. } => {
                 Some((crate::timing::ArrivalPattern::Constant, Some(*rate), None))
             }
-            Self::UserCentric { .. }
-            | Self::FixedSchedule { .. }
-            | Self::AgenticReplay { .. } => None,
+            Self::UserCentric { .. } | Self::FixedSchedule { .. } | Self::AgenticReplay { .. } => {
+                None
+            }
         }
     }
 
@@ -683,9 +683,9 @@ impl PhaseSpec {
             | Self::Gamma { rate, .. }
             | Self::Constant { rate, .. }
             | Self::UserCentric { rate, .. } => Some(*rate),
-            Self::Concurrency { .. }
-            | Self::FixedSchedule { .. }
-            | Self::AgenticReplay { .. } => None,
+            Self::Concurrency { .. } | Self::FixedSchedule { .. } | Self::AgenticReplay { .. } => {
+                None
+            }
         }
     }
 }
