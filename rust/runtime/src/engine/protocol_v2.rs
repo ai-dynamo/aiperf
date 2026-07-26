@@ -467,8 +467,13 @@ impl BenchmarkRunWireV2 {
         } else {
             (SidecarSpecV2::default(), false)
         };
-        let models = serde_json::to_value(&cfg.models)
-            .map_err(|error| anyhow!("run.cfg.models: {error}"))?;
+        // Lower the authoring models to the runner spec via the typed `From`
+        // (no `Value` round-trip); a missing models section is a hard error, as
+        // before.
+        let models = cfg
+            .models
+            .map(ModelsSpec::from)
+            .ok_or_else(|| anyhow!("run.cfg.models must be an object"))?;
         let endpoint = serde_json::to_value(&cfg.endpoint)
             .map_err(|error| anyhow!("run.cfg.endpoint: {error}"))?;
         let additional_profiles = cfg
@@ -514,7 +519,7 @@ impl BenchmarkRunWireV2 {
                 variation: self.variation,
             },
             artifact_target: self.artifact_dir,
-            models: models_from_config(models)?,
+            models,
             endpoints: endpoint_profiles(endpoint, additional_profiles)?,
             transport,
             workload,
@@ -533,22 +538,6 @@ impl BenchmarkRunWireV2 {
             },
         })
     }
-}
-
-fn models_from_config(value: Value) -> Result<ModelsSpec> {
-    let mut models = value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| anyhow!("run.cfg.models must be an object"))?;
-    if let Some(Value::Array(items)) = models.get_mut("items") {
-        for item in items {
-            if let Some(item) = item.as_object_mut() {
-                item.retain(|key, _| matches!(key.as_str(), "name" | "weight"));
-            }
-        }
-    }
-    serde_json::from_value(Value::Object(models))
-        .map_err(|error| anyhow!("run.cfg.models: {error}"))
 }
 
 fn component_from_inline(value: Value, field: &str) -> Result<NamedRunnerComponentSpecV2> {

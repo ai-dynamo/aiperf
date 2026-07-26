@@ -332,6 +332,36 @@ pub struct ModelsSpec {
     pub items: Vec<ModelItemSpec>,
 }
 
+impl From<crate::config::model::models::ModelStrategy> for ModelSelectionStrategy {
+    fn from(value: crate::config::model::models::ModelStrategy) -> Self {
+        use crate::config::model::models::ModelStrategy;
+        match value {
+            ModelStrategy::RoundRobin => Self::RoundRobin,
+            ModelStrategy::Random => Self::Random,
+            ModelStrategy::Weighted => Self::Weighted,
+        }
+    }
+}
+
+impl From<crate::config::model::models::Models> for ModelsSpec {
+    /// Lower the authoring models section to the runner spec. `config::ModelItem`
+    /// is already `{name, weight}` (the prior projection's name/weight retain is a
+    /// no-op), so this is a direct field map with no `Value` round-trip.
+    fn from(value: crate::config::model::models::Models) -> Self {
+        Self {
+            strategy: value.strategy.into(),
+            items: value
+                .items
+                .into_iter()
+                .map(|item| ModelItemSpec {
+                    name: item.name,
+                    weight: item.weight,
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Supported model selection algorithms.
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
