@@ -475,8 +475,13 @@ impl BenchmarkRunWireV2 {
             .endpoint_profiles
             .into_iter()
             .collect::<BTreeMap<_, _>>();
-        let metrics = serde_json::to_value(&cfg.metrics)
-            .map_err(|error| anyhow!("run.cfg.metrics: {error}"))?;
+        // Lower the authoring metrics to the runner spec via the typed
+        // `TryFrom` (no untyped `Value` round-trip); default on absence or a
+        // non-numeric SLO, matching the prior `from_value(...).unwrap_or_default()`.
+        let metrics = cfg
+            .metrics
+            .and_then(|metrics| MetricsSpec::try_from(metrics).ok())
+            .unwrap_or_default();
         let artifacts_spec: ArtifactSpecV2 = serde_json::from_value(
             serde_json::to_value(&cfg.artifacts)
                 .map_err(|error| anyhow!("run.cfg.artifacts: {error}"))?,
@@ -513,7 +518,7 @@ impl BenchmarkRunWireV2 {
             endpoints: endpoint_profiles(endpoint, additional_profiles)?,
             transport,
             workload,
-            metrics: serde_json::from_value(metrics).unwrap_or_default(),
+            metrics,
             artifacts: artifacts_spec,
             export: export_cfg,
             sidecars,

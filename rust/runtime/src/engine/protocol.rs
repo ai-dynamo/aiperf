@@ -196,6 +196,41 @@ pub struct SteadyStateSpec {
     pub hybrid_latency: bool,
 }
 
+impl From<crate::config::model::metrics::SteadyState> for SteadyStateSpec {
+    fn from(value: crate::config::model::metrics::SteadyState) -> Self {
+        Self {
+            enabled: value.enabled,
+            fraction: value.fraction,
+            hybrid_latency: value.hybrid_latency,
+        }
+    }
+}
+
+impl TryFrom<crate::config::model::metrics::Metrics> for MetricsSpec {
+    type Error = String;
+
+    /// Lower the authoring-shaped config metrics to the runner spec: coerce the
+    /// open `slos` value bag to `f64` (matching the prior `from_value` decode),
+    /// unwrap the optional `sketch`/`steady_state` to their concrete forms. Fails
+    /// if any SLO threshold is not a number — the caller defaults on error,
+    /// preserving the previous `from_value(...).unwrap_or_default()` behavior.
+    fn try_from(value: crate::config::model::metrics::Metrics) -> Result<Self, String> {
+        let mut slos = BTreeMap::new();
+        for (key, raw) in value.slos {
+            let number = raw
+                .as_f64()
+                .ok_or_else(|| format!("metrics.slos[{key:?}] must be a number"))?;
+            slos.insert(key, number);
+        }
+        Ok(Self {
+            slice_duration_seconds: value.slice_duration_seconds,
+            slos,
+            sketch: value.sketch.unwrap_or(false),
+            steady_state: value.steady_state.map(SteadyStateSpec::from).unwrap_or_default(),
+        })
+    }
+}
+
 /// Artifact paths relative to the exclusive run directory.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
