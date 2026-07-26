@@ -1524,6 +1524,7 @@ pub(crate) fn prepare_dynosim_graph(
         t_star_window: prepared.t_star_window,
         worker_count: workload.worker_count,
         phase_count: workload.phases.len(),
+        ignore_trace_delays: workload.ignore_trace_delays,
     }))
 }
 
@@ -1624,6 +1625,7 @@ struct PreparedDynosimGraphOperation {
     t_star_window: crate::engine::graph_input::TStarWindow,
     worker_count: usize,
     phase_count: usize,
+    ignore_trace_delays: bool,
 }
 
 impl fmt::Debug for PreparedDynosimGraphOperation {
@@ -1653,6 +1655,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
             t_star_window,
             worker_count,
             phase_count,
+            ignore_trace_delays,
         } = *self;
         create_artifact_target(&artifact_target)?;
         let metadata = input.metadata.clone();
@@ -1698,7 +1701,13 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
         );
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
-            .execute_graph_deferred(segments, default_max_tokens, metrics, factory)?;
+            .execute_graph_deferred(
+                segments,
+                default_max_tokens,
+                metrics,
+                ignore_trace_delays,
+                factory,
+            )?;
         ensure_no_failed_traces(&outcome.report.workload)?;
 
         let native_report = NativeReport::from_outcome(
@@ -1868,6 +1877,7 @@ impl DynosimExecutor {
         metrics: MetricsConfig,
         node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
         node_failure: Rc<dyn NodeFailurePolicy>,
+        ignore_trace_delays: bool,
         workload: Box<dyn OfflineGraphRunFactory>,
     ) -> Result<DynosimDirectGraphOutcome> {
         ensure!(
@@ -1884,6 +1894,7 @@ impl DynosimExecutor {
                 metrics,
                 node_policy,
                 node_failure,
+                ignore_trace_delays,
                 workload,
             )?
         } else {
@@ -1895,6 +1906,7 @@ impl DynosimExecutor {
                 metrics,
                 node_policy,
                 node_failure,
+                ignore_trace_delays,
                 workload,
             )?
         };
@@ -1916,6 +1928,7 @@ impl DynosimExecutor {
         segments: Arc<dyn SegmentStore>,
         default_max_tokens: usize,
         metrics: MetricsConfig,
+        ignore_trace_delays: bool,
         workload: Box<dyn DeferredOfflineGraphRunFactory>,
     ) -> Result<DynosimDirectGraphOutcome> {
         ensure!(
@@ -1930,6 +1943,7 @@ impl DynosimExecutor {
                 segments,
                 default_max_tokens,
                 metrics,
+                ignore_trace_delays,
                 workload,
             )?
         } else {
@@ -1939,6 +1953,7 @@ impl DynosimExecutor {
                 segments,
                 default_max_tokens,
                 metrics,
+                ignore_trace_delays,
                 workload,
             )?
         };
@@ -2401,6 +2416,7 @@ mod tests {
                 MetricsConfig::default(),
                 None,
                 Rc::new(crate::graph::policy::AbortTraceNodeFailurePolicy),
+                false,
                 factory,
             )
             .unwrap();

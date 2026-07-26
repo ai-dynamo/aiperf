@@ -1253,6 +1253,7 @@ fn lower_graph(
         allow_dataset_wrap: prepared.allow_dataset_wrap,
         t_star_window: prepared.t_star_window,
         cache_bust_target: prepared.cache_bust_target,
+        ignore_trace_delays: workload.ignore_trace_delays,
     };
     build_common_plan(
         run,
@@ -1297,7 +1298,7 @@ fn lower_legacy_agentic(
     use crate::agentx::config::WekaConfig;
     use crate::agentx::corpus::CorpusTokenSynth;
     use crate::agentx::hf_dataset::{HfDatasetRef, load_hf_weka_traces};
-    use crate::agentx::loader::{MainReconstructOptions, convert_traces_serial};
+    use crate::agentx::loader::{MainReconstructOptions, convert_traces_parallel};
     use crate::agentx::weka_dataset::{WekaComposeOptions, compose_weka_agentic_dataset};
     use crate::rng::compat::python_random::PythonRandomGenerator;
     use std::collections::HashMap;
@@ -1355,7 +1356,7 @@ fn lower_legacy_agentic(
     );
     let corpus = crate::dataset::coding::build_coding_corpus(tokenizer_impl.as_ref(), root_seed)
         .map_err(|error| anyhow!(error.to_string()))?;
-    let corpus = std::rc::Rc::new(corpus);
+    let corpus = std::sync::Arc::new(corpus);
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1393,7 +1394,7 @@ fn lower_legacy_agentic(
         idle_gap_cap_seconds: Some(10.0),
         ..MainReconstructOptions::default()
     };
-    let results = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
+    let results = convert_traces_parallel(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
         let tok = tokenizer_impl.clone();
         CorpusTokenSynth::new(
             (*corpus).clone(),

@@ -154,6 +154,11 @@ pub struct ProfileFlags {
     #[arg(long = "weka-semantics")]
     pub weka_semantics: Option<String>,
 
+    /// Ignore recorded trace inter-message/inter-request delays for graph-ir runs
+    /// (`--ignore-trace-delays`): fire every node as soon as its inputs are ready.
+    #[arg(long = "ignore-trace-delays", num_args = 0..=1, default_missing_value = "true")]
+    pub ignore_trace_delays: Option<bool>,
+
     /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
     #[arg(long = "trajectory-start-min-ratio")]
     pub trajectory_start_min_ratio: Option<f64>,

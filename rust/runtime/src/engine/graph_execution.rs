@@ -21,6 +21,7 @@ use crate::endpoints::{
 use crate::failure::OnFailure;
 use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
+use crate::graph::executor::ExecutorFlags;
 use crate::graph::materialize::SegmentItemsMaterializer;
 use crate::graph::model::{GraphTracePlan, LlmNode};
 use crate::graph::placement::{
@@ -549,6 +550,9 @@ pub(crate) struct GraphBackendFactoryConfig {
     /// the run has no `cache_bust_target`; `Some` prepends a per-conversation
     /// nonce marker to the first user message of every request.
     pub(crate) cache_bust: Option<GraphCacheBust>,
+    /// Ignore recorded trace inter-message/inter-request delays: fire every node
+    /// as soon as its inputs are ready via `ExecutorFlags::ignore_edge_delays`.
+    pub(crate) ignore_trace_delays: bool,
 }
 
 /// First-turn cache-bust inputs shared by graph workers.
@@ -710,6 +714,7 @@ impl TracePlacementFactory for GraphBackendFactory {
             node_policy,
             on_failure: self.config.on_failure,
             cache_bust: self.config.cache_bust.clone(),
+            ignore_trace_delays: self.config.ignore_trace_delays,
             prefill_slots,
             next_session: Cell::new(0),
             next_execution: Cell::new(0),
@@ -741,6 +746,7 @@ struct GraphWorkerBackend {
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
     on_failure: OnFailure,
     cache_bust: Option<GraphCacheBust>,
+    ignore_trace_delays: bool,
     prefill_slots: Option<Rc<SlotPool>>,
     next_session: Cell<u64>,
     next_execution: Cell<u64>,
@@ -798,6 +804,12 @@ impl TracePlacement for GraphWorkerBackend {
             self.materializer.clone(),
             sink.clone(),
         );
+        if self.ignore_trace_delays {
+            local = local.with_executor_flags(ExecutorFlags {
+                ignore_edge_delays: true,
+                ..Default::default()
+            });
+        }
         if let Some(policy) = &self.node_policy {
             local = local.with_node_policy(policy.clone());
         }

@@ -425,6 +425,9 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) allow_dataset_wrap: bool,
     pub(crate) t_star_window: crate::engine::graph_input::TStarWindow,
     pub(crate) cache_bust_target: crate::engine::graph_input::CacheBustTarget,
+    /// Ignore recorded trace inter-message/inter-request delays: the graph
+    /// executor fires every node as soon as its inputs are ready.
+    pub(crate) ignore_trace_delays: bool,
 }
 
 /// A side-channel subsystem that samples over the profiling window requires

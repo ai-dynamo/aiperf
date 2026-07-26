@@ -861,6 +861,10 @@ pub struct GraphWorkloadConfigV2 {
     /// agentic pipeline (requires the `agentx` feature).
     #[serde(default)]
     pub weka_semantics: Option<String>,
+    /// Ignore recorded trace inter-message/inter-request delays: fire every node
+    /// as soon as its inputs are ready (sets `ExecutorFlags::ignore_edge_delays`).
+    #[serde(default)]
+    pub ignore_trace_delays: bool,
 }
 
 impl Debug for GraphWorkloadConfigV2 {

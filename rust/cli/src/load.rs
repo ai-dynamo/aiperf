@@ -467,6 +467,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         prefix_prompts: build_prefix_prompts(flags),
         scenario: flags.scenario.clone(),
         weka_semantics: flags.weka_semantics.clone(),
+        ignore_trace_delays: flags.ignore_trace_delays.unwrap_or(false),
+        ignore_trace_delays_explicit: flags.ignore_trace_delays.is_some(),
         trajectory_start_min_ratio: flags.trajectory_start_min_ratio.unwrap_or(0.0),
         trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
         unsafe_override: flags.unsafe_override.unwrap_or(false),

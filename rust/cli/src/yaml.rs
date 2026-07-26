@@ -1859,6 +1859,10 @@ impl Benchmark {
             // The YAML config path selects semantics via the scenario (derived in
             // `build`); the explicit override is the `--weka-semantics` CLI flag.
             weka_semantics: None,
+            // No YAML surface yet; the CLI `--ignore-trace-delays` flag is the
+            // only authoring path. Default to honoring recorded trace delays.
+            ignore_trace_delays: false,
+            ignore_trace_delays_explicit: false,
             trajectory_start_min_ratio: self.trajectory_start_min_ratio.unwrap_or(0.0),
             trajectory_start_max_ratio: self.trajectory_start_max_ratio.unwrap_or(0.0),
             unsafe_override: self.unsafe_override.unwrap_or(false),

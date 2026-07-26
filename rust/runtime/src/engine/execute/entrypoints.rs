@@ -369,6 +369,7 @@ pub(crate) async fn execute_graph_native(
     let graph_default_output_tokens = graph.default_output_tokens;
     let allow_dataset_wrap = graph.allow_dataset_wrap;
     let t_star_window = graph.t_star_window;
+    let ignore_trace_delays = graph.ignore_trace_delays;
     let metrics_config =
         metrics_config(&request.metrics, request.endpoint.use_server_token_count())?;
     let tokenizer = build_tokenizer(&request.tokenizer)?;
@@ -430,6 +431,7 @@ pub(crate) async fn execute_graph_native(
         raw_enabled: request.artifacts.raw_path.is_some(),
         on_failure,
         cache_bust,
+        ignore_trace_delays,
     };
     // Telemetry sidecars are side-channel producers synchronized to phase
     // barriers, not to the workload, so the graph path attaches the same

@@ -388,6 +388,7 @@ impl BenchmarkRunWireV2 {
         // `null` — fails decode. Only attach it to the graph workload.
         if workload_kind == WorkloadKind::Graph {
             workload_config["weka_semantics"] = serde_json::json!(cfg.weka_semantics);
+            workload_config["ignore_trace_delays"] = serde_json::json!(cfg.ignore_trace_delays);
         }
         let workload = NamedRunnerComponentSpecV2 {
             id: workload_id.parse().expect("built-in workload ID is valid"),
@@ -1513,6 +1514,45 @@ mod dispatch_mode_tests {
             graph_config.get("weka_semantics").and_then(|v| v.as_str()),
             Some("legacy"),
             "graph config must still carry weka_semantics: {graph_config}"
+        );
+    }
+
+    #[test]
+    fn ignore_trace_delays_is_graph_only_in_projection() {
+        // `ignore_trace_delays` is graph-only, exactly like `weka_semantics`:
+        // attaching it to the strict scheduled DTO would fail decode. The
+        // projection must emit it only for graph workloads and round-trip the
+        // authored value there.
+        fn project(dataset: Value) -> (String, serde_json::Value) {
+            let mut cfg = base_cfg(dataset, serde_json::json!({"type": "http"}), rt(1, 1));
+            cfg["ignore_trace_delays"] = serde_json::json!(true);
+            let wire: BenchmarkRunWireV2 = serde_json::from_value(serde_json::json!({
+                "benchmark_id": "run-1",
+                "artifact_dir": "/tmp/not-created",
+                "cfg": cfg,
+            }))
+            .unwrap();
+            let authored = wire.into_authored().unwrap();
+            let config: serde_json::Value =
+                serde_json::from_str(authored.workload.config.get()).unwrap();
+            (authored.workload.id.as_str().to_owned(), config)
+        }
+
+        let (id, scheduled_config) = project(synthetic_ds());
+        assert_eq!(id, "scheduled");
+        assert!(
+            scheduled_config.get("ignore_trace_delays").is_none(),
+            "scheduled config must not carry graph-only ignore_trace_delays: {scheduled_config}"
+        );
+
+        let (id, graph_config) = project(graph_ds());
+        assert_eq!(id, "graph");
+        assert_eq!(
+            graph_config
+                .get("ignore_trace_delays")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "graph config must carry ignore_trace_delays: {graph_config}"
         );
     }
 

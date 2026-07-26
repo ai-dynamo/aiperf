@@ -3460,6 +3460,7 @@ struct DynamoDirectGraphBackend {
     prefill_slots: Option<Rc<SlotPool>>,
     max_tokens: usize,
     next_uuid: Rc<Cell<u128>>,
+    ignore_trace_delays: bool,
     cancelled: Cell<bool>,
     active: RefCell<Vec<Weak<LocalGraphTraceExecutionBackend<GraphMessage>>>>,
 }
@@ -3512,6 +3513,12 @@ impl TracePlacement for DynamoDirectGraphBackend {
             sink,
         )
         .with_node_failure(self.node_failure.clone());
+        if self.ignore_trace_delays {
+            local = local.with_executor_flags(ExecutorFlags {
+                ignore_edge_delays: true,
+                ..Default::default()
+            });
+        }
         if let Some(policy) = &self.node_policy {
             local = local.with_node_policy(policy.clone());
         }
@@ -3561,6 +3568,7 @@ struct DynosimGraphBackendFactory {
     materializer: Rc<SegmentItemsMaterializer>,
     max_tokens: usize,
     next_uuid: Rc<Cell<u128>>,
+    ignore_trace_delays: bool,
 }
 
 impl OfflineGraphBackendFactory for DynosimGraphBackendFactory {
@@ -3596,6 +3604,7 @@ impl OfflineGraphBackendFactory for DynosimGraphBackendFactory {
             prefill_slots,
             max_tokens: self.max_tokens,
             next_uuid: self.next_uuid.clone(),
+            ignore_trace_delays: self.ignore_trace_delays,
             cancelled: Cell::new(false),
             active: RefCell::new(Vec::new()),
         }))
@@ -3644,6 +3653,7 @@ pub fn run_graph_workload_offline(
     metrics_config: MetricsConfig,
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
     node_failure: Rc<dyn NodeFailurePolicy>,
+    ignore_trace_delays: bool,
     factory: Box<dyn OfflineGraphRunFactory>,
 ) -> Result<OfflineDirectGraphReport> {
     let deferred: Box<dyn DeferredOfflineGraphRunFactory> = Box::new(
@@ -3676,6 +3686,7 @@ pub fn run_graph_workload_offline(
         segments,
         default_max_tokens,
         metrics_config,
+        ignore_trace_delays,
         deferred,
     )
 }
@@ -3692,6 +3703,7 @@ pub fn run_graph_workload_offline_deferred(
     segments: Arc<dyn SegmentStore>,
     default_max_tokens: usize,
     metrics_config: MetricsConfig,
+    ignore_trace_delays: bool,
     factory: Box<dyn DeferredOfflineGraphRunFactory>,
 ) -> Result<OfflineDirectGraphReport> {
     anyhow::ensure!(
@@ -3725,6 +3737,7 @@ pub fn run_graph_workload_offline_deferred(
         materializer: Rc::new(SegmentItemsMaterializer::new(segments)),
         max_tokens: default_max_tokens,
         next_uuid: Rc::new(Cell::new(1)),
+        ignore_trace_delays,
     });
     let future = factory.create(clock_trait, backends)?;
     let result = Rc::new(RefCell::new(None));
@@ -3790,6 +3803,7 @@ pub fn run_graph_workload_online(
     metrics_config: MetricsConfig,
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
     node_failure: Rc<dyn NodeFailurePolicy>,
+    ignore_trace_delays: bool,
     factory: Box<dyn OfflineGraphRunFactory>,
 ) -> Result<OfflineDirectGraphReport> {
     let deferred: Box<dyn DeferredOfflineGraphRunFactory> = Box::new(
@@ -3822,6 +3836,7 @@ pub fn run_graph_workload_online(
         segments,
         default_max_tokens,
         metrics_config,
+        ignore_trace_delays,
         deferred,
     )
 }
@@ -3837,6 +3852,7 @@ pub fn run_graph_workload_online_deferred(
     segments: Arc<dyn SegmentStore>,
     default_max_tokens: usize,
     metrics_config: MetricsConfig,
+    ignore_trace_delays: bool,
     factory: Box<dyn DeferredOfflineGraphRunFactory>,
 ) -> Result<OfflineDirectGraphReport> {
     anyhow::ensure!(
@@ -3869,6 +3885,7 @@ pub fn run_graph_workload_online_deferred(
         materializer: Rc::new(SegmentItemsMaterializer::new(segments)),
         max_tokens: default_max_tokens,
         next_uuid: Rc::new(Cell::new(1)),
+        ignore_trace_delays,
     });
     let future = factory.create(clock.clone(), backends)?;
     let result = Rc::new(RefCell::new(None));

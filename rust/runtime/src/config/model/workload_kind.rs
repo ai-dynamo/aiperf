@@ -93,9 +93,7 @@ pub fn workload_kind(cfg: &BenchmarkConfig) -> WorkloadKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::model::dataset::{
-        Distribution, FileDataset, Prompts, Sampling, Synthetic,
-    };
+    use crate::config::model::dataset::{Distribution, FileDataset, Prompts, Sampling, Synthetic};
 
     fn synthetic_dataset() -> Dataset {
         Dataset::Synthetic(Synthetic {
