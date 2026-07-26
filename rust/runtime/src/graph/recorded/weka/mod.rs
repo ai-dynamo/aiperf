@@ -98,6 +98,10 @@ pub async fn compile_weka_trace_input(
                 requests,
                 trace.block_size,
                 idle_gap,
+                // WEKA byte-exact parity with the Python `_IdleGapTimeWarp`
+                // oracle: compress consecutive request-start gaps, not
+                // busy-period gaps.
+                super::trie::IdleWarpMode::StartToStart,
                 hash_scope,
                 &trace.id,
                 &mut content,

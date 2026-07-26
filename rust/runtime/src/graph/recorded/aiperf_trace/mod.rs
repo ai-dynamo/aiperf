@@ -79,6 +79,7 @@ pub async fn compile_aiperf_trace_input(
             requests,
             trace.block_size,
             config.idle_gap_cap_seconds,
+            super::trie::IdleWarpMode::BusyPeriod,
             hash_scope,
             &trace.id,
             &mut content,

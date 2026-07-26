@@ -10,7 +10,18 @@ use crate::graph::model::{START_NODE_ID, StaticEdge};
 
 use super::TrieNode;
 
-pub(super) fn apply_idle_warp(nodes: &mut [TrieNode], cap: Option<f64>) {
+/// How idle gaps are measured before capping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdleWarpMode {
+    /// Gap between a request start and the running max end of all prior requests
+    /// (busy-period aware). Default for dynamo/aiperf recorded traces.
+    BusyPeriod,
+    /// Gap between consecutive request *starts*, ignoring durations. Byte-exact
+    /// match for the Python WEKA oracle's `_IdleGapTimeWarp`.
+    StartToStart,
+}
+
+pub(super) fn apply_idle_warp(nodes: &mut [TrieNode], cap: Option<f64>, mode: IdleWarpMode) {
     let Some(cap) = cap else {
         return;
     };
@@ -26,16 +37,19 @@ pub(super) fn apply_idle_warp(nodes: &mut [TrieNode], cap: Option<f64>) {
     let mut cuts = Vec::new();
     if let Some(first) = intervals.first().copied() {
         let mut running_end = first.1;
+        let mut prev_start = first.0;
         let mut cumulative = 0.0;
         for (start, end) in intervals.into_iter().skip(1) {
-            if start > running_end {
-                let idle = start - running_end;
-                if idle > cap {
-                    cumulative += idle - cap;
-                    cuts.push((start, cumulative));
-                }
+            let idle = match mode {
+                IdleWarpMode::BusyPeriod => start - running_end,
+                IdleWarpMode::StartToStart => start - prev_start,
+            };
+            if idle > cap {
+                cumulative += idle - cap;
+                cuts.push((start, cumulative));
             }
             running_end = running_end.max(end);
+            prev_start = start;
         }
     }
     for node in nodes {
@@ -226,12 +240,34 @@ mod parity_tests {
             node("c", 2, 100.0, 1.0),
             node("d", 3, 200.0, 1.0),
         ];
-        apply_idle_warp(&mut nodes, Some(10.0));
+        apply_idle_warp(&mut nodes, Some(10.0), IdleWarpMode::BusyPeriod);
         assert_eq!(nodes[0].warped_start, 0.0);
         assert_eq!(nodes[1].warped_start, 2.0);
         assert_eq!(nodes[2].warped_start, 15.0);
         assert_eq!(nodes[3].warped_start, 26.0);
         assert_eq!(nodes[0].end(), 5.0, "active duration is never compressed");
+    }
+
+    #[test]
+    fn start_to_start_mode_ignores_durations_matching_python_weka_oracle() {
+        // Same nodes as the busy-period test. StartToStart measures gaps between
+        // consecutive request *starts* (not the running max end), so the active
+        // duration of `a` (end 5.0) does not shrink the 0->2 or 2->100 gap.
+        //   starts: 0, 2, 100, 200
+        //   0->2   : gap 2   (<=10, no cut)
+        //   2->100 : gap 98  (excess 88, cumulative 88, cut at 100)
+        //   100->200: gap 100 (excess 90, cumulative 178, cut at 200)
+        let mut nodes = vec![
+            node("a", 0, 0.0, 5.0),
+            node("overlap", 1, 2.0, 1.0),
+            node("c", 2, 100.0, 1.0),
+            node("d", 3, 200.0, 1.0),
+        ];
+        apply_idle_warp(&mut nodes, Some(10.0), IdleWarpMode::StartToStart);
+        assert_eq!(nodes[0].warped_start, 0.0);
+        assert_eq!(nodes[1].warped_start, 2.0);
+        assert_eq!(nodes[2].warped_start, 12.0);
+        assert_eq!(nodes[3].warped_start, 22.0);
     }
 
     #[test]
@@ -324,7 +360,7 @@ mod tests {
     #[test]
     fn idle_warp_caps_only_dead_time_after_the_active_interval() {
         let mut nodes = vec![node("a", 0, 0.0, 2.0), node("b", 1, 137_124.0, 1.0)];
-        apply_idle_warp(&mut nodes, Some(60.0));
+        apply_idle_warp(&mut nodes, Some(60.0), IdleWarpMode::BusyPeriod);
         assert_eq!(nodes[0].warped_start, 0.0);
         assert_eq!(nodes[1].warped_start, 62.0);
         assert_eq!(nodes[0].end(), 2.0);
@@ -338,19 +374,19 @@ mod tests {
         // Over-cap gap: intervals (0,2),(100,101); idle 100-2=98 > 60 cap,
         // excess 98-60=38, so b warps 100-38=62.
         let mut over = vec![node("a", 0, 0.0, 2.0), node("b", 1, 100.0, 1.0)];
-        apply_idle_warp(&mut over, Some(60.0));
+        apply_idle_warp(&mut over, Some(60.0), IdleWarpMode::BusyPeriod);
         assert_eq!(over[0].warped_start, 0.0);
         assert_eq!(over[1].warped_start, 62.0);
 
         // `None` leaves warped_start at the raw start_seconds.
         let mut disabled = vec![node("a", 0, 0.0, 2.0), node("b", 1, 100.0, 1.0)];
-        apply_idle_warp(&mut disabled, None);
+        apply_idle_warp(&mut disabled, None, IdleWarpMode::BusyPeriod);
         assert_eq!(disabled[0].warped_start, 0.0);
         assert_eq!(disabled[1].warped_start, 100.0);
 
         // Sub-cap gap: idle 50-2=48 <= 60 cap → no cut, raw passthrough.
         let mut under = vec![node("a", 0, 0.0, 2.0), node("b", 1, 50.0, 1.0)];
-        apply_idle_warp(&mut under, Some(60.0));
+        apply_idle_warp(&mut under, Some(60.0), IdleWarpMode::BusyPeriod);
         assert_eq!(under[0].warped_start, 0.0);
         assert_eq!(under[1].warped_start, 50.0);
     }

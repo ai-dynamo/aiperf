@@ -64,6 +64,7 @@ pub async fn compile_dynamo_trace_input(
             requests,
             block_size,
             config.idle_gap_cap_seconds,
+            super::trie::IdleWarpMode::BusyPeriod,
             None,
             &root,
             &mut content,

@@ -8,6 +8,7 @@ mod parents;
 mod timing;
 
 pub(crate) use messages::BlockTag;
+pub(crate) use timing::IdleWarpMode;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -82,6 +83,7 @@ pub(crate) fn lower_recorded_graph(
     requests: Vec<RecordedRequest>,
     block_size: usize,
     idle_gap_cap_seconds: Option<f64>,
+    idle_warp_mode: timing::IdleWarpMode,
     hash_scope: Option<&str>,
     tail_scope: &str,
     content: &mut dyn RecordedContentSynthesizer,
@@ -129,7 +131,7 @@ pub(crate) fn lower_recorded_graph(
     let mut mark = std::time::Instant::now();
     parents::resolve_content_parents(&mut nodes);
     subphase!("resolve_content_parents", mark);
-    timing::apply_idle_warp(&mut nodes, idle_gap_cap_seconds);
+    timing::apply_idle_warp(&mut nodes, idle_gap_cap_seconds, idle_warp_mode);
     timing::compute_ranks(&mut nodes);
     let mut edges = timing::build_interval_edges(&nodes);
     timing::apply_start_anchors(&nodes, &mut edges);
