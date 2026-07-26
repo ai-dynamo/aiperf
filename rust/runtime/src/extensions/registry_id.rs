@@ -20,6 +20,16 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// Normalize an identifier for case/separator-insensitive matching: trim,
+/// lowercase, and fold `-` to `_`. This is the one shared seam for every
+/// registry key and discriminant enum, mirroring Python's
+/// `ExtensibleStrEnum._normalize_name` (lowercase + `-`→`_`; note it does *not*
+/// strip separators, so `graphir` is a spelling alias, not a normalization of
+/// `graph-ir`).
+pub fn normalize_ident(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('-', "_")
+}
+
 /// Normalized registry identifier: lowercase, trimmed, `-` folded to `_`.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -28,7 +38,7 @@ pub struct RegistryId(Box<str>);
 impl RegistryId {
     /// Normalize and validate a registry identifier.
     pub fn new(value: impl AsRef<str>) -> Result<Self, RegistryIdError> {
-        let normalized = value.as_ref().trim().to_ascii_lowercase().replace('-', "_");
+        let normalized = normalize_ident(value.as_ref());
         if normalized.is_empty() {
             return Err(RegistryIdError {
                 value: value.as_ref().to_string(),
