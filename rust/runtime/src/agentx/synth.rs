@@ -288,7 +288,11 @@ impl ConversationReconstructor {
 
         self.last_disturbance_at = truncate_synth_buf_at_block(&mut self.segments, lcp, bs, synth);
 
-        let new_blocks = &curr_hash_ids[lcp as usize..m_curr_covered as usize];
+        // Python slices `curr_hash_ids[lcp:m_curr_covered]`, which yields an empty
+        // list when `lcp > m_curr_covered` (a pull-back where the current prompt is
+        // a strict hash-prefix of prev ending on a partial last block). Rust range
+        // start>end panics, so clamp the end up to `lcp` to reproduce the empty slice.
+        let new_blocks = &curr_hash_ids[lcp as usize..(m_curr_covered.max(lcp)) as usize];
         let mut new_region_tokens = synth.decode_block_tokens(new_blocks);
         if synth_tail_n > 0 {
             new_region_tokens.extend(synth.sample_partial_tail_tokens(synth_tail_n as usize, seed));
