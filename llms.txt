@@ -406,6 +406,13 @@ Whole system:
   `BenchmarkConfig`/`BenchmarkRun` shared by the CLI producer and runtime consumer
   (mirroring Python's `AIPerfConfig`→`build_benchmark_plan`→`BenchmarkRun`),
   retiring the untyped projection seam and the per-workload `*WorkloadConfigV2` DTOs.
+- [`docs/specs/typed-factory-runner.md`](docs/specs/typed-factory-runner.md)
+  — planned completion of config-model-unification: the runtime consumes the typed
+  `BenchmarkRun` directly and selects a component by an open, normalized string id
+  (`RegistryId`) whose config is a typed struct for built-ins and an opaque
+  `RawValue` (plugin-decoded) only for the runtime-plugin tail — deleting the
+  `AuthoredRunSpecV2` projection; the discriminant stays a string (as Python's
+  `ExtensibleStrEnum` is), enums reserved for closed knobs.
 - [`docs/specs/2026-07-24-rust-port-flow-deck-design.md`](docs/specs/2026-07-24-rust-port-flow-deck-design.md)
   — design for the `apps/aiperf-flow` `rust-port-flow` deck: an interactive,
   zoomable, playable request-lifecycle explainer of the whole Rust port, plus
