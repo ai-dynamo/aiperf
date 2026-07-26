@@ -1380,15 +1380,12 @@ fn lower_legacy_agentic(
         )
         .map_err(|error| anyhow!(error))?;
 
-    // Parity with the Python oracle: the legacy agentic_replay path keeps ONE
-    // main conversation per trace (bare trace id) plus `::sa:` subagent lanes.
-    // The top-level flat-chain split (`::aux:`/`::fa:`/`::wg:` lanes carved out
-    // by hash-LCP heuristics) is a Rust-only artifact the oracle does not emit,
-    // so disable it here.
-    let cfg = WekaConfig {
-        split_flattened_agents: false,
-        ..WekaConfig::default()
-    };
+    // The Python oracle enables WEKA_SPLIT_FLATTENED_AGENTS by default (True),
+    // so it carves interleaved worker/flat chains out of the main conversation
+    // via hash-LCP detection (removing e.g. a small-context reset request from
+    // the main normals into its own `::fa:`/`::wg:` lane). Use the Rust default
+    // (also true) so the main-conversation turn sequence matches byte-for-byte.
+    let cfg = WekaConfig::default();
     // The agentic-replay scenario caps per-trace idle gaps at 10s (Python
     // `trace_idle_gap_cap_seconds`); apply it during reconstruction so t* and
     // dispatch timing match the oracle's warped timeline.
