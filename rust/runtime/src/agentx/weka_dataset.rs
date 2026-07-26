@@ -152,16 +152,23 @@ pub fn slice_trajectories_at_tstar(
     out
 }
 
-/// Flatten the per-turn deltas of `turns` into the full accumulated OpenAI
-/// message array, exactly as the runtime's `DeltasWithoutResponses` accumulator
-/// does (naive concatenation of each turn's delta messages; live replies are
-/// folded in only at dispatch). This reproduces the recorded conversation prefix
-/// the Python oracle back-seeds on resume.
+/// Flatten the per-turn deltas of `turns` into the accumulated OpenAI message
+/// array exactly as the Python oracle's endpoint does (`_flatten_turns`,
+/// base_endpoint.py): iterate turns in order; a turn whose delta carries
+/// `reset_context` DISCARDS the accumulated messages before appending its delta
+/// (a full-window re-emission), otherwise its delta appends. The array therefore
+/// begins at the last `reset_context` turn ≤ k — reproducing the recorded prefix
+/// (e.g. a shared-prefix reset folds turn 0's tiny user into the big leading user
+/// block). Naive concatenation would strand that tiny turn-0 user at the head.
 fn flatten_prefix(turns: &[ReconstructedTurn]) -> Vec<crate::agentx::synth::ChatMessage> {
-    turns
-        .iter()
-        .flat_map(|t| t.raw_messages.iter().cloned())
-        .collect()
+    let mut acc: Vec<crate::agentx::synth::ChatMessage> = Vec::new();
+    for t in turns {
+        if t.reset_context {
+            acc.clear();
+        }
+        acc.extend(t.raw_messages.iter().cloned());
+    }
+    acc
 }
 
 /// Session-id suffix marking a warmup-phase conversation (turn n-1 prime). The
