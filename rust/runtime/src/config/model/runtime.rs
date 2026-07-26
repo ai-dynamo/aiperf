@@ -4,7 +4,7 @@
 //!
 //! `workers` and `workers_min` emit null when unset; `workers_max` is omitted.
 
-use aiperf_runtime::engine::protocol::{DispatchMode, HopRouting};
+use crate::config::model::{DispatchMode, HopRouting};
 use serde::{Deserialize, Serialize};
 
 /// The typed worker/cell runtime policy.

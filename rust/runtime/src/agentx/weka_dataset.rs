@@ -20,11 +20,8 @@ use bytes::Bytes;
 
 use crate::agentx::cache_bust::{resolve_tree_marker, CacheBustLedger, CacheBustTarget};
 use crate::agentx::loader::ReconstructedConversation;
-use crate::agentx::wire::{chat_request_body, ChatRequestOptions};
 use crate::dataset::Dataset;
-use crate::dataset::model::{
-    Conversation, ConversationContextMode, ModelId, SessionId, Turn,
-};
+use crate::dataset::model::{Conversation, ConversationContextMode, SessionId, Turn};
 use crate::dataset::segment::{Role, SegmentPool};
 
 /// Wire-body options applied when composing (scenario-derived).
@@ -122,14 +119,17 @@ pub const WARMUP_SUFFIX: &str = "::warmup";
 
 /// Compose reconstructed conversations into a verbatim-replay [`Dataset`].
 ///
-/// Turns carry their exact chat body as a `Raw` segment (byte-for-byte replay,
-/// preserving tool messages) plus the recorded `timestamp_ms`/`delay_ms`. The
+/// Turns carry their DELTA chat messages as a message-array segment (interned,
+/// not an opaque `Raw` body) plus the recorded `timestamp_ms`/`delay_ms`. The
 /// cache-bust marker (resolved once per trajectory tree via a shared ledger) is
-/// baked into the first turn's body. Context mode is `MessageArrayWithResponses`
-/// (each turn is a complete self-contained messages array).
+/// baked into turn 0's first message. Context mode is `DeltasWithoutResponses`,
+/// so the runtime materializer concatenates each turn's delta with the captured
+/// live replies into the full accumulated history — matching the Python oracle.
+/// `count_tokens` supplies each delta's client input-token count.
 pub fn compose_weka_agentic_dataset(
     convs: &[ReconstructedConversation],
     opts: &WekaComposeOptions,
+    count_tokens: &dyn Fn(&str) -> usize,
 ) -> Result<Dataset> {
     let mut pool = SegmentPool::new();
     let mut ledger = CacheBustLedger::default();
@@ -161,28 +161,41 @@ pub fn compose_weka_agentic_dataset(
         );
 
         let mut turns = Vec::with_capacity(conv.turns.len());
-        let mut parent = None;
         for (i, t) in conv.turns.iter().enumerate() {
-            let req_opts = ChatRequestOptions {
-                streaming: opts.streaming,
-                ignore_eos: opts.ignore_eos,
-                // The marker rides the first turn only; it is then part of the
-                // self-contained prefix of every later turn's replayed body.
-                cache_bust_marker: if i == 0 { marker.clone() } else { None },
-            };
-            let body = chat_request_body(&t.model, &t.raw_messages, t.max_tokens, &req_opts);
-            let wire = Bytes::from(serde_json::to_vec(&body)?);
-            let handle = pool.intern_raw(parent, wire)?;
-            parent = Some(handle);
+            // Intern this turn's DELTA messages as a message-array segment (not an
+            // opaque Raw body) so the runtime materializer accumulates the full
+            // conversation prefix + captured live replies under
+            // `DeltasWithoutResponses` — matching the Python oracle, whose worker
+            // sends the whole growing history each turn. The cache-bust marker
+            // rides turn 0's first message and then persists as the permanent
+            // accumulated prefix.
+            let marker_for_turn = if i == 0 { marker.as_deref() } else { None };
+            let msgs_value = crate::agentx::wire::chat_messages_array(&t.raw_messages, marker_for_turn);
+            let handle = pool.intern_raw(None, Bytes::from(serde_json::to_vec(&msgs_value)?))?;
+            // Per-turn delta input-token count; the delta-accumulating materializer
+            // sums these (plus captured reply tokens) for the ISL accounting.
+            let input_tokens: u64 = t
+                .raw_messages
+                .iter()
+                .map(|m| count_tokens(&m.content) as u64)
+                .sum();
+            let extra_body = opts
+                .ignore_eos
+                .then(|| pool.intern_raw(None, Bytes::from_static(b"{\"ignore_eos\":true}")))
+                .transpose()?;
 
             let turn = Turn {
                 role: Some(Role::from("user")),
-                model: Some(ModelId::from(t.model.as_str())),
+                // `None` => the chat composer authors the run's primary `--model`,
+                // not the trace's recorded per-turn model (oracle parity).
+                model: None,
                 max_tokens: u32::try_from(t.max_tokens.max(1)).ok(),
+                input_tokens: Some(input_tokens),
                 streaming: Some(opts.streaming),
                 timestamp_ms: t.timestamp_ms,
                 delay_ms: t.delay_ms,
-                body: Turn::dispatch_body(Some(handle), None, &[]),
+                raw_messages: Some(handle),
+                extra_body,
                 ..Turn::default()
             };
             turns.push(turn);
@@ -204,7 +217,7 @@ pub fn compose_weka_agentic_dataset(
         conversations,
         Arc::new(pool.freeze()),
         "sequential",
-        ConversationContextMode::MessageArrayWithResponses,
+        ConversationContextMode::DeltasWithoutResponses,
     )
     .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
@@ -304,7 +317,7 @@ mod tests {
         };
         // Composes without a DAG-validation error, and every conversation is
         // DAG-free with no branch/prerequisite metadata on its turns.
-        let ds = compose_weka_agentic_dataset(&[root, child], &opts()).unwrap();
+        let ds = compose_weka_agentic_dataset(&[root, child], &opts(), &|s| s.len()).unwrap();
         for conv in ds.conversations() {
             assert!(conv.dag.is_none(), "dataset must stay DAG-free");
             for t in &conv.turns {
@@ -330,6 +343,7 @@ mod tests {
                 benchmark_id: "bench".into(),
                 cache_bust_target: CacheBustTarget::FirstTurnPrefix,
             },
+            &|s| s.len(),
         )
         .unwrap();
         assert_eq!(ds.conversations().len(), 1);
@@ -338,5 +352,8 @@ mod tests {
         assert_eq!(c.turns[0].timestamp_ms, Some(0.0));
         assert_eq!(c.turns[1].timestamp_ms, Some(1000.0));
         assert_eq!(c.turns[0].max_tokens, Some(8));
+        // Delta messages are interned as a message-array segment (not a raw body);
+        // the dataset is `DeltasWithoutResponses` so dispatch accumulates history.
+        assert!(c.turns[0].raw_messages.is_some());
     }
 }

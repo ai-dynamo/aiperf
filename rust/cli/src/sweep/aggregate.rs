@@ -74,7 +74,7 @@ pub fn finish(
         .or_else(|| common_base(outcomes))
         .unwrap_or_else(|| PathBuf::from("artifacts"));
 
-    if !flags.no_sweep_table && std::io::stdout().is_terminal() && rows.len() > 1 {
+    if !flags.no_sweep_table.unwrap_or(false) && std::io::stdout().is_terminal() && rows.len() > 1 {
         print_table(&rows);
     }
 

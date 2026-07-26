@@ -31,42 +31,20 @@ use crate::extensions::AIPerfRegistry;
 /// match a single global limiter; `Sharded` retains the static `1/workers`
 /// per-thread partition. `workers==1` and the single-thread coordinator path
 /// have no cross-thread admission concern, so the mode is inert there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DispatchMode {
-    Sharded,
-    #[default]
-    Global,
-    GlobalHop,
-}
+///
+/// The enum itself is defined in `crate::config::model::dispatch` (so the typed
+/// config model and runtime share one serde-stable type) and re-exported here to
+/// keep `crate::engine::protocol::DispatchMode` call sites unchanged.
+pub use crate::config::model::DispatchMode;
 
 /// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]
 /// pick site (`ThreadPerCoreExecutor::execute_command`) when `workers > 1`.
 ///
-/// The hop only chooses *which worker executes an already-issued request*; every
-/// global-hop guarantee (exactly-once, deterministic merged record order,
-/// aggregate concurrency/rate/arrival pattern) is coordinator-side and unaffected
-/// by this choice, so the policy is free to trade placement determinism for
-/// per-session connection reuse.
-///
-/// - `RoundRobin` (default) hops each issued turn to worker `i % workers` in
-///   issuance order — deterministic and load-even, but it fragments a session's
-///   worker-local sticky connection pool across workers.
-/// - `Sticky` maps every turn of a conversation to one worker via a fixed
-///   seed-free hash of its `correlation_id`, so the worker-local sticky pool
-///   reuses one connection per session; a turn with no `correlation_id` falls
-///   back to round-robin.
-/// - `LeastLoaded` sends a new session to the worker with the shallowest in-flight
-///   count, then binds that `correlation_id` to the chosen worker so its
-///   continuations stay sticky.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum HopRouting {
-    #[default]
-    RoundRobin,
-    Sticky,
-    LeastLoaded,
-}
+/// Defined in the leaf config model (`config::model::dispatch`, so the typed
+/// config model and runtime share one serde-stable type) and re-exported here to
+/// keep `crate::engine::protocol::HopRouting` call sites unchanged. See the
+/// definition for the per-variant placement semantics.
+pub use crate::config::model::HopRouting;
 
 /// One plugins.yaml-shaped catalog entry.
 #[derive(Debug, Serialize)]

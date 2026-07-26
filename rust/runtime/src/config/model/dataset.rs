@@ -11,6 +11,41 @@ use serde::{Deserialize, Serialize};
 #[serde(transparent)]
 pub struct Sampling(pub String);
 
+/// Where (and how) to inject a per-conversation cache-bust marker.
+///
+/// Mirrors the Python `CacheBustTarget` enum. `Prefix` variants diverge at
+/// token 0 of the prompt (most aggressive — defeats KV-cache prefix matching
+/// for the entire prompt); `Suffix` variants append after existing content
+/// (preserves leading-prefix caching). `None` disables the feature.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheBustTarget {
+    /// Cache-busting disabled (default).
+    #[default]
+    None,
+    /// Prepend the marker at token 0 of the system message.
+    SystemPrefix,
+    /// Append the marker after the system message content.
+    SystemSuffix,
+    /// Prepend the marker at token 0 of the first turn.
+    FirstTurnPrefix,
+    /// Append the marker after the first turn content.
+    FirstTurnSuffix,
+}
+
+/// Per-conversation cache-bust marker injection policy.
+///
+/// Mirrors the Python `CacheBustConfig`: a single `target` selects where the
+/// deterministic marker is injected. Absent from the wire when unset, so a
+/// config without cache-busting serializes byte-identically to before this
+/// field existed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheBust {
+    /// Where (and how) to inject the marker.
+    #[serde(default)]
+    pub target: CacheBustTarget,
+}
+
 /// A scalar or parametric numeric distribution.
 ///
 /// Only present fields serialize.
@@ -79,6 +114,9 @@ pub struct Prompts {
     /// Shared-prefix fraction of each reusing prompt's length (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_reuse_ratio: Option<f64>,
+    /// Per-conversation cache-bust marker policy (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_bust: Option<CacheBust>,
 }
 
 /// Shared prompt-source selection for non-synthetic dataset kinds.
@@ -274,6 +312,9 @@ pub struct FileDataset {
     /// Recorded-graph synthesis block set by `--synthesis-*` flags.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<serde_json::Value>,
+    /// Per-conversation cache-bust marker policy (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_bust: Option<CacheBust>,
     /// Fetch remote image URLs at generation time and inline them as data URLs
     /// (`--prefetch-media-urls`). Omitted when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -308,6 +349,9 @@ pub struct PublicDataset {
     /// file path does; absent for non-recorded public datasets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<serde_json::Value>,
+    /// Per-conversation cache-bust marker policy (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_bust: Option<CacheBust>,
     /// Fetch remote image URLs at generation time and inline them as data URLs
     /// (`--prefetch-media-urls`). Omitted when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -351,6 +395,7 @@ mod tests {
                 sequence_distribution: None,
                 prefix_reuse_fraction: None,
                 prefix_reuse_ratio: None,
+                cache_bust: None,
             },
             prefix_prompts: None,
             images: None,

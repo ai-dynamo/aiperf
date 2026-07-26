@@ -1380,7 +1380,15 @@ fn lower_legacy_agentic(
         )
         .map_err(|error| anyhow!(error))?;
 
-    let cfg = WekaConfig::default();
+    // Parity with the Python oracle: the legacy agentic_replay path keeps ONE
+    // main conversation per trace (bare trace id) plus `::sa:` subagent lanes.
+    // The top-level flat-chain split (`::aux:`/`::fa:`/`::wg:` lanes carved out
+    // by hash-LCP heuristics) is a Rust-only artifact the oracle does not emit,
+    // so disable it here.
+    let cfg = WekaConfig {
+        split_flattened_agents: false,
+        ..WekaConfig::default()
+    };
     let opts = MainReconstructOptions::default();
     let results = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
         let tok = tokenizer_impl.clone();
@@ -1418,7 +1426,8 @@ fn lower_legacy_agentic(
         "legacy weka trajectories produced no profiling turns at t*"
     );
 
-    // Compose the verbatim-replay linear dataset.
+    // Compose the delta-message linear dataset (history-accumulating dispatch).
+    let count_tokens = |text: &str| tokenizer_impl.as_ref().count(text).unwrap_or(0);
     let dataset = compose_weka_agentic_dataset(
         &convs,
         &WekaComposeOptions {
@@ -1427,6 +1436,7 @@ fn lower_legacy_agentic(
             benchmark_id: run.identity.benchmark_id.clone(),
             cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
         },
+        &count_tokens,
     )?;
     // Build the DAG-free subagent join-gate side channel from the SLICED
     // profiling conversations: the slice preserves each surviving turn's

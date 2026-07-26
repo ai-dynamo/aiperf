@@ -32,8 +32,8 @@ use aiperf_runtime::engine::application::Application;
 use aiperf_runtime::engine::cellular_kind::CellularRunKind;
 use aiperf_runtime::engine::distribution_identity::current_distribution_id;
 use aiperf_runtime::engine::protocol_v2::{
-    BenchmarkRunWireV2, DiagnosticV2, EnvelopeV2, FailureStageV2, OperationV2, PROTOCOL_V2,
-    RunTerminalV2, RunValidationV2, ValidationCompletenessV2,
+    DiagnosticV2, EnvelopeV2, FailureStageV2, OperationV2, PROTOCOL_V2, RunTerminalV2,
+    RunValidationV2, ValidationCompletenessV2,
 };
 use aiperf_runtime::engine::redaction::redact_diagnostic;
 use serde_json::Value;
@@ -431,12 +431,16 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
 
 /// Drive one bare-run request to its terminal or validation envelope.
 ///
-/// The stdin payload is a bare [`BenchmarkRunWireV2`]; the `operation` is
+/// The stdin payload is the authoring execute wire decoded by
+/// [`decode_execute_wire`](aiperf_runtime::engine::protocol_v2::decode_execute_wire):
+/// an authoring `{"authoring": <Inputs>}` envelope the runtime resolves here (every
+/// profile path — single run, sweeps, and adaptive search — ships authoring). The
+/// `operation` is
 /// selected by the re-exec mode (`--execute` or `--validate`), not carried on the
 /// wire. A malformed run produces a typed v2 protocol failure.
 fn run_v2(input: &[u8], operation: OperationV2, application: &Application) -> ! {
     let distribution_id = application.distribution_id().to_owned();
-    let run = match serde_json::from_slice::<BenchmarkRunWireV2>(input) {
+    let run = match aiperf_runtime::engine::protocol_v2::decode_execute_wire(input) {
         Ok(run) => run,
         Err(error) => write_v2_protocol_failure(
             Some(operation),

@@ -4,8 +4,8 @@
 
 use std::collections::HashSet;
 
-use crate::model::phase::{Phase, PhaseKind, PhaseRole};
-use crate::model::rate_series::RateSeries;
+use crate::config::model::phase::{Phase, PhaseKind, PhaseRole};
+use crate::config::model::rate_series::RateSeries;
 
 const PHASE_NAME_PATTERN: &str = r"^[A-Za-z_][A-Za-z0-9_-]*$";
 
@@ -174,7 +174,7 @@ pub(crate) struct LoadgenOverlay {
 }
 
 impl LoadgenOverlay {
-    pub(crate) fn from_inputs(inputs: &crate::load::Inputs) -> Self {
+    pub(crate) fn from_inputs(inputs: &super::resolve::Inputs) -> Self {
         Self {
             concurrency: inputs.concurrency,
             request_rate: inputs.request_rate,
@@ -286,11 +286,12 @@ pub(crate) fn apply_cli_loadgen_overlays(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::phase::{PhaseCommon, PhaseKind};
+    use crate::config::model::phase::{PhaseCommon, PhaseKind};
 
     fn concurrency_phase(name: &str, kind: Option<PhaseRole>) -> Phase {
         Phase {
             common: PhaseCommon {
+                timing_mode: None,
                 name: name.into(),
                 kind,
                 exclude_from_results: kind == Some(PhaseRole::Warmup),
@@ -312,8 +313,8 @@ mod tests {
         }
     }
 
-    fn adaptive_scale(control_variable: &str) -> crate::model::phase::AdaptiveScale {
-        crate::model::phase::AdaptiveScale {
+    fn adaptive_scale(control_variable: &str) -> crate::config::model::phase::AdaptiveScale {
+        crate::config::model::phase::AdaptiveScale {
             control_variable: control_variable.into(),
             minimum: serde_json::Number::from(1),
             maximum: serde_json::Number::from(64),
@@ -347,7 +348,7 @@ mod tests {
         let mut phase = concurrency_phase("rr", Some(PhaseRole::Profiling));
         phase.common.adaptive_scale = Some(adaptive_scale("request_rate"));
         phase.common.rate_series =
-            Some(crate::model::rate_series::RateSeries::from_json_str("[[0,1],[10,5]]").unwrap());
+            Some(crate::config::model::rate_series::RateSeries::from_json_str("[[0,1],[10,5]]").unwrap());
         phase.kind = PhaseKind::Constant {
             rate: 1.0,
             concurrency: None,

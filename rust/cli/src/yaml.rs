@@ -45,6 +45,18 @@ pub(crate) fn resolve_expanded_value(
     artifact_dir: Option<PathBuf>,
     overrides: Option<&crate::flags::ProfileFlags>,
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
+    load::build(resolve_expanded_inputs(expanded, artifact_dir, overrides)?)
+}
+
+/// Normalize an already-expanded config value into authoring [`Inputs`] without
+/// resolving. The single-run path serializes these onto the `--execute` wire so the
+/// runtime resolves; [`resolve_expanded_value`] additionally builds the run for the
+/// YAML `sweep:` path, which resolves CLI-side.
+pub(crate) fn resolve_expanded_inputs(
+    expanded: serde_json::Value,
+    artifact_dir: Option<PathBuf>,
+    overrides: Option<&crate::flags::ProfileFlags>,
+) -> anyhow::Result<Inputs> {
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
@@ -54,11 +66,25 @@ pub(crate) fn resolve_expanded_value(
     }
     let mut inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
     apply_cli_overrides(&mut inputs, overrides)?;
-    load::build(inputs)
+    Ok(inputs)
+}
+
+/// Overlay an explicitly-set `Option<bool>` flag onto a config-derived `bool`.
+///
+/// A `None` flag (unset) is a no-op, so the config-authored value (or its
+/// effective default) is preserved byte-for-byte; only an explicitly authored
+/// `--flag`/`--flag=false` overrides. This is the single mechanism the operational
+/// bool toggles below drive through instead of a per-flag `unwrap_or`/`if` line.
+fn overlay_bool(slot: &mut bool, flag: Option<bool>) {
+    if let Some(v) = flag {
+        *slot = v;
+    }
 }
 
 /// Apply explicitly authored operational CLI flags over a config-derived run;
-/// model, dataset, endpoint, and phase content remains config-owned.
+/// model, dataset, and phase content remains config-owned. Operational endpoint
+/// and dataset bool toggles (`--streaming`, `--use-server-token-count`, …) overlay
+/// only when explicitly set, mirroring the flag-only path's `Inputs` mapping.
 fn apply_cli_overrides(
     inputs: &mut Inputs,
     overrides: Option<&crate::flags::ProfileFlags>,
@@ -66,6 +92,32 @@ fn apply_cli_overrides(
     let Some(flags) = overrides else {
         return Ok(());
     };
+    // Operational bool toggles that map directly to a single `Inputs` bool, driven
+    // through one mechanism. Each overlays only when explicitly set (`Some`); an
+    // unset flag leaves the config-authored value (or default) unchanged. Inverse
+    // `--no-*`-paired toggles (open_loop_replay, force_min_tokens, auto_plot …) and
+    // compound toggles (steady_state windowing, dataset-analysis knobs) resolve
+    // bespoke below and are intentionally not folded here.
+    overlay_bool(&mut inputs.streaming, flags.streaming);
+    overlay_bool(
+        &mut inputs.use_legacy_max_tokens,
+        flags.use_legacy_max_tokens,
+    );
+    overlay_bool(
+        &mut inputs.use_server_token_count,
+        flags.use_server_token_count,
+    );
+    overlay_bool(
+        &mut inputs.download_video_content,
+        flags.download_video_content,
+    );
+    overlay_bool(&mut inputs.apply_chat_template, flags.apply_chat_template);
+    overlay_bool(&mut inputs.proxy_from_env, flags.proxy_from_env);
+    overlay_bool(&mut inputs.prefetch_media_urls, flags.prefetch_media_urls);
+    overlay_bool(&mut inputs.uuid_and_strip, flags.uuid_and_strip);
+    overlay_bool(&mut inputs.omit_kv_hints, flags.omit_kv_hints);
+    overlay_bool(&mut inputs.open_loop_strict, flags.open_loop_strict);
+    overlay_bool(&mut inputs.unsafe_override, flags.unsafe_override);
     if let Some(name) = flags.tokenizer.clone() {
         inputs.tokenizer_name = Some(name);
     }
@@ -110,15 +162,11 @@ fn apply_cli_overrides(
     }
     // Steady-state windowing: `--steady-state` (+ optional `--steady-state-fraction`)
     // layers over a config-authored run.
-    if flags.steady_state {
-        inputs.steady_state = true;
-    }
+    overlay_bool(&mut inputs.steady_state, flags.steady_state);
     if let Some(fraction) = flags.steady_state_fraction {
         inputs.steady_state_fraction = Some(fraction);
     }
-    if flags.steady_state_hybrid {
-        inputs.steady_state_hybrid = true;
-    }
+    overlay_bool(&mut inputs.steady_state_hybrid, flags.steady_state_hybrid);
     // Explicit CLI loadgen axes overlay onto a unique profiling phase when the
     // config authored a multi-phase workflow (`phases_override`).
     if let Some(v) = load::parse_single::<u32>("--concurrency", flags.concurrency.as_deref())? {
@@ -159,7 +207,7 @@ fn apply_cli_overrides(
     // Dry-run dataset-analysis toggles: `--no-dataset-analysis` suppresses the
     // family; the `--kv-*` / `--dataset-analysis-per-conversation` knobs layer
     // over the config-derived defaults when the analysis is active.
-    if flags.no_dataset_analysis {
+    if flags.no_dataset_analysis.unwrap_or(false) {
         inputs.dataset_analysis = None;
     } else if let Some(analysis) = inputs.dataset_analysis.as_mut() {
         // `--kv-block-size` carries its default (16); only override when authored.
@@ -169,7 +217,7 @@ fn apply_cli_overrides(
         if let Some(cache_blocks) = flags.kv_cache_blocks {
             analysis.cache_blocks = Some(cache_blocks);
         }
-        if flags.dataset_analysis_per_conversation {
+        if flags.dataset_analysis_per_conversation.unwrap_or(false) {
             analysis.per_conversation = true;
         }
     }
@@ -2011,6 +2059,7 @@ fn yaml_phase_to_model(section: &PhaseSection) -> anyhow::Result<crate::model::p
     };
     Ok(Phase {
         common: PhaseCommon {
+            timing_mode: None,
             name,
             kind: Some(role),
             exclude_from_results: role == PhaseRole::Warmup,
@@ -2437,8 +2486,9 @@ benchmark:
         // Model selection is populated from the `model:` shorthand.
         let models = c.models.as_ref().expect("models present");
         let models_v = serde_json::to_value(models).unwrap();
-        assert!(
-            models_v.to_string().contains('m'),
+        assert_eq!(
+            models_v["items"][0]["name"],
+            serde_json::json!("m"),
             "model name should survive into typed models: {models_v}"
         );
         // Exactly one canonical dataset, synthetic.
@@ -2494,6 +2544,62 @@ benchmark:
                     ph_v.get("request_rate").is_none()
                         || ph_v["request_rate"].is_null(),
                     "unset --request-rate must not inject a rate: {ph_v}"
+                );
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    /// Increment A guard: an explicitly-set operational bool flag (`--streaming`)
+    /// now overlays a YAML-authored endpoint, while an unset flag leaves the
+    /// config value intact (byte-identical to no overlay).
+    #[test]
+    fn explicit_bool_flag_overlays_yaml_unset_leaves_config() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let yaml = cfg(
+                    "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 2, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+
+                // No `--streaming` flag: the config default (streaming: false) stands.
+                let unset = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--concurrency".to_string(),
+                    "1".to_string(),
+                ])
+                .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded.clone(),
+                    Some("/tmp/x".into()),
+                    Some(&unset),
+                )
+                .expect("overlay resolves");
+                let v = serde_json::to_value(&run).unwrap();
+                assert_eq!(
+                    v["cfg"]["endpoint"]["streaming"],
+                    serde_json::json!(false),
+                    "unset --streaming must not flip the config default"
+                );
+
+                // Explicit `--streaming`: overlays the config-derived endpoint.
+                let set = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--streaming".to_string(),
+                ])
+                .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&set),
+                )
+                .expect("overlay resolves");
+                let v = serde_json::to_value(&run).unwrap();
+                assert_eq!(
+                    v["cfg"]["endpoint"]["streaming"],
+                    serde_json::json!(true),
+                    "explicit --streaming must overlay the YAML endpoint"
                 );
             })
             .expect("spawn worker")

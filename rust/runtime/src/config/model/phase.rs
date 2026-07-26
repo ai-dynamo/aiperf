@@ -130,6 +130,14 @@ pub struct PhaseCommon {
     /// Agentic cache-warmup duration, seconds (present on scenario configs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agentic_cache_warmup_duration: Option<f64>,
+    /// Explicit credit-issuance timing-mode override (e.g. `agentic_replay`).
+    ///
+    /// Normally absent — the effective mode is derived from the phase type at
+    /// runtime. A named scenario stamps `agentic_replay` here post-construction.
+    /// Kept as an extensible string to mirror Python's `TimingMode`
+    /// `CaseInsensitiveStrEnum` and preserve any authored value verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing_mode: Option<String>,
     /// Adaptive-scale controller (present when `--adaptive-scale` is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adaptive_scale: Option<AdaptiveScale>,
@@ -230,6 +238,7 @@ mod tests {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                timing_mode: None,
                 adaptive_scale: None,
                 rate_series: None,
             },

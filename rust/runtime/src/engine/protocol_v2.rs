@@ -21,6 +21,8 @@ use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
+use crate::config::model::BenchmarkConfig;
+use crate::config::model::workload_kind::{WorkloadKind, workload_kind};
 use crate::engine::protocol::{
     DispatchMode, HopRouting, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
 };
@@ -136,6 +138,84 @@ impl EnvelopeV2 {
     }
 }
 
+/// Authoring-tagged execute-mode stdin payload.
+///
+/// The single-run and sweep/YAML-sweep profile paths serialize normalized authoring
+/// [`Inputs`] under an `authoring` tag so the runtime performs the authoritative
+/// `Inputs -> BenchmarkRun` resolution at `--execute`, rather than the CLI resolving
+/// before the child launch. The sweep paths additionally carry the per-cell sweep
+/// envelope (`sweep_id`/`variation`/`trial`) alongside the inputs — the runtime
+/// overlays these onto the resolved run so the resolved wire the runner consumes is
+/// byte-identical to what the CLI-side resolution would have produced (per-cell
+/// `artifact_dir` and `random_seed` ride inside the `Inputs` themselves). Absent
+/// envelope fields (the single-run case) default to a bare run.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthoringWireV2 {
+    /// Normalized profile inputs the runtime resolves through the shared `resolve`.
+    authoring: crate::config::resolve::Inputs,
+    /// Outer sweep identifier (absent for a bare single run).
+    #[serde(default)]
+    sweep_id: Option<String>,
+    /// Sweep variation metadata (`{index,label,values}`); absent for a single run.
+    #[serde(default)]
+    variation: Option<Value>,
+    /// Zero-based trial number (`0` for a single run).
+    #[serde(default)]
+    trial: u32,
+}
+
+/// Decode the execute-mode stdin payload into a resolved [`BenchmarkRunWireV2`].
+///
+/// Two wire shapes are accepted:
+///
+/// - The **authoring envelope** `{"authoring": <Inputs>}` (single runs, flag/YAML
+///   sweeps, and adaptive-search / recipe sweeps alike): every CLI-side profile path
+///   ships this shape, and the runtime performs the sole authoritative resolution
+///   here through the shared [`crate::config::resolve::resolve`], re-projecting the
+///   resolved [`crate::config::model::BenchmarkRun`] onto the wire shape. The
+///   re-projection round-trips the resolved run through bytes, which preserves
+///   factory-owned [`RawValue`] config that `serde_json::from_value` cannot
+///   reconstruct.
+/// - A **bare resolved run** (`BenchmarkRunWireV2` directly, with no `authoring`
+///   tag): the pre-collapse internal `--execute` contract. No CLI sender emits this,
+///   but the documented `--execute` stdin protocol and external harnesses (and the
+///   e2e reachability test) still feed an already-resolved run directly. The runtime
+///   accepts and returns it unchanged.
+///
+/// The two shapes are disjoint at the top level: the authoring envelope is tagged by
+/// an `authoring` key, which the bare run's `deny_unknown_fields` contract forbids.
+/// We branch on the presence of that key so a malformed authoring payload reports an
+/// authoring error rather than being misread as a bare run.
+pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
+    // Probe the top-level JSON for the `authoring` tag; a bare resolved run has no
+    // such key (and `BenchmarkRunWireV2` rejects it via `deny_unknown_fields`).
+    let has_authoring = serde_json::from_slice::<Value>(input)
+        .ok()
+        .and_then(|value| value.get("authoring").map(|_| ()))
+        .is_some();
+    if !has_authoring {
+        // Pre-collapse contract: an already-resolved run projected onto the wire.
+        return serde_json::from_slice(input)
+            .map_err(|error| anyhow!("invalid resolved run: {error}"));
+    }
+    let envelope: AuthoringWireV2 = serde_json::from_slice(input)
+        .map_err(|error| anyhow!("invalid authoring inputs: {error}"))?;
+    let mut run = crate::config::resolve::resolve(envelope.authoring)?;
+    // Overlay the per-cell sweep envelope so the resolved run the runner consumes is
+    // byte-identical to the CLI-side resolution (the sweep/search paths carry these;
+    // a single run leaves them at their `None`/`0` defaults).
+    run.sweep_id = envelope.sweep_id;
+    run.trial = envelope.trial;
+    if envelope.variation.is_some() {
+        run.variation = envelope.variation;
+    }
+    let bytes = serde_json::to_vec(&run)
+        .map_err(|error| anyhow!("re-serializing the resolved run: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| anyhow!("resolved run failed the wire contract: {error}"))
+}
+
 /// Default thread-per-core worker count when `runtime.workers` is unset: the
 /// machine's available parallelism, so a load run uses every core. Falls back to
 /// `1` when the platform cannot report parallelism.
@@ -202,7 +282,7 @@ pub struct BenchmarkRunWireV2 {
     /// Runner-owned artifact directory.
     pub artifact_dir: PathBuf,
     /// Canonical benchmark configuration.
-    pub cfg: BenchmarkConfigWireV2,
+    pub cfg: BenchmarkConfig,
     /// Resolution facts computed before runner execution.
     #[serde(default)]
     pub resolved: Value,
@@ -229,74 +309,6 @@ pub struct BenchmarkRunWireV2 {
     pub variables: BTreeMap<String, Value>,
 }
 
-/// Runner-relevant subset of the canonical BenchmarkConfig dump.
-///
-/// Unknown Config keys are ignored because the canonical dump includes fields this
-/// runner does not consume, such as `model`, `warmup`, and `profiling`.
-#[derive(Deserialize)]
-pub struct BenchmarkConfigWireV2 {
-    /// Model-selection policy.
-    pub models: Value,
-    /// Default endpoint profile.
-    pub endpoint: Value,
-    /// Additional named endpoint profiles.
-    #[serde(default)]
-    pub endpoint_profiles: BTreeMap<String, Value>,
-    /// Canonical single-dataset list.
-    #[serde(default)]
-    pub datasets: Vec<Value>,
-    /// Ordered phase policy.
-    pub phases: Vec<Value>,
-    /// Optional tokenizer policy.
-    #[serde(default)]
-    pub tokenizer: Option<Value>,
-    /// Inline Config transport selection.
-    pub transport: Value,
-    /// Worker-count configuration.
-    #[serde(default)]
-    pub runtime: Value,
-    /// Native output policy.
-    #[serde(default)]
-    pub artifacts: Value,
-    /// Native metrics policy.
-    #[serde(default)]
-    pub metrics: Value,
-    /// Optional run-failure policy (`"continue"` / `"abort"`); absent selects
-    /// resilient scheduled execution or fail-fast graph execution.
-    #[serde(default)]
-    pub failure_policy: Value,
-    /// Goodput/SLO policy.
-    #[serde(default)]
-    pub slos: Value,
-    /// Explicit goodput policy retained for Config revisions that expose it separately.
-    #[serde(default)]
-    pub goodput: Value,
-    /// GPU telemetry sidecar configuration.
-    #[serde(default)]
-    pub gpu_telemetry: Value,
-    /// Server-metrics sidecar configuration.
-    #[serde(default)]
-    pub server_metrics: Value,
-    /// Network-latency sidecar configuration.
-    #[serde(default)]
-    pub network_latency: Value,
-    /// Generated-content sidecar configuration.
-    #[serde(default)]
-    pub content_server: Value,
-    /// Prepared sidecar bag, when present.
-    #[serde(default)]
-    pub sidecars: Value,
-    /// Native post-report export policy; absence decodes to all-disabled
-    /// defaults.
-    #[serde(default)]
-    pub export: Value,
-    /// Resolved WEKA reconstruction semantics (`legacy`|`graph-ir`); authored into
-    /// the graph workload so the engine selects the legacy agentic path. Absent
-    /// defers to the graph-ir default.
-    #[serde(default)]
-    pub weka_semantics: Option<String>,
-}
-
 impl BenchmarkRunWireV2 {
     /// Validate wire-only invariants before adapting to linked factories.
     pub fn validate_outer(&self) -> Result<()> {
@@ -309,34 +321,39 @@ impl BenchmarkRunWireV2 {
             "run.artifact_dir cannot be empty"
         );
         ensure!(
-            !self.cfg.datasets.is_empty(),
+            self.cfg
+                .datasets
+                .as_ref()
+                .is_some_and(|datasets| !datasets.is_empty()),
             "run.cfg.datasets must contain exactly one dataset"
         );
         Ok(())
     }
 
     /// Adapt canonical Config nesting to the linked preparation seam.
-    pub(crate) fn into_authored(self) -> Result<AuthoredRunSpecV2> {
+    pub fn into_authored(self) -> Result<AuthoredRunSpecV2> {
         self.validate_outer()?;
-        let dataset = self
-            .cfg
+        // Classify the workload from the typed config before consuming it, so the
+        // graph-format set stays sourced from `config::model::workload_kind`.
+        let workload_kind = workload_kind(&self.cfg);
+        let cfg = self.cfg;
+        // The runner builds exactly one dataset; take the first and re-serialize it
+        // as the dataset-factory-owned authored object.
+        let dataset = cfg
             .datasets
-            .into_iter()
-            .next()
+            .and_then(|datasets| datasets.into_iter().next())
             .ok_or_else(|| anyhow!("run.cfg.datasets must contain one dataset"))?;
-        let workload_id = dataset_type(&dataset)
-            .is_some_and(|kind| {
-                matches!(
-                    kind,
-                    "dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace"
-                )
-            })
-            .then_some("graph")
-            .unwrap_or("scheduled");
-        let transport = component_from_inline(self.cfg.transport, "run.cfg.transport")?;
-        let worker_count = self
-            .cfg
-            .runtime
+        let dataset = serde_json::to_value(&dataset)
+            .map_err(|error| anyhow!("run.cfg.datasets[0]: {error}"))?;
+        let workload_id = workload_kind.workload_id();
+        let transport_value = serde_json::to_value(&cfg.transport)
+            .map_err(|error| anyhow!("run.cfg.transport: {error}"))?;
+        let transport = component_from_inline(transport_value, "run.cfg.transport")?;
+        // Re-serialize the typed runtime policy so the worker-count and dispatch
+        // resolution keep reading the same wire shape (`Null` when unset).
+        let runtime = serde_json::to_value(&cfg.runtime)
+            .map_err(|error| anyhow!("run.cfg.runtime: {error}"))?;
+        let worker_count = runtime
             .get("workers")
             .and_then(Value::as_u64)
             // Unset `runtime.workers` auto-selects the machine's parallelism so a
@@ -347,49 +364,65 @@ impl BenchmarkRunWireV2 {
             worker_count > 0 && worker_count <= usize::MAX as u64,
             "run.cfg.runtime.workers must be a positive usize"
         );
-        let dispatch = parse_dispatch_mode(&self.cfg.runtime)?;
-        let hop_routing = parse_hop_routing(&self.cfg.runtime)?;
+        let dispatch = parse_dispatch_mode(&runtime)?;
+        let hop_routing = parse_hop_routing(&runtime)?;
+        let tokenizer = match cfg.tokenizer {
+            Some(tokenizer) => serde_json::to_value(&tokenizer)
+                .map_err(|error| anyhow!("run.cfg.tokenizer: {error}"))?,
+            None => serde_json::json!({}),
+        };
+        let phases = serde_json::to_value(&cfg.phases)
+            .map_err(|error| anyhow!("run.cfg.phases: {error}"))?;
+        let failure_policy = serde_json::to_value(&cfg.failure_policy)
+            .map_err(|error| anyhow!("run.cfg.failure_policy: {error}"))?;
         let mut workload_config = serde_json::json!({
             "worker_count": worker_count,
             "dataset": dataset,
-            "tokenizer": self.cfg.tokenizer.unwrap_or_else(|| serde_json::json!({})),
-            "phases": self.cfg.phases,
-            "failure_policy": self.cfg.failure_policy,
+            "tokenizer": tokenizer,
+            "phases": phases,
+            "failure_policy": failure_policy,
         });
         // `weka_semantics` selects the graph reconstruction pipeline and exists
         // only on the graph workload's config DTO. The scheduled workload DTO is
         // strict (`deny_unknown_fields`), so emitting the field there — even as
         // `null` — fails decode. Only attach it to the graph workload.
-        if workload_id == "graph" {
-            workload_config["weka_semantics"] = serde_json::json!(self.cfg.weka_semantics);
+        if workload_kind == WorkloadKind::Graph {
+            workload_config["weka_semantics"] = serde_json::json!(cfg.weka_semantics);
         }
         let workload = NamedRunnerComponentSpecV2 {
             id: workload_id.parse().expect("built-in workload ID is valid"),
             config: raw_value(workload_config)?,
         };
-        let (sidecars, sidecars_present) = if !self.cfg.sidecars.is_null()
-            && self
-                .cfg
-                .sidecars
-                .as_object()
-                .is_some_and(|object| !object.is_empty())
+        // Content-server config is folded into `cfg.sidecars` by the typed model,
+        // so the sidecar bag is the single source of prepared sidecars.
+        let sidecars_value = serde_json::to_value(&cfg.sidecars)
+            .map_err(|error| anyhow!("run.cfg.sidecars: {error}"))?;
+        let (sidecars, sidecars_present) = if sidecars_value
+            .as_object()
+            .is_some_and(|object| !object.is_empty())
         {
             (
-                serde_json::from_value(self.cfg.sidecars)
+                serde_json::from_value(sidecars_value)
                     .map_err(|error| anyhow!("run.cfg.sidecars: {error}"))?,
                 true,
             )
-        } else if self.cfg.content_server.is_null() {
-            (SidecarSpecV2::default(), false)
         } else {
-            (
-                SidecarSpecV2 {
-                    content_server: Some(raw_value(self.cfg.content_server)?),
-                    ..SidecarSpecV2::default()
-                },
-                true,
-            )
+            (SidecarSpecV2::default(), false)
         };
+        let models = serde_json::to_value(&cfg.models)
+            .map_err(|error| anyhow!("run.cfg.models: {error}"))?;
+        let endpoint = serde_json::to_value(&cfg.endpoint)
+            .map_err(|error| anyhow!("run.cfg.endpoint: {error}"))?;
+        let additional_profiles = cfg
+            .endpoint_profiles
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        let metrics = serde_json::to_value(&cfg.metrics)
+            .map_err(|error| anyhow!("run.cfg.metrics: {error}"))?;
+        let artifacts = serde_json::to_value(&cfg.artifacts)
+            .map_err(|error| anyhow!("run.cfg.artifacts: {error}"))?;
+        let export = serde_json::to_value(&cfg.export)
+            .map_err(|error| anyhow!("run.cfg.export: {error}"))?;
         Ok(AuthoredRunSpecV2 {
             identity: RunIdentitySpecV2 {
                 benchmark_id: self.benchmark_id,
@@ -400,13 +433,13 @@ impl BenchmarkRunWireV2 {
                 variation: self.variation,
             },
             artifact_target: self.artifact_dir,
-            models: models_from_config(self.cfg.models)?,
-            endpoints: endpoint_profiles(self.cfg.endpoint, self.cfg.endpoint_profiles)?,
+            models: models_from_config(models)?,
+            endpoints: endpoint_profiles(endpoint, additional_profiles)?,
             transport,
             workload,
-            metrics: serde_json::from_value(self.cfg.metrics).unwrap_or_default(),
-            artifacts: serde_json::from_value(self.cfg.artifacts).unwrap_or_default(),
-            export: serde_json::from_value(self.cfg.export).unwrap_or_default(),
+            metrics: serde_json::from_value(metrics).unwrap_or_default(),
+            artifacts: serde_json::from_value(artifacts).unwrap_or_default(),
+            export: serde_json::from_value(export).unwrap_or_default(),
             sidecars,
             dispatch,
             hop_routing,
@@ -435,13 +468,6 @@ fn models_from_config(value: Value) -> Result<ModelsSpec> {
     }
     serde_json::from_value(Value::Object(models))
         .map_err(|error| anyhow!("run.cfg.models: {error}"))
-}
-
-fn dataset_type(dataset: &Value) -> Option<&str> {
-    dataset
-        .get("format")
-        .and_then(Value::as_str)
-        .or_else(|| dataset.get("type").and_then(Value::as_str))
 }
 
 fn component_from_inline(value: Value, field: &str) -> Result<NamedRunnerComponentSpecV2> {
@@ -1286,61 +1312,165 @@ mod tests {
 mod dispatch_mode_tests {
     use super::*;
 
+    /// A fully-serialized `chat` endpoint matching the CLI's typed `Endpoint`
+    /// projection (every required field present), so `cfg` deserializes into the
+    /// typed `BenchmarkConfig`.
+    fn endpoint() -> Value {
+        serde_json::json!({
+            "type": "chat",
+            "urls": ["http://127.0.0.1:8000"],
+            "streaming": true,
+            "use_legacy_max_tokens": false,
+            "use_server_token_count": false,
+            "timeout_seconds": 21600.0,
+            "connection_reuse": "pooled",
+            "ssl_verify": true,
+            "connection_limit": 2500,
+            "keepalive_timeout": 300.0,
+            "download_video_content": false,
+            "extra": {},
+            "headers": {},
+            "http2": false,
+            "wait_for_model_timeout": 0.0,
+            "wait_for_model_interval": 5.0,
+            "wait_for_model_mode": "inference"
+        })
+    }
+
+    /// The real serialized synthetic `Dataset` (scheduled workload).
+    fn synthetic_ds() -> Value {
+        serde_json::json!({
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"batch_size": 1, "isl": {"mean": 550.0, "stddev": 0.0}},
+            "sampling": "sequential",
+            "turn_delay_ratio": 1.0
+        })
+    }
+
+    /// The real serialized graph `Dataset` (a `dag_jsonl` file → graph workload).
+    fn graph_ds() -> Value {
+        serde_json::json!({
+            "type": "file",
+            "format": "dag_jsonl",
+            "sampling": "sequential",
+            "options": {}
+        })
+    }
+
+    /// Build a `cfg` object that deserializes into the typed `BenchmarkConfig`.
+    fn base_cfg(dataset: Value, transport: Value, runtime: Value) -> Value {
+        serde_json::json!({
+            "models": {"strategy": "round_robin", "items": [{"name": "model"}]},
+            "endpoint": endpoint(),
+            "tokenizer": {
+                "name": "model",
+                "revision": "main",
+                "trust_remote_code": false,
+                "apply_chat_template": false
+            },
+            "transport": transport,
+            "runtime": runtime,
+            "datasets": [dataset],
+            "phases": [{
+                "name": "profiling",
+                "type": "concurrency",
+                "concurrency": 1,
+                "exclude_from_results": false,
+                "seamless": false,
+                "requests": 1
+            }],
+        })
+    }
+
+    /// The real serialized `Runtime` policy (`workers_min` is a required wire key).
+    fn rt(workers: u32, cells: u32) -> Value {
+        serde_json::json!({"workers": workers, "workers_min": null, "cells": cells})
+    }
+
     fn minimal_wire(runtime: Value) -> BenchmarkRunWireV2 {
         serde_json::from_value(serde_json::json!({
             "benchmark_id": "run-1",
             "artifact_dir": "/tmp/not-created",
-            "cfg": {
-                "models": {"items": [{"name": "model"}]},
-                "endpoint": {"type": "future_endpoint"},
-                "datasets": [{"type": "synthetic", "entries": 1}],
-                "phases": [{"type": "concurrency", "concurrency": 1}],
-                "transport": {"type": "future_transport"},
-                "runtime": runtime,
-            }
+            "cfg": base_cfg(synthetic_ds(), serde_json::json!({"type": "http"}), runtime),
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn execute_wire_accepts_bare_run_and_authoring_envelope_shapes() {
+        // A **bare** resolved `BenchmarkRunWireV2` (no `authoring` tag) is the
+        // pre-collapse internal `--execute` contract that the documented stdin
+        // protocol, external harnesses, and the e2e reachability test still feed.
+        // The runtime must accept it unchanged and project it to the same
+        // `AuthoredRunSpecV2` as a direct decode + `into_authored`.
+        let bare = serde_json::json!({
+            "benchmark_id": "run-1",
+            "artifact_dir": "/tmp/not-created",
+            "cfg": base_cfg(synthetic_ds(), serde_json::json!({"type": "http"}), rt(1, 1)),
+        });
+        let bare_bytes = serde_json::to_vec(&bare).unwrap();
+        let via_execute = decode_execute_wire(&bare_bytes)
+            .expect("bare resolved run must be accepted")
+            .into_authored()
+            .expect("project bare run");
+        let via_direct = serde_json::from_value::<BenchmarkRunWireV2>(bare)
+            .expect("decode bare run")
+            .into_authored()
+            .expect("project bare run directly");
+        assert_eq!(via_execute.identity.benchmark_id, via_direct.identity.benchmark_id);
+        assert_eq!(via_execute.transport.id, via_direct.transport.id);
+        assert_eq!(via_execute.workload.id, via_direct.workload.id);
+        assert_eq!(via_execute.dispatch, via_direct.dispatch);
+
+        // An `{"authoring": ...}` payload is routed to the authoring resolver, not
+        // misread as a bare run: an inner-inputs failure surfaces the authoring
+        // decode error (proving the envelope branch is taken). The positive
+        // resolve-to-identical-run path is pinned end-to-end in `aiperf-cli`'s
+        // `authoring_wire_matches_cli_resolved`.
+        let envelope = serde_json::to_vec(&serde_json::json!({ "authoring": {} })).unwrap();
+        let error = decode_execute_wire(&envelope)
+            .err()
+            .expect("empty authoring inputs must fail")
+            .to_string();
+        assert!(
+            error.contains("invalid authoring inputs"),
+            "authoring payload must route to the authoring path, got: {error}"
+        );
     }
 
     #[test]
     fn wire_contract_pins_into_authored_component_selection() {
         // Step-1 (config-model-unification) regression net: pin the observable
         // shape `into_authored` projects from a representative CLI-serialized wire
-        // run, so the planned move to a shared typed BenchmarkRun stays byte-behavior
+        // run, so the move to the typed `BenchmarkConfig` stays byte-behavior
         // identical. Asserts the component-selection contract: transport id
         // (passthrough of `type`), workload id (derived from dataset), and the
         // cellular-aware dispatch default.
-        fn project(dataset_type: &str, transport_type: &str, runtime: serde_json::Value) -> AuthoredRunSpecV2 {
+        fn project(dataset: Value, transport_type: &str, runtime: Value) -> AuthoredRunSpecV2 {
             let wire: BenchmarkRunWireV2 = serde_json::from_value(serde_json::json!({
                 "benchmark_id": "run-1",
                 "artifact_dir": "/tmp/not-created",
-                "cfg": {
-                    "models": {"items": [{"name": "model"}]},
-                    "endpoint": {"type": "chat", "urls": ["http://127.0.0.1:8000"]},
-                    "datasets": [{"type": dataset_type, "entries": 1}],
-                    "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 1}],
-                    "transport": {"type": transport_type},
-                    "runtime": runtime,
-                }
+                "cfg": base_cfg(dataset, serde_json::json!({"type": transport_type}), runtime),
             }))
             .unwrap();
             wire.into_authored().unwrap()
         }
 
         // Synthetic dataset + http transport, single-process → scheduled/http/Global.
-        let a = project("synthetic", "http", serde_json::json!({"workers": 1}));
+        let a = project(synthetic_ds(), "http", rt(1, 1));
         assert_eq!(a.workload.id.as_str(), "scheduled");
         assert_eq!(a.transport.id.as_str(), "http");
         assert_eq!(a.dispatch, DispatchMode::Global);
 
         // Graph dataset → graph workload; grpc transport id passes through.
-        let b = project("dag_jsonl", "grpc", serde_json::json!({"workers": 4}));
+        let b = project(graph_ds(), "grpc", rt(4, 1));
         assert_eq!(b.workload.id.as_str(), "graph");
         assert_eq!(b.transport.id.as_str(), "grpc");
         assert_eq!(b.dispatch, DispatchMode::Global);
 
         // Cellular (cells>1) with absent dispatch → Sharded default.
-        let c = project("synthetic", "http", serde_json::json!({"workers": 4, "cells": 4}));
+        let c = project(synthetic_ds(), "http", rt(4, 4));
         assert_eq!(c.dispatch, DispatchMode::Sharded);
     }
 
@@ -1350,19 +1480,13 @@ mod dispatch_mode_tests {
         // scheduled DTO is strict (`deny_unknown_fields`). Emitting the key into
         // a scheduled config — even as `null` — fails decode with "unknown field
         // `weka_semantics`". The projection must attach it only for graph runs.
-        fn project(dataset_type: &str) -> (String, serde_json::Value) {
+        fn project(dataset: Value) -> (String, serde_json::Value) {
+            let mut cfg = base_cfg(dataset, serde_json::json!({"type": "http"}), rt(1, 1));
+            cfg["weka_semantics"] = serde_json::json!("legacy");
             let wire: BenchmarkRunWireV2 = serde_json::from_value(serde_json::json!({
                 "benchmark_id": "run-1",
                 "artifact_dir": "/tmp/not-created",
-                "cfg": {
-                    "models": {"items": [{"name": "model"}]},
-                    "endpoint": {"type": "future_endpoint"},
-                    "datasets": [{"type": dataset_type, "entries": 1}],
-                    "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 1}],
-                    "transport": {"type": "future_transport"},
-                    "runtime": {"workers": 1},
-                    "weka_semantics": "legacy",
-                }
+                "cfg": cfg,
             }))
             .unwrap();
             let authored = wire.into_authored().unwrap();
@@ -1372,7 +1496,7 @@ mod dispatch_mode_tests {
         }
 
         // Synthetic → scheduled workload: the key must be absent entirely.
-        let (id, scheduled_config) = project("synthetic");
+        let (id, scheduled_config) = project(synthetic_ds());
         assert_eq!(id, "scheduled");
         assert!(
             scheduled_config.get("weka_semantics").is_none(),
@@ -1380,7 +1504,7 @@ mod dispatch_mode_tests {
         );
 
         // A graph dataset → graph workload: the key still round-trips (unchanged).
-        let (id, graph_config) = project("dag_jsonl");
+        let (id, graph_config) = project(graph_ds());
         assert_eq!(id, "graph");
         assert_eq!(
             graph_config.get("weka_semantics").and_then(|v| v.as_str()),
@@ -1390,10 +1514,11 @@ mod dispatch_mode_tests {
     }
 
     #[test]
-    fn runtime_dispatch_defaults_to_global_when_absent() {        let runtime = serde_json::json!({"workers": 4, "cells": 1});
+    fn runtime_dispatch_defaults_to_global_when_absent() {
+        let runtime = serde_json::json!({"workers": 4, "cells": 1});
         assert_eq!(parse_dispatch_mode(&runtime).unwrap(), DispatchMode::Global);
 
-        let authored = minimal_wire(runtime).into_authored().unwrap();
+        let authored = minimal_wire(rt(4, 1)).into_authored().unwrap();
         assert_eq!(authored.dispatch, DispatchMode::Global);
     }
 
@@ -1406,7 +1531,7 @@ mod dispatch_mode_tests {
             parse_dispatch_mode(&runtime).unwrap(),
             DispatchMode::Sharded
         );
-        let authored = minimal_wire(runtime).into_authored().unwrap();
+        let authored = minimal_wire(rt(4, 4)).into_authored().unwrap();
         assert_eq!(authored.dispatch, DispatchMode::Sharded);
     }
 
@@ -1423,14 +1548,23 @@ mod dispatch_mode_tests {
 
     #[test]
     fn runtime_dispatch_rejects_unknown_variant() {
+        // The raw admission-strategy parser still rejects an unknown selector.
         let runtime = serde_json::json!({"workers": 1, "cells": 1, "dispatch": "bogus"});
         assert!(parse_dispatch_mode(&runtime).is_err());
 
-        let error = match minimal_wire(runtime).into_authored() {
-            Ok(_) => panic!("expected an unknown-dispatch-variant error"),
-            Err(error) => error.to_string(),
-        };
-        assert!(error.contains("run.cfg.runtime.dispatch"), "{error}");
+        // With the typed wire, `runtime.dispatch` is a strict `DispatchMode`, so an
+        // unknown variant now fails closed at wire-decode (before `into_authored`).
+        let mut runtime = rt(1, 1);
+        runtime["dispatch"] = serde_json::json!("bogus");
+        let wire = serde_json::from_value::<BenchmarkRunWireV2>(serde_json::json!({
+            "benchmark_id": "run-1",
+            "artifact_dir": "/tmp/not-created",
+            "cfg": base_cfg(synthetic_ds(), serde_json::json!({"type": "http"}), runtime),
+        }));
+        assert!(
+            wire.is_err(),
+            "unknown runtime.dispatch variant must be rejected at wire decode"
+        );
     }
 
     #[test]
@@ -1446,6 +1580,8 @@ mod dispatch_mode_tests {
                 expected,
                 "{wire_value}"
             );
+            let mut runtime = rt(1, 1);
+            runtime["dispatch"] = serde_json::json!(wire_value);
             let authored = minimal_wire(runtime).into_authored().unwrap();
             assert_eq!(authored.dispatch, expected, "{wire_value}");
         }

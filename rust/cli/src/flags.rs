@@ -43,8 +43,8 @@ pub struct ProfileFlags {
     pub tokenizer_revision: Option<String>,
 
     /// Trust remote tokenizer code (`--tokenizer-trust-remote-code`).
-    #[arg(long = "tokenizer-trust-remote-code", default_value_t = false)]
-    pub tokenizer_trust_remote_code: bool,
+    #[arg(long = "tokenizer-trust-remote-code", num_args = 0..=1, default_missing_value = "true")]
+    pub tokenizer_trust_remote_code: Option<bool>,
 
     /// Offload tokenization to the inference server's `/tokenize` and
     /// `/detokenize` endpoints at this origin (`--server-tokenizer-url`, e.g.
@@ -68,8 +68,8 @@ pub struct ProfileFlags {
     pub custom_endpoint: Option<String>,
 
     /// Enable the endpoint-local KV-cache reset hook (`--reset-kv-cache`).
-    #[arg(long = "reset-kv-cache", default_value_t = false)]
-    pub reset_kv_cache: bool,
+    #[arg(long = "reset-kv-cache", num_args = 0..=1, default_missing_value = "true")]
+    pub reset_kv_cache: Option<bool>,
     /// Override the KV-cache reset hook timeout, seconds
     /// (`--reset-kv-cache-timeout-seconds`). Implies hook enablement.
     #[arg(long = "reset-kv-cache-timeout-seconds")]
@@ -79,8 +79,8 @@ pub struct ProfileFlags {
     #[arg(long = "reset-kv-cache-path")]
     pub reset_kv_cache_path: Option<String>,
     /// Enable the endpoint-local server-profiler hooks (`--server-profiler`).
-    #[arg(long = "server-profiler", default_value_t = false)]
-    pub server_profiler: bool,
+    #[arg(long = "server-profiler", num_args = 0..=1, default_missing_value = "true")]
+    pub server_profiler: Option<bool>,
     /// Override the server-profiler hook timeout, seconds
     /// (`--server-profiler-timeout-seconds`). Implies hook enablement.
     #[arg(long = "server-profiler-timeout-seconds")]
@@ -101,8 +101,8 @@ pub struct ProfileFlags {
     pub export_level: Option<String>,
 
     /// Emit per-request HTTP trace columns (`--export-http-trace`).
-    #[arg(long = "export-http-trace", default_value_t = false)]
-    pub export_http_trace: bool,
+    #[arg(long = "export-http-trace", num_args = 0..=1, default_missing_value = "true")]
+    pub export_http_trace: Option<bool>,
 
     /// Cellular (multi-process) cell count (`--cells`); `1` = single process.
     #[arg(long = "cells")]
@@ -142,8 +142,8 @@ pub struct ProfileFlags {
     pub sweep_type: String,
 
     /// Suppress the live sweep summary table (`--no-sweep-table`).
-    #[arg(long = "no-sweep-table", default_value_t = false)]
-    pub no_sweep_table: bool,
+    #[arg(long = "no-sweep-table", num_args = 0..=1, default_missing_value = "true")]
+    pub no_sweep_table: Option<bool>,
 
     /// Named submission scenario (`--scenario`; `cfg.scenario`).
     #[arg(long = "scenario")]
@@ -163,8 +163,8 @@ pub struct ProfileFlags {
     pub trajectory_start_max_ratio: Option<f64>,
 
     /// Relax cross-field config validation (`--unsafe-override`).
-    #[arg(long = "unsafe-override", default_value_t = false)]
-    pub unsafe_override: bool,
+    #[arg(long = "unsafe-override", num_args = 0..=1, default_missing_value = "true")]
+    pub unsafe_override: Option<bool>,
 
     /// Agentic cache-warmup duration, seconds (`--agentic-cache-warmup-duration`);
     /// auto-creates a minimal warmup phase carrying it.
@@ -208,47 +208,44 @@ pub struct ProfileFlags {
     pub accuracy_system_prompt: Option<String>,
     /// Enable chain-of-thought (`--accuracy-enable-cot`).
     #[arg(
-        long = "accuracy-enable-cot",
+        long = "accuracy-enable-cot", num_args = 0..=1, default_missing_value = "true",
         overrides_with = "accuracy_no_enable_cot"
     )]
-    pub accuracy_enable_cot: bool,
+    pub accuracy_enable_cot: Option<bool>,
     /// Disable chain-of-thought (`--accuracy-no-enable-cot`).
-    #[arg(long = "accuracy-no-enable-cot")]
-    pub accuracy_no_enable_cot: bool,
+    #[arg(long = "accuracy-no-enable-cot", num_args = 0..=1, default_missing_value = "true")]
+    pub accuracy_no_enable_cot: Option<bool>,
     /// Verbose grader output (`--accuracy-verbose`).
-    #[arg(long = "accuracy-verbose", default_value_t = false)]
-    pub accuracy_verbose: bool,
+    #[arg(long = "accuracy-verbose", num_args = 0..=1, default_missing_value = "true")]
+    pub accuracy_verbose: Option<bool>,
 
     /// Auto-set a consistent run seed (default; `--no-set-consistent-seed` disables).
     #[arg(
-        long = "set-consistent-seed",
-        default_value_t = true,
+        long = "set-consistent-seed", num_args = 0..=1, default_missing_value = "true",
         overrides_with = "no_set_consistent_seed"
     )]
-    pub set_consistent_seed: bool,
+    pub set_consistent_seed: Option<bool>,
     /// Disable the auto consistent seed (`--no-set-consistent-seed`).
-    #[arg(long = "no-set-consistent-seed")]
-    pub no_set_consistent_seed: bool,
+    #[arg(long = "no-set-consistent-seed", num_args = 0..=1, default_missing_value = "true")]
+    pub no_set_consistent_seed: Option<bool>,
     /// Use the same seed for every sweep variation (`--parameter-sweep-same-seed`).
     #[arg(
-        long = "parameter-sweep-same-seed",
-        default_value_t = false,
+        long = "parameter-sweep-same-seed", num_args = 0..=1, default_missing_value = "true",
         overrides_with = "no_parameter_sweep_same_seed"
     )]
-    pub parameter_sweep_same_seed: bool,
+    pub parameter_sweep_same_seed: Option<bool>,
     /// Inverse of the above (`--no-parameter-sweep-same-seed`).
-    #[arg(long = "no-parameter-sweep-same-seed")]
-    pub no_parameter_sweep_same_seed: bool,
+    #[arg(long = "no-parameter-sweep-same-seed", num_args = 0..=1, default_missing_value = "true")]
+    pub no_parameter_sweep_same_seed: Option<bool>,
     /// Derive a distinct seed per trial (`--vary-seed-per-trial`).
     #[arg(
-        long = "vary-seed-per-trial",
-        default_value_t = false,
+        long = "vary-seed-per-trial", num_args = 0..=1, default_missing_value = "true",
         overrides_with = "no_vary_seed_per_trial"
     )]
-    pub vary_seed_per_trial: bool,
+    pub vary_seed_per_trial: Option<bool>,
     /// Inverse of the above (`--no-vary-seed-per-trial`).
-    #[arg(long = "no-vary-seed-per-trial")]
-    pub no_vary_seed_per_trial: bool,
+    #[arg(long = "no-vary-seed-per-trial", num_args = 0..=1, default_missing_value = "true")]
+    pub no_vary_seed_per_trial: Option<bool>,
     /// Confidence level for the sweep aggregate (`--confidence-level`, default 0.95).
     #[arg(long = "confidence-level")]
     pub confidence_level: Option<f64>,
@@ -288,8 +285,8 @@ pub struct ProfileFlags {
     #[arg(long = "url-strategy")]
     pub url_strategy: Option<String>,
     /// Disable auto fixed-schedule detection (`--no-fixed-schedule`).
-    #[arg(long = "no-fixed-schedule", default_value_t = false)]
-    pub no_fixed_schedule: bool,
+    #[arg(long = "no-fixed-schedule", num_args = 0..=1, default_missing_value = "true")]
+    pub no_fixed_schedule: Option<bool>,
 
     /// Public-dataset loader filters as `key=value` (`--dataset-filter`, repeatable).
     /// Requires `--public-dataset`; merged into the dataset's loader options.
@@ -425,8 +422,8 @@ pub struct ProfileFlags {
     #[arg(long = "slo-attainment-fraction")]
     pub slo_attainment_fraction: Option<f64>,
     /// Enable OTel live-streaming (`--stream`; requires `--otel-url`).
-    #[arg(long = "stream", default_value_t = false)]
-    pub stream: bool,
+    #[arg(long = "stream", num_args = 0..=1, default_missing_value = "true")]
+    pub stream: Option<bool>,
 
     /// Controller API host (`--api-host`).
     #[arg(long = "api-host")]
@@ -438,11 +435,11 @@ pub struct ProfileFlags {
     #[arg(long = "log-level")]
     pub log_level: Option<String>,
     /// Verbose logging (`--verbose`).
-    #[arg(long = "verbose", short = 'v', default_value_t = false)]
-    pub verbose: bool,
+    #[arg(long = "verbose", num_args = 0..=1, default_missing_value = "true", short = 'v')]
+    pub verbose: Option<bool>,
     /// Extra-verbose logging (`--extra-verbose`).
-    #[arg(long = "extra-verbose", default_value_t = false)]
-    pub extra_verbose: bool,
+    #[arg(long = "extra-verbose", num_args = 0..=1, default_missing_value = "true")]
+    pub extra_verbose: Option<bool>,
     /// UI type (`--ui-type` / `--ui`).
     #[arg(long = "ui-type", visible_alias = "ui")]
     pub ui_type: Option<String>,
@@ -459,21 +456,19 @@ pub struct ProfileFlags {
     #[arg(long = "stats-interval")]
     pub stats_interval: Option<f64>,
     /// Show per-request trace timing (`--show-trace-timing`).
-    #[arg(long = "show-trace-timing", default_value_t = false)]
-    pub show_trace_timing: bool,
+    #[arg(long = "show-trace-timing", num_args = 0..=1, default_missing_value = "true")]
+    pub show_trace_timing: Option<bool>,
     /// Auto-generate plots after the run (`--auto-plot` / `--no-auto-plot`).
     #[arg(
-        long = "auto-plot",
-        overrides_with = "no_auto_plot",
-        default_value_t = false
-    )]
-    pub auto_plot: bool,
+        long = "auto-plot", num_args = 0..=1, default_missing_value = "true",
+        overrides_with = "no_auto_plot")]
+    pub auto_plot: Option<bool>,
     /// Inverse of `--auto-plot`.
-    #[arg(long = "no-auto-plot", default_value_t = false)]
-    pub no_auto_plot: bool,
+    #[arg(long = "no-auto-plot", num_args = 0..=1, default_missing_value = "true")]
+    pub no_auto_plot: Option<bool>,
     /// Fail the run if plotting fails (`--plot-required`).
-    #[arg(long = "plot-required", default_value_t = false)]
-    pub plot_required: bool,
+    #[arg(long = "plot-required", num_args = 0..=1, default_missing_value = "true")]
+    pub plot_required: Option<bool>,
     /// Export file prefix (`--profile-export-prefix` / `--profile-export-file`).
     #[arg(long = "profile-export-prefix", visible_alias = "profile-export-file")]
     pub profile_export_prefix: Option<String>,
@@ -484,8 +479,8 @@ pub struct ProfileFlags {
     #[arg(long = "zmq-ipc-path")]
     pub zmq_ipc_path: Option<String>,
     /// ZMQ dual-bind mode (`--zmq-dual-bind`).
-    #[arg(long = "zmq-dual-bind", default_value_t = false)]
-    pub zmq_dual_bind: bool,
+    #[arg(long = "zmq-dual-bind", num_args = 0..=1, default_missing_value = "true")]
+    pub zmq_dual_bind: Option<bool>,
 
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
@@ -505,14 +500,13 @@ pub struct ProfileFlags {
     /// Keep the warmup phase on trials after the first
     /// (`--no-profile-run-disable-warmup-after-first`); default drops it.
     #[arg(
-        long = "profile-run-disable-warmup-after-first",
-        default_value_t = true,
+        long = "profile-run-disable-warmup-after-first", num_args = 0..=1, default_missing_value = "true",
         overrides_with = "no_profile_run_disable_warmup_after_first"
     )]
-    pub profile_run_disable_warmup_after_first: bool,
+    pub profile_run_disable_warmup_after_first: Option<bool>,
     /// Inverse of the above (keep warmup on every trial).
-    #[arg(long = "no-profile-run-disable-warmup-after-first")]
-    pub no_profile_run_disable_warmup_after_first: bool,
+    #[arg(long = "no-profile-run-disable-warmup-after-first", num_args = 0..=1, default_missing_value = "true")]
+    pub no_profile_run_disable_warmup_after_first: Option<bool>,
 
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean", visible_alias = "conversation-turn-mean")]
@@ -589,16 +583,16 @@ pub struct ProfileFlags {
     pub warmup_grace_period: Option<f64>,
 
     /// Disable GPU telemetry collection (`--no-gpu-telemetry`).
-    #[arg(long = "no-gpu-telemetry", default_value_t = false)]
-    pub no_gpu_telemetry: bool,
+    #[arg(long = "no-gpu-telemetry", num_args = 0..=1, default_missing_value = "true")]
+    pub no_gpu_telemetry: Option<bool>,
 
     /// Custom DCGM exporter URLs (`--gpu-telemetry`), repeatable.
     #[arg(long = "gpu-telemetry", num_args = 1..)]
     pub gpu_telemetry: Vec<String>,
 
     /// Disable server-metrics collection (`--no-server-metrics`).
-    #[arg(long = "no-server-metrics", default_value_t = false)]
-    pub no_server_metrics: bool,
+    #[arg(long = "no-server-metrics", num_args = 0..=1, default_missing_value = "true")]
+    pub no_server_metrics: Option<bool>,
 
     /// Server-metrics output formats (`--server-metrics-formats`).
     #[arg(long = "server-metrics-formats", num_args = 1..)]
@@ -622,22 +616,22 @@ pub struct ProfileFlags {
     pub osl_stddev: Option<f64>,
 
     /// Enable streaming responses (`--streaming`).
-    #[arg(long = "streaming", default_value_t = false)]
-    pub streaming: bool,
+    #[arg(long = "streaming", num_args = 0..=1, default_missing_value = "true")]
+    pub streaming: Option<bool>,
 
     /// Prompts per request (`--batch-size`).
     #[arg(long = "batch-size", visible_aliases = ["batch-size-text", "prompt-batch-size"], short = 'b')]
     pub batch_size: Option<u32>,
 
     /// Download video content from responses (`--download-video-content`).
-    #[arg(long = "download-video-content", default_value_t = false)]
-    pub download_video_content: bool,
+    #[arg(long = "download-video-content", num_args = 0..=1, default_missing_value = "true")]
+    pub download_video_content: Option<bool>,
 
     /// Fetch remote image URLs and inline them as data URLs at dataset
     /// generation time (`--prefetch-media-urls`), for file/public datasets whose
     /// server cannot resolve URLs itself. Default sends authored URLs unchanged.
-    #[arg(long = "prefetch-media-urls", default_value_t = false)]
-    pub prefetch_media_urls: bool,
+    #[arg(long = "prefetch-media-urls", num_args = 0..=1, default_missing_value = "true")]
+    pub prefetch_media_urls: Option<bool>,
 
     /// Extra request-body inputs `key:value` (`--extra-inputs`), repeatable.
     #[arg(long = "extra-inputs", num_args = 1..)]
@@ -660,12 +654,12 @@ pub struct ProfileFlags {
     pub request_timeout_seconds: Option<f64>,
 
     /// Emit `max_tokens` (`--use-legacy-max-tokens`).
-    #[arg(long = "use-legacy-max-tokens", default_value_t = false)]
-    pub use_legacy_max_tokens: bool,
+    #[arg(long = "use-legacy-max-tokens", num_args = 0..=1, default_missing_value = "true")]
+    pub use_legacy_max_tokens: Option<bool>,
 
     /// Trust server-reported token counts (`--use-server-token-count`).
-    #[arg(long = "use-server-token-count", default_value_t = false)]
-    pub use_server_token_count: bool,
+    #[arg(long = "use-server-token-count", num_args = 0..=1, default_missing_value = "true")]
+    pub use_server_token_count: Option<bool>,
 
     /// Connection reuse policy (`--connection-reuse-strategy`):
     /// `pooled` (default), `never`, `sticky-user-sessions`.
@@ -690,8 +684,8 @@ pub struct ProfileFlags {
     pub wait_for_model_interval: Option<f64>,
 
     /// Apply the chat template when tokenizing (`--apply-chat-template`).
-    #[arg(long = "apply-chat-template", default_value_t = false)]
-    pub apply_chat_template: bool,
+    #[arg(long = "apply-chat-template", num_args = 0..=1, default_missing_value = "true")]
+    pub apply_chat_template: Option<bool>,
 
     /// Prefill concurrency (`--prefill-concurrency`); requires `--streaming`.
     #[arg(long = "prefill-concurrency")]
@@ -837,8 +831,8 @@ pub struct ProfileFlags {
 
     /// Honor the ambient proxy environment (`HTTPS_PROXY`/`NO_PROXY`, loopback
     /// excluded) for benchmark traffic. Ignored when `--proxy` is set.
-    #[arg(long = "proxy-from-env", default_value_t = false)]
-    pub proxy_from_env: bool,
+    #[arg(long = "proxy-from-env", num_args = 0..=1, default_missing_value = "true")]
+    pub proxy_from_env: Option<bool>,
 
     /// Dataset sampling strategy (`--dataset-sampling-strategy`).
     #[arg(long = "dataset-sampling-strategy")]
@@ -886,8 +880,8 @@ pub struct ProfileFlags {
     /// same session. Automatic stripping supports only `single_turn` datasets
     /// with `session_id`-grouped rows; `multi_turn` is rejected. Requires
     /// endpoint type `chat`.
-    #[arg(long = "uuid-and-strip", default_value_t = false)]
-    pub uuid_and_strip: bool,
+    #[arg(long = "uuid-and-strip", num_args = 0..=1, default_missing_value = "true")]
+    pub uuid_and_strip: Option<bool>,
 
     /// Wall-clock compression factor for `baseten_trace` replay
     /// (`--replay-speedup`); divides normalized timestamps and
@@ -905,37 +899,35 @@ pub struct ProfileFlags {
     /// `--no-open-loop-replay` switches to closed-loop back-pressure, where
     /// continuation turns fire only after the prior turn completes).
     #[arg(
-        long = "open-loop-replay",
-        default_value_t = true,
+        long = "open-loop-replay", num_args = 0..=1, default_missing_value = "true",
         overrides_with = "no_open_loop_replay"
     )]
-    pub open_loop_replay: bool,
+    pub open_loop_replay: Option<bool>,
     /// Disable open-loop replay (`--no-open-loop-replay`).
-    #[arg(long = "no-open-loop-replay")]
-    pub no_open_loop_replay: bool,
+    #[arg(long = "no-open-loop-replay", num_args = 0..=1, default_missing_value = "true")]
+    pub no_open_loop_replay: Option<bool>,
     /// Open-loop-only: explode every `baseten_trace` session into an
     /// independent single-turn conversation, each firing at its absolute
     /// recorded time with no session grouping (`--open-loop-strict`).
-    #[arg(long = "open-loop-strict", default_value_t = false)]
-    pub open_loop_strict: bool,
+    #[arg(long = "open-loop-strict", num_args = 0..=1, default_missing_value = "true")]
+    pub open_loop_strict: Option<bool>,
     /// Skip injecting `hash_ids`/`block_size` KV-cache routing hints into
     /// the `baseten_trace` request body (`--omit-kv-hints`); use for strict
     /// frontends that reject unknown body params.
-    #[arg(long = "omit-kv-hints", default_value_t = false)]
-    pub omit_kv_hints: bool,
+    #[arg(long = "omit-kv-hints", num_args = 0..=1, default_missing_value = "true")]
+    pub omit_kv_hints: Option<bool>,
     /// Inject `min_tokens` (from the recorded output length) into the
     /// `baseten_trace` request body (default; `--no-force-min-tokens`
     /// disables so a user-supplied `--extra-inputs min_tokens` value goes
     /// through instead).
     #[arg(
-        long = "force-min-tokens",
-        default_value_t = true,
+        long = "force-min-tokens", num_args = 0..=1, default_missing_value = "true",
         overrides_with = "no_force_min_tokens"
     )]
-    pub force_min_tokens: bool,
+    pub force_min_tokens: Option<bool>,
     /// Disable forced `min_tokens` injection (`--no-force-min-tokens`).
-    #[arg(long = "no-force-min-tokens")]
-    pub no_force_min_tokens: bool,
+    #[arg(long = "no-force-min-tokens", num_args = 0..=1, default_missing_value = "true")]
+    pub no_force_min_tokens: Option<bool>,
 
     /// Synthetic video audio channels (`--video-audio-num-channels`).
     #[arg(long = "video-audio-num-channels")]
@@ -948,8 +940,8 @@ pub struct ProfileFlags {
     pub video_audio_sample_rate: Option<f64>,
 
     /// Replay requests by their timestamps (`--fixed-schedule`).
-    #[arg(long = "fixed-schedule", default_value_t = false)]
-    pub fixed_schedule: bool,
+    #[arg(long = "fixed-schedule", num_args = 0..=1, default_missing_value = "true")]
+    pub fixed_schedule: Option<bool>,
 
     /// Auto-normalize fixed-schedule timestamps (`--fixed-schedule-auto-offset`).
     /// Accepts a bare flag (`--fixed-schedule-auto-offset` ⇒ `Some(true)`) or an
@@ -987,14 +979,14 @@ pub struct ProfileFlags {
     pub isl_block_size: Option<u32>,
 
     /// Bounded-memory metric retention (`--sketch-metrics`).
-    #[arg(long = "sketch-metrics", default_value_t = false)]
-    pub sketch_metrics: bool,
+    #[arg(long = "sketch-metrics", num_args = 0..=1, default_missing_value = "true")]
+    pub sketch_metrics: Option<bool>,
 
     /// Emit a closed-loop steady-state summary for concurrency-target runs
     /// (`--steady-state`). Detects the window where in-flight concurrency is at
     /// or above a fraction of the target, excluding ramp-up and drain.
-    #[arg(long = "steady-state", default_value_t = false)]
-    pub steady_state: bool,
+    #[arg(long = "steady-state", num_args = 0..=1, default_missing_value = "true")]
+    pub steady_state: Option<bool>,
 
     /// Steady-state occupancy fraction of the concurrency target
     /// (`--steady-state-fraction`, default 0.8). Ignored unless `--steady-state`
@@ -1010,8 +1002,8 @@ pub struct ProfileFlags {
     /// the detected steady-state window (excluding ramp-up/drain, since a
     /// window that includes them mechanically understates sustained rate).
     /// Ignored unless `--steady-state` is also set.
-    #[arg(long = "steady-state-hybrid", default_value_t = false)]
-    pub steady_state_hybrid: bool,
+    #[arg(long = "steady-state-hybrid", num_args = 0..=1, default_missing_value = "true")]
+    pub steady_state_hybrid: Option<bool>,
 
     /// Synthetic image width mean, pixels (`--image-width-mean`).
     #[arg(long = "image-width-mean")]
@@ -1090,8 +1082,8 @@ pub struct ProfileFlags {
     pub video_batch_size: Option<u32>,
 
     /// Enable adaptive scaling (`--adaptive-scale`).
-    #[arg(long = "adaptive-scale", default_value_t = false)]
-    pub adaptive_scale: bool,
+    #[arg(long = "adaptive-scale", num_args = 0..=1, default_missing_value = "true")]
+    pub adaptive_scale: Option<bool>,
     /// Adaptive control variable (`--adaptive-control-variable`).
     #[arg(long = "adaptive-control-variable")]
     pub adaptive_control_variable: Option<String>,
@@ -1127,8 +1119,8 @@ pub struct ProfileFlags {
     pub network_latency_mean: Option<f64>,
 
     /// Enable automatic RTT calibration (`--network-latency-automatic`).
-    #[arg(long = "network-latency-automatic", default_value_t = false)]
-    pub network_latency_automatic: bool,
+    #[arg(long = "network-latency-automatic", num_args = 0..=1, default_missing_value = "true")]
+    pub network_latency_automatic: Option<bool>,
 
     /// RTT probe ping interval, seconds (`--network-latency-ping-interval`).
     #[arg(long = "network-latency-ping-interval")]
@@ -1184,8 +1176,8 @@ pub struct ProfileFlags {
     /// fabricates every response from an analytic latency model with zero
     /// network. Exercises the full scheduling/metrics/export pipeline without an
     /// inference server (`--dry-run`). Sets `transport.type: dry_run`.
-    #[arg(long = "dry-run", default_value_t = false)]
-    pub dry_run: bool,
+    #[arg(long = "dry-run", num_args = 0..=1, default_missing_value = "true")]
+    pub dry_run: Option<bool>,
     /// Synthetic time-to-first-token in milliseconds for `--dry-run`
     /// (`--dry-run-ttft-ms`). Omitted → the runtime default.
     #[arg(long = "dry-run-ttft-ms")]
@@ -1244,12 +1236,12 @@ pub struct ProfileFlags {
     pub kv_cache_blocks: Option<u64>,
     /// Emit per-conversation breakdowns in the `--dry-run` dataset analysis
     /// (`--dataset-analysis-per-conversation`).
-    #[arg(long = "dataset-analysis-per-conversation", default_value_t = false)]
-    pub dataset_analysis_per_conversation: bool,
+    #[arg(long = "dataset-analysis-per-conversation", num_args = 0..=1, default_missing_value = "true")]
+    pub dataset_analysis_per_conversation: Option<bool>,
     /// Suppress the `--dry-run` dataset-analysis artifact family and console echo
     /// (`--no-dataset-analysis`).
-    #[arg(long = "no-dataset-analysis", default_value_t = false)]
-    pub no_dataset_analysis: bool,
+    #[arg(long = "no-dataset-analysis", num_args = 0..=1, default_missing_value = "true")]
+    pub no_dataset_analysis: Option<bool>,
 }
 
 impl ProfileFlags {

@@ -18,18 +18,102 @@ fn clear_prior_report(artifact_dir: &Path) {
     let _ = std::fs::remove_file(artifact_dir.join("native-v2.json"));
 }
 
-/// Validate control-hook transport compatibility, run any local pre-launch control
-/// hooks, and then drive one execution child to completion.
-fn run_benchmark_child(
-    run: &crate::model::BenchmarkRun,
+/// Authoring-tagged `--execute` wire body.
+///
+/// The single-run and flag/YAML sweep paths send normalized authoring
+/// [`load::Inputs`] under an `authoring` tag so the runtime resolves them at
+/// `--execute` (matching the runtime
+/// [`decode_execute_wire`](aiperf_runtime::engine::protocol_v2::decode_execute_wire)
+/// union). The sweep paths additionally carry the per-cell sweep envelope
+/// (`sweep_id`/`variation`/`trial`) so the runtime overlays it onto the resolved
+/// run (per-cell `artifact_dir`/`random_seed` ride inside the `Inputs`). The CLI
+/// therefore no longer resolves before the child launch — except that a configured
+/// `reset_kv_cache` / `server_profiler` endpoint control hook is a live pre-flight
+/// action that still needs the resolved endpoint, so that (rare) case resolves
+/// locally purely to run the hook.
+#[derive(serde::Serialize)]
+struct AuthoringWire<'a> {
+    authoring: &'a load::Inputs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sweep_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variation: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "trial_is_zero")]
+    trial: u32,
+}
+
+/// A zero trial is the single-run/base default; omit it from the wire so the
+/// single-run envelope stays `{"authoring": …}` exactly as before.
+fn trial_is_zero(trial: &u32) -> bool {
+    *trial == 0
+}
+
+/// Drive one child from authoring [`load::Inputs`], sending the authoring wire body
+/// so the runtime performs the authoritative resolution at `--execute`. `envelope`
+/// supplies the per-cell sweep coordinates (`sweep_id`/`variation`/`trial`) for the
+/// sweep paths; the single-run path passes `None` for a bare `{"authoring": …}` body.
+fn run_benchmark_child_authoring(
+    inputs: &load::Inputs,
+    envelope: Option<&crate::model::BenchmarkRun>,
     runner: &Path,
     child_pid: &crate::signals::ChildPid,
 ) -> anyhow::Result<crate::execute::Terminal> {
-    crate::control_hooks::run_reset_kv_cache_before_run(run)?;
-    clear_prior_report(&run.artifact_dir);
-    let payload = serde_json::to_vec(run)
+    // A live endpoint control hook (reset_kv_cache / server_profiler) must run before
+    // the child launches and needs the resolved endpoint; resolve locally only then.
+    if inputs.reset_kv_cache.is_some() || inputs.server_profiler.is_some() {
+        let run = load::build(inputs.clone())?;
+        crate::control_hooks::run_reset_kv_cache_before_run(&run)?;
+    }
+    clear_prior_report(&inputs.artifact_dir);
+    let wire = AuthoringWire {
+        authoring: inputs,
+        sweep_id: envelope.and_then(|r| r.sweep_id.clone()),
+        variation: envelope.and_then(|r| r.variation.clone()),
+        trial: envelope.map(|r| r.trial).unwrap_or(0),
+    };
+    let payload = serde_json::to_vec(&wire)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
     execute::run_once(runner, &payload, child_pid)
+}
+
+/// Ship one adaptive-search probe on the authoring wire.
+///
+/// Clones the base authoring [`load::Inputs`], overrides the swept profiling
+/// concurrency on the authoring scalar (the runtime resolves it at `--execute`,
+/// expanding it exactly as the old resolved-cfg override did), stamps the per-cell
+/// artifact dir + run seed onto the inputs, and carries the sweep envelope
+/// (`sweep_id`/`variation`/`trial`) on a clone of the base run. The CLI no longer
+/// resolves the probe run itself — the runtime does.
+#[allow(clippy::too_many_arguments)]
+fn run_search_probe(
+    base_inputs: &load::Inputs,
+    base: &crate::model::BenchmarkRun,
+    sweep_id: &str,
+    iter: i64,
+    label: &str,
+    dir: std::path::PathBuf,
+    value: i64,
+    seed: Option<u64>,
+    runner: &Path,
+    child_pid: &crate::signals::ChildPid,
+) -> anyhow::Result<crate::execute::Terminal> {
+    let mut inputs = base_inputs.clone();
+    crate::search::apply_override_inputs(
+        &mut inputs,
+        crate::search::AxisKind::PhaseConcurrency,
+        value,
+    );
+    inputs.artifact_dir = dir;
+    inputs.random_seed = seed;
+    let mut envelope = base.clone();
+    envelope.sweep_id = Some(sweep_id.to_string());
+    envelope.variation = Some(serde_json::json!({
+        "index": iter,
+        "label": label,
+        "values": { "phases.profiling.concurrency": value },
+    }));
+    envelope.trial = 0;
+    run_benchmark_child_authoring(&inputs, Some(&envelope), runner, child_pid)
 }
 
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
@@ -53,8 +137,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             return run_yaml_sweep(&flags, base, sweep);
         }
         let expanded = crate::expand::render_with_context(base)?;
-        let run = yaml::resolve_expanded_value(expanded, flags.artifact_dir.clone(), Some(&flags))?;
-        return run_single(run);
+        let inputs =
+            yaml::resolve_expanded_inputs(expanded, flags.artifact_dir.clone(), Some(&flags))?;
+        return run_single(inputs);
     }
 
     // `max-concurrency-under-sla --search-style monotonic` runs a dynamic
@@ -110,7 +195,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let expansion = sweep::expand(&flags, sweep_type)?;
     let trials = flags.num_profile_runs.unwrap_or(1);
     if !expansion.is_sweep && trials <= 1 {
-        return run_single(load::resolve(&flags)?);
+        return run_single(load::resolve_inputs(&flags)?);
     }
     let order = match flags.parameter_sweep_mode.as_str() {
         "independent" => IterationOrder::Independent,
@@ -168,14 +253,17 @@ fn validate_multi_run(flags: &ProfileFlags) -> anyhow::Result<()> {
 
 /// Execute one built run through the runner and map its terminal outcome, echoing
 /// the runner's console summary to stdout on success.
-fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
-    let artifact_dir = run.artifact_dir.clone();
+///
+/// The single-run path sends authoring [`load::Inputs`] on the wire; the runtime
+/// resolves them at `--execute`.
+fn run_single(inputs: load::Inputs) -> anyhow::Result<i32> {
+    let artifact_dir = inputs.artifact_dir.clone();
     // Bind logging before execution so startup events reach the run artifact.
     crate::logging::set_log_file(&artifact_dir);
     tracing::info!("Starting native AIPerf run");
     let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
-    let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
+    let terminal = run_benchmark_child_authoring(&inputs, None, &runner, &child_pid)?;
     if terminal.success {
         tracing::info!("Native AIPerf run completed");
         if let Some(path) = &terminal.report_path {
@@ -255,6 +343,7 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     let mut base_flags = flags.clone();
     base_flags.concurrency = Some("1".to_string());
     let base = load::resolve(&base_flags)?;
+    let base_inputs = load::resolve_inputs(&base_flags)?;
     let base_artifact_dir = base.artifact_dir.clone();
     crate::logging::set_log_file(&base_artifact_dir);
 
@@ -270,10 +359,6 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         let label = format!("search_iter_{iter:04}");
 
         // Build this probe's run: mutate the built cfg's profiling concurrency.
-        let mut run = base.clone();
-        let mut cfg = serde_json::to_value(&run.cfg)?;
-        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
-        run.cfg = serde_json::from_value(cfg)?;
         let dir = crate::sweep::artifact_dir::resolve(
             &base_artifact_dir,
             true,
@@ -282,21 +367,22 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             0,
             IterationOrder::Repeated,
         );
-        run.sweep_id = Some(sweep_id.clone());
-        run.variation = Some(serde_json::json!({
-            "index": iter,
-            "label": label,
-            "values": { "phases.profiling.concurrency": value },
-        }));
-        run.random_seed = seed.seed(iter as usize);
-        run.trial = 0;
-        run.artifact_dir = dir.clone();
-
         eprintln!(
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
+        let terminal = run_search_probe(
+            &base_inputs,
+            &base,
+            &sweep_id,
+            iter,
+            &label,
+            dir,
+            value,
+            seed.seed(iter as usize),
+            &runner,
+            &child_pid,
+        )?;
 
         // Read the report once: per-iteration feasibility (every SLA filter
         // satisfied) and the objective value recorded for search_history.json.
@@ -445,6 +531,7 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     let mut base_flags = flags.clone();
     base_flags.concurrency = Some("1".to_string());
     let base = load::resolve(&base_flags)?;
+    let base_inputs = load::resolve_inputs(&base_flags)?;
     let base_artifact_dir = base.artifact_dir.clone();
     crate::logging::set_log_file(&base_artifact_dir);
 
@@ -459,10 +546,6 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         let iter = planner.iteration();
         let label = format!("search_iter_{iter:04}");
 
-        let mut run = base.clone();
-        let mut cfg = serde_json::to_value(&run.cfg)?;
-        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
-        run.cfg = serde_json::from_value(cfg)?;
         let dir = crate::sweep::artifact_dir::resolve(
             &base_artifact_dir,
             true,
@@ -471,21 +554,22 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             0,
             IterationOrder::Repeated,
         );
-        run.sweep_id = Some(sweep_id.clone());
-        run.variation = Some(serde_json::json!({
-            "index": iter,
-            "label": label,
-            "values": { "phases.profiling.concurrency": value },
-        }));
-        run.random_seed = seed.seed(iter as usize);
-        run.trial = 0;
-        run.artifact_dir = dir.clone();
-
         eprintln!(
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
+        let terminal = run_search_probe(
+            &base_inputs,
+            &base,
+            &sweep_id,
+            iter,
+            &label,
+            dir,
+            value,
+            seed.seed(iter as usize),
+            &runner,
+            &child_pid,
+        )?;
 
         // Per-iteration feasibility + per-filter signed margins from the report.
         let mut feasible = false;
@@ -611,6 +695,7 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     let mut base_flags = flags.clone();
     base_flags.concurrency = Some("1".to_string());
     let base = load::resolve(&base_flags)?;
+    let base_inputs = load::resolve_inputs(&base_flags)?;
     let base_artifact_dir = base.artifact_dir.clone();
     crate::logging::set_log_file(&base_artifact_dir);
 
@@ -626,10 +711,6 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         let iter = planner.iteration();
         let label = format!("search_iter_{iter:04}");
 
-        let mut run = base.clone();
-        let mut cfg = serde_json::to_value(&run.cfg)?;
-        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
-        run.cfg = serde_json::from_value(cfg)?;
         let dir = crate::sweep::artifact_dir::resolve(
             &base_artifact_dir,
             true,
@@ -638,21 +719,22 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             0,
             IterationOrder::Repeated,
         );
-        run.sweep_id = Some(sweep_id.clone());
-        run.variation = Some(serde_json::json!({
-            "index": iter,
-            "label": label,
-            "values": { "phases.profiling.concurrency": value },
-        }));
-        run.random_seed = seed.seed(iter as usize);
-        run.trial = 0;
-        run.artifact_dir = dir.clone();
-
         eprintln!(
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
+        let terminal = run_search_probe(
+            &base_inputs,
+            &base,
+            &sweep_id,
+            iter,
+            &label,
+            dir,
+            value,
+            seed.seed(iter as usize),
+            &runner,
+            &child_pid,
+        )?;
 
         let mut objective: Option<f64> = None;
         let mut sla_observed: Vec<Option<f64>> = vec![None; filters.len()];
@@ -790,6 +872,7 @@ fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         "time_to_first_token:{ttft} inter_token_latency:{tpot} request_latency:{e2e}"
     ));
     let base = load::resolve(&base_flags)?;
+    let base_inputs = load::resolve_inputs(&base_flags)?;
     let base_artifact_dir = base.artifact_dir.clone();
     crate::logging::set_log_file(&base_artifact_dir);
 
@@ -805,10 +888,6 @@ fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         let iter = planner.iteration();
         let label = format!("search_iter_{iter:04}");
 
-        let mut run = base.clone();
-        let mut cfg = serde_json::to_value(&run.cfg)?;
-        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
-        run.cfg = serde_json::from_value(cfg)?;
         let dir = crate::sweep::artifact_dir::resolve(
             &base_artifact_dir,
             true,
@@ -817,21 +896,22 @@ fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             0,
             IterationOrder::Repeated,
         );
-        run.sweep_id = Some(sweep_id.clone());
-        run.variation = Some(serde_json::json!({
-            "index": iter,
-            "label": label,
-            "values": { "phases.profiling.concurrency": value },
-        }));
-        run.random_seed = seed.seed(iter as usize);
-        run.trial = 0;
-        run.artifact_dir = dir.clone();
-
         eprintln!(
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
+        let terminal = run_search_probe(
+            &base_inputs,
+            &base,
+            &sweep_id,
+            iter,
+            &label,
+            dir,
+            value,
+            seed.seed(iter as usize),
+            &runner,
+            &child_pid,
+        )?;
 
         let mut objective: Option<f64> = None;
         let mut sla_observed: Vec<Option<f64>> = vec![None; filters.len()];
@@ -923,21 +1003,22 @@ pub fn plan_recipe_cells(
 ) -> anyhow::Result<Vec<sweep_run::Cell>> {
     let seed = seed_policy(flags);
     // The recipe owns the swept axes and overrides them per variation, so resolve
-    // the base run with a single (non-sweep) value for any axis flag it consumes
-    // (e.g. pareto-sweep's `--concurrency 1,4` list).
+    // the base authoring inputs with a single (non-sweep) value for any axis flag it
+    // consumes (e.g. pareto-sweep's `--concurrency 1,4` list).
     let mut base_flags = flags.clone();
     base_flags.concurrency = Some("1".to_string());
-    let base = load::resolve(&base_flags)?;
+    let base_inputs = load::resolve_inputs(&base_flags)?;
 
     let mut cells = Vec::with_capacity(recipe.variations.len());
     for v in &recipe.variations {
-        let mut run = base.clone();
-        // Mutate the built cfg at each recipe axis (concurrency / isl / osl scalar).
-        let mut cfg = serde_json::to_value(&run.cfg)?;
+        // Override each recipe axis on the authoring inputs (concurrency / isl / osl
+        // scalar); the runtime resolves at `--execute`, and a CLI-side run is built
+        // purely for per-cell planning metadata + the parity oracle.
+        let mut inputs = base_inputs.clone();
         for (kind, value) in &v.overrides {
-            crate::search::apply_override(&mut cfg, *kind, *value);
+            crate::search::apply_override_inputs(&mut inputs, *kind, *value);
         }
-        run.cfg = serde_json::from_value(cfg)?;
+        let mut run = load::build(inputs.clone())?;
         let dir = crate::sweep::artifact_dir::resolve(
             &run.artifact_dir,
             true,
@@ -959,12 +1040,17 @@ pub fn plan_recipe_cells(
         }));
         run.random_seed = seed.seed(v.index);
         run.trial = 0;
-        run.artifact_dir = dir;
+        run.artifact_dir = dir.clone();
+        // Mirror the per-cell artifact dir + run seed onto the authoring inputs so the
+        // runtime's resolution reproduces the CLI-side run byte-for-byte.
+        inputs.artifact_dir = dir;
+        inputs.random_seed = seed.seed(v.index);
         cells.push(sweep_run::Cell {
             index: v.index,
             trial: 0,
             label: v.label.clone(),
             run,
+            inputs: Some(inputs),
         });
     }
     Ok(cells)
@@ -996,7 +1082,11 @@ pub fn plan_yaml_cells(
     let mut cells = Vec::with_capacity(variations.len());
     for v in &variations {
         let expanded = crate::expand::render_with_context(v.config.clone())?;
-        let mut run = yaml::resolve_expanded_value(expanded, artifact_dir.clone(), overrides)?;
+        // Build the authoring `Inputs` this cell ships on the wire (the runtime
+        // resolves at `--execute`), and resolve a CLI-side run purely for per-cell
+        // planning metadata (artifact dir base, sweep envelope, and the parity oracle).
+        let mut inputs = yaml::resolve_expanded_inputs(expanded, artifact_dir.clone(), overrides)?;
+        let mut run = load::build(inputs.clone())?;
         let dir = crate::sweep::artifact_dir::resolve(
             &run.artifact_dir,
             true,
@@ -1018,12 +1108,17 @@ pub fn plan_yaml_cells(
         }));
         run.random_seed = seed.seed(v.index);
         run.trial = 0;
-        run.artifact_dir = dir;
+        run.artifact_dir = dir.clone();
+        // Mirror the per-cell artifact dir + run seed onto the authoring inputs so the
+        // runtime's resolution reproduces the CLI-side run byte-for-byte.
+        inputs.artifact_dir = dir;
+        inputs.random_seed = seed.seed(v.index);
         cells.push(sweep_run::Cell {
             index: v.index,
             trial: 0,
             label: v.label.clone(),
             run,
+            inputs: Some(inputs),
         });
     }
     Ok(cells)
@@ -1038,8 +1133,10 @@ fn run_sweep(
     order: IterationOrder,
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
-    let disable_warmup = !flags.no_profile_run_disable_warmup_after_first
-        && flags.profile_run_disable_warmup_after_first;
+    let disable_warmup = !flags
+        .no_profile_run_disable_warmup_after_first
+        .unwrap_or(false)
+        && flags.profile_run_disable_warmup_after_first.unwrap_or(true);
     let cells = sweep_run::plan_cells(
         flags,
         expansion,
@@ -1055,11 +1152,13 @@ fn run_sweep(
 
 /// Resolve per-variation seed policy from sweep seed flags.
 pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
-    let consistent = flags.set_consistent_seed && !flags.no_set_consistent_seed;
+    let consistent =
+        flags.set_consistent_seed.unwrap_or(true) && !flags.no_set_consistent_seed.unwrap_or(false);
     let base = flags
         .random_seed
         .or_else(|| consistent.then_some(sweep_run::DEFAULT_SWEEP_SEED));
-    let same_seed = flags.parameter_sweep_same_seed && !flags.no_parameter_sweep_same_seed;
+    let same_seed = flags.parameter_sweep_same_seed.unwrap_or(false)
+        && !flags.no_parameter_sweep_same_seed.unwrap_or(false);
     sweep_run::SeedPolicy { base, same_seed }
 }
 
@@ -1114,7 +1213,13 @@ fn run_cells(
             total,
             cell.label,
         );
-        let terminal = run_benchmark_child(&cell.run, &runner, &child_pid)?;
+        // Every sweep/multi-run/recipe cell now carries authoring `Inputs`; the
+        // runtime resolves them at `--execute`. The CLI never lowers.
+        let inputs = cell.inputs.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("internal: sweep cell {} missing authoring inputs", cell.label)
+        })?;
+        let terminal =
+            run_benchmark_child_authoring(inputs, Some(&cell.run), &runner, &child_pid)?;
         outcomes.push(sweep::aggregate::CellOutcome {
             label: cell.label.clone(),
             values: cell.run.variation.clone(),
@@ -1145,4 +1250,200 @@ fn run_cells(
         tracing::warn!("{failed}/{total} sweep cells failed");
     }
     Ok(exit_code)
+}
+
+#[cfg(test)]
+mod authoring_wire_tests {
+    use aiperf_runtime::engine::protocol_v2::{BenchmarkRunWireV2, decode_execute_wire};
+
+    /// The authoring wire (`{"authoring": <Inputs>}`) that every profile path now
+    /// ships must resolve — through the runtime's shared
+    /// `aiperf_runtime::config::resolve::resolve` — to the same run the CLI would
+    /// build from the identical inputs. This pins the no-lower collapse: the CLI
+    /// never resolves before the child launch, the runtime does, and both project to
+    /// an identical `AuthoredRunSpecV2`.
+    #[test]
+    fn authoring_wire_matches_cli_resolved() {
+        // `resolve` builds the large `BenchmarkConfig` on the stack, which overflows
+        // the default test-thread stack; run the body on a generous one.
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(authoring_wire_matches_cli_resolved_body)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    fn authoring_wire_matches_cli_resolved_body() {
+        use crate::flags::ProfileFlags;
+
+        let args = [
+            "-m",
+            "mock-model",
+            "--url",
+            "http://localhost:8000",
+            "--endpoint-type",
+            "chat",
+            "--concurrency",
+            "4",
+            "--request-count",
+            "8",
+            "--isl",
+            "128",
+            "--osl",
+            "16",
+            "--streaming",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+        let flags = ProfileFlags::parse_from_args(&args).expect("parse flags");
+
+        let inputs = crate::load::resolve_inputs(&flags).expect("normalize inputs");
+        // The CLI-side resolved run is the oracle; the authoring wire the runtime
+        // decodes originates from the same normalized inputs.
+        let resolved = crate::load::build(inputs.clone()).expect("resolve run");
+        let resolved_bytes = serde_json::to_vec(&resolved).expect("serialize resolved run");
+        let authoring_bytes = serde_json::to_vec(&super::AuthoringWire {
+            authoring: &inputs,
+            sweep_id: None,
+            variation: None,
+            trial: 0,
+        })
+        .expect("serialize authoring wire");
+
+        // Oracle: the CLI-side resolved run projected directly onto the wire shape
+        // (the same projection the runner performs after decode).
+        let via_resolved = serde_json::from_slice::<BenchmarkRunWireV2>(&resolved_bytes)
+            .expect("decode resolved run")
+            .into_authored()
+            .expect("project resolved run");
+        let via_authoring = decode_execute_wire(&authoring_bytes)
+            .expect("decode authoring wire")
+            .into_authored()
+            .expect("project authoring run");
+
+        assert_eq!(
+            via_authoring.transport.id, via_resolved.transport.id,
+            "transport selection must match the CLI-side resolution"
+        );
+        assert_eq!(
+            via_authoring.workload.id, via_resolved.workload.id,
+            "workload selection must match the CLI-side resolution"
+        );
+        assert_eq!(
+            via_authoring.dispatch, via_resolved.dispatch,
+            "dispatch default must match the CLI-side resolution"
+        );
+        assert_eq!(
+            via_authoring.artifact_target, via_resolved.artifact_target,
+            "artifact target must match the CLI-side resolution"
+        );
+        // `benchmark_id` is a fresh UUID per `resolve` (random by design), so the two
+        // resolutions differ there; every other identity field must match.
+        assert_eq!(via_authoring.identity.label, via_resolved.identity.label);
+        assert_eq!(via_authoring.identity.trial, via_resolved.identity.trial);
+        assert_eq!(
+            via_authoring.identity.random_seed,
+            via_resolved.identity.random_seed
+        );
+    }
+
+    /// A search/recipe override applied to the authoring `Inputs` (the new no-lower
+    /// path) and then resolved must produce a byte-identical resolved `cfg` to the
+    /// old resolved-cfg override (`apply_override` on the built cfg). This pins the
+    /// conversion of the adaptive-search loops + recipe sweeps from resolved-cfg
+    /// mutation to authoring-scalar override.
+    #[test]
+    fn search_override_authoring_matches_resolved_cfg() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(search_override_authoring_matches_resolved_cfg_body)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    fn search_override_authoring_matches_resolved_cfg_body() {
+        use crate::flags::ProfileFlags;
+        use crate::search::{AxisKind, apply_override, apply_override_inputs};
+
+        let args = [
+            "-m",
+            "mock-model",
+            "--url",
+            "http://localhost:8000",
+            "--endpoint-type",
+            "chat",
+            "--concurrency",
+            "1",
+            "--request-count",
+            "8",
+            "--isl",
+            "128",
+            "--osl",
+            "16",
+            "--streaming",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+        let flags = ProfileFlags::parse_from_args(&args).expect("parse flags");
+        let base_inputs = crate::load::resolve_inputs(&flags).expect("normalize inputs");
+
+        // Every axis a search loop or recipe drives: profiling concurrency + isl/osl
+        // scalar. Each is applied both ways and the resolved cfg JSON must match.
+        for (kind, value) in [
+            (AxisKind::PhaseConcurrency, 137i64),
+            (AxisKind::IslScalar, 512),
+            (AxisKind::OslScalar, 300),
+        ] {
+            // Old path: resolve the base run, then mutate the resolved cfg JSON.
+            let base_run = crate::load::build(base_inputs.clone()).expect("resolve base run");
+            let mut old_cfg = serde_json::to_value(&base_run.cfg).expect("serialize base cfg");
+            apply_override(&mut old_cfg, kind, value);
+
+            // New path: override the authoring inputs, then resolve.
+            let mut inputs = base_inputs.clone();
+            apply_override_inputs(&mut inputs, kind, value);
+            let new_run = crate::load::build(inputs).expect("resolve overridden run");
+            let mut new_cfg = serde_json::to_value(&new_run.cfg).expect("serialize overridden cfg");
+
+            // `benchmark_id` is a fresh UUID per `resolve` (random by design), and the
+            // `input_config` echo is a reporting-only mirror of the authored config —
+            // the old resolved-cfg patch left it stale (it never patched the echo),
+            // while the new authoring path resolves it consistently. Strip both so the
+            // comparison pins the *executable* resolved config (phases/datasets/…),
+            // which must be byte-identical.
+            strip_keys(&mut old_cfg);
+            strip_keys(&mut new_cfg);
+
+            assert_eq!(
+                new_cfg, old_cfg,
+                "authoring override {kind:?}={value} must resolve to the same executable \
+                 cfg as the old resolved-cfg override"
+            );
+        }
+    }
+
+    /// Recursively remove `benchmark_id` (a random UUID per resolution) and the
+    /// `input_config` reporting echo so two independently-resolved cfgs compare on
+    /// their executable structure alone.
+    fn strip_keys(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("benchmark_id");
+                map.remove("input_config");
+                for v in map.values_mut() {
+                    strip_keys(v);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for v in items.iter_mut() {
+                    strip_keys(v);
+                }
+            }
+            _ => {}
+        }
+    }
 }

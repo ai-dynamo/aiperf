@@ -62,7 +62,17 @@ async fn test_online_graph_terminal_reports_run_metadata() {
                     "type": "chat",
                     "urls": [format!("{}/v1/chat/completions", h.mock.url)],
                     "streaming": true,
+                    "use_legacy_max_tokens": false,
                     "use_server_token_count": true,
+                    "timeout_seconds": 21600.0,
+                    "connection_reuse": "pooled",
+                    "ssl_verify": true,
+                    "connection_limit": 2500,
+                    "keepalive_timeout": 300.0,
+                    "download_video_content": false,
+                    "extra": {},
+                    "headers": {},
+                    "http2": false,
                     "wait_for_model_timeout": 0.0,
                     "wait_for_model_interval": 5.0,
                     "wait_for_model_mode": "inference"
@@ -71,6 +81,7 @@ async fn test_online_graph_terminal_reports_run_metadata() {
                     "type": "file",
                     "format": "dag_jsonl",
                     "sampling": "sequential",
+                    "options": {},
                     "records": graph_rows()
                 }],
                 "tokenizer": {
@@ -83,11 +94,12 @@ async fn test_online_graph_terminal_reports_run_metadata() {
                     "type": "concurrency",
                     "name": "profiling",
                     "exclude_from_results": false,
+                    "seamless": false,
                     "sessions": 1,
                     "concurrency": 2
                 }],
                 "transport": {"type": "http"},
-                "runtime": {"workers": 2}
+                "runtime": {"workers": 2, "workers_min": null, "cells": 1}
             }
         }
     });

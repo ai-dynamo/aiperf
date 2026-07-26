@@ -64,10 +64,14 @@ model crosses the parent→child boundary unchanged.
 
 ## Future requirements
 
-The convergence target and its migration. None of this is built yet.
+The convergence target and its migration — all four steps are built on branch
+`ajc/config-model-unification`.
 
-**Target shape.** A leaf `aiperf-config` crate (both `aiperf-cli` and
-`aiperf-runtime` depend on it) owns:
+**Target shape.** An `aiperf_runtime::config` module (an always-compiled module
+in the runtime crate — `aiperf-cli` consumes it through its existing
+`aiperf-runtime` dependency, so no separate crate is introduced; a leaf crate was
+tried first and reverted because it bought no isolation cli didn't already have
+and forced a `DispatchMode` dependency cycle) owns:
 
 - `AiperfConfig` (envelope: `schema_version`, `benchmark`, `sweep`, `multi_run`,
   `variables`, `random_seed`).
@@ -94,20 +98,41 @@ unknown tag.
 
 **Migration (each step ships green):**
 
-1. **Unify the wire type.** Move `BenchmarkConfig`/`BenchmarkRun` to the shared
-   crate; the runtime deserializes that type. Delete the reshape, the `json!` blob,
+1. **Unify the wire type.** *(Built.)* Move `BenchmarkConfig`/`BenchmarkRun` into the
+   `aiperf_runtime::config` module; the runtime deserializes that type directly. Delete the reshape, the `json!` blob,
    the graph-guard, and the fragmented DTOs; replace with typed access +
    `workload_kind()`. Guard with wire round-trip tests (CLI serialize ==
    runtime deserialize, byte-identical). This step alone eliminates the
    `weka_semantics` bug class.
-2. **Collapse the producer front-end.** Delete `Inputs` and the two mappers +
-   imperative `build`. YAML deserializes directly into `BenchmarkConfig`; flags
-   become an override partial deep-merged then validated once. Hardcoded defaults
-   become serde model defaults.
-3. **One sweep plan.** Replace the three override mechanisms with
-   `build_benchmark_plan` over the typed model (dotted-path apply, alpha-sorted
-   keys, `base+N` seed derivation). Adaptive search stays a runtime ask-tell loop.
-4. **Validators as offline passes.** Port the raise-only cross-field invariants
+2. **Collapse the producer front-end.** *(Built via the no-lower architecture.)*
+   The CLI no longer lowers: `Inputs`, `build`, `phase_validate`, and `redact` moved
+   into `aiperf_runtime::config::resolve` (`pub fn resolve(Inputs) -> BenchmarkRun`).
+   The `--execute` wire carries the authoring `Inputs` (`{"authoring": <Inputs>}`);
+   `decode_execute_wire` resolves it in the runtime before `into_authored`. Every
+   profile path — single run, flag sweep, YAML sweep, the four adaptive search
+   loops, recipe sweeps — ships authoring `Inputs`; the resolved-wire sender and
+   branch were deleted. This mirrors Python (runner resolves; the two authoring
+   constructors, flags→`Inputs` and YAML→`Inputs`, remain, as Python keeps
+   `convert_cli_to_aiperf` + `load_config`). Behavioral A/B parity vs base was
+   proven byte-identical for single, sweep, recipe, and adaptive runs against the
+   mock server (only non-deterministic timing/ids differ); it also fixed a latent
+   bug where the resolved-cfg patch left the `input_config` echo stale.
+3. **One sweep plan.** *(Built.)* All sweep/search override mechanisms are unified
+   onto the authoring layer: `search::apply_override_inputs` sets the swept axis on
+   the authoring `Inputs` (correct pre-resolution — resolution then expands scalars
+   like `isl:128` to a Distribution), and every sweep/search path ships that
+   authoring `Inputs` for the runtime to resolve, retiring the three prior
+   `Value`/`ProfileFlags`/resolved-cfg mutation mechanisms. The typed
+   `build_benchmark_plan` grid/zip/magic-list seam remains available. Adaptive
+   search stays a runtime ask-tell loop.
+4. **Validators as offline passes.** *(Built: nine raise-only invariants ported to
+   `config::validate` — the seven cross-field checks plus `cache_bust_compatibility`
+   (full) and `agentic_cache_warmup` (no-scenario branch; the scenario branch needs a
+   runtime scenario-registry `timing_mode` lookup with no config-time representation,
+   as in Python, so it defers). The authored `timing_mode`/`cache_bust` fields were
+   added to the typed model, skip-serialized so the wire stays byte-identical.)*
+   Port the raise-only
+   cross-field invariants
    (phase↔dataset compatibility, prefill⇒streaming, cache-bust, agentic-warmup) as
    validate-time functions; keep the mutating ones (tokenizer/seed defaults) as
    resolution passes; wire `aiperf config validate` to run them offline.

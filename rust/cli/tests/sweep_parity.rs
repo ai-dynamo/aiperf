@@ -12,6 +12,22 @@ fn load_golden(name: &str) -> serde_json::Value {
     serde_json::from_slice(&bytes).expect("golden json")
 }
 
+/// When `AIPERF_UPDATE_SWEEP_GOLDEN=1`, tests regenerate the golden JSON from the
+/// current branch's computed cells instead of asserting against it. The regenerated
+/// structure mirrors exactly the fields the assertions read back
+/// (`{cells:[{label,artifact_dir,random_seed,trial,request:{run:{...}}}], trials}`),
+/// so a fresh `cargo test` run reads self-consistent goldens.
+fn regen_enabled() -> bool {
+    std::env::var("AIPERF_UPDATE_SWEEP_GOLDEN").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
+fn write_golden(name: &str, value: &serde_json::Value) {
+    let path = format!("../../tools/parity/sweep_golden/{name}.json");
+    let mut s = serde_json::to_string_pretty(value).expect("serialize golden");
+    s.push('\n');
+    std::fs::write(&path, s).unwrap_or_else(|e| panic!("write {path}: {e}"));
+}
+
 fn fixture_args(name: &str) -> Vec<String> {
     let path = format!("../../tools/parity/fixtures/{name}.args");
     std::fs::read_to_string(&path)
@@ -36,9 +52,6 @@ const MULTI_FIXTURES: &[(&str, sweep::SweepType, u32)] = &[
 #[test]
 fn sweep_cells_match_oracle() {
     for (name, sweep_type) in SWEEP_FIXTURES {
-        let golden = load_golden(name);
-        let cells_g = golden["cells"].as_array().expect("cells array");
-
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
         let expansion =
@@ -57,6 +70,25 @@ fn sweep_cells_match_oracle() {
             load::resolve,
         )
         .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+
+        if regen_enabled() {
+            let cells_json: Vec<_> = cells
+                .iter()
+                .map(|cell| {
+                    serde_json::json!({
+                        "label": cell.label,
+                        "artifact_dir": cell.run.artifact_dir.to_str().unwrap(),
+                        "random_seed": cell.run.random_seed,
+                        "request": { "run": serde_json::to_value(&cell.run).unwrap() },
+                    })
+                })
+                .collect();
+            write_golden(name, &serde_json::json!({ "cells": cells_json }));
+            continue;
+        }
+
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
 
         assert_eq!(
             cells.len(),
@@ -95,9 +127,6 @@ fn sweep_cells_match_oracle() {
 
 #[test]
 fn yaml_sweep_cells_match_oracle() {
-    let golden = load_golden("sweep_yaml");
-    let cells_g = golden["cells"].as_array().expect("cells array");
-
     let path = std::path::Path::new("../../tools/parity/configs/sweep_dist.yaml");
     let mut base = aiperf_cli::yaml::read_env_substituted(path).expect("read config");
     let sweep = aiperf_cli::sweep::yaml_sweep::parse(&base)
@@ -112,6 +141,25 @@ fn yaml_sweep_cells_match_oracle() {
         None,
     )
     .expect("plan yaml cells");
+
+    if regen_enabled() {
+        let cells_json: Vec<_> = cells
+            .iter()
+            .map(|cell| {
+                serde_json::json!({
+                    "label": cell.label,
+                    "artifact_dir": cell.run.artifact_dir.to_str().unwrap(),
+                    "random_seed": cell.run.random_seed,
+                    "request": { "run": serde_json::to_value(&cell.run).unwrap() },
+                })
+            })
+            .collect();
+        write_golden("sweep_yaml", &serde_json::json!({ "cells": cells_json }));
+        return;
+    }
+
+    let golden = load_golden("sweep_yaml");
+    let cells_g = golden["cells"].as_array().expect("cells array");
 
     assert_eq!(cells.len(), cells_g.len(), "cell count");
     let modeled = [
@@ -149,8 +197,6 @@ fn search_recipe_cells_match_oracle() {
         "recipe_pareto",
         "recipe_maxconc",
     ] {
-        let golden = load_golden(name);
-        let cells_g = golden["cells"].as_array().expect("cells array");
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
         let recipe = aiperf_cli::search::expand_recipe(&flags)
@@ -158,6 +204,24 @@ fn search_recipe_cells_match_oracle() {
             .expect("recipe present");
         let cells = aiperf_cli::profile::plan_recipe_cells(&flags, &recipe, "parity-sweep")
             .unwrap_or_else(|e| panic!("[{name}] plan_recipe_cells: {e}"));
+
+        if regen_enabled() {
+            let cells_json: Vec<_> = cells
+                .iter()
+                .map(|cell| {
+                    serde_json::json!({
+                        "label": cell.label,
+                        "random_seed": cell.run.random_seed,
+                        "request": { "run": serde_json::to_value(&cell.run).unwrap() },
+                    })
+                })
+                .collect();
+            write_golden(name, &serde_json::json!({ "cells": cells_json }));
+            continue;
+        }
+
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
         assert_eq!(cells.len(), cells_g.len(), "[{name}] cell count");
         let modeled = ["phases", "datasets", "endpoint", "models"];
         for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
@@ -182,8 +246,6 @@ fn search_recipe_cells_match_oracle() {
 #[test]
 fn seed_knob_cells_match_oracle() {
     for name in ["sweep_sameseed", "sweep_noseed"] {
-        let golden = load_golden(name);
-        let cells_g = golden["cells"].as_array().expect("cells array");
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
         let expansion = sweep::expand(&flags, sweep::SweepType::Grid)
@@ -199,6 +261,25 @@ fn seed_knob_cells_match_oracle() {
             load::resolve,
         )
         .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+
+        if regen_enabled() {
+            let cells_json: Vec<_> = cells
+                .iter()
+                .map(|cell| {
+                    serde_json::json!({
+                        "label": cell.label,
+                        "artifact_dir": cell.run.artifact_dir.to_str().unwrap(),
+                        "random_seed": cell.run.random_seed,
+                        "request": { "run": serde_json::to_value(&cell.run).unwrap() },
+                    })
+                })
+                .collect();
+            write_golden(name, &serde_json::json!({ "cells": cells_json }));
+            continue;
+        }
+
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
         for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
             assert_eq!(
                 cell.run.random_seed,
@@ -212,14 +293,6 @@ fn seed_knob_cells_match_oracle() {
 #[test]
 fn multi_run_cells_match_oracle() {
     for (name, sweep_type, trials) in MULTI_FIXTURES {
-        let golden = load_golden(name);
-        let cells_g = golden["cells"].as_array().expect("cells array");
-        assert_eq!(
-            golden["trials"].as_u64(),
-            Some(*trials as u64),
-            "[{name}] golden trials",
-        );
-
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
         let expansion =
@@ -238,6 +311,34 @@ fn multi_run_cells_match_oracle() {
             load::resolve,
         )
         .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+
+        if regen_enabled() {
+            let cells_json: Vec<_> = cells
+                .iter()
+                .map(|cell| {
+                    serde_json::json!({
+                        "label": cell.label,
+                        "trial": cell.trial,
+                        "artifact_dir": cell.run.artifact_dir.to_str().unwrap(),
+                        "random_seed": cell.run.random_seed,
+                        "request": { "run": serde_json::to_value(&cell.run).unwrap() },
+                    })
+                })
+                .collect();
+            write_golden(
+                name,
+                &serde_json::json!({ "trials": trials, "cells": cells_json }),
+            );
+            continue;
+        }
+
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
+        assert_eq!(
+            golden["trials"].as_u64(),
+            Some(*trials as u64),
+            "[{name}] golden trials",
+        );
 
         assert_eq!(
             cells.len(),

@@ -56,6 +56,23 @@ fn message_json(m: &ChatMessage) -> Value {
 /// `messages` is the full accumulated chat prefix for this turn (the endpoint
 /// concatenates deltas at request time; here the caller passes the resolved
 /// prefix). `max_tokens` is the recorded output cap; `model` the mapped name.
+/// Build just the accumulated `messages` array value (role/content objects),
+/// applying the cache-bust marker to the first message with the same placement
+/// rule as [`chat_request_body`]. Used by the agentic composer to intern each
+/// per-turn delta as a message-array segment for the history-accumulating
+/// dispatch (so the runtime materializer concatenates deltas + live replies).
+pub(crate) fn chat_messages_array(messages: &[ChatMessage], cache_bust_marker: Option<&str>) -> Value {
+    let mut msgs: Vec<ChatMessage> = messages.to_vec();
+    if let (Some(marker), Some(first)) = (cache_bust_marker, msgs.first_mut()) {
+        if marker.starts_with('\n') {
+            first.content.push_str(marker);
+        } else {
+            first.content = format!("{marker}{}", first.content);
+        }
+    }
+    Value::Array(msgs.iter().map(message_json).collect())
+}
+
 pub fn chat_request_body(
     model: &str,
     messages: &[ChatMessage],
