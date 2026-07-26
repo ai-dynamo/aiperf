@@ -369,9 +369,31 @@ impl BenchmarkRunWireV2 {
         let dataset = serde_json::to_value(&dataset)
             .map_err(|error| anyhow!("run.cfg.datasets[0]: {error}"))?;
         let workload_id = workload_kind.workload_id();
-        let transport_value = serde_json::to_value(&cfg.transport)
-            .map_err(|error| anyhow!("run.cfg.transport: {error}"))?;
-        let transport = component_from_inline(transport_value, "run.cfg.transport")?;
+        // Build the transport component from the typed `Transport`: the id comes
+        // from the typed `canonical_id()` (no string extraction that could drift
+        // from the variant), and the factory-owned config is the serialized body
+        // minus the `type` tag. Built-in ids decode typed downstream; the plugin
+        // tail keeps the config opaque.
+        let transport = match &cfg.transport {
+            Some(transport) => {
+                let id: ComponentId = transport
+                    .canonical_id()
+                    .parse()
+                    .map_err(|error: String| anyhow!("run.cfg.transport.type: {error}"))?;
+                let mut object = serde_json::to_value(transport)
+                    .map_err(|error| anyhow!("run.cfg.transport: {error}"))?
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("run.cfg.transport must be an object"))?;
+                object.remove("type");
+                NamedRunnerComponentSpecV2 {
+                    id,
+                    config: raw_value(Value::Object(object))?,
+                }
+            }
+            // Preserve the prior "transport must be an object" failure when unset.
+            None => component_from_inline(Value::Null, "run.cfg.transport")?,
+        };
         // Re-serialize the typed runtime policy so the worker-count and dispatch
         // resolution keep reading the same wire shape (`Null` when unset).
         let runtime = serde_json::to_value(&cfg.runtime)
