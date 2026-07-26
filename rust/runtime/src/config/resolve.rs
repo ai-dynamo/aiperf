@@ -246,6 +246,12 @@ pub struct Inputs {
     pub scenario: Option<String>,
     /// WEKA reconstruction semantics (`--weka-semantics`; legacy|graph-ir).
     pub weka_semantics: Option<String>,
+    /// Ignore recorded trace inter-message/inter-request delays for graph-ir runs
+    /// (`--ignore-trace-delays`): fire every node as soon as its inputs are ready.
+    pub ignore_trace_delays: bool,
+    /// Whether `--ignore-trace-delays` was explicitly set (distinguishes user
+    /// intent from the default for the scenario guard).
+    pub ignore_trace_delays_explicit: bool,
     /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
     pub trajectory_start_min_ratio: f64,
     /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
@@ -663,9 +669,16 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 serde_json::json!(inputs.fixed_schedule.is_some()),
             );
         }
+        // Cap the loaded corpus only when an entry count was set explicitly
+        // (`inputs.dataset_entries`, `None` when unset). The `DEFAULT_ENTRIES`
+        // fallback in `inputs.entries` is a *synthetic* default (how many prompts
+        // to generate); applying it here silently truncated a recorded/public
+        // corpus to 100. Unset now means "load the full dataset" — the loader
+        // caps at whatever the corpus actually holds. Matches the HF-direct path
+        // above, which already uses `inputs.dataset_entries`.
         if let Some(max) = crate::config::model::public_catalog::max_conversations(
             meta,
-            Some(inputs.entries),
+            inputs.dataset_entries,
             inputs.request_count,
         ) {
             options.insert("max_conversations".to_string(), serde_json::json!(max));
@@ -1081,6 +1094,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         failure_policy: None,
         scenario: inputs.scenario.clone(),
         weka_semantics,
+        ignore_trace_delays: inputs.ignore_trace_delays,
         trajectory_start_max_ratio: inputs.trajectory_start_max_ratio,
         trajectory_start_min_ratio: inputs.trajectory_start_min_ratio,
         unsafe_override: inputs.unsafe_override,
@@ -1194,8 +1208,8 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
         streaming: inputs.streaming,
         streaming_explicit: inputs.streaming,
         ignore_eos,
-        ignore_trace_delays: false,
-        ignore_trace_delays_explicit: false,
+        ignore_trace_delays: inputs.ignore_trace_delays,
+        ignore_trace_delays_explicit: inputs.ignore_trace_delays_explicit,
         loader,
         cache_bust: None,
         cache_bust_explicit: false,
