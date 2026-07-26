@@ -56,7 +56,7 @@ pub fn slice_trajectories_at_tstar(
     idle_gap_cap_ms: Option<f64>,
 ) -> Vec<ReconstructedConversation> {
     use crate::agentx::trajectory_source::{
-        capped_warmup_lead_ms, next_turn_index_at_or_after, seed_for_trace,
+        capped_warmup_lead_ms, next_turn_index_at_or_after, seed_for_trace_lane,
         timestamped_t_star_ms,
     };
     use std::collections::BTreeMap;
@@ -73,9 +73,9 @@ pub fn slice_trajectories_at_tstar(
 
     let mut out = Vec::new();
     for (_tree_index, (scope, members)) in trees.into_iter().enumerate() {
-        // One t* for the whole tree, sampled from the ROOT's recorded turn span.
-        // Seed on the root trace id only (Python `_seed_for_trace(random_seed,
-        // root_id)`) so the sampled instant byte-matches the oracle's per-trace t*.
+        // One t* for the whole tree, sampled over ALL tree members' warped turn
+        // timestamps (Python `_trace_time_bounds` spans every conversation in the
+        // trace, not just the root), seeded on the root id.
         let root_id = members
             .iter()
             .find(|c| c.parent_conversation_id.is_none())
@@ -83,16 +83,18 @@ pub fn slice_trajectories_at_tstar(
             .unwrap_or_else(|| scope.clone());
         let root_ts: Vec<f64> = members
             .iter()
-            .find(|c| c.parent_conversation_id.is_none())
-            .map(|r| r.turns.iter().filter_map(|t| t.timestamp_ms).collect())
-            .unwrap_or_default();
+            .flat_map(|c| c.turns.iter().filter_map(|t| t.timestamp_ms))
+            .collect();
         let t_star = if root_ts.is_empty() {
             0.0
         } else {
             let mn = root_ts.iter().copied().fold(f64::INFINITY, f64::min);
             let mx = root_ts.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let dur = mx - mn;
-            let seed = seed_for_trace(base_seed, &root_id);
+            // The oracle samples the primary trajectory with lane_index 0
+            // (`_seed_for_trace_lane(random_seed, root_id, 0)`), NOT the bare
+            // per-trace seed — matching the wrap-fill lane machinery.
+            let seed = seed_for_trace_lane(base_seed, &root_id, 0);
             timestamped_t_star_ms(seed, mn + start_min_ratio * dur, mn + start_max_ratio * dur)
         };
 
