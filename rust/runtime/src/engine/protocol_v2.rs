@@ -64,7 +64,11 @@ impl FromStr for ComponentId {
     type Err = String;
 
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        let mut bytes = value.bytes();
+        // Normalize case and `-`→`_` through the shared seam (spec: every
+        // discriminant matches Python's `_normalize_name`), then enforce the
+        // strict runner-id grammar on the normalized form.
+        let normalized = crate::extensions::normalize_ident(value);
+        let mut bytes = normalized.bytes();
         let Some(first) = bytes.next() else {
             return Err("runner component ID cannot be empty".into());
         };
@@ -78,7 +82,7 @@ impl FromStr for ComponentId {
                 "runner component ID {value:?} may contain only lowercase ASCII letters, digits, and underscores"
             ));
         }
-        Ok(Self(value.to_owned()))
+        Ok(Self(normalized))
     }
 }
 
@@ -1336,11 +1340,25 @@ mod tests {
     }
 
     #[test]
-    fn component_ids_are_open_but_wire_safe() {
+    fn component_ids_are_open_normalized_and_wire_safe() {
+        // Canonical forms round-trip unchanged.
         for valid in ["http", "acme_zmq4", "x"] {
             assert_eq!(valid.parse::<ComponentId>().unwrap().as_str(), valid);
         }
-        for invalid in ["", " Online_http", "Online", "a-b", "a.b", "a/b"] {
+        // Non-canonical spellings normalize (trim + lowercase + `-`→`_`) rather
+        // than being rejected — the discriminant follows Python's
+        // `_normalize_name` convention.
+        for (input, normalized) in [
+            (" Online_http", "online_http"),
+            ("Online", "online"),
+            ("a-b", "a_b"),
+            ("DYNOSIM-OFFLINE", "dynosim_offline"),
+        ] {
+            assert_eq!(input.parse::<ComponentId>().unwrap().as_str(), normalized);
+        }
+        // Structurally invalid ids (empty, or characters no fold can rescue)
+        // still fail closed.
+        for invalid in ["", "   ", "a.b", "a/b", "1abc"] {
             assert!(invalid.parse::<ComponentId>().is_err(), "{invalid:?}");
         }
     }
