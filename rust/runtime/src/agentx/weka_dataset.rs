@@ -152,16 +152,21 @@ pub fn slice_trajectories_at_tstar(
     out
 }
 
-/// Flatten the strict-append per-turn deltas of `turns` into the full accumulated
-/// OpenAI message array (`user0, asst0, user1, asst1, … user_k`). Weka multi-turn
-/// deltas strictly append (one assistant reply + one user message per turn), so
-/// concatenation reproduces the recorded conversation prefix — the back-seeded
-/// history the Python oracle sends on resume.
+/// Flatten the per-turn deltas of `turns` into the full accumulated OpenAI
+/// message array, exactly as the dispatch accumulator would: a turn whose delta
+/// carries `reset_context` REPLACES the accumulated prefix (a full re-emission),
+/// otherwise its delta appends. Naive concatenation would duplicate a re-emitted
+/// context block and corrupt the role alternation, so honor the reset here — this
+/// reproduces the recorded conversation prefix the Python oracle back-seeds.
 fn flatten_prefix(turns: &[ReconstructedTurn]) -> Vec<crate::agentx::synth::ChatMessage> {
-    turns
-        .iter()
-        .flat_map(|t| t.raw_messages.iter().cloned())
-        .collect()
+    let mut acc: Vec<crate::agentx::synth::ChatMessage> = Vec::new();
+    for t in turns {
+        if t.reset_context {
+            acc.clear();
+        }
+        acc.extend(t.raw_messages.iter().cloned());
+    }
+    acc
 }
 
 /// Session-id suffix marking a warmup-phase conversation (turn n-1 prime). The
