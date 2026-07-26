@@ -1280,12 +1280,13 @@ pub(crate) fn resolve_hop_routing(
 /// cache-bust target in `lower_legacy_agentic`, so it never consulted `inputs`.
 /// The graph-ir path instead composes its wire body from `inputs.extra`
 /// (`ignore_eos` reaches the payload only through `endpoint.extra` -> `merge_extra`)
-/// and derives its phase list + `t*` snapshot from `inputs` (a `"warmup"` phase
-/// plus the recorded-graph synthesis block). Without this step a
-/// `--scenario inferencex-agentx-mvp --weka-semantics graph-ir` run drops
-/// `ignore_eos` from the body and runs a single unprimed profiling phase (no `t*`
-/// warmup barrier). Idempotent and conservative: only fills values the user left
-/// unset, so `resolve_scenario_outcome`'s explicit-conflict checks still fire.
+/// and derives its phase list + `t*` snapshot from `inputs` (an unbound
+/// AgentX lane-prime `"warmup"` phase plus the recorded-graph synthesis block).
+/// Without this step a `--scenario inferencex-agentx-mvp --weka-semantics graph-ir`
+/// run drops `ignore_eos` from the body and runs a single unprimed profiling
+/// phase (no `t*` lane-prime warmup barrier). Idempotent and conservative: only
+/// fills values the user left unset, so `resolve_scenario_outcome`'s
+/// explicit-conflict checks still fire.
 #[cfg(feature = "agentx")]
 fn apply_scenario_graph_locks(
     inputs: &mut Inputs,
@@ -1317,10 +1318,12 @@ fn apply_scenario_graph_locks(
         inputs.trajectory_start_min_ratio = min;
         inputs.trajectory_start_max_ratio = max;
         apply_scenario_synthesis(inputs, &spec, min, max)?;
-        // Author a prime-once/drain warmup barrier (excluded from results). With
-        // no request/session/duration bound the graph runtime fires each trace's
-        // `t*`-primed plan exactly once and drains, mirroring the legacy warmup
-        // phase. Only synthesize when the user has not authored their own warmup.
+        // Author an AgentX lane-prime warmup barrier (excluded from results).
+        // Unbound (no request/session/duration) under the scenario t* window
+        // warms only `concurrency` in-flight lanes at the turn before t*, then
+        // hands those lanes into profiling — matching legacy AgentX warmup, not
+        // a full-corpus one-pass. Only synthesize when the user has not authored
+        // their own warmup.
         if inputs.warmup.is_none() {
             inputs.warmup = Some(Warmup {
                 concurrency: inputs.concurrency,

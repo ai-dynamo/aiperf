@@ -115,14 +115,16 @@ pub(crate) fn validate_graph_phases(phases: &[PhaseSpec]) -> Result<()> {
         );
         let common = phase.common();
         // Seamless profiling can consume the handoff slot before warmup finalizes.
+        // Both extended cache-pressure and AgentX lane-prime stash a handoff.
         if common.name == "warmup"
-            && common.agentic_cache_warmup_duration.is_some()
+            && (common.agentic_cache_warmup_duration.is_some() || is_unbound_warmup(common))
             && phase_seamless_to_next(phases, phase_index)
         {
             bail!(
-                "graph phase {phase_index}: cache-pressure warmup (agentic_cache_warmup_duration) \
-                 cannot be seamless into profiling: the warmup->profiling handoff requires the \
-                 warmup drain to complete before profiling prepares"
+                "graph phase {phase_index}: warmup that produces a lane handoff \
+                 (agentic_cache_warmup_duration or unbound t*-prime) cannot be seamless into \
+                 profiling: the warmup->profiling handoff requires the warmup drain to complete \
+                 before profiling prepares"
             );
         }
         ensure!(
@@ -374,24 +376,50 @@ struct PressureTemplate {
     original_plan: GraphTracePlan,
 }
 
-/// Prepared warmup cache-pressure recycle inputs, carried on the warmup
+/// Prepared warmup lane-driver inputs, carried on the warmup
 /// [`PreparedGraphPhase`] until the phase execution binds a placement + progress.
 ///
-/// Present only when the warmup phase carried `agentic_cache_warmup_duration`
-/// (`Some`); `None` leaves the warmup on the unchanged single-pass workload path.
+/// Present when the warmup phase carries `agentic_cache_warmup_duration` (extended
+/// cache-pressure recycle) **or** when it is an unbound AgentX lane-prime barrier
+/// under an active `t*` window. `None` leaves the warmup on the single-pass
+/// workload path (full-corpus one-pass without a `t*` window).
 struct PreparedPressureRecycle {
     templates: Rc<Vec<PressureTemplate>>,
     /// Clock-driven pressure budget in nanoseconds (`cache_pressure_duration`).
+    /// Zero for lane-prime (`prime_once`), which stops after the first instance.
     duration_ns: i64,
     /// Requested concurrent lane count (the CONCURRENCY_BURST warmup width).
     lane_target: usize,
-    /// `--num-conversations` lane clamp, if any (absent for the auto warmup).
+    /// `--num-conversations` lane clamp, if any; lane-prime sets this to concurrency.
     session_limit: Option<u64>,
     /// Whether an explicit phase stop condition exists (governs the corpus
-    /// lane clamp in [`pressure_resolve_lane_count`]); false for the auto warmup.
+    /// lane clamp in [`pressure_resolve_lane_count`]); false for unbound warmups.
     recycle_bounded: bool,
     /// Trajectory-start window for each recycle lane's salted `t*`.
     t_star: TStarWindow,
+    /// AgentX lane-prime: each lane runs exactly one pass-0 instance then stops
+    /// (no duration recycle). Extended cache-pressure sets this `false`.
+    prime_once: bool,
+}
+
+/// True when the authored warmup has no request/session/duration/
+/// `agentic_cache_warmup_duration` bound (scenario auto-injected barrier shape).
+fn is_unbound_warmup(common: &PhaseCommonSpec) -> bool {
+    common.name == "warmup"
+        && common.sessions.is_none()
+        && common.requests.is_none()
+        && common.duration.is_none()
+        && common.agentic_cache_warmup_duration.is_none()
+}
+
+/// True when an unbound warmup should run AgentX lane-prime semantics: warm only
+/// `concurrency` in-flight lanes at the turn before `t*`, then hand off.
+///
+/// Requires an active trajectory-start window (`[0,0]` disables `t*` and keeps
+/// the legacy full-corpus one-pass workload path).
+fn is_lane_prime_warmup(common: &PhaseCommonSpec, t_star: TStarWindow) -> bool {
+    is_unbound_warmup(common)
+        && (t_star.start_min_ratio != 0.0 || t_star.start_max_ratio != 0.0)
 }
 
 /// Strategy-aware corpus draw shared by pressure and profiling recycle.
@@ -612,6 +640,8 @@ fn plan_trace_duration_us(plan: &GraphTracePlan) -> f64 {
 ///
 /// Each lane repeatedly draws from one corpus cursor until the injected Clock
 /// reaches the deadline. Terminal returns are attributed through the lane ledger.
+/// With [`PreparedPressureRecycle::prime_once`], each lane stops after its first
+/// pass-0 instance (AgentX lane-prime barrier).
 struct GraphPressureRecycle {
     clock: Rc<dyn Clock>,
     placement: Rc<dyn TracePlacement>,
@@ -626,6 +656,8 @@ struct GraphPressureRecycle {
     cancelled: Rc<Cell<bool>>,
     /// Number of pass-0 lanes launched; zero before execution.
     pressure_lane_count: Cell<u64>,
+    /// Stop each lane after its first instance (lane-prime; no recycle).
+    prime_once: bool,
 }
 
 impl GraphPressureRecycle {
@@ -676,6 +708,7 @@ impl GraphPressureRecycle {
             let draw = draw.clone();
             let done_tx = done_tx.clone();
             let t_star = self.t_star;
+            let prime_once = self.prime_once;
             let lane = lane_index as u64;
             tokio::task::spawn_local(async move {
                 let mut template_index = start_template;
@@ -728,7 +761,11 @@ impl GraphPressureRecycle {
                         Err(TraceError::Cancelled(_)) => {}
                         Err(_) => consecutive_errors = consecutive_errors.saturating_add(1),
                     }
-                    if cancelled.get() || cancelled_return || clock.now_ns() >= deadline_ns {
+                    if prime_once
+                        || cancelled.get()
+                        || cancelled_return
+                        || clock.now_ns() >= deadline_ns
+                    {
                         break;
                     }
                     if consecutive_errors > 0 {
@@ -1111,10 +1148,10 @@ struct GraphPhaseExecution {
     drain_stop: Rc<GraphRecordDrainStop>,
     drain_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
     setup_error: Option<String>,
-    /// Warmup cache-pressure recycle, `Some` only for a warmup phase carrying
-    /// `agentic_cache_warmup_duration`. When present, [`execute`](PhaseExecution::execute)
-    /// drives it in place of the single-pass workload and `stop_issuing` latches
-    /// its cancel; `None` leaves the byte-unchanged workload path.
+    /// Warmup lane driver (`agentic_cache_warmup_duration` recycle or AgentX
+    /// lane-prime). When present, [`execute`](PhaseExecution::execute) drives it
+    /// in place of the single-pass workload and `stop_issuing` latches its cancel;
+    /// `None` leaves the byte-unchanged workload path.
     pressure_recycle: Option<Rc<GraphPressureRecycle>>,
     /// Consume-once WARMUP -> PROFILING handoff slot, shared with the factory and
     /// every phase. A warmup phase with a pressure recycle STASHES a
@@ -1377,8 +1414,9 @@ impl PhaseExecution for GraphPhaseExecution {
                     "warmup phase recorded terminal trace failures; aborting before profiling",
                 ));
             }
-            // Stash a handoff only after every pressure return completes without
+            // Stash a handoff only after every lane return completes without
             // failure; an incomplete ledger could refire server-executed nodes.
+            // Both extended cache-pressure and AgentX lane-prime install a recycle.
             if progress.is_warmup
                 && let Some(recycle) = &pressure_recycle
                 && progress.traces.borrow().is_empty()
@@ -1503,6 +1541,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
                 t_star: prepared_pressure.t_star,
                 cancelled: Rc::new(Cell::new(false)),
                 pressure_lane_count: Cell::new(0),
+                prime_once: prepared_pressure.prime_once,
             })
         });
         Rc::new(GraphPhaseExecution {
@@ -1873,12 +1912,18 @@ fn prepare_graph_phase(
     phase_plans.retain(|plan| !plan.graph.nodes.is_empty());
     let one_pass =
         common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
-    let session_limit = if one_pass {
+    let lane_prime = is_lane_prime_warmup(common, t_star);
+    // Lane-prime bounds sessions to concurrency (N in-flight lanes). Unbound
+    // one-pass without an active t* window still covers the non-empty corpus once.
+    let session_limit = if lane_prime {
+        let concurrency = phase.concurrency().unwrap_or(1).max(1);
+        Some(u64::try_from(concurrency).context("graph concurrency exceeds u64")?)
+    } else if one_pass {
         Some(u64::try_from(phase_plans.len()).context("graph root count exceeds u64")?)
     } else {
         common.sessions
     };
-    // Cache-pressure warmup recycles the rewritten corpus for the configured duration.
+    // Cache-pressure recycle (duration) or AgentX lane-prime (unbound + t*).
     let pressure = build_pressure_recycle(&phase_plans, &input.plans, phase, common, t_star)
         .with_context(|| {
             format!("preparing warmup cache-pressure recycle for phase {phase_index}")
@@ -2017,7 +2062,7 @@ fn prepare_graph_phase(
     })
 }
 
-/// Build cache-pressure inputs for a duration-bounded warmup.
+/// Build lane-driver inputs for extended cache-pressure or AgentX lane-prime warmup.
 fn build_pressure_recycle(
     warmup_plans: &[GraphTracePlan],
     original_plans: &[GraphTracePlan],
@@ -2028,37 +2073,75 @@ fn build_pressure_recycle(
     if common.name != "warmup" {
         return Ok(None);
     }
-    let Some(duration_s) = common.agentic_cache_warmup_duration else {
+    let lane_target = phase.concurrency().unwrap_or(1).max(1);
+    if let Some(duration_s) = common.agentic_cache_warmup_duration {
+        ensure!(
+            duration_s.is_finite() && duration_s > 0.0,
+            "warmup agentic_cache_warmup_duration must be finite and positive"
+        );
+        let duration_ns = i64::try_from(seconds_to_u64_ns(duration_s)?)
+            .context("warmup cache-pressure duration in nanoseconds exceeds i64")?;
+        let templates = warmup_plans
+            .iter()
+            .zip(original_plans.iter())
+            .map(|(warmup_plan, original_plan)| PressureTemplate {
+                plan: warmup_plan.clone(),
+                template_id: warmup_plan.trace.id.clone(),
+                t_star_us: sample_plan_tstar(original_plan, t_star),
+                duration_us: plan_trace_duration_us(original_plan),
+                original_plan: original_plan.clone(),
+            })
+            .collect::<Vec<_>>();
+        // The pressure deadline does not make corpus recycling bounded.
+        let recycle_bounded =
+            common.duration.is_some() || common.requests.is_some() || common.sessions.is_some();
+        return Ok(Some(PreparedPressureRecycle {
+            templates: Rc::new(templates),
+            duration_ns,
+            lane_target,
+            session_limit: common.sessions,
+            recycle_bounded,
+            t_star,
+            prime_once: false,
+        }));
+    }
+    if !is_lane_prime_warmup(common, t_star) {
         return Ok(None);
-    };
-    ensure!(
-        duration_s.is_finite() && duration_s > 0.0,
-        "warmup agentic_cache_warmup_duration must be finite and positive"
-    );
-    let duration_ns = i64::try_from(seconds_to_u64_ns(duration_s)?)
-        .context("warmup cache-pressure duration in nanoseconds exceeds i64")?;
-    let templates = warmup_plans
+    }
+    // AgentX lane-prime: rebuild primes from the full corpus so empty t*
+    // snapshots drop without mis-zipping against filtered warmup plans.
+    let templates = original_plans
         .iter()
-        .zip(original_plans.iter())
-        .map(|(warmup_plan, original_plan)| PressureTemplate {
-            plan: warmup_plan.clone(),
-            template_id: warmup_plan.trace.id.clone(),
-            t_star_us: sample_plan_tstar(original_plan, t_star),
-            duration_us: plan_trace_duration_us(original_plan),
-            original_plan: original_plan.clone(),
+        .filter_map(|original_plan| {
+            let t_star_us = sample_plan_tstar(original_plan, t_star);
+            let parsed = single_trace_parsed(original_plan);
+            let rewritten = rewrite_for_warmup(&parsed, t_star_us);
+            if rewritten.graph.nodes.is_empty() {
+                return None;
+            }
+            Some(PressureTemplate {
+                plan: GraphTracePlan {
+                    graph: rewritten.graph,
+                    trace: original_plan.trace.clone(),
+                    arrival_offset_ns: original_plan.arrival_offset_ns,
+                },
+                template_id: original_plan.trace.id.clone(),
+                t_star_us,
+                duration_us: plan_trace_duration_us(original_plan),
+                original_plan: original_plan.clone(),
+            })
         })
         .collect::<Vec<_>>();
-    let lane_target = phase.concurrency().unwrap_or(1).max(1);
-    // The pressure deadline does not make corpus recycling bounded.
-    let recycle_bounded =
-        common.duration.is_some() || common.requests.is_some() || common.sessions.is_some();
     Ok(Some(PreparedPressureRecycle {
         templates: Rc::new(templates),
-        duration_ns,
+        duration_ns: 0,
         lane_target,
-        session_limit: common.sessions,
-        recycle_bounded,
+        // Bound live lanes to concurrency — not the corpus size.
+        session_limit: Some(u64::try_from(lane_target).context("graph concurrency exceeds u64")?),
+        // Clamp lanes to the spawnable corpus when wrap is disabled.
+        recycle_bounded: false,
         t_star,
+        prime_once: true,
     }))
 }
 
@@ -2707,7 +2790,7 @@ mod tests {
         let error = validate_graph_phases(&cache_pressure_warmup(true)).unwrap_err();
         let message = format!("{error:#}");
         assert!(
-            message.contains("cache-pressure warmup") && message.contains("seamless"),
+            message.contains("lane handoff") && message.contains("seamless"),
             "unexpected error: {message}"
         );
     }
@@ -4048,6 +4131,7 @@ mod tests {
             t_star: TStarWindow::default(),
             cancelled: Rc::new(Cell::new(false)),
             pressure_lane_count: Cell::new(0),
+            prime_once: false,
         });
         let run_recycle = recycle.clone();
         let outcome = crate::graph::runtime::drive_sim(sim, move |_handle| async move {
@@ -4088,36 +4172,232 @@ mod tests {
     }
 
     #[test]
-    fn build_pressure_recycle_engages_only_for_warmup_with_a_duration() {
+    fn build_pressure_recycle_engages_for_duration_or_lane_prime() {
         let plans = vec![pressure_one_node_plan("a"), pressure_one_node_plan("b")];
-        let window = TStarWindow::default();
+        let default_window = TStarWindow::default();
 
         let phase = warmup_pressure_phase(4, Some(2.0));
-        let prepared = build_pressure_recycle(&plans, &plans, &phase, phase.common(), window)
+        let prepared = build_pressure_recycle(&plans, &plans, &phase, phase.common(), default_window)
             .unwrap()
             .expect("warmup with cache-pressure duration engages the recycle");
         assert_eq!(prepared.lane_target, 4);
         assert_eq!(prepared.templates.len(), 2);
         assert_eq!(prepared.duration_ns, 2_000_000_000);
         assert!(!prepared.recycle_bounded);
+        assert!(!prepared.prime_once);
         assert!(prepared.templates.iter().all(|t| t.t_star_us == 0.0));
 
+        // Unbound warmup without a t* window stays on the one-pass workload path.
         let phase = warmup_pressure_phase(4, None);
         assert!(
-            build_pressure_recycle(&plans, &plans, &phase, phase.common(), window)
+            build_pressure_recycle(&plans, &plans, &phase, phase.common(), default_window)
                 .unwrap()
                 .is_none()
         );
+
+        // Unbound warmup + active t* window → AgentX lane-prime.
+        let active = TStarWindow {
+            start_min_ratio: 0.5,
+            start_max_ratio: 0.5,
+            random_seed: 0,
+            ..TStarWindow::default()
+        };
+        let chain = tstar_chain_plan();
+        let prepared = build_pressure_recycle(&chain, &chain, &phase, phase.common(), active)
+            .unwrap()
+            .expect("unbound warmup with t* window engages lane-prime");
+        assert!(prepared.prime_once);
+        assert_eq!(prepared.duration_ns, 0);
+        assert_eq!(prepared.lane_target, 4);
+        assert_eq!(prepared.session_limit, Some(4));
+        assert_eq!(prepared.templates.len(), 1);
+        assert!(!prepared.templates[0].plan.graph.nodes.is_empty());
 
         let mut profiling = warmup_pressure_phase(4, Some(2.0));
         if let PhaseSpec::Concurrency { common, .. } = &mut profiling {
             common.name = "profiling".into();
         }
         assert!(
-            build_pressure_recycle(&plans, &plans, &profiling, profiling.common(), window)
+            build_pressure_recycle(&plans, &plans, &profiling, profiling.common(), default_window)
                 .unwrap()
                 .is_none()
         );
+    }
+
+    fn multi_chain_plans(ids: &[&str]) -> Vec<GraphTracePlan> {
+        ids.iter()
+            .map(|id| {
+                let mut plan = tstar_chain_plan().remove(0);
+                plan.trace.id = (*id).to_owned();
+                plan
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lane_prime_c1_dispatches_one_root_session_and_stops() {
+        let sim = Rc::new(crate::clock::SimClock::new());
+        let clock: Rc<dyn crate::clock::Clock> = sim.clone();
+        let dispatched = Rc::new(RefCell::new(Vec::new()));
+        let placement: Rc<dyn crate::graph::execution::TracePlacement> =
+            Rc::new(RecycleClockPlacement {
+                clock: clock.clone(),
+                per_trace_ns: 40,
+                dispatched: dispatched.clone(),
+            });
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let ledger = Rc::new(GraphLaneLedger::default());
+        let progress = Rc::new(GraphPhaseProgress::new(
+            sink,
+            failures,
+            Rc::new(RefCell::new(GraphWorkloadReport::default())),
+            clock.clone(),
+            ledger.clone(),
+            true,
+            Rc::new(RefCell::new(Vec::new())),
+        ));
+        let window = TStarWindow {
+            start_min_ratio: 0.5,
+            start_max_ratio: 0.5,
+            random_seed: 0,
+            ..TStarWindow::default()
+        };
+        let phase = warmup_pressure_phase(1, None);
+        let plans = multi_chain_plans(&["a", "b", "c"]);
+        let prepared = build_pressure_recycle(&plans, &plans, &phase, phase.common(), window)
+            .unwrap()
+            .expect("lane-prime");
+        assert!(prepared.prime_once);
+        assert_eq!(prepared.session_limit, Some(1));
+        let recycle = Rc::new(GraphPressureRecycle {
+            clock: clock.clone(),
+            placement,
+            progress,
+            templates: prepared.templates,
+            duration_ns: prepared.duration_ns,
+            lane_target: prepared.lane_target,
+            session_limit: prepared.session_limit,
+            recycle_bounded: prepared.recycle_bounded,
+            t_star: prepared.t_star,
+            cancelled: Rc::new(Cell::new(false)),
+            pressure_lane_count: Cell::new(0),
+            prime_once: prepared.prime_once,
+        });
+        let run_recycle = recycle.clone();
+        let outcome = crate::graph::runtime::drive_sim(sim, move |_handle| async move {
+            run_recycle.run().await;
+        });
+        assert!(!outcome.deadlocked);
+        assert_eq!(recycle.pressure_lane_count.get(), 1);
+        assert_eq!(ledger.registered_lanes(), vec![0]);
+        assert_eq!(
+            dispatched.borrow().len(),
+            1,
+            "c=1 lane-prime must dispatch exactly one root session, got {:?}",
+            dispatched.borrow()
+        );
+        assert!(dispatched.borrow()[0].starts_with("a::"));
+    }
+
+    #[test]
+    fn lane_prime_c2_registers_two_lanes_and_builds_handoff() {
+        let sim = Rc::new(crate::clock::SimClock::new());
+        let clock: Rc<dyn crate::clock::Clock> = sim.clone();
+        let dispatched = Rc::new(RefCell::new(Vec::new()));
+        let placement: Rc<dyn crate::graph::execution::TracePlacement> =
+            Rc::new(RecycleClockPlacement {
+                clock: clock.clone(),
+                per_trace_ns: 40,
+                dispatched: dispatched.clone(),
+            });
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let ledger = Rc::new(GraphLaneLedger::default());
+        let progress = Rc::new(GraphPhaseProgress::new(
+            sink,
+            failures,
+            Rc::new(RefCell::new(GraphWorkloadReport::default())),
+            clock.clone(),
+            ledger.clone(),
+            true,
+            Rc::new(RefCell::new(Vec::new())),
+        ));
+        let window = TStarWindow {
+            start_min_ratio: 0.5,
+            start_max_ratio: 0.5,
+            random_seed: 0,
+            ..TStarWindow::default()
+        };
+        let phase = warmup_pressure_phase(2, None);
+        let plans = multi_chain_plans(&["a", "b", "c"]);
+        let prepared = build_pressure_recycle(&plans, &plans, &phase, phase.common(), window)
+            .unwrap()
+            .expect("lane-prime");
+        let recycle = Rc::new(GraphPressureRecycle {
+            clock: clock.clone(),
+            placement,
+            progress,
+            templates: prepared.templates,
+            duration_ns: prepared.duration_ns,
+            lane_target: prepared.lane_target,
+            session_limit: prepared.session_limit,
+            recycle_bounded: prepared.recycle_bounded,
+            t_star: prepared.t_star,
+            cancelled: Rc::new(Cell::new(false)),
+            pressure_lane_count: Cell::new(0),
+            prime_once: prepared.prime_once,
+        });
+        let run_recycle = recycle.clone();
+        let outcome = crate::graph::runtime::drive_sim(sim, move |_handle| async move {
+            run_recycle.run().await;
+        });
+        assert!(!outcome.deadlocked);
+        assert_eq!(recycle.pressure_lane_count.get(), 2);
+        assert_eq!(ledger.registered_lanes(), vec![0, 1]);
+        assert_eq!(dispatched.borrow().len(), 2);
+
+        // Simulate observed returns so the handoff carries executed-node sets.
+        let id0 = ledger.lane_identity(0).unwrap().instance_id;
+        let id1 = ledger.lane_identity(1).unwrap().instance_id;
+        ledger.observe_return(&id0, "n_0", 1.0);
+        ledger.observe_return(&id1, "n_0", 2.0);
+        let handoff = build_warmup_handoff(&ledger, recycle.pressure_lane_count.get(), 10.0);
+        assert_eq!(handoff.pressure_lane_count, 2);
+        assert_eq!(handoff.lanes.len(), 2);
+        assert_eq!(handoff.lanes[&0].instance_id, id0);
+        assert_eq!(handoff.lanes[&1].instance_id, id1);
+        assert!(handoff.lanes[&0].executed_node_ids.contains("n_0"));
+        assert!(handoff.lanes[&1].executed_node_ids.contains("n_0"));
+
+        // Profiling resume must reuse the warmup instance ids for marker continuity.
+        let profiling = serde_json::from_value::<PhaseSpec>(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "concurrency": 2,
+            "duration": 1.0,
+        }))
+        .unwrap();
+        let (resumes, _) = build_profiling_resume_lane_plans(
+            &plans,
+            &profiling,
+            window,
+            &handoff,
+            None,
+            true,
+        );
+        assert_eq!(resumes.len(), 2);
+        assert_eq!(resumes[0].resume_instance_id.as_deref(), Some(id0.as_str()));
+        assert_eq!(resumes[1].resume_instance_id.as_deref(), Some(id1.as_str()));
+        // Warmup-executed n_0 must not be re-dispatched on the resume frontier.
+        for resume in &resumes {
+            assert!(
+                !resume.plan.graph.nodes.contains_key("n_0"),
+                "resume must drop warmup-executed n_0; got {:?}",
+                plan_node_ids(&resume.plan)
+            );
+        }
     }
 
     #[test]

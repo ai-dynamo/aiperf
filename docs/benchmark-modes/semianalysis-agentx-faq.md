@@ -543,7 +543,9 @@ in-flight session's prefix is already cached on your server.
 
 ### Q: What exactly does the warmup phase send?
 For each in-flight session, the **single turn immediately before t\*** — enough to bring your
-server's cache to the state it would be in at t\*. Three details worth knowing:
+server's cache to the state it would be in at t\*. Concurrency `N` means `N` lanes, so warmup
+primes those `N` sessions only (legacy agentic-replay and `--weka-semantics graph-ir` share this
+lane-prime barrier; it is not a one-pass over every loaded trace). Three details worth knowing:
 
 - **Boundary timing.** In the default (spread) mode, warmup dispatches are timed so that **every
   session's t\* lands at the same instant** — the warmup-to-profiling boundary — so profiling begins

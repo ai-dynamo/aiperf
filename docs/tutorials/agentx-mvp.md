@@ -361,7 +361,10 @@ evolving (see the status note at the top).
 
 Before AIPerf measures anything, it runs a **warmup phase** that primes the
 server's KV cache. This isn't the generic AIPerf warmup — it's a
-trajectory-based warmup specific to the agentic-replay scheduler.
+trajectory-based warmup specific to the agentic-replay scheduler. The same
+lane-prime barrier applies under `--weka-semantics graph-ir`: concurrency `N`
+warms only the `N` in-flight lanes (turn before `t*`), then hands those lanes
+into profiling — not a one-pass over the whole loaded corpus.
 
 Here's the picture. You set `--concurrency 100`. The scheduler builds 100
 active trajectory lanes, drawing traces from the dataset sampler. Filling more
