@@ -469,14 +469,13 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // derives its composed wire body (from `inputs.extra`) and its t* warmup phase
     // (from `inputs.warmup` + the synthesis block) from `inputs`. Without this a
     // `--weka-semantics graph-ir` run under an agentic scenario silently drops
-    // `ignore_eos` from the body and runs a single unprimed profiling phase. A
-    // no-op without the `agentx` feature. Runs before `resolve_scenario_outcome`
-    // so the outcome report and its conflict checks see the injected values.
-    #[cfg(feature = "agentx")]
+    // `ignore_eos` from the body and runs a single unprimed profiling phase.
+    // Runs before `resolve_scenario_outcome` so the outcome report and its
+    // conflict checks see the injected values.
     apply_scenario_graph_locks(&mut inputs, weka_semantics.as_deref())?;
     // Resolve legacy-AgentX scenario locks (`--scenario`) while `inputs` is still
-    // whole (later lowering partially moves it). A no-op without the `agentx`
-    // feature. A hard scenario-lock conflict fails resolution here.
+    // whole (later lowering partially moves it). A hard scenario-lock conflict
+    // fails resolution here.
     let scenario_outcome = resolve_scenario_outcome(&inputs)?;
     // The agentic_replay (legacy weka) timing mode is a single coherent driver:
     // one workload instance owns the per-tree join gate, session-tree registry,
@@ -1170,11 +1169,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
 /// resolved run config, returning the serialized [`ScenarioOutcome`] for the
 /// run's `resolved` projection.
 ///
-/// Compiled only under the `agentx` feature; a hard [`ScenarioLockError`]
-/// (non-overridable conflict, or violations without `--unsafe-override`) fails
-/// the resolution. Without the feature this is a no-op returning `None`, so a
-/// lean build silently ignores `--scenario`.
-#[cfg(feature = "agentx")]
+/// A hard [`ScenarioLockError`] (non-overridable conflict, or violations without
+/// `--unsafe-override`) fails the resolution.
 fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
     use crate::agentx::scenario::{RunLockInputs, apply_scenario_locks, get_scenario};
 
@@ -1221,18 +1217,11 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
     Ok(Some(serde_json::to_value(&outcome)?))
 }
 
-/// No-op scenario resolution for lean builds without the `agentx` feature.
-#[cfg(not(feature = "agentx"))]
-fn resolve_scenario_outcome(_inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
-    Ok(None)
-}
-
 /// Resolve the effective WEKA reconstruction semantics for the run: an explicit
 /// `--weka-semantics` flag always wins; otherwise an agentic-replay scenario
 /// selects `legacy` (the byte-exact AgentX path), and everything else defers to
 /// the graph-ir default (`None`). Authored onto the config so the engine's graph
-/// workload factory can branch. Only the `agentx` build can select `legacy`.
-#[cfg(feature = "agentx")]
+/// workload factory can branch.
 fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
     if let Some(flag) = inputs.weka_semantics.as_deref() {
         return Some(flag.to_string());
@@ -1244,13 +1233,6 @@ fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
         return Some("legacy".to_string());
     }
     None
-}
-
-/// Without the `agentx` feature, only an explicit flag threads through (the
-/// engine rejects `legacy` at selection since the legacy path is compiled out).
-#[cfg(not(feature = "agentx"))]
-fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
-    inputs.weka_semantics.clone()
 }
 
 /// Resolve the effective global-hop worker-assignment policy.
@@ -1287,7 +1269,6 @@ pub(crate) fn resolve_hop_routing(
 /// phase (no `t*` lane-prime warmup barrier). Idempotent and conservative: only
 /// fills values the user left unset, so `resolve_scenario_outcome`'s
 /// explicit-conflict checks still fire.
-#[cfg(feature = "agentx")]
 fn apply_scenario_graph_locks(
     inputs: &mut Inputs,
     weka_semantics: Option<&str>,
@@ -1347,7 +1328,6 @@ fn apply_scenario_graph_locks(
 /// recorded-graph `synthesis` block the graph-input adapter reads
 /// (`TraceSynthesisSpec`). Preserves any user-authored `--synthesis-*` values and
 /// supplies the required (non-defaulted) spec fields at identity when absent.
-#[cfg(feature = "agentx")]
 fn apply_scenario_synthesis(
     inputs: &mut Inputs,
     spec: &crate::agentx::scenario::ScenarioSpec,

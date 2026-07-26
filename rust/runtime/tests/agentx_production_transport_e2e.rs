@@ -7,7 +7,6 @@
 //! returned [`RequestRecord`] (the export raw record) carries the byte-exact
 //! request content, the streamed response tokens, captured TTFT, and timing.
 
-#![cfg(feature = "agentx")]
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};

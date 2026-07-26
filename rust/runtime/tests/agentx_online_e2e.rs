@@ -8,7 +8,6 @@
 //! path from trace bytes through the wire to an actual inference endpoint —
 //! reconstruction content + dispatch timing landing on the wire unchanged.
 
-#![cfg(feature = "agentx")]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

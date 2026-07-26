@@ -8,7 +8,6 @@
 //! scenario and diffs the full partition (main index, worker indices, seams,
 //! per-chain request lists, fork metadata, spliced_into).
 
-#![cfg(feature = "agentx")]
 
 use aiperf_runtime::agentx::chains::{
     compute_chain_prefix_blocks, detect_agent_chains, worker_group_assignment, ChainReq,

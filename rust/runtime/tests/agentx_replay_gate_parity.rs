@@ -18,7 +18,6 @@
 //! predecessor graph and the same op sequence, both implementations produce the
 //! same observable release/prefix/pending outputs.
 
-#![cfg(feature = "agentx")]
 
 use std::path::PathBuf;
 

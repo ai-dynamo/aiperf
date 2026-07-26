@@ -53,10 +53,6 @@ parquet = ["aiperf-runtime/parquet"]
 # the controller/cell/aggregator re-exec path; `cells=1` is byte-unchanged and
 # `cells>1` fails closed without it. In the default set.
 cellular = ["aiperf-runtime/cellular"]
-# Legacy byte-exact AgentX (WEKA trace replay + agentic timing + scenario locks),
-# transitional alongside the graph-ir path. Gates the CLI's scenario-lock
-# resolution (`--scenario`); off by default (the resolver is a no-op without it).
-agentx = ["aiperf-runtime/agentx"]
 dynamo-router-runtime = ["dynosim", "aiperf-runtime/dynamo-router-runtime"]
 dynamo-zmq-events = ["dynosim", "aiperf-runtime/dynamo-zmq-events"]
 dynamo-kvbm-offload = ["dynosim", "aiperf-runtime/dynamo-kvbm-offload"]
@@ -71,7 +67,7 @@ dynamo-full = [
 ]
 dynamo-parity = ["dynamo-full", "aiperf-runtime/dynamo-parity"]
 # Convenience: the full execution surface (sibling required).
-full = ["dynosim", "parquet", "cellular", "grpc", "agentx"]
+full = ["dynosim", "parquet", "cellular", "grpc"]
 
 [dependencies]
 aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }

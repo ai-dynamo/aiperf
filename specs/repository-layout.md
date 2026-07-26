@@ -25,7 +25,7 @@ prefix and sit directly under `rust/`.
 | `rust/runtime` | `aiperf-runtime` | `aiperf_runtime` |
 | `rust/cli` | `aiperf-cli` | `aiperf_cli` |
 | `rust/mock-server` | `aiperf-mock-server` | `aiperf_mock_server` |
-| `rust/e2e` | `aiperf-e2e-tests` | `aiperf_e2e_tests` |
+| `rust/e2e` | `aiperf-e2e` | `aiperf_e2e` |
 | `rust/pyext` | `aiperf-pyext` | `_native` |
 
 Direct dependency direction is `aiperf-cli` → `aiperf-runtime`;
@@ -48,7 +48,7 @@ server are independent executables.
 - `aiperf-pyext`: packaging-only pyo3 `cdylib` maturin compiles into
   `aiperf._native`. `make wheel` repacks the `aiperf` binary into the wheel's
   scripts directory through `tools/wheel_repack.py`.
-- `aiperf-e2e-tests`: product integration harness.
+- `aiperf-e2e`: product integration harness.
 
 ### Naming rules
 

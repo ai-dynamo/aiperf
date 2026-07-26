@@ -10,7 +10,6 @@
 //! an identical stub and asserts the emitted `TurnDelta`s and full segment state
 //! match the Python output field-for-field.
 
-#![cfg(feature = "agentx")]
 
 use aiperf_runtime::agentx::synth::{ConversationReconstructor, TokenSynth};
 use serde_json::Value;

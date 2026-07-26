@@ -7,9 +7,8 @@
 //! This subsystem deliberately shares **no logic** with the next-gen graph-ir
 //! recorded path (`crate::graph::recorded`). It is a faithful 1:1 parity port of
 //! the Python implementation under `src/aiperf/dataset/loader/weka_*.py` and
-//! `src/aiperf/timing/`, gated behind the `agentx` Cargo feature and intended to
-//! be deleted wholesale once graph-ir supersedes AgentX. See
-//! `specs/agentx-rust-port.md` for the design record.
+//! `src/aiperf/timing/`, intended to be deleted wholesale once graph-ir
+//! supersedes AgentX. See `specs/agentx-rust-port.md` for the design record.
 //!
 //! Parity is proven, not asserted: reconstruction is deterministic given
 //! `(seed, trace)`, and every module is cross-checked byte-for-byte against its

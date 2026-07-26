@@ -27,7 +27,7 @@
 //! client is IPv4-only on loopback) serves a fixed streaming SSE completion over
 //! keep-alive connections, so a worker CAN reuse a pooled connection.
 
-#![cfg(all(feature = "engine", feature = "agentx"))]
+#![cfg(feature = "engine")]
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;

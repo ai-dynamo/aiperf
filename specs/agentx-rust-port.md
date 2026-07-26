@@ -15,8 +15,8 @@ to — and shares no logic with — the next-gen graph-ir recorded path
 `graph-ir` semantics) so a run can be executed either way and the outputs compared.
 
 This subsystem is **transitional**: once graph-ir supersedes AgentX it is deleted
-wholesale. It therefore lives behind a Cargo feature and never entangles the rest
-of the runtime.
+wholesale. It ships always-on in `aiperf-runtime` (no Cargo feature gate) and is
+switchable at runtime via `--weka-semantics legacy|graph-ir`.
 
 Parity is *proven*, not asserted: the `raw` export level emits per-request
 byte-exact timing and content, and an A/B harness diffs the Rust output against the
@@ -24,8 +24,8 @@ Python AgentX output over identical deterministic (SimClock) virtual time.
 
 ## Built
 
-The `agentx` feature and module tree exist under `rust/runtime/src/agentx/`, off by
-default. Slice 1 is in progress; these units are byte-exact against their Python
+The module tree lives under `rust/runtime/src/agentx/` (always compiled). Slice 1
+is in progress; these units are byte-exact against their Python
 counterparts with unit tests (golden values captured from CPython where relevant):
 
 - `rng.rs` — `HashIdRandomGenerator`, reusing the runtime CPython-MT compat; golden
@@ -249,7 +249,7 @@ byte-identical raw export — the definition of done for parity.
 
 ## Source anchors
 
-- `rust/runtime/src/agentx/` — the subsystem (feature `agentx`).
+- `rust/runtime/src/agentx/` — the subsystem (always compiled).
 - `rust/runtime/src/rng/compat/python_random.rs` — reused CPython MT.
 - Python reference: `src/aiperf/dataset/loader/weka_*.py`,
   `src/aiperf/timing/strategies/agentic_replay.py`,

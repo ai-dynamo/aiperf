@@ -43,8 +43,7 @@ pub mod grpc_execution;
 pub mod grpc_turn_execution;
 pub mod heartbeat_lane;
 /// Legacy AgentX weka execution path (byte-exact agentic replay), selected by
-/// `--weka-semantics legacy`. Requires the `agentx` feature.
-#[cfg(feature = "agentx")]
+/// `--weka-semantics legacy`.
 pub mod legacy_agentx_execution;
 pub mod live_streaming;
 pub mod network_latency;

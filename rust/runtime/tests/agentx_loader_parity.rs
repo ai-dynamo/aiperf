@@ -8,7 +8,6 @@
 //! + real loop helpers + stub token generator). This replays with an identical
 //! stub and diffs the full reconstructed conversation.
 
-#![cfg(feature = "agentx")]
 
 use aiperf_runtime::agentx::loader::{
     reconstruct_main_conversation, MainReconstructOptions, NormalReq, TurnInputKind,

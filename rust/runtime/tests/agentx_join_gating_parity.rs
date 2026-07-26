@@ -29,7 +29,6 @@
 //! (The separate per-lane `slice_trajectories_at_tstar` rebasing is a dispatch
 //! concern, not part of the join-gating rule under test.)
 
-#![cfg(feature = "agentx")]
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -378,23 +378,14 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
                 // selected by `--weka-semantics legacy` (default under an
                 // agentic-replay scenario). Graph-ir stays the fall-through.
                 if weka_wants_legacy(workload.weka_semantics.as_deref())? {
-                    #[cfg(feature = "agentx")]
-                    {
-                        let plan = lower_legacy_agentic(
-                            run,
-                            context,
-                            workload,
-                            self.tokenizers.as_ref(),
-                            binding.clone(),
-                        )?;
-                        return prepare_native_operation(run, context, plan, binding);
-                    }
-                    #[cfg(not(feature = "agentx"))]
-                    {
-                        anyhow::bail!(
-                            "--weka-semantics legacy requires a build with the `agentx` feature"
-                        );
-                    }
+                    let plan = lower_legacy_agentic(
+                        run,
+                        context,
+                        workload,
+                        self.tokenizers.as_ref(),
+                        binding.clone(),
+                    )?;
+                    return prepare_native_operation(run, context, plan, binding);
                 }
                 let plan = lower_graph(
                     run,
@@ -1275,7 +1266,6 @@ fn lower_graph(
 /// legacy path synthesizes its own WARMUP phase and replaces the authored ones,
 /// so the value is recovered here (first authored phase carrying it) and threaded
 /// onto the synthesized warmup phase. Returns `None` when unset.
-#[cfg(feature = "agentx")]
 fn warmup_agentic_cache_duration(phases: &[PhaseSpec]) -> Option<f64> {
     phases
         .iter()
@@ -1287,7 +1277,6 @@ fn warmup_agentic_cache_duration(phases: &[PhaseSpec]) -> Option<f64> {
 /// byte-exact AgentX loader, composes them into a verbatim-replay linear dataset,
 /// translates the phases to `agentic_replay`, and reuses the shared scheduled
 /// execution (`prepare_native_operation`) for transport/metrics/records/report.
-#[cfg(feature = "agentx")]
 fn lower_legacy_agentic(
     run: &AuthoredRunSpecV2,
     context: &RunContext,
@@ -1750,7 +1739,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "agentx")]
     #[test]
     fn warmup_agentic_cache_duration_recovers_authored_value() {
         // The CLI stamps `--agentic-cache-warmup-duration` onto an authored
@@ -1778,7 +1766,6 @@ mod tests {
         assert_eq!(warmup_agentic_cache_duration(&phases), Some(5.0));
     }
 
-    #[cfg(feature = "agentx")]
     #[test]
     fn warmup_agentic_cache_duration_absent_when_unset() {
         let phases: Vec<PhaseSpec> = serde_json::from_str(
@@ -1819,7 +1806,7 @@ mod tests {
     #[test]
     fn builtin_tokenizer_resolves_with_trust_remote_code() {
         // A built-in (tiktoken) encoding must resolve identically whether or not
-        // `trust_remote_code` is set; the flag must not pre-empt the load.
+        // `trust_remote_code` is set; the flag must not preempt the load.
         let resolved = resolve_builtin_or_local("cl100k_base", true).expect("builtin must resolve");
         assert_eq!(resolved.as_deref(), Some("cl100k_base"));
     }

@@ -615,7 +615,7 @@ fn measure_runner_vmhwm(url: &str, exact_fold: bool, entries: u32, requests: u32
 /// `aiperf` process in flight). Run with:
 ///
 /// ```text
-/// cargo test -p aiperf-e2e-tests --test test_exact_fold_ab_parity \
+/// cargo test -p aiperf-e2e --test test_exact_fold_ab_parity \
 ///     -- --ignored --nocapture exact_fold_runner_rss_below_retained
 /// ```
 #[cfg(target_os = "linux")]

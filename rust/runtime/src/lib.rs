@@ -11,14 +11,11 @@
 
 pub mod accuracy;
 pub mod adaptive;
-/// AgentX agentic-replay timing mode (scheduled-runtime Workload). Requires the
-/// `agentx` feature.
-#[cfg(feature = "agentx")]
+/// AgentX agentic-replay timing mode (scheduled-runtime Workload).
 pub mod agentic_replay;
-/// Always-compiled subagent tree-spec side channel (`TreeSpec`) for the
-/// `agentic_replay` timing mode.
+/// Subagent tree-spec side channel (`TreeSpec`) for the `agentic_replay` timing mode.
 pub mod agentic_tree;
-#[cfg(feature = "agentx")]
+/// Byte-exact AgentX port (WEKA replay, scenario locks, trajectory timing).
 pub mod agentx;
 #[cfg(feature = "dynamo-aic-forward-pass")]
 pub mod aic_runtime;

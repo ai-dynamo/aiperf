@@ -5,7 +5,7 @@
 //! the network); run with `--ignored`. Downloads `semianalysisai/cc-traces-weka-062126`
 //! (393 public v7 traces), validates rows as `WekaTrace`, and reconstructs.
 
-#![cfg(all(feature = "agentx", feature = "parquet"))]
+#![cfg(feature = "parquet")]
 
 use aiperf_runtime::agentx::hf_dataset::{fetch_hf_weka_rows, HfDatasetRef};
 

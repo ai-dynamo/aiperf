@@ -1637,7 +1637,6 @@ mod tests {
     }
 
     /// Without `--scenario`, resolution leaves `resolved.scenario_outcome` unset.
-    #[cfg(feature = "agentx")]
     #[test]
     fn no_scenario_leaves_outcome_unset() {
         run_on_big_stack(|| {
@@ -1658,7 +1657,6 @@ mod tests {
     /// non-overridable lock failure (`require_loader` forbids the synthetic
     /// default), so resolution fails — proving the scenario resolver is wired
     /// into the CLI Config-v2 pipeline.
-    #[cfg(feature = "agentx")]
     #[test]
     fn scenario_hard_fails_on_synthetic_default_dataset() {
         run_on_big_stack(|| {
@@ -1736,7 +1734,6 @@ mod tests {
     }
 
     /// An unknown `--scenario` name is rejected during resolution.
-    #[cfg(feature = "agentx")]
     #[test]
     fn unknown_scenario_rejected() {
         run_on_big_stack(|| {

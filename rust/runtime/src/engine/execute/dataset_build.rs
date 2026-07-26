@@ -303,7 +303,6 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                     && phase.common().rate_ramp.is_none(),
                 "agentic_replay phases own their dispatch timing and do not accept ramps"
             );
-            #[cfg(feature = "agentx")]
             {
                 use crate::agentic_replay::{
                     AgenticPhase, AgenticReplayConfig, AgenticReplayWorkload,
@@ -379,10 +378,6 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                     Rc::new(crate::phase_runtime::NoopScheduledPhaseResources),
                     None,
                 )
-            }
-            #[cfg(not(feature = "agentx"))]
-            {
-                anyhow::bail!("agentic_replay timing mode requires the `agentx` feature");
             }
         }
     };

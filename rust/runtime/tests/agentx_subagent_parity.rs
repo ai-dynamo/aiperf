@@ -4,7 +4,6 @@
 //! Byte-exact parity of Rust `expand_subagent_to_child_plans` against the real
 //! Python `weka_trace._expand_subagent_to_child_plans`.
 
-#![cfg(feature = "agentx")]
 
 use aiperf_runtime::agentx::config::WekaConfig;
 use aiperf_runtime::agentx::subagent::expand_subagent_to_child_plans;

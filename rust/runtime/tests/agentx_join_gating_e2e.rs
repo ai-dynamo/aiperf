@@ -20,7 +20,6 @@
 //! parent join is provably parked for the entire live child lifetime and only
 //! becomes dispatchable at-or-after the child's terminal instant.
 
-#![cfg(feature = "agentx")]
 
 use std::cell::RefCell;
 
