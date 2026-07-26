@@ -78,4 +78,4 @@ the public CLI.
 - `rust/runtime/src/engine/protocol_v2.rs` (`BenchmarkConfigWireV2` projection)
   and `rust/cli/src/model/config.rs` (`cfg.accuracy` serialization).
 - `rust/runtime/src/engine/execute.rs` (shard capture and single-grade join).
-- `rust/e2e/tests/test_accuracy_mock.rs`.
+- `rust/e2e-tests/tests/test_accuracy_mock.rs`.

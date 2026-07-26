@@ -165,7 +165,7 @@ wc -l "$baseline/controller/all-rust-files.txt"
 ```
 
 Expected at plan creation: 600 files under the six canonical directories
-`rust/runtime`, `rust/cli`, `rust/mock-server`, `rust/e2e`,
+`rust/runtime`, `rust/cli`, `rust/mock-server`, `rust/e2e-tests`,
 `rust/loadgen-core`, and `rust/pyext`. If the count differs at execution time,
 reconcile the difference against Git status and the six on-disk workspace
 directories before dispatch. Do not include stale editor-index paths that do

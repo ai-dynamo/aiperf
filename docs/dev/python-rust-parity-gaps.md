@@ -105,7 +105,7 @@ stock HTTP workload registration does not expose the complete path.
 - Rust projection: `rust/runtime/src/engine/protocol_v2.rs`
 - Rust execution: `rust/runtime/src/accuracy.rs`
 - Rust registration: `rust/runtime/src/engine/online_execution.rs`
-- Rust E2E: `rust/e2e/tests/test_accuracy_mock.rs`
+- Rust E2E: `rust/e2e-tests/tests/test_accuracy_mock.rs`
 
 **Convergence target**
 
@@ -176,7 +176,7 @@ boundaries.
 - Rust observer: `rust/runtime/src/metrics.rs`
 - Rust reduction: `rust/runtime/src/transport/reduce.rs`
 - Rust TGI endpoint: `rust/runtime/src/endpoints/tier2.rs`
-- Rust E2E: `rust/e2e/tests/test_huggingface_generate_endpoint.rs`
+- Rust E2E: `rust/e2e-tests/tests/test_huggingface_generate_endpoint.rs`
 
 **Convergence target**
 
@@ -210,8 +210,8 @@ usage events. Rust can also derive a total when Python preserves absence.
 - Rust: `rust/runtime/src/endpoints/usage.rs`
 - Rust reduction: `rust/runtime/src/transport/reduce.rs`
 - Rust metrics: `rust/runtime/src/metrics.rs`
-- Rust E2E: `rust/e2e/tests/test_use_server_token_counts.rs`
-- Rust E2E: `rust/e2e/tests/test_usage_fields.rs`
+- Rust E2E: `rust/e2e-tests/tests/test_use_server_token_counts.rs`
+- Rust E2E: `rust/e2e-tests/tests/test_usage_fields.rs`
 
 **Convergence target**
 
@@ -241,7 +241,7 @@ tokenizes only `tool_call_text`. Rust reduction includes both.
 - `tests/unit/endpoints/test_openai_chat_tool_call_reassembly.py`
 - `rust/runtime/src/endpoints/endpoints.rs`
 - `rust/runtime/src/transport/reduce.rs`
-- `rust/e2e/tests/test_tool_calls.rs`
+- `rust/e2e-tests/tests/test_tool_calls.rs`
 
 **Convergence target**
 
@@ -270,7 +270,7 @@ execution status.
 - Rust single run: `rust/cli/src/profile.rs`
 - Rust classifier: `rust/cli/src/sweep/confidence.rs`
 - Rust coordinator: `rust/runtime/src/engine/coordinator.rs`
-- Rust E2E: `rust/e2e/tests/test_error_fidelity.rs`
+- Rust E2E: `rust/e2e-tests/tests/test_error_fidelity.rs`
 
 **Convergence target**
 
@@ -296,11 +296,11 @@ generator, not complete Python and Rust product runs.
 **Executable evidence**
 
 - Python harness: `tests/integration/conftest.py`
-- Rust harness: `rust/e2e/tests/common/mod.rs`
+- Rust harness: `rust/e2e-tests/tests/common/mod.rs`
 - Existing latency comparison:
-  `rust/e2e/tests/test_rust_python_latency_parity.rs`
+  `rust/e2e-tests/tests/test_rust_python_latency_parity.rs`
 - Existing RNG comparison:
-  `rust/e2e/tests/test_seeded_poisson_parity.rs`
+  `rust/e2e-tests/tests/test_seeded_poisson_parity.rs`
 
 **Convergence target**
 
@@ -568,8 +568,8 @@ artifacts.
 **Evidence:** `src/aiperf/common/models/record_models.py`,
 `src/aiperf/common/models/branch_stats.py`,
 `rust/runtime/src/engine/records.rs`,
-`rust/e2e/tests/test_dag_spawn.rs`,
-`rust/e2e/tests/test_dag_full_topology.rs`.
+`rust/e2e-tests/tests/test_dag_spawn.rs`,
+`rust/e2e-tests/tests/test_dag_full_topology.rs`.
 
 **Target:** emit stable branch correlation IDs and a compatibility branch-stat
 rollup. Unignore the topology E2E tests.
@@ -641,7 +641,7 @@ Python inference requests follow redirects by aiohttp default. Rust reports
 
 **Evidence:** `src/aiperf/transports/aiohttp_client.py`,
 `rust/runtime/src/transport/http/client/http_client.rs`,
-`rust/e2e/tests/test_error_fidelity.rs`.
+`rust/e2e-tests/tests/test_error_fidelity.rs`.
 
 **Target:** disable inference redirects and preserve the same status, headers,
 body, and error fields.
@@ -683,7 +683,7 @@ the complete metrics path.
 **Evidence:** `src/aiperf/endpoints/openai_embeddings.py`,
 `src/aiperf/endpoints/chat_embeddings.py`,
 `rust/runtime/src/endpoints/endpoints.rs`,
-`rust/e2e/tests/test_embeddings_endpoint.rs`.
+`rust/e2e-tests/tests/test_embeddings_endpoint.rs`.
 
 **Target:** one vector validity contract and usage capture for both dialects.
 
@@ -696,7 +696,7 @@ automatically selects and validates multipart.
 **Evidence:** `src/aiperf/endpoints/openai_image_edit.py`,
 `src/aiperf/transports/aiohttp_transport.py`,
 `rust/runtime/src/endpoints/tier2.rs`,
-`rust/e2e/tests/test_image_edit_endpoint.rs`.
+`rust/e2e-tests/tests/test_image_edit_endpoint.rs`.
 
 **Target:** endpoint metadata must select multipart in every execution path,
 with wire-level tests for file bytes and malformed input.
@@ -1271,7 +1271,7 @@ provides no signal for those planners.
 
 ## Latency parity is aggregate and tolerant
 
-`rust/e2e/tests/test_rust_python_latency_parity.rs` compares a narrow set of
+`rust/e2e-tests/tests/test_rust_python_latency_parity.rs` compares a narrow set of
 averages. It does not protect per-record boundaries, percentiles, delayed usage,
 reasoning, batching, or client-token semantics.
 

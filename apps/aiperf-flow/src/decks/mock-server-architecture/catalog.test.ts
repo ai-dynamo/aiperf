@@ -22,12 +22,12 @@ describe("mock-server-architecture catalog", () => {
   it("preserves load-bearing source/proof paths and invariants verbatim", () => {
     const journey = pageById("request-journey");
     expect(journey.source).toBe("rust/mock-server/src/handlers.rs");
-    expect(journey.proof).toBe("rust/e2e/tests/test_tuned_raw_timing.rs");
+    expect(journey.proof).toBe("rust/e2e-tests/tests/test_tuned_raw_timing.rs");
     expect(journey.invariant).toBe(
       "A request crosses parsing, token budgeting, latency, streaming, and accounting in one server process.",
     );
     expect(pageById("riva-nlp-boundary").status).toBe("boundary");
-    expect(pageById("process-boundary").proof).toBe("rust/e2e/tests/test_chat_endpoint.rs");
+    expect(pageById("process-boundary").proof).toBe("rust/e2e-tests/tests/test_chat_endpoint.rs");
   });
 
   it("built pages have a rust/ source and every proof is a rust/ path or Cargo.toml", () => {

@@ -222,6 +222,6 @@ detection heuristic plus CLI/YAML plumbing that skips the catalog.
 - `rust/cli/src/flags.rs` — the `--hf-*` flags.
 - `rust/cli/src/yaml.rs` — `DatasetSection` `hf_dataset` fields + relaxed public-form
   `ensure!`.
-- `rust/e2e/tests/test_hf_auto_dataset.rs` — offline per-record E2E over a local JSONL.
+- `rust/e2e-tests/tests/test_hf_auto_dataset.rs` — offline per-record E2E over a local JSONL.
 - `rust/cli/resources/public_datasets.json` + `rust/cli/src/model/public_catalog.rs` —
   the catalog the passthrough intentionally bypasses (unchanged).

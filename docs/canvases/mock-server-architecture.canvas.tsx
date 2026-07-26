@@ -79,7 +79,7 @@ const CHAPTERS: readonly { id: ChapterId; title: string; short: string; world: s
 
 const S = "rust/mock-server/src/";
 const T = "rust/mock-server/tests/";
-const E = "rust/e2e/tests/";
+const E = "rust/e2e-tests/tests/";
 
 function page(
   id: string,

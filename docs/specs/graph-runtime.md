@@ -60,5 +60,5 @@ scenario config-lock; the runner consumes only the resolved v2 knobs.
   `warmup_handoff.rs`, `placement.rs`, `policy.rs`, `sink.rs`, `transport_sink.rs`,
   `workload.rs`).
 - `rust/runtime/src/engine/{graph_execution.rs,graph_input.rs,graph_phase_runtime.rs}`.
-- `rust/e2e/tests/test_graph_cellular.rs`,
+- `rust/e2e-tests/tests/test_graph_cellular.rs`,
   `rust/cli/tests/{recorded_graph_stdio_e2e.rs,test_graph_grpc.rs}`.

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "aiperf-e2e"
+name = "aiperf-e2e-tests"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

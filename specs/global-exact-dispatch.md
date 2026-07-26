@@ -31,7 +31,7 @@ where shared admission alone is insufficient.
   (`rust/cli/src/yaml.rs`), matching the `--cells`/`runtime.cells`
   precedence. `runtime.dispatch`/`--dispatch` are config-surface fields only;
   there is no separate `--workers` CLI flag (see
-  `rust/e2e/tests/global_dispatch_real_clock.rs`).
+  `rust/e2e-tests/tests/global_dispatch_real_clock.rs`).
 - `Sharded` is today's static per-thread partition: `owned_positions`,
   `two_level_partition`, `slice_phase_for_thread`
   (`rust/runtime/src/engine/sharded_scheduled.rs`) slice concurrency, rate,
@@ -90,7 +90,7 @@ where shared admission alone is insufficient.
   covering `Sharded`/`Global`/`GlobalHop` phase-shape parity, a
   `Sharded`-vs-`Global` divergence regression test, and SimClock-adjacent
   (RealClock-based) byte-exact determinism tests.
-  `rust/e2e/tests/global_dispatch_real_clock.rs` is a real-binary end-to-end
+  `rust/e2e-tests/tests/global_dispatch_real_clock.rs` is a real-binary end-to-end
   `RealClock` spot-check proving `Global` mode's aggregate concurrency cap
   against a live `aiperf-mock-server` process across `workers=4` OS-thread
   sub-cells, with deterministic TTFT/ITL and raw per-record assertions per
@@ -127,7 +127,7 @@ driven multi-worker dispatch" is not a real configuration.
   `rust/runtime/src/engine/global_hop.rs` — `GlobalHop`'s
   `ThreadPerCoreExecutor`-shaped single-coordinator dispatcher.
 - `rust/runtime/src/engine/workers_characterization.rs` — parity oracle.
-- `rust/e2e/tests/global_dispatch_real_clock.rs` — real-binary `RealClock`
+- `rust/e2e-tests/tests/global_dispatch_real_clock.rs` — real-binary `RealClock`
   aggregate-concurrency e2e spot-check.
 - `rust/cli/src/flags.rs`, `rust/cli/src/yaml.rs` — `--dispatch` flag and
   `runtime.dispatch` YAML surface and precedence.

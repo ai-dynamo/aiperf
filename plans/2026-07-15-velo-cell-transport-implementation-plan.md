@@ -48,7 +48,7 @@ SPDX-License-Identifier: Apache-2.0
 - `rust/runner/src/cellular_cell.rs` — `CellRecordsShipper` sends over velo; `CellLaunchSpec` fetched via `register`.
 - `rust/runner/src/main.rs` — cell bootstrap from env + velo register (not stdin); controller path; fail-closed without `velo`.
 - `rust/runner/src/lib.rs` — `mod cell_launcher;` and re-exports.
-- `rust/e2e/tests/test_cellular.rs`, `rust/e2e/tests/test_graph_cellular.rs` — run over the velo `LocalLauncher`.
+- `rust/e2e-tests/tests/test_cellular.rs`, `rust/e2e-tests/tests/test_graph_cellular.rs` — run over the velo `LocalLauncher`.
 - The four agent files + canonical in-place updates to `specs/cellular.md`,
   `specs/README.md`, and `llms.txt` (Task 12).
 
@@ -576,8 +576,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task 10: Port `test_cellular.rs` onto the velo LocalLauncher
 
 **Files:**
-- Modify: `rust/e2e/tests/test_cellular.rs`
-- Modify: `rust/e2e/Cargo.toml` if a `velo` feature passthrough is needed for the e2e crate.
+- Modify: `rust/e2e-tests/tests/test_cellular.rs`
+- Modify: `rust/e2e-tests/Cargo.toml` if a `velo` feature passthrough is needed for the e2e crate.
 
 **Interfaces:** Consumes the full `aiperf profile --cells N` path (Python frontend → runner controller → cells over velo).
 
@@ -600,7 +600,7 @@ Expected: PASS — 3-cell reproduces 1-cell ISL/OSL distributions byte-for-byte 
 ## Task 11: Port `test_graph_cellular.rs` onto the velo LocalLauncher
 
 **Files:**
-- Modify: `rust/e2e/tests/test_graph_cellular.rs`
+- Modify: `rust/e2e-tests/tests/test_graph_cellular.rs`
 
 - [ ] **Step 1:** Same feature-gating + runner-build adjustment as Task 10 for the graph path.
 

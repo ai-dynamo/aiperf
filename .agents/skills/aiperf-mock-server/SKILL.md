@@ -99,7 +99,7 @@ types (`vllm_generate`, `responses`, `embeddings`, `kserve_v2_infer`, `riva_asr`
 transports (`grpc`, `https`) are covered in `references/endpoints.md` and
 `references/grpc-and-transports.md`.
 
-The Rust integration tests under `rust/aiperf/tests/` and the e2e harness under `rust/e2e/`
+The Rust integration tests under `rust/aiperf/tests/` and the e2e harness under `rust/e2e-tests/`
 spawn this same binary. They locate it via `$AIPERF_MOCK_RS_BIN`, then next to the test
 executable, then `target/{debug,release}/aiperf-mock-server`, then `PATH`. Export
 `AIPERF_MOCK_RS_BIN=/abs/path` to force a specific build.

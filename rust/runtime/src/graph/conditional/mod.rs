@@ -244,7 +244,7 @@ traces:
     }
 
     // Adapter registration + end-to-end routing of `conditional_graph` through
-    // the resolver is proven by the product e2e (`rust/e2e/tests/
+    // the resolver is proven by the product e2e (`rust/e2e-tests/tests/
     // test_conditional_graph.rs`), which drives the real `aiperf` binary. A unit
     // test of the resolver here would require compiling the `engine`-feature lib
     // test target, which is independently broken at this base commit.

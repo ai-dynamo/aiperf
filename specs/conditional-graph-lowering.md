@@ -149,7 +149,7 @@ flat fast path (see [flatgraph-fast-path.md](flatgraph-fast-path.md)).
 
 ### Validation
 
-`rust/e2e/tests/test_conditional_graph.rs` drives an authored conditional graph
+`rust/e2e-tests/tests/test_conditional_graph.rs` drives an authored conditional graph
 (`e2e/tests/fixtures/conditional/conditional_shopping.yaml`) with pinned
 `selected_branches` through the real `aiperf` binary against a deterministic
 `aiperf-mock-server`, asserting the per-record projection for each taken path
@@ -177,8 +177,8 @@ replay node. It is reserved, not built; no current target requires it.
 - Eager-conditional adapter: `rust/runtime/src/graph/conditional/` (`mod.rs`,
   `model.rs`, `resolve.rs`, `fold.rs`) — authored-model decode, branch
   resolution/pruning, and the replay fold.
-- `rust/e2e/tests/test_conditional_graph.rs`,
-  `rust/e2e/tests/fixtures/conditional/` — e2e coverage.
+- `rust/e2e-tests/tests/test_conditional_graph.rs`,
+  `rust/e2e-tests/tests/fixtures/conditional/` — e2e coverage.
 - Other eager per-trace compilers over the same seam: `rust/runtime/src/graph/lowering.rs`
   (`lower_catalog`), `rust/runtime/src/graph/recorded/weka/mod.rs`,
   `rust/runtime/src/graph/recorded/dynamo/mod.rs`, and the shared

@@ -37,4 +37,4 @@ finished once per cell on the main thread (see
   `histogram.rs`, `accumulator.rs`).
 - `rust/runtime/src/network_latency/` (`probe.rs`, `accumulator.rs`).
 - `rust/runtime/src/engine/{gpu_telemetry.rs,server_metrics.rs,network_latency.rs}`.
-- `rust/e2e/tests/{test_gpu_telemetry.rs,test_server_metrics.rs,test_telemetry_fills.rs,test_network_latency_calibration.rs}`.
+- `rust/e2e-tests/tests/{test_gpu_telemetry.rs,test_server_metrics.rs,test_telemetry_fills.rs,test_network_latency_calibration.rs}`.

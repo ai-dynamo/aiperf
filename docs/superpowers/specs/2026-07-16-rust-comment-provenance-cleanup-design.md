@@ -13,7 +13,7 @@ The review covers every `.rs` file under:
 - `rust/runtime`
 - `rust/cli`
 - `rust/mock-server`
-- `rust/e2e`
+- `rust/e2e-tests`
 - `rust/loadgen-core`
 - `rust/pyext`
 - Rust build scripts and Rust tools in the workspace

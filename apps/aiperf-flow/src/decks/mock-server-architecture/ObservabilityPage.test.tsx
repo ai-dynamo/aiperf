@@ -23,6 +23,6 @@ describe("ObservabilityPage", () => {
         "Synthetic GPU load follows observed request throughput within the configured window.",
       ).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText("rust/e2e/tests/test_server_metrics.rs")).toBeInTheDocument();
+    expect(screen.getByText("rust/e2e-tests/tests/test_server_metrics.rs")).toBeInTheDocument();
   });
 });

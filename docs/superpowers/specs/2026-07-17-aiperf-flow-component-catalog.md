@@ -38,7 +38,7 @@ examples, and benchmarks:
 - `rust/runtime/`;
 - `rust/cli/`;
 - `rust/mock-server/`;
-- `rust/e2e/`;
+- `rust/e2e-tests/`;
 - `rust/pyext/`.
 
 The most useful visual semantics live in runtime, transport, dataset, graph,

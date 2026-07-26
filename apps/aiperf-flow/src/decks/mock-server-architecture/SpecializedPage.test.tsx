@@ -22,6 +22,6 @@ describe("SpecializedPage", () => {
       screen.getAllByText("RAG and KServe HTTP aliases remain HTTP routes over shared handlers.")
         .length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText("rust/e2e/tests/test_embeddings_endpoint.rs")).toBeInTheDocument();
+    expect(screen.getByText("rust/e2e-tests/tests/test_embeddings_endpoint.rs")).toBeInTheDocument();
   });
 });

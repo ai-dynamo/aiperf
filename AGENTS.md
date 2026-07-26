@@ -62,9 +62,9 @@ The Cargo workspace uses edition 2024 and resolver 3.
 - `aiperf-cli`: library plus the `aiperf` binary. It owns command routing, Config v2 loading and expansion, profile projection, self-execution, cellular roles, native searches and sweeps, result rendering, and process signals.
 - `aiperf-mock-server`: standalone HTTP/gRPC inference target with deterministic response generation, latency models, error injection, usage accounting, telemetry, TLS, UDS, balancing, accuracy fixtures, and request recording.
 - `pyext`: packaging-only pyo3 module exposed as `aiperf._native` in the wheel.
-- `e2e`: product integration harness and tests.
+- `aiperf-e2e-tests` (`rust/e2e-tests`): product integration harness and tests.
 
-Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `e2e` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `pyext` depends directly on pyo3. The CLI and mock server are independent executables.
+Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `aiperf-e2e-tests` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `pyext` depends directly on pyo3. The CLI and mock server are independent executables.
 
 ## Runtime modules
 

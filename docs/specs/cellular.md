@@ -102,4 +102,4 @@ coordinator `finalize_run` provenance or the grouped error-message list.
   `heartbeat.rs`, `sketch.rs`, `transport/`, and the forward-plane `broadcast.rs`,
   `phaser.rs`, `dispatch_state.rs`, `dataset_session.rs`).
 - `rust/runtime/src/engine/{cellular_cell.rs,cellular_controller.rs,cellular_aggregator.rs,cell_launcher.rs,heartbeat_lane.rs,record_lane.rs}`.
-- `rust/e2e/tests/{test_cellular.rs,test_graph_cellular.rs,test_grpc_cellular.rs,test_cellular_multiturn.rs}`.
+- `rust/e2e-tests/tests/{test_cellular.rs,test_graph_cellular.rs,test_grpc_cellular.rs,test_cellular_multiturn.rs}`.

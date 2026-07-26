@@ -27,7 +27,7 @@ describe("OrientationPage", () => {
     );
     expect(screen.getByText("Standalone target boundary")).toBeInTheDocument();
     expect(screen.getByText("One request end to end")).toBeInTheDocument();
-    expect(screen.getByText("rust/e2e/tests/test_chat_endpoint.rs")).toBeInTheDocument();
+    expect(screen.getByText("rust/e2e-tests/tests/test_chat_endpoint.rs")).toBeInTheDocument();
     expect(
       screen.getAllByText(
         "A request crosses parsing, token budgeting, latency, streaming, and accounting in one server process.",

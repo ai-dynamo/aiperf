@@ -103,7 +103,7 @@ script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
   SLURM-native aggregator placement (rank-band assignment) is unbuilt.
 - **Live in-sandbox multi-cell proof**: the topology, launcher selection, coordinate
   derivation, velo discovery/envelope-fetch, AND the controller's merge are proven
-  end-to-end by the simulation in `rust/e2e/scripts/slurm_sim.sh` — a 3-task loopback
+  end-to-end by the simulation in `rust/e2e-tests/scripts/slurm_sim.sh` — a 3-task loopback
   allocation (rank-0 controller + two cells) runs to completion (`controller exit=0`),
   and the controller merges both cells' partitions into one report (`request_count`
   total 40 over the two cells, ISL/OSL count 40, merged `cellular-heartbeat.json`
@@ -114,7 +114,7 @@ script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
   waited forever in `wait_for_cells` for uploads a loopback-coordinate cell never
   sends). A real cross-node SLURM run keeps HTTP shipping on (routable coordinate);
   the loopback sim (and any same-host allocation) co-locates on both sides. The
-  single-cell (2-task) path has its own loopback sim, `rust/e2e/scripts/slurm_sim_single_cell.sh`
+  single-cell (2-task) path has its own loopback sim, `rust/e2e-tests/scripts/slurm_sim_single_cell.sh`
   (rank-0 controller + one cell): the controller promotes to the cellular path at
   `cell_count == 1` via the cross-host launcher gate, the sole cell registers and
   ships its slice, and the run completes with `controller exit=0` and a merged report.
@@ -131,8 +131,8 @@ script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
   rank dispatch and routing.
 - `src/aiperf/cli_commands/slurm/` — the `aiperf slurm generate` sbatch generator
   and `tests/unit/cli_commands/test_slurm_generate.py`.
-- `rust/e2e/scripts/slurm_sim.sh` — the loopback multi-cell (3-task) SLURM-allocation
-  simulation, and `rust/e2e/scripts/slurm_sim_single_cell.sh` — the single-cell
+- `rust/e2e-tests/scripts/slurm_sim.sh` — the loopback multi-cell (3-task) SLURM-allocation
+  simulation, and `rust/e2e-tests/scripts/slurm_sim_single_cell.sh` — the single-cell
   (2-task) variant.
 - `rust/runtime/src/engine/cell_launcher.rs` — `is_cross_host_launcher`, the gate the
   runner uses to promote the controller for a single cell under `slurm`/`k8s`.

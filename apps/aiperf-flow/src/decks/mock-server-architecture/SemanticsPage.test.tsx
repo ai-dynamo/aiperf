@@ -22,6 +22,6 @@ describe("SemanticsPage", () => {
       screen.getAllByText("A stream can fail after generated output, preserving partial-response evidence.")
         .length,
     ).toBeGreaterThan(0);
-    expect(screen.getAllByText("rust/e2e/tests/test_error_fidelity.rs").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("rust/e2e-tests/tests/test_error_fidelity.rs").length).toBeGreaterThan(0);
   });
 });

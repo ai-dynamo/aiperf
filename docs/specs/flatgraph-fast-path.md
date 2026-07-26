@@ -182,7 +182,7 @@ terminal node's output channel; only test-scoped helpers snapshot channel state.
   `rust/runtime/src/engine/graph_execution.rs` (`GraphWorkerBackend`,
   `EngineGraphSink`); and `rust/runtime/src/engine/execute.rs`
   (`NativeDatasetPlan` routing).
-- `rust/e2e/tests/test_flatgraph_parity.rs` and the
+- `rust/e2e-tests/tests/test_flatgraph_parity.rs` and the
   `tests/fixtures/dag/single_node.dag.jsonl` fixture prove flat-vs-executor
   byte-parity through the real `aiperf` binary;
   `rust/runtime/src/engine/workers_characterization.rs` and

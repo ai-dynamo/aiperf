@@ -48,4 +48,4 @@ telemetry side channels (see [telemetry.md](telemetry.md)).
   `dcgm.rs`, `prom.rs`, `accuracy.rs`, `tokens.rs`, `state.rs`).
 - `rust/mock-server/tests/` (`integration.rs`, `grpc_integration.rs`,
   `accuracy_integration.rs`, `tls_integration.rs`, `balancer.rs`).
-- `rust/e2e/tests/test_kserve_grpc_endpoint.rs` (full-stack profile → mock).
+- `rust/e2e-tests/tests/test_kserve_grpc_endpoint.rs` (full-stack profile → mock).

@@ -75,5 +75,5 @@ model-readiness RPC, so its bindings report readiness as unsupported.
 - `rust/runtime/src/transport/grpc/` (`binding.rs`, `codec.rs`, `raw_codec.rs`,
   `proto.rs`, `riva_binding.rs`, `riva_codec.rs`, `riva_proto.rs`, `transport.rs`,
   `sink.rs`, `models.rs`).
-- `rust/e2e/tests/{test_kserve_grpc_endpoint.rs,test_riva.rs}`,
+- `rust/e2e-tests/tests/{test_kserve_grpc_endpoint.rs,test_riva.rs}`,
   `rust/cli/tests/riva_grpc_v2_stdio.rs`, `rust/cli/tests/grpc_v2_stdio.rs`.

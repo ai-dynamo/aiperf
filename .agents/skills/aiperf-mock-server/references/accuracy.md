@@ -145,4 +145,4 @@ With `--export-level raw`, reconstruct each response's content from `profile_exp
 (`responses[].packets[].value` → SSE `choices[0].delta.content`, concatenated) and assert it
 equals the formatted answer; `reasoning_content` deltas carry CoT. The `/accuracy`
 `correct`/`matched` equal the raw-record counts exactly for a single-pass run with no warmup.
-Worked example + assertions: `rust/e2e/tests/test_accuracy_mock.rs`.
+Worked example + assertions: `rust/e2e-tests/tests/test_accuracy_mock.rs`.

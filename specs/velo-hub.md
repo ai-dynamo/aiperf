@@ -270,7 +270,7 @@ the one hub anchor. Remaining additive work (not blocking):
   toggle (`CELLULAR_HUB_ENV`), `build_cellular_hub` (mounting the cell↔controller,
   `/artifact`, `/phaser`, `/dataset`, and discovery plugins), and the hub-mode bootstrap
   round-trip test.
-- `rust/e2e/tests/test_cellular_velo_shipping.rs` —
+- `rust/e2e-tests/tests/test_cellular_velo_shipping.rs` —
   `test_cellular_hub_mode_matches_default_velo_path`, the hub-vs-default parity e2e, and
   `test_cellular_hub_mode_dataset_fanout_and_phaser_matches_standalone`, the complete
   hub-mode (dataset fan-out + phaser) parity e2e.

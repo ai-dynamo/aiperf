@@ -11,7 +11,7 @@ members = [
     "runtime",
     "cli",
     "mock-server",
-    "e2e",
+    "e2e-tests",
     # pyo3 cdylib compiled into the single interned `aiperf` wheel (aiperf._native);
     # the unified `aiperf` binary rides along as interned package data.
     "pyext",

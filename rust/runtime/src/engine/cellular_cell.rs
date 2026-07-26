@@ -97,7 +97,7 @@ pub fn artifact_transport_is_velo() -> bool {
 /// without a second host. Set to `1`/`true`/`on`/`yes` to enable.
 ///
 /// This lets same-host multi-process tests exercise HTTP+zstd shipping
-/// (see `rust/e2e/tests/test_cellular_http_shipping.rs`).
+/// (see `rust/e2e-tests/tests/test_cellular_http_shipping.rs`).
 /// It is not a product mode; local `--cells N` writes directly to
 /// controller-local scratch when the flag is unset.
 pub const CELL_ARTIFACT_HTTP_FORCE_ENV: &str = "AIPERF_CELL_ARTIFACT_HTTP_FORCE";

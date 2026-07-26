@@ -95,7 +95,7 @@ that does speak `/endpoints/{EndpointName}/invocations` over the wire.
 
 ## Verification
 
-- `rust/e2e/tests/test_sagemaker_endpoint.rs` drives `aiperf profile` against
+- `rust/e2e-tests/tests/test_sagemaker_endpoint.rs` drives `aiperf profile` against
   `aiperf-mock-server` with `--endpoint-type sagemaker`, both without and
   with `--streaming`, inspecting raw per-record output: response status, parsed
   OpenAI-chat-completion body shape and content, request/response `model`,
@@ -126,6 +126,6 @@ that does speak `/endpoints/{EndpointName}/invocations` over the wire.
 - `rust/runtime/src/dataset/loader/trace.rs` (`SageMakerDataCaptureDatasetLoader`,
   `SageMakerDataCaptureComposer`) — the separate, unrelated dataset-format
   SageMaker support.
-- `rust/e2e/tests/test_sagemaker_data_capture.rs` — existing e2e coverage for
+- `rust/e2e-tests/tests/test_sagemaker_data_capture.rs` — existing e2e coverage for
   the dataset loader, not the runtime endpoint.
-- `rust/e2e/tests/test_sagemaker_endpoint.rs` — e2e coverage for this record.
+- `rust/e2e-tests/tests/test_sagemaker_endpoint.rs` — e2e coverage for this record.

@@ -418,7 +418,7 @@ export const ELIGIBILITY_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/cli/src/execute_mode.rs", startLine: 83, endLine: 120, symbol: "dispatch" },
     evidence: [
       { path: "rust/cli/src/execute_mode.rs", symbol: "four promotion predicates at lines 105-113", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_run_from_python_frontend", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_run_from_python_frontend", kind: "e2e" },
     ],
     inputs: ["stdin bytes", "AIPERF_CELL_ID presence", "operation", "resolved runtime.cells"],
     outputs: ["controller orchestration or ordinary execute request"],
@@ -588,7 +588,7 @@ export const ELIGIBILITY_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 1570, endLine: 1680, symbol: "CELLULAR_REQUEST_BOUNDED_PHASE_TYPES / validate_cellular_phase_budgets" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "phase type/budget/cap gates at lines 1570-1680", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_retain_is_rejected", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_retain_is_rejected", kind: "e2e" },
     ],
     inputs: ["scheduled phases", "cell_count", "predicted exact-fold compatibility"],
     outputs: ["scheduled admission or exact rejecting reason"],
@@ -623,7 +623,7 @@ export const ELIGIBILITY_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 1682, endLine: 1729, symbol: "validate_graph_cellular_phases" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "graph requests/cap gates at lines 1682-1729", kind: "boundary" },
-      { path: "rust/e2e/tests/test_graph_cellular.rs", symbol: "test_graph_cellular_from_python_frontend", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_graph_cellular.rs", symbol: "test_graph_cellular_from_python_frontend", kind: "e2e" },
     ],
     inputs: ["graph phase bounds and caps", "cell_count"],
     outputs: ["graph admission or exact rejecting reason"],
@@ -727,7 +727,7 @@ export const ELIGIBILITY_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 719, endLine: 751, symbol: "run_cellular merge-mode backstops" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "mixed-mode and retain backstops at lines 719-751", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_retain_is_rejected", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_retain_is_rejected", kind: "e2e" },
     ],
     inputs: ["actual CellMessage payload variants", "run kind", "multi-turn classification"],
     outputs: ["selected store/record merge path or explicit error"],
@@ -834,7 +834,7 @@ export const OWNERSHIP_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 1925, endLine: 1946, symbol: "resolve_cellular_seed" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "DefaultHasher benchmark_id derivation at lines 1930-1945", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_autoderives_seed_when_absent", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_autoderives_seed_when_absent", kind: "e2e" },
     ],
     inputs: ["optional run.random_seed", "run.benchmark_id"],
     outputs: ["None for an authored seed; otherwise Some(DefaultHasher result)"],
@@ -869,7 +869,7 @@ export const OWNERSHIP_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 1013, endLine: 1122, symbol: "build_cell_envelope" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "build_cell_envelope", kind: "integration" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_run_from_python_frontend", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_run_from_python_frontend", kind: "e2e" },
     ],
     inputs: ["shared envelope", "cell_id", "cell_count", "cell artifact directory", "optional injected seed"],
     outputs: ["one isolated cell BenchmarkRun"],
@@ -905,7 +905,7 @@ export const OWNERSHIP_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 1061, endLine: 1097, symbol: "build_cell_envelope phase slicing" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "session slicing and debug tiling assertion at lines 1074-1097", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_exact_fold_matches_single_cell", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_exact_fold_matches_single_cell", kind: "e2e" },
     ],
     inputs: ["phase requests or sessions", "cell_id", "cell_count", "run kind"],
     outputs: ["cell-local finite budget"],
@@ -1079,7 +1079,7 @@ export const OWNERSHIP_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 1174, endLine: 1233, symbol: "dataset_is_single_turn / cellular_run_is_multi_turn" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "single/multi-turn format allowlists at lines 1149-1172", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular_multiturn.rs", symbol: "module contract at lines 4-22", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular_multiturn.rs", symbol: "module contract at lines 4-22", kind: "e2e" },
     ],
     inputs: ["dataset type/format/turns", "phase sessions fields"],
     outputs: ["multi-turn boolean"],
@@ -1113,7 +1113,7 @@ export const OWNERSHIP_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/dataset/sampler.rs", startLine: 269, endLine: 333, symbol: "PartitionedSampler" },
     evidence: [
       { path: "rust/runtime/src/dataset/sampler.rs", symbol: "partitioned_sampler_yields_disjoint_owned_positions", kind: "unit" },
-      { path: "rust/e2e/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_exact_fold_matches_single_cell", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular_multiturn.rs", symbol: "test_cellular_multi_turn_exact_fold_matches_single_cell", kind: "e2e" },
     ],
     inputs: ["deterministic inner Sampler", "ModuloCellPartition"],
     outputs: ["next owned SessionId"],
@@ -3584,7 +3584,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/cellular/shard.rs", startLine: 108, endLine: 141, symbol: "merge_records_in_global_order" },
     evidence: [
       { path: "rust/runtime/src/cellular/shard.rs", symbol: "merged_cell_records_are_byte_identical_to_a_single_cell_run lines 502-536", kind: "unit" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_matches_single_cell lines 98-157", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_matches_single_cell lines 98-157", kind: "e2e" },
     ],
     inputs: ["MetricsConfig", "RecordsShardPartition values whose union carries scheduled global request_index ordinals"],
     outputs: ["MetricsAccumulator populated in ascending global dispatch order"],
@@ -3662,7 +3662,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/cellular/shard.rs", startLine: 171, endLine: 191, symbol: "merge_records_by_concatenation" },
     evidence: [
       { path: "rust/runtime/src/cellular/shard.rs", symbol: "concatenation_merges_all_cells_and_renumbers_densely lines 943-971", kind: "unit" },
-      { path: "rust/e2e/tests/test_graph_cellular.rs", symbol: "test_graph_cellular_from_python_frontend lines 30-105", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_graph_cellular.rs", symbol: "test_graph_cellular_from_python_frontend lines 30-105", kind: "e2e" },
     ],
     inputs: ["graph RecordsShardPartition values with per-cell local ordinals"], outputs: ["dense accumulator ordered by cell_id then local request_index"],
     state: ["sorted partitions", "monotonic global slot counter"], invariants: ["Every graph record receives one unique dense slot.", "Phase membership remains record.phase, never inferred from the new slot."],
@@ -3683,7 +3683,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/cellular/shard.rs", startLine: 357, endLine: 373, symbol: "merge_store_partitions" },
     evidence: [
       { path: "rust/runtime/src/cellular/shard.rs", symbol: "n_store_partitions_merge_within_tolerance_of_the_union lines 856-932", kind: "unit" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_exact_fold_matches_retain lines 303-365", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_exact_fold_matches_retain lines 303-365", kind: "e2e" },
     ],
     inputs: ["MetricsConfig", "exact ColumnStorePartition values"], outputs: ["MetricsAccumulator reconstructed from appended exact store"],
     state: ["cell_id-sorted accumulated partition"], invariants: ["Each partition is appended once.", "Fixed producer-id order makes arrival order irrelevant."],
@@ -3707,7 +3707,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
       { path: "rust/runtime/src/cellular/sketch.rs", symbol: "TDigest::merge lines 128-143", kind: "boundary" },
       { path: "rust/runtime/src/cellular/sketch.rs", symbol: "quantiles_converge_to_the_exact_report_percentiles lines 308-327", kind: "unit" },
       { path: "rust/runtime/src/cellular/sketch.rs", symbol: "merge_matches_a_single_digest_of_the_whole lines 330-358", kind: "unit" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_sketch_matches_single_cell lines 384-455", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_sketch_matches_single_cell lines 384-455", kind: "e2e" },
     ],
     inputs: ["sketch ColumnStorePartition values with t-digests, Welford aggregates, and ingested_total"], outputs: ["bounded merged sketch accumulator"],
     state: ["per-(phase,tag) t-digests", "Welford aggregate state", "ingested_total"],
@@ -3828,7 +3828,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     summary: "After the tier has launched, an aggregator collects folded stores and terminal-adjacent heartbeat messages, rejects any raw record partition at receive time, merges accepted stores, and ships one store with summed counters upstream.",
     source: { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", startLine: 136, endLine: 255, symbol: "run_aggregator" },
     evidence: [
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_tree_merge_matches_flat_star lines 471-532", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_tree_merge_matches_flat_star lines 471-532", kind: "e2e" },
       { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", symbol: "run_aggregator raw Partition rejection lines 219-223", kind: "boundary" },
     ],
     inputs: ["aggregator identity/bind env", "child_count", "folded StorePartition messages", "controller coordinate"], outputs: ["one merged StorePartition plus summed heartbeat counters"],
@@ -3873,8 +3873,8 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 740, endLine: 815, symbol: "run_cellular report publication block" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "minimal RunOutcome construction and pre-artifact exporter invocation at lines 758-815", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_run_from_python_frontend lines 37-64", kind: "e2e" },
-      { path: "rust/e2e/tests/test_graph_cellular.rs", symbol: "test_graph_cellular_from_python_frontend lines 30-105", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_run_from_python_frontend lines 37-64", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_graph_cellular.rs", symbol: "test_graph_cellular_from_python_frontend lines 30-105", kind: "e2e" },
     ],
     inputs: ["uniform merged accumulator", "authored metrics/export config", "model and endpoint config", "report path"], outputs: ["native-v2.json", "native exporter outputs", "CellularRunOutcome record count"],
     state: ["profiling summary", "optional warmup", "minimal RunOutcome", "NativeReport", "published report/export files before artifact completion"],
@@ -3975,7 +3975,7 @@ export const ARTIFACT_ALGORITHMS: readonly AlgorithmDefinition[] = [
     evidence: [
       { path: "rust/runtime/src/runner_protocol/shard_artifacts.rs", symbol: "per_cell_concat_matches_batch_over_union lines 636-757", kind: "unit" },
       { path: "rust/runtime/src/runner_protocol/shard_artifacts.rs", symbol: "concatenate_cell_artifacts parquet cfg branch lines 195-201", kind: "boundary" },
-      { path: "rust/e2e/tests/test_cellular.rs", symbol: "test_cellular_emits_per_record_artifacts_matching_single_cell lines 195-287", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_emits_per_record_artifacts_matching_single_cell lines 195-287", kind: "e2e" },
     ],
     inputs: ["cell directories ordered by cell_id", "ArtifactSpec", "final artifact directory"], outputs: ["merged JSONL/CSV/outputs artifacts", "merged Parquet only in parquet-feature builds"],
     state: ["source path list per configured artifact"], invariants: ["Cell source cleanup belongs to ScratchTreeGuard, not this function.", "Per-record rows are concatenated; full-dataset inputs.json is copied once."],
@@ -3996,7 +3996,7 @@ export const ARTIFACT_ALGORITHMS: readonly AlgorithmDefinition[] = [
     summary: "After native-v2 and exporter publication, the controller conditionally waits for Stage E /done cardinality, then concatenates requested JSONL/CSV/outputs artifacts, conditionally concatenates Parquet only under #[cfg(feature=\"parquet\")], and copies one inputs.json. A late barrier or concat failure can leave earlier report/export files on disk.",
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 829, endLine: 895, symbol: "run_cellular artifact barrier and concat block" },
     evidence: [
-      { path: "rust/e2e/tests/test_cellular_http_shipping.rs", symbol: "test_cellular_http_shipping_matches_single_cell lines 354-570", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular_http_shipping.rs", symbol: "test_cellular_http_shipping_matches_single_cell lines 354-570", kind: "e2e" },
       { path: "rust/runtime/src/runner_protocol/shard_artifacts.rs", symbol: "concatenate_cell_artifacts parquet cfg branch lines 195-201", kind: "boundary" },
       { path: "rust/runtime/src/runner_protocol/shard_artifacts.rs", symbol: "copy_cell_inputs_json lines 205-245", kind: "boundary" },
     ],
@@ -4019,7 +4019,7 @@ export const ARTIFACT_ALGORITHMS: readonly AlgorithmDefinition[] = [
     source: { path: "rust/runtime/src/runner_protocol/artifact_shipping.rs", startLine: 654, endLine: 680, symbol: "ship_cell_artifacts" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/artifact_shipping.rs", symbol: "streaming_zstd_round_trips_byte_for_byte lines 1003-1034", kind: "unit" },
-      { path: "rust/e2e/tests/test_cellular_http_shipping.rs", symbol: "test_cellular_http_shipping_matches_single_cell lines 354-570", kind: "e2e" },
+      { path: "rust/e2e-tests/tests/test_cellular_http_shipping.rs", symbol: "test_cellular_http_shipping_matches_single_cell lines 354-570", kind: "e2e" },
     ],
     inputs: ["controller authority", "cell_id", "cell artifact directory", "shippable relative paths"], outputs: ["controller-local byte-identical files", "per-cell done marker"],
     state: ["FileCompressor CHUNK_SIZE=65536", "zstd level 3", "bounded body/decode channels"], invariants: ["Neither sender nor receiver buffers a whole file.", "Only existing requested files are POSTed.", "/done is posted after all file responses succeed."],

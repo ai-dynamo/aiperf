@@ -47,4 +47,4 @@ Parquet exporter is registered.
   `console_txt.rs`, `otel.rs`, `mlflow.rs`, `wandb/`, `parquet.rs`,
   `per_record_parquet.rs`).
 - `rust/runtime/src/metrics_core/report.rs`, `rust/runtime/src/report.rs`.
-- `rust/e2e/tests/{test_exporters.rs,test_records_parquet.rs}`.
+- `rust/e2e-tests/tests/{test_exporters.rs,test_records_parquet.rs}`.

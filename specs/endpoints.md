@@ -72,4 +72,4 @@ lowering and decoding back into the canonical response shape (see
   `anthropic.rs`, `vllm_generate.rs`, `tier2.rs`, `tier2/`, `metadata.rs`,
   `usage.rs`, `extraction.rs`).
 - `rust/runtime/src/transport/http/` and `rust/runtime/src/transport/grpc/binding.rs`.
-- Tier-2 online endpoint tests and per-endpoint e2e tests under `rust/e2e/tests/`.
+- Tier-2 online endpoint tests and per-endpoint e2e tests under `rust/e2e-tests/tests/`.
