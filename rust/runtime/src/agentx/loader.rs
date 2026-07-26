@@ -223,6 +223,10 @@ pub struct MainReconstructOptions {
     pub think_time_only: bool,
     /// Inter-turn delay cap in seconds.
     pub delay_cap_seconds: Option<f64>,
+    /// Per-trace idle-gap cap in seconds (Python `trace_idle_gap_cap_seconds`).
+    /// When set, request-start gaps larger than this are compressed before any
+    /// timing is derived, so t\* sampling and dispatch match the oracle.
+    pub idle_gap_cap_seconds: Option<f64>,
     /// Whether `turn_delta` emits tool-shaped messages.
     pub tool_shaped_messages: bool,
 }
@@ -467,6 +471,32 @@ pub fn convert_trace_to_conversations(
                 });
                 children.extend(new_children);
             }
+        }
+    }
+
+    // Idle-gap time-warp (Python `_build_trace_idle_timing`): collect every
+    // request-start timestamp (parent normals + all subagent chain requests),
+    // compress gaps larger than the cap, and map ALL timing onto the warped
+    // timeline BEFORE reconstruction derives per-turn delays and before t* is
+    // sampled. Without this, a long dead-air gap inflates the raw span and t*
+    // lands on a different turn than the oracle.
+    if let Some(cap) = opts.idle_gap_cap_seconds {
+        let mut starts: Vec<f64> = normals.iter().map(|(_, n)| n.t).collect();
+        for c in &children {
+            starts.extend(c.requests.iter().map(|r| r.t));
+        }
+        let warp = crate::agentx::idle_gap::IdleGapTimeWarp::new(starts, cap);
+        for (_, n) in &mut normals {
+            n.t = warp.map(n.t);
+        }
+        for c in &mut children {
+            for r in &mut c.requests {
+                r.t = warp.map(r.t);
+            }
+        }
+        for s in &mut spawns {
+            s.spawn_t = warp.map(s.spawn_t);
+            s.completion_t = warp.map(s.completion_t);
         }
     }
 

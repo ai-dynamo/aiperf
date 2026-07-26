@@ -1389,7 +1389,13 @@ fn lower_legacy_agentic(
         split_flattened_agents: false,
         ..WekaConfig::default()
     };
-    let opts = MainReconstructOptions::default();
+    // The agentic-replay scenario caps per-trace idle gaps at 10s (Python
+    // `trace_idle_gap_cap_seconds`); apply it during reconstruction so t* and
+    // dispatch timing match the oracle's warped timeline.
+    let opts = MainReconstructOptions {
+        idle_gap_cap_seconds: Some(10.0),
+        ..MainReconstructOptions::default()
+    };
     let results = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
         let tok = tokenizer_impl.clone();
         CorpusTokenSynth::new(

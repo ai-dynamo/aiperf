@@ -26,6 +26,7 @@ pub mod handoff;
 /// HuggingFace-hosted WEKA trace dataset download (JSON/JSONL always; Parquet
 /// under the `parquet` feature).
 pub mod hf_dataset;
+pub mod idle_gap;
 pub mod loader;
 /// Compose reconstructed WEKA trajectories into a linear scheduled `Dataset` for
 /// the agentic-replay timing mode.
