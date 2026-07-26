@@ -242,6 +242,8 @@ fn streaming_turn(correlation_id: &str, is_final_turn: bool) -> PreparedTurn {
             cancel_after_ns: None,
             url_index: None,
             image_count: None,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
         },
         model: "fixture-model".to_string(),
         endpoint: PreparedEndpointBinding::Prepared(PreparedEndpointReference {

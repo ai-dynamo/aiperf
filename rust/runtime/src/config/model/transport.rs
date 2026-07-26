@@ -74,7 +74,8 @@ pub struct DryRunConfig {
     /// Root seed for the per-request jitter draw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    /// Analytic latency curve: `linear` or `aiconfigurator_polynomial`.
+    /// Latency model: `linear`, `aiconfigurator_polynomial`, or `recorded`
+    /// (reproduce the trace's pre-known api_time as the total response latency).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency_model: Option<String>,
     /// KV-cache utilization for the polynomial decode curve.

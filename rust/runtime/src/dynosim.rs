@@ -2366,6 +2366,8 @@ impl TurnDispatcher for DynosimSink {
                     cancel_after_ns: turn.cancel_after_ns,
                     url_index: turn.url_index,
                     image_count: None,
+                    recorded_api_time_ns: None,
+                    recorded_ttft_ns: None,
                 },
                 observer,
                 on_first_token,

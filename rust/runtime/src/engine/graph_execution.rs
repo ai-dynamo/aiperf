@@ -503,6 +503,8 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             cancel_after_ns: input.cancel_after_ns,
             url_index: Some(session_url_index(input.session_num, profile.url_count)),
             image_count: None,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
         };
         Ok(GraphEndpointDispatch {
             transport: profile.transport.clone(),
@@ -1008,6 +1010,14 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             endpoint,
             input_tokens,
         } = dispatch;
+        // Lower the recorded api_time (and TTFT when present) onto the request so
+        // the `dry_run` transport can reproduce the recorded timeline exactly under
+        // the `recorded` latency model. Absent on non-recorded graphs → analytic.
+        let mut request = request;
+        request.recorded_api_time_ns =
+            metadata_u64(node, "recorded_api_time_us").map(|us| (us as i64).saturating_mul(1_000));
+        request.recorded_ttft_ns =
+            metadata_u64(node, "recorded_ttft_us").map(|us| (us as i64).saturating_mul(1_000));
         let uuid = request.uuid;
         let dimensions: InferenceDimensions =
             Dispatcher::inference_dimensions(transport.as_ref(), &request);

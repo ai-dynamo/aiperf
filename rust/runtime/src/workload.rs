@@ -46,6 +46,8 @@ impl SkeletonWorkload {
             cancel_after_ns: None,
             url_index: None,
             image_count: None,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
         }
     }
 }

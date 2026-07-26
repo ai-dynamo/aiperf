@@ -60,6 +60,15 @@ pub struct Request {
     /// re-parsing the body. `None` means the dispatch path derives `num_images`
     /// by parsing the serialized body (raw payloads, history-accumulating turns).
     pub image_count: Option<u32>,
+    /// Pre-known recorded response latency (api_time) in nanoseconds, lowered from
+    /// a recorded trace. Consumed only by the `dry_run` transport under the
+    /// `recorded` latency model to reproduce the recorded timeline exactly; `None`
+    /// on every non-recorded path (analytic fallback).
+    pub recorded_api_time_ns: Option<i64>,
+    /// Pre-known recorded time-to-first-token in nanoseconds, when the trace
+    /// supplies it. Splits the recorded api_time into TTFT + generated-token span;
+    /// `None` falls back to an even split of the recorded api_time.
+    pub recorded_ttft_ns: Option<i64>,
 }
 
 impl fmt::Debug for Request {
@@ -84,6 +93,8 @@ impl fmt::Debug for Request {
             .field("cancel_after_ns", &self.cancel_after_ns)
             .field("url_index", &self.url_index)
             .field("image_count", &self.image_count)
+            .field("recorded_api_time_ns", &self.recorded_api_time_ns)
+            .field("recorded_ttft_ns", &self.recorded_ttft_ns)
             .finish()
     }
 }
@@ -234,6 +245,8 @@ impl PreparedTurn {
                 cancel_after_ns: turn.cancel_after_ns,
                 url_index: turn.url_index,
                 image_count: turn.image_count,
+                recorded_api_time_ns: None,
+                recorded_ttft_ns: None,
             },
             model,
             endpoint,

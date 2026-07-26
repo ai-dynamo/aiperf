@@ -100,6 +100,13 @@ pub enum DryRunLatencyModel {
     /// Dynamo `PerfModel::Polynomial`: TTFT from prefill tokens and ITL from
     /// KV-cache utilization.
     AiconfiguratorPolynomial,
+    /// Reproduce the trace's pre-known recorded `api_time` per request as the
+    /// total response latency (recorded TTFT split when available, else an even
+    /// split). Used for timing-parity checking on the graph-ir recorded path:
+    /// when the fake latency equals the recorded api_time, the causal dispatch
+    /// schedule reproduces the recorded warped timeline exactly. Falls back to the
+    /// linear analytic model for any request lacking a recorded api_time.
+    Recorded,
 }
 
 /// Built-in `dry_run` transport descriptor. The catalog clock is `Sim` (the
@@ -238,7 +245,9 @@ impl DryRunParams {
     ) -> (i64, i64) {
         let active = active_inflight as f64;
         let (base_ttft_ms, base_itl_ms) = match self.latency_model {
-            DryRunLatencyModel::Linear => (
+            // `Recorded` uses per-request api_time in `fabricate`; a request that
+            // lacks a recorded value falls through to the linear analytic model.
+            DryRunLatencyModel::Linear | DryRunLatencyModel::Recorded => (
                 self.ttft_ms
                     + self.ttft_per_isl_token_ms * isl as f64
                     + self.ttft_concurrency_quad_ms * active * active,
@@ -269,6 +278,29 @@ impl DryRunParams {
                 self.itl_jitter_cv,
             );
         (ms_to_ns(ttft_ms), ms_to_ns(itl_ms))
+    }
+}
+
+/// Split a recorded total `api_time` (nanoseconds) into `(ttft_ns, itl_ns)` for a
+/// stream of `osl` output tokens so the fabricated request ends exactly at
+/// `total_ns`. With a recorded `ttft_ns` the generated-token span carries the
+/// remainder; without it the api_time is split evenly across the tokens. For
+/// `osl <= 1` the whole api_time is the TTFT (`itl` is unused).
+fn recorded_latencies_ns(total_ns: i64, ttft_ns: Option<i64>, osl: usize) -> (i64, i64) {
+    let total = total_ns.max(0);
+    if osl <= 1 {
+        return (total, 0);
+    }
+    let steps = osl as i64 - 1;
+    match ttft_ns {
+        Some(ttft) => {
+            let ttft = ttft.clamp(0, total);
+            (ttft, (total - ttft) / steps)
+        }
+        None => {
+            let per = total / osl as i64;
+            (per, per)
+        }
     }
 }
 
@@ -420,6 +452,17 @@ impl NativeTransportExecution for DryRunNativeExecution {
     }
 }
 
+/// Per-request recorded timing carried from a recorded trace into the fake leaf.
+/// Both fields are `None` on non-recorded paths; only consulted under the
+/// `recorded` latency model.
+#[derive(Debug, Clone, Copy, Default)]
+struct RecordedLatency {
+    /// Recorded total response latency (api_time) in nanoseconds.
+    api_time_ns: Option<i64>,
+    /// Recorded time-to-first-token in nanoseconds, when the trace supplies it.
+    ttft_ns: Option<i64>,
+}
+
 /// Register the always-built `dry_run` transport into a mutable runner registry.
 pub fn register_dry_run_transport(registry: &mut AIPerfRegistry) -> Result<()> {
     registry.register_transport(Arc::new(DryRunTransportFactoryV2))
@@ -514,6 +557,7 @@ impl FakeFabricator {
         osl: usize,
         start_abs: i64,
         request_payload: Bytes,
+        recorded: RecordedLatency,
         on_first_token: &dyn Fn(i64),
     ) -> DispatchResult {
         // The live in-flight count feeds the analytic concurrency terms; the
@@ -522,12 +566,25 @@ impl FakeFabricator {
         self.inflight.set(active_inflight);
         let ordinal = self.ordinal.get();
         self.ordinal.set(ordinal + 1);
-        let (ttft_ns, itl_ns) =
-            self.params
-                .effective_latencies_ns(isl as usize, osl, active_inflight, ordinal);
+        // Under the `recorded` model with a known api_time, reproduce that total
+        // latency exactly; otherwise (or when the trace has no recorded value) fall
+        // back to the analytic model.
+        let recorded_total = (self.params.latency_model == DryRunLatencyModel::Recorded)
+            .then_some(recorded.api_time_ns)
+            .flatten();
+        let (ttft_ns, itl_ns) = match recorded_total {
+            Some(total) => recorded_latencies_ns(total, recorded.ttft_ns, osl),
+            None => self
+                .params
+                .effective_latencies_ns(isl as usize, osl, active_inflight, ordinal),
+        };
         let recv_start_abs = start_abs + ttft_ns;
         let token_abs = |index: usize| start_abs + ttft_ns + (index as i64) * itl_ns;
-        let end_abs = if osl > 0 {
+        // In recorded mode the total end is pinned to the recorded api_time so the
+        // request latency is byte-exact even when integer token spacing rounds.
+        let end_abs = if let Some(total) = recorded_total {
+            start_abs + total.max(0)
+        } else if osl > 0 {
             token_abs(osl - 1)
         } else {
             recv_start_abs
@@ -673,6 +730,10 @@ impl RequestExecutor for FakeRequestExecutor {
         // shared fabrication.
         observer.register_metadata(uuid, context.metadata.clone());
         observer.on_arrival(uuid, context.arrival_ms, isl as usize, osl);
+        let recorded = RecordedLatency {
+            api_time_ns: turn.request.recorded_api_time_ns,
+            ttft_ns: turn.request.recorded_ttft_ns,
+        };
         let result = self
             .core
             .fabricate(
@@ -682,6 +743,7 @@ impl RequestExecutor for FakeRequestExecutor {
                 osl,
                 start_abs,
                 request_payload,
+                recorded,
                 on_first_token,
             )
             .await;
@@ -753,6 +815,10 @@ impl crate::transport::core::Dispatcher for FakeDispatcher {
             .request_body_bytes
             .clone()
             .unwrap_or_else(Bytes::new);
+        let recorded = RecordedLatency {
+            api_time_ns: turn.request.recorded_api_time_ns,
+            ttft_ns: turn.request.recorded_ttft_ns,
+        };
         Ok(self
             .core
             .fabricate(
@@ -762,6 +828,7 @@ impl crate::transport::core::Dispatcher for FakeDispatcher {
                 osl,
                 start_abs,
                 request_payload,
+                recorded,
                 on_first_token,
             )
             .await)
@@ -864,6 +931,8 @@ mod tests {
                 cancel_after_ns: None,
                 url_index: None,
                 image_count: None,
+                recorded_api_time_ns: None,
+                recorded_ttft_ns: None,
             },
             model: "fixture-model".to_string(),
             endpoint: PreparedEndpointBinding::Prepared(PreparedEndpointReference {
@@ -934,6 +1003,84 @@ mod tests {
         assert_eq!(*drained_uuid, uuid);
         assert_eq!(ingest.tokens.output, Some(OSL as u64));
         assert_eq!(ingest.token_arrival_ns.len(), OSL);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_model_reproduces_api_time_as_total_latency() {
+        // With the `recorded` model and a request carrying a recorded api_time, the
+        // fabricated request latency equals that api_time exactly (timing parity),
+        // and the recorded TTFT splits the token stream.
+        const ISL: usize = 20;
+        const OSL: usize = 12;
+        const API_TIME_NS: i64 = 137_000_000; // 137 ms recorded api_time
+        const TTFT_NS: i64 = 40_000_000; // 40 ms recorded TTFT
+        let params = DryRunParams {
+            // Non-zero analytic knobs prove the recorded value wins over them.
+            ttft_ms: 999.0,
+            itl_ms: 999.0,
+            latency_model: DryRunLatencyModel::Recorded,
+            ..zero_params()
+        };
+        let executor = build_executor(params);
+        let uuid = Uuid::new_v4();
+        let mut turn = fixture_turn(uuid, ISL, OSL);
+        turn.request.recorded_api_time_ns = Some(API_TIME_NS);
+        turn.request.recorded_ttft_ns = Some(TTFT_NS);
+
+        let local = tokio::task::LocalSet::new();
+        let outcome = local
+            .run_until(executor.execute_measured(turn, context(ISL, OSL), &|_| {}))
+            .await
+            .expect("fabricated dispatch");
+
+        let o = &outcome.result.outcome;
+        // Total request latency is byte-exact to the recorded api_time.
+        assert_eq!(o.end_ns - o.start_ns, API_TIME_NS);
+        // First token lands at the recorded TTFT.
+        let record = &outcome.result.record;
+        assert_eq!(record.recv_start_ns, Some(record.start_ns + TTFT_NS));
+        assert_eq!(record.responses[0].perf_ns() - record.start_ns, TTFT_NS);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_model_falls_back_to_analytic_without_recorded_value() {
+        // A request with no recorded api_time under the `recorded` model uses the
+        // linear analytic latencies (fallback), not a zero-latency response.
+        const ISL: usize = 8;
+        const OSL: usize = 4;
+        let params = DryRunParams {
+            ttft_ms: 10.0,
+            itl_ms: 2.0,
+            latency_model: DryRunLatencyModel::Recorded,
+            ..zero_params()
+        };
+        let executor = build_executor(params);
+        let uuid = Uuid::new_v4();
+        let outcome = tokio::task::LocalSet::new()
+            .run_until(executor.execute_measured(
+                fixture_turn(uuid, ISL, OSL),
+                context(ISL, OSL),
+                &|_| {},
+            ))
+            .await
+            .expect("fabricated dispatch");
+        let o = &outcome.result.outcome;
+        assert_eq!(
+            o.end_ns - o.start_ns,
+            10_000_000 + (OSL as i64 - 1) * 2_000_000
+        );
+    }
+
+    #[test]
+    fn recorded_split_pins_total_and_honors_ttft() {
+        // Even split when no TTFT: total end == api_time.
+        assert_eq!(recorded_latencies_ns(120, None, 4), (30, 30));
+        // Recorded TTFT carries the remainder in the generated-token span.
+        assert_eq!(recorded_latencies_ns(120, Some(30), 4), (30, 30));
+        assert_eq!(recorded_latencies_ns(100, Some(40), 4), (40, 20));
+        // osl <= 1 puts the whole api_time in the TTFT.
+        assert_eq!(recorded_latencies_ns(90, Some(10), 1), (90, 0));
+        assert_eq!(recorded_latencies_ns(90, None, 0), (90, 0));
     }
 
     #[test]

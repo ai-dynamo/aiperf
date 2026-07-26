@@ -1216,8 +1216,10 @@ pub struct ProfileFlags {
     /// Root seed for the `--dry-run` per-request jitter draw (`--dry-run-seed`).
     #[arg(long = "dry-run-seed")]
     pub dry_run_seed: Option<u64>,
-    /// Analytic latency curve (`--dry-run-latency-model`): `linear` (default) or
-    /// `aiconfigurator_polynomial`.
+    /// Latency model (`--dry-run-latency-model`): `linear` (default),
+    /// `aiconfigurator_polynomial`, or `recorded` (reproduce each request's
+    /// pre-known recorded api_time as the total response latency on the graph-ir
+    /// recorded path, for timing-parity checking; analytic fallback otherwise).
     #[arg(long = "dry-run-latency-model")]
     pub dry_run_latency_model: Option<String>,
     /// KV-cache utilization in `[0,1]` for the polynomial decode curve
