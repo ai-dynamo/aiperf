@@ -31,7 +31,7 @@ specifically about latency fidelity, always a scratch artifact directory outside
 repo.
 
 ```bash
-PORT=$(python -c "import socket;s=socket.socket();s.bind(('',0));print(s.getsockname()[1]);s.close()")
+PORT=$(uv run python -c "import socket;s=socket.socket();s.bind(('',0));print(s.getsockname()[1]);s.close()")
 OUT=$(mktemp -d)
 
 uv run aiperf-mock-server --port "$PORT" <latency/error flags> \

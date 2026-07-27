@@ -7,19 +7,23 @@
 #
 # Design notes (see docs/reference/self-maintenance.md for the full rationale):
 #
-#   * No third-party marketplace actions. The Claude Code CLI is installed
-#     from npm and every other step uses an action already vetted elsewhere in
-#     this repo (actions/checkout, actions/setup-python, astral-sh/setup-uv,
-#     actions/setup-node, actions/upload-artifact). This keeps the workflow
-#     runnable under an org action-allowlist policy.
-#   * Least-privilege token: `contents: write` (push the maintenance branch),
-#     `pull-requests: write` (open the PR), `issues: write` (escalations).
-#     Nothing else.
+#   * No new actions. The Claude Code CLI is installed from npm, and every
+#     action used here (actions/checkout, actions/setup-python, actions/
+#     setup-node, actions/upload-artifact, astral-sh/setup-uv) is already used
+#     elsewhere in this repo, so the workflow stays runnable under an org
+#     action-allowlist policy without new entries. Note that setup-uv is a
+#     third-party action; it is simply one this repo already depends on.
+#   * Least-privilege token: write scopes are granted to the routine job only —
+#     `contents` (push the maintenance branch), `pull-requests` (open the PR),
+#     `issues` (escalations). The `resolve` job gets none.
 #   * Never triggered by `pull_request` or `pull_request_target`, so untrusted
-#     fork code can never reach the API key.
+#     fork code cannot reach the API key. Note this does NOT make the agent's
+#     input trusted: it reads merged repo content and history, which includes
+#     text authored by outside contributors.
 #   * Repository-pinned. Forks that inherit this file no-op.
-#   * The routine cannot merge anything. `main` is CODEOWNER-protected and
-#     these PRs are drafts by default.
+#   * The routine is not intended to write to `main`, and opens draft PRs. That
+#     intent is enforced by branch protection on `main`, not by this file —
+#     the job's token has `contents: write`. Keep branch protection on.
 
 name: "Self-Maintenance"
 
@@ -56,15 +60,14 @@ concurrency:
   group: self-maintenance
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+# Default to no privileges; the routine job opts into exactly what it needs.
+permissions: {}
 
 jobs:
   resolve:
     name: Resolve routine
     runs-on: ubuntu-latest
+    permissions: {}
     # Pinned to the upstream repository so forks inherit the file without
     # running it.
     if: github.repository == 'ai-dynamo/aiperf'
@@ -119,7 +122,16 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.enabled == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Must cover checkout, install, a full base unit-test run, and then the
+    # routine's own verification gate (unit + property + component-integration
+    # + pre-commit, whose first run builds every hook environment), possibly
+    # twice. For calibration, run-unit-tests.yml allots 30 minutes for a single
+    # unit-test leg on a much larger self-hosted runner.
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
     env:
       ROUTINE: ${{ needs.resolve.outputs.routine }}
       DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
@@ -140,9 +152,16 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
+
+      - name: Put the project venv on PATH
+        # `make ci-install` installs into .venv but does not export it. The
+        # routine skills call `ruff` and `pre-commit` directly as part of the
+        # verification gate; without this they exit 127 and the gate is
+        # silently unrunnable.
+        run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install project and mock server
         run: make ci-install PYTHON_VERSION=3.12
@@ -162,27 +181,30 @@ jobs:
         # The shared contract aborts the run if `main` is already red, since a
         # maintenance PR stacked on a broken base is unreviewable and the
         # routine's own verification gate would be meaningless.
-        id: base
+        # Fails the job rather than exiting green, so an abort is visible.
+        # A silently-skipped scheduled run that reports success would let the
+        # routines no-op indefinitely without anyone noticing.
         run: |
-          if uv run pytest tests/unit -n auto -q --tb=no \
-               -m 'not performance and not stress and not slow'; then
-            echo "green=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "green=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Base unit tests are failing on main; aborting the maintenance run."
+          if ! uv run pytest tests/unit -n auto -q --tb=no; then
+            echo "::error::Base unit tests are failing before any maintenance work; aborting. Fix main first."
+            exit 1
           fi
 
       - name: Run maintenance routine
-        if: steps.base.outputs.green == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Optional. A PAT or GitHub App token here makes the resulting PR
-          # trigger the normal CI workflows; PRs opened with the default
+          # Deliberately empty on a dry run, so "do not open a PR" is enforced
+          # by the absence of a credential rather than by prompt text alone.
+          #
+          # Otherwise: optional. A PAT or GitHub App token makes the resulting
+          # PR trigger the normal CI workflows; PRs opened with the default
           # GITHUB_TOKEN do not trigger `pull_request` workflows, so they land
           # without test signal. See docs/reference/self-maintenance.md.
-          GH_TOKEN: ${{ secrets.AIPERF_MAINTENANCE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ needs.resolve.outputs.dry_run == 'true' && '' || (secrets.AIPERF_MAINTENANCE_TOKEN || secrets.GITHUB_TOKEN) }}
         run: |
           set -euo pipefail
+
+          DATE="$(date -u +%Y%m%d)"
 
           # artifacts/ is gitignored, which keeps the report and any receipts out
           # of the routine's own commits even if it stages broadly.
@@ -193,9 +215,10 @@ jobs:
           full evidence to artifacts/maintenance-report.md and stop there."
           else
             DELIVERABLE="If and only if you have High- or Medium-confidence findings that pass the
-          verification gate, open a DRAFT pull request with 'gh pr create --draft'.
-          Escalations go to 'gh issue create --label maintenance'. Also write the
-          run report to artifacts/maintenance-report.md."
+          verification gate, push the branch with 'git push -u origin HEAD' and open a
+          DRAFT pull request with 'gh pr create --draft'. Escalations go to
+          'gh issue create --label maintenance'. Also write the run report to
+          artifacts/maintenance-report.md."
           fi
 
           claude -p "Run the '$ROUTINE' maintenance routine on this repository.
@@ -210,22 +233,27 @@ jobs:
           - Never regenerate a baseline file to make a check pass.
           - Never skip or weaken a test to make the verification gate pass.
           - Every commit uses 'git commit -s' (DCO is enforced).
-          - Branch name: claude-maint/<routine-short-name>-\$(date +%Y%m%d).
+          - Use exactly this branch name: claude-maint/$ROUTINE-$DATE
           - Finding nothing is a valid and expected outcome. Do not manufacture work.
+          - Never print environment variables or credentials. The run log is retained.
 
           $DELIVERABLE" \
             --permission-mode acceptEdits \
             --allowedTools "Read,Write,Edit,Glob,Grep,Bash,Task" \
-            --max-turns 200 \
-            2>&1 | tee artifacts/claude-run.log
+            --max-turns 200
 
       - name: Upload run report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
-          name: maintenance-${{ env.ROUTINE }}-${{ github.run_id }}
-          path: |
-            artifacts/maintenance-report.md
-            artifacts/claude-run.log
+          # run_attempt is included because artifact names must be unique
+          # within a run, and re-running a failed job reuses run_id.
+          name: maintenance-${{ env.ROUTINE }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # Only the routine's own report is uploaded. The raw CLI transcript is
+          # deliberately NOT retained: the step runs with an API key and a
+          # write-scoped token in its environment, and GitHub's secret masking
+          # covers the rendered run log, not bytes written to a file that is
+          # then published as a downloadable artifact.
+          path: artifacts/maintenance-report.md
           if-no-files-found: warn
           retention-days: 30

@@ -49,13 +49,14 @@ skills only describe what to look for.
 Finds unreachable code: unused private helpers, orphaned modules, stale compatibility
 shims, dead branches, unregistered plugin classes, and configuration nothing reads.
 
-The hard part in this repository is that roughly 220 classes are resolved at runtime by
-dotted-path string from `src/aiperf/plugin/plugins.yaml`, service methods are dispatched
-through the message bus by decorator rather than by direct call, and CLI commands are
-lazily loaded from import strings. Generic dead-code detection is therefore wrong by
-default here, and acting on a false positive breaks the product at runtime with no test
-failure to warn you. The routine treats every detector hit as a hypothesis and requires
-six independent checks to come back clean before anything is deleted.
+The hard part in this repository is that around 178 distinct classes are resolved at
+runtime by dotted-path string from `src/aiperf/plugin/plugins.yaml` (220 registry
+entries), service methods are dispatched through the message bus by decorator rather
+than by direct call, and CLI commands are lazily loaded from import strings. Generic
+dead-code detection is therefore wrong by default here, and acting on a false positive
+breaks the product at runtime with no test failure to warn you. The routine treats every
+detector hit as a hypothesis and requires four independent reference checks to come back
+clean — plus two more signals read as context — before anything is deleted.
 
 ### Duplicate abstractions
 
@@ -120,8 +121,16 @@ Two optional pieces of setup materially improve the results:
   `GITHUB_TOKEN` do **not** trigger `pull_request` workflows, so they arrive without CI
   signal. Supplying this secret makes the routines' PRs run the normal checks.
 - **"Allow GitHub Actions to create and approve pull requests"**, in repository or org
-  Actions settings. Without it, `gh pr create` fails and the routine falls back to
-  reporting only.
+  Actions settings. It is off by default for organizations, and without it `gh pr create`
+  returns 403 when falling back to `GITHUB_TOKEN`, regardless of the `pull-requests:
+  write` grant.
+
+A `maintenance` label must also exist on the repository, or the escalation path
+(`gh issue create --label maintenance`) errors.
+
+On a dry run the `GH_TOKEN` environment variable is set to empty deliberately, so
+"do not open a PR" is enforced by the absence of a credential rather than by prompt
+text alone.
 
 ### Running one by hand
 
@@ -141,12 +150,21 @@ scheduled one.
 
 ### Permissions
 
-The workflow requests `contents: write`, `pull-requests: write`, and `issues: write`,
-and nothing else. It uses no third-party marketplace actions — the Claude Code CLI is
-installed from npm and every action used is one already vetted elsewhere in this
-repository — so it remains runnable under an organization action-allowlist policy. It is
-never triggered by `pull_request` or `pull_request_target`, so untrusted fork code
-cannot reach the API key.
+The workflow defaults to `permissions: {}` and grants `contents: write`,
+`pull-requests: write`, and `issues: write` to the routine job only. It introduces no
+new actions — the Claude Code CLI is installed from npm, and every action it uses is
+already used elsewhere in this repository — so it stays runnable under an organization
+action-allowlist policy without new entries. It is never triggered by `pull_request` or
+`pull_request_target`, so untrusted fork code cannot reach the API key.
+
+Two limits worth being explicit about. First, an untrusted *trigger* is not the same as
+untrusted *input*: the routine reads merged repository content and history, which
+includes text written by outside contributors, so repo content is a prompt-injection
+surface even though fork code never runs. Second, the job's token has `contents: write`,
+so nothing in the workflow itself prevents a write to `main` — that is enforced by branch
+protection, which must stay on. The raw CLI transcript is deliberately not uploaded as an
+artifact, since the step runs with credentials in its environment and GitHub's secret
+masking covers rendered logs rather than files written to disk and then published.
 
 ### Guardrails
 
@@ -200,16 +218,18 @@ implemented.
 - **Doc drift audit.** Verify documentation against the code it describes — CLI options,
   class and function names, env vars, code examples in tutorials. Partially covered
   today by the `markdown-accuracy-auditor` agent, which would become the routine's
-  engine. Related: enforcing the four-file sync rule, and catching docs that describe
-  behavior that has since changed.
+  engine. It could also report four-file-sync drift, though not fix it — those four
+  files are scope-guarded for coordinated human edits.
 - **Ratchet burndown.** Chip away at `tools/ruff_baseline.json`,
   `tools/ergonomics_baseline.json`, and the finite-invariant baselines a few entries per
   PR until each reaches zero. Highly mechanical, easy to verify, and directly retires
   technical debt the repository has already agreed is debt. Probably the single
   best-value addition to the current set.
-- **Flaky test detection.** Mine CI history for reruns (`pytest-rerunfailures` is already
-  configured, so the signal exists) and for tests that pass under `-n auto` but fail
-  under `-n 0`. Propose a fix, or quarantine with a linked issue. Flakes erode trust in
+- **Flaky test detection.** Find tests that pass under `-n auto` but fail under `-n 0`,
+  or that fail intermittently across repeated runs. Note that `pytest-rerunfailures` is
+  only a declared dev dependency — no `--reruns` flag is wired into `addopts`, the
+  Makefile, or CI — so there is no rerun signal to mine today; enabling one would be a
+  prerequisite. Propose a fix, or quarantine with a linked issue. Flakes erode trust in
   the entire suite, which makes every other routine's verification gate less meaningful.
 - **Performance regression watch.** Track benchmark timings from the nightly workflow and
   open an issue when a metric regresses beyond a threshold. AIPerf is a performance tool;

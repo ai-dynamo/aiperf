@@ -11,7 +11,8 @@ and how to prove it.
 
 ## The central problem
 
-AIPerf resolves ~220 classes at runtime by dotted-path string from
+AIPerf resolves ~178 distinct classes at runtime across 220 registry entries, by
+dotted-path string from
 `src/aiperf/plugin/plugins.yaml`, dispatches service methods through the ZMQ message bus
 via `@on_message`/`@on_command`/`@on_request` decorators, and lazily loads CLI commands
 from import strings in `cli.py`. **A generic dead-code tool applied to this repo produces
@@ -64,7 +65,9 @@ feature; the git history distinguishes them.
 
 ## The deadness proof
 
-A candidate is only deletable when **all six** checks come back clean. Record the actual
+Checks 1, 2, 3, and 5 are the gate: a candidate is only deletable when **all four** come
+back clean. Checks 4 and 6 are context that informs the judgment but have no pass/fail
+state — read the interpretation notes below before weighing them. Record the actual
 output for each — the PR body has to quote it.
 
 ```bash

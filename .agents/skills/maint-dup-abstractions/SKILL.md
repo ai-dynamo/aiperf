@@ -69,7 +69,7 @@ grep -rn "sum(.*)/len(\|statistics\.\|np\.mean\|np\.percentile\|math\.isnan" \
 grep -rn "\.read_text(\|open(" --include='*.py' src/aiperf/ | grep -v path_safety
 
 # 5. Grandfathered duplicate classes with existing provenance
-python tools/check_ergonomics.py --only duplicate-classes
+uv run python tools/check_ergonomics.py --only duplicate-classes
 ```
 
 ## Qualification
@@ -122,7 +122,7 @@ One cluster per PR. Not one *category* — one cluster.
 
 ## Verification, beyond the standard gate
 
-- `python tools/check_ergonomics.py` — confirm the duplicate-class count went down and
+- `make check-ergonomics` — confirm the duplicate-class count went down and
   nothing new appeared. If the unification lets you remove entries from
   `tools/ergonomics_baseline.json`, do so and list them in the PR body (this is the
   sanctioned burndown direction; see the shared contract).
