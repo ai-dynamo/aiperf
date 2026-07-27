@@ -306,6 +306,8 @@ mod tests {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                agentic_warmup_grace_period: None,
+                failed_request_threshold: None,
                 adaptive_scale: None,
                 rate_series: None,
             },

@@ -720,9 +720,11 @@ fn prepare_recorded_file(
         .as_ref()
         .and_then(|value| value.max_osl)
         .map(|value| value as usize);
+    // Absent synthesis → no idle-gap warp (raw recorded gaps). A present
+    // TraceSynthesisSpec still defaults its field to 60s when the key is omitted.
     let idle_gap_cap_seconds = synthesis
         .as_ref()
-        .map_or(Some(60.0), |value| value.idle_gap_cap_seconds);
+        .map_or(None, |value| value.idle_gap_cap_seconds);
     // The default window collapses to `t* = 0` and full replay.
     let t_star_window = synthesis
         .as_ref()
@@ -846,9 +848,11 @@ fn prepare_recorded_public(
         .as_ref()
         .and_then(|value| value.max_osl)
         .map(|value| value as usize);
+    // Absent synthesis → no idle-gap warp (raw recorded gaps). A present
+    // TraceSynthesisSpec still defaults its field to 60s when the key is omitted.
     let idle_gap_cap_seconds = synthesis
         .as_ref()
-        .map_or(Some(60.0), |value| value.idle_gap_cap_seconds);
+        .map_or(None, |value| value.idle_gap_cap_seconds);
     let t_star_window = synthesis
         .as_ref()
         .map_or_else(TStarWindow::default, |value| TStarWindow {

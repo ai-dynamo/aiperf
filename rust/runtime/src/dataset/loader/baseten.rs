@@ -11,14 +11,14 @@
 //! `min_tokens`/`hash_ids`/`block_size` KV-cache routing hints injected into
 //! the outgoing request body.
 //!
-//! Scope cut from the Python loader: `--trace-session-sample-ratio` (RNG
-//! session subsampling) and Synthesizer integration are not ported. Trace
+//! Scope cut from the Python loader: Synthesizer integration is not ported. Trace
 //! synthesis is already rejected for this loader before it ever reaches
 //! composition -- `engine/execute.rs`'s `build_file_dataset` only allows
 //! synthesis for `mooncake_trace`/`bailian_trace`/`burst_gpt`, so any
 //! `--synthesis-*` config on `baseten_trace` errors at the engine layer
 //! (matching Python's conservative rejection: prompt reshaping would desync
 //! the forwarded `hash_ids` KV hints from the verbatim-replayed prompt).
+//! `--trace-session-sample-ratio` whole-session subsampling is ported.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -183,6 +183,104 @@ fn choose_session_key(rows: &[BasetenRow]) -> Option<SessionKey> {
     None
 }
 
+/// Port of Python baseten `_sample_sessions`: keep whole sessions (and null-session
+/// rows) at `ratio`, always retaining at least one session when any existed.
+fn sample_trace_sessions(
+    rows: &mut Vec<BasetenRow>,
+    session_key: Option<SessionKey>,
+    ratio: f64,
+    rng_root: crate::rng::RngRoot,
+) -> Result<()> {
+    use crate::rng::compat::python_random::PythonRandomGenerator;
+    use crate::rng::derive::DerivedRandomGenerator;
+    use crate::rng::random_generator::RandomGenerator;
+
+    let Some(session_key) = session_key else {
+        tracing::warn!(
+            "trace_session_sample_ratio requested, but neither provided_session_id \
+             nor poor_man_session_id forms multi-row sessions; skipping sampling"
+        );
+        return Ok(());
+    };
+
+    let mut session_first_ts: HashMap<String, f64> = HashMap::new();
+    let mut null_row_count = 0_usize;
+    for row in rows.iter() {
+        let session_id = match session_key {
+            SessionKey::Provided => row.provided_session_id.as_deref(),
+            SessionKey::PoorMan => row.poor_man_session_id.as_deref(),
+        };
+        let Some(session_id) = session_id else {
+            null_row_count += 1;
+            continue;
+        };
+        let ts = row.timestamp.unwrap_or(0.0);
+        session_first_ts
+            .entry(session_id.to_string())
+            .and_modify(|existing| *existing = existing.min(ts))
+            .or_insert(ts);
+    }
+
+    let mut session_entries: Vec<(f64, String)> = session_first_ts
+        .into_iter()
+        .map(|(sid, ts)| (ts, sid))
+        .collect();
+    session_entries.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    let original_count = session_entries.len();
+    let mut rng = PythonRandomGenerator::from_rng_root(
+        rng_root,
+        crate::rng::namespace::DATASET_LOADER_BASETEN_TRACE_SESSION_SAMPLING,
+    );
+    let mut sampled_entries: Vec<(f64, String)> = session_entries
+        .iter()
+        .filter(|_| rng.uniform(0.0, 1.0) < ratio)
+        .cloned()
+        .collect();
+    if sampled_entries.is_empty() && original_count > 0 {
+        let chosen = rng
+            .choice(&session_entries)
+            .map_err(|error| DatasetError::Validation(error.to_string()))?
+            .clone();
+        sampled_entries.push(chosen);
+    }
+    let kept_sessions: std::collections::HashSet<String> =
+        sampled_entries.into_iter().map(|(_, sid)| sid).collect();
+    let sampled_null_rows: std::collections::HashSet<usize> = (0..null_row_count)
+        .filter(|_| rng.uniform(0.0, 1.0) < ratio)
+        .collect();
+
+    tracing::info!(
+        kept_sessions = kept_sessions.len(),
+        original_sessions = original_count,
+        kept_null_rows = sampled_null_rows.len(),
+        null_row_count,
+        ratio,
+        ?session_key,
+        "sampled baseten_trace sessions"
+    );
+
+    let mut null_ordinal = 0_usize;
+    rows.retain(|row| {
+        let session_id = match session_key {
+            SessionKey::Provided => row.provided_session_id.as_deref(),
+            SessionKey::PoorMan => row.poor_man_session_id.as_deref(),
+        };
+        match session_id {
+            Some(session_id) => kept_sessions.contains(session_id),
+            None => {
+                let keep = sampled_null_rows.contains(&null_ordinal);
+                null_ordinal += 1;
+                keep
+            }
+        }
+    });
+    Ok(())
+}
+
 /// Port of `_baseten_replay_timemodel.reflow_idle_gaps`: collapse global idle
 /// gaps larger than `cap_ms` so fixed-schedule replay of a sparse trace does
 /// not idle through dead-air stretches. Ordering and relative spacing up to
@@ -216,7 +314,8 @@ fn reflow_idle_gaps(timestamps_ms: &[f64], cap_ms: Option<f64>) -> Vec<f64> {
 /// Replay-timing knobs threaded from the dataset `options` bag
 /// (`--replay-speedup`, `--max-idle-gap-cap-seconds`, `--open-loop-replay`,
 /// `--open-loop-strict`, `--omit-kv-hints`, `--force-min-tokens`,
-/// `--inter-turn-delay-cap-seconds`), matching `--uuid-and-strip`'s wiring.
+/// `--inter-turn-delay-cap-seconds`, `--trace-session-sample-ratio`), matching
+/// `--uuid-and-strip`'s wiring.
 struct ReplayOptions {
     speedup: f64,
     max_idle_gap_cap_ms: Option<f64>,
@@ -225,6 +324,8 @@ struct ReplayOptions {
     omit_kv_hints: bool,
     force_min_tokens: bool,
     inter_turn_delay_cap_ms: Option<f64>,
+    /// Whole-session keep fraction in `(0, 1]`; `None` keeps every session.
+    session_sample_ratio: Option<f64>,
 }
 
 impl ReplayOptions {
@@ -277,6 +378,25 @@ impl ReplayOptions {
                 .get("inter_turn_delay_cap_seconds")
                 .and_then(Value::as_f64)
                 .map(|seconds| seconds * 1000.0),
+            session_sample_ratio: {
+                let ratio = options
+                    .get("trace_session_sample_ratio")
+                    .and_then(Value::as_f64);
+                if let Some(ratio) = ratio {
+                    if !ratio.is_finite() || ratio <= 0.0 || ratio > 1.0 {
+                        return Err(DatasetError::Validation(
+                            "trace_session_sample_ratio must be in (0.0, 1.0]".into(),
+                        ));
+                    }
+                    if ratio >= 1.0 {
+                        None
+                    } else {
+                        Some(ratio)
+                    }
+                } else {
+                    None
+                }
+            },
         })
     }
 
@@ -369,18 +489,29 @@ impl DatasetLoader for BasetenTraceDatasetLoader {
     }
 
     async fn load(&self, config: &LoadConfig) -> Result<Vec<RawRow>> {
-        let path = match &config.source {
-            DatasetSource::Path(path) => path.clone(),
+        let (raw_rows, origin_label) = match &config.source {
+            DatasetSource::Path(path) => {
+                let rows = read_parquet_rows(path)?;
+                (rows, path.display().to_string())
+            }
+            DatasetSource::Url(_) | DatasetSource::HuggingFace { .. } => {
+                // Public / `--hf-dataset --hf-format baseten_trace` path: reuse the
+                // shared remote parquet/jsonl acquisition, then apply baseten
+                // replay normalization below.
+                let rows = crate::dataset::loader::public::load_raw_rows(config).await?;
+                let values = rows.into_iter().map(|row| row.value).collect();
+                (values, config.source.label())
+            }
             _ => {
                 return Err(DatasetError::Validation(
-                    "baseten_trace requires a Parquet file path".into(),
+                    "baseten_trace requires a Parquet file path, URL, or Hugging Face source"
+                        .into(),
                 ));
             }
         };
-        let raw_rows = read_parquet_rows(&path)?;
         let mut rows = raw_rows
             .into_iter()
-            .map(|value| parse_row(&value, &path.display()))
+            .map(|value| parse_row(&value, &origin_label))
             .collect::<Result<Vec<_>>>()?;
 
         let min_timestamp = rows
@@ -415,7 +546,7 @@ impl DatasetLoader for BasetenTraceDatasetLoader {
                 session_id: None,
                 group_key: None,
                 origin: RowOrigin::FileLine {
-                    path: path.clone(),
+                    path: std::path::PathBuf::from(&origin_label),
                     line: 0,
                 },
             });
@@ -521,6 +652,10 @@ impl Composer for BasetenTraceComposer {
         }
 
         let session_key = choose_session_key(&parsed);
+        if let Some(ratio) = replay.session_sample_ratio {
+            sample_trace_sessions(&mut parsed, session_key, ratio, config.rng_root)?;
+        }
+
         let mut groups: HashMap<String, Vec<BasetenRow>> = HashMap::new();
         let mut order: Vec<String> = Vec::new();
         let mut next_ordinal: u64 = 0;
@@ -1178,5 +1313,87 @@ mod tests {
         // Equal (both have one repeated pair) -> provided wins ties.
         let tied = rows(&[Some("a"), Some("a")], &[Some("x"), Some("x")]);
         assert_eq!(choose_session_key(&tied), Some(SessionKey::Provided));
+    }
+
+    #[test]
+    fn sample_trace_sessions_keeps_whole_sessions_deterministically() {
+        let mut rows = vec![
+            BasetenRow {
+                prompt: "a1".into(),
+                input_tokens: 1,
+                output_tokens: 1,
+                total_hashes: Vec::new(),
+                provided_session_id: Some("a".into()),
+                poor_man_session_id: None,
+                duration_e2e_ms: None,
+                block_size: None,
+                timestamp: Some(0.0),
+                delay: None,
+                output_length: 1,
+            },
+            BasetenRow {
+                prompt: "a2".into(),
+                input_tokens: 1,
+                output_tokens: 1,
+                total_hashes: Vec::new(),
+                provided_session_id: Some("a".into()),
+                poor_man_session_id: None,
+                duration_e2e_ms: None,
+                block_size: None,
+                timestamp: Some(10.0),
+                delay: None,
+                output_length: 1,
+            },
+            BasetenRow {
+                prompt: "b1".into(),
+                input_tokens: 1,
+                output_tokens: 1,
+                total_hashes: Vec::new(),
+                provided_session_id: Some("b".into()),
+                poor_man_session_id: None,
+                duration_e2e_ms: None,
+                block_size: None,
+                timestamp: Some(20.0),
+                delay: None,
+                output_length: 1,
+            },
+            BasetenRow {
+                prompt: "c1".into(),
+                input_tokens: 1,
+                output_tokens: 1,
+                total_hashes: Vec::new(),
+                provided_session_id: Some("c".into()),
+                poor_man_session_id: None,
+                duration_e2e_ms: None,
+                block_size: None,
+                timestamp: Some(30.0),
+                delay: None,
+                output_length: 1,
+            },
+        ];
+        sample_trace_sessions(
+            &mut rows,
+            Some(SessionKey::Provided),
+            0.01,
+            crate::rng::RngRoot::new(Some(7)),
+        )
+        .unwrap();
+        // Tiny ratio keeps at least one whole session; both turns of "a" stay together
+        // when that session is chosen.
+        assert!(!rows.is_empty());
+        let sessions: std::collections::HashSet<_> = rows
+            .iter()
+            .map(|row| row.provided_session_id.as_deref().unwrap())
+            .collect();
+        assert!(sessions.len() >= 1);
+        for session in &sessions {
+            let count = rows
+                .iter()
+                .filter(|row| row.provided_session_id.as_deref() == Some(session))
+                .count();
+            if *session == "a" {
+                assert_eq!(count, 2, "session a must stay intact when kept");
+            }
+        }
     }
 }

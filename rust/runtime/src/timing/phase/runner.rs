@@ -112,6 +112,15 @@ pub struct PhaseContext {
     progress: PhaseProgress,
     stop_checker: Rc<StopChecker>,
     cancellation: Rc<CancellationSignal>,
+    /// Profiling-only abort latch for `--failed-request-threshold`.
+    failed_request_abort: Option<Rc<FailedRequestAbort>>,
+}
+
+/// Soft-cancel the phase when profiling `errors/total` exceeds a ratio.
+struct FailedRequestAbort {
+    threshold: f64,
+    grace_floor: u64,
+    triggered: Cell<bool>,
 }
 
 impl PhaseContext {
@@ -121,6 +130,7 @@ impl PhaseContext {
         progress: PhaseProgress,
         stop_checker: Rc<StopChecker>,
         cancellation: Rc<CancellationSignal>,
+        failed_request_abort: Option<Rc<FailedRequestAbort>>,
     ) -> Self {
         Self {
             clock,
@@ -128,6 +138,7 @@ impl PhaseContext {
             progress,
             stop_checker,
             cancellation,
+            failed_request_abort,
         }
     }
 
@@ -187,7 +198,42 @@ impl PhaseContext {
 
     /// Atomically record one terminal request.
     pub fn record_returned(&self, returned: PhaseReturn) -> PhaseReturnOutcome {
-        self.progress.record_returned(returned)
+        let outcome = self.progress.record_returned(returned);
+        self.maybe_abort_on_failed_request_threshold();
+        outcome
+    }
+
+    fn maybe_abort_on_failed_request_threshold(&self) {
+        let Some(gate) = &self.failed_request_abort else {
+            return;
+        };
+        if gate.triggered.get() || self.cancellation.cancelled.get() {
+            return;
+        }
+        let counters = self.progress.snapshot();
+        // Match Python records_tracker: total = successes + errors (not cancels).
+        let total = counters.requests_completed;
+        if total < gate.grace_floor {
+            return;
+        }
+        let errors = counters.request_errors;
+        let rate = errors as f64 / total as f64;
+        if rate <= gate.threshold {
+            return;
+        }
+        if gate.triggered.replace(true) {
+            return;
+        }
+        tracing::warn!(
+            errors,
+            total,
+            rate,
+            threshold = gate.threshold,
+            grace_floor = gate.grace_floor,
+            "--failed-request-threshold exceeded; cancelling profiling phase"
+        );
+        self.lifecycle.borrow_mut().cancel();
+        self.cancellation.cancel();
     }
 
     /// Record a first-token prefill release.
@@ -340,6 +386,7 @@ struct RunnerInner {
     execution: Rc<dyn PhaseExecution>,
     observer: Rc<dyn PhaseObserver>,
     cancellation: Rc<CancellationSignal>,
+    failed_request_abort: Option<Rc<FailedRequestAbort>>,
     run_started: Cell<bool>,
     progress_stopped: Cell<bool>,
     progress_stop: Notify,
@@ -368,12 +415,28 @@ impl ClockPhaseRunner {
         let progress = PhaseProgress::new(config.stop);
         let stop_checker = Rc::new(StopChecker::new(&config.stop));
         let cancellation = Rc::new(CancellationSignal::new());
+        let failed_request_abort = match (
+            config.kind,
+            config.failed_request_threshold,
+        ) {
+            (super::PhaseKind::Profiling, Some(threshold))
+                if threshold.is_finite() && threshold >= 0.0 =>
+            {
+                Some(Rc::new(FailedRequestAbort {
+                    threshold,
+                    grace_floor: config.concurrency.unwrap_or(1).max(10) as u64,
+                    triggered: Cell::new(false),
+                }))
+            }
+            _ => None,
+        };
         let context = PhaseContext::new(
             clock.clone(),
             lifecycle.clone(),
             progress.clone(),
             stop_checker,
             cancellation.clone(),
+            failed_request_abort.clone(),
         );
         let execution = execution_factory.create(&config, context);
         Ok(Self {
@@ -385,6 +448,7 @@ impl ClockPhaseRunner {
                 execution,
                 observer,
                 cancellation,
+                failed_request_abort,
                 run_started: Cell::new(false),
                 progress_stopped: Cell::new(false),
                 progress_stop: Notify::new(),
@@ -404,6 +468,7 @@ impl ClockPhaseRunner {
             self.inner.progress.clone(),
             Rc::new(StopChecker::new(&self.inner.config.stop)),
             self.inner.cancellation.clone(),
+            self.inner.failed_request_abort.clone(),
         )
     }
 

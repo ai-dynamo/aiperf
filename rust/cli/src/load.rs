@@ -137,22 +137,6 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
     reject_sweep("--benchmark-duration", flags.benchmark_duration.as_deref())?;
     reject_sweep("--num-conversations", flags.num_conversations.as_deref())?;
 
-    // Fail closed: accepted for clap parity, not yet implemented natively.
-    if flags.trace_session_sample_ratio.is_some() {
-        anyhow::bail!(
-            "--trace-session-sample-ratio is not yet supported by the native profile engine"
-        );
-    }
-    if flags.agentic_warmup_grace_period.is_some() {
-        anyhow::bail!(
-            "--agentic-warmup-grace-period is not yet supported by the native profile engine"
-        );
-    }
-    if flags.failed_request_threshold.is_some() {
-        anyhow::bail!(
-            "--failed-request-threshold is not yet supported by the native profile engine"
-        );
-    }
     if flags.use_think_time_only.unwrap_or(false) && flags.ignore_trace_delays.unwrap_or(false) {
         anyhow::bail!("--use-think-time-only and --ignore-trace-delays are mutually exclusive");
     }
@@ -1404,7 +1388,32 @@ mod tests {
         ]);
         let error = super::resolve(&flags).unwrap_err();
         assert!(error.to_string().contains("baseten_trace loader"));
-        assert!(error.to_string().contains("--input-file"));
+        assert!(
+            error.to_string().contains("--input-file")
+                || error.to_string().contains("--hf-dataset")
+                || error.to_string().contains("public dataset"),
+            "got: {error}"
+        );
+
+        // Non-baseten public dataset.
+        let flags = parse(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "-u",
+            "http://localhost:8000",
+            "--public-dataset",
+            "sharegpt",
+            "--replay-speedup",
+            "2.0",
+        ]);
+        let error = super::resolve(&flags).unwrap_err();
+        assert!(error.to_string().contains("baseten_trace loader"));
+        assert!(
+            error.to_string().contains("sharegpt"),
+            "got: {error}"
+        );
     }
 
     #[test]
@@ -1433,6 +1442,41 @@ mod tests {
         if let Err(error) = super::resolve(&flags) {
             assert!(!error.to_string().contains("baseten_trace loader"));
         }
+    }
+
+    #[test]
+    fn baseten_only_flags_accepted_with_hf_baseten_format() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--hf-dataset",
+                "org/baseten-traces",
+                "--hf-format",
+                "baseten_trace",
+                "--trace-session-sample-ratio",
+                "0.25",
+                "--replay-speedup",
+                "2.0",
+            ]);
+            let run = super::resolve(&flags).expect("public/hf baseten must accept knobs");
+            let public = match run.cfg.datasets.as_ref().and_then(|d| d.first()) {
+                Some(crate::model::dataset::Dataset::Public(public)) => public,
+                other => panic!("expected public dataset, got {other:?}"),
+            };
+            assert_eq!(public.format, "baseten_trace");
+            assert_eq!(
+                public.options.get("trace_session_sample_ratio"),
+                Some(&serde_json::json!(0.25))
+            );
+            assert_eq!(
+                public.options.get("replay_speedup"),
+                Some(&serde_json::json!(2.0))
+            );
+        });
     }
 
     #[test]
@@ -1862,29 +1906,53 @@ mod tests {
     }
 
     #[test]
-    fn hard_trio_flags_fail_closed() {
+    fn hard_trio_flags_project() {
         run_on_big_stack(|| {
-            for (flag, value) in [
-                ("--trace-session-sample-ratio", "0.5"),
-                ("--agentic-warmup-grace-period", "1.0"),
-                ("--failed-request-threshold", "0.1"),
-            ] {
-                let flags = parse(&[
-                    "-m",
-                    "mock-model",
-                    "--endpoint-type",
-                    "chat",
-                    "--dry-run",
-                    flag,
-                    value,
-                ]);
-                let err = super::resolve_inputs(&flags).expect_err("must fail closed");
-                assert!(
-                    err.to_string()
-                        .contains("is not yet supported by the native profile engine"),
-                    "{flag}: {err}"
-                );
-            }
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--failed-request-threshold",
+                "0.25",
+                "--agentic-warmup-grace-period",
+                "12.5",
+            ]);
+            let inputs = super::resolve_inputs(&flags).expect("inputs");
+            assert_eq!(inputs.failed_request_threshold, Some(0.25));
+            assert_eq!(inputs.agentic_warmup_grace_period, Some(12.5));
+            let run = super::resolve(&flags).expect("resolve");
+            let profiling = run
+                .cfg
+                .phases
+                .as_ref()
+                .expect("phases")
+                .iter()
+                .find(|p| !p.common.exclude_from_results)
+                .expect("profiling");
+            assert_eq!(profiling.common.failed_request_threshold, Some(0.25));
+            assert_eq!(profiling.common.agentic_warmup_grace_period, Some(12.5));
+        });
+    }
+
+    #[test]
+    fn trace_session_sample_ratio_requires_baseten() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--trace-session-sample-ratio",
+                "0.5",
+            ]);
+            let err = super::resolve(&flags).expect_err("baseten-only");
+            assert!(
+                err.to_string().contains("baseten_trace"),
+                "got: {err}"
+            );
         });
     }
 

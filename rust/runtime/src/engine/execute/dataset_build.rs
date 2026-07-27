@@ -1089,6 +1089,13 @@ pub(crate) fn phase_config(spec: &PhaseSpec, seamless_to_next: bool) -> Result<P
     if let Some(grace) = common.grace_period {
         phase = phase.with_grace_period(GracePeriod::Finite(seconds_to_ns(grace)?));
     }
+    if let Some(threshold) = common.failed_request_threshold {
+        ensure!(
+            threshold.is_finite() && (0.0..=1.0).contains(&threshold),
+            "failed_request_threshold must be finite and in [0.0, 1.0], got {threshold}"
+        );
+        phase = phase.with_failed_request_threshold(Some(threshold));
+    }
     phase.validate()?;
     Ok(phase)
 }

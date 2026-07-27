@@ -153,20 +153,14 @@ fn apply_cli_overrides(
         inputs.public_dataset = Some("weka_hf".to_string());
         inputs.hf_weka_dataset = Some(repo);
     }
-    if flags.trace_session_sample_ratio.is_some() {
-        anyhow::bail!(
-            "--trace-session-sample-ratio is not yet supported by the native profile engine"
-        );
+    if let Some(v) = flags.trace_session_sample_ratio {
+        inputs.trace_session_sample_ratio = Some(v);
     }
-    if flags.agentic_warmup_grace_period.is_some() {
-        anyhow::bail!(
-            "--agentic-warmup-grace-period is not yet supported by the native profile engine"
-        );
+    if let Some(v) = flags.agentic_warmup_grace_period {
+        inputs.agentic_warmup_grace_period = Some(v);
     }
-    if flags.failed_request_threshold.is_some() {
-        anyhow::bail!(
-            "--failed-request-threshold is not yet supported by the native profile engine"
-        );
+    if let Some(v) = flags.failed_request_threshold {
+        inputs.failed_request_threshold = Some(v);
     }
     if flags.use_think_time_only.unwrap_or(false) && flags.ignore_trace_delays.unwrap_or(false) {
         anyhow::bail!("--use-think-time-only and --ignore-trace-delays are mutually exclusive");
@@ -2165,6 +2159,8 @@ fn yaml_phase_to_model(section: &PhaseSection) -> anyhow::Result<crate::model::p
                 delay: c.delay,
             }),
             agentic_cache_warmup_duration: None,
+            agentic_warmup_grace_period: None,
+            failed_request_threshold: None,
             adaptive_scale,
             rate_series,
         },

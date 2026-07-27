@@ -130,6 +130,12 @@ pub struct PhaseCommon {
     /// Agentic cache-warmup duration, seconds (present on scenario configs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agentic_cache_warmup_duration: Option<f64>,
+    /// Agentic auto-warmup barrier grace, seconds (`--agentic-warmup-grace-period`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agentic_warmup_grace_period: Option<f64>,
+    /// Abort when profiling `errors/total` exceeds this ratio (`--failed-request-threshold`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_request_threshold: Option<f64>,
     /// Explicit credit-issuance timing-mode override (e.g. `agentic_replay`).
     ///
     /// Normally absent — the effective mode is derived from the phase type at
@@ -238,6 +244,8 @@ mod tests {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                agentic_warmup_grace_period: None,
+                failed_request_threshold: None,
                 timing_mode: None,
                 adaptive_scale: None,
                 rate_series: None,

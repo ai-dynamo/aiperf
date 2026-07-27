@@ -37,6 +37,9 @@ pub const DATASET_IMAGE_NOISE: &str = "dataset.image.noise";
 pub const DATASET_IMAGE_SOURCE: &str = "dataset.image.source";
 /// Dataset-loader derivation regression namespace.
 pub const DATASET_LOADER: &str = "dataset.loader";
+/// Baseten whole-session subsample stream (`--trace-session-sample-ratio`).
+pub const DATASET_LOADER_BASETEN_TRACE_SESSION_SAMPLING: &str =
+    "dataset.loader.baseten_trace.session_sampling";
 /// Random-pool dataset loading.
 pub const DATASET_LOADER_RANDOM_POOL: &str = "dataset.loader.random_pool";
 /// Random-pool loader entry sampling.
@@ -118,6 +121,7 @@ pub const ALL: &[&str] = &[
     DATASET_IMAGE_NOISE,
     DATASET_IMAGE_SOURCE,
     DATASET_LOADER,
+    DATASET_LOADER_BASETEN_TRACE_SESSION_SAMPLING,
     DATASET_LOADER_RANDOM_POOL,
     DATASET_LOADER_RANDOM_POOL_SAMPLING,
     DATASET_LOADER_SHAREGPT,

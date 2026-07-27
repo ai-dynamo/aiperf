@@ -367,7 +367,8 @@ before execution.
 
 ## P1.4 Native profile accepts dead or differently defined flags
 
-Wired in a dedicated pass (CLI clap + `Inputs` / resolve projection):
+Wired in a dedicated pass (CLI clap + `Inputs` / resolve projection), with
+runtime backends for the former fail-closed trio:
 
 - `--export-outputs-json`, `--allow-dataset-wrap` / `--no-allow-dataset-wrap`,
   `--cache-bust`, `--max-context-length`, `--use-think-time-only`,
@@ -375,12 +376,9 @@ Wired in a dedicated pass (CLI clap + `Inputs` / resolve projection):
   `-vv` / `--extra-verbose`
 - `--vary-seed-per-trial`, `--no-fixed-schedule`, `--profile-export-prefix`,
   `--show-trace-timing`
-
-Fail-closed until runtime exists (clear error, no silent ignore):
-
-- `--trace-session-sample-ratio`
-- `--agentic-warmup-grace-period`
-- `--failed-request-threshold`
+- `--trace-session-sample-ratio` (baseten_trace whole-session subsample)
+- `--agentic-warmup-grace-period` (synthesized agentic warmup barrier grace)
+- `--failed-request-threshold` (profiling soft-cancel on error ratio)
 
 Still dead / differently defined (intentionally retired or unfinished):
 

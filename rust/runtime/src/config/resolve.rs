@@ -312,11 +312,11 @@ pub struct Inputs {
     pub trace_idle_gap_cap_seconds: Option<f64>,
     /// HuggingFace repo for generic Weka loader (`--hf-weka-dataset`).
     pub hf_weka_dataset: Option<String>,
-    /// Baseten whole-session sample ratio (fail-closed until implemented).
+    /// Baseten whole-session sample ratio (`--trace-session-sample-ratio`).
     pub trace_session_sample_ratio: Option<f64>,
-    /// Agentic warmup barrier grace (fail-closed until implemented).
+    /// Agentic warmup barrier grace (`--agentic-warmup-grace-period`).
     pub agentic_warmup_grace_period: Option<f64>,
-    /// Abort-on-failure-ratio threshold (fail-closed until implemented).
+    /// Abort-on-failure-ratio threshold (`--failed-request-threshold`).
     pub failed_request_threshold: Option<f64>,
     /// Mixed ISL/OSL sequence distribution (`--seq-dist`).
     pub sequence_distribution: Option<Vec<crate::config::model::dataset::SeqDistEntry>>,
@@ -487,6 +487,102 @@ pub struct DatasetAnalysisInputs {
     pub per_conversation: bool,
 }
 
+/// Baseten_trace replay knobs projected into loader `options`.
+#[derive(Clone, Copy)]
+struct BasetenReplayKnobs {
+    inter_turn_delay_cap_seconds: Option<f64>,
+    replay_speedup: Option<f64>,
+    max_idle_gap_cap_seconds: Option<f64>,
+    open_loop_replay: bool,
+    open_loop_strict: bool,
+    omit_kv_hints: bool,
+    force_min_tokens: bool,
+    trace_session_sample_ratio: Option<f64>,
+    isl_block_size: Option<u32>,
+}
+
+impl BasetenReplayKnobs {
+    fn from_inputs(inputs: &Inputs) -> Self {
+        Self {
+            inter_turn_delay_cap_seconds: inputs.inter_turn_delay_cap_seconds,
+            replay_speedup: inputs.replay_speedup,
+            max_idle_gap_cap_seconds: inputs.max_idle_gap_cap_seconds,
+            open_loop_replay: inputs.open_loop_replay,
+            open_loop_strict: inputs.open_loop_strict,
+            omit_kv_hints: inputs.omit_kv_hints,
+            force_min_tokens: inputs.force_min_tokens,
+            trace_session_sample_ratio: inputs.trace_session_sample_ratio,
+            isl_block_size: inputs.isl_block_size,
+        }
+    }
+
+    fn insert_into(self, options: &mut serde_json::Map<String, serde_json::Value>) {
+        if let Some(cap) = self.inter_turn_delay_cap_seconds {
+            options.insert(
+                "inter_turn_delay_cap_seconds".to_string(),
+                serde_json::json!(cap),
+            );
+        }
+        if let Some(speedup) = self.replay_speedup {
+            options.insert("replay_speedup".to_string(), serde_json::json!(speedup));
+        }
+        if let Some(cap) = self.max_idle_gap_cap_seconds {
+            options.insert(
+                "max_idle_gap_cap_seconds".to_string(),
+                serde_json::json!(cap),
+            );
+        }
+        if !self.open_loop_replay {
+            options.insert("open_loop_replay".to_string(), serde_json::json!(false));
+        }
+        if self.open_loop_strict {
+            options.insert("open_loop_strict".to_string(), serde_json::json!(true));
+        }
+        if self.omit_kv_hints {
+            options.insert("omit_kv_hints".to_string(), serde_json::json!(true));
+        }
+        if !self.force_min_tokens {
+            options.insert("force_min_tokens".to_string(), serde_json::json!(false));
+        }
+        if let Some(ratio) = self.trace_session_sample_ratio {
+            options.insert(
+                "trace_session_sample_ratio".to_string(),
+                serde_json::json!(ratio),
+            );
+        }
+        if let Some(block_size) = self.isl_block_size {
+            options.insert("block_size".to_string(), serde_json::json!(block_size));
+        }
+    }
+}
+
+/// Whether the resolved dataset uses the `baseten_trace` loader.
+///
+/// True for file datasets with `--custom-dataset-type baseten_trace`, for
+/// `--hf-dataset` with `--hf-format baseten_trace`, and for catalog public
+/// datasets whose format is `baseten_trace`.
+fn is_baseten_trace_dataset(inputs: &Inputs) -> bool {
+    if inputs.custom_dataset_type.as_deref() == Some("baseten_trace") {
+        return true;
+    }
+    if inputs.hf_dataset.is_some() && inputs.hf_format.as_deref() == Some("baseten_trace") {
+        return true;
+    }
+    inputs
+        .public_dataset
+        .as_deref()
+        .and_then(crate::config::model::public_catalog::lookup)
+        .is_some_and(|meta| meta.format == "baseten_trace")
+}
+
+/// Insert baseten_trace replay knobs into a loader `options` bag.
+fn insert_baseten_replay_options(
+    options: &mut serde_json::Map<String, serde_json::Value>,
+    knobs: BasetenReplayKnobs,
+) {
+    knobs.insert_into(options);
+}
+
 /// Reject `extra`-input keys the baseten_trace loader injects per-turn.
 ///
 /// Ports Python's `_reject_baseten_trace_extra_input_collisions`:
@@ -501,7 +597,7 @@ pub struct DatasetAnalysisInputs {
 /// YAML `endpoint.extra` path enforce it identically — it is the single source
 /// of truth, called from `build()`.
 fn validate_baseten_extra_input_collisions(inputs: &Inputs) -> anyhow::Result<()> {
-    if inputs.custom_dataset_type.as_deref() != Some("baseten_trace") {
+    if !is_baseten_trace_dataset(inputs) {
         return Ok(());
     }
     let extra = &inputs.extra;
@@ -545,6 +641,9 @@ fn validate_baseten_extra_input_collisions(inputs: &Inputs) -> anyhow::Result<()
 /// introspection, so this instead fires on a *non-default value* -- it
 /// catches every case that would actually change behavior on the wrong
 /// loader, just not a redundant explicit default.
+/// Accepted when the dataset is file `baseten_trace`, a catalog public dataset
+/// whose format is `baseten_trace`, or `--hf-dataset` with `--hf-format
+/// baseten_trace`.
 fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
     let mut set_flags = Vec::new();
     if inputs.replay_speedup.is_some() {
@@ -565,27 +664,58 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
     if !inputs.force_min_tokens {
         set_flags.push("--force-min-tokens/--no-force-min-tokens");
     }
+    if inputs.trace_session_sample_ratio.is_some() {
+        set_flags.push("--trace-session-sample-ratio");
+    }
     if set_flags.is_empty() {
+        return Ok(());
+    }
+    if is_baseten_trace_dataset(inputs) {
         return Ok(());
     }
     let msg = format!(
         "{} is only supported by the baseten_trace loader",
         set_flags.join(", ")
     );
-    if inputs.public_dataset.is_some() || inputs.input_file.is_none() {
-        anyhow::bail!("{msg}; provide --input-file and --custom-dataset-type baseten_trace.");
-    }
-    if let Some(format) = &inputs.custom_dataset_type
-        && format != "baseten_trace"
-    {
+    if let Some(format) = &inputs.custom_dataset_type {
         anyhow::bail!("{msg}, but --custom-dataset-type is {format}.");
     }
-    Ok(())
+    if let Some(format) = &inputs.hf_format {
+        anyhow::bail!("{msg}, but --hf-format is {format}.");
+    }
+    if let Some(name) = &inputs.public_dataset {
+        let format = crate::config::model::public_catalog::lookup(name)
+            .map(|meta| meta.format.as_str())
+            .unwrap_or("unknown");
+        anyhow::bail!("{msg}, but --public-dataset {name} uses format {format}.");
+    }
+    anyhow::bail!(
+        "{msg}; provide --input-file with --custom-dataset-type baseten_trace, \
+         a baseten_trace public dataset, or --hf-dataset with --hf-format baseten_trace."
+    );
 }
 
 pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
     validate_baseten_extra_input_collisions(&inputs)?;
+    if let Some(ratio) = inputs.trace_session_sample_ratio {
+        anyhow::ensure!(
+            ratio.is_finite() && ratio > 0.0 && ratio <= 1.0,
+            "--trace-session-sample-ratio must be in (0.0, 1.0], got {ratio}"
+        );
+    }
+    if let Some(threshold) = inputs.failed_request_threshold {
+        anyhow::ensure!(
+            threshold.is_finite() && (0.0..=1.0).contains(&threshold),
+            "--failed-request-threshold must be in [0.0, 1.0], got {threshold}"
+        );
+    }
+    if let Some(grace) = inputs.agentic_warmup_grace_period {
+        anyhow::ensure!(
+            grace.is_finite() && grace >= 0.0,
+            "--agentic-warmup-grace-period must be finite and non-negative, got {grace}"
+        );
+    }
     // Effective weka semantics, resolved while `inputs` is still whole (needed
     // before scenario-lock materialization so a graph-ir-specific lock targets the
     // right arm).
@@ -677,6 +807,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
 
     let endpoint_type_for_dataset_validation = inputs.endpoint_type.clone();
+    let baseten_knobs = BasetenReplayKnobs::from_inputs(&inputs);
     // Resolve the effective connection-reuse strategy once so the hop-routing
     // default can derive from it (see `resolved_hop_routing`).
     let resolved_connection_reuse = inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled);
@@ -754,6 +885,10 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         if let Some(n) = inputs.hf_output_len {
             options.insert("output_len".to_string(), serde_json::json!(n));
         }
+        let format = inputs.hf_format.clone().unwrap_or_else(|| "hf".to_string());
+        if format == "baseten_trace" {
+            insert_baseten_replay_options(&mut options, baseten_knobs);
+        }
         let mut source = serde_json::Map::new();
         source.insert("type".to_string(), serde_json::json!("hugging_face"));
         source.insert("dataset".to_string(), serde_json::json!(id));
@@ -771,7 +906,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         Dataset::Public(crate::config::model::dataset::PublicDataset {
             cache_bust,
             name: id.clone(),
-            format: inputs.hf_format.clone().unwrap_or_else(|| "hf".to_string()),
+            format,
             source: serde_json::Value::Object(source),
             options,
             sampling: Sampling(inputs.sampling.clone()),
@@ -844,6 +979,9 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         ) {
             options.insert("max_conversations".to_string(), serde_json::json!(max));
         }
+        if meta.format == "baseten_trace" {
+            insert_baseten_replay_options(&mut options, baseten_knobs);
+        }
         let mut source = meta.source.clone();
         if let (Some(subset), Some(obj)) = (&inputs.hf_subset, source.as_object_mut()) {
             obj.insert("subset".to_string(), serde_json::json!(subset));
@@ -891,6 +1029,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     }
                     _ => {}
                 }
+                // Shared across DAG JSONL and baseten closed-loop think-times.
                 if let Some(cap) = inputs.inter_turn_delay_cap_seconds {
                     o.insert(
                         "inter_turn_delay_cap_seconds".to_string(),
@@ -900,28 +1039,12 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 if inputs.uuid_and_strip {
                     o.insert("uuid_and_strip".to_string(), serde_json::json!(true));
                 }
-                if let Some(speedup) = inputs.replay_speedup {
-                    o.insert("replay_speedup".to_string(), serde_json::json!(speedup));
-                }
-                if let Some(cap) = inputs.max_idle_gap_cap_seconds {
-                    o.insert(
-                        "max_idle_gap_cap_seconds".to_string(),
-                        serde_json::json!(cap),
-                    );
-                }
-                if !inputs.open_loop_replay {
-                    o.insert("open_loop_replay".to_string(), serde_json::json!(false));
-                }
-                if inputs.open_loop_strict {
-                    o.insert("open_loop_strict".to_string(), serde_json::json!(true));
-                }
-                if inputs.omit_kv_hints {
-                    o.insert("omit_kv_hints".to_string(), serde_json::json!(true));
-                }
-                if !inputs.force_min_tokens {
-                    o.insert("force_min_tokens".to_string(), serde_json::json!(false));
-                }
-                if let Some(block_size) = inputs.isl_block_size {
+                if format == "baseten_trace" {
+                    // Re-run insert after the shared inter-turn cap so baseten
+                    // knobs (including a duplicate inter-turn write) stay in one
+                    // helper shared with the public/hf paths.
+                    insert_baseten_replay_options(&mut o, baseten_knobs);
+                } else if let Some(block_size) = inputs.isl_block_size {
                     o.insert("block_size".to_string(), serde_json::json!(block_size));
                 }
                 o
@@ -1002,6 +1125,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                agentic_warmup_grace_period: inputs.agentic_warmup_grace_period,
+                failed_request_threshold: inputs.failed_request_threshold,
                 adaptive_scale: None,
                 rate_series: None,
             },
@@ -1029,6 +1154,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                agentic_warmup_grace_period: inputs.agentic_warmup_grace_period,
+                failed_request_threshold: inputs.failed_request_threshold,
                 adaptive_scale: None,
                 rate_series: None,
             },
@@ -1073,6 +1200,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             .cancellation
             .map(|(rate, delay)| crate::config::model::phase::Cancellation { rate, delay });
         phase.common.rate_series = inputs.request_rate_series.clone();
+        phase.common.agentic_warmup_grace_period = inputs.agentic_warmup_grace_period;
+        phase.common.failed_request_threshold = inputs.failed_request_threshold;
         phase
     };
     let mut phases = match inputs.phases_override.take() {
@@ -1111,6 +1240,17 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             phases
         }
     };
+    for phase in &mut phases {
+        if phase.common.exclude_from_results {
+            continue;
+        }
+        if phase.common.agentic_warmup_grace_period.is_none() {
+            phase.common.agentic_warmup_grace_period = inputs.agentic_warmup_grace_period;
+        }
+        if phase.common.failed_request_threshold.is_none() {
+            phase.common.failed_request_threshold = inputs.failed_request_threshold;
+        }
+    }
     normalize_and_validate_phases(&mut phases)?;
 
     let endpoint_type = endpoint.endpoint_type.0.clone();
@@ -1612,6 +1752,8 @@ fn build_phase(
             rate_ramp: None,
             cancellation: None,
             agentic_cache_warmup_duration: None,
+            agentic_warmup_grace_period: None,
+            failed_request_threshold: None,
             adaptive_scale: None,
             rate_series: None,
         },

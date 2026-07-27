@@ -1272,6 +1272,27 @@ fn warmup_agentic_cache_duration(phases: &[PhaseSpec]) -> Option<f64> {
         .find_map(|phase| phase.common().agentic_cache_warmup_duration)
 }
 
+/// Default upper bound for accelerated-cache agentic warmup grace (Python
+/// `_AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC`).
+const AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC: f64 = 300.0;
+
+/// Resolve synthesized agentic-warmup grace from the profiling phase common.
+///
+/// `None` leaves the phase on the warmup default (infinite grace).
+fn resolve_agentic_warmup_grace(
+    profiling: &crate::engine::protocol::PhaseCommonSpec,
+) -> Option<f64> {
+    if let Some(grace) = profiling.agentic_warmup_grace_period {
+        return Some(grace);
+    }
+    let cache_warmup = profiling.agentic_cache_warmup_duration?;
+    let default_grace = cache_warmup.min(AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC);
+    Some(match profiling.grace_period {
+        None => default_grace,
+        Some(benchmark_grace) => benchmark_grace.max(default_grace),
+    })
+}
+
 /// Lower a legacy-AgentX weka run into a scheduled `NativeRunSpec` driven by the
 /// `agentic_replay` timing mode. Reconstructs the WEKA trajectories with the
 /// byte-exact AgentX loader, composes them into a verbatim-replay linear dataset,
@@ -1511,6 +1532,16 @@ fn lower_legacy_agentic(
     // authored value from any authored phase and carry it forward so
     // `dataset_build` can populate `AgenticReplayConfig.cache_warmup_duration_s`.
     warmup_common.agentic_cache_warmup_duration = warmup_agentic_cache_duration(&workload.phases);
+    // Warmup barrier grace is independent of profiling `--grace-period`. Explicit
+    // `--agentic-warmup-grace-period` wins; otherwise accelerated cache-warmup
+    // gets a bounded default; plain snapshot warmup keeps infinite grace.
+    let mut grace_source = profiling_common.clone();
+    if grace_source.agentic_cache_warmup_duration.is_none() {
+        grace_source.agentic_cache_warmup_duration = warmup_common.agentic_cache_warmup_duration;
+    }
+    warmup_common.grace_period = resolve_agentic_warmup_grace(&grace_source);
+    warmup_common.agentic_warmup_grace_period = None;
+    warmup_common.failed_request_threshold = None;
     // The warmup phase dispatches each warmup conversation exactly once (no
     // recycle), so its record count is known. Set `requests` to that count so the
     // per-phase record-ordinal base of the following PROFILING phase is offset past
@@ -1815,6 +1846,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(warmup_agentic_cache_duration(&phases), None);
+    }
+
+    #[test]
+    fn resolve_agentic_warmup_grace_prefers_explicit_then_cache_default() {
+        let explicit: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(
+            serde_json::json!({
+                "name": "profiling",
+                "exclude_from_results": false,
+                "agentic_warmup_grace_period": 7.5,
+                "agentic_cache_warmup_duration": 60.0,
+                "grace_period": 1.0
+            }),
+        )
+        .unwrap();
+        assert_eq!(resolve_agentic_warmup_grace(&explicit), Some(7.5));
+
+        let cache_only: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(
+            serde_json::json!({
+                "name": "profiling",
+                "exclude_from_results": false,
+                "agentic_cache_warmup_duration": 60.0,
+                "grace_period": 10.0
+            }),
+        )
+        .unwrap();
+        // max(benchmark grace 10, min(cache 60, 300)) = 60
+        assert_eq!(resolve_agentic_warmup_grace(&cache_only), Some(60.0));
+
+        let plain: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(
+            serde_json::json!({
+                "name": "profiling",
+                "exclude_from_results": false
+            }),
+        )
+        .unwrap();
+        assert_eq!(resolve_agentic_warmup_grace(&plain), None);
     }
 
     #[test]

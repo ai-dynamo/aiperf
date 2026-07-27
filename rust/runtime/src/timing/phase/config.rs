@@ -49,7 +49,7 @@ pub enum GracePeriod {
 }
 
 /// Validated policy for one bounded issuance phase.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PhaseConfig {
     /// Stable phase identifier used by progress and report consumers.
     pub id: String,
@@ -65,6 +65,9 @@ pub struct PhaseConfig {
     pub concurrency: Option<usize>,
     /// Optional shared prefill-concurrency target for this phase.
     pub prefill_concurrency: Option<usize>,
+    /// Abort profiling when `errors/total` exceeds this ratio after
+    /// `max(concurrency, 10)` records. Absent disables the check.
+    pub failed_request_threshold: Option<f64>,
     /// Clock nanoseconds between progress observations.
     pub progress_interval_ns: i64,
     /// Clock nanoseconds allowed for cancelled requests to drain.
@@ -87,6 +90,7 @@ impl PhaseConfig {
             seamless: false,
             concurrency: None,
             prefill_concurrency: None,
+            failed_request_threshold: None,
             progress_interval_ns: DEFAULT_PROGRESS_INTERVAL_NS,
             cancel_drain_timeout_ns: DEFAULT_CANCEL_DRAIN_TIMEOUT_NS,
         }
@@ -112,6 +116,12 @@ impl PhaseConfig {
     ) -> Self {
         self.concurrency = concurrency;
         self.prefill_concurrency = prefill_concurrency;
+        self
+    }
+
+    /// Abort profiling when the failure ratio exceeds `threshold`.
+    pub fn with_failed_request_threshold(mut self, threshold: Option<f64>) -> Self {
+        self.failed_request_threshold = threshold;
         self
     }
 

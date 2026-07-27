@@ -457,6 +457,14 @@ pub struct PhaseCommonSpec {
     /// uses it as the cache-pressure window; absence selects the pair's default.
     #[serde(default)]
     pub agentic_cache_warmup_duration: Option<f64>,
+    /// Agentic auto-warmup barrier grace in seconds (`--agentic-warmup-grace-period`).
+    /// Applied only to the synthesized agentic warmup phase, not profiling grace.
+    #[serde(default)]
+    pub agentic_warmup_grace_period: Option<f64>,
+    /// Abort profiling when `errors/total` exceeds this ratio after a grace floor
+    /// of `max(concurrency, 10)` records (`--failed-request-threshold`).
+    #[serde(default)]
+    pub failed_request_threshold: Option<f64>,
     /// Piecewise-linear request-rate schedule (mutually exclusive with scalar `rate`).
     #[serde(default, alias = "rateSeries")]
     pub rate_series: Option<RateSeriesSpec>,
