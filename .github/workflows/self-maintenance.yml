@@ -1,147 +1,152 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Scheduled autonomous maintenance routines. Each weekday runs one routine
-# defined by a skill under `.agents/skills/maint-*/SKILL.md`; the shared
-# guardrails live in `.agents/skills/self-maintenance/SKILL.md`.
+# Monthly whole-repo maintenance analysis.
 #
-# Design notes (see docs/reference/self-maintenance.md for the full rationale):
+# Runs the four `maint-*` analysis routines in ANALYSIS MODE ONLY: they read the
+# repository, cluster findings, and update a single long-lived "Maintenance
+# backlog" issue. They do not commit, push, or open pull requests. A human picks
+# an item off the backlog and runs the routine interactively (`/maint-dead-code`)
+# to actually make the change, which is where the judgment questions get answered.
 #
-#   * No new actions. The Claude Code CLI is installed from npm, and every
-#     action used here (actions/checkout, actions/setup-python, actions/
-#     setup-node, actions/upload-artifact, astral-sh/setup-uv) is already used
-#     elsewhere in this repo, so the workflow stays runnable under an org
-#     action-allowlist policy without new entries. Note that setup-uv is a
-#     third-party action; it is simply one this repo already depends on.
-#   * Least-privilege token: write scopes are granted to the routine job only —
-#     `contents` (push the maintenance branch), `pull-requests` (open the PR),
-#     `issues` (escalations). The `resolve` job gets none.
-#   * Never triggered by `pull_request` or `pull_request_target`, so untrusted
-#     fork code cannot reach the API key. Note this does NOT make the agent's
-#     input trusted: it reads merged repo content and history, which includes
-#     text authored by outside contributors.
-#   * Repository-pinned. Forks that inherit this file no-op.
-#   * The routine is not intended to write to `main`, and opens draft PRs. That
-#     intent is enforced by branch protection on `main`, not by this file —
-#     the job's token has `contents: write`. Keep branch protection on.
+# Why monthly analysis instead of a daily PR stream (see
+# docs/reference/self-maintenance.md for the full rationale):
+#
+#   * Review capacity is the binding constraint. AIPerf merges ~15 PRs/week past
+#     7 code owners. A bot adding 5/week would make maintenance a quarter of the
+#     review queue, where it would starve behind feature work and go stale.
+#   * These routines answer questions no existing tool can: PR review agents see
+#     one diff, nightly CI sees pass/fail, the ruff/ergonomics ratchets see
+#     mechanical rules. Cross-file, historical, judgment-dependent findings fall
+#     through all three. That analysis is cheap; acting on it is expensive.
+#   * A single backlog issue is also the system's only memory across runs.
+#     Without it a scheduled routine re-proposes findings that were already
+#     considered and rejected, forever.
+#
+# Security notes:
+#
+#   * `issues: write` only. The job cannot push a branch or open a PR, so an
+#     analysis run that misbehaves cannot modify the repository.
+#   * No new actions. The Claude Code CLI comes from npm; every action used here
+#     is already used elsewhere in this repo, so no new action-allowlist entries
+#     are required. (setup-uv is third-party, but already a repo dependency.)
+#   * Never triggered by `pull_request` / `pull_request_target`, so fork code
+#     cannot reach the API key. Note this does not make the agent's *input*
+#     trusted: it reads merged repo content and history, which includes text
+#     from outside contributors.
+#   * The raw CLI transcript is not uploaded. Secret masking covers rendered run
+#     logs, not files written to disk and then published as artifacts.
 
-name: "Self-Maintenance"
+name: "Self-Maintenance Analysis"
 
 on:
   schedule:
-    # One routine per weekday, 10:00 UTC. The routine is resolved from
-    # `github.event.schedule` in the `resolve` job below, so the cron string
-    # is the source of truth for which routine runs.
-    - cron: '0 10 * * 1'  # Monday    - dead code
-    - cron: '0 10 * * 2'  # Tuesday   - duplicate abstractions
-    - cron: '0 10 * * 3'  # Wednesday - coverage gaps
-    - cron: '0 10 * * 4'  # Thursday  - test pruning
-    - cron: '0 10 * * 5'  # Friday    - experiments
+    # 10:00 UTC on the 1st of each month. Deliberately infrequent: these findings
+    # accumulate over months, and the backlog caps at 20 open items per routine.
+    - cron: '0 10 1 * *'
   workflow_dispatch:
     inputs:
       routine:
-        description: 'Which maintenance routine to run.'
+        description: 'Which routine to run. "all" runs the full sweep.'
         required: true
+        default: all
         type: choice
         options:
+          - all
           - maint-dead-code
           - maint-dup-abstractions
           - maint-coverage-gaps
           - maint-test-pruning
-          - maint-experiment
       dry_run:
-        description: 'Analyze and upload a report, but do not open a PR or issue.'
+        description: 'Analyze and upload a report, but do not touch the backlog issue.'
         type: boolean
         default: true
 
-# Only one maintenance run at a time. Overlapping runs would race on the
-# working tree and could open duplicate PRs for the same finding.
 concurrency:
   group: self-maintenance
   cancel-in-progress: false
 
-# Default to no privileges; the routine job opts into exactly what it needs.
 permissions: {}
 
 jobs:
   resolve:
-    name: Resolve routine
+    name: Resolve routines
     runs-on: ubuntu-latest
-    permissions: {}
-    # Pinned to the upstream repository so forks inherit the file without
-    # running it.
     if: github.repository == 'ai-dynamo/aiperf'
+    permissions: {}
     outputs:
-      routine: ${{ steps.pick.outputs.routine }}
+      routines: ${{ steps.pick.outputs.routines }}
       dry_run: ${{ steps.pick.outputs.dry_run }}
       enabled: ${{ steps.pick.outputs.enabled }}
     steps:
-      - name: Pick routine and check that the run is enabled
+      - name: Pick routines and check that the run is enabled
         id: pick
         env:
           # Secret presence cannot be tested in an `if:` expression, so it is
-          # resolved here into a plain output that downstream jobs gate on.
+          # resolved here into a plain boolean output. No secret material is
+          # exposed by comparing it to the empty string.
           HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
-          SCHEDULE: ${{ github.event.schedule }}
           INPUT_ROUTINE: ${{ inputs.routine }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
 
+          ALL='["maint-dead-code","maint-dup-abstractions","maint-coverage-gaps","maint-test-pruning"]'
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "$INPUT_ROUTINE" != "all" ]]; then
+            routines="[\"$INPUT_ROUTINE\"]"
+          else
+            routines="$ALL"
+          fi
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            routine="$INPUT_ROUTINE"
             dry_run="$INPUT_DRY_RUN"
           else
-            case "$SCHEDULE" in
-              '0 10 * * 1') routine=maint-dead-code ;;
-              '0 10 * * 2') routine=maint-dup-abstractions ;;
-              '0 10 * * 3') routine=maint-coverage-gaps ;;
-              '0 10 * * 4') routine=maint-test-pruning ;;
-              '0 10 * * 5') routine=maint-experiment ;;
-              *)
-                echo "::error::Unmapped cron schedule '$SCHEDULE'. Add it to the case statement."
-                exit 1
-                ;;
-            esac
             dry_run=false
           fi
 
           if [[ "$HAS_KEY" != "true" ]]; then
-            echo "::notice::ANTHROPIC_API_KEY is not configured for this repository; skipping. See docs/reference/self-maintenance.md for enablement steps."
+            echo "::notice::ANTHROPIC_API_KEY is not configured for this repository; skipping. See docs/reference/self-maintenance.md."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "routine=$routine"   >> "$GITHUB_OUTPUT"
+          echo "routines=$routines" >> "$GITHUB_OUTPUT"
           echo "dry_run=$dry_run"   >> "$GITHUB_OUTPUT"
-          echo "Routine: $routine (dry_run=$dry_run)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Routines: $routines (dry_run=$dry_run)" >> "$GITHUB_STEP_SUMMARY"
 
-  run-routine:
-    name: ${{ needs.resolve.outputs.routine }}
+  analyze:
+    name: ${{ matrix.routine }}
     needs: resolve
     if: needs.resolve.outputs.enabled == 'true'
     runs-on: ubuntu-latest
-    # Must cover checkout, install, a full base unit-test run, and then the
-    # routine's own verification gate (unit + property + component-integration
-    # + pre-commit, whose first run builds every hook environment), possibly
-    # twice. For calibration, run-unit-tests.yml allots 30 minutes for a single
-    # unit-test leg on a much larger self-hosted runner.
-    timeout-minutes: 120
+    timeout-minutes: 45
     permissions:
-      contents: write
-      pull-requests: write
+      # Analysis mode updates the backlog issue and nothing else. No `contents:
+      # write`, so the job structurally cannot push a branch or open a PR.
       issues: write
+    strategy:
+      # Sequential: all four routines edit the same backlog issue, and parallel
+      # edits would clobber each other. fail-fast off so one routine erroring
+      # does not cancel the rest of the sweep.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        routine: ${{ fromJSON(needs.resolve.outputs.routines) }}
     env:
-      ROUTINE: ${{ needs.resolve.outputs.routine }}
+      ROUTINE: ${{ matrix.routine }}
       DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
     steps:
       - uses: actions/checkout@v6
         with:
-          # Full history: every routine reasons about provenance
-          # (`git log -S`, `--follow`) to decide whether code or a test is
-          # safe to touch. A shallow clone silently degrades that judgment.
+          # Full history: every routine reasons about provenance (`git log -S`,
+          # `--follow`) to judge whether code or a test is safe to touch. A
+          # shallow clone silently degrades that judgment.
           fetch-depth: 0
+          # Analysis mode never pushes, so the job has no need of a credential
+          # in .git/config where an agent could read it back out.
+          persist-credentials: false
 
       - uses: actions/setup-python@v6
         with:
@@ -156,104 +161,71 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Put the project venv on PATH
-        # `make ci-install` installs into .venv but does not export it. The
-        # routine skills call `ruff` and `pre-commit` directly as part of the
-        # verification gate; without this they exit 127 and the gate is
-        # silently unrunnable.
-        run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-
       - name: Install project and mock server
         run: make ci-install PYTHON_VERSION=3.12
+
+      - name: Put the project venv on PATH
+        # `make ci-install` installs into .venv but does not export it. The
+        # coverage-gap routine invokes pytest/coverage tooling directly.
+        run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Configure git identity
-        # DCO is enforced on this repository, so the routine's commits must
-        # carry a `Signed-off-by` trailer matching this identity. The skills
-        # instruct `git commit -s`; this makes the trailer resolvable.
-        run: |
-          git config user.name  "aiperf-maintenance[bot]"
-          git config user.email "aiperf-maintenance[bot]@users.noreply.github.com"
-
-      - name: Verify base is green before starting
-        # The shared contract aborts the run if `main` is already red, since a
-        # maintenance PR stacked on a broken base is unreviewable and the
-        # routine's own verification gate would be meaningless.
-        # Fails the job rather than exiting green, so an abort is visible.
-        # A silently-skipped scheduled run that reports success would let the
-        # routines no-op indefinitely without anyone noticing.
-        run: |
-          if ! uv run pytest tests/unit -n auto -q --tb=no; then
-            echo "::error::Base unit tests are failing before any maintenance work; aborting. Fix main first."
-            exit 1
-          fi
-
-      - name: Run maintenance routine
+      - name: Run analysis
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Deliberately empty on a dry run, so "do not open a PR" is enforced
-          # by the absence of a credential rather than by prompt text alone.
-          #
-          # Otherwise: optional. A PAT or GitHub App token makes the resulting
-          # PR trigger the normal CI workflows; PRs opened with the default
-          # GITHUB_TOKEN do not trigger `pull_request` workflows, so they land
-          # without test signal. See docs/reference/self-maintenance.md.
-          GH_TOKEN: ${{ needs.resolve.outputs.dry_run == 'true' && '' || (secrets.AIPERF_MAINTENANCE_TOKEN || secrets.GITHUB_TOKEN) }}
+          # Empty on a dry run, so "do not touch the backlog" is enforced by the
+          # absence of a credential rather than by prompt text alone.
+          GH_TOKEN: ${{ needs.resolve.outputs.dry_run == 'true' && '' || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          DATE="$(date -u +%Y%m%d)"
-
-          # artifacts/ is gitignored, which keeps the report and any receipts out
-          # of the routine's own commits even if it stages broadly.
+          # artifacts/ is gitignored, so nothing written here can be picked up
+          # by a stray `git add`.
           mkdir -p artifacts
 
           if [[ "$DRY_RUN" == "true" ]]; then
-            DELIVERABLE="Do NOT open a pull request or an issue. Write your findings and the
-          full evidence to artifacts/maintenance-report.md and stop there."
+            DELIVERABLE="Do NOT create or edit any issue. Write what you would have added to
+          the backlog, plus your full evidence, to artifacts/maintenance-report.md."
           else
-            DELIVERABLE="If and only if you have High- or Medium-confidence findings that pass the
-          verification gate, push the branch with 'git push -u origin HEAD' and open a
-          DRAFT pull request with 'gh pr create --draft'. Escalations go to
-          'gh issue create --label maintenance'. Also write the run report to
-          artifacts/maintenance-report.md."
+            DELIVERABLE="Find the open issue titled 'Maintenance backlog' with
+          'gh issue list --label maintenance --state open --search \"Maintenance backlog\" in:title'.
+          If none exists, create it with 'gh issue create --label maintenance'. Read it in
+          full, then update it per the backlog rules in the shared contract. Also write the
+          run report to artifacts/maintenance-report.md."
           fi
 
-          claude -p "Run the '$ROUTINE' maintenance routine on this repository.
+          claude -p "Run the '$ROUTINE' maintenance routine on this repository in ANALYSIS MODE.
 
-          Read .agents/skills/self-maintenance/SKILL.md first and follow it exactly —
-          it defines the scope guards, the baseline rules, the verification gate, the
-          change budget, the confidence tiers, and the abort conditions. Then read
-          .agents/skills/$ROUTINE/SKILL.md and carry out that routine.
+          Read .agents/skills/self-maintenance/SKILL.md first and follow it exactly. It
+          defines the two run modes, the maintenance backlog rules, the scope guards, the
+          confidence tiers, and the abort conditions. Then read
+          .agents/skills/$ROUTINE/SKILL.md and carry out that routine's analysis.
 
-          Non-negotiable:
-          - Never modify a scope-guarded path.
-          - Never regenerate a baseline file to make a check pass.
-          - Never skip or weaken a test to make the verification gate pass.
-          - Every commit uses 'git commit -s' (DCO is enforced).
-          - Use exactly this branch name: claude-maint/$ROUTINE-$DATE
+          You are in ANALYSIS MODE. Non-negotiable:
+          - Do NOT modify any file in the working tree. Do not commit, branch, or push.
+          - Do NOT open a pull request.
+          - Record only High- and Medium-confidence findings. Drop Low entirely.
+          - Read the existing backlog before proposing anything. Never re-propose an item
+            listed under 'Declined', and never duplicate one already under 'Open'.
+          - Reject any finding that could have been made by reviewing a single PR diff.
+            That belongs to the PR review agents, not to this routine.
           - Finding nothing is a valid and expected outcome. Do not manufacture work.
-          - Never print environment variables or credentials. The run log is retained.
+          - Never print environment variables or credentials.
 
           $DELIVERABLE" \
             --permission-mode acceptEdits \
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash,Task" \
-            --max-turns 200
+            --allowedTools "Read,Glob,Grep,Bash,Task" \
+            --max-turns 120
 
       - name: Upload run report
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          # run_attempt is included because artifact names must be unique
-          # within a run, and re-running a failed job reuses run_id.
-          name: maintenance-${{ env.ROUTINE }}-${{ github.run_id }}-${{ github.run_attempt }}
-          # Only the routine's own report is uploaded. The raw CLI transcript is
-          # deliberately NOT retained: the step runs with an API key and a
-          # write-scoped token in its environment, and GitHub's secret masking
-          # covers the rendered run log, not bytes written to a file that is
-          # then published as a downloadable artifact.
+          # run_attempt included because artifact names must be unique within a
+          # run, and re-running a failed job reuses run_id.
+          name: maintenance-${{ matrix.routine }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/maintenance-report.md
           if-no-files-found: warn
           retention-days: 30

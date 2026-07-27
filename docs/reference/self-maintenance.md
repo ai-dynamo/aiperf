@@ -6,164 +6,174 @@ sidebar-title: Self-Maintenance Routines
 
 # Self-Maintenance Routines
 
-AIPerf runs a set of scheduled, autonomous maintenance routines. Each routine is a
-Claude Code skill that analyzes one narrow aspect of repository health and, when it
-finds something it can prove, opens a scoped draft pull request for human review.
-
-This document covers what the routines are, the guarantees they operate under, how to
-enable and operate them, and the backlog of routines not yet built.
+AIPerf runs a monthly whole-repository maintenance analysis. Four Claude Code routines
+each examine one aspect of repository health that no existing tool can see, and record
+what they find to a single **Maintenance backlog** issue. A human picks items off that
+backlog; the routine then does the work interactively, with a person available to answer
+the judgment calls.
 
 > [!IMPORTANT]
-> Nothing here merges itself. `main` is CODEOWNER-protected; every routine's output is
-> a draft PR or an issue. The routines are a source of reviewable proposals, not an
-> autonomous committer.
+> The scheduled runs are **analysis only**. They hold `issues: write` and nothing else,
+> so they structurally cannot commit, push, or open a pull request. Changes happen only
+> when a person invokes a routine directly.
 
-## Why routines rather than ad-hoc cleanup
+## What this covers that existing tooling does not
 
-Repository health decays in ways that are individually too small to prioritize and
-collectively expensive: a helper nobody calls anymore, a third copy of the same parsing
-logic, a test that has asserted nothing since a refactor two years ago. None of these
-justify a ticket. All of them compound.
+This is the load-bearing question for the whole system, and the sharpest filter on what
+belongs in it.
 
-The routines exist to convert that class of work into a steady trickle of small,
-independently reviewable PRs, and to keep each one *cheap to reject*. A maintenance PR
-that a reviewer cannot verify in five minutes is a net loss even when it is correct, so
-every routine optimizes for reviewability over volume.
+| Existing tooling | Sees | Structurally blind to |
+|---|---|---|
+| PR review agents (CodeRabbit) | one diff | patterns spanning files that no single PR touched |
+| Nightly CI | whether `main` builds and passes | whether code should exist at all |
+| ruff, `check_ergonomics`, finite-invariant ratchets | mechanical rules | anything requiring a judgment call |
+
+These routines occupy the intersection: **whole-repo scope, historical context, and a
+judgment call with no pass/fail answer.**
+
+The gap is real rather than manufactured. A diff-scoped reviewer *cannot* find "this
+abstraction now exists in five places," because each of the five PRs that added a copy
+looked correct on its own. Dead code is the same: a symbol becomes dead relative to the
+entire repository and its history, usually several PRs after the one that orphaned it.
+Neither a per-diff reviewer nor a pass/fail signal can see either.
+
+The corollary is a hard scope rule the routines enforce on themselves: **a finding that
+could have been made from a single diff does not belong here.** "This PR lacks a test" is
+the PR reviewer's job, and duplicating it is noise.
+
+## Why monthly analysis instead of a PR stream
+
+The binding constraint is review capacity, not detection capacity.
+
+AIPerf merges roughly 15 PRs a week past 7 code owners, while `src/` grows tens of
+thousands of lines a month. There is no shortage of things a routine could propose. A bot
+adding five PRs a week would make maintenance a quarter of the review queue — where it
+would starve behind feature work, go stale, and train reviewers to ignore the label.
+
+So the system splits the cheap half from the expensive half. Analysis is cheap and runs
+on a schedule. Acting on it is expensive and happens only when a human decides an item is
+worth their review.
+
+The backlog issue is also the system's **only memory across runs**. Without it, a
+scheduled routine re-proposes findings that were already considered and rejected,
+indefinitely. A human moving an item to `Declined` is how the system gets tuned, and the
+routines treat that section as read-only.
 
 ## The routines
 
-| Routine | Skill | Schedule | Output |
-|---|---|---|---|
-| Dead code sweep | `.agents/skills/maint-dead-code/` | Mon 10:00 UTC | `refactor:`/`chore:` deletion PR |
-| Duplicate abstractions | `.agents/skills/maint-dup-abstractions/` | Tue 10:00 UTC | `refactor:` unification PR |
-| Coverage gaps | `.agents/skills/maint-coverage-gaps/` | Wed 10:00 UTC | `test:` PR adding tests |
-| Test pruning | `.agents/skills/maint-test-pruning/` | Thu 10:00 UTC | `test:` deletion PR |
-| Experiments | `.agents/skills/maint-experiment/` | Fri 10:00 UTC | Issue; PR only for a proven fix |
+| Routine | Skill | Finds |
+|---|---|---|
+| Dead code | `.agents/skills/maint-dead-code/` | Unreachable code: orphaned modules, unused private helpers, stale shims, dead branches, unregistered plugin classes |
+| Duplicate abstractions | `.agents/skills/maint-dup-abstractions/` | One concept implemented several times and drifting apart |
+| Subsystem coverage gaps | `.agents/skills/maint-coverage-gaps/` | A category of behavior untested across an entire subsystem |
+| Test pruning | `.agents/skills/maint-test-pruning/` | Tests that cost more than they protect |
 
-The shared contract every routine obeys is `.agents/skills/self-maintenance/SKILL.md`.
-Read that file before changing any routine — it holds the guardrails, and the individual
-skills only describe what to look for.
+All four run on the 1st of each month, sequentially (they share one backlog issue). The
+shared contract every routine obeys is `.agents/skills/self-maintenance/SKILL.md` — read
+that before changing any routine, since the individual skills only describe what to look
+for.
 
-### Dead code sweep
+### Dead code
 
-Finds unreachable code: unused private helpers, orphaned modules, stale compatibility
-shims, dead branches, unregistered plugin classes, and configuration nothing reads.
+The hard part here is that AIPerf resolves around 178 distinct classes at runtime by
+dotted-path string from `src/aiperf/plugin/plugins.yaml` (220 registry entries),
+dispatches service methods through the message bus by decorator rather than direct call,
+and lazily loads CLI commands from import strings. Generic dead-code detection is
+therefore wrong by default here, and acting on a false positive breaks the product at
+runtime with no test failure to warn you.
 
-The hard part in this repository is that around 178 distinct classes are resolved at
-runtime by dotted-path string from `src/aiperf/plugin/plugins.yaml` (220 registry
-entries), service methods are dispatched through the message bus by decorator rather
-than by direct call, and CLI commands are lazily loaded from import strings. Generic
-dead-code detection is therefore wrong by default here, and acting on a false positive
-breaks the product at runtime with no test failure to warn you. The routine treats every
-detector hit as a hypothesis and requires four independent reference checks to come back
-clean — plus two more signals read as context — before anything is deleted.
+The routine treats every detector hit as a hypothesis and requires four independent
+reference checks to come back clean — plus two further signals read as context — before
+recording a candidate. The one question it cannot answer is whether something outside
+this repository imports the symbol, so every entry carries that question for a human.
 
 ### Duplicate abstractions
 
-Finds one concept implemented several times and drifting apart. The signal is not "these
-look similar" — it is "a bug fixed in one of these would need fixing in all of them, and
-wasn't." Where a duplicate received a fix its siblings never did, the routine says so
-explicitly, because that converts a housekeeping PR into a latent-bug fix.
+The signal is not "these look similar" — it is *"a bug fixed in one of these would need
+fixing in all of them, and wasn't."* Where a duplicate received a fix its siblings never
+did, the routine leads with that, because it converts the item from housekeeping into a
+latent bug.
 
-Unification is refused when it would require inventing a new abstraction layer or adding
-flags to the merged function for each call site. Both of those are design decisions, and
-both get escalated to an issue instead.
+Unification is refused outright when it would require inventing a new abstraction layer,
+or when the merged function would need a flag per call site. Both are design decisions.
 
-### Coverage gaps
+### Subsystem coverage gaps
 
-Adds tests for behavior that matters: error paths, NaN/Inf boundaries, config
-validation, boundary conditions, plugin contracts. Coverage numbers are used only as a
-search heuristic — the gate for shipping any test is being able to name, in one
-sentence, the bug it catches. Each new test is mutation-checked (introduce the bug,
-confirm the test fails, revert) before it ships.
+Deliberately *not* per-PR test coverage, which the PR review agents already handle at the
+moment it is most useful. This routine clusters uncovered lines and reports only
+systematic gaps: *"none of the seventeen error paths in the metrics export layer are
+covered, and each PR that added one looked fine."*
 
-This routine ships test-only changes. If writing a test reveals a product bug, it files
-an issue rather than fixing it.
+One important caveat it must respect: the coverage run does not include
+`tests/integration/`, a large suite that does run in nightly CI. Code that looks
+uncovered frequently is not, so every finding must state that the integration suite was
+checked.
 
 ### Test pruning
 
-Removes tests that cost more than they protect: tautologies, mock-only tests, tests for
-deleted behavior, permanently-skipped tests, redundant parametrize cases.
+The most conservative routine by design. Every other one's worst case is a rejected
+finding; this one's worst case is a silently-removed regression guard. The default answer
+is *keep*, deletion requires a proven-zero branch-coverage delta plus evidence from the
+introducing commit that the test was not a regression guard, and recording nothing is the
+expected outcome most months.
 
-This is the most dangerous routine, and it is deliberately the most conservative. Every
-other routine's worst case is a rejected PR; this one's worst case is a silently-removed
-regression guard. The default answer is *keep*, deletion requires a proven-zero
-branch-coverage delta plus evidence from the introducing commit that the test was not a
-regression guard, and finding nothing is the expected outcome most weeks.
+## The two modes
 
-### Experiments
+| | Analysis mode | Apply mode |
+|---|---|---|
+| Triggered by | Monthly schedule, or `workflow_dispatch` | A person running `/maint-dead-code` etc. |
+| Produces | Backlog entries | A branch, commits, and a draft PR |
+| Touches the working tree | Never | Yes |
+| Judgment calls | Recorded with the question attached | Asked of the human, then acted on |
 
-Runs the real `aiperf` CLI against `tests/aiperf_mock_server` to check that AIPerf
-measures what it claims. Unit tests can only verify that a function returns what it
-returns; they cannot verify that a reported TTFT of 42 ms corresponds to an actual
-42 ms. The mock server's configurable latency, deterministic generation, error
-injection, and per-request ISL/OSL recording provide the ground truth to compare
-against.
-
-Six rotating families: metric accuracy versus ground truth, run-to-run determinism,
-config-space robustness, error-path behavior, load scaling, and cross-endpoint metric
-consistency. Findings become issues. A PR is opened only when the root cause is
-identified in code, the fix is small and local, it changes no *intended* behavior, and a
-regression test that fails before the fix accompanies it.
+Apply mode existing is the point. Roughly half of all findings rest on a question a
+person answers in thirty seconds — *was this specialization deliberate?* — that a
+scheduled run can only guess at, and a wrong guess becomes a rejected PR.
 
 ## Operating the routines
 
 ### Enabling
 
-The workflow (`.github/workflows/self-maintenance.yml`) is pinned to
-`ai-dynamo/aiperf` and no-ops until an `ANTHROPIC_API_KEY` repository secret exists.
-Until then, scheduled runs log a notice and exit cleanly — forks inherit the file
-harmlessly.
+`.github/workflows/self-maintenance.yml` is pinned to `ai-dynamo/aiperf` and no-ops until
+an `ANTHROPIC_API_KEY` repository secret exists. Until then, scheduled runs log a notice
+and exit cleanly; forks inherit the file harmlessly.
 
-Two optional pieces of setup materially improve the results:
+A `maintenance` label must also exist, since the backlog issue is created and found by
+that label.
 
-- **`AIPERF_MAINTENANCE_TOKEN`** (a PAT or GitHub App token). PRs opened with the default
-  `GITHUB_TOKEN` do **not** trigger `pull_request` workflows, so they arrive without CI
-  signal. Supplying this secret makes the routines' PRs run the normal checks.
-- **"Allow GitHub Actions to create and approve pull requests"**, in repository or org
-  Actions settings. It is off by default for organizations, and without it `gh pr create`
-  returns 403 when falling back to `GITHUB_TOKEN`, regardless of the `pull-requests:
-  write` grant.
-
-A `maintenance` label must also exist on the repository, or the escalation path
-(`gh issue create --label maintenance`) errors.
-
-On a dry run the `GH_TOKEN` environment variable is set to empty deliberately, so
-"do not open a PR" is enforced by the absence of a credential rather than by prompt
-text alone.
+No PAT, GitHub App token, or "Allow GitHub Actions to create and approve pull requests"
+setting is needed — the analysis job never opens a PR.
 
 ### Running one by hand
 
-Use the `workflow_dispatch` trigger, pick a routine, and leave `dry_run` at its default
-of `true` — the run then analyzes, uploads `artifacts/maintenance-report.md` plus the
-full log as a workflow artifact, and opens nothing. That is the right way to evaluate a
-routine's judgment before letting it file PRs.
+Use `workflow_dispatch`, pick a routine (or `all`), and leave `dry_run` at its default of
+`true`. The run then analyzes, uploads `artifacts/maintenance-report.md` as a workflow
+artifact, and leaves the backlog untouched. That is the right way to evaluate a routine's
+judgment before letting it write anything.
 
-Locally, invoke the skill directly in Claude Code:
+Locally — and this is the normal path for actually making a change:
 
 ```
 /maint-dead-code
 ```
 
-The skills carry no CI-specific assumptions, so a local run behaves the same as a
-scheduled one.
+The skills carry no CI-specific assumptions, so a local run behaves the same, except that
+you are present to answer questions.
 
 ### Permissions
 
-The workflow defaults to `permissions: {}` and grants `contents: write`,
-`pull-requests: write`, and `issues: write` to the routine job only. It introduces no
-new actions — the Claude Code CLI is installed from npm, and every action it uses is
-already used elsewhere in this repository — so it stays runnable under an organization
-action-allowlist policy without new entries. It is never triggered by `pull_request` or
-`pull_request_target`, so untrusted fork code cannot reach the API key.
+The workflow defaults to `permissions: {}` and grants the analysis job `issues: write`
+only. It checks out with `persist-credentials: false`, so no git credential sits in
+`.git/config` for an agent to read back. It introduces no new actions — the Claude Code
+CLI is installed from npm and every action it uses is already used elsewhere in this
+repo — so it stays runnable under an organization action-allowlist policy without new
+entries.
 
-Two limits worth being explicit about. First, an untrusted *trigger* is not the same as
-untrusted *input*: the routine reads merged repository content and history, which
-includes text written by outside contributors, so repo content is a prompt-injection
-surface even though fork code never runs. Second, the job's token has `contents: write`,
-so nothing in the workflow itself prevents a write to `main` — that is enforced by branch
-protection, which must stay on. The raw CLI transcript is deliberately not uploaded as an
-artifact, since the step runs with credentials in its environment and GitHub's secret
+Two limits worth stating plainly. An untrusted *trigger* is not the same as untrusted
+*input*: the routine reads merged repository content and history, which includes text
+written by outside contributors, so repo content is a prompt-injection surface even
+though fork code never runs. And the raw CLI transcript is deliberately not uploaded as
+an artifact, since the step runs with an API key in its environment and GitHub's secret
 masking covers rendered logs rather than files written to disk and then published.
 
 ### Guardrails
@@ -172,109 +182,96 @@ Summarized from the shared contract:
 
 - **Scope guards.** Generated files, ratchet baselines, `ATTRIBUTIONS*`, `uv.lock`,
   `CODEOWNERS`, workflows, and the four synchronized agent-instruction files are never
-  modified by a routine.
+  modified.
 - **Baselines burn down, never regenerate.** `tools/ruff_baseline.json`,
   `tools/ergonomics_baseline.json`, and the finite-invariant baselines are ratchets. A
   routine may remove an entry it genuinely fixed; running `--regenerate-baseline` is
   forbidden, because it silently re-grandfathers every violation added since the last
   regeneration.
-- **No new dependencies, no public API changes, no behavior changes.** Routines refactor
-  and delete. Anything that alters what AIPerf does belongs to a human.
-- **Change budget.** At most 400 changed lines, 15 files, and one concern per PR.
-  Overflow is deferred to the next run rather than split across simultaneous PRs.
-- **Verification gate.** `ruff`, unit tests, property tests, component-integration tests,
-  and `pre-commit run --all-files` must all pass, and the PR body must quote the actual
-  output rather than claim it passed.
-- **Abort conditions.** A red `main`, a failing gate, a scope-guard collision, an
-  unexplainable candidate, or zero High/Medium findings all mean the routine opens
-  nothing. Silence is a valid outcome, and two consecutive closed-unmerged PRs from the
-  same routine escalate to an issue asking a human to retune it rather than producing a
-  third.
+- **No new dependencies, no public API changes, no behavior changes.** A routine that
+  believes it has found a product bug records it and stops.
+- **Change budget** (apply mode): at most 400 changed lines, 15 files, one concern per PR.
+- **Verification gate** (apply mode): ruff, unit tests, property tests,
+  component-integration tests, and `pre-commit run --all-files` must all pass, and the PR
+  body must quote the actual output rather than claim it passed.
+- **Backlog discipline.** Read it fully before proposing. Never re-propose a `Declined`
+  item. Cap `Open` at 20 per routine. Low-confidence findings are dropped, not recorded.
+- **Abort conditions.** A red `main`, zero High/Medium findings, a scope-guard collision,
+  an unexplainable candidate, a finding that a PR reviewer should have made, a full
+  backlog, or a routine whose recent items were mostly declined — all mean the routine
+  produces nothing. Silence is a valid and frequent outcome.
 
-### Reviewing a routine's PR
+### Reviewing the output
 
-Review these the way you would review a contribution from someone competent but
-unfamiliar with the codebase's history — because that is exactly what they are.
+For a **backlog entry**, the useful question is whether the finding is worth someone's
+review time. If it isn't, move it to `Declined` with a one-line reason — that is the
+primary tuning mechanism, and the routines are built to respect it permanently.
 
-1. Start at the **Reviewer checklist** in the PR body. Each item is a question the
-   routine could not answer for itself, usually about intent or about consumers outside
-   this repository.
-2. For deletions, confirm nothing external depends on the symbol. That is the one thing
-   no routine can verify.
-3. For unifications, read the behavior-difference table before the diff. If a difference
-   is dispositioned as "deliberate" and you disagree, the whole unification is suspect.
-4. Check that the quoted verification output is real, and that no baseline file grew.
-5. Close it without ceremony if it is not worth the review. Routines are designed to be
-   cheap to reject, and a closed PR is useful signal — the contract escalates after two
-   in a row from the same routine.
+For a **PR** from apply mode, start at the `Reviewer checklist` in the body. Each item is
+a question the routine could not answer for itself, usually about intent or about
+consumers outside this repository. For deletions, confirm nothing external depends on the
+symbol. For unifications, read the behavior-difference table before the diff — if a
+difference is dispositioned as "deliberate" and you disagree, the whole unification is
+suspect. Check that the quoted verification output is real and that no baseline file grew.
 
 ## Backlog
 
-Routines worth building, roughly in the order the value justifies the effort. Not yet
-implemented.
+Routines worth building, roughly in order of value. Not yet implemented. Each is filtered
+by the same question: **can an existing tool already see this?**
 
 **High value**
 
-- **Doc drift audit.** Verify documentation against the code it describes — CLI options,
-  class and function names, env vars, code examples in tutorials. Partially covered
-  today by the `markdown-accuracy-auditor` agent, which would become the routine's
-  engine. It could also report four-file-sync drift, though not fix it — those four
-  files are scope-guarded for coordinated human edits.
 - **Ratchet burndown.** Chip away at `tools/ruff_baseline.json`,
   `tools/ergonomics_baseline.json`, and the finite-invariant baselines a few entries per
-  PR until each reaches zero. Highly mechanical, easy to verify, and directly retires
-  technical debt the repository has already agreed is debt. Probably the single
-  best-value addition to the current set.
-- **Flaky test detection.** Find tests that pass under `-n auto` but fail under `-n 0`,
-  or that fail intermittently across repeated runs. Note that `pytest-rerunfailures` is
-  only a declared dev dependency — no `--reruns` flag is wired into `addopts`, the
-  Makefile, or CI — so there is no rerun signal to mine today; enabling one would be a
-  prerequisite. Propose a fix, or quarantine with a linked issue. Flakes erode trust in
-  the entire suite, which makes every other routine's verification gate less meaningful.
-- **Performance regression watch.** Track benchmark timings from the nightly workflow and
-  open an issue when a metric regresses beyond a threshold. AIPerf is a performance tool;
-  a regression in its own overhead is a product defect.
+  PR until each reaches zero. Mechanical, easy to verify, and it retires debt the
+  repository has already agreed is debt. Probably the best-value addition to the current
+  set.
+- **Doc drift audit.** Verify documentation against the code it describes — CLI options,
+  class and function names, env vars, tutorial examples. Partially covered by the
+  `markdown-accuracy-auditor` agent, which would become the engine. It could report
+  four-file-sync drift, though not fix it; those files are scope-guarded.
+- **Flaky test detection.** Find tests that pass under `-n auto` but fail under `-n 0`, or
+  fail intermittently across repeated runs. Note that `pytest-rerunfailures` is only a
+  declared dev dependency — no `--reruns` is wired into `addopts`, the Makefile, or CI —
+  so there is no rerun signal to mine today; enabling one is a prerequisite. Flakes erode
+  trust in the whole suite, which makes every apply-mode verification gate less
+  meaningful.
 
 **Medium value**
 
-- **Dependency hygiene.** Unused declarations in `pyproject.toml`, dependencies pinned
-  far behind, and optional-extra groups that no longer match what the code imports.
-  Needs care around the license/attribution surface.
+- **Dependency hygiene.** Unused declarations in `pyproject.toml`, dependencies pinned far
+  behind, optional-extra groups that no longer match what the code imports. Needs care
+  around the license and attribution surface.
 - **Error-message ergonomics.** A pass over exception messages and CLI errors asking
-  whether each one tells a user what to do next. AIPerf's users hit config errors
-  constantly, and the distance between a good and a bad message is the distance between
-  a five-minute and a five-hour debugging session.
+  whether each tells a user what to do next. AIPerf users hit config errors constantly,
+  and the distance between a good and a bad message is the distance between a five-minute
+  and a five-hour debugging session.
 - **TODO/FIXME triage.** Classify long-lived inline markers into done-already, still-real
-  (file an issue and link it), and never-going-to-happen (delete). Prevents the comment
-  layer from decaying into noise.
-- **Type-hint completeness.** Find public functions missing annotations, per the coding
-  standard, and add them where the type is unambiguous from the implementation.
-- **Test tier misplacement.** Find unit tests that are really component-integration
-  tests, and tests missing the `slow` marker that should have it. Keeps the default
-  suite fast, which everything else depends on.
+  (file an issue and link it), and never-going-to-happen (delete).
+- **Test tier misplacement.** Unit tests that are really component-integration tests, and
+  tests missing the `slow` marker. Keeps the default suite fast, which everything else
+  depends on.
 
 **Lower value / higher risk**
 
-- **Docstring coverage.** Easy to generate, easy to generate badly. Only worth doing for
+- **Type-hint completeness.** Public functions missing annotations. Ruff covers part of
+  this already.
+- **Docstring coverage.** Easy to generate, easy to generate badly. Only worth it for
   public API surface, and only where the docstring says something the signature does not.
-- **Config-schema drift.** Check that generated config schemas match the Pydantic models.
-  Largely already enforced by `make check-config-schema`.
-- **Import hygiene.** Circular-import risk, unused imports beyond what ruff catches,
-  imports that should be deferred for startup time. Low yield given ruff's existing
-  coverage.
-- **Changelog synthesis.** Draft release notes from merged PRs. Useful, but it is a
-  release-process routine rather than a maintenance one, and it wants a different
-  trigger.
+- **Import hygiene.** Circular-import risk, deferred imports for startup time. Low yield
+  given ruff's existing coverage.
 
 ### Deliberately not built
 
+- **Per-PR test-coverage nagging.** The PR review agents already do this, at the right
+  moment, with the author present. A second bot in the same thread is noise.
+- **Experiment runner / metric-accuracy validation.** Proposed and dropped: nightly CI
+  already runs the full integration suite, and the GitLab pipeline it triggers covers
+  performance validation. Revisit only if a specific accuracy gap is identified that
+  neither covers.
 - **Auto-merge on green CI.** The value of this system is that it produces reviewable
-  proposals. Removing the reviewer removes the safety property that makes autonomous
-  maintenance acceptable at all.
+  proposals. Removing the reviewer removes the property that makes it acceptable at all.
 - **Automatic dependency upgrades.** Dependabot and Renovate solve this well, and neither
   needs a language model.
-- **Broad automated refactoring for style.** Ruff and the ergonomics checker already
-  enforce style mechanically, without judgment calls and without token cost.
-- **Anything that changes benchmark semantics.** Metric definitions, timing behavior, and
-  wire formats are product decisions. A routine may report a discrepancy; it may not
-  resolve one.
+- **Broad automated style refactoring.** Ruff and the ergonomics checker already enforce
+  style mechanically, without judgment calls and without token cost.

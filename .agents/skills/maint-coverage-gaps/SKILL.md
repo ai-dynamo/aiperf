@@ -1,118 +1,118 @@
 ---
 name: maint-coverage-gaps
-description: Autonomous maintenance routine that finds untested behavior in AIPerf that actually matters (error paths, boundary conditions, NaN/Inf handling, config validation, plugin contracts) and opens one PR adding focused tests. Targets risk, not coverage percentage. Use for the scheduled coverage sweep or when asked to write tests for uncovered code.
+description: Autonomous maintenance routine that finds SYSTEMATIC test-coverage gaps spanning a whole AIPerf subsystem (an entire category of error path, boundary condition, or contract left untested across many files) rather than per-PR omissions. Records findings to the maintenance backlog; writes tests only when a human invokes it on a backlog item. Use for the scheduled coverage sweep or when asked about subsystem-level test gaps.
 ---
 
-# Coverage Gap Tests
+# Subsystem Coverage Gaps
 
-Read `.agents/skills/self-maintenance/SKILL.md` first — its scope guards, verification
-gate, change budget, and PR conventions all apply.
+Read `.agents/skills/self-maintenance/SKILL.md` first — the two run modes, the backlog
+rules, scope guards, verification gate, and PR conventions all apply.
 
-## The failure mode this routine must avoid
+## The scope line, and why it matters here
 
-Coverage-driven test generation reliably produces tests that assert what the code
-currently does rather than what it should do. Those tests are worse than no tests: they
-pass forever, they break during legitimate refactors, and they encode bugs as
-requirements. AIPerf already has 879 test files — the marginal value of test #880 is
-negative unless it would **fail if a specific plausible bug were introduced**.
+"This PR doesn't have a test" is the PR reviewer's job. CodeRabbit already does it, at
+the moment it is most useful, with the author present. **Do not duplicate it.** A second
+bot saying the same thing later is pure noise.
 
-The gate for every proposed test:
+This routine looks for the thing a diff-scoped reviewer structurally cannot see: a
+**category of behavior that is untested across an entire subsystem**. Not "this function
+lacks a test" — *"none of the seventeen error paths in the metrics export layer are
+covered, and each individual PR that added one looked fine."*
 
-> Name the bug this test catches. If you can't state it in one sentence — as a change
-> someone might actually make — don't write the test.
+The distinction is concrete. Ask: could this finding have been made by looking at one
+PR? If yes, drop it. A finding belongs here only when the pattern is the point and the
+individual instances are unremarkable.
 
-Coverage numbers are a search heuristic for finding candidates. They are not the goal,
-and no PR from this routine should be justified by a percentage.
+## What a real finding looks like
+
+Good — systematic, spans files, the pattern is the insight:
+
+- "Every `except` branch in the response-parsing path is uncovered; 12 handlers across
+  6 files, zero tests exercise any of them."
+- "No test anywhere passes a `nan` or `inf` through the metric aggregation path, despite
+  the NaN/Inf contract in `CLAUDE.md` making that a documented invariant."
+- "Config validators: 34 `@field_validator` functions across the config package, 9 have
+  any test at all. The untested ones cluster in the endpoint configs."
+- "Plugin category X has 14 registered implementations and the base-class contract is
+  tested against exactly one of them."
+- "Boundary conditions: no test in the repo runs with `--request-count 1`."
+
+Not a finding — belongs to the PR reviewer, or to nobody:
+
+- "`foo()` added last week has no test."
+- Coverage percentage moved down.
+- Getters, `__repr__`, trivial delegation, log-only branches.
+- Anything already covered under `-m integration` (see the caveat below).
 
 ## Finding candidates
 
 ```bash
 uv run pytest tests/unit tests/component_integration -n auto \
-  --cov=src/aiperf --cov-branch --cov-report=term-missing --cov-report=html \
+  --cov=src/aiperf --cov-branch --cov-report=term-missing --cov-report=json \
   -m 'not performance and not stress and not slow'
 ```
 
-Note: `-m integration` is not in this run, so integration-only paths look uncovered here
-and are not real gaps. Confirm a candidate is not exercised under
-`uv run pytest -m integration` before treating it as untested.
+**Critical caveat:** this does not run `tests/integration/`, which is a large suite
+(~55 files) covering endpoints, exporters, tracing, cancellation, telemetry, and more,
+and which does run in nightly CI. Code that looks uncovered here is frequently covered
+there. **Before recording any gap, grep `tests/integration/` for the subsystem** and say
+in the backlog entry that you did. Reporting an integration-covered path as a gap is the
+fastest way to get this routine's findings dismissed wholesale.
 
-Then filter the uncovered lines hard. Ranked by value:
+The analysis that matters is not reading the coverage report line by line — it is
+**clustering** the uncovered lines. Group them by subsystem and by *kind* of behavior
+(error handling, validation, boundary, contract). A cluster with a shared cause is a
+finding. Twenty scattered uncovered lines are not.
 
-**Worth testing**
+Ranked by value once clustered:
 
-1. **Error and failure paths.** `except` bodies, retry exhaustion, timeout handling,
-   malformed-response branches. This is where async services break in production and
-   where coverage is systematically weakest, because the happy path is easy to exercise.
-2. **NaN/Inf boundaries.** Any numeric path where a value could be `nan`, `inf`, or
-   `None` crossing a serialization boundary. `CLAUDE.md` makes this a hard contract and
-   `tests/unit/property/test_finite_invariants.py` enforces the mechanical half — but
-   *semantic* handling (does a single NaN latency poison the percentile? does it
-   propagate to JSON export?) needs real tests.
-3. **Config validation.** Every `BaseConfig` field validator and cross-field constraint.
-   These are cheap to test, high-churn, and user-facing: a broken validator means a
-   confusing CLI error, which is the difference between a five-minute and a five-hour
-   debugging session for a user.
-4. **Boundary conditions.** Zero requests, one request, empty dataset, single-token
-   response, concurrency of 1, request count below warmup count.
-5. **Plugin contracts.** Each plugin category's base-class contract, tested once against
-   a representative implementation. Use `from tests.harness import mock_plugin`.
-6. **Message-handler wiring.** That `@on_message(MessageType.X)` handlers exist for every
-   published message type and don't silently drop messages.
+1. **Error and failure paths.** Exception bodies, retry exhaustion, timeout handling,
+   malformed-response branches. Systematically weakest, because happy paths are easy to
+   exercise, and this is where async services actually break.
+2. **NaN/Inf boundaries.** `CLAUDE.md` makes this a hard contract and
+   `tests/unit/property/test_finite_invariants.py` enforces the mechanical half —
+   semantic handling is much thinner.
+3. **Config validation.** Cheap to test, high-churn, user-facing: a broken validator is
+   the difference between a five-minute and a five-hour debugging session.
+4. **Plugin contracts.** Each category's base-class contract, across implementations.
+5. **Boundary conditions.** Zero/one request, empty dataset, single-token response,
+   concurrency 1, request count below warmup count.
 
-**Not worth testing**
+## The gate for recording a gap
 
-- Getters, `__repr__`, trivial delegation, Pydantic field defaults with no logic.
-- Anything requiring a real inference server. Use `tests/aiperf_mock_server`.
-- Anything already covered under `-m integration` or `-m component_integration`.
-- Log-only branches.
-- Paths whose test would need to mock so much that the test only asserts the mocks.
-  If setting up the test requires patching more than about three things, the finding is
-  a *testability* problem — open an issue about the seam, don't force the test.
+A cluster is only worth recording when all four hold:
 
-## Writing the tests
+1. **It spans multiple files or many call sites.** One file is not a subsystem.
+2. **It has a shared cause**, not just a shared directory. "These are all untested
+   because error paths were never prioritized" is a cause; "these are all in
+   `exporters/`" is not.
+3. **It is not covered by `tests/integration/`.** Checked, and said so.
+4. **You can name the bug class it would catch.** Not one bug — the *class*. "A silent
+   swallow in any of these handlers would ship undetected."
 
-Follow `docs/dev/patterns.md` and the testing conventions in `CLAUDE.md`:
+## Apply mode — writing the tests
 
-- Name: `test_<function>_<scenario>_<expected>`, e.g.
-  `test_parse_config_missing_field_raises_error`.
-- `@pytest.mark.asyncio` for async, `@pytest.mark.parametrize` for data-driven, with
-  `from pytest import param`, explicit `id=`, and `# fmt: skip` on the closing paren.
-- Imports at file top. Fixtures for setup. One focus per test.
-- The auto-fixtures apply: `asyncio.sleep` is instant, RNG is seeded to 42, singletons
-  reset between tests. Do not re-implement any of that.
-- Place tests next to their existing siblings — mirror the `src/aiperf/` layout under
-  `tests/unit/`. Do not create a new top-level test directory.
-- Mark anything ≥3s as `@pytest.mark.slow` and anything multi-service as
-  `component_integration`, or the routine will slow the default suite for everyone.
+Only when a human pulls a backlog item. Follow `docs/dev/patterns.md` and the testing
+conventions in `CLAUDE.md`:
 
-## Self-check: does the test actually work?
+- Name: `test_<function>_<scenario>_<expected>`.
+- `@pytest.mark.parametrize` with `from pytest import param`, explicit `id=`, and
+  `# fmt: skip` on the closing paren. Systematic gaps usually want one parametrized test
+  over many cases, not many near-identical tests.
+- Mirror the `src/aiperf/` layout under `tests/unit/`. Never a new top-level test dir.
+- Mark ≥3s as `slow`, multi-service as `component_integration`, or the default suite
+  slows for everyone.
+- The auto-fixtures already give instant `asyncio.sleep`, seeded RNG, and singleton
+  reset. Don't reimplement them.
 
-Before shipping, prove each new test has teeth. This step is mandatory and is the main
-thing separating this routine from a coverage-number generator.
+**Mutation-check every test before shipping.** Introduce the bug it should catch —
+invert the condition, drop the `await`, return early — confirm the test fails, revert.
+A test that still passes asserts nothing; delete it. Then run in isolation and under
+`-n 0` to catch order-dependence, and run the suite twice to catch state leakage.
 
-1. **Mutate and confirm failure.** Introduce the bug the test is supposed to catch —
-   invert a condition, drop an `await`, return early — and confirm the new test fails.
-   Revert the mutation. If the test still passed, it asserts nothing; delete it.
-2. **Run in isolation and without xdist**, to catch order-dependence and shared state:
-   ```bash
-   uv run pytest <new_test_file> -n 0 -v
-   uv run pytest <new_test_file>::<test_name> -n 0 -v
-   ```
-3. **Run the full unit suite twice.** A test that passes once and fails on repeat is
-   leaking state.
-4. **Check runtime.** New unit tests should add well under a second each. If one is
-   slower, mark it `slow` or reconsider it.
+Ship test-only changes. If writing a test reveals a product bug, **do not fix it** —
+record it and tell the human. A routine quietly changing behavior under a `test:` title
+is the trust violation that gets this whole system switched off.
 
-## Shipping
-
-- One PR covers **one area** — one module, or one concern like "config validation error
-  paths". Not "tests for everything uncovered this week".
-- Title: `test: cover <specific behavior>`.
-- Test-only PRs, always. If writing the test reveals a bug in the source, **do not fix
-  it here** — that is a behavior change and belongs to a human. Open an issue, link it
-  from the PR, and either mark the test `xfail` with the issue link or leave it out.
-  A maintenance routine quietly changing product behavior under a `test:` title is
-  exactly the trust violation that gets the whole system turned off.
-- The PR body's findings table has an extra column: **the bug each test catches**, and
-  confirmation that the mutation check failed as expected.
-- If no candidate survives the "name the bug" gate, open nothing.
+PR title: `test: cover <the systematic gap>`. The body names the bug class, not just
+the files touched.

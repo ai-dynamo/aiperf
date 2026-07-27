@@ -1,6 +1,6 @@
 ---
 name: maint-test-pruning
-description: Autonomous maintenance routine that removes tests that cost more than they protect in AIPerf (tautologies, mock-only tests, redundant parametrize cases, tests for deleted behavior, permanently-skipped tests, slow tests with cheap equivalents) and opens one scoped deletion PR. Deliberately conservative — deleting a test that was catching something is the worst outcome this system can produce. Use for the scheduled test-pruning sweep.
+description: Autonomous maintenance routine that identifies tests that cost more than they protect in AIPerf (tautologies, mock-only tests, redundant parametrize cases, tests for deleted behavior, permanently-skipped tests). Records candidates to the maintenance backlog when run on a schedule; opens a scoped deletion PR when a human invokes it on a backlog item. Deliberately conservative — deleting a test that was catching something is the worst outcome this system can produce. Use for the scheduled test-pruning sweep.
 ---
 
 # Test Pruning
@@ -94,7 +94,14 @@ A candidate clears the bar only when:
 - Its introducing commit shows it was not a regression guard; **and**
 - It falls into one of the six High-confidence categories above.
 
-## Shipping
+## Output
+
+**Analysis mode** — record candidates with their original intent and the branch-coverage
+delta already measured. Because the default answer is *keep*, expect most sweeps to
+record nothing; that is the routine working, not failing.
+
+**Apply mode** — take one backlog item, re-verify the coverage delta against current
+`main`, and ship:
 
 - One PR = one category of pruning. Do not mix "deleted tautologies" with "trimmed
   parametrize cases".

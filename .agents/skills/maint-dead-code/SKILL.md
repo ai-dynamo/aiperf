@@ -1,6 +1,6 @@
 ---
 name: maint-dead-code
-description: Autonomous maintenance routine that finds provably-unreachable code in AIPerf (unused private helpers, orphaned modules, unregistered plugin classes, dead branches, stale compatibility shims) and opens one scoped deletion PR. Accounts for AIPerf's heavy dynamic dispatch via plugins.yaml, message-bus decorators, and lazy CLI imports. Use for the scheduled dead-code sweep or when asked to clean up dead code.
+description: Autonomous maintenance routine that finds provably-unreachable code in AIPerf (unused private helpers, orphaned modules, unregistered plugin classes, dead branches, stale compatibility shims). Records findings to the maintenance backlog when run on a schedule; opens a scoped deletion PR when a human invokes it on a backlog item. Accounts for AIPerf's heavy dynamic dispatch via plugins.yaml, message-bus decorators, and lazy CLI imports. Use for the scheduled dead-code sweep or when asked to clean up dead code.
 ---
 
 # Dead Code Sweep
@@ -119,20 +119,30 @@ Interpreting the results:
 - Test helpers under `tests/harness/` and `tests/fixtures/` — pruning those is
   `maint-test-pruning`'s job, and mixing the two violates one-PR-one-concern.
 
-## Shipping
+## Output
 
-Group the surviving High-confidence deletions into **one** PR, ordered by blast radius
-(whole orphaned files first, then module-level symbols, then private helpers). Stay
-inside the change budget; defer the rest.
+**Analysis mode** — record each surviving High/Medium candidate as a backlog entry with
+its deadness proof compressed to one evidence line, plus the question no static analysis
+can answer: *does anything outside this repository import it?* Change nothing.
 
-- PR title: `refactor: remove dead <area> code` — or `chore:` if it is purely
-  deletions with no restructuring.
-- One commit per logical deletion group, so a reviewer can drop a single commit if they
-  disagree with one finding without rejecting the whole PR. This matters more here than
-  in any other routine, because deletions are exactly where a reviewer is most likely to
-  say "all of these but that one".
-- The PR body's `Reviewer checklist` asks, per deletion: *"Confirm nothing outside this
-  repo imports `X`"* — the one thing the routine genuinely cannot check.
+Group related candidates into a single entry where they share a cause ("the `foo` shim
+and its three helpers, orphaned when X landed") — one entry per deletable unit of
+review, not one per symbol.
 
-If the sweep yields nothing High-confidence, open nothing. A clean repo is the success
+**Apply mode** — take one backlog item and ship it:
+
+- Re-run the deadness proof. The repo has moved since the finding was recorded, and a
+  symbol that gained a caller last week is no longer a candidate.
+- Order commits by blast radius: whole orphaned files, then module-level symbols, then
+  private helpers.
+- **One commit per logical deletion group.** This matters more here than in any other
+  routine — deletions are exactly where a reviewer is most likely to say "all of these
+  but that one," and per-group commits let them drop one without rejecting the PR.
+- Delete the symbol's own tests in the same commit as the symbol.
+- PR title: `refactor: remove dead <area> code`, or `chore:` if purely deletions.
+- `Reviewer checklist` asks, per deletion: *"Confirm nothing outside this repo imports
+  `X`."* That is the one thing the routine genuinely cannot check, and it is the only
+  question that reliably matters.
+
+If a sweep yields nothing High-confidence, record nothing. A clean repo is the success
 case, not a failure to find work.

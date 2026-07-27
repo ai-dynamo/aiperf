@@ -1,6 +1,6 @@
 ---
 name: maint-dup-abstractions
-description: Autonomous maintenance routine that finds the same abstraction reimplemented in multiple places across AIPerf (parallel helper functions, copy-pasted validation, near-identical Pydantic models, repeated retry/parsing/formatting logic) and opens one PR unifying a single family onto a canonical implementation. Use for the scheduled duplicate-abstraction sweep or when asked to find and unify repeated code.
+description: Autonomous maintenance routine that finds the same abstraction reimplemented in multiple places across AIPerf (parallel helper functions, copy-pasted validation, near-identical Pydantic models, repeated retry/parsing/formatting logic). Records clusters to the maintenance backlog when run on a schedule; opens a PR unifying one family onto a canonical implementation when a human invokes it on a backlog item. Use for the scheduled duplicate-abstraction sweep or when asked to find and unify repeated code.
 ---
 
 # Duplicate Abstraction Unification
@@ -101,9 +101,18 @@ from the code and history, it is Low confidence — issue, not PR.
    than one new boolean flag to serve all call sites, the abstractions were correctly
    separate. Abandon the cluster.
 
-## Executing a unification
+## Output
 
-One cluster per PR. Not one *category* — one cluster.
+**Analysis mode** — record each qualified cluster as one backlog entry: the concept, the
+implementations and their locations, whether they have drifted, and the proposed
+canonical home. Where a duplicate received a fix its siblings never did, **lead with
+that** — it converts the item from housekeeping into a latent bug and changes its
+priority entirely. Change nothing.
+
+**Apply mode** — take one backlog item and execute the unification below. One cluster
+per PR. Not one *category* — one cluster.
+
+## Executing a unification
 
 1. Pick the canonical implementation: the most correct one, not the most used one.
    Correct means it handles the union of edge cases the others handle, uses
