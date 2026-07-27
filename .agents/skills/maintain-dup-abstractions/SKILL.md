@@ -1,5 +1,5 @@
 ---
-name: maint-dup-abstractions
+name: maintain-dup-abstractions
 description: Autonomous maintenance routine that finds the same abstraction reimplemented in multiple places across AIPerf (parallel helper functions, copy-pasted validation, near-identical Pydantic models, repeated retry/parsing/formatting logic). Records clusters to the maintenance backlog when run on a schedule; opens a PR unifying one family onto a canonical implementation when a human invokes it on a backlog item. Use for the scheduled duplicate-abstraction sweep or when asked to find and unify repeated code.
 ---
 

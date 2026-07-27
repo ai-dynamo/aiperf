@@ -6,16 +6,17 @@ sidebar-title: Self-Maintenance Routines
 
 # Self-Maintenance Routines
 
-AIPerf runs a monthly whole-repository maintenance analysis. Four Claude Code routines
-each examine one aspect of repository health that no existing tool can see, and record
-what they find to a single **Maintenance backlog** issue. A human picks items off that
-backlog; the routine then does the work interactively, with a person available to answer
-the judgment calls.
+AIPerf's recommended cadence is a monthly whole-repository maintenance analysis. Four
+Claude Code routines each examine one aspect of repository health that no existing tool
+can see, and record what they find to a single **Maintenance backlog** issue. A human
+picks items off that backlog; the routine then does the work interactively, with a
+person available to answer the judgment calls.
 
 > [!IMPORTANT]
-> The scheduled runs are **analysis only**. They hold `issues: write` and nothing else,
-> so they structurally cannot commit, push, or open a pull request. Changes happen only
-> when a person invokes a routine directly.
+> Scheduled execution is not wired up in this PR. Ops still needs to choose the right
+> runner. When a scheduler is added, it should run in **analysis only** mode and be
+> unable to commit, push, or open a pull request. Changes happen only when a person
+> invokes a routine directly.
 
 ## What this covers that existing tooling does not
 
@@ -63,15 +64,15 @@ routines treat that section as read-only.
 
 | Routine | Skill | Finds |
 |---|---|---|
-| Dead code | `.agents/skills/maint-dead-code/` | Unreachable code: orphaned modules, unused private helpers, stale shims, dead branches, unregistered plugin classes |
-| Duplicate abstractions | `.agents/skills/maint-dup-abstractions/` | One concept implemented several times and drifting apart |
-| Subsystem coverage gaps | `.agents/skills/maint-coverage-gaps/` | A category of behavior untested across an entire subsystem |
-| Test pruning | `.agents/skills/maint-test-pruning/` | Tests that cost more than they protect |
+| Dead code | `.agents/skills/maintain-dead-code/` | Unreachable code: orphaned modules, unused private helpers, stale shims, dead branches, unregistered plugin classes |
+| Duplicate abstractions | `.agents/skills/maintain-dup-abstractions/` | One concept implemented several times and drifting apart |
+| Subsystem coverage gaps | `.agents/skills/maintain-coverage-gaps/` | A category of behavior untested across an entire subsystem |
+| Test pruning | `.agents/skills/maintain-test-pruning/` | Tests that cost more than they protect |
 
-All four run on the 1st of each month, sequentially (they share one backlog issue). The
-shared contract every routine obeys is `.agents/skills/self-maintenance/SKILL.md` — read
-that before changing any routine, since the individual skills only describe what to look
-for.
+When scheduled automation exists, all four should run monthly and sequentially because
+they share one backlog issue. The shared contract every routine obeys is
+`.agents/skills/self-maintenance/SKILL.md` — read that before changing any routine,
+since the individual skills only describe what to look for.
 
 ### Dead code
 
@@ -121,7 +122,7 @@ expected outcome most months.
 
 | | Analysis mode | Apply mode |
 |---|---|---|
-| Triggered by | Monthly schedule, or `workflow_dispatch` | A person running `/maint-dead-code` etc. |
+| Triggered by | Manual or future scheduled analysis run | A person running `/maintain-dead-code` etc. |
 | Produces | Backlog entries | A branch, commits, and a draft PR |
 | Touches the working tree | Never | Yes |
 | Judgment calls | Recorded with the question attached | Asked of the human, then acted on |
@@ -132,29 +133,32 @@ scheduled run can only guess at, and a wrong guess becomes a rejected PR.
 
 ## Operating the routines
 
-### Enabling
+### Scheduling
 
-`.github/workflows/self-maintenance.yml` is pinned to `ai-dynamo/aiperf` and no-ops until
-an `ANTHROPIC_API_KEY` repository secret exists. Until then, scheduled runs log a notice
-and exit cleanly; forks inherit the file harmlessly.
+This PR intentionally does not add a scheduler. The recommended cadence is monthly, but
+the runner, credentials, and ownership model should be chosen with Ops before any
+automation is enabled.
 
-A `maintenance` label must also exist, since the backlog issue is created and found by
-that label.
+The scheduler should run the routines sequentially, with only the minimum permission
+needed to read the existing **Maintenance backlog** issue and update it. It should not
+have credentials that allow commits, pushes, or pull requests. It should also include a
+mechanical preflight, such as `uv run pytest tests/unit -n auto -q --tb=no`, before
+invoking any model-driven analysis; if `main` is red, the maintenance run should abort.
 
-No PAT, GitHub App token, or "Allow GitHub Actions to create and approve pull requests"
-setting is needed — the analysis job never opens a PR.
+A `maintenance` label must exist wherever the backlog lives, since the backlog issue is
+created and found by that label.
 
 ### Running one by hand
 
-Use `workflow_dispatch`, pick a routine (or `all`), and leave `dry_run` at its default of
-`true`. The run then analyzes, uploads `artifacts/maintenance-report.md` as a workflow
-artifact, and leaves the backlog untouched. That is the right way to evaluate a routine's
+Until a scheduler exists, evaluate a routine by running it manually in analysis mode and
+having it write the proposed backlog additions plus evidence to
+`artifacts/maintenance-report.md`. That is the right way to evaluate a routine's
 judgment before letting it write anything.
 
 Locally — and this is the normal path for actually making a change:
 
 ```
-/maint-dead-code
+/maintain-dead-code
 ```
 
 The skills carry no CI-specific assumptions, so a local run behaves the same, except that
@@ -162,19 +166,17 @@ you are present to answer questions.
 
 ### Permissions
 
-The workflow defaults to `permissions: {}` and grants the analysis job `issues: write`
-only. It checks out with `persist-credentials: false`, so no git credential sits in
-`.git/config` for an agent to read back. It introduces no new actions — the Claude Code
-CLI is installed from npm and every action it uses is already used elsewhere in this
-repo — so it stays runnable under an organization action-allowlist policy without new
-entries.
+The analysis runner should be read-only for repository contents and should have no
+credential capable of pushing branches or opening pull requests. If it updates the
+backlog directly, grant only the issue-writing permission required for that operation.
+If Ops prefers a report-only first phase, run without issue write access and publish the
+report somewhere humans can inspect.
 
 Two limits worth stating plainly. An untrusted *trigger* is not the same as untrusted
 *input*: the routine reads merged repository content and history, which includes text
-written by outside contributors, so repo content is a prompt-injection surface even
-though fork code never runs. And the raw CLI transcript is deliberately not uploaded as
-an artifact, since the step runs with an API key in its environment and GitHub's secret
-masking covers rendered logs rather than files written to disk and then published.
+written by outside contributors, so repo content is a prompt-injection surface even when
+fork code never runs. Raw model transcripts should not be published as artifacts, since
+secret masking covers rendered logs rather than files written to disk and then published.
 
 ### Guardrails
 
@@ -196,6 +198,9 @@ Summarized from the shared contract:
   body must quote the actual output rather than claim it passed.
 - **Backlog discipline.** Read it fully before proposing. Never re-propose a `Declined`
   item. Cap `Open` at 20 per routine. Low-confidence findings are dropped, not recorded.
+- **Mechanical preflight.** Any scheduled runner should run a cheap test preflight, such
+  as `uv run pytest tests/unit -n auto -q --tb=no`, before model-driven analysis. If
+  `main` is red, the analysis jobs never start.
 - **Abort conditions.** A red `main`, zero High/Medium findings, a scope-guard collision,
   an unexplainable candidate, a finding that a PR reviewer should have made, a full
   backlog, or a routine whose recent items were mostly declined — all mean the routine

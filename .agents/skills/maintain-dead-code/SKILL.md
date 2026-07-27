@@ -1,5 +1,5 @@
 ---
-name: maint-dead-code
+name: maintain-dead-code
 description: Autonomous maintenance routine that finds provably-unreachable code in AIPerf (unused private helpers, orphaned modules, unregistered plugin classes, dead branches, stale compatibility shims). Records findings to the maintenance backlog when run on a schedule; opens a scoped deletion PR when a human invokes it on a backlog item. Accounts for AIPerf's heavy dynamic dispatch via plugins.yaml, message-bus decorators, and lazy CLI imports. Use for the scheduled dead-code sweep or when asked to clean up dead code.
 ---
 
@@ -90,8 +90,12 @@ git log --oneline -S"${SYM}" -- src/ | head -20
 grep -rn "__all__" --include='*.py' src/aiperf/ | grep "${SYM}"
 
 # 6. Coverage — was it executed by any tier of the test suite?
-uv run pytest tests/unit tests/component_integration -n auto \
-  --cov=src/aiperf --cov-report=term-missing -m 'not performance and not stress and not slow'
+COVERAGE_FILE=.coverage.unit uv run pytest tests/unit -n auto \
+  --cov=src/aiperf --cov-report= -m 'not performance and not stress and not slow'
+COVERAGE_FILE=.coverage.component uv run pytest tests/component_integration -n auto \
+  --cov=src/aiperf --cov-report= -m 'not performance and not stress and not slow'
+uv run coverage combine .coverage.unit .coverage.component
+uv run coverage report -m
 ```
 
 Interpreting the results:
@@ -117,7 +121,7 @@ Interpreting the results:
 - Windows/macOS platform branches. CI covers all three platforms; a branch that looks
   unreachable on Linux is not.
 - Test helpers under `tests/harness/` and `tests/fixtures/` — pruning those is
-  `maint-test-pruning`'s job, and mixing the two violates one-PR-one-concern.
+  `maintain-test-pruning`'s job, and mixing the two violates one-PR-one-concern.
 
 ## Output
 

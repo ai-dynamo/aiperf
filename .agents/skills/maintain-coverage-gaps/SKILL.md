@@ -1,5 +1,5 @@
 ---
-name: maint-coverage-gaps
+name: maintain-coverage-gaps
 description: Autonomous maintenance routine that finds SYSTEMATIC test-coverage gaps spanning a whole AIPerf subsystem (an entire category of error path, boundary condition, or contract left untested across many files) rather than per-PR omissions. Records findings to the maintenance backlog; writes tests only when a human invokes it on a backlog item. Use for the scheduled coverage sweep or when asked about subsystem-level test gaps.
 ---
 
@@ -47,9 +47,15 @@ Not a finding — belongs to the PR reviewer, or to nobody:
 ## Finding candidates
 
 ```bash
-uv run pytest tests/unit tests/component_integration -n auto \
-  --cov=src/aiperf --cov-branch --cov-report=term-missing --cov-report=json \
+COVERAGE_FILE=.coverage.unit uv run pytest tests/unit -n auto \
+  --cov=src/aiperf --cov-branch --cov-report= \
   -m 'not performance and not stress and not slow'
+COVERAGE_FILE=.coverage.component uv run pytest tests/component_integration -n auto \
+  --cov=src/aiperf --cov-branch --cov-report= \
+  -m 'not performance and not stress and not slow'
+uv run coverage combine .coverage.unit .coverage.component
+uv run coverage report -m
+uv run coverage json
 ```
 
 **Critical caveat:** this does not run `tests/integration/`, which is a large suite

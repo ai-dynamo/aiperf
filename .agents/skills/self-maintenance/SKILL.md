@@ -1,12 +1,12 @@
 ---
 name: self-maintenance
-description: Shared contract for AIPerf autonomous maintenance routines (dead code, duplicate abstractions, subsystem coverage gaps, test pruning). Defines the two run modes, the maintenance backlog, the guardrails, the verification gate, PR conventions, and abort rules that every maint-* skill must follow. Read this before running any maint-* routine; do not invoke it standalone.
+description: Shared contract for AIPerf autonomous maintenance routines (dead code, duplicate abstractions, subsystem coverage gaps, test pruning). Defines the two run modes, the maintenance backlog, the guardrails, the verification gate, PR conventions, and abort rules that every maintain-* skill must follow. Read this before running any maintain-* routine; do not invoke it standalone.
 disable-model-invocation: true
 ---
 
 # AIPerf Self-Maintenance Contract
 
-Shared rules for every `maint-*` routine. Each routine skill covers *what* to look
+Shared rules for every `maintain-*` routine. Each routine skill covers *what* to look
 for; this file covers *how to land it safely*. When the two conflict, this file wins.
 
 ## What these routines are for — and what they are not
@@ -66,7 +66,7 @@ analysis mode.
 
 ### Apply mode — human-invoked, interactive
 
-- Triggered when a person runs the skill directly (`/maint-dead-code`), normally after
+- Triggered when a person runs the skill directly (`/maintain-dead-code`), normally after
   picking an item off the backlog.
 - Produces a real branch, real commits, and a PR.
 - A human is present. **Ask them the judgment questions.** This is the whole reason this
@@ -85,10 +85,10 @@ Structure:
 
 ```markdown
 ## Open — <routine name>
-- [ ] `MAINT-<routine>-<NNN>` <one-line finding> — confidence, evidence pointer
+- [ ] `MAINTAIN-<routine>-<NNN>` <one-line finding> — confidence, evidence pointer
 
 ## Declined
-- `MAINT-dead-code-004` <finding> — declined <date>: <reason>
+- `MAINTAIN-dead-code-004` <finding> — declined <date>: <reason>
 ```
 
 Rules, in priority order:
@@ -200,7 +200,7 @@ Rules for the gate:
   in the run summary. Maintenance PRs stacked on a broken base are unreviewable.
 - Never `-x`, never `-k` to dodge a failure, never add `@pytest.mark.skip` to make the
   gate pass. A failing gate means the change is wrong.
-- Test-touching routines (`maint-coverage-gaps`, `maint-test-pruning`) additionally run
+- Test-touching routines (`maintain-coverage-gaps`, `maintain-test-pruning`) additionally run
   the affected tests in isolation *and* under `-n 0` to catch xdist-order dependence.
 
 ## Change budget
@@ -236,13 +236,13 @@ Two rules that follow:
 ## Git and PR conventions
 
 ```bash
-git checkout -b claude-maint/<routine>-<YYYYMMDD>   # e.g. claude-maint/maint-dead-code-20260727
+git checkout -b claude-maint/<routine>-<YYYYMMDD>   # e.g. claude-maint/maintain-dead-code-20260727
 git commit -s -m "<type>: <subject>"                # -s is REQUIRED, DCO is enforced
 git push -u origin HEAD                             # gh pr create fails without this
 ```
 
 - **Branch**: `claude-maint/<routine>-<YYYYMMDD>`, where `<routine>` is the full skill
-  name (`maint-dead-code`, not `dead-code`). Never commit to `main` — the
+  name (`maintain-dead-code`, not `dead-code`). Never commit to `main` — the
   `no-commit-to-branch` pre-commit hook enforces this locally, but it is not installed
   in CI, so do not rely on it.
 - **Push before opening the PR.** `gh pr create` fails non-interactively on an unpushed
@@ -264,7 +264,7 @@ Keep entries to a few lines. The backlog is a queue, not a report; detail belong
 PR that eventually acts on the item.
 
 ```markdown
-- [ ] `MAINT-dead-code-007` `aiperf.foo.bar.unused_helper` appears unreferenced
+- [ ] `MAINTAIN-dead-code-007` `aiperf.foo.bar.unused_helper` appears unreferenced
       — High. No hits in src/tests/docs/plugins.yaml; last touched 2025-03 (#812).
       Question for a human: does any downstream NVIDIA repo import this?
 ```
@@ -280,7 +280,7 @@ point of the whole exercise — it tells a human exactly what to spot-check.
 ```markdown
 ## What this is
 
-Maintenance change from backlog item `MAINT-<routine>-<NNN>`
+Maintenance change from backlog item `MAINTAIN-<routine>-<NNN>`
 (see docs/reference/self-maintenance.md). **Not auto-merged** — needs CODEOWNER review.
 
 ## Findings shipped

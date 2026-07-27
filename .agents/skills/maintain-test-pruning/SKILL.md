@@ -1,5 +1,5 @@
 ---
-name: maint-test-pruning
+name: maintain-test-pruning
 description: Autonomous maintenance routine that identifies tests that cost more than they protect in AIPerf (tautologies, mock-only tests, redundant parametrize cases, tests for deleted behavior, permanently-skipped tests). Records candidates to the maintenance backlog when run on a schedule; opens a scoped deletion PR when a human invokes it on a backlog item. Deliberately conservative — deleting a test that was catching something is the worst outcome this system can produce. Use for the scheduled test-pruning sweep.
 ---
 
@@ -89,7 +89,7 @@ uv run pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=json
 A candidate clears the bar only when:
 
 - Removing it changes **no** covered branch (or the branches it uniquely covers are
-  themselves dead code — in which case this is a `maint-dead-code` finding and the test
+  themselves dead code — in which case this is a `maintain-dead-code` finding and the test
   goes with the code, in that routine's PR, not this one); **and**
 - Its introducing commit shows it was not a regression guard; **and**
 - It falls into one of the six High-confidence categories above.
@@ -118,5 +118,5 @@ record nothing; that is the routine working, not failing.
 
 If the coverage comparison shows any branch lost, or if the introducing commit is
 ambiguous about intent, **keep the test and drop the finding**. Do not compensate by
-writing a replacement test in the same PR — that is `maint-coverage-gaps`' job and mixing
+writing a replacement test in the same PR — that is `maintain-coverage-gaps`' job and mixing
 them makes both unreviewable.
