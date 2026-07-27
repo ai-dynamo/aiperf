@@ -128,6 +128,10 @@ class SageMakerDataCaptureLoader(
             raise DatasetLoaderError(
                 f"Capture record {event_id} missing required field: {e}"
             ) from e
+        except ValueError as e:
+            raise DatasetLoaderError(
+                f"Capture record {event_id} has malformed inferenceTime: {e}"
+            ) from e
 
         try:
             input_data = _decode_payload(
