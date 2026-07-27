@@ -649,14 +649,9 @@ def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
 async def responses(req: ResponsesRequest, request: Request) -> ORJSONResponse:
     """Mock OpenAI Responses endpoint."""
     endpoint = "/v1/responses"
-    model = req.model or "test-model"
-    mock_req = ChatCompletionRequest(
-        model=model,
-        messages=[{"role": "user", "content": req.prompt_text}],
-    )
-    ctx = make_ctx(mock_req, endpoint, request.state.start_time)
+    ctx = make_ctx(req, endpoint, request.state.start_time)
 
-    with track_llm_request(ctx, model, endpoint):
+    with track_llm_request(ctx, ctx.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         response_data = _build_responses_response_data(ctx)
         record_request_bytes(
