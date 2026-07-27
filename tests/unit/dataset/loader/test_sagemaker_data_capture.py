@@ -813,6 +813,28 @@ class TestParseTraceErrorPaths:
         with pytest.raises(DatasetLoaderError, match="bad-json payload decode failed"):
             loader._parse_trace(record)
 
+    def test_parse_trace_malformed_inference_time_raises_dataset_loader_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A present-but-non-ISO8601 inferenceTime must raise DatasetLoaderError, not ValueError."""
+        loader = self._make_loader(tmp_path)
+        record = {
+            "captureData": {
+                "endpointInput": {
+                    "data": orjson.dumps(
+                        {"messages": [{"role": "user", "content": "hi"}]}
+                    ).decode(),
+                    "encoding": "JSON",
+                },
+            },
+            "eventMetadata": {
+                "eventId": "bad-ts",
+                "inferenceTime": "not-a-timestamp",
+            },
+        }
+        with pytest.raises(DatasetLoaderError, match="bad-ts.*malformed inferenceTime"):
+            loader._parse_trace(record)
+
     def test_load_dataset_empty_file_returns_empty(self, tmp_path: Path) -> None:
         f = tmp_path / "empty.jsonl"
         f.write_text("")
