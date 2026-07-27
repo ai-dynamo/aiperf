@@ -832,7 +832,9 @@ class TestParseTraceErrorPaths:
                 "inferenceTime": "not-a-timestamp",
             },
         }
-        with pytest.raises(DatasetLoaderError, match="bad-ts.*malformed inferenceTime"):
+        with pytest.raises(
+            DatasetLoaderError, match=r"bad-ts.*malformed inferenceTime"
+        ):
             loader._parse_trace(record)
 
     def test_load_dataset_empty_file_returns_empty(self, tmp_path: Path) -> None:
