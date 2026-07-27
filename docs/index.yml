@@ -211,6 +211,8 @@ navigation:
     path: reference/api-endpoints.md
   - page: YAML Config Roadmap
     path: reference/yaml-config-roadmap.md
+  - page: Self-Maintenance Routines
+    path: reference/self-maintenance.md
 
 - section: Server Metrics
   collapsed: true

@@ -1,0 +1,231 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Scheduled autonomous maintenance routines. Each weekday runs one routine
+# defined by a skill under `.agents/skills/maint-*/SKILL.md`; the shared
+# guardrails live in `.agents/skills/self-maintenance/SKILL.md`.
+#
+# Design notes (see docs/reference/self-maintenance.md for the full rationale):
+#
+#   * No third-party marketplace actions. The Claude Code CLI is installed
+#     from npm and every other step uses an action already vetted elsewhere in
+#     this repo (actions/checkout, actions/setup-python, astral-sh/setup-uv,
+#     actions/setup-node, actions/upload-artifact). This keeps the workflow
+#     runnable under an org action-allowlist policy.
+#   * Least-privilege token: `contents: write` (push the maintenance branch),
+#     `pull-requests: write` (open the PR), `issues: write` (escalations).
+#     Nothing else.
+#   * Never triggered by `pull_request` or `pull_request_target`, so untrusted
+#     fork code can never reach the API key.
+#   * Repository-pinned. Forks that inherit this file no-op.
+#   * The routine cannot merge anything. `main` is CODEOWNER-protected and
+#     these PRs are drafts by default.
+
+name: "Self-Maintenance"
+
+on:
+  schedule:
+    # One routine per weekday, 10:00 UTC. The routine is resolved from
+    # `github.event.schedule` in the `resolve` job below, so the cron string
+    # is the source of truth for which routine runs.
+    - cron: '0 10 * * 1'  # Monday    - dead code
+    - cron: '0 10 * * 2'  # Tuesday   - duplicate abstractions
+    - cron: '0 10 * * 3'  # Wednesday - coverage gaps
+    - cron: '0 10 * * 4'  # Thursday  - test pruning
+    - cron: '0 10 * * 5'  # Friday    - experiments
+  workflow_dispatch:
+    inputs:
+      routine:
+        description: 'Which maintenance routine to run.'
+        required: true
+        type: choice
+        options:
+          - maint-dead-code
+          - maint-dup-abstractions
+          - maint-coverage-gaps
+          - maint-test-pruning
+          - maint-experiment
+      dry_run:
+        description: 'Analyze and upload a report, but do not open a PR or issue.'
+        type: boolean
+        default: true
+
+# Only one maintenance run at a time. Overlapping runs would race on the
+# working tree and could open duplicate PRs for the same finding.
+concurrency:
+  group: self-maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  resolve:
+    name: Resolve routine
+    runs-on: ubuntu-latest
+    # Pinned to the upstream repository so forks inherit the file without
+    # running it.
+    if: github.repository == 'ai-dynamo/aiperf'
+    outputs:
+      routine: ${{ steps.pick.outputs.routine }}
+      dry_run: ${{ steps.pick.outputs.dry_run }}
+      enabled: ${{ steps.pick.outputs.enabled }}
+    steps:
+      - name: Pick routine and check that the run is enabled
+        id: pick
+        env:
+          # Secret presence cannot be tested in an `if:` expression, so it is
+          # resolved here into a plain output that downstream jobs gate on.
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_ROUTINE: ${{ inputs.routine }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            routine="$INPUT_ROUTINE"
+            dry_run="$INPUT_DRY_RUN"
+          else
+            case "$SCHEDULE" in
+              '0 10 * * 1') routine=maint-dead-code ;;
+              '0 10 * * 2') routine=maint-dup-abstractions ;;
+              '0 10 * * 3') routine=maint-coverage-gaps ;;
+              '0 10 * * 4') routine=maint-test-pruning ;;
+              '0 10 * * 5') routine=maint-experiment ;;
+              *)
+                echo "::error::Unmapped cron schedule '$SCHEDULE'. Add it to the case statement."
+                exit 1
+                ;;
+            esac
+            dry_run=false
+          fi
+
+          if [[ "$HAS_KEY" != "true" ]]; then
+            echo "::notice::ANTHROPIC_API_KEY is not configured for this repository; skipping. See docs/reference/self-maintenance.md for enablement steps."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "routine=$routine"   >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run"   >> "$GITHUB_OUTPUT"
+          echo "Routine: $routine (dry_run=$dry_run)" >> "$GITHUB_STEP_SUMMARY"
+
+  run-routine:
+    name: ${{ needs.resolve.outputs.routine }}
+    needs: resolve
+    if: needs.resolve.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ROUTINE: ${{ needs.resolve.outputs.routine }}
+      DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history: every routine reasons about provenance
+          # (`git log -S`, `--follow`) to decide whether code or a test is
+          # safe to touch. A shallow clone silently degrades that judgment.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install project and mock server
+        run: make ci-install PYTHON_VERSION=3.12
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Configure git identity
+        # DCO is enforced on this repository, so the routine's commits must
+        # carry a `Signed-off-by` trailer matching this identity. The skills
+        # instruct `git commit -s`; this makes the trailer resolvable.
+        run: |
+          git config user.name  "aiperf-maintenance[bot]"
+          git config user.email "aiperf-maintenance[bot]@users.noreply.github.com"
+
+      - name: Verify base is green before starting
+        # The shared contract aborts the run if `main` is already red, since a
+        # maintenance PR stacked on a broken base is unreviewable and the
+        # routine's own verification gate would be meaningless.
+        id: base
+        run: |
+          if uv run pytest tests/unit -n auto -q --tb=no \
+               -m 'not performance and not stress and not slow'; then
+            echo "green=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "green=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Base unit tests are failing on main; aborting the maintenance run."
+          fi
+
+      - name: Run maintenance routine
+        if: steps.base.outputs.green == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Optional. A PAT or GitHub App token here makes the resulting PR
+          # trigger the normal CI workflows; PRs opened with the default
+          # GITHUB_TOKEN do not trigger `pull_request` workflows, so they land
+          # without test signal. See docs/reference/self-maintenance.md.
+          GH_TOKEN: ${{ secrets.AIPERF_MAINTENANCE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # artifacts/ is gitignored, which keeps the report and any receipts out
+          # of the routine's own commits even if it stages broadly.
+          mkdir -p artifacts
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            DELIVERABLE="Do NOT open a pull request or an issue. Write your findings and the
+          full evidence to artifacts/maintenance-report.md and stop there."
+          else
+            DELIVERABLE="If and only if you have High- or Medium-confidence findings that pass the
+          verification gate, open a DRAFT pull request with 'gh pr create --draft'.
+          Escalations go to 'gh issue create --label maintenance'. Also write the
+          run report to artifacts/maintenance-report.md."
+          fi
+
+          claude -p "Run the '$ROUTINE' maintenance routine on this repository.
+
+          Read .agents/skills/self-maintenance/SKILL.md first and follow it exactly —
+          it defines the scope guards, the baseline rules, the verification gate, the
+          change budget, the confidence tiers, and the abort conditions. Then read
+          .agents/skills/$ROUTINE/SKILL.md and carry out that routine.
+
+          Non-negotiable:
+          - Never modify a scope-guarded path.
+          - Never regenerate a baseline file to make a check pass.
+          - Never skip or weaken a test to make the verification gate pass.
+          - Every commit uses 'git commit -s' (DCO is enforced).
+          - Branch name: claude-maint/<routine-short-name>-\$(date +%Y%m%d).
+          - Finding nothing is a valid and expected outcome. Do not manufacture work.
+
+          $DELIVERABLE" \
+            --permission-mode acceptEdits \
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash,Task" \
+            --max-turns 200 \
+            2>&1 | tee artifacts/claude-run.log
+
+      - name: Upload run report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintenance-${{ env.ROUTINE }}-${{ github.run_id }}
+          path: |
+            artifacts/maintenance-report.md
+            artifacts/claude-run.log
+          if-no-files-found: warn
+          retention-days: 30
