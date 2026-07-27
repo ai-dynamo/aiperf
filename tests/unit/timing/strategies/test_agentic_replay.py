@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
@@ -66,11 +67,14 @@ def _make_strategy(
     num_traces: int = 5,
     turns_per_trace: int = 4,
     issuer: AsyncMock | None = None,
-    scheduler: MagicMock | None = None,
+    scheduler: LoopScheduler | MagicMock | None = None,
     run: object | None = None,
     dataset: DatasetMetadata | None = None,
     cache_warmup_duration: float | None = None,
-) -> tuple[AgenticReplayStrategy, AsyncMock, MagicMock, TrajectorySource]:
+    progress: MagicMock | None = None,
+) -> tuple[
+    AgenticReplayStrategy, AsyncMock, LoopScheduler | MagicMock, TrajectorySource
+]:
     src = _build_real_trajectory_source(
         num_traces, turns_per_trace, trajectories, dataset=dataset
     )
@@ -92,6 +96,7 @@ def _make_strategy(
         credit_issuer=issuer,
         lifecycle=MagicMock(),
         run=run,
+        progress=progress,
     )
     return strategy, issuer, scheduler, src
 
@@ -156,6 +161,46 @@ def test_constructor_rejects_non_trajectory_source():
             credit_issuer=AsyncMock(),
             lifecycle=MagicMock(),
         )
+
+
+def test_system_idle_cap_shifts_pending_schedule_only_when_globally_idle():
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    scheduler = MagicMock()
+    scheduler.running_count = 0
+    scheduler.cap_pending_delay.return_value = 90.0
+    progress = MagicMock()
+    progress.in_flight = 0
+    run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    run.cfg.get_profiling_phases()[0].system_idle_gap_cap_seconds = 10.0
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        scheduler=scheduler,
+        run=run,
+        progress=progress,
+    )
+
+    strategy.enforce_system_idle_cap()
+
+    scheduler.cap_pending_delay.assert_called_once_with(10.0)
+    assert strategy._system_idle_jump_count == 1
+    assert strategy._system_idle_seconds_skipped == 90.0
+
+    scheduler.reset_mock()
+    progress.in_flight = 1
+    strategy.enforce_system_idle_cap()
+    scheduler.cap_pending_delay.assert_not_called()
+
+    progress.in_flight = 0
+    scheduler.running_count = 1
+    strategy.enforce_system_idle_cap()
+    scheduler.cap_pending_delay.assert_not_called()
+
+    scheduler.running_count = 0
+    strategy._accelerated_warmup_started = True
+    strategy.enforce_system_idle_cap()
+    scheduler.cap_pending_delay.assert_not_called()
 
 
 def test_constructor_accepts_warmup_and_profiling():
@@ -1908,6 +1953,56 @@ async def test_handle_credit_return_honors_delay_ms_via_scheduler():
     assert scheduler.schedule_later.call_count == 1
     delay_arg = scheduler.schedule_later.call_args.args[0]
     assert delay_arg == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_global_idle_cap_shifts_real_delayed_continuation_to_ten_seconds():
+    """Exercise the production scheduler and strategy together."""
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0, delay_ms=None),
+                    TurnMetadata(timestamp_ms=100_000, delay_ms=100_000),
+                ],
+            )
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    issuer = AsyncMock()
+    scheduler = LoopScheduler()
+    run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    run.cfg.get_profiling_phases()[0].system_idle_gap_cap_seconds = 10.0
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=1,
+        turns_per_trace=2,
+        issuer=issuer,
+        scheduler=scheduler,
+        run=run,
+        dataset=dataset,
+    )
+    await strategy.setup_phase()
+    issuer.issue_credit.reset_mock()
+
+    await strategy.handle_credit_return(
+        _make_credit(conversation_id="trace_0", turn_index=0, num_turns=2)
+    )
+    assert scheduler.pending_count == 1
+
+    strategy.enforce_system_idle_cap(in_flight_requests=0)
+    assert strategy._system_idle_jump_count == 1
+    assert strategy._system_idle_seconds_skipped == pytest.approx(90.0)
+
+    handle, _ = next(iter(scheduler._handles.values()))
+    assert handle.when() - asyncio.get_running_loop().time() == pytest.approx(
+        10.0, abs=0.01
+    )
+    issuer.issue_credit.assert_not_awaited()
+    scheduler.cancel_all_pending()
 
 
 @pytest.mark.asyncio
