@@ -1,6 +1,6 @@
 ---
 name: maintain-test-pruning
-description: Autonomous maintenance routine that identifies tests that cost more than they protect in AIPerf (tautologies, mock-only tests, redundant parametrize cases, tests for deleted behavior, permanently-skipped tests). Records candidates to the maintenance backlog when run on a schedule; opens a scoped deletion PR when a human invokes it on a backlog item. Deliberately conservative — deleting a test that was catching something is the worst outcome this system can produce. Use for the scheduled test-pruning sweep.
+description: Autonomous maintenance routine that identifies tests that cost more than they protect in AIPerf (tautologies, mock-only tests, redundant parametrize cases, tests for deleted behavior, permanently-skipped tests). Records candidates to the maintenance backlog during analysis runs; opens a scoped deletion PR only when a human invokes it on a backlog item. Deliberately conservative — deleting a test that was catching something is the worst outcome this system can produce. Use for manual or future scheduled test-pruning analysis.
 ---
 
 # Test Pruning
@@ -23,6 +23,11 @@ by looking redundant. Asymmetry of harm:
 
 When the two are in tension, keep the test. If a run finds nothing that clears the bar,
 that is the expected outcome most weeks.
+
+Detector output for this routine is especially noisy. Summarize skip markers, no-assert
+tests, and duplicate-looking tests into candidate groups first, then qualify only the
+ones old enough and clear enough to justify a branch-coverage comparison. A skipped test
+is not prune-worthy merely because it is skipped.
 
 ## What qualifies for deletion
 
@@ -97,7 +102,7 @@ A candidate clears the bar only when:
 ## Output
 
 **Analysis mode** — record candidates with their original intent and the branch-coverage
-delta already measured. Because the default answer is *keep*, expect most sweeps to
+delta already measured. Because the default answer is *keep*, expect most analysis runs to
 record nothing; that is the routine working, not failing.
 
 **Apply mode** — take one backlog item, re-verify the coverage delta against current

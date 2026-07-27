@@ -1,6 +1,6 @@
 ---
 name: maintain-dead-code
-description: Autonomous maintenance routine that finds provably-unreachable code in AIPerf (unused private helpers, orphaned modules, unregistered plugin classes, dead branches, stale compatibility shims). Records findings to the maintenance backlog when run on a schedule; opens a scoped deletion PR when a human invokes it on a backlog item. Accounts for AIPerf's heavy dynamic dispatch via plugins.yaml, message-bus decorators, and lazy CLI imports. Use for the scheduled dead-code sweep or when asked to clean up dead code.
+description: Autonomous maintenance routine that finds provably-unreachable code in AIPerf (unused private helpers, orphaned modules, unregistered plugin classes, dead branches, stale compatibility shims). Records findings to the maintenance backlog during analysis runs; opens a scoped deletion PR only when a human invokes it on a backlog item. Accounts for AIPerf's heavy dynamic dispatch via plugins.yaml, message-bus decorators, and lazy CLI imports. Use for manual or future scheduled dead-code analysis, or when asked to clean up dead code.
 ---
 
 # Dead Code Sweep
@@ -26,6 +26,9 @@ affirmative proof of deadness before anything is deleted.
 ## Candidate generation
 
 Cheap, high-signal passes. Run them all; each produces hypotheses, not conclusions.
+Do not paste raw detector output into the backlog. Summarize it first: group candidates
+by mechanism, discard hook/validator/plugin false positives, then qualify only the
+strongest few survivors with the deadness proof below.
 
 **1. Unused private symbols.** Leading-underscore functions/methods/classes are not part
 of any public or plugin surface, so the reference graph is closed within the repo.
@@ -148,5 +151,5 @@ review, not one per symbol.
   `X`."* That is the one thing the routine genuinely cannot check, and it is the only
   question that reliably matters.
 
-If a sweep yields nothing High-confidence, record nothing. A clean repo is the success
+If an analysis run yields nothing High-confidence, record nothing. A clean repo is the success
 case, not a failure to find work.

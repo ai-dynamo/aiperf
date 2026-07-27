@@ -1,6 +1,6 @@
 ---
 name: maintain-dup-abstractions
-description: Autonomous maintenance routine that finds the same abstraction reimplemented in multiple places across AIPerf (parallel helper functions, copy-pasted validation, near-identical Pydantic models, repeated retry/parsing/formatting logic). Records clusters to the maintenance backlog when run on a schedule; opens a PR unifying one family onto a canonical implementation when a human invokes it on a backlog item. Use for the scheduled duplicate-abstraction sweep or when asked to find and unify repeated code.
+description: Autonomous maintenance routine that finds the same abstraction reimplemented in multiple places across AIPerf (parallel helper functions, copy-pasted validation, near-identical Pydantic models, repeated retry/parsing/formatting logic). Records clusters to the maintenance backlog during analysis runs; opens a PR unifying one family onto a canonical implementation only when a human invokes it on a backlog item. Use for manual or future scheduled duplicate-abstraction analysis, or when asked to find and unify repeated code.
 ---
 
 # Duplicate Abstraction Unification
@@ -51,6 +51,12 @@ reading `tools/ergonomics_baseline.json` — grandfathered duplicate-class entri
 are pre-identified candidates with a paper trail.
 
 ## Detection
+
+These commands are noisy by design. Treat them as candidate generators, not findings.
+Before qualifying anything, rank the output by likely drift: repeated code where one
+copy received a bug fix the others did not, duplicated helpers with different edge-case
+handling, or copy-pasted descriptions attached to models that now validate differently.
+Do not record "same name in many files" by itself.
 
 ```bash
 # 1. Repeated function signatures across different modules

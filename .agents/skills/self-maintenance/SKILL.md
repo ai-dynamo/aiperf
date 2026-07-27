@@ -53,11 +53,11 @@ Each routine runs in one of two modes. **Which mode you are in determines what y
 allowed to produce.** If the invocation does not make the mode explicit, you are in
 analysis mode.
 
-### Analysis mode — scheduled, unattended
+### Analysis mode — unattended or report-only
 
 - **Produces findings. Never a PR. Never a commit. Never a working-tree change.**
-- Appends to the maintenance backlog (see below), or comments on a PR when the routine
-  is PR-triggered.
+- Appends to the maintenance backlog (see below), or writes a report when the run has no
+  issue-writing credential. Future scheduled runs use this same mode.
 - Runs read-only. If a routine needs to modify a file to evaluate a finding, that
   finding is by definition not verifiable in analysis mode — record it as a candidate
   and stop.
@@ -78,7 +78,7 @@ analysis mode.
 
 A single long-lived GitHub issue titled **"Maintenance backlog"**, labelled
 `maintenance`. It is the system's only memory across runs, and it exists because
-scheduled runs are otherwise blind: without it, a routine re-proposes findings that were
+analysis runs are otherwise blind: without it, a routine re-proposes findings that were
 already considered and rejected, forever.
 
 Structure:
@@ -215,7 +215,7 @@ Per PR, hard caps:
 
 If a routine's findings exceed the budget, it ships the highest-confidence subset and
 lists the remainder in the PR body under "Deferred to a follow-up run". It does not
-split one concern across simultaneous PRs — the next scheduled run picks up the rest.
+split one concern across simultaneous PRs — the next analysis run picks up the rest.
 
 ## Confidence tiers
 

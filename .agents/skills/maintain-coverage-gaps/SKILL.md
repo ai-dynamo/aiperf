@@ -1,6 +1,6 @@
 ---
 name: maintain-coverage-gaps
-description: Autonomous maintenance routine that finds SYSTEMATIC test-coverage gaps spanning a whole AIPerf subsystem (an entire category of error path, boundary condition, or contract left untested across many files) rather than per-PR omissions. Records findings to the maintenance backlog; writes tests only when a human invokes it on a backlog item. Use for the scheduled coverage sweep or when asked about subsystem-level test gaps.
+description: Autonomous maintenance routine that finds SYSTEMATIC test-coverage gaps spanning a whole AIPerf subsystem (an entire category of error path, boundary condition, or contract left untested across many files) rather than per-PR omissions. Records findings to the maintenance backlog during analysis runs; writes tests only when a human invokes it on a backlog item. Use for manual or future scheduled coverage analysis, or when asked about subsystem-level test gaps.
 ---
 
 # Subsystem Coverage Gaps
@@ -45,6 +45,12 @@ Not a finding — belongs to the PR reviewer, or to nobody:
 - Anything already covered under `-m integration` (see the caveat below).
 
 ## Finding candidates
+
+Coverage output is a map, not the finding. After generating it, summarize the largest
+low-coverage regions by subsystem and behavior class, then investigate only the clusters
+that might satisfy the gate below. Do not file a backlog item for a low-percentage file
+unless the uncovered lines share a bug class and are not already covered by integration
+tests.
 
 ```bash
 COVERAGE_FILE=.coverage.unit uv run pytest tests/unit -n auto \
