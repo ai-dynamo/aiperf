@@ -86,7 +86,7 @@ pub struct Endpoint {
     /// Whether to request server-sent-events streaming.
     pub streaming: bool,
     /// Emit `max_tokens` instead of `max_completion_tokens`.
-    #[serde(rename = "use_legacy_max_tokens", alias = "useLegacyMaxTokens")]
+    #[serde(default, rename = "use_legacy_max_tokens", alias = "useLegacyMaxTokens")]
     pub use_legacy_max_tokens: bool,
     /// Trust the server's reported token counts over local tokenization.
     pub use_server_token_count: bool,
