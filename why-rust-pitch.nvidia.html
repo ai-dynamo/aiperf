@@ -21,14 +21,14 @@
   .slide {
     width:1280px; height:720px; position:relative; overflow:hidden; flex:none; background:#fff;
     font-family:"NVIDIA Sans","Manrope",Arial,sans-serif; color:var(--ink);
-    box-shadow:0 20px 60px rgba(0,0,0,.4);
+    box-shadow:0 6px 20px rgba(0,0,0,.35);
   }
   .mono { font-family:"Roboto Mono",monospace; }
   .wordmark {
     position:absolute; top:52px; right:64px; font-family:"Roboto Mono",monospace; font-weight:700;
     font-size:20px; letter-spacing:.16em; color:var(--green);
   }
-  .pad { position:absolute; inset:0; padding:88px 96px 0; display:flex; flex-direction:column; }
+  .pad { position:absolute; inset:0; padding:76px 80px 0; display:flex; flex-direction:column; }
   .eyebrow { font-family:"Roboto Mono",monospace; font-size:16px; letter-spacing:.2em; text-transform:uppercase; color:var(--green); margin-bottom:24px; }
   h2 { font-weight:500; font-size:48px; line-height:1.14; letter-spacing:-.015em; margin:0; color:#000; max-width:1080px; }
   h2 .g, .g { color:var(--green); }
@@ -43,7 +43,7 @@
   .pipe .cell.accent { border-color:var(--green); background:var(--tint); }
   .pipe .cell.dark { border-color:#111; }
   .pipe .cell .t { font-family:"Roboto Mono",monospace; font-size:14px; color:#000; }
-  .pipe .cell .s { font-size:11px; color:#999; margin-top:3px; }
+  .pipe .cell .s { font-size:13px; color:#555; margin-top:4px; font-weight:500; }
   .arrow { color:var(--green); padding:0 10px; align-self:center; font-size:20px; }
 
   /* note columns */
@@ -59,8 +59,8 @@
   .stat .k { font-family:"Roboto Mono",monospace; font-size:12px; color:var(--green); margin-top:6px; }
 
   /* two big drivers */
-  .cols2 { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
-  .card { border:1px solid var(--line); padding:26px 26px; height:100%; }
+  .cols2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .card { border:1px solid var(--line); padding:18px 20px; height:100%; }
   .card.accent { border-color:var(--green); background:var(--tint); }
   .card .num { font-family:"Roboto Mono",monospace; font-size:13px; letter-spacing:.14em; color:var(--green); }
   .card .ti { font-size:27px; font-weight:600; color:#000; margin:8px 0 12px; letter-spacing:-.01em; }
@@ -123,27 +123,12 @@
         reuse with Dynamo</strong>, matches Python's measurements on real runs, and pulls several-fold ahead only
         where the client — not the inference server — is the limit.
       </div>
-      <div class="notes" style="grid-template-columns:repeat(3,1fr);margin-top:40px;max-width:1040px;">
-        <div class="note"><div class="h">Driver 1 · Strategic</div>Consuming <span class="mono">frontend-crates</span> and <span class="mono">velo</span>, while contributing back to the Dynamo mocker.</div>
-        <div class="note"><div class="h">Driver 2 · Architecture</div>One multithreaded process replaces the necessary multiprocess service mesh.</div>
-        <div class="note"><div class="h">The bonus</div>Parity on real runs; ~2× Python at the byte-exact ceiling (measured); whole workloads simulated in seconds.</div>
-      </div>
-    </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>02</span></div>
-  </section>
-
-  <!-- ============================ 11 · WHY NOW ============================ -->
-  <section class="slide" aria-label="Why now">
-    <div class="wordmark">NVIDIA</div>
-    <div class="pad">
-      <div class="eyebrow">Timing</div>
-      <h2>Why Rust, why <span class="g">now</span></h2>
-      <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:44px;max-width:1088px;gap:32px;">
+      <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:40px;max-width:1040px;">
         <div class="note"><div class="h">A · The first call was right</div><b>Python was chosen for reach — accessibility and contribution speed.</b> Correct for AIPerf's first generation.</div>
         <div class="note"><div class="h">B · The barrier has been broken</div><b>The accessibility reason that favored Python has fallen.</b> AI-assisted, spec-driven development makes Rust approachable to write and review — and the port proves it in this codebase, not in theory.</div>
       </div>
     </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>11</span></div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>02</span></div>
   </section>
 
   <!-- ============================ 13 · PRECEDENT (vLLM) ============================ -->
@@ -183,8 +168,35 @@
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>13</span></div>
   </section>
 
+
+  <!-- ============================ 09 · MARQUEE SIM ============================ -->
+  <section class="slide" aria-label="Simulate any workload in seconds">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Marquee capability</div>
+      <h2>Simulate <span class="g">any</span> AIPerf workload in <span class="g">seconds</span> — no GPUs, no network</h2>
+      <div class="pipe" style="margin-top:34px;max-width:1040px;">
+        <div class="cell"><div class="t">any workload</div><div class="s">arrival · datasets · multi-turn</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="cell accent"><div class="t">SimClock</div><div class="s">virtual time, discrete hops</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="cell dark"><div class="t">SteppableEngine</div><div class="s">Dynamo core, co-simulated in-process</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="cell"><div class="t">full report</div><div class="s">deterministic, seconds</div></div>
+      </div>
+      <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:40px;max-width:1088px;gap:28px;">
+        <div class="note"><div class="h">Free, because it's one front-end</div>Every feature — arrival patterns, datasets, metrics — runs <strong>unchanged</strong> in sim mode.</div>
+        <div class="note"><div class="h">Runs in CI, not a GPU cluster</div>Virtual clock removes real waiting. Minutes collapse to seconds for rapid CI sweeps.</div>
+        <div class="note"><div class="h">Reproducible down to the nanosecond</div>No thread scheduling races, no wall-clock noise. Run the same workload twice and get exact results — every time.</div>
+        <div class="note"><div class="h">Subsumes Dynamo Replay</div>Brings DynoSim Replay's functionality to the entire AIPerf workload surface natively.</div>
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>09</span></div>
+  </section>
+
+
   <!-- ============================ 03 · NUMBERS ============================ -->
-  <section class="slide" aria-label="Headline numbers">
+  <!-- <section class="slide" aria-label="Headline numbers">
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
       <div class="eyebrow">The shape of the win</div>
@@ -200,72 +212,54 @@
       </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>03</span></div>
-  </section>
-
-  <!-- ============================ 04 · TWO DRIVERS ============================ -->
-  <section class="slide" aria-label="Two primary drivers">
-    <div class="wordmark">NVIDIA</div>
-    <div class="pad">
-      <div class="eyebrow">Why — the two drivers that carry the case</div>
-      <h2>Strategic reuse and architectural simplification</h2>
-      <div class="cols2" style="margin-top:40px;">
-        <div class="card accent">
-          <div class="num">DRIVER 01</div>
-          <div class="ti">Leveraging shared crates</div>
-          <div class="bd">
-            <ul class="tight">
-                <li>AIPerf consumes shared infrastructure (<span class="mono">frontend-crates</span>, <span class="mono">velo</span>).</li>
-                <li>AIPerf contributes back to Dynamo mocker's shared loadgen core.</li>
-                <li><strong>Business value:</strong> Consolidates engineering effort, unifies testing ecosystems, and ensures bug fixes in shared crates instantly benefit multiple products.</li>
-            </ul>
-          </div>
-        </div>
-        <div class="card">
-          <div class="num">DRIVER 02</div>
-          <div class="ti">One process, not ten services</div>
-          <div class="bd">
-            <ul class="tight">
-                <li>Python requires ~12 services + 3 ZMQ proxies to scale across the GIL.</li>
-                <li>Rust maps cleanly to one thread-per-core process.</li>
-                <li><strong>Result:</strong> Drastically simpler ops, instant native binary cold start (ms), and lower maintenance overhead.</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>04</span></div>
-  </section>
+  </section> -->
 
   <!-- ============================ 05 · COMPLEXITY ============================ -->
   <section class="slide" aria-label="Where the complexity went">
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
       <div class="eyebrow">Where the complexity went</div>
-      <h2>Python distributes to <span class="g">use</span> one box; Rust distributes only to <span class="g">exceed</span> one</h2>
-      <div class="cols2" style="margin-top:34px;">
-        <div class="card">
-          <div class="num" style="color:#c0392b;">PYTHON · MULTIPROCESSING</div>
-          <div class="ti" style="font-size:24px;">Service coordination for single-node scaling</div>
-          <ul class="tight">
-            <li>~12 services + 3 ZMQ proxies (controller, workers, records manager, timing, dataset manager, …)</li>
-            <li>ZeroMQ message bus + steerable ZMQ proxies for routing</li>
-            <li>Dedicated dataset service to dodge per-process copies (~30 MiB overhead)</li>
-            <li>multiprocess service managers to parallelize workloads — on one host</li>
-            <li>per-service CPU tuning at high load (records-manager starvation &gt; 500k)</li>
-          </ul>
+      <h2>Python distributes to <span class="g">use</span> one box;<br>Rust distributes only to <span class="g">exceed</span> one</h2>
+
+      <div class="cols2" style="margin-top:28px;">
+        <!-- Python column -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div class="card" style="border-top:3px solid #c0392b;">
+            <div class="num" style="color:#c0392b;">PYTHON · ONE NODE</div>
+            <ul class="tight" style="margin-top:6px;">
+              <li><strong>~12 services + 3 ZMQ proxies.</strong> Because the GIL blocks all but one thread, every role needs its own process.</li>
+              <li>A dedicated dataset service avoids shoving huge tokenizers into each worker.</li>
+            </ul>
+          </div>
+          <div class="card" style="border-top:3px solid #c0392b;">
+            <div class="num" style="color:#c0392b;">PYTHON · MULTI-HOST</div>
+            <ul class="tight" style="margin-top:6px;">
+              <li>Kubernetes: core controller services plus repeated worker pods per node.</li>
+              <li>Each Python process hogs memory (interpreter + numpy + pandas). At scale, pods OOM on even modest CPU limits.</li>
+              <li>Past 500k concurrency: records processor starves for CPU, credit backpressure chokes the whole pipeline.</li>
+            </ul>
+          </div>
         </div>
-        <div class="card accent">
-          <div class="num">RUST · MULTITHREADING</div>
-          <div class="ti" style="font-size:24px;">One process by default; cells only for true scale-out</div>
-          <ul class="tight">
-            <li>Single-node run: one binary, worker-local state (<span class="mono">Rc&lt;RefCell&lt;_&gt;&gt;</span>, no mutex on the hot path)</li>
-            <li>Three seams, not a mesh — <span class="mono">Clock</span> (time), <span class="mono">RequestSink</span>+<span class="mono">RequestObserver</span> (dispatch), <span class="mono">WorkerSink</span> (transport)</li>
-            <li>Dataset in-process via content-addressed <span class="mono">SegmentStore</span> — BLAKE3 handles, zero-copy across threads</li>
-            <li>Cellular multi-node behind the <span class="mono">cellular</span> feature gate — velo transport for cross-host, or local subprocesses</li>
-            <li>You pay for distributed orchestration only when you outgrow one host</li>
-          </ul>
+        <!-- Rust column -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div class="card accent" style="border-top:3px solid var(--green);">
+            <div class="num">RUST · ONE NODE</div>
+            <ul class="tight" style="margin-top:6px;">
+              <li><strong>One process. One thread per core.</strong> No GIL, no IPC — just threads sharing memory.</li>
+              <li>Dataset stays in-process. Half the cores idle at peak throughput.</li>
+            </ul>
+          </div>
+          <div class="card accent" style="border-top:3px solid var(--green);">
+            <div class="num">RUST · MULTI-HOST</div>
+            <ul class="tight" style="margin-top:6px;">
+              <li>Kubernetes + SLURM — single binary runs as controller, remote worker cell, or aggregator, all orchestrated via Dynamo Velo.</li>
+              <li><strong>1 M concurrency proven on DGX</strong>, bottlenecks fixed live, transport held.</li>
+              <li><strong>1.4M RPS</strong> — Rust AIPerf hitting throughput Python can't approach at this scale.</li>
+            </ul>
+          </div>
         </div>
       </div>
+
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>05</span></div>
   </section>
@@ -283,7 +277,6 @@
         <tbody>
           <tr><td>Real server, 250 concurrency — req/s</td><td class="n">7.24</td><td class="n">7.26</td><td>Tied — the server, not the client, sets the pace.</td></tr>
           <tr><td>Real server, 250 concurrency — TTFT p50</td><td class="n">25,072 ms</td><td class="n">25,138 ms</td><td>Within noise. Every latency metric matches.</td></tr>
-          <tr class="win"><td>Fast target, c4-144 — <strong>byte-exact</strong> ceiling (default)</td><td class="n"><span class="rs">~45,000 req/s</span></td><td class="n">~21,000 req/s</td><td>~2× — parity preserved (`global` dispatch). Measured, 0 errors.</td></tr>
           <tr><td>Fast target, c4-144 — opt-in `sharded` (not byte-exact)</td><td class="n"><span class="rs">~61,000 req/s</span></td><td class="n">—</td><td>~3×, when reproducible parity isn't required.</td></tr>
           <tr class="win"><td>Client-side latency (p50) at the ceiling</td><td class="n"><span class="rs">~7 ms</span></td><td class="n">~40 ms</td><td>~5–7× lower — Python pays per-request asyncio/GC overhead.</td></tr>
         </tbody>
@@ -331,44 +324,19 @@
         </thead>
         <tbody>
           <tr class="win"><td>Processes for a single-node run</td><td class="n"><span class="rs">1</span></td><td class="n">~97 (at benchmark scale)</td><td>One binary replaces a multiprocess fan-out of workers, managers, and sidecars.</td></tr>
-          <tr class="win"><td>Baseline memory overhead</td><td class="n"><span class="rs">&lt;200 MiB</span></td><td class="n">~2.5 GiB</td><td>Python pays ~150 MiB/<em>process</em> for interpreter + numpy, pandas, msgspec, pydantic. 12 services add up.</td></tr>
+          <tr class="win"><td>Baseline memory overhead</td><td class="n"><span class="rs">&lt;200 MiB</span></td><td class="n">~10 GiB</td><td>Python pays ~150 MiB/<em>process</em> for interpreter + libraries.</td></tr>
           <tr class="win"><td>CPU cores used during profiling (c4-144)</td><td class="n"><span class="rs">~33 of 112</span></td><td class="n">All available</td><td>Rust uses a third of the node and isn't even trying — ~3× headroom. Python burns everything.</td></tr>
-          <tr class="win"><td>Cold start to first request</td><td class="n"><span class="rs">~1 s</span></td><td class="n">~40 s</td><td>Python spends ~40s spawning processes, loading tokenizers, and generating the dataset before profiling starts.</td></tr>
-          <tr><td>Peak memory (large benchmark)</td><td class="n">dominated by dataset size</td><td class="n">same — dataset dominates</td><td>Both hit ~19 GiB on c4-144, but that's the 4000-conversation working set. The gap is in <em>overhead</em>, not peak.</td></tr>
+          <tr class="win"><td>Fast target, c4-144 — <strong>byte-exact</strong> ceiling (default)</td><td class="n"><span class="rs">~45,000 req/s</span></td><td class="n">~21,000 req/s</td><td>~2× — parity preserved (`global` dispatch). Measured, 0 errors.</td></tr>
+          <!-- <tr class="win"><td>Cold start to first request</td><td class="n"><span class="rs">~1 s</span></td><td class="n">~40 s</td><td>Python spends ~40s spawning processes, loading tokenizers, and generating the dataset before profiling starts.</td></tr> -->
         </tbody>
       </table>
       <div class="callout" style="margin-top:26px;max-width:1088px;">
-        <span class="h">Measured on a 144-core node (c4-144), realistic ISL 550 / OSL 150 streaming.</span> Rust uses ~33 cores of 112 at peak throughput and leaves the rest free. Python's 97-process fan-out consumes the whole machine. On a shared GPU node, that means Rust leaves more CPU headroom for the inference server it's measuring — or fits on a smaller CPU-only node when you don't need GPUs.
+        <span>On a shared GPU node, that means Rust leaves more CPU headroom for the inference server it's measuring — or fits on a smaller CPU-only node when you don't need GPUs.
       </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>07</span></div>
   </section>
 
-
-  <!-- ============================ 09 · MARQUEE SIM ============================ -->
-  <section class="slide" aria-label="Simulate any workload in seconds">
-    <div class="wordmark">NVIDIA</div>
-    <div class="pad">
-      <div class="eyebrow">Marquee capability</div>
-      <h2>Simulate <span class="g">any</span> AIPerf workload in <span class="g">seconds</span> — no GPUs, no network</h2>
-      <div class="pipe" style="margin-top:34px;max-width:1040px;">
-        <div class="cell"><div class="t">any workload</div><div class="s">arrival · datasets · multi-turn</div></div>
-        <span class="arrow">&#8594;</span>
-        <div class="cell accent"><div class="t">SimClock</div><div class="s">virtual time, discrete hops</div></div>
-        <span class="arrow">&#8594;</span>
-        <div class="cell dark"><div class="t">SteppableEngine</div><div class="s">Dynamo core, co-simulated in-process</div></div>
-        <span class="arrow">&#8594;</span>
-        <div class="cell"><div class="t">full report</div><div class="s">deterministic, seconds</div></div>
-      </div>
-      <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:40px;max-width:1088px;gap:28px;">
-        <div class="note"><div class="h">Free, because it's one front-end</div>Every feature — arrival patterns, datasets, metrics — runs <strong>unchanged</strong> in sim mode.</div>
-        <div class="note"><div class="h">Runs in CI, not a GPU cluster</div>Virtual clock removes real waiting. Minutes collapse to seconds for rapid CI sweeps.</div>
-        <div class="note" style="font-size:16px;"><div class="h">Deterministic — structurally, not by luck</div>SimClock uses a discrete-event <span class="mono">BinaryHeap&lt;(at_ns, seq_no)&gt;</span> — ties break by registration order. The idle pump polls to quiescence, advances the clock, repeats. Virtual time is single-threaded by design: no asyncio wake-ordering races can exist when there's no wall clock.</div>
-        <div class="note"><div class="h">Subsumes Dynamo Replay</div>Brings Replay's functionality to the entire AIPerf workload surface natively.</div>
-      </div>
-    </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>09</span></div>
-  </section>
 
   <!-- ============================ 10 · OBJECTIONS ============================ -->
   <section class="slide" aria-label="Objections answered">
@@ -399,7 +367,7 @@
 
 
 
-  <!-- ============================ 12 · MIGRATION ============================ -->
+  <!-- ============================ 12 · MIGRATION ============================
   <section class="slide" aria-label="Migration Strategy">
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
@@ -419,11 +387,11 @@
       </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>12</span></div>
-  </section>
+  </section> -->
 
 
 
-  <!-- ============================ 14 · JUST THE FACTS ============================ -->
+  <!-- ============================ 14 · JUST THE FACTS ============================
   <section class="slide" aria-label="Just the facts">
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
@@ -446,7 +414,7 @@
       </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>14</span></div>
-  </section>
+  </section> -->
 
   <!-- ============================ 15 · THE ASK ============================ -->
   <section class="slide" aria-label="The ask">
