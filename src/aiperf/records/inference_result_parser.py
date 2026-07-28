@@ -186,6 +186,7 @@ class InferenceResultParser(CommunicationMixin):
                         request_record, inputs=inputs
                     )
 
+            self._release_session_isl_state(request_record)
             return ParsedResponseRecord(
                 request=request_record,
                 responses=[],
@@ -240,6 +241,7 @@ class InferenceResultParser(CommunicationMixin):
                             request_record, inputs=inputs
                         )
 
+                self._release_session_isl_state(request_record)
                 return ParsedResponseRecord(
                     request=request_record,
                     responses=[],
@@ -248,6 +250,18 @@ class InferenceResultParser(CommunicationMixin):
                     ),
                     media_counts=media_counts,
                 )
+
+    def _release_session_isl_state(self, request_record: RequestRecord) -> None:
+        """Remove per-session ISL correction state when a final-turn record exits.
+
+        Called on both success and error paths so that a final-turn record that
+        errors out does not leave a stale entry in ``_session_isl_corrections``.
+        The success path cleanup already happens inside
+        ``_compute_server_token_counts``; this covers the remaining exits.
+        """
+        ctx = request_record.request_info
+        if ctx is not None and ctx.is_final_turn:
+            self._session_isl_corrections.pop(ctx.x_correlation_id, None)
 
     def _extract_payload_inputs_for_record(
         self, request_record: RequestRecord
@@ -533,7 +547,7 @@ class InferenceResultParser(CommunicationMixin):
         if session_id and input_token_count is not None:
             correction = self._session_isl_corrections.get(session_id, 0)
             if correction:
-                input_token_count += correction
+                input_token_count = max(0, input_token_count + correction)
 
         # Accumulate delta for future turns in this session (skip on the final
         # turn — there is no next turn to correct, and skipping avoids wasted
