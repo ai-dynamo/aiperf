@@ -100,12 +100,12 @@
       <div class="mono" style="font-size:18px;letter-spacing:.24em;text-transform:uppercase;color:var(--green);margin-bottom:22px;">Engineering Proposal</div>
       <h1 style="font-weight:500;font-size:76px;line-height:1.03;letter-spacing:-.02em;margin:0;color:#fff;">The Case for Rust</h1>
       <div style="margin-top:24px;font-size:26px;line-height:1.35;color:#d6d6d6;max-width:820px;">
-        Reimplementing AIPerf — NVIDIA's server-agnostic GenAI benchmarking tool — on a high performance Rust core
+        Re-imagining AIPerf — NVIDIA's de-facto server-agnostic GenAI benchmarking tool — on a high performance Rust core
       </div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:40px;">
         <div style="width:36px;height:3px;background:var(--green);"></div>
         <div style="font-weight:500;font-size:22px;color:#eee;">Anthony Casagrande</div>
-        <div style="font-size:20px;color:#9a9a9a;">· AIPerf Tech Lead · 2026</div>
+        <div style="font-size:20px;color:#9a9a9a;">· AIPerf Tech Lead · July 2026</div>
       </div>
     </div>
     <div class="mono" style="position:absolute;right:64px;bottom:44px;font-size:13px;letter-spacing:.18em;color:#6f6f6f;">perf_analyzer → GenAI-Perf → AIPerf (Py) → AIPerf (Rust)</div>
@@ -176,13 +176,13 @@
       <div class="eyebrow">Marquee capability</div>
       <h2>Simulate <span class="g">any</span> AIPerf workload in <span class="g">seconds</span> — no GPUs, no network</h2>
       <div class="pipe" style="margin-top:34px;max-width:1040px;">
-        <div class="cell"><div class="t">any workload</div><div class="s">arrival · datasets · multi-turn</div></div>
+        <div class="cell"><div class="t">Any Workload</div><div class="s">arrival · datasets · multi-turn · AgentX</div></div>
         <span class="arrow">&#8594;</span>
         <div class="cell accent"><div class="t">SimClock</div><div class="s">virtual time, discrete hops</div></div>
         <span class="arrow">&#8594;</span>
-        <div class="cell dark"><div class="t">SteppableEngine</div><div class="s">Dynamo core, co-simulated in-process</div></div>
+        <div class="cell dark"><div class="t">SteppableEngine</div><div class="s">Dynamo core, co-simulated in-process with mocker and AIC</div></div>
         <span class="arrow">&#8594;</span>
-        <div class="cell"><div class="t">full report</div><div class="s">deterministic, seconds</div></div>
+        <div class="cell"><div class="t">Full Report</div><div class="s">deterministic, seconds</div></div>
       </div>
       <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:40px;max-width:1088px;gap:28px;">
         <div class="note"><div class="h">Free, because it's one front-end</div>Every feature — arrival patterns, datasets, metrics — runs <strong>unchanged</strong> in sim mode.</div>
@@ -224,19 +224,19 @@
       <div class="cols2" style="margin-top:28px;">
         <!-- Python column -->
         <div style="display:flex;flex-direction:column;gap:16px;">
-          <div class="card" style="border-top:3px solid #c0392b;">
-            <div class="num" style="color:#c0392b;">PYTHON · ONE NODE</div>
+          <div class="card" style="border-top:3px solid #666;">
+            <div class="num" style="color:#666;">PYTHON · ONE NODE</div>
             <ul class="tight" style="margin-top:6px;">
               <li><strong>~12 services + 3 ZMQ proxies.</strong> Because the GIL blocks all but one thread, every role needs its own process.</li>
-              <li>A dedicated dataset service avoids shoving huge tokenizers into each worker.</li>
+              <li><strong>Each worker is a full Python interpreter</strong>, with independent memory and startup overhead.</li>
             </ul>
           </div>
-          <div class="card" style="border-top:3px solid #c0392b;">
-            <div class="num" style="color:#c0392b;">PYTHON · MULTI-HOST</div>
+          <div class="card" style="border-top:3px solid #666;">
+            <div class="num" style="color:#666;">PYTHON · MULTI-HOST</div>
             <ul class="tight" style="margin-top:6px;">
-              <li>Kubernetes: core controller services plus repeated worker pods per node.</li>
-              <li>Each Python process hogs memory (interpreter + numpy + pandas). At scale, pods OOM on even modest CPU limits.</li>
-              <li>Past 500k concurrency: records processor starves for CPU, credit backpressure chokes the whole pipeline.</li>
+              <li><strong>Kubernetes:</strong> core controller services plus repeated worker pods per node. Pods OOM at scale.</li>
+              <li><strong>500k concurrency</strong>: records processor starves for CPU, credit backpressure chokes the whole pipeline.</li>
+              <li><strong>20k RPS</strong>: single credit issuer bottleneck</li>
             </ul>
           </div>
         </div>
@@ -246,15 +246,15 @@
             <div class="num">RUST · ONE NODE</div>
             <ul class="tight" style="margin-top:6px;">
               <li><strong>One process. One thread per core.</strong> No GIL, no IPC — just threads sharing memory.</li>
-              <li>Dataset stays in-process. Half the cores idle at peak throughput.</li>
+              <li>Dataset stays in-process. Half the cores idle at peak throughput.<br></li>
             </ul>
           </div>
           <div class="card accent" style="border-top:3px solid var(--green);">
             <div class="num">RUST · MULTI-HOST</div>
             <ul class="tight" style="margin-top:6px;">
-              <li>Kubernetes + SLURM — single binary runs as controller, remote worker cell, or aggregator, all orchestrated via Dynamo Velo.</li>
-              <li><strong>1 M concurrency proven on DGX</strong>, bottlenecks fixed live, transport held.</li>
-              <li><strong>1.4M RPS</strong> — Rust AIPerf hitting throughput Python can't approach at this scale.</li>
+              <li><strong>Kubernetes + SLURM</strong> — single binary runs as controller or remote worker orchestrated over <a style="font-style: italic; font-weight:bold; color:#76B900" href="https://github.com/ai-dynamo/velo">Dynamo Velo</a>.</li>
+              <li><strong>1 M concurrency on DGX</strong> - benchmark at massive scale</li>
+              <li><strong>1.4M RPS</strong> — Distributed Rust AIPerf (Cellular Mode) hitting throughput Python can't approach at this scale.</li>
             </ul>
           </div>
         </div>
@@ -264,7 +264,7 @@
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>05</span></div>
   </section>
 
-  <!-- ============================ 06 · PERFORMANCE ============================ -->
+  <!-- ============================ 06 · PERFORMANCE ============================
   <section class="slide" aria-label="Performance, honestly">
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
@@ -282,28 +282,37 @@
         </tbody>
       </table>
 
-      <div class="callout" style="margin-top:28px;max-width:1088px;">
-        <span class="h">Field evidence, not just a synth.</span> The ceiling numbers above aren't theoretical — they've been hit in production-scale stress tests. As John Thompson (NVIDIA) confirmed after swapping to the Rust port:
-      </div>
-      <blockquote style="margin-top:18px;max-width:1088px;border-left:4px solid var(--green);padding-left:24px;font-size:22px;line-height:1.5;color:var(--sub);">
-        "When using multiplexed TCP on the response path, I found that the next biggest overhead was in AIPerf. Switching to Anthony Casagrande's Rust-based AIPerf alleviated this bottleneck, and enabled runs at significantly higher concurrency."
-        <div style="margin-top:10px;font-size:15px;color:var(--mut);font-style:italic;">— John Thompson, NVIDIA</div>
-      </blockquote>
-
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>06</span></div>
+  </section> -->
+
+  <!-- ============================ 07 · USER TESTIMONIALS ============================ -->
+  <section class="slide" aria-label="User testimonials">
+    <div style="position:absolute;inset:0;background:linear-gradient(120deg,#fafcf6 0%,#f5f9eb 100%);"></div>
+    <div style="position:absolute;left:80px;top:50%;transform:translateY(-50%);max-width:1040px;text-align:center;">
+      <div class="mono" style="font-size:16px;letter-spacing:.22em;text-transform:uppercase;color:var(--green);margin-bottom:32px;">User testimony - Dynamo Performance Tuning</div>
+      <blockquote style="margin:0 auto;border-left:none;font-size:36px;line-height:1.45;color:var(--sub);font-style:italic;max-width:960px;text-align:center;">
+        "When using multiplexed TCP on the response path, I found that the next biggest overhead was in AIPerf. Switching to Anthony Casagrande's Rust-based AIPerf alleviated this bottleneck, and enabled runs at significantly higher concurrency."
+      </blockquote>
+      <div style="margin-top:36px;font-size:20px;color:var(--mut);">— John Thompson, DL Algo</div>
+    </div>
+    <div class="wordmark">NVIDIA</div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>07</span></div>
   </section>
 
-  <!-- ============================ 08 · HARDWARE EVOLUTION ============================ -->
+  <!-- ============================ 08 · RESOURCE FOOTPRINT ============================ -->
   <section class="slide" aria-label="Hardware evolution">
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
       <div class="eyebrow">Future-proofing measurements</div>
       <h2>Ultra-fast silicon exposes <span class="g">Python's timing limits</span></h2>
-      <div class="lead" style="margin-top:22px;">"This is the first iteration of this cyborg setup and I expect to regularly profile >1000 oT/s/u models with it" - <b>Josh Hay - Groq LPU Team</b></b></div>
-      <div class="cols4" style="margin-top:34px;">
-        <div class="card" style="border-top:3px solid #c0392b;">
-          <div class="num" style="color:#c0392b;">THE PROBLEM: SUB-MILLISECOND ITL</div>
+      <div style="margin-top:26px;border-left:4px solid var(--green);padding:20px 24px;background:#fafcf6;font-size:22px;line-height:1.5;color:var(--sub);font-style:italic;">
+        "This is the first iteration of this cyborg setup and I expect to regularly profile &gt;1000 oT/s/u models with it."
+        <div style="margin-top:10px;font-size:16px;color:var(--mut);font-style:normal;">— <strong>Josh Hay</strong>, Groq LPU Team</div>
+      </div>
+      <div class="cols4" style="margin-top:28px;">
+        <div class="card" style="border-top:3px solid #666;">
+          <div class="num" style="color:#666;">THE PROBLEM: SUB-MILLISECOND ITL</div>
           <div class="ti" style="font-size:24px;">Groq LPUs outpace asyncio & aiohttp</div>
           <div class="bd">Hardware like the Groq LPU delivers <strong>sub-millisecond Inter-Token Latency (ITL)</strong>. Even with the garbage collector disabled, Python's <span class="mono">asyncio</span> loop and <span class="mono">aiohttp</span> inherently <strong>coalesce packets</strong>. When the hardware responds in 0.8ms, a 2ms event-loop coalescing delay corrupts the measurement entirely.</div>
         </div>
@@ -317,24 +326,24 @@
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
       <div class="eyebrow">Resource overhead</div>
-      <h2>The client shouldn't cost more than the <span class="g">benchmarked server</span></h2>
-      <table class="perf" style="margin-top:34px;">
+      <h2>The client shouldn't weigh more than the <span class="g">server</span></h2>
+      <table class="perf" style="margin-top:30px;">
         <thead>
-          <tr><th>Metric</th><th style="text-align:right;">Rust</th><th style="text-align:right;">Python k8s</th><th>What it means</th></tr>
+          <tr><th>Metric</th><th style="text-align:right;">Rust</th><th style="text-align:right;">Python</th><th>What it means</th></tr>
         </thead>
         <tbody>
-          <tr class="win"><td>Processes for a single-node run</td><td class="n"><span class="rs">1</span></td><td class="n">~97 (at benchmark scale)</td><td>One binary replaces a multiprocess fan-out of workers, managers, and sidecars.</td></tr>
-          <tr class="win"><td>Baseline memory overhead</td><td class="n"><span class="rs">&lt;200 MiB</span></td><td class="n">~10 GiB</td><td>Python pays ~150 MiB/<em>process</em> for interpreter + libraries.</td></tr>
-          <tr class="win"><td>CPU cores used during profiling (c4-144)</td><td class="n"><span class="rs">~33 of 112</span></td><td class="n">All available</td><td>Rust uses a third of the node and isn't even trying — ~3× headroom. Python burns everything.</td></tr>
-          <tr class="win"><td>Fast target, c4-144 — <strong>byte-exact</strong> ceiling (default)</td><td class="n"><span class="rs">~45,000 req/s</span></td><td class="n">~21,000 req/s</td><td>~2× — parity preserved (`global` dispatch). Measured, 0 errors.</td></tr>
-          <!-- <tr class="win"><td>Cold start to first request</td><td class="n"><span class="rs">~1 s</span></td><td class="n">~40 s</td><td>Python spends ~40s spawning processes, loading tokenizers, and generating the dataset before profiling starts.</td></tr> -->
+          <tr class="win"><td>Processes for a single-node run</td><td class="n"><span class="rs">1</span></td><td class="n">~97</td><td>One binary replaces a multiprocess fan-out of workers, managers, and sidecars.</td></tr>
+          <tr class="win"><td>Baseline memory overhead</td><td class="n"><span class="rs">&lt;200 MiB</span></td><td class="n">&gt;10 GiB</td><td>Python pays ~150 MiB/<em>process</em> for interpreter + libraries.</td></tr>
+          <tr class="win"><td>CPU cores used during profiling (c4-144)</td><td class="n"><span class="rs">~33 of 112</span></td><td class="n">112</td><td>Rust uses a third of the node and isn't even trying — ~3× headroom. Python burns everything.</td></tr>
+          <tr class="win"><td>Fast mock server target, (c4-144)</td><td class="n"><span class="rs">~45,000 req/s</span></td><td class="n">~21,000 req/s</td><td>&gt;2×. Full metrics pipeline, 0 errors.</td></tr>
+          <tr class="win"><td>Cold start to first request (100 workers)</td><td class="n"><span class="rs">&lt;5 s</span></td><td class="n">~40 s</td><td>Python spends ~40s spawning processes, loading tokenizers, and generating the data before profiling starts.</td></tr>
         </tbody>
       </table>
-      <div class="callout" style="margin-top:26px;max-width:1088px;">
-        <span>On a shared GPU node, that means Rust leaves more CPU headroom for the inference server it's measuring — or fits on a smaller CPU-only node when you don't need GPUs.
+      <div class="callout" style="margin-top:6px;max-width:1088px;">
+        <span>On a shared GPU node, that means Rust leaves more CPU headroom for the inference server it's measuring — or fits on a smaller CPU-only nodes. <i>Note: c4-144 is a 144-core k8s node. Many CPU-only nodes only have 8 cores.</i>
       </div>
     </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>07</span></div>
+    <!-- <div class="foot"><span>AIPerf · The Case for Rust</span><span>07</span></div> -->
   </section>
 
 
@@ -343,9 +352,9 @@
     <div class="wordmark">NVIDIA</div>
     <div class="pad">
       <div class="eyebrow">The hard questions, answered</div>
-      <h2>“Won't <span class="g">free-threaded (no-GIL)</span> Python make this moot?”</h2>
-      <div class="lead" style="margin-top:22px;">A common consideration that shifts the focus, but preserves the primary benefits. Free-threaded CPython is real and maturing, so we meet it directly:</div>
-      <div class="cols2" style="margin-top:26px;">
+      <h2>What about <span class="g">free-threaded (no-GIL)</span> Python?</h2>
+      <!-- <div class="lead" style="margin-top:22px;">A common consideration that shifts the focus, but preserves the primary benefits. Free-threaded CPython is real and maturing, so we meet it directly:</div> -->
+      <div class="cols2" style="margin-top:42px;">
         <div class="card">
           <div class="num">IT DOESN'T MOVE THE MAIN CASE</div>
           <ul class="tight">
@@ -361,10 +370,12 @@
           </ul>
         </div>
       </div>
+      <div class="callout" style="margin-top:28px;max-width:1040px;">
+        <span class="h">Rust doesn't degrade the user experience.</span> AIPerf Rust will still be <strong><span class="mono">pip install</span>-able</strong>, a drop-in replacement for every existing script, Jenkins job, and CI pipeline. Same CLI flags, same outputs — just a native binary under the hood instead of a Python service mesh.
+      </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>10</span></div>
   </section>
-
 
 
   <!-- ============================ 12 · MIGRATION ============================
@@ -426,7 +437,7 @@
       <div style="font-size:23px;line-height:1.5;color:#d6d6d6;max-width:1000px;margin-top:26px;">
         The case rests on <span class="g" style="font-weight:600;">expanding shared Rust infrastructure</span> and
         <span class="g" style="font-weight:600;">simplifying a GIL-driven multiprocess architecture</span>.
-        Performance is a real bonus: accurate sub-millisecond ITL tracking for next-gen silicon, ~2× at the byte-exact client ceiling (~3× opt-in), and workload simulation in seconds. The core engineering is already functioning; we seek approval to formally shift resources to take this proven, drop-in prototype into production.
+        Performance is a real bonus: accurate sub-millisecond ITL tracking for next-gen silicon, ~2× at the byte-exact client ceiling, and workload simulation in seconds. The core engineering is already functioning; we seek approval to formally shift resources to take this proven, drop-in prototype into production.
       </div>
       <div style="display:flex;gap:14px;margin-top:34px;flex-wrap:wrap;">
         <span class="mono" style="border:1px solid var(--green);color:var(--green);padding:8px 14px;font-size:14px;letter-spacing:.06em;">SHARED RUST CRATES</span>

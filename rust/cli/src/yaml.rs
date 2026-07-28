@@ -221,6 +221,14 @@ fn apply_cli_overrides(
     }
     if let Some(v) = load::parse_single::<u64>("--request-count", flags.request_count.as_deref())? {
         inputs.request_count = Some(v);
+        // If synthetic entries fell back to the default (no explicit num_conversations,
+        // dataset.entries, or phase.requests in YAML), use the CLI --request-count as
+        // the entry pool size. Matches Python _resolve_entries fallback behavior.
+        if inputs.entries == load::DEFAULT_ENTRIES {
+            if let Ok(n) = u32::try_from(v) {
+                inputs.entries = n;
+            }
+        }
     }
     if let Some(v) = load::parse_single::<f64>("--request-rate", flags.request_rate.as_deref())? {
         inputs.request_rate = Some(v);
@@ -1563,9 +1571,12 @@ impl Benchmark {
             None
         };
 
-        // Synthetic conversation count never derives from the request bound.
+        // Resolution order (matches Python _resolve_entries): explicit num_conversations,
+        // explicit dataset.entries, then fallback to phase.requests so a single
+        // `requests: N` / `--request-count N` invocation produces N unique entries.
         let entries = num_conversations
             .or(dataset_entries)
+            .or_else(|| phase.requests.and_then(|n| u32::try_from(n).ok()))
             .unwrap_or(load::DEFAULT_ENTRIES);
 
         let (
@@ -2675,6 +2686,91 @@ benchmark:
                     v["cfg"]["endpoint"]["streaming"],
                     serde_json::json!(true),
                     "explicit --streaming must overlay the YAML endpoint"
+                );
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    /// When synthetic dataset has no explicit entries and no phase.requests,
+    /// a CLI --request-count N should become the entry pool size (matching
+    /// Python _resolve_entries fallback). When entries is set by YAML, CLI
+    /// --request-count should not override it.
+    #[test]
+    fn cli_request_count_fills_synthetic_entries_when_defaulted() {
+        use aiperf_runtime::config::model::dataset::Dataset;
+
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                // --- Case 1: no entries, no phase.requests → CLI --request-count fills it ---
+                let yaml = cfg("  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, concurrency: 1}\n");
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+                let flags = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--request-count".to_string(),
+                    "500".to_string(),
+                ])
+                .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&flags),
+                )
+                .expect("resolve");
+                // Phase should have requests=500 from CLI override
+                assert_eq!(
+                    run.cfg.phases.as_ref().unwrap()[0].common.requests,
+                    Some(500),
+                    "CLI --request-count should set phase requests"
+                );
+
+                // --- Case 2: explicit YAML entries → CLI --request-count does NOT fill it ---
+                let yaml_explicit = cfg(
+                    "  dataset: {entries: 200, prompts: {isl: 128}}\n  \
+                     phases: {type: concurrency, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml_explicit).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&flags),
+                )
+                .expect("resolve with explicit entries");
+                // Dataset should still have entries=200
+                if let Dataset::Synthetic(syn) = &run.cfg.datasets.as_ref().unwrap()[0] {
+                    assert_eq!(
+                        syn.entries,
+                        Some(200),
+                        "explicit YAML entries must not be overridden by CLI --request-count"
+                    );
+                } else {
+                    panic!("expected synthetic dataset");
+                }
+
+                // --- Case 3: YAML phase.requests fills entries (no CLI request-count) ---
+                let yaml_requests = cfg(
+                    "  dataset: {prompts: {isl: 128}}\n  \
+                     phases: {type: concurrency, requests: 300, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml_requests).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+                let no_flags =
+                    crate::flags::ProfileFlags::parse_from_args(&["--concurrency".to_string(), "1".to_string()])
+                        .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&no_flags),
+                )
+                .expect("resolve with YAML requests");
+                // Phase should have requests=300 from YAML
+                assert_eq!(
+                    run.cfg.phases.as_ref().unwrap()[0].common.requests,
+                    Some(300),
+                    "phase.requests from YAML should be preserved"
                 );
             })
             .expect("spawn worker")
