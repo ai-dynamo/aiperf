@@ -838,6 +838,12 @@ class RecordContext(AIPerfBaseModel):
         ...,
         description="The index of the turn in the conversation (if applicable).",
     )
+    is_final_turn: bool = Field(
+        default=True,
+        description="Whether this is the final turn in the conversation. "
+        "Used by the per-conversation connection strategy to release the connection lease "
+        "and by the record processor to clean up per-session ISL correction state.",
+    )
     source_trace_id: str | None = Field(
         default=None,
         description=(
@@ -1008,11 +1014,6 @@ class RequestInfo(RecordContext):
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the credit was dropped by the timing manager. "
         "This is used to calculate the credit drop latency.",
-    )
-    is_final_turn: bool = Field(
-        default=True,
-        description="Whether this is the final turn in the conversation. "
-        "Used by per-conversation connection strategy to release the connection lease.",
     )
     url_index: int | None = Field(
         default=None,

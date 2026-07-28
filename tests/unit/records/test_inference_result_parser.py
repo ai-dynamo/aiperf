@@ -1124,3 +1124,93 @@ class TestMTPMultiTurnISLCorrection:
         )
         result_b = await parser.process_valid_record(rec_b1)
         assert result_b.token_counts.input == 4050
+
+    async def test_isl_correction_with_bare_record_context(
+        self, server_token_parser, sample_turn
+    ):
+        """Verify correction works with bare RecordContext (production post-ZMQ type)."""
+        from aiperf.common.enums import CreditPhase
+        from aiperf.common.models.record_models import RecordContext
+
+        parser = server_token_parser
+
+        # Build a bare RecordContext (mirrors what the record processor receives post-ZMQ)
+        ctx0 = RecordContext(
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            conversation_id="cid",
+            turn_index=0,
+            x_request_id="req-0",
+            x_correlation_id="session-bare",
+            is_final_turn=False,
+        )
+        rec0 = RequestRecord(request_info=ctx0, model_name="test-model")
+        setup_parser_responses(
+            parser,
+            [
+                make_parsed_response(
+                    text="output", prompt_tokens=100, completion_tokens=1024
+                )
+            ],
+        )
+        parser.get_tokenizer = AsyncMock(return_value=self._mock_tokenizer(949))
+        await parser.process_valid_record(rec0)
+
+        ctx1 = RecordContext(
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            conversation_id="cid",
+            turn_index=1,
+            x_request_id="req-1",
+            x_correlation_id="session-bare",
+            is_final_turn=True,
+        )
+        rec1 = RequestRecord(request_info=ctx1, model_name="test-model")
+        setup_parser_responses(
+            parser,
+            [
+                make_parsed_response(
+                    text="out1", prompt_tokens=2000, completion_tokens=100
+                )
+            ],
+        )
+        result = await parser.process_valid_record(rec1)
+        assert result.token_counts.input == 2075
+
+    async def test_no_delta_accumulated_when_tokenization_disabled(
+        self, server_token_parser, sample_turn
+    ):
+        """When disable_tokenization=True, no delta is accumulated and ISL is not corrected."""
+        parser = server_token_parser
+        parser.disable_tokenization = True
+
+        rec0 = self._make_record(sample_turn, turn_index=0, is_final_turn=False)
+        get_tok = AsyncMock()
+        parser.get_tokenizer = get_tok
+        setup_parser_responses(
+            parser,
+            [
+                make_parsed_response(
+                    text="output", prompt_tokens=100, completion_tokens=1024
+                )
+            ],
+        )
+        await parser.process_valid_record(rec0)
+
+        # No delta should have been accumulated
+        assert parser._session_isl_corrections == {}
+        # get_tokenizer must not have been called for delta computation
+        get_tok.assert_not_called()
+
+        rec1 = self._make_record(sample_turn, turn_index=1, is_final_turn=True)
+        setup_parser_responses(
+            parser,
+            [
+                make_parsed_response(
+                    text="out1", prompt_tokens=2000, completion_tokens=100
+                )
+            ],
+        )
+        result = await parser.process_valid_record(rec1)
+        # ISL is unchanged - no correction applied
+        assert result.token_counts.input == 2000
