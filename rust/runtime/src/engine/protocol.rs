@@ -394,6 +394,9 @@ pub enum PhaseSpec {
         /// Idle-gap cap in seconds for warmup-lead / leading-idle capping.
         #[serde(default)]
         idle_gap_cap_seconds: Option<f64>,
+        /// Global system-idle cap in seconds; shifts pending replay work without rewriting trace timing.
+        #[serde(default)]
+        system_idle_gap_cap_seconds: Option<f64>,
         /// Anchor each phase-start burst at the earliest post-t\* request
         /// (`--burst-phase-starts`) instead of spreading by recorded offset.
         #[serde(default)]

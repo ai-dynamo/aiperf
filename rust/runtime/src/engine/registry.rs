@@ -861,6 +861,9 @@ pub struct GraphWorkloadConfigV2 {
     /// agentic pipeline (requires the `agentx` feature).
     #[serde(default)]
     pub weka_semantics: Option<String>,
+    /// Legacy AgentX replay global idle cap, seconds.
+    #[serde(default)]
+    pub system_idle_gap_cap_seconds: Option<f64>,
     /// Ignore recorded trace inter-message/inter-request delays: fire every node
     /// as soon as its inputs are ready (sets `ExecutorFlags::ignore_edge_delays`).
     #[serde(default)]

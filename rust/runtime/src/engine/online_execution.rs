@@ -1565,6 +1565,7 @@ fn lower_legacy_agentic(
             start_min_ratio: 0.0,
             start_max_ratio: 1.0,
             idle_gap_cap_seconds,
+            system_idle_gap_cap_seconds: workload.system_idle_gap_cap_seconds,
             burst_phase_starts,
         };
     let mut agentic_phases: Vec<PhaseSpec> = vec![agentic_replay_phase(warmup_common)];
