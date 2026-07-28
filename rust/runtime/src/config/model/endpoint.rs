@@ -48,6 +48,14 @@ fn default_keepalive_timeout() -> f64 {
     5.0
 }
 
+fn default_wait_interval() -> f64 {
+    5.0
+}
+
+fn default_wait_mode() -> WaitForModelMode {
+    WaitForModelMode::Inference
+}
+
 /// Readiness-probe mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -128,18 +136,25 @@ pub struct Endpoint {
     #[serde(default = "default_keepalive_timeout")]
     pub keepalive_timeout: f64,
     /// Download video content referenced by responses.
+    #[serde(default)]
     pub download_video_content: bool,
     /// Vendor-specific request-body extras (open bag).
+    #[serde(default)]
     pub extra: serde_json::Map<String, serde_json::Value>,
     /// Extra request headers (name → value).
+    #[serde(default)]
     pub headers: BTreeMap<String, String>,
     /// Use HTTP/2 (h2/h2c).
+    #[serde(default)]
     pub http2: bool,
     /// Readiness-probe timeout in seconds.
+    #[serde(default)]
     pub wait_for_model_timeout: f64,
     /// Readiness-probe poll interval, in seconds.
+    #[serde(default = "default_wait_interval")]
     pub wait_for_model_interval: f64,
     /// Readiness-probe mode.
+    #[serde(default = "default_wait_mode")]
     pub wait_for_model_mode: WaitForModelMode,
 
     /// Optional URL path override.
