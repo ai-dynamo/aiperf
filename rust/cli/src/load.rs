@@ -1229,6 +1229,27 @@ mod tests {
     }
 
     #[test]
+    fn dry_run_projects_idle_gap_caps_without_an_endpoint() {
+        run_on_big_stack(|| {
+            use crate::flags::ProfileFlags;
+
+            let flags = ProfileFlags::parse_from_args(&[
+                "--dry-run".to_string(),
+                "--trace-idle-gap-cap-seconds".to_string(),
+                "12".to_string(),
+                "--system-idle-gap-cap-seconds".to_string(),
+                "7".to_string(),
+            ])
+            .expect("parse flags");
+            let inputs = super::resolve_inputs(&flags).expect("resolve dry-run inputs");
+
+            assert_eq!(inputs.trace_idle_gap_cap_seconds, Some(12.0));
+            assert_eq!(inputs.system_idle_gap_cap_seconds, Some(7.0));
+            assert!(matches!(inputs.transport, crate::model::transport::Transport::DryRun(_)));
+        });
+    }
+
+    #[test]
     fn synthesis_rejects_non_finite_value() {
         run_on_big_stack(|| {
             use crate::flags::ProfileFlags;
