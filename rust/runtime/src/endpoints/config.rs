@@ -614,7 +614,8 @@ mod tests {
         assert!(!decoded.use_legacy_max_tokens);
     }
 
-
+    #[test]
+    fn endpoint_control_hook_paths_must_be_relative() {
         let error = RawEndpointConfig {
             urls: vec!["http://127.0.0.1:8000".to_string()],
             reset_kv_cache: Some(ResetKvCacheConfig {
