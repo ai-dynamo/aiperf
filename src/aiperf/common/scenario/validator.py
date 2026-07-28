@@ -93,6 +93,7 @@ def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:
     _apply_trajectory_ratios(run, spec, applied)
     _apply_inter_turn_delay_cap(run, spec, violations, applied)
     _apply_trace_idle_gap_cap(run, spec, violations, applied)
+    _apply_system_idle_gap_cap(run, spec, violations, applied)
     _apply_random_seed(run, spec, applied)
 
     # Synthetic (CLI default when no --public-dataset/--input-file) under a
@@ -644,13 +645,26 @@ def _apply_inter_turn_delay_cap(
     violations: list[ScenarioViolation],
     applied: list[str],
 ) -> None:
-    if spec.inter_turn_delay_cap_seconds is None:
-        return
     dataset = run.cfg.get_default_dataset()
     if not hasattr(dataset, "inter_turn_delay_cap_seconds"):
         # Synthetic datasets have no inter-turn delay-cap concept; nothing to lock.
         return
     cap = dataset.inter_turn_delay_cap_seconds
+    if spec.forbid_inter_turn_delay_cap and cap is not None:
+        violations.append(
+            ScenarioViolation(
+                flag="--inter-turn-delay-cap-seconds",
+                current_value=cap,
+                required_value=None,
+                message=(
+                    f"scenario {spec.name!r} preserves original inter-turn "
+                    "timing and forbids a per-turn delay cap"
+                ),
+            )
+        )
+        return
+    if spec.inter_turn_delay_cap_seconds is None:
+        return
     explicit = "inter_turn_delay_cap_seconds" in getattr(
         dataset, "model_fields_set", ()
     )
@@ -685,13 +699,26 @@ def _apply_trace_idle_gap_cap(
     violations: list[ScenarioViolation],
     applied: list[str],
 ) -> None:
-    if spec.trace_idle_gap_cap_seconds is None:
-        return
     dataset = run.cfg.get_default_dataset()
     if not hasattr(dataset, "trace_idle_gap_cap_seconds"):
         # Synthetic datasets have no trace idle-gap concept; nothing to lock.
         return
     idle = dataset.trace_idle_gap_cap_seconds
+    if spec.forbid_trace_idle_gap_cap and idle is not None:
+        violations.append(
+            ScenarioViolation(
+                flag="--trace-idle-gap-cap-seconds",
+                current_value=idle,
+                required_value=None,
+                message=(
+                    f"scenario {spec.name!r} preserves original per-trace "
+                    "request timing and forbids timeline compression"
+                ),
+            )
+        )
+        return
+    if spec.trace_idle_gap_cap_seconds is None:
+        return
     explicit = "trace_idle_gap_cap_seconds" in getattr(dataset, "model_fields_set", ())
     if explicit:
         if idle != spec.trace_idle_gap_cap_seconds:
@@ -716,6 +743,46 @@ def _apply_trace_idle_gap_cap(
             spec.trace_idle_gap_cap_seconds,
         )
         applied.append("trace_idle_gap_cap")
+
+
+def _apply_system_idle_gap_cap(
+    run: BenchmarkRun,
+    spec: ScenarioSpec,
+    violations: list[ScenarioViolation],
+    applied: list[str],
+) -> None:
+    """Lock the global idle cap without altering dataset timestamps."""
+    required = spec.system_idle_gap_cap_seconds
+    if required is None:
+        return
+
+    valid = True
+    for phase in run.cfg.get_profiling_phases():
+        current = phase.system_idle_gap_cap_seconds
+        explicit = phase._system_idle_gap_cap_seconds_explicitly_set
+        if explicit and current != required:
+            valid = False
+            violations.append(
+                ScenarioViolation(
+                    flag="--system-idle-gap-cap-seconds",
+                    current_value=current,
+                    required_value=required,
+                    message=(
+                        f"scenario {spec.name!r} limits only globally idle "
+                        f"replay time to {required} seconds"
+                    ),
+                )
+            )
+            continue
+        if current != required:
+            phase.system_idle_gap_cap_seconds = required
+            _logger.info(
+                "Scenario %r: auto-set --system-idle-gap-cap-seconds=%s (was unset).",
+                spec.name,
+                required,
+            )
+    if valid:
+        applied.append("system_idle_gap_cap")
 
 
 def _apply_random_seed(

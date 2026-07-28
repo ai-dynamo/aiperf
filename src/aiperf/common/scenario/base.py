@@ -108,6 +108,28 @@ class ScenarioSpec(AIPerfBaseModel):
             "inter_turn_delay_cap_seconds and supersedes use_think_time_only."
         ),
     )
+    system_idle_gap_cap_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Hard ceiling in seconds for globally idle replay time. Pending "
+            "request timers shift uniformly only when no request is active."
+        ),
+    )
+    forbid_trace_idle_gap_cap: bool = Field(
+        default=False,
+        description=(
+            "Reject trace_idle_gap_cap_seconds so the scenario preserves each "
+            "trace's original request timeline."
+        ),
+    )
+    forbid_inter_turn_delay_cap: bool = Field(
+        default=False,
+        description=(
+            "Reject inter_turn_delay_cap_seconds so the scenario preserves "
+            "each trace's original inter-turn timing."
+        ),
+    )
     require_cache_bust: CacheBustTarget | None = Field(
         default=None,
         description=(
