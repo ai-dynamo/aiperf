@@ -668,6 +668,7 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 |-------|:-------:|-------------|
 | `sonnet` |  | Shakespeare sonnets (default). Classic prose for filler text. |
 | `coding` |  | Realistic coding content: code, bash output, JSON, error tracebacks, git diffs. |
+| `random` |  | Random tokens drawn from the full tokenizer vocabulary minus special tokens. Matches vLLM bench's RandomDataset token-generation strategy. |
 
 ### Cache Bust
 
@@ -2208,6 +2209,7 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 |-------|:-------:|-------------|
 | `sonnet` |  | Shakespeare sonnets (default). Classic prose for filler text. |
 | `coding` |  | Realistic coding content: code, bash output, JSON, error tracebacks, git diffs. |
+| `random` |  | Random tokens drawn from the full tokenizer vocabulary minus special tokens. Matches vLLM bench's RandomDataset token-generation strategy. |
 
 ### Cache Bust
 
