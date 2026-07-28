@@ -358,6 +358,17 @@ impl Workload for AgenticReplayWorkload {
     }
 }
 
+fn system_idle_continuation_delay_ms(
+    delay_ms: f64,
+    cap_ms: Option<f64>,
+    scheduler_task_count: usize,
+) -> f64 {
+    match cap_ms {
+        Some(cap_ms) if scheduler_task_count <= 1 => delay_ms.min(cap_ms),
+        _ => delay_ms,
+    }
+}
+
 fn cap_system_idle_offsets_ms(offsets_ms: &[f64], cap_ms: Option<f64>) -> Vec<f64> {
     let Some(cap_ms) = cap_ms else {
         return offsets_ms.to_vec();
@@ -519,6 +530,7 @@ impl AgenticReplayWorkload {
                 // Standard warmup/profiling path: no accelerated observer.
                 None,
                 AccelCtx::default(),
+                cfg.system_idle_gap_cap_ms,
             );
         }
         Ok(())
@@ -636,6 +648,7 @@ impl AgenticReplayWorkload {
                 defer_queue.clone(),
                 Some(observer.clone()),
                 accel.clone(),
+                None,
             );
         }
 
@@ -831,6 +844,7 @@ impl AgenticReplayWorkload {
                     defer_queue.clone(),
                     None,
                     AccelCtx::default(),
+                    cfg.system_idle_gap_cap_ms,
                 );
             }
         }
@@ -924,6 +938,7 @@ fn schedule_agentic_turn(
     defer_queue: Rc<RefCell<Vec<PendingJoin>>>,
     observer: Option<Rc<AcceleratedObserver>>,
     accel: AccelCtx,
+    system_idle_gap_cap_ms: Option<f64>,
 ) {
     // Defer a gated join turn until its awaited children terminate. The child
     // terminal callbacks (below) drain the queue and re-dispatch at `now_ns`.
@@ -1000,6 +1015,7 @@ fn schedule_agentic_turn(
                                         defer_c.clone(),
                                         observer_c.clone(),
                                         accel_c.clone(),
+                                        system_idle_gap_cap_ms,
                                     );
                                 }
                             }
@@ -1039,6 +1055,7 @@ fn schedule_agentic_turn(
                                         defer_c,
                                         observer_c,
                                         accel_c.clone(),
+                                        system_idle_gap_cap_ms,
                                     );
                                 }
                             }
@@ -1066,7 +1083,15 @@ fn schedule_agentic_turn(
                         };
                         // Accelerated pressure fires continuations at zero idle;
                         // the standard path honors the recorded inter-turn delay.
-                        let effective_delay_ms = if accel_c.zero_idle { 0.0 } else { delay_ms };
+                        let effective_delay_ms = if accel_c.zero_idle {
+                            0.0
+                        } else {
+                            system_idle_continuation_delay_ms(
+                                delay_ms,
+                                system_idle_gap_cap_ms,
+                                runtime_c.scheduler().task_count(),
+                            )
+                        };
                         let next_target = outcome
                             .end_ns
                             .saturating_add((effective_delay_ms.max(0.0) * NS_PER_MS) as i64);
@@ -1081,6 +1106,7 @@ fn schedule_agentic_turn(
                             defer_c,
                             observer_c,
                             accel_c,
+                            system_idle_gap_cap_ms,
                         );
                     })
                 }),
@@ -1394,6 +1420,14 @@ mod system_idle_gap_tests {
         let capped = cap_system_idle_offsets_ms(&offsets, Some(10_000.0));
 
         assert_eq!(capped, offsets);
+    }
+
+    #[test]
+    fn system_idle_continuation_delay_caps_only_when_no_other_tasks_are_pending() {
+        assert_eq!(system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 1), 10_000.0);
+        assert_eq!(system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 2), 100_000.0);
+        assert_eq!(system_idle_continuation_delay_ms(5_000.0, Some(10_000.0), 1), 5_000.0);
+        assert_eq!(system_idle_continuation_delay_ms(100_000.0, None, 1), 100_000.0);
     }
 }
 
