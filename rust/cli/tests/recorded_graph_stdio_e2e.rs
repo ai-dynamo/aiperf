@@ -241,7 +241,7 @@ async fn graph_run_accepts_enabled_but_unreachable_telemetry_sidecars() {
             "records_path": "gpu.jsonl",
             "sources": [{"type": "dcgm", "url": "http://127.0.0.1:1/metrics"}]
         },
-        "network_latency": {"mean_rtt_ns": 250000.0},
+        "network_latency": {"mean_rtt_ns": 250000},
         "server_metrics": {
             "collection_interval_ns": 100_000_000,
             "reachability_timeout_ns": 50_000_000,
