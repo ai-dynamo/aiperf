@@ -304,7 +304,7 @@ class TestConfigRegistration:
                     gpu_uuid="GPU-amd-test-0",
                     gpu_model_name="AMD Instinct MI300X OAM",
                     timestamp_ns=ts,
-                    dcgm_url="amdsmi://localhost",
+                    telemetry_source_url="amdsmi://localhost",
                     telemetry_data=TelemetryMetrics(
                         amd_power=287.0,
                         amd_energy_consumption=energy,
@@ -319,7 +319,9 @@ class TestConfigRegistration:
                 )
             )
 
-        gpu_data = hierarchy.dcgm_endpoints["amdsmi://localhost"]["GPU-amd-test-0"]
+        gpu_data = hierarchy.telemetry_source_endpoints["amdsmi://localhost"][
+            "GPU-amd-test-0"
+        ]
         seen = set()
         for _display, field, unit_enum in GPU_TELEMETRY_METRICS_CONFIG:
             if not field.startswith("amd_"):
@@ -362,7 +364,7 @@ class TestCollection:
         records = await initialized_collector._loop_to_thread_collect()
         assert len(records) == 2
         for r in records:
-            assert r.dcgm_url == AMDSMI_SOURCE_IDENTIFIER
+            assert r.telemetry_source_url == AMDSMI_SOURCE_IDENTIFIER
             assert r.timestamp_ns > 0
 
     @pytest.mark.asyncio
