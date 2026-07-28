@@ -1235,6 +1235,8 @@ mod tests {
 
             let flags = ProfileFlags::parse_from_args(&[
                 "--dry-run".to_string(),
+                "--model".to_string(),
+                "test-model".to_string(),
                 "--trace-idle-gap-cap-seconds".to_string(),
                 "12".to_string(),
                 "--system-idle-gap-cap-seconds".to_string(),
