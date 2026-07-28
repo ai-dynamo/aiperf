@@ -267,6 +267,8 @@ pub struct AgenticReplayConfig {
     pub start_max_ratio: f64,
     /// Idle-gap cap in ms for warmup-lead / leading-idle capping (`None` = uncapped).
     pub idle_gap_cap_ms: Option<f64>,
+    /// Global system-idle cap in ms; shifts pending replay issuance without rewriting trace timing.
+    pub system_idle_gap_cap_ms: Option<f64>,
     /// Anchor phase-start bursts at the earliest post-t\* request instead of spread.
     pub burst_phase_starts: bool,
     /// Base random seed for per-lane t\* sampling.
@@ -356,6 +358,43 @@ impl Workload for AgenticReplayWorkload {
     }
 }
 
+fn system_idle_continuation_delay_ms(
+    delay_ms: f64,
+    cap_ms: Option<f64>,
+    scheduler_task_count: usize,
+) -> f64 {
+    match cap_ms {
+        Some(cap_ms) if scheduler_task_count <= 1 => delay_ms.min(cap_ms),
+        _ => delay_ms,
+    }
+}
+
+fn cap_system_idle_offsets_ms(offsets_ms: &[f64], cap_ms: Option<f64>) -> Vec<f64> {
+    let Some(cap_ms) = cap_ms else {
+        return offsets_ms.to_vec();
+    };
+    if offsets_ms.is_empty() {
+        return Vec::new();
+    }
+
+    let mut adjusted = offsets_ms.to_vec();
+    let mut indices: Vec<usize> = (0..adjusted.len()).collect();
+    indices.sort_by(|&left, &right| adjusted[left].total_cmp(&adjusted[right]));
+
+    let mut previous = 0.0;
+    let mut total_shift = 0.0;
+    for idx in indices {
+        let shifted = adjusted[idx] - total_shift;
+        let gap = shifted - previous;
+        if gap > cap_ms {
+            total_shift += gap - cap_ms;
+        }
+        adjusted[idx] = (adjusted[idx] - total_shift).max(previous);
+        previous = adjusted[idx];
+    }
+    adjusted
+}
+
 impl AgenticReplayWorkload {
     /// Standard (non-accelerated) warmup/profiling dispatch: warmup primes each
     /// `::warmup` turn-(n-1) once; profiling replays each post-t\* lane at its
@@ -412,6 +451,7 @@ impl AgenticReplayWorkload {
                 profiling_dispatch_delays_ms(&raw, cfg.burst_phase_starts, cfg.idle_gap_cap_ms)
             }
         };
+        let offsets_ms = cap_system_idle_offsets_ms(&offsets_ms, cfg.system_idle_gap_cap_ms);
 
         // 3) Anchor and schedule each lane's dispatch at its phase-start offset.
         let lead_ns = if runtime.clock().is_virtual() {
@@ -490,6 +530,7 @@ impl AgenticReplayWorkload {
                 // Standard warmup/profiling path: no accelerated observer.
                 None,
                 AccelCtx::default(),
+                cfg.system_idle_gap_cap_ms,
             );
         }
         Ok(())
@@ -607,6 +648,7 @@ impl AgenticReplayWorkload {
                 defer_queue.clone(),
                 Some(observer.clone()),
                 accel.clone(),
+                None,
             );
         }
 
@@ -802,6 +844,7 @@ impl AgenticReplayWorkload {
                     defer_queue.clone(),
                     None,
                     AccelCtx::default(),
+                    cfg.system_idle_gap_cap_ms,
                 );
             }
         }
@@ -895,6 +938,7 @@ fn schedule_agentic_turn(
     defer_queue: Rc<RefCell<Vec<PendingJoin>>>,
     observer: Option<Rc<AcceleratedObserver>>,
     accel: AccelCtx,
+    system_idle_gap_cap_ms: Option<f64>,
 ) {
     // Defer a gated join turn until its awaited children terminate. The child
     // terminal callbacks (below) drain the queue and re-dispatch at `now_ns`.
@@ -971,6 +1015,7 @@ fn schedule_agentic_turn(
                                         defer_c.clone(),
                                         observer_c.clone(),
                                         accel_c.clone(),
+                                        system_idle_gap_cap_ms,
                                     );
                                 }
                             }
@@ -1010,6 +1055,7 @@ fn schedule_agentic_turn(
                                         defer_c,
                                         observer_c,
                                         accel_c.clone(),
+                                        system_idle_gap_cap_ms,
                                     );
                                 }
                             }
@@ -1037,7 +1083,15 @@ fn schedule_agentic_turn(
                         };
                         // Accelerated pressure fires continuations at zero idle;
                         // the standard path honors the recorded inter-turn delay.
-                        let effective_delay_ms = if accel_c.zero_idle { 0.0 } else { delay_ms };
+                        let effective_delay_ms = if accel_c.zero_idle {
+                            0.0
+                        } else {
+                            system_idle_continuation_delay_ms(
+                                delay_ms,
+                                system_idle_gap_cap_ms,
+                                runtime_c.scheduler().task_count(),
+                            )
+                        };
                         let next_target = outcome
                             .end_ns
                             .saturating_add((effective_delay_ms.max(0.0) * NS_PER_MS) as i64);
@@ -1052,6 +1106,7 @@ fn schedule_agentic_turn(
                             defer_c,
                             observer_c,
                             accel_c,
+                            system_idle_gap_cap_ms,
                         );
                     })
                 }),
@@ -1344,6 +1399,35 @@ impl TreeGate {
         // child — is a lone conversation and thus its own trivially-drained
         // tree, so recycle behaves as it does with no gate.
         true
+    }
+}
+
+#[cfg(test)]
+mod system_idle_gap_tests {
+    use super::*;
+
+    #[test]
+    fn cap_system_idle_offsets_preserves_spacing_and_caps_next_delay() {
+        let offsets = vec![0.0, 100_000.0, 101_000.0];
+        let capped = cap_system_idle_offsets_ms(&offsets, Some(10_000.0));
+
+        assert_eq!(capped, vec![0.0, 10_000.0, 11_000.0]);
+    }
+
+    #[test]
+    fn cap_system_idle_offsets_noops_without_large_idle_gap() {
+        let offsets = vec![0.0, 9_000.0, 9_500.0];
+        let capped = cap_system_idle_offsets_ms(&offsets, Some(10_000.0));
+
+        assert_eq!(capped, offsets);
+    }
+
+    #[test]
+    fn system_idle_continuation_delay_caps_only_when_no_other_tasks_are_pending() {
+        assert_eq!(system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 1), 10_000.0);
+        assert_eq!(system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 2), 100_000.0);
+        assert_eq!(system_idle_continuation_delay_ms(5_000.0, Some(10_000.0), 1), 5_000.0);
+        assert_eq!(system_idle_continuation_delay_ms(100_000.0, None, 1), 100_000.0);
     }
 }
 

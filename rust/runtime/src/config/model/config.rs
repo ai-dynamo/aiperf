@@ -108,6 +108,9 @@ pub struct BenchmarkConfig {
     /// the graph-ir path. Unset defers to the graph-ir default.
     #[serde(default)]
     pub weka_semantics: Option<String>,
+    /// Legacy Weka global idle cap (`--system-idle-gap-cap-seconds`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_idle_gap_cap_seconds: Option<f64>,
     /// Ignore recorded trace inter-message/inter-request delays for graph-ir runs
     /// (`--ignore-trace-delays`). Attached only to the graph workload DTO; the
     /// engine sets `ExecutorFlags::ignore_edge_delays` so nodes fire as soon as

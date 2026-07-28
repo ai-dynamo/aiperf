@@ -310,6 +310,8 @@ pub struct Inputs {
     pub burst_phase_starts: bool,
     /// Per-trace idle-gap cap, seconds (`--trace-idle-gap-cap-seconds`).
     pub trace_idle_gap_cap_seconds: Option<f64>,
+    /// Global system-idle cap, seconds (`--system-idle-gap-cap-seconds`). Legacy Weka only.
+    pub system_idle_gap_cap_seconds: Option<f64>,
     /// HuggingFace repo for generic Weka loader (`--hf-weka-dataset`).
     pub hf_weka_dataset: Option<String>,
     /// Baseten whole-session sample ratio (`--trace-session-sample-ratio`).
@@ -710,6 +712,12 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             "--failed-request-threshold must be in [0.0, 1.0], got {threshold}"
         );
     }
+    if let Some(cap) = inputs.system_idle_gap_cap_seconds {
+        anyhow::ensure!(
+            cap.is_finite() && cap >= 0.0,
+            "--system-idle-gap-cap-seconds must be finite and non-negative, got {cap}"
+        );
+    }
     if let Some(grace) = inputs.agentic_warmup_grace_period {
         anyhow::ensure!(
             grace.is_finite() && grace >= 0.0,
@@ -743,6 +751,14 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // Cellular execution (`--cells > 1`) would partition a trajectory tree's root
     // and subagent children across cell processes, breaking join gating — reject
     // it with a clear error (use `--weka-semantics graph-ir` for cellular weka).
+    if inputs.system_idle_gap_cap_seconds.is_some()
+        && !matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx"))
+    {
+        anyhow::bail!(
+            "--system-idle-gap-cap-seconds requires legacy Weka / agentic_replay \
+             (set --weka-semantics legacy or --scenario inferencex-agentx-mvp)"
+        );
+    }
     if matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx")) {
         if inputs.runtime_cells > 1 {
             anyhow::bail!(
@@ -1396,6 +1412,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         failure_policy: None,
         scenario: inputs.scenario.clone(),
         weka_semantics,
+        system_idle_gap_cap_seconds: inputs.system_idle_gap_cap_seconds,
         ignore_trace_delays: inputs.ignore_trace_delays,
         trajectory_start_max_ratio: inputs.trajectory_start_max_ratio,
         trajectory_start_min_ratio: inputs.trajectory_start_min_ratio,

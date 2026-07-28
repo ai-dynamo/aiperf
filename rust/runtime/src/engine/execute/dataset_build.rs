@@ -294,6 +294,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
             start_min_ratio,
             start_max_ratio,
             idle_gap_cap_seconds,
+            system_idle_gap_cap_seconds,
             burst_phase_starts,
             ..
         } => {
@@ -316,6 +317,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                     start_min_ratio: *start_min_ratio,
                     start_max_ratio: *start_max_ratio,
                     idle_gap_cap_ms: idle_gap_cap_seconds.map(|s| s * 1000.0),
+                    system_idle_gap_cap_ms: system_idle_gap_cap_seconds.map(|s| s * 1000.0),
                     burst_phase_starts: *burst_phase_starts,
                     // Base t\* seed is dataset-level (phase-independent) so the
                     // WARMUP and PROFILING instances sample the SAME t\* per lane.
@@ -1155,6 +1157,7 @@ mod tests {
             start_min_ratio: 0.0,
             start_max_ratio: 1.0,
             idle_gap_cap_seconds: Some(10.0),
+            system_idle_gap_cap_seconds: None,
             burst_phase_starts: false,
         }
     }
