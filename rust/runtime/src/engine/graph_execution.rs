@@ -1059,7 +1059,6 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             usize::try_from(input_tokens).unwrap_or(usize::MAX),
             max_output_tokens,
         );
-        self.arrivals.set(self.arrivals.get().saturating_add(1));
         let first_token_emitted = Cell::new(false);
         let first_token_error = RefCell::new(None);
         let collected = transport
@@ -1085,6 +1084,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 },
             )
             .await?;
+        self.arrivals.set(self.arrivals.get().saturating_add(1));
         if let Some(error) = first_token_error.into_inner() {
             return Err(anyhow!("emitting graph first-token event: {error}"));
         }
