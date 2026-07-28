@@ -1245,6 +1245,7 @@ fn lower_graph(
         t_star_window: prepared.t_star_window,
         cache_bust_target: prepared.cache_bust_target,
         ignore_trace_delays: workload.ignore_trace_delays,
+        system_idle_gap_cap_seconds: workload.system_idle_gap_cap_seconds,
     };
     build_common_plan(
         run,

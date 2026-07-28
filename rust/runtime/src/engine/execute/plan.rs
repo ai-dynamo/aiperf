@@ -428,6 +428,7 @@ pub(crate) struct NativeGraphDatasetPlan {
     /// Ignore recorded trace inter-message/inter-request delays: the graph
     /// executor fires every node as soon as its inputs are ready.
     pub(crate) ignore_trace_delays: bool,
+    pub(crate) system_idle_gap_cap_seconds: Option<f64>,
 }
 
 /// A side-channel subsystem that samples over the profiling window requires

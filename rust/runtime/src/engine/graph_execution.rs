@@ -555,6 +555,7 @@ pub(crate) struct GraphBackendFactoryConfig {
     /// Ignore recorded trace inter-message/inter-request delays: fire every node
     /// as soon as its inputs are ready via `ExecutorFlags::ignore_edge_delays`.
     pub(crate) ignore_trace_delays: bool,
+    pub(crate) system_idle_gap_cap_seconds: Option<f64>,
 }
 
 /// First-turn cache-bust inputs shared by graph workers.
@@ -806,12 +807,11 @@ impl TracePlacement for GraphWorkerBackend {
             self.materializer.clone(),
             sink.clone(),
         );
-        if self.ignore_trace_delays {
-            local = local.with_executor_flags(ExecutorFlags {
-                ignore_edge_delays: true,
-                ..Default::default()
-            });
-        }
+        local = local.with_executor_flags(ExecutorFlags {
+            ignore_edge_delays: self.ignore_trace_delays,
+            system_idle_gap_cap_ms: self.system_idle_gap_cap_seconds.map(|s| s * 1000.0),
+            ..Default::default()
+        });
         if let Some(policy) = &self.node_policy {
             local = local.with_node_policy(policy.clone());
         }

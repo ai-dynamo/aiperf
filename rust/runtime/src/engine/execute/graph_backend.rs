@@ -23,6 +23,7 @@ pub(crate) struct OnlineGraphPhaseBackendFactory<'a> {
     pub(crate) on_failure: OnFailure,
     pub(crate) cache_bust: Option<crate::engine::graph_execution::GraphCacheBust>,
     pub(crate) ignore_trace_delays: bool,
+    pub(crate) system_idle_gap_cap_seconds: Option<f64>,
 }
 
 impl GraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
@@ -46,6 +47,7 @@ impl GraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
             on_failure: self.on_failure,
             cache_bust: self.cache_bust.clone(),
             ignore_trace_delays: self.ignore_trace_delays,
+            system_idle_gap_cap_seconds: self.system_idle_gap_cap_seconds,
         }));
         let requires_node_records = self.placement.requires_node_records();
         let placement =
