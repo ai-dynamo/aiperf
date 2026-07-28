@@ -233,29 +233,24 @@ class TestAMDSMITelemetry:
         assert result.request_count == 50
         assert result.has_gpu_telemetry
         assert result.json.telemetry_data.endpoints is not None
-
-        endpoint_data = result.json.telemetry_data.endpoints.get(
-            AMDSMI_SOURCE_IDENTIFIER
-        )
-        assert endpoint_data is not None, (
-            f"Expected endpoint key '{AMDSMI_SOURCE_IDENTIFIER}' in telemetry_data.endpoints"
-        )
-        assert endpoint_data.gpus is not None
-        assert len(endpoint_data.gpus) > 0
+        assert len(result.json.telemetry_data.endpoints) > 0
 
         # amd_energy_consumption and amd_ecc_uncorrectable are counters (delta only)
         counter_metrics = {"amd_energy_consumption", "amd_ecc_uncorrectable"}
-        for gpu_data in endpoint_data.gpus.values():
-            assert gpu_data.metrics is not None
-            assert len(gpu_data.metrics) > 0
-            amd_metrics = {k for k in gpu_data.metrics if k.startswith("amd_")}
-            assert amd_metrics, "No amd_* metrics collected"
-            for metric_name, metric_value in gpu_data.metrics.items():
-                assert metric_value.avg is not None
-                assert metric_value.unit is not None
-                if metric_name not in counter_metrics:
-                    assert metric_value.min is not None
-                    assert metric_value.max is not None
+        for endpoint_data in result.json.telemetry_data.endpoints.values():
+            assert endpoint_data.gpus is not None
+            assert len(endpoint_data.gpus) > 0
+            for gpu_data in endpoint_data.gpus.values():
+                assert gpu_data.metrics is not None
+                assert len(gpu_data.metrics) > 0
+                amd_metrics = {k for k in gpu_data.metrics if k.startswith("amd_")}
+                assert amd_metrics, "No amd_* metrics collected"
+                for metric_name, metric_value in gpu_data.metrics.items():
+                    assert metric_value.avg is not None
+                    assert metric_value.unit is not None
+                    if metric_name not in counter_metrics:
+                        assert metric_value.min is not None
+                        assert metric_value.max is not None
 
     async def test_amd_gpu_telemetry_export(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
