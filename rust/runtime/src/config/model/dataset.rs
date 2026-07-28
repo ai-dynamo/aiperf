@@ -290,6 +290,7 @@ pub struct FileDataset {
     /// Sampling order.
     pub sampling: Sampling,
     /// Format-specific loader options (open bag).
+    #[serde(default)]
     pub options: serde_json::Map<String, serde_json::Value>,
     /// Absolute path to the dataset file/directory (present when path-backed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -331,6 +332,7 @@ pub struct PublicDataset {
     /// Source coordinates (HuggingFace or URL; open bag).
     pub source: serde_json::Value,
     /// Loader options (columns/multi_turn/max_conversations).
+    #[serde(default)]
     pub options: serde_json::Map<String, serde_json::Value>,
     /// Sampling order.
     pub sampling: Sampling,
