@@ -836,6 +836,22 @@ class Tokenizer:
         special = self.all_special_ids
         return [i for i in range(self._tokenizer.vocab_size) if i not in special]
 
+    @property
+    def all_token_ids(self) -> list[int]:
+        """Sorted list of all decodable token IDs, including special tokens.
+
+        Matches vLLM bench's RandomDataset which samples from the full
+        range(vocab_size) without filtering specials. For tiktoken encodings
+        gap IDs are still excluded because they cannot be decoded.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            enc = self._tokenizer._encoding
+            return sorted(
+                set(enc._mergeable_ranks.values()) | set(enc._special_token_values)
+            )
+        return list(range(self._tokenizer.vocab_size))
+
     def num_prompt_special_tokens(self) -> int:
         """Number of special tokens the server adds to each prompt.
 
