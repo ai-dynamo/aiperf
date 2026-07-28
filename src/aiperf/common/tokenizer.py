@@ -800,6 +800,42 @@ class Tokenizer:
             return self.eos_token_id
         return None
 
+    @property
+    def vocab_size(self) -> int:
+        """Total vocabulary size of the underlying tokenizer."""
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return self._tokenizer._encoding.n_vocab
+        return self._tokenizer.vocab_size
+
+    @property
+    def all_special_ids(self) -> set[int]:
+        """Set of special token IDs that should be excluded from random sampling."""
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return set(self._tokenizer._encoding._special_token_values)
+        return set(self._tokenizer.all_special_ids)
+
+    @property
+    def valid_token_ids(self) -> list[int]:
+        """Sorted list of all decodable, non-special token IDs.
+
+        Tiktoken encodings have sparse ID spaces (gaps between mergeable ranks
+        and special tokens), so range(vocab_size) includes invalid IDs that
+        raise KeyError on decode. This property returns only IDs that are both
+        decodable and non-special.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            special = self._tokenizer._encoding._special_token_values
+            return sorted(
+                id_
+                for id_ in self._tokenizer._encoding._mergeable_ranks.values()
+                if id_ not in special
+            )
+        special = self.all_special_ids
+        return [i for i in range(self._tokenizer.vocab_size) if i not in special]
+
     def num_prompt_special_tokens(self) -> int:
         """Number of special tokens the server adds to each prompt.
 

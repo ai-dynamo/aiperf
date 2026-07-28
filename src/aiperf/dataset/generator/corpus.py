@@ -31,6 +31,13 @@ def resolve_prompt_generator(
             tokenizer=tokenizer,
             prefix_prompts=prefix_prompts,
         )
+    if resolved == PromptCorpus.RANDOM or resolved == "random":
+        return PromptGenerator(
+            prompts=prompts,
+            prefix_prompts=prefix_prompts,
+            tokenizer=tokenizer,
+            corpus=PromptCorpus.RANDOM,
+        )
     return PromptGenerator(
         prompts=prompts,
         prefix_prompts=prefix_prompts,

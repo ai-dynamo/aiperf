@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import (
     ConfigurationError,
     InvalidStateError,
@@ -80,13 +81,16 @@ class PromptGenerator(BaseGenerator):
         prompts: PromptConfig | None,
         prefix_prompts: PrefixPromptConfig | None,
         tokenizer: Tokenizer,
+        corpus: PromptCorpus = PromptCorpus.SONNET,
         **kwargs,
     ):
         self.prompts = prompts
         self.prefix_prompts = prefix_prompts
         self.tokenizer = tokenizer
+        self._corpus = corpus
         self._tokenized_corpus = None
         self._corpus_size = 0
+        self._allowed_tokens: list[int] = []
         self._prefix_prompts: list[str] = []
 
         # Conversation context prompts
@@ -117,6 +121,9 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             self._initialize_corpus()
 
+        if self._corpus == PromptCorpus.RANDOM:
+            self._build_allowed_tokens()
+
         # Probe the tokenizer for a BPE-stable terminator we can append to
         # every reconstructed segment so aiperf's join-with-" " ISL formula
         # equals the sum of per-segment token counts (eliminates segment-join
@@ -142,8 +149,24 @@ class PromptGenerator(BaseGenerator):
             self._generate_shared_system_prompt()
         # Note: User context prompts are generated on-demand in generate_user_context_prompt()
 
+    def _build_allowed_tokens(self) -> None:
+        """Build the list of non-special token IDs for random vocab sampling.
+
+        Uses tokenizer.valid_token_ids to avoid tiktoken's sparse ID gaps
+        (e.g. o200k_base has 199998 valid ranks but n_vocab=200019).
+        """
+        self._allowed_tokens = self.tokenizer.valid_token_ids
+        self.debug(
+            lambda: (
+                f"Built random vocab corpus with {len(self._allowed_tokens)} allowed tokens"
+            )
+        )
+
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse.
+
+        No-op when corpus is RANDOM — token IDs are drawn directly from the
+        vocabulary without loading a text file.
 
         Uses character-based chunking for reproducibility across different machines.
         The chunk size is fixed (not CPU-dependent) to ensure the same tokenization
@@ -156,6 +179,9 @@ class PromptGenerator(BaseGenerator):
             Thread count doesn't affect reproducibility since chunks have deterministic
             boundaries based on character count.
         """
+        if self._corpus == PromptCorpus.RANDOM:
+            return
+
         corpus_path = Path(__file__).parent / DEFAULT_CORPUS_FILE
 
         with open(corpus_path, encoding="utf-8") as f:
@@ -474,8 +500,13 @@ class PromptGenerator(BaseGenerator):
         return final_prompt
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
-        """Generate a list of token IDs containing exactly `num_tokens` number of tokens
-        using the preloaded tokenized corpus.
+        """Generate a list of token IDs containing exactly `num_tokens` number of tokens.
+
+        For SONNET corpus: samples a contiguous window from the preloaded Shakespeare
+        corpus starting at a random offset (wraps at end).
+
+        For RANDOM corpus: samples a contiguous window from the sorted allowed-token
+        list using (offset + j) % n, matching vLLM bench's RandomDataset strategy.
 
         Args:
             num_tokens: Number of tokens required in the prompt.
@@ -484,8 +515,15 @@ class PromptGenerator(BaseGenerator):
             A list of token IDs.
 
         Raises:
-            NotInitializedError: If the tokenized corpus is not initialized
+            NotInitializedError: If the relevant corpus is not initialized.
         """
+        if self._corpus == PromptCorpus.RANDOM:
+            if not self._allowed_tokens:
+                raise NotInitializedError("Random vocab corpus is not initialized.")
+            n = len(self._allowed_tokens)
+            offset = self._corpus_rng.randrange(n)
+            return [self._allowed_tokens[(offset + j) % n] for j in range(num_tokens)]
+
         if not self._tokenized_corpus:
             raise NotInitializedError("Tokenized corpus is not initialized.")
         if num_tokens > self._corpus_size:

@@ -256,6 +256,10 @@ class PromptCorpus(CaseInsensitiveStrEnum):
     CODING = "coding"
     """Realistic coding content: code, bash output, JSON, error tracebacks, git diffs."""
 
+    RANDOM = "random"
+    """Random tokens drawn from the full tokenizer vocabulary minus special tokens.
+    Matches vLLM bench's RandomDataset token-generation strategy."""
+
 
 class MemoryMapFormat(CaseInsensitiveStrEnum):
     """Storage format for memory-mapped dataset files."""
