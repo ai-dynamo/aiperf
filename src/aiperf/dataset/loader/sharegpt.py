@@ -83,7 +83,6 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         )
         return load_json_str(loaded_dataset)
 
-    # TODO: distribute this work across the processors
     async def convert_to_conversations(
         self, dataset: dict[str, Any]
     ) -> list[Conversation]:
@@ -102,24 +101,48 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         self.info(
             f"Validating {self.tag} dataset and constructing conversation dataset"
         )
-        filtered_dataset = []
-        skipped_entries = 0
+
+        # Pass 1: extract all (prompt, completion) pairs per entry without tokenizing.
+        all_entry_pairs: list[list[tuple[str, str]]] = []
         for entry in dataset:
             conversations = entry.get("conversations", [])
             if not conversations or len(conversations) < 2:
-                skipped_entries += 1
+                all_entry_pairs.append([])
                 continue
+            all_entry_pairs.append(
+                self._sharegpt_prompt_completion_pairs(conversations)
+            )
 
-            pairs = self._sharegpt_prompt_completion_pairs(conversations)
+        # Build a flat text list interleaved as [prompt0, completion0, prompt1, ...].
+        # flat_pair_offset[e] is the pair index (not text index) where entry e starts.
+        flat_texts: list[str] = []
+        flat_pair_offset: list[int] = []
+        for pairs in all_entry_pairs:
+            flat_pair_offset.append(len(flat_texts) // 2)
+            for prompt, completion in pairs:
+                flat_texts.append(prompt)
+                flat_texts.append(completion)
+
+        # Pass 2: single batch-encode call for all texts.
+        all_lengths = (
+            self.tokenizer.encode_lengths_batch(flat_texts) if flat_texts else []
+        )
+
+        # Pass 3: validate lengths and build Conversation objects.
+        filtered_dataset = []
+        skipped_entries = 0
+        for entry_idx, pairs in enumerate(all_entry_pairs):
             if not pairs:
                 skipped_entries += 1
                 continue
 
+            pair_start = flat_pair_offset[entry_idx]
             validated: list[tuple[str, int]] = []
             rejected = False
-            for prompt, completion in pairs:
-                prompt_length = len(self.tokenizer.encode(prompt))
-                completion_length = len(self.tokenizer.encode(completion))
+            for i, (prompt, _) in enumerate(pairs):
+                pi = (pair_start + i) * 2
+                prompt_length = all_lengths[pi]
+                completion_length = all_lengths[pi + 1]
                 if not self.is_valid_sequence(
                     prompt_len=prompt_length,
                     output_len=completion_length,
@@ -128,22 +151,22 @@ class ShareGPTLoader(BasePublicDatasetLoader):
                     rejected = True
                     break
                 validated.append((prompt, completion_length))
+
             if rejected or not validated:
                 skipped_entries += 1
                 continue
 
-            turns = [
-                Turn(
-                    model=self._select_model_name(),
-                    texts=[Text(contents=[prompt])],
-                    max_tokens=completion_length,
-                )
-                for prompt, completion_length in validated
-            ]
             filtered_dataset.append(
                 Conversation(
                     session_id=self.session_id_generator.next(),
-                    turns=turns,
+                    turns=[
+                        Turn(
+                            model=self._select_model_name(),
+                            texts=[Text(contents=[prompt])],
+                            max_tokens=completion_length,
+                        )
+                        for prompt, completion_length in validated
+                    ],
                 )
             )
 

@@ -58,6 +58,9 @@ class _TiktokenAdapter:
     def decode(self, token_ids: list[int], **kwargs) -> str:
         return self._encoding.decode(token_ids)
 
+    def encode_batch(self, texts: list[str]) -> list[list[int]]:
+        return self._encoding.encode_batch(texts, allowed_special="all")
+
     def __call__(self, text: str, **kwargs) -> dict:
         return {"input_ids": self.encode(text)}
 
@@ -733,6 +736,25 @@ class Tokenizer:
         """
         self._require_init()
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
+
+    def encode_lengths_batch(self, texts: list[str]) -> list[int]:
+        """Return the token count for each text using a single batch call.
+
+        Uses tiktoken's native parallel encode_batch or the HuggingFace tokenizer's
+        batch __call__, both of which are significantly faster than sequential encode()
+        calls for large input lists.
+
+        Args:
+            texts: List of strings to tokenize.
+
+        Returns:
+            List of token counts, one per input text.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return [len(ids) for ids in self._tokenizer.encode_batch(texts)]
+        result = self._tokenizer(texts, **{**self._call_args, "padding": False})
+        return [len(ids) for ids in result["input_ids"]]
 
     @property
     def resolved_name(self) -> str | None:
