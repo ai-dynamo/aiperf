@@ -352,36 +352,56 @@ class TestAMDSMITelemetry:
         assert len(jsonl_files) == 0, f"Unexpected GPU telemetry files: {jsonl_files}"
 
 
+_PLATFORM_EXPECTED_PREFIX: dict[str, str] = {
+    "nvidia": "nvidia_",
+    "amd": "amd_",
+}
+_PLATFORM_FORBIDDEN_PREFIX: dict[str, str] = {
+    "nvidia": "amd_",
+    "amd": "nvidia_",
+}
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestTelemetryVendorIsolation:
-    """Vendor namespacing: DCGM records must never contain amd_* metrics and
-    amdsmi records must never contain nvidia_* metrics."""
+    """Per-GPU vendor namespace isolation.
+
+    Each GPU's metrics must only contain the prefix matching its platform tag.
+    This design is forward-compatible with heterogeneous systems: validation is
+    localised to each GPU using GpuSummary.platform so a mixed NVIDIA+AMD node
+    passes as long as every individual GPU is internally consistent.
+    """
 
     @pytest.mark.parametrize(
-        ("collector", "forbidden_prefix"),
+        "collector",
         [
             param(
                 "dcgm",
-                "amd_",
                 marks=pytest.mark.skipif(
                     platform.system() in ("Darwin", "Windows"),
                     reason="DCGM telemetry requires Linux",
                 ),
-                id="dcgm-has-no-amd-metrics",
+                id="dcgm",
             ),
-            param("amdsmi", "nvidia_", id="amdsmi-has-no-nvidia-metrics"),
+            param("amdsmi", id="amdsmi"),
         ],
     )  # fmt: skip
     async def test_vendor_metric_isolation(
         self,
         collector: str,
-        forbidden_prefix: str,
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No GPU metric key from one vendor appears in the other vendor's records."""
+        """Each GPU only carries metrics prefixed for its own platform.
+
+        For every GPU in the result:
+        - at least one metric with the expected vendor prefix is present
+          (the vendor URL produced data)
+        - no metric with the other vendor's prefix is present
+          (namespaces are not crossed)
+        """
         if collector == "amdsmi":
             monkeypatch.setenv("AIPERF_MOCK_AMDSMI", "1")
             telemetry_arg = "amdsmi"
@@ -405,12 +425,29 @@ class TestTelemetryVendorIsolation:
         assert result.has_gpu_telemetry
         assert result.json.telemetry_data.endpoints is not None
 
-        for endpoint_data in result.json.telemetry_data.endpoints.values():
-            for gpu_data in endpoint_data.gpus.values():
-                forbidden = [
-                    k for k in gpu_data.metrics if k.startswith(forbidden_prefix)
-                ]
-                assert not forbidden, (
-                    f"{collector} collector produced metrics with forbidden "
-                    f"'{forbidden_prefix}' prefix: {forbidden}"
-                )
+        for source_url, endpoint_data in result.json.telemetry_data.endpoints.items():
+            assert endpoint_data.gpus, f"No GPUs reported for {source_url}"
+            for gpu_uuid, gpu_data in endpoint_data.gpus.items():
+                gpu_platform = gpu_data.platform
+                expected_prefix = _PLATFORM_EXPECTED_PREFIX.get(gpu_platform)
+                forbidden_prefix = _PLATFORM_FORBIDDEN_PREFIX.get(gpu_platform)
+
+                if expected_prefix is not None:
+                    present = [
+                        k for k in gpu_data.metrics if k.startswith(expected_prefix)
+                    ]
+                    assert present, (
+                        f"GPU {gpu_uuid[:12]} (platform={gpu_platform!r}) at "
+                        f"{source_url!r} has no '{expected_prefix}' metrics — "
+                        f"vendor URL present but no matching data collected"
+                    )
+
+                if forbidden_prefix is not None:
+                    leaked = [
+                        k for k in gpu_data.metrics if k.startswith(forbidden_prefix)
+                    ]
+                    assert not leaked, (
+                        f"GPU {gpu_uuid[:12]} (platform={gpu_platform!r}) at "
+                        f"{source_url!r} contains forbidden '{forbidden_prefix}' "
+                        f"metrics: {leaked}"
+                    )
