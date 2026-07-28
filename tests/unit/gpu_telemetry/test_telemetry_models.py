@@ -25,7 +25,7 @@ def _make_record(timestamp_ns: int, **metrics: float) -> TelemetryRecord:
     """Create TelemetryRecord with minimal boilerplate for testing."""
     return TelemetryRecord(
         timestamp_ns=timestamp_ns,
-        dcgm_url="http://localhost:9401/metrics",
+        telemetry_source_url="http://localhost:9401/metrics",
         gpu_index=0,
         gpu_model_name="Test GPU",
         gpu_uuid="GPU-test-uuid",
@@ -132,13 +132,13 @@ class TestTelemetryRecord:
         """Test creating a TelemetryRecord with all fields populated.
 
         Verifies that a fully-populated TelemetryRecord stores all fields correctly
-        including both required fields (timestamp, dcgm_url, gpu_index, etc.) and
+        including both required fields (timestamp, telemetry_source_url, gpu_index, etc.) and
         optional metadata fields (pci_bus_id, device, hostname).
         """
 
         record = TelemetryRecord(
             timestamp_ns=1000000000,
-            dcgm_url="http://localhost:9401/metrics",
+            telemetry_source_url="http://localhost:9401/metrics",
             gpu_index=0,
             gpu_model_name="NVIDIA RTX 6000 Ada Generation",
             gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
@@ -154,7 +154,7 @@ class TestTelemetryRecord:
         )
 
         assert record.timestamp_ns == 1000000000
-        assert record.dcgm_url == "http://localhost:9401/metrics"
+        assert record.telemetry_source_url == "http://localhost:9401/metrics"
         assert record.gpu_index == 0
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
@@ -178,7 +178,7 @@ class TestTelemetryRecord:
 
         record = TelemetryRecord(
             timestamp_ns=1000000000,
-            dcgm_url="http://node2:9401/metrics",
+            telemetry_source_url="http://node2:9401/metrics",
             gpu_index=1,
             gpu_model_name="NVIDIA H100",
             gpu_uuid="GPU-00000000-0000-0000-0000-000000000001",
@@ -187,7 +187,7 @@ class TestTelemetryRecord:
 
         # Verify required fields are set
         assert record.timestamp_ns == 1000000000
-        assert record.dcgm_url == "http://node2:9401/metrics"
+        assert record.telemetry_source_url == "http://node2:9401/metrics"
         assert record.gpu_index == 1
         assert record.gpu_model_name == "NVIDIA H100"
         assert record.gpu_uuid == "GPU-00000000-0000-0000-0000-000000000001"
@@ -210,7 +210,7 @@ class TestTelemetryRecord:
 
         record = TelemetryRecord(
             timestamp_ns=1000000000,
-            dcgm_url="http://localhost:9401/metrics",
+            telemetry_source_url="http://localhost:9401/metrics",
             gpu_index=0,
             gpu_model_name="NVIDIA RTX 6000",
             gpu_uuid="GPU-test-uuid",
@@ -226,13 +226,13 @@ class TestTelemetryRecord:
 
         Verifies that TelemetryRecord properly supports the hierarchical
         identification structure needed for telemetry organization:
-        dcgm_url -> gpu_uuid -> metadata. This structure enables proper
+        telemetry_source_url -> gpu_uuid -> metadata. This structure enables proper
         grouping and filtering in the dashboard.
         """
 
         record = TelemetryRecord(
             timestamp_ns=1000000000,
-            dcgm_url="http://gpu-node-01:9401/metrics",
+            telemetry_source_url="http://gpu-node-01:9401/metrics",
             gpu_index=0,
             gpu_model_name="NVIDIA RTX 6000 Ada Generation",
             gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
@@ -244,7 +244,7 @@ class TestTelemetryRecord:
 
         # Verify hierarchical identification works
         # Level 1: DCGM endpoint identification
-        assert record.dcgm_url == "http://gpu-node-01:9401/metrics"
+        assert record.telemetry_source_url == "http://gpu-node-01:9401/metrics"
 
         # Level 2: Unique GPU identification
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"

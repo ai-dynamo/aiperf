@@ -119,7 +119,7 @@ def create_metric_record_data(
 def _telemetry_record(gpu_index: int = 0) -> TelemetryRecord:
     return TelemetryRecord(
         timestamp_ns=1_000_000 + gpu_index,
-        dcgm_url="http://localhost:9400/metrics",
+        telemetry_source_url="http://localhost:9400/metrics",
         gpu_index=gpu_index,
         gpu_uuid=f"GPU-{gpu_index}",
         gpu_model_name="Test GPU",
@@ -139,7 +139,7 @@ class TestRecordsManagerTelemetry:
         message = TelemetryRecordsMessage(
             service_id="test_service",
             collector_id="test_collector",
-            dcgm_url="http://localhost:9400/metrics",
+            telemetry_source_url="http://localhost:9400/metrics",
             records=records,
             error=None,
         )
@@ -163,7 +163,7 @@ class TestRecordsManagerTelemetry:
             TelemetryRecordsMessage(
                 service_id="test_service",
                 collector_id="test_collector",
-                dcgm_url="http://localhost:9400/metrics",
+                telemetry_source_url="http://localhost:9400/metrics",
                 records=[_telemetry_record()],
                 error=None,
             )
@@ -183,7 +183,7 @@ class TestRecordsManagerTelemetry:
             TelemetryRecordsMessage(
                 service_id="test_service",
                 collector_id="test_collector",
-                dcgm_url="http://localhost:9400/metrics",
+                telemetry_source_url="http://localhost:9400/metrics",
                 records=[],
                 error=error,
             )
