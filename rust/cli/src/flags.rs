@@ -191,6 +191,11 @@ pub struct ProfileFlags {
     #[arg(long = "trace-idle-gap-cap-seconds")]
     pub trace_idle_gap_cap_seconds: Option<f64>,
 
+    /// Legacy Weka: cap periods where the whole replay is idle without rewriting trace timing
+    /// (`--system-idle-gap-cap-seconds`).
+    #[arg(long = "system-idle-gap-cap-seconds")]
+    pub system_idle_gap_cap_seconds: Option<f64>,
+
     /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
     #[arg(long = "trajectory-start-min-ratio")]
     pub trajectory_start_min_ratio: Option<f64>,

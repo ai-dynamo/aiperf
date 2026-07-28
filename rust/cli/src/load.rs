@@ -410,6 +410,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         cache_bust,
         burst_phase_starts: flags.burst_phase_starts.unwrap_or(false),
         trace_idle_gap_cap_seconds: flags.trace_idle_gap_cap_seconds,
+        system_idle_gap_cap_seconds: flags.system_idle_gap_cap_seconds,
         hf_weka_dataset,
         trace_session_sample_ratio: flags.trace_session_sample_ratio,
         agentic_warmup_grace_period: flags.agentic_warmup_grace_period,
@@ -1212,6 +1213,21 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parses_system_idle_gap_cap_seconds() {
+        run_on_big_stack(|| {
+            use crate::flags::ProfileFlags;
+
+            let flags = ProfileFlags::parse_from_args(&[
+                "--system-idle-gap-cap-seconds".to_string(),
+                "10".to_string(),
+            ])
+            .expect("parse flags");
+
+            assert_eq!(flags.system_idle_gap_cap_seconds, Some(10.0));
+        });
+    }
+
     #[test]
     fn synthesis_rejects_non_finite_value() {
         run_on_big_stack(|| {

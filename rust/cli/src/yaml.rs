@@ -134,6 +134,9 @@ fn apply_cli_overrides(
     if let Some(v) = flags.trace_idle_gap_cap_seconds {
         inputs.trace_idle_gap_cap_seconds = Some(v);
     }
+    if let Some(v) = flags.system_idle_gap_cap_seconds {
+        inputs.system_idle_gap_cap_seconds = Some(v);
+    }
     if let Some(v) = flags.cache_bust.clone().filter(|t| t != "none") {
         inputs.cache_bust = Some(v);
     }
@@ -1810,6 +1813,7 @@ impl Benchmark {
             cache_bust: None,
             burst_phase_starts: false,
             trace_idle_gap_cap_seconds: None,
+            system_idle_gap_cap_seconds: None,
             hf_weka_dataset: None,
             trace_session_sample_ratio: None,
             agentic_warmup_grace_period: None,
