@@ -227,7 +227,8 @@ pub trait TurnRecordProcessor {
 /// on the same local dispatch task. Implementations must not block or await.
 pub trait TurnLifecycleObserver {
     /// Observe one accepted turn before asynchronous backend dispatch begins.
-    fn on_issue(&self, turn: &TurnToSend);
+    /// Return `false` to reject a stale scheduled turn before dispatch.
+    fn on_issue(&self, turn: &TurnToSend) -> bool;
 
     /// Observe the first meaningful token for an active request.
     fn on_first_token(&self, uuid: Uuid);
@@ -820,8 +821,11 @@ impl ScheduledRuntime {
         });
 
         let turn_lifecycle_observer = self.turn_lifecycle_observer.borrow().clone();
-        if let Some(observer) = &turn_lifecycle_observer {
-            observer.on_issue(&turn);
+        if let Some(observer) = &turn_lifecycle_observer
+            && !observer.on_issue(&turn)
+        {
+            self.stop_reached.notify_waiters();
+            return false;
         }
 
         let (credit_id, final_credit) = self.counter.borrow_mut().increment_sent(&turn, &self.stop);
