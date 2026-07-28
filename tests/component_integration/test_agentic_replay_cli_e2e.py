@@ -130,9 +130,9 @@ def test_agentic_replay_cli_scenario_unsafe_override_runs_to_completion(
         "scenario resolver must log the per-phase timing_mode auto-set under "
         "--scenario (covers the ConfigResolver -> apply_scenario chain)"
     )
-    assert "auto-set --trace-idle-gap-cap-seconds=10.0" in log_text, (
-        "resolver must auto-set the per-trace idle-gap cap when unset "
-        "(the AgentX scenario locks trace_idle_gap_cap_seconds=10.0)"
+    assert "auto-set --system-idle-gap-cap-seconds=10.0" in log_text, (
+        "resolver must auto-set the global system-idle cap when unset without "
+        "changing per-trace or per-turn timing"
     )
 
     assert result.json is not None, "JSON export must exist"

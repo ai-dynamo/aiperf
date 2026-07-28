@@ -37,9 +37,10 @@ mapping.
 
 AgentX MVP is essentially a *recipe* on top of those traces: a fixed set of
 replay rules so two different teams running on two different servers produce
-results you can compare. Things like "long request-start idle gaps are
-compressed to 10 seconds", "the server must be allowed to generate full
-responses (no early stop)", "warm up the cache before measuring", and so on.
+results you can compare. Things like "preserve each trace's original request
+timing", "never leave the whole system idle for more than 10 seconds", "the
+server must be allowed to generate full responses (no early stop)", "warm up
+the cache before measuring", and so on.
 
 AIPerf bundles every one of those rules into a single CLI flag:
 `--scenario inferencex-agentx-mvp`. When you pass that flag, AIPerf locks the
@@ -97,7 +98,7 @@ aiperf profile \
     --streaming \
     --extra-inputs ignore_eos:true \
     --cache-bust first_turn_prefix \
-    --trace-idle-gap-cap-seconds 10 \
+    --system-idle-gap-cap-seconds 10 \
     --trajectory-start-min-ratio 0.0 \
     --trajectory-start-max-ratio 1.0 \
     --benchmark-duration 1800 \
@@ -140,11 +141,13 @@ what you must set, what you may tune, and what you shouldn't touch:
 
 **Flags the scenario hard-locks** — `--streaming`,
 `--extra-inputs ignore_eos:true`,
-`--cache-bust first_turn_prefix`, and `--trace-idle-gap-cap-seconds 10`. You
+`--cache-bust first_turn_prefix`, and `--system-idle-gap-cap-seconds 10`. You
 can omit all of them (AIPerf fills in exactly these values under
 `--scenario`), but writing them out makes the command document what runs. If
 you pass one of them with a *conflicting* value, AIPerf errors up front
-rather than silently producing an invalid result.
+rather than silently producing an invalid result. The scenario also forbids
+`--trace-idle-gap-cap-seconds` and `--inter-turn-delay-cap-seconds`, preserving
+the recorded timing within every trace.
 
 **Flags the scenario only defaults** — auto-filled when omitted, but an
 explicit value is honored *silently*, with no error and no change to the
@@ -256,12 +259,13 @@ flag.
 
 | Locked setting | What it means | Why it matters |
 |---|---|---|
-| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state — the [profiling phase](#profiling-phase-replay-recycle-idle-gap-compression) — with sampler-driven trace recycle, per-session-tree concurrency, and trace idle-gap compression). |
+| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state — the [profiling phase](#profiling-phase-faithful-replay-recycle-global-idle-guard) — with sampler-driven trace recycle and per-session-tree concurrency). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
 | `--streaming` is on | Responses stream token-by-token (auto-enabled when unset; explicit `--no-streaming` errors) | The per-token latency metrics (TTFT, ITL) are core to this benchmark and need streaming responses. |
 | Replay delays are end-to-start (always on, no flag) | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta. This is unconditional for weka trace replay — there is no toggle. | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
-| `--ignore-trace-delays` is off | Trace-derived delays are preserved, with long idle gaps capped by the trace idle-gap rule below | The whole point of replay is to preserve the agent's pacing without letting coffee-break gaps dominate steady-state. |
-| `--trace-idle-gap-cap-seconds = 10` | Gaps between recorded request starts over 10s are compressed to 10s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
+| `--ignore-trace-delays` is off | Trace-derived delays are preserved | The replay retains the captured agent pacing and KV-cache reuse intervals. |
+| Per-trace and per-turn caps are forbidden | `--trace-idle-gap-cap-seconds` and `--inter-turn-delay-cap-seconds` must remain unset | Independently compressing each trace changes think-time and cache-TTL behavior even while other trajectories keep the server busy. |
+| `--system-idle-gap-cap-seconds = 10` | When no request is active or ready, all pending replay timers shift uniformly so the next request arrives within 10 seconds | The benchmark avoids measuring long periods with no server work while preserving request order and relative spacing across every pending trajectory. |
 | `--cache-bust first_turn_prefix` | A unique per-conversation marker is injected at the start of the first user turn for every play (each dispatch of a trace, initial or recycled) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
 | Loader is a pinned Weka with-subagents corpus | The dataset must be a with-subagents `--public-dataset` alias or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`). A local `weka_trace` directory is format-compatible but unpinned — the run refuses unless you pass `--unsafe-override` (which stamps `submission_valid: false`). The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | Submission validity requires a known public corpus identity; arbitrary local dirs are not hash-verifiable. |
 | `--benchmark-duration >= 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; if omitted, it runs for 30 minutes | Steady-state needs time to stabilize; short runs are noise. |
@@ -271,7 +275,7 @@ flag.
 If you forget to pass the `ignore_eos` extra-input, `--streaming`,
 `--cache-bust`, or `--random-seed`, AIPerf
 injects the locked value and tells you at INFO log level. The same goes for
-`--trace-idle-gap-cap-seconds` and `--benchmark-duration` (1800s default)
+`--system-idle-gap-cap-seconds` and `--benchmark-duration` (1800s default)
 when you don't set them explicitly. If you pass one of these explicitly with
 a value that conflicts with the scenario, AIPerf errors with all the
 violations listed at once — you don't have to fix them one at a time.
@@ -416,17 +420,17 @@ profiling from that exact state.
 These requests remain part of warmup, so they are excluded from exported
 request metrics.
 
-### Profiling Phase: Replay, Recycle, Idle-Gap Compression
+### Profiling Phase: Faithful Replay, Recycle, Global Idle Guard
 
 After warmup, the profiling phase opens. Now you're measuring. Each trajectory
 keeps replaying its conversation from turn `k_i + 1` onward, honoring the
-recorded inter-turn idle gaps: the 10-second compression rule is applied to
-the recorded request-start timeline, then each gap is replayed as an
-end-to-start delay counted from the moment the previous turn completes (the
-always-on end-to-start rule from the table above). When a
-recorded gap between consecutive request starts in the same trace exceeds 10
-seconds, the later request and everything after it are shifted earlier so
-the gap becomes exactly 10 seconds, preserving local subagent overlap.
+original recorded inter-turn gaps as end-to-start delays counted from the
+moment the previous turn completes. If every request completes while future
+requests remain scheduled more than 10 seconds away, AIPerf shifts all pending
+request timers earlier by the same amount. This bounds true system-idle time
+without changing request order or the relative spacing among pending
+trajectories. The phase-end log reports how many global jumps occurred and how
+many seconds they skipped.
 
 Concurrency here is **per session tree**: each lane holds one slot for a
 whole tree — the root conversation plus every subagent worker stream it
@@ -483,7 +487,7 @@ The AgentX MVP corpus is the current **with-subagents** variant. Parent turns
 can spawn one or more helper conversations, and the parent's next anchored
 turn waits on the corresponding `SPAWN_JOIN` prerequisite before resuming. As
 covered in the
-[Profiling Phase](#profiling-phase-replay-recycle-idle-gap-compression)
+[Profiling Phase](#profiling-phase-faithful-replay-recycle-global-idle-guard)
 section, `--concurrency` counts live session **trees**, with each slot held
 until the whole tree drains. The new wrinkle here is the *request* count:
 helper conversations run alongside their parent, so the instantaneous number
@@ -711,5 +715,5 @@ the percentiles more data to stabilize on.
 - [ISL Budget Compensation Derivation](../reference/isl-budget-compensation.md) —
   the math behind chat-template + marker overhead compensation.
 - [CLI Options Reference](../cli-options.md) — the auto-generated reference
-  for `--scenario`, `--unsafe-override`, `--trace-idle-gap-cap-seconds`,
+  for `--scenario`, `--unsafe-override`, `--system-idle-gap-cap-seconds`,
   and every other flag.

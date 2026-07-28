@@ -461,7 +461,7 @@ class CreditCallbackHandler:
             intercepted = await self._branch_orchestrator.intercept(credit)
             if intercepted:
                 await self._handle_warmup_failure(credit, credit_return, handler, phase)
-                self._signal_all_credits_returned_if_ready(handler)
+                self._finish_return_processing(handler)
                 return
 
         # Per-tree slot release: a root's terminal return marks its tree's root
@@ -535,7 +535,16 @@ class CreditCallbackHandler:
         # child's evict-and-drain cascade is what clears
         # ``has_pending_branch_work``, at which point this check on the
         # child's own return path fires the event.
+        self._finish_return_processing(handler)
+
+    def _finish_return_processing(self, handler: PhaseCallbackContext) -> None:
+        """Run completion and global-idle checks after return-driven dispatch."""
         self._signal_all_credits_returned_if_ready(handler)
+        enforce_system_idle_cap = getattr(
+            handler.strategy, "enforce_system_idle_cap", None
+        )
+        if enforce_system_idle_cap is not None:
+            enforce_system_idle_cap(handler.progress.in_flight)
 
     def _signal_all_credits_returned_if_ready(
         self, handler: PhaseCallbackContext
