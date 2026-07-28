@@ -138,6 +138,9 @@ pub struct FileDatasetSpec {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TraceSynthesisSpec {
+    /// Optional legacy corpus selector retained for protocol compatibility.
+    #[serde(default)]
+    pub corpus: Option<String>,
     /// Timestamp divisor.
     pub speedup_ratio: f64,
     /// Shared-prefix length multiplier.
