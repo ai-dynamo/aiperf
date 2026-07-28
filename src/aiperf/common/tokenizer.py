@@ -753,6 +753,8 @@ class Tokenizer:
         Returns:
             List of token counts, one per input text.
         """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
         self._require_init()
         lengths: list[int] = []
         for i in range(0, len(texts), chunk_size):
