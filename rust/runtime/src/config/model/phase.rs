@@ -97,8 +97,10 @@ pub struct PhaseCommon {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<PhaseRole>,
     /// Exclude this phase's records from results.
+    #[serde(default)]
     pub exclude_from_results: bool,
     /// Run seamlessly into the next phase (no drain barrier).
+    #[serde(default)]
     pub seamless: bool,
     /// Request-count bound (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
