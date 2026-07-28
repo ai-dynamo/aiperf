@@ -62,6 +62,7 @@ class InferenceResultParser(CommunicationMixin):
         self.disable_tokenization: bool = resolve_disable_tokenization(
             run.cfg, endpoint_meta
         )
+        self._session_isl_corrections: dict[str, int] = {}
         self.debug(
             lambda: (
                 f"Created endpoint for {self.model_endpoint.endpoint.type}, "
@@ -307,7 +308,7 @@ class InferenceResultParser(CommunicationMixin):
 
         # Compute token counts based on configuration
         if self.run.cfg.endpoint.use_server_token_count:
-            token_counts = await self._compute_server_token_counts(resp)
+            token_counts = await self._compute_server_token_counts(resp, request_record)
         elif not self.disable_tokenization:
             token_counts = await self._compute_client_side_token_counts(
                 request_record, resp, inputs=inputs
@@ -487,7 +488,7 @@ class InferenceResultParser(CommunicationMixin):
         return len(tokens)
 
     async def _compute_server_token_counts(
-        self, responses: list[ParsedResponse]
+        self, responses: list[ParsedResponse], request_record: RequestRecord
     ) -> TokenCounts:
         """Compute token counts using server-provided usage fields.
 
@@ -496,8 +497,17 @@ class InferenceResultParser(CommunicationMixin):
         reasoning, and output counts are mutually consistent (all from the
         same chunk), and it avoids three redundant walks of the same list.
 
+        When ``use_server_token_count`` is active and the record belongs to a
+        multi-turn session, accumulates a per-session ISL correction so that
+        subsequent turns' reported ISL reflects the server-reported output
+        token count rather than the re-tokenized wire count. This corrects
+        the MTP tokenization artifact where ``completion_tokens`` and the
+        re-encoded text token count diverge.
+
         Args:
             responses: List of parsed responses from the server
+            request_record: The originating request record, used to read
+                session identity and turn lifecycle fields.
 
         Returns:
             TokenCounts populated with server-reported values. All fields
@@ -509,11 +519,55 @@ class InferenceResultParser(CommunicationMixin):
             reasoning_token_count = None
             output_token_count = None
         else:
-            input_token_count = usage.prompt_tokens
             reasoning_token_count = usage.reasoning_tokens
             output_token_count = self._server_output_minus_reasoning(
                 usage.completion_tokens, reasoning_token_count
             )
+            input_token_count = usage.prompt_tokens
+
+        # Apply ISL correction accumulated from prior turns in this session.
+        ctx = request_record.request_info
+        session_id = ctx.x_correlation_id if ctx is not None else None
+        is_final_turn = ctx.is_final_turn if ctx is not None else True
+
+        if session_id and input_token_count is not None:
+            correction = self._session_isl_corrections.get(session_id, 0)
+            if correction:
+                input_token_count += correction
+
+        # Accumulate delta for future turns in this session (skip on the final
+        # turn — there is no next turn to correct, and skipping avoids wasted
+        # tokenization).
+        if (
+            session_id
+            and not is_final_turn
+            and output_token_count is not None
+            and not self.disable_tokenization
+            and request_record.model_name is not None
+        ):
+            try:
+                output_texts, _ = self._parse_output_and_reasoning_texts(responses)
+                if output_texts:
+                    tokenizer = await self.get_tokenizer(request_record.model_name)
+                    re_encoded = (
+                        await self._compute_token_count(tokenizer, output_texts) or 0
+                    )
+                    delta = output_token_count - re_encoded
+                    if delta:
+                        self._session_isl_corrections[session_id] = (
+                            self._session_isl_corrections.get(session_id, 0) + delta
+                        )
+            except Exception as exc:
+                self.warning(
+                    lambda exc=exc: (
+                        f"Failed to compute ISL correction delta for session "
+                        f"'{session_id}': {exc!r}. ISL for subsequent turns may be undercounted."
+                    )
+                )
+
+        # Release session state after the final turn to prevent unbounded growth.
+        if session_id and is_final_turn:
+            self._session_isl_corrections.pop(session_id, None)
 
         token_counts = TokenCounts(
             input=input_token_count,
