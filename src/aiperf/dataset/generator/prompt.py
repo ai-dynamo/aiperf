@@ -91,6 +91,7 @@ class PromptGenerator(BaseGenerator):
         self._tokenized_corpus = None
         self._corpus_size = 0
         self._allowed_tokens: list[int] = []
+        self._random_request_index: int = 0
         self._prefix_prompts: list[str] = []
 
         # Conversation context prompts
@@ -150,12 +151,13 @@ class PromptGenerator(BaseGenerator):
         # Note: User context prompts are generated on-demand in generate_user_context_prompt()
 
     def _build_allowed_tokens(self) -> None:
-        """Build the list of non-special token IDs for random vocab sampling.
+        """Build the list of token IDs for random vocab sampling.
 
-        Uses tokenizer.valid_token_ids to avoid tiktoken's sparse ID gaps
-        (e.g. o200k_base has 199998 valid ranks but n_vocab=200019).
+        Uses tokenizer.all_token_ids (includes special tokens, excludes
+        tiktoken gap IDs) to match vLLM bench's RandomDataset which samples
+        from the full range(vocab_size) without filtering specials.
         """
-        self._allowed_tokens = self.tokenizer.valid_token_ids
+        self._allowed_tokens = self.tokenizer.all_token_ids
         self.debug(
             lambda: (
                 f"Built random vocab corpus with {len(self._allowed_tokens)} allowed tokens"
@@ -357,6 +359,10 @@ class PromptGenerator(BaseGenerator):
             A synthetic prompt as a string.
         """
         tokens = self._sample_tokens(num_tokens)
+        if self._corpus == PromptCorpus.RANDOM:
+            text = self.tokenizer.decode(tokens)
+            re_encoded = self.tokenizer.encode(text)[:num_tokens]
+            return self.tokenizer.decode(re_encoded)
         for _ in range(_max_retries):
             text = self.tokenizer.decode(tokens)
             actual = len(self.tokenizer.encode(text))
@@ -506,7 +512,8 @@ class PromptGenerator(BaseGenerator):
         corpus starting at a random offset (wraps at end).
 
         For RANDOM corpus: samples a contiguous window from the sorted allowed-token
-        list using (offset + j) % n, matching vLLM bench's RandomDataset strategy.
+        list using (offset + request_index + j) % n, matching vLLM bench's
+        RandomDataset strategy including the per-request index shift.
 
         Args:
             num_tokens: Number of tokens required in the prompt.
@@ -522,7 +529,11 @@ class PromptGenerator(BaseGenerator):
                 raise NotInitializedError("Random vocab corpus is not initialized.")
             n = len(self._allowed_tokens)
             offset = self._corpus_rng.randrange(n)
-            return [self._allowed_tokens[(offset + j) % n] for j in range(num_tokens)]
+            idx = self._random_request_index
+            self._random_request_index += 1
+            return [
+                self._allowed_tokens[(offset + idx + j) % n] for j in range(num_tokens)
+            ]
 
         if not self._tokenized_corpus:
             raise NotInitializedError("Tokenized corpus is not initialized.")
