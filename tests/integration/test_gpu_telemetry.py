@@ -288,7 +288,7 @@ class TestAMDSMITelemetry:
         for line in lines:
             record = TelemetryRecord.model_validate(orjson.loads(line))
             assert record.timestamp_ns > 0
-            assert record.dcgm_url == AMDSMI_SOURCE_IDENTIFIER
+            assert record.telemetry_source_url == AMDSMI_SOURCE_IDENTIFIER
             assert record.gpu_index >= 0
             assert record.gpu_uuid is not None
             assert record.gpu_model_name is not None
@@ -326,7 +326,7 @@ class TestAMDSMITelemetry:
         assert len(lines) > 0, "Export file should contain telemetry records"
         first = TelemetryRecord.model_validate_json(lines[0])
         assert first.timestamp_ns > 0
-        assert first.dcgm_url == AMDSMI_SOURCE_IDENTIFIER
+        assert first.telemetry_source_url == AMDSMI_SOURCE_IDENTIFIER
 
     async def test_amd_gpu_telemetry_disabled(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
