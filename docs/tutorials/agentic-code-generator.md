@@ -223,6 +223,63 @@ aiperf synthesize agentic-code \
   --output .test/
 ```
 
+### Inter-Turn Delay Distributions
+
+Inter-turn delays come from a two-component mixture: a fast agentic component
+for tool-call follow-ups and a slow human component for think time. A Bernoulli
+draw with probability `agentic_fraction` selects the component for each turn.
+
+Each component is lognormal by default, so existing untagged configs keep
+working unchanged:
+
+```json
+"inter_turn_delay": {
+  "agentic_fraction": 0.7,
+  "agentic_delay": {"mean": 2500, "median": 1800, "max": 10000},
+  "human_delay": {"mean": 40000, "median": 25000, "max": 120000}
+}
+```
+
+Tag a component with `"distribution": "weibull"` to sample it from a Weibull
+distribution instead. Components can mix families:
+
+```json
+"inter_turn_delay": {
+  "agentic_fraction": 0.7,
+  "agentic_delay": {"distribution": "weibull", "mean": 2500, "median": 1800, "max": 10000},
+  "human_delay": {"mean": 40000, "median": 25000, "max": 120000}
+}
+```
+
+Weibull components take the same fields as lognormal components, in
+milliseconds:
+
+- `mean` and `median` are always required. When only these are given, the
+  generator solves the Weibull shape and scale from them numerically. This
+  derived form requires `mean > median`, matching the right-skewed delays the
+  generator models; configs with `mean <= median` are rejected.
+- `shape` and `scale` can be supplied explicitly as a pair to skip the numeric
+  solve, for example when reusing parameters fitted elsewhere. `mean` and
+  `median` stay required and are cross-checked against the distribution the
+  pair describes: they are derived summary statistics, so a pair that implies a
+  different mean or median is rejected instead of being silently ignored. This
+  keeps the summary the manifest reports in step with what is actually sampled.
+
+```json
+"human_delay": {"distribution": "weibull", "shape": 0.889, "scale": 37756.88, "mean": 40000, "median": 25000}
+```
+
+- `min` and `max` are optional rejection-sampling bounds, with the same
+  semantics as for lognormal components.
+
+The `"distribution": "weibull"` tag is what selects the family, and it is
+required whenever `shape`/`scale` are present. An untagged component defaults to
+lognormal — that is what keeps older `{mean, median}` configs working — so a
+component carrying `shape`/`scale` without the tag would otherwise have been
+read as a lognormal with those fields ignored, silently sampling the wrong
+family. It is rejected instead. The same holds in reverse: `mu`/`sigma` on a
+component tagged `weibull` is an error rather than a no-op.
+
 The config schema is generated at
 `src/aiperf/dataset/agentic_code_gen/configs/spec.json`.
 

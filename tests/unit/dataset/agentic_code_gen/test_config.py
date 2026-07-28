@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import jsonschema
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.dataset.agentic_code_gen import config
 from aiperf.dataset.agentic_code_gen.config import (
@@ -16,6 +18,7 @@ from aiperf.dataset.agentic_code_gen.config import (
     list_bundled_configs,
     load_config,
 )
+from aiperf.dataset.agentic_code_gen.models import LognormalParams, WeibullParams
 
 
 class TestLoadConfig:
@@ -38,6 +41,39 @@ class TestLoadConfig:
         schema = orjson.loads(path.read_bytes())
         assert schema == build_config_schema()
         assert "unknown fields are accepted" in schema["description"]
+
+    @pytest.mark.parametrize(
+        ("payload", "valid"),
+        [
+            param({"mean": 40_000, "median": 25_000}, True, id="bare_stays_lognormal"),
+            param(
+                {"mu": 10.1, "sigma": 0.97, "mean": 40_000, "median": 25_000},
+                True,
+                id="explicit_mu_sigma_ok",
+            ),
+            param(
+                {"shape": 1.2, "scale": 42_000, "mean": 40_000, "median": 25_000},
+                False,
+                id="untagged_weibull_shape_rejected",
+            ),
+            param(
+                {"shape": 1.2, "mean": 40_000, "median": 25_000},
+                False,
+                id="untagged_lone_shape_rejected",
+            ),
+        ],
+    )  # fmt: skip
+    def test_generated_schema_rejects_untagged_weibull_component(
+        self, payload: dict[str, float], valid: bool
+    ) -> None:
+        """The schema must reject what the model validator rejects.
+
+        Otherwise a schema-driven editor accepts an untagged Weibull config that
+        silently samples a lognormal.
+        """
+        schema = build_config_schema()["$defs"]["LognormalParams"]
+        errors = list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
+        assert (not errors) is valid
 
     def test_spec_json_is_not_loadable_config(self) -> None:
         with pytest.raises(ValueError, match="JSON Schema reference"):
@@ -73,6 +109,52 @@ class TestLoadConfig:
         assert config.cache.layer2.mean == 5000
         assert config.cache.layer2.mu is not None
         assert config.cache.layer2.sigma is not None
+
+    def test_load_config_bare_delay_dicts_parse_as_lognormal(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: untagged delay dicts in existing configs stay lognormal."""
+        data = {
+            "inter_turn_delay": {
+                "agentic_fraction": 0.5,
+                "agentic_delay": {"mean": 2000, "median": 1500},
+                "human_delay": {"mean": 30000, "median": 20000},
+            },
+        }
+        path = tmp_path / "bare.json"
+        path.write_bytes(orjson.dumps(data))
+
+        config = load_config(str(path))
+        assert isinstance(config.inter_turn_delay.agentic_delay, LognormalParams)
+        assert isinstance(config.inter_turn_delay.human_delay, LognormalParams)
+
+    def test_load_config_tagged_weibull_delay_parses_as_weibull(
+        self, tmp_path: Path
+    ) -> None:
+        data = {
+            "inter_turn_delay": {
+                "agentic_fraction": 0.5,
+                "agentic_delay": {
+                    "distribution": "weibull",
+                    "mean": 2000,
+                    "median": 1500,
+                },
+                "human_delay": {"mean": 30000, "median": 20000},
+            },
+        }
+        path = tmp_path / "weibull.json"
+        path.write_bytes(orjson.dumps(data))
+
+        config = load_config(str(path))
+        assert isinstance(config.inter_turn_delay.agentic_delay, WeibullParams)
+        assert config.inter_turn_delay.agentic_delay.shape is not None
+        assert isinstance(config.inter_turn_delay.human_delay, LognormalParams)
+
+    def test_load_bundled_default_delays_are_lognormal(self) -> None:
+        """Regression: bundled default.json components stay lognormal."""
+        config = load_config("default")
+        assert isinstance(config.inter_turn_delay.agentic_delay, LognormalParams)
+        assert isinstance(config.inter_turn_delay.human_delay, LognormalParams)
 
     def test_ignores_deprecated_system_prompt_tokens(self, tmp_path: Path) -> None:
         data = {
