@@ -429,8 +429,11 @@ moment the previous turn completes. If every request completes while future
 requests remain scheduled more than 10 seconds away, AIPerf shifts all pending
 request timers earlier by the same amount. This bounds true system-idle time
 without changing request order or the relative spacing among pending
-trajectories. The phase-end log reports how many global jumps occurred and how
-many seconds they skipped.
+trajectories. A scheduled turn may become retained by a cross-stream replay
+barrier instead of reaching the wire; AIPerf re-evaluates the guard after that
+scheduler task drains so a nearby blocked turn cannot hide a much later
+dispatchable timer. The phase-end log reports how many global jumps occurred
+and how many seconds they skipped.
 
 Concurrency here is **per session tree**: each lane holds one slot for a
 whole tree — the root conversation plus every subagent worker stream it
