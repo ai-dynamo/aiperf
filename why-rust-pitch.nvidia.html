@@ -100,7 +100,7 @@
       <div class="mono" style="font-size:18px;letter-spacing:.24em;text-transform:uppercase;color:var(--green);margin-bottom:22px;">Engineering Proposal</div>
       <h1 style="font-weight:500;font-size:76px;line-height:1.03;letter-spacing:-.02em;margin:0;color:#fff;">The Case for Rust</h1>
       <div style="margin-top:24px;font-size:26px;line-height:1.35;color:#d6d6d6;max-width:820px;">
-        Reimplementing AIPerf — NVIDIA's server-agnostic GenAI benchmarking tool — on a single-binary Rust core
+        Reimplementing AIPerf — NVIDIA's server-agnostic GenAI benchmarking tool — on a high performance Rust core
       </div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:40px;">
         <div style="width:36px;height:3px;background:var(--green);"></div>
@@ -118,9 +118,10 @@
       <div class="eyebrow">The whole case in one slide</div>
       <h2>Simplify AIPerf's multiprocess architecture — and <span class="g">expand shared Rust infrastructure</span></h2>
       <div class="lead" style="margin-top:26px;">
-        Python AIPerf utilizes a ~10-service, ZeroMQ multiprocess control plane <strong>to scale across the GIL</strong>.
-        Porting to Rust collapses it into a single multithreaded process, unlocks <strong>code reuse across Dynamo and Velo</strong>,
-        matches Python's measurements on real runs, and yields additional throughput headroom when the client — not the inference server — is the limit.
+        Python AIPerf runs a ~12-service, ZeroMQ, multiprocess control plane that <strong>exists only to work
+        around the GIL</strong>. Porting to Rust collapses it to one multithreaded process, unlocks <strong>bidirectional code
+        reuse with Dynamo</strong>, matches Python's measurements on real runs, and pulls several-fold ahead only
+        where the client — not the inference server — is the limit.
       </div>
       <div class="notes" style="grid-template-columns:repeat(3,1fr);margin-top:40px;max-width:1040px;">
         <div class="note"><div class="h">Driver 1 · Strategic</div>Consuming <span class="mono">frontend-crates</span> and <span class="mono">velo</span>, while contributing back to the Dynamo mocker.</div>
@@ -129,6 +130,57 @@
       </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>02</span></div>
+  </section>
+
+  <!-- ============================ 11 · WHY NOW ============================ -->
+  <section class="slide" aria-label="Why now">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Timing</div>
+      <h2>Why Rust, why <span class="g">now</span></h2>
+      <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:44px;max-width:1088px;gap:32px;">
+        <div class="note"><div class="h">A · The first call was right</div><b>Python was chosen for reach — accessibility and contribution speed.</b> Correct for AIPerf's first generation.</div>
+        <div class="note"><div class="h">B · The barrier has been broken</div><b>The accessibility reason that favored Python has fallen.</b> AI-assisted, spec-driven development makes Rust approachable to write and review — and the port proves it in this codebase, not in theory.</div>
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>11</span></div>
+  </section>
+
+  <!-- ============================ 13 · PRECEDENT (vLLM) ============================ -->
+  <section class="slide" aria-label="Industry precedent: vLLM">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad" style="padding-top:70px;">
+      <div class="eyebrow" style="margin-bottom:18px;">We are not alone — industry precedent</div>
+      <h2>vLLM already <span class="g">reached the same conclusion</span></h2>
+      <div class="cols2" style="margin-top:28px;">
+        <div class="card accent">
+          <div class="num">THEIR FRONTEND · vllm-frontend-rs</div>
+          <div class="ti" style="font-size:26px;">1 Rust process ≥ 32 Python servers</div>
+          <div class="bd">
+            <ul class="tight" style="margin-top:0;">
+              <li>A drop-in Rust replacement for vLLM's Python FastAPI server.</li>
+              <li>Default Python saturates at <strong>~19%</strong> of Rust throughput, with <strong>~10× worse P50 TTFT</strong>.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="num">THEIR CLIENT · vllm-bench</div>
+          <div class="ti" style="font-size:26px;">A Rust benchmark client</div>
+          <div class="bd">
+            <ul class="tight" style="margin-top:0;">
+              <li>vLLM ships a high-performance <strong>Rust benchmark client</strong> (AIPerf's category).</li>
+              <li>Uses the same exact techniques AIPerf does.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:22px;max-width:1088px;">
+        <span class="h">Their motivation is our argument, verbatim.</span> Python was chosen for accessibility and the ML
+        ecosystem — reasonable while GPUs were the bottleneck. As GPUs got faster, the asyncio frontend became a real
+        share of CPU time, and more Python processes <em>“add operational complexity and still hit a ceiling.”</em>
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>13</span></div>
   </section>
 
   <!-- ============================ 03 · NUMBERS ============================ -->
@@ -237,33 +289,16 @@
         </tbody>
       </table>
 
+      <div class="callout" style="margin-top:28px;max-width:1088px;">
+        <span class="h">Field evidence, not just a synth.</span> The ceiling numbers above aren't theoretical — they've been hit in production-scale stress tests. As John Thompson (NVIDIA) confirmed after swapping to the Rust port:
+      </div>
+      <blockquote style="margin-top:18px;max-width:1088px;border-left:4px solid var(--green);padding-left:24px;font-size:22px;line-height:1.5;color:var(--sub);">
+        "When using multiplexed TCP on the response path, I found that the next biggest overhead was in AIPerf. Switching to Anthony Casagrande's Rust-based AIPerf alleviated this bottleneck, and enabled runs at significantly higher concurrency."
+        <div style="margin-top:10px;font-size:15px;color:var(--mut);font-style:italic;">— John Thompson, NVIDIA</div>
+      </blockquote>
+
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>06</span></div>
-  </section>
-
-  <!-- ============================ 07 · RESOURCE FOOTPRINT ============================ -->
-  <section class="slide" aria-label="Resource footprint">
-    <div class="wordmark">NVIDIA</div>
-    <div class="pad">
-      <div class="eyebrow">CPU and memory overhead</div>
-      <h2>The client shouldn't cost more than the <span class="g">benchmarked server</span></h2>
-      <table class="perf" style="margin-top:34px;">
-        <thead>
-          <tr><th>Metric</th><th style="text-align:right;">Rust</th><th style="text-align:right;">Python k8s</th><th>What it means</th></tr>
-        </thead>
-        <tbody>
-          <tr class="win"><td>Processes for a single-node run</td><td class="n"><span class="rs">1</span></td><td class="n">~15 (12 services + 3 ZMQ proxies)</td><td>One binary replaces a whole service mesh.</td></tr>
-          <tr class="win"><td>Baseline memory overhead (empty workload)</td><td class="n"><span class="rs">~100 MiB</span></td><td class="n">~2.5 GiB</td><td>Python pays ~150 MiB/<em>process</em> for interpreter + numpy, pandas, msgspec, pydantic.</td></tr>
-          <tr class="win"><td>CPU cores at idle</td><td class="n"><span class="rs">~0.5</span></td><td class="n">~12+</td><td>Python runs one event loop per service; each burns a core scheduling nothing.</td></tr>
-          <tr><td>Dataset memory</td><td class="n">one copy (BLAKE3 content-addressed)</td><td class="n">per-process copies + mmap index</td><td>Rust shares payload bytes across threads via dense handles; Python replicates per process.</td></tr>
-          <tr><td>Per-record overhead</td><td class="n">zero-copy column store</td><td class="n">504 B/record shell + 152 B/token SSE frame</td><td>Python's msgspec struct chain multiplies memory at high concurrency.</td></tr>
-        </tbody>
-      </table>
-      <div class="callout" style="margin-top:26px;max-width:1088px;">
-        <span class="h">Fits on a CPU-only node.</span> The Rust client uses under a gigabyte at rest and scales linearly with worker threads — not services. On a shared GPU node, that means the benchmark leaves almost all RAM free for the inference server it's measuring. Python's k8s overhead is ~25× larger just to stand idle.
-      </div>
-    </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>07</span></div>
   </section>
 
   <!-- ============================ 08 · HARDWARE EVOLUTION ============================ -->
@@ -272,22 +307,43 @@
     <div class="pad">
       <div class="eyebrow">Future-proofing measurements</div>
       <h2>Ultra-fast silicon exposes <span class="g">Python's timing limits</span></h2>
-      <div class="lead" style="margin-top:22px;">Current GPU servers often mask client-side overhead, but next-generation custom silicon changes the physics of benchmarking. Rust guarantees the precision required for tomorrow's hardware.</div>
-      <div class="cols2" style="margin-top:34px;">
+      <div class="lead" style="margin-top:22px;">"This is the first iteration of this cyborg setup and I expect to regularly profile >1000 oT/s/u models with it" - <b>Josh Hay - Groq LPU Team</b></b></div>
+      <div class="cols4" style="margin-top:34px;">
         <div class="card" style="border-top:3px solid #c0392b;">
           <div class="num" style="color:#c0392b;">THE PROBLEM: SUB-MILLISECOND ITL</div>
           <div class="ti" style="font-size:24px;">Groq LPUs outpace asyncio & aiohttp</div>
           <div class="bd">Hardware like the Groq LPU delivers <strong>sub-millisecond Inter-Token Latency (ITL)</strong>. Even with the garbage collector disabled, Python's <span class="mono">asyncio</span> loop and <span class="mono">aiohttp</span> inherently <strong>coalesce packets</strong>. When the hardware responds in 0.8ms, a 2ms event-loop coalescing delay corrupts the measurement entirely.</div>
         </div>
-        <div class="card accent" style="border-top:3px solid var(--green);">
-          <div class="num">THE SOLUTION: NATIVE TIMING</div>
-          <div class="ti" style="font-size:24px;">Deterministic precision</div>
-          <div class="bd">Rust eliminates the interpreter layer between the socket and the timestamp. No GIL contention, no GC pauses, no per-message Python object allocation. The hot path is thread-local (<span class="mono">Rc</span>/<span class="mono">RefCell</span>, not mutexes), and timing sleeps use Linux <span class="mono">timerfd</span> directly via Tokio's IO layer for nanosecond precision. As inference hardware accelerates to microsecond ITL, the benchmarking tool remains an authoritative observer.</div>
-        </div>
       </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>08</span></div>
   </section>
+
+  <!-- ============================ 07 · RESOURCE FOOTPRINT ============================ -->
+  <section class="slide" aria-label="Resource footprint">
+    <div class="wordmark">NVIDIA</div>
+    <div class="pad">
+      <div class="eyebrow">Resource overhead</div>
+      <h2>The client shouldn't cost more than the <span class="g">benchmarked server</span></h2>
+      <table class="perf" style="margin-top:34px;">
+        <thead>
+          <tr><th>Metric</th><th style="text-align:right;">Rust</th><th style="text-align:right;">Python k8s</th><th>What it means</th></tr>
+        </thead>
+        <tbody>
+          <tr class="win"><td>Processes for a single-node run</td><td class="n"><span class="rs">1</span></td><td class="n">~97 (at benchmark scale)</td><td>One binary replaces a multiprocess fan-out of workers, managers, and sidecars.</td></tr>
+          <tr class="win"><td>Baseline memory overhead</td><td class="n"><span class="rs">&lt;200 MiB</span></td><td class="n">~2.5 GiB</td><td>Python pays ~150 MiB/<em>process</em> for interpreter + numpy, pandas, msgspec, pydantic. 12 services add up.</td></tr>
+          <tr class="win"><td>CPU cores used during profiling (c4-144)</td><td class="n"><span class="rs">~33 of 112</span></td><td class="n">All available</td><td>Rust uses a third of the node and isn't even trying — ~3× headroom. Python burns everything.</td></tr>
+          <tr class="win"><td>Cold start to first request</td><td class="n"><span class="rs">~1 s</span></td><td class="n">~40 s</td><td>Python spends ~40s spawning processes, loading tokenizers, and generating the dataset before profiling starts.</td></tr>
+          <tr><td>Peak memory (large benchmark)</td><td class="n">dominated by dataset size</td><td class="n">same — dataset dominates</td><td>Both hit ~19 GiB on c4-144, but that's the 4000-conversation working set. The gap is in <em>overhead</em>, not peak.</td></tr>
+        </tbody>
+      </table>
+      <div class="callout" style="margin-top:26px;max-width:1088px;">
+        <span class="h">Measured on a 144-core node (c4-144), realistic ISL 550 / OSL 150 streaming.</span> Rust uses ~33 cores of 112 at peak throughput and leaves the rest free. Python's 97-process fan-out consumes the whole machine. On a shared GPU node, that means Rust leaves more CPU headroom for the inference server it's measuring — or fits on a smaller CPU-only node when you don't need GPUs.
+      </div>
+    </div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>07</span></div>
+  </section>
+
 
   <!-- ============================ 09 · MARQUEE SIM ============================ -->
   <section class="slide" aria-label="Simulate any workload in seconds">
@@ -341,23 +397,7 @@
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>10</span></div>
   </section>
 
-  <!-- ============================ 11 · WHY NOW ============================ -->
-  <section class="slide" aria-label="Why now">
-    <div class="wordmark">NVIDIA</div>
-    <div class="pad">
-      <div class="eyebrow">Timing</div>
-      <h2>Why Rust, why <span class="g">now</span></h2>
-      <div class="notes" style="grid-template-columns:repeat(3,1fr);margin-top:44px;max-width:1088px;gap:32px;">
-        <div class="note"><div class="h">A · The first call was right</div>Python was chosen for reach — accessibility and contribution speed. Correct for AIPerf's first generation.</div>
-        <div class="note"><div class="h">B · The barrier is already broken</div>Not a forecast — the proof. An AI-assisted, spec-driven effort reproduced a mature Python codebase in Rust, at parity. The port existing is the evidence.</div>
-        <div class="note"><div class="h">C · Feasibility is not a guess</div>A working prototype already reaches byte-exact config parity and an indistinguishable live A-B — a de-risked investment, with Python as the reference oracle throughout.</div>
-      </div>
-      <div class="callout" style="margin-top:44px;max-width:1088px;">
-        <span class="h">The accessibility reason that favored Python has fallen.</span> AI-assisted, spec-driven development makes Rust approachable to write and review — and the port proves it in this codebase, not in theory.
-      </div>
-    </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>11</span></div>
-  </section>
+
 
   <!-- ============================ 12 · MIGRATION ============================ -->
   <section class="slide" aria-label="Migration Strategy">
@@ -377,49 +417,38 @@
             </ul>
         </div>
       </div>
-      <div class="callout" style="margin-top:34px;max-width:1040px;">
-        <span class="h">Bottom Line:</span> Teams do not need to rewrite their benchmarks or automation to adopt this.
-      </div>
     </div>
     <div class="foot"><span>AIPerf · The Case for Rust</span><span>12</span></div>
   </section>
 
-  <!-- ============================ 13 · PRECEDENT (vLLM) ============================ -->
-  <section class="slide" aria-label="Industry precedent: vLLM">
+
+
+  <!-- ============================ 14 · JUST THE FACTS ============================ -->
+  <section class="slide" aria-label="Just the facts">
     <div class="wordmark">NVIDIA</div>
-    <div class="pad" style="padding-top:70px;">
-      <div class="eyebrow" style="margin-bottom:18px;">We are not alone — industry precedent</div>
-      <h2>vLLM already <span class="g">reached the same conclusion</span></h2>
-      <div class="cols2" style="margin-top:28px;">
-        <div class="card accent">
-          <div class="num">THEIR FRONTEND · vllm-frontend-rs</div>
-          <div class="ti" style="font-size:26px;">1 Rust process ≥ 32 Python servers</div>
-          <div class="bd">
-            <ul class="tight" style="margin-top:0;">
-              <li>A drop-in Rust replacement for vLLM's Python FastAPI server.</li>
-              <li>Default Python saturates at <strong>~19%</strong> of Rust throughput, with <strong>~10× worse P50 TTFT</strong>.</li>
-            </ul>
-          </div>
+    <div class="pad">
+      <div class="eyebrow">The whole case — one line each</div>
+      <h2 style="font-size:40px;">Just the facts</h2>
+      <div style="margin-top:36px;max-width:1040px;">
+        <div style="font-size:24px;line-height:2.1;color:var(--sub);">
+          <div>One thread-per-core process replaces ~97 services + 3 ZMQ proxies.</div>
+          <div>~45,000 req/s byte-exact ceiling — measured, zero errors — <strong>~2× Python</strong>.</div>
+          <div>On real server-bound runs, the two clients are statistically indistinguishable (<strong>±0.3%</strong> drift at 250 concurrency).</div>
+          <div>Baseline memory: <strong>&lt;200 MiB vs ~2.5 GiB</strong>; CPU: <strong>~33 of 112 cores</strong> at peak.</div>
+          <div>Cold start: <strong>~1 s vs ~40 s</strong> — no process spawning, no lazy imports.</div>
+          <div>Simulate any workload offline in <strong>seconds</strong> — virtual clock, no GPUs, no network.</div>
+          <div>Consumes shared Rust infrastructure (<strong>frontend-crates, velo</strong>) and contributes back to Dynamo mocker.</div>
+          <div>Sub-millisecond ITL tracking for next-gen silicon — <strong>no asyncio coalescing</strong>, no GIL, no GC pauses.</div>
+          <div>vLLM reached the same conclusion independently — <strong>Rust frontend + Rust benchmark client</strong>.</div>
+          <div>A production stress test confirmed it: Rust AIPerf eliminated a client-side bottleneck at multiplexed-TCP scale.</div>
+          <div><strong>Working prototype</strong> — parity proven against Python, not forecast.</div>
         </div>
-        <div class="card">
-          <div class="num">THEIR CLIENT · vllm-bench</div>
-          <div class="ti" style="font-size:26px;">A Rust benchmark client</div>
-          <div class="bd">
-            <ul class="tight" style="margin-top:0;">
-              <li>vLLM ships a high-performance <strong>Rust benchmark client</strong> (AIPerf's category).</li>
-              <li>Uses the same exact techniques AIPerf does (skipping server-side tokenization).</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-      <div class="callout" style="margin-top:22px;max-width:1088px;">
-        <span class="h">Their motivation is our argument, verbatim.</span> As GPUs (and LPUs) got faster, the Python frontend became a real share of CPU time, and more Python processes <em>“add operational complexity and still hit a ceiling.”</em>
       </div>
     </div>
-    <div class="foot"><span>AIPerf · The Case for Rust</span><span>13</span></div>
+    <div class="foot"><span>AIPerf · The Case for Rust</span><span>14</span></div>
   </section>
 
-  <!-- ============================ 14 · THE ASK ============================ -->
+  <!-- ============================ 15 · THE ASK ============================ -->
   <section class="slide" aria-label="The ask">
     <div style="position:absolute;inset:0;background:linear-gradient(120deg,#0f0f0f 0%,#1c1c1c 52%,#232323 100%);"></div>
     <div class="mono" style="position:absolute;top:52px;right:64px;font-weight:700;font-size:20px;letter-spacing:.16em;color:var(--green);">NVIDIA</div>
@@ -429,7 +458,7 @@
       <div style="font-size:23px;line-height:1.5;color:#d6d6d6;max-width:1000px;margin-top:26px;">
         The case rests on <span class="g" style="font-weight:600;">expanding shared Rust infrastructure</span> and
         <span class="g" style="font-weight:600;">simplifying a GIL-driven multiprocess architecture</span>.
-        Performance is a real bonus: accurate sub-millisecond ITL tracking for next-gen silicon, ~3× at the client ceiling, and workload simulation in seconds. The core engineering is already functioning; we seek approval to formally shift resources to take this proven, drop-in prototype into production.
+        Performance is a real bonus: accurate sub-millisecond ITL tracking for next-gen silicon, ~2× at the byte-exact client ceiling (~3× opt-in), and workload simulation in seconds. The core engineering is already functioning; we seek approval to formally shift resources to take this proven, drop-in prototype into production.
       </div>
       <div style="display:flex;gap:14px;margin-top:34px;flex-wrap:wrap;">
         <span class="mono" style="border:1px solid var(--green);color:var(--green);padding:8px 14px;font-size:14px;letter-spacing:.06em;">SHARED RUST CRATES</span>
@@ -439,9 +468,10 @@
       </div>
     </div>
     <div class="mono" style="position:absolute;left:64px;bottom:44px;font-size:12px;letter-spacing:.1em;color:#6f6f6f;max-width:1120px;line-height:1.6;">
-      Sources: AIPerf Tech Lead design notes and live A-B benchmarks (Jul 2026) — 250-concurrency parity run (2026-07-19),
-      100k-request ceiling run (2026-07-20), single-process ~40k req/s microbench (2026-07-13).
+      Sources: AIPerf Tech Lead design notes and live A-B benchmarks (Jul 2026) — 250-concurrency parity run,
+      concurrency sweep on c4-144 (112-core node, realistic ISL 550 / OSL 150 streaming), dispatch mode A/B test.
       &nbsp;·&nbsp; vLLM precedent: vllm-project/vllm Rust frontend (RFC #40846, PR #40848; vendored in vLLM 0.24.0) and vllm-bench Rust client.
+      &nbsp;·&nbsp; Field testimony: John Thompson (NVIDIA), multiplexed TCP stress test.
     </div>
   </section>
 
