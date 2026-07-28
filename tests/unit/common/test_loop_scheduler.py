@@ -129,6 +129,43 @@ class TestScheduleLater:
 
         assert order == ["first", "second", "third"]
 
+    async def test_cap_pending_delay_shifts_all_timers_uniformly(
+        self, scheduler: LoopScheduler
+    ):
+        """The earliest timer is capped without changing relative spacing."""
+
+        async def noop():
+            pass
+
+        loop = asyncio.get_running_loop()
+        scheduler.schedule_later(5.0, noop())
+        scheduler.schedule_later(8.0, noop())
+        before = sorted(handle.when() for handle, _ in scheduler._handles.values())
+
+        shifted = scheduler.cap_pending_delay(1.0)
+
+        after = sorted(handle.when() for handle, _ in scheduler._handles.values())
+        assert shifted == pytest.approx(4.0)
+        assert after[0] - loop.time() == pytest.approx(1.0)
+        assert after[1] - after[0] == pytest.approx(before[1] - before[0])
+        scheduler.cancel_all_pending()
+
+    async def test_cap_pending_delay_noops_when_next_timer_within_cap(
+        self, scheduler: LoopScheduler
+    ):
+        async def noop():
+            pass
+
+        scheduler.schedule_later(1.0, noop())
+        assert scheduler.cap_pending_delay(2.0) == 0.0
+        scheduler.cancel_all_pending()
+
+    async def test_cap_pending_delay_rejects_negative_cap(
+        self, scheduler: LoopScheduler
+    ):
+        with pytest.raises(ValueError, match="non-negative"):
+            scheduler.cap_pending_delay(-1.0)
+
 
 class TestExecuteAsync:
     """Tests for execute_async (immediate task execution)."""

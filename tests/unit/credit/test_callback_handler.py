@@ -236,6 +236,20 @@ class TestCreditReturnBasicFlow:
             is_child=False,  # agent_depth=0 root credit
         )
 
+    async def test_on_credit_return_checks_global_idle_after_dispatch(
+        self, registered_handler, mock_progress, mock_strategy
+    ):
+        """The strategy sees the final in-flight count after return dispatch."""
+        mock_progress.in_flight = 0
+        credit = make_credit(turn_index=0, num_turns=2)
+
+        await registered_handler.on_credit_return(
+            "worker-1", make_credit_return(credit)
+        )
+
+        mock_strategy.handle_credit_return.assert_awaited_once()
+        mock_strategy.enforce_system_idle_cap.assert_called_once_with(0)
+
     async def test_on_credit_return_tracks_cancelled_status(
         self, registered_handler, mock_progress
     ):

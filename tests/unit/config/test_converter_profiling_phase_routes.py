@@ -319,6 +319,24 @@ class TestAgenticWarmupGracePeriodRouting:
         assert prof["agentic_warmup_grace_period"] == 0.0
 
 
+class TestSystemIdleGapCapRouting:
+    def test_system_idle_gap_cap_routes_onto_profiling_phase(self) -> None:
+        loadgen = CLIConfig(
+            concurrency=8,
+            request_count=10,
+            system_idle_gap_cap_seconds=10.0,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["system_idle_gap_cap_seconds"] == 10.0
+
+    def test_system_idle_gap_cap_absent_when_unset(self) -> None:
+        loadgen = CLIConfig(concurrency=8, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert "system_idle_gap_cap_seconds" not in prof
+
+
 class TestAdaptiveScaleCliRemoval:
     REMOVED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
