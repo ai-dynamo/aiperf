@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
+from aiperf.common.enums import UserCentricGapDistribution
 from aiperf.config.phases import (
     BasePhaseConfig,
     ConcurrencyPhase,
@@ -276,4 +277,81 @@ class TestAdaptiveScalePhaseValidation:
                     },
                     "sla": {"request_latency": {"p95": {"le": 1000}}},
                 },
+            )
+
+
+def _make_user_centric_phase(**overrides) -> UserCentricPhase:
+    kwargs = {
+        "name": "profiling",
+        "type": PhaseType.USER_CENTRIC,
+        "rate": 10.0,
+        "users": 5,
+        "requests": 10,
+    }
+    kwargs.update(overrides)
+    return UserCentricPhase(**kwargs)
+
+
+class TestUserCentricGapDistribution:
+    """Cross-field validation of gap_distribution / gap_median on UserCentricPhase."""
+
+    def test_default_is_fixed_without_median(self) -> None:
+        phase = _make_user_centric_phase()
+        assert phase.gap_distribution == UserCentricGapDistribution.FIXED
+        assert phase.gap_median is None
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_valid_median_below_mean_accepted(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        # mean gap = users / rate = 5 / 10.0 = 0.5s; median 0.3s < mean.
+        phase = _make_user_centric_phase(gap_distribution=distribution, gap_median=0.3)
+        assert phase.gap_distribution == distribution
+        assert phase.gap_median == 0.3
+
+    def test_median_with_fixed_distribution_rejected(self) -> None:
+        with pytest.raises(ValueError, match="--user-centric-gap-median"):
+            _make_user_centric_phase(gap_median=0.3)
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_missing_median_for_sampled_distribution_rejected(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        with pytest.raises(ValueError, match="requires --user-centric-gap-median"):
+            _make_user_centric_phase(gap_distribution=distribution)
+
+    @pytest.mark.parametrize(
+        "median",
+        [
+            param(0.5, id="median_equals_mean"),
+            param(1.5, id="median_above_mean"),
+        ],
+    )  # fmt: skip
+    def test_median_not_below_mean_rejected_with_computed_mean(
+        self, median: float
+    ) -> None:
+        # mean gap = users / rate = 5 / 10.0 = 0.5s.
+        with pytest.raises(ValueError, match=r"0\.5"):
+            _make_user_centric_phase(
+                gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+                gap_median=median,
+            )
+
+    def test_non_positive_median_rejected(self) -> None:
+        with pytest.raises(ValueError, match="greater than 0"):
+            _make_user_centric_phase(
+                gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+                gap_median=0.0,
             )
