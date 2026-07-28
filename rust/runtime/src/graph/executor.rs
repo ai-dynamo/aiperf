@@ -51,6 +51,8 @@ pub struct ExecutorFlags {
     /// Anchor node `min_start` offsets to an absolute wall origin captured on
     /// the first `build_context`, rather than to each node's firable instant.
     pub absolute_start_offsets: bool,
+    /// Maximum global idle interval before a graph node dispatch, in milliseconds.
+    pub system_idle_gap_cap_ms: Option<f64>,
 }
 
 /// Async-dataflow trace executor for a single resolved graph, generic over the
@@ -75,7 +77,14 @@ pub struct TraceExecutor<M: WireMessage> {
     compress_edge_delays: bool,
     ignore_edge_delays: bool,
     absolute_start_offsets: bool,
+    system_idle_gap_cap_ms: Option<f64>,
     anchor_wall_us: Cell<Option<f64>>,
+}
+
+fn cap_system_idle_wait_us(wait_us: f64, cap_ms: Option<f64>) -> f64 {
+    cap_ms
+        .filter(|cap| cap.is_finite() && *cap >= 0.0)
+        .map_or(wait_us, |cap| wait_us.min(cap * 1_000.0))
 }
 
 impl<M: WireMessage> TraceExecutor<M> {
@@ -131,6 +140,7 @@ impl<M: WireMessage> TraceExecutor<M> {
             compress_edge_delays: flags.compress_edge_delays,
             ignore_edge_delays: flags.ignore_edge_delays,
             absolute_start_offsets: flags.absolute_start_offsets,
+            system_idle_gap_cap_ms: flags.system_idle_gap_cap_ms,
             anchor_wall_us: Cell::new(None),
         }))
     }
@@ -476,6 +486,7 @@ impl<M: WireMessage> TraceExecutor<M> {
         if wait_us <= 0.0 {
             return;
         }
+        let wait_us = cap_system_idle_wait_us(wait_us, self.system_idle_gap_cap_ms);
         self.handle.sleep_ns((wait_us * 1_000.0) as i64).await;
     }
 
@@ -520,5 +531,21 @@ impl<M: WireMessage> TraceExecutor<M> {
             gate_us = gate_us.max(anchor + node_min_start);
         }
         gate_us
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cap_system_idle_wait_us;
+
+    #[test]
+    fn caps_oversized_graph_idle_wait() {
+        assert_eq!(cap_system_idle_wait_us(100_000.0, Some(10.0)), 10_000.0);
+    }
+
+    #[test]
+    fn preserves_disabled_and_short_waits() {
+        assert_eq!(cap_system_idle_wait_us(5_000.0, Some(10.0)), 5_000.0);
+        assert_eq!(cap_system_idle_wait_us(100_000.0, None), 100_000.0);
     }
 }
