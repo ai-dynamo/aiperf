@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from pytest import param
@@ -50,6 +52,7 @@ from aiperf.metrics.types.spec_decode_metrics import (
     TotalDraftTokensMetric,
     TotalSpecDecodeStepsMetric,
 )
+from aiperf.records.records_manager import _pooled_spec_decode_histogram
 from tests.unit.conftest import make_benchmark_run
 from tests.unit.metrics.conftest import create_record
 
@@ -363,6 +366,41 @@ class TestPooledHistogram:
 
         summary = asyncio.run(run())
         assert summary.pooled_spec_decode_acceptance_histogram is None
+
+
+class TestRecordsManagerHistogramSelection:
+    """``_pooled_spec_decode_histogram`` picks the one accumulator that pooled a
+    histogram. Only ``metric_results`` should, so more than one populated is a
+    broken single-source invariant (a developer error from adding a second
+    pooling accumulator) -- it warns and takes the first rather than silently
+    picking a dict-ordering winner.
+    """
+
+    @staticmethod
+    def _ctx(*histograms: dict[int, int] | None):
+        return SimpleNamespace(
+            accumulator_outputs={
+                i: AccumulatorMetricsSummary(
+                    results={}, pooled_spec_decode_acceptance_histogram=h
+                )
+                for i, h in enumerate(histograms)
+            }
+        )
+
+    def test_single_populated_returned_without_warning(self):
+        with patch("aiperf.records.records_manager._logger") as logger:
+            result = _pooled_spec_decode_histogram(self._ctx(None, {0: 5}))
+        assert result == {0: 5}
+        logger.warning.assert_not_called()
+
+    def test_none_when_no_populated_histogram(self):
+        assert _pooled_spec_decode_histogram(self._ctx(None, None)) is None
+
+    def test_multiple_populated_warns_and_takes_first(self):
+        with patch("aiperf.records.records_manager._logger") as logger:
+            result = _pooled_spec_decode_histogram(self._ctx({0: 5}, {1: 7}))
+        assert result == {0: 5}
+        logger.warning.assert_called_once()
 
 
 class TestSummarySerialization:

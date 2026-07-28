@@ -52,9 +52,9 @@ class BaseSpecDecodeRecordMetric(
     # flip this in __init_subclass__ so they register normally.
     __is_abstract__: ClassVar[bool] = True
 
-    spec_decode_field: ClassVar[str] = ""
+    spec_decode_field: ClassVar[str | None] = None
     """Attribute on ``SpecDecodeAcceptanceRecord`` read by the default
-    ``_parse_record``. Empty on subclasses that override ``_parse_record``."""
+    ``_parse_record``. None on subclasses that override ``_parse_record``."""
 
     def __init_subclass__(cls, **kwargs) -> None:
         cls.__is_abstract__ = False
@@ -72,6 +72,11 @@ class BaseSpecDecodeRecordMetric(
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> MetricValueTypeVarT:
+        if not self.spec_decode_field:
+            raise TypeError(
+                f"{type(self).__name__} must set spec_decode_field or override "
+                "_parse_record"
+            )
         return getattr(self._record(record), self.spec_decode_field)
 
 

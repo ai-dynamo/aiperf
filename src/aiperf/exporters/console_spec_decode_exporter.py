@@ -44,6 +44,8 @@ def format_acceptance_histogram_line(
         folded = sum(steps for bucket, steps in histogram.items() if bucket >= cap)
         parts.append(f">={cap}: {folded / total_steps * 100:.0f}%")
 
+    # Two spaces after the label and three between buckets visually separate the
+    # label from the data (and the buckets from each other) at a glance.
     return "Accepted drafts per step (% of steps):  " + "   ".join(parts)
 
 
@@ -72,9 +74,7 @@ class ConsoleSpecDecodeExporter(ConsoleMetricsExporter):
         renderable = self.get_renderable(self._results.records, console)
         if renderable is not None:
             self._print_renderable(console, renderable)
-        histogram = getattr(
-            self._results, "pooled_spec_decode_acceptance_histogram", None
-        )
+        histogram = self._results.pooled_spec_decode_acceptance_histogram
         line = format_acceptance_histogram_line(histogram) if histogram else None
         if line is not None:
             console.print(f"  [cyan]{line}[/cyan]")
