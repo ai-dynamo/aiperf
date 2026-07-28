@@ -111,12 +111,16 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # One-shot latch for the mid-run "enable cache reporting" server-knob hint.
         self._warned_missing_cache_reporting: bool = False
 
-        # Pooled speculative-decoding acceptance histogram, keyed by phase so the
-        # phase-scoped export (warmup vs profiling) pools exactly the same record
-        # set the masked scalar totals do -- keeping the pooled counts reconciled
-        # with ``total_spec_decode_steps``. Dict aggregation has no home in the
-        # numpy columnar store, so it lives here as the one dedicated reducer.
-        self._acceptance_pool_by_phase: dict[str, dict[int, int]] = {}
+        # Pooled speculative-decoding acceptance histogram, keyed by
+        # (benchmark_phase, phase_index) so a phase-scoped export pools exactly
+        # the same record set the masked scalar totals do -- the export mask
+        # filters by phase kind and, when a concrete instance is requested, by
+        # phase_index too. Keeps the pooled counts reconciled with
+        # ``total_spec_decode_steps``. Dict aggregation has no home in the numpy
+        # columnar store, so it lives here as the one dedicated reducer.
+        self._acceptance_pool_by_phase: dict[
+            tuple[str, int | None], dict[int, int]
+        ] = {}
 
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
@@ -239,7 +243,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
             self.warning(CACHE_REPORTING_HINT)
 
     def _pool_spec_decode_record(self, record: MetricRecordsData) -> None:
-        """Sum a request's accepted-draft histogram into its phase's pool.
+        """Sum a request's accepted-draft histogram into its
+        ``(benchmark_phase, phase_index)`` pool.
 
         Skips records with no spec-decode stats and error records -- the latter
         never contribute the ``spec_decode_steps`` metric either, so excluding
@@ -249,9 +254,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
         spec = record.spec_decode_acceptance
         if spec is None or record.error is not None:
             return
-        pool = self._acceptance_pool_by_phase.setdefault(
-            str(record.metadata.benchmark_phase), {}
-        )
+        key = (str(record.metadata.benchmark_phase), record.metadata.phase_index)
+        pool = self._acceptance_pool_by_phase.setdefault(key, {})
         for accepted_draft_count, steps in spec.acceptance_histogram.items():
             pool[accepted_draft_count] = pool.get(accepted_draft_count, 0) + steps
 
@@ -260,27 +264,39 @@ class MetricsAccumulator(BaseMetricsProcessor):
     ) -> dict[int, int] | None:
         """Return the pooled histogram for the exported phase, key-sorted.
 
-        Phase-scoped exports return that phase's pool (matching the scalar
-        mask). Windowed (realtime/timeslice) exports return None -- the pooled
-        histogram is a run-level artifact, not defined per rolling window. A
-        fully-unbounded export pools every phase.
+        Mirrors the scalar export mask: a phase-scoped export selects pools by
+        phase kind, and by ``phase_index`` too when a concrete instance was
+        requested; otherwise it merges every same-kind instance. Windowed
+        (realtime/timeslice) exports return None -- the pooled histogram is a
+        run-level artifact, not defined per rolling window. A fully-unbounded
+        export pools every phase.
         """
         if not self._acceptance_pool_by_phase:
             return None
         if ctx is not None and ctx.phase is not None:
-            pool = self._acceptance_pool_by_phase.get(str(ctx.phase))
+            phase = str(ctx.phase)
+            selected = [
+                pool
+                for (
+                    pool_phase,
+                    pool_index,
+                ), pool in self._acceptance_pool_by_phase.items()
+                if pool_phase == phase
+                and (ctx.phase_index is None or pool_index == ctx.phase_index)
+            ]
         elif ctx is not None and (ctx.start_ns is not None or ctx.end_ns is not None):
             return None
         else:
-            pool = {}
-            for phase_pool in self._acceptance_pool_by_phase.values():
-                for accepted_draft_count, steps in phase_pool.items():
-                    pool[accepted_draft_count] = (
-                        pool.get(accepted_draft_count, 0) + steps
-                    )
-        if not pool:
+            selected = list(self._acceptance_pool_by_phase.values())
+        merged: dict[int, int] = {}
+        for pool in selected:
+            for accepted_draft_count, steps in pool.items():
+                merged[accepted_draft_count] = (
+                    merged.get(accepted_draft_count, 0) + steps
+                )
+        if not merged:
             return None
-        return {j: pool[j] for j in sorted(pool)}
+        return {j: merged[j] for j in sorted(merged)}
 
     def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""

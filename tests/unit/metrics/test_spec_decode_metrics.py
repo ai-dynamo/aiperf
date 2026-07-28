@@ -19,6 +19,7 @@ from collections import Counter
 import pytest
 from pytest import param
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import (
     CreditPhase,
     GenericMetricUnit,
@@ -34,7 +35,8 @@ from aiperf.exporters.console_spec_decode_exporter import (
     format_acceptance_histogram_line,
 )
 from aiperf.metrics.accumulator import MetricsAccumulator
-from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
+from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.spec_decode_metrics import (
     SpecDecodeAcceptanceLengthMetric,
     SpecDecodeAcceptedDraftTokensMetric,
@@ -135,6 +137,28 @@ class TestValueExtraction:
             )
 
 
+class TestDerivedZeroDenominatorGuards:
+    """The run-level derived acceptance metrics raise ``NoMetricValue`` rather
+    than dividing by zero when the run recorded no verify steps / no proposed
+    draft tokens (the fully-rejected / zero-step edge). ``accepted_per_verified``
+    has the analogous per-request guard covered in ``TestValueExtraction``.
+    """
+
+    def test_token_weighted_raises_on_zero_steps(self):
+        results = MetricResultsDict()
+        results[TotalSpecDecodeStepsMetric.tag] = 0
+        results[TotalAcceptedDraftTokensMetric.tag] = 0
+        with pytest.raises(NoMetricValue):
+            SpecDecodeTokenWeightedAcceptanceLengthMetric().derive_value(results)
+
+    def test_overall_draft_rate_raises_on_zero_draft(self):
+        results = MetricResultsDict()
+        results[TotalDraftTokensMetric.tag] = 0
+        results[TotalAcceptedDraftTokensMetric.tag] = 0
+        with pytest.raises(NoMetricValue):
+            SpecDecodeOverallDraftAcceptanceRateMetric().derive_value(results)
+
+
 class TestAbsentRecordDegradesCleanly:
     @pytest.mark.parametrize(
         "metric_cls",
@@ -193,6 +217,7 @@ def _spec_metric_records_data(
     session_num: int,
     spec: SpecDecodeAcceptanceRecord | None,
     phase: CreditPhase = CreditPhase.PROFILING,
+    phase_index: int | None = None,
 ) -> MetricRecordsData:
     """A wire record carrying the per-request spec-decode metrics + neutral struct."""
     metrics: dict = {}
@@ -211,6 +236,7 @@ def _spec_metric_records_data(
             turn_index=session_num,
             record_processor_id="rp",
             benchmark_phase=phase,
+            phase_index=phase_index,
             worker_id="worker",
         ),
         metrics=metrics,
@@ -284,13 +310,50 @@ class TestPooledHistogram:
                     1, make_spec([1, 1, 1]), phase=CreditPhase.WARMUP
                 )
             )
-            from aiperf.common.accumulator_protocols import ExportContext
-
             return await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
 
         summary = asyncio.run(run())
         # Only the profiling record's histogram ({3:2}) is pooled.
         assert summary.pooled_spec_decode_acceptance_histogram == {3: 2}
+
+    def test_pool_scopes_by_phase_index_and_reconciles(self):
+        # Two profiling-phase INSTANCES (phase_index 0 and 1). A phase_index-
+        # scoped export must pool only that instance and reconcile with its
+        # masked total_spec_decode_steps; a phase-only export merges both.
+        async def run():
+            acc = MetricsAccumulator(make_benchmark_run())
+            await acc.process_record(
+                _spec_metric_records_data(0, make_spec([3, 3]), phase_index=0)
+            )
+            await acc.process_record(
+                _spec_metric_records_data(1, make_spec([1, 1, 1]), phase_index=1)
+            )
+            merged = await acc.export_results(
+                ExportContext(phase=CreditPhase.PROFILING)
+            )
+            inst0 = await acc.export_results(
+                ExportContext(phase=CreditPhase.PROFILING, phase_index=0)
+            )
+            inst1 = await acc.export_results(
+                ExportContext(phase=CreditPhase.PROFILING, phase_index=1)
+            )
+            return merged, inst0, inst1
+
+        merged, inst0, inst1 = asyncio.run(run())
+        # Phase-only export merges both instances.
+        assert merged.pooled_spec_decode_acceptance_histogram == {1: 3, 3: 2}
+        # Each phase_index-scoped export pools only its instance and reconciles
+        # with that instance's masked total_spec_decode_steps.
+        assert inst0.pooled_spec_decode_acceptance_histogram == {3: 2}
+        assert (
+            sum(inst0.pooled_spec_decode_acceptance_histogram.values())
+            == inst0.results[TotalSpecDecodeStepsMetric.tag].avg
+        )
+        assert inst1.pooled_spec_decode_acceptance_histogram == {1: 3}
+        assert (
+            sum(inst1.pooled_spec_decode_acceptance_histogram.values())
+            == inst1.results[TotalSpecDecodeStepsMetric.tag].avg
+        )
 
     def test_no_histogram_without_spec_decode(self):
         async def run():
@@ -302,11 +365,26 @@ class TestPooledHistogram:
         assert summary.pooled_spec_decode_acceptance_histogram is None
 
 
+class TestSummarySerialization:
+    def test_to_json_includes_histogram_when_present(self):
+        summary = AccumulatorMetricsSummary(
+            results={}, pooled_spec_decode_acceptance_histogram={0: 3, 1: 1}
+        )
+        assert summary.to_json()["pooled_spec_decode_acceptance_histogram"] == {
+            0: 3,
+            1: 1,
+        }
+
+    def test_to_json_omits_histogram_when_absent(self):
+        summary = AccumulatorMetricsSummary(results={})
+        assert "pooled_spec_decode_acceptance_histogram" not in summary.to_json()
+
+
 class TestConsoleHistogramRendering:
     def test_ticket_example_line(self):
         line = format_acceptance_histogram_line({0: 6100, 1: 300, 2: 1800, 3: 1800})
         assert line == (
-            "Accepted-draft histogram (% steps):  0: 61%   1: 3%   2: 18%   3: 18%"
+            "Accepted drafts per step (% of steps):  0: 61%   1: 3%   2: 18%   3: 18%"
         )
 
     def test_overflow_folds_into_capped_bucket(self):

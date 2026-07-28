@@ -726,6 +726,8 @@ total_reasoning_tokens = sum(r.reasoning_token_count for r in records if r.valid
 > spec decode is off (or a request had no verify steps) the record is absent and
 > every metric here drops out cleanly -- nothing is shown or exported.
 
+<!-- -->
+
 > [!IMPORTANT]
 > Acceptance length can be **concurrency / batch-size dependent for adaptive
 > drafters** (DSpark, vLLM's dynamic speculative decoding), which tune the number
@@ -831,7 +833,7 @@ Per-request number of speculative verification steps (`num_spec_steps`). Equals 
 
 The per-request `acceptance_histogram {j: steps}` pooled elementwise across the run into a single `{j: total_steps}` -- verify steps bucketed by accepted-draft count over the whole run. AIPerf's metric accumulator handles scalars and lists but not dicts, so this one aggregate is pooled by a dedicated per-phase reducer in the accumulator and rides on `ProfileResults.pooled_spec_decode_acceptance_histogram`.
 
-- **Console:** a one-line row beneath the Spec Decode table showing the % of steps per bucket, capped to buckets `0 .. 8` with any `j >= 8` folded into a trailing `>=8` bucket.
+- **Console:** a one-line row beneath the Spec Decode table showing the % of steps per bucket, capped to buckets `0 .. 7` with any `j >= 8` folded into a trailing `>=8` bucket.
 - **Aggregate JSON** (`profile_export_aiperf.json`): the full `{j: count}` object under `pooled_spec_decode_acceptance_histogram` (no cap).
 - **CSV:** the scalar metrics carry the CSV; the structured histogram is JSON-only.
 

@@ -13,6 +13,7 @@ import orjson
 from pydantic import (
     ConfigDict,
     Field,
+    NonNegativeInt,
     PlainSerializer,
     PrivateAttr,
     RootModel,
@@ -482,7 +483,9 @@ class ProfileResults(AIPerfBaseModel):
         default=None,
         description="Internal per-phase metric summaries used for phase artifacts.",
     )
-    pooled_spec_decode_acceptance_histogram: dict[int, int] | None = Field(
+    pooled_spec_decode_acceptance_histogram: (
+        dict[NonNegativeInt, NonNegativeInt] | None
+    ) = Field(
         default=None,
         description="Run-level pooled speculative-decoding acceptance histogram "
         "for this phase: accepted-draft count j mapped to the total number of "

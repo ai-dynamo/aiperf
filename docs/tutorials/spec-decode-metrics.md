@@ -100,20 +100,20 @@ pooled acceptance histogram.
 > result.** The numbers are placeholders; real values depend entirely on your model,
 > drafter, draft budget, dataset, and concurrency.
 
-```
+```text
                                     NVIDIA AIPerf: Spec Decode
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
 ┃                            Metric ┃    avg ┃   min ┃    max ┃    p99 ┃    p90 ┃    p50 ┃   std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
 │         Acceptance Length (ratio) │   3.21 │  1.00 │   6.00 │   5.80 │   4.90 │   3.10 │  1.05 │
-│  Token-Weighted Acceptance Length │   3.34 │   N/A │    N/A │    N/A │    N/A │    N/A │   N/A │
+│  Token-Weighted Acceptance Length │   3.20 │   N/A │    N/A │    N/A │    N/A │    N/A │   N/A │
 │                           (ratio) │        │       │        │        │        │        │       │
 │         Draft Acceptance Rate (%) │  44.20 │  0.00 │ 100.00 │  96.00 │  82.00 │  42.00 │ 18.00 │
 │ Overall Draft Acceptance Rate (%) │  46.80 │   N/A │    N/A │    N/A │    N/A │    N/A │   N/A │
 │     Accepted per Verified (ratio) │   0.53 │  0.17 │   1.00 │   0.97 │   0.82 │   0.52 │  0.17 │
 │         Spec Decode Steps (count) │ 128.00 │ 40.00 │ 410.00 │ 390.00 │ 250.00 │ 118.00 │ 60.00 │
 └───────────────────────────────────┴────────┴───────┴────────┴────────┴────────┴────────┴───────┘
-  Accepted-draft histogram (% steps):  0: 25%   1: 18%   2: 15%   3: 13%   4: 12%   5: 17%
+  Accepted drafts per step (% of steps):  0: 25%   1: 18%   2: 15%   3: 13%   4: 12%   5: 17%
 ```
 
 Quick reading (full definitions in the
@@ -129,7 +129,7 @@ Quick reading (full definitions in the
   step got to accepting everything it proposed.
 - **Spec Decode Steps** -- verify steps per request.
 - **Accepted-draft histogram** -- share of verify steps that accepted exactly `j` draft
-  tokens, pooled across the run. Capped to buckets `0..8` on the console (any `j >= 8` folds
+  tokens, pooled across the run. Capped to buckets `0..7` on the console (any `j >= 8` folds
   into a trailing `>=8` bucket); the full histogram is in the JSON export.
 
 The section is omitted entirely when no request carried spec-decode stats.

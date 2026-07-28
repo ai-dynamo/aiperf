@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from aiperf.common.exceptions import ConsoleExporterDisabled
-from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.common.enums import MetricConsoleGroup
+from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -45,33 +44,37 @@ def format_acceptance_histogram_line(
         folded = sum(steps for bucket, steps in histogram.items() if bucket >= cap)
         parts.append(f">={cap}: {folded / total_steps * 100:.0f}%")
 
-    return "Accepted-draft histogram (% steps):  " + "   ".join(parts)
+    return "Accepted drafts per step (% of steps):  " + "   ".join(parts)
 
 
-class ConsoleSpecDecodeHistogramExporter(AIPerfLoggerMixin):
-    """Console exporter for the one-line pooled acceptance histogram.
+class ConsoleSpecDecodeExporter(ConsoleMetricsExporter):
+    """Dedicated console section for speculative-decoding acceptance.
 
-    Renders the ``pooled_spec_decode_acceptance_histogram`` pooled by the accumulator
-    as a single compact row beneath the ``Spec Decode`` scalar table (whose rows
-    the main ``ConsoleMetricsExporter`` renders via ``MetricConsoleGroup.SPEC_DECODE``).
-    The histogram is a dict, not a ``MetricResult``, so it cannot ride the
-    metric-table machinery -- hence this dedicated section, mirroring the
-    power-efficiency exporter pattern. Self-disables when no request carried
-    spec-decode stats.
+    Renders the ``Spec Decode`` scalar table (the ``SPEC_DECODE`` metric group)
+    immediately followed by the one-line pooled accepted-draft histogram, as a
+    single self-contained block -- mirroring the power-efficiency dedicated-
+    section pattern. Keeping the table and histogram in one exporter guarantees
+    the histogram sits directly beneath its table (the pooled histogram is a
+    dict, not a ``MetricResult``, so it cannot ride the metric-table machinery
+    and would otherwise be emitted by a separate exporter that prints after the
+    main metrics block). Renders nothing when no request carried spec-decode
+    stats.
     """
 
-    def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
-        results = exporter_config.results
-        if results is None or results.pooled_spec_decode_acceptance_histogram is None:
-            raise ConsoleExporterDisabled(
-                "Spec-decode histogram console exporter is disabled: no pooled "
-                "acceptance histogram in the results."
-            )
-        super().__init__(**kwargs)
-        self._histogram = results.pooled_spec_decode_acceptance_histogram
+    console_groups = (MetricConsoleGroup.SPEC_DECODE,)
+
+    def _get_group_title(self, group: MetricConsoleGroup) -> str:
+        return f"{self._get_title()}: Spec Decode"
 
     async def export(self, console: Console) -> None:
-        line = format_acceptance_histogram_line(self._histogram)
-        if line is None:
+        if not self._results or not self._results.records:
             return
-        console.print(f"  [cyan]{line}[/cyan]")
+        renderable = self.get_renderable(self._results.records, console)
+        if renderable is not None:
+            self._print_renderable(console, renderable)
+        histogram = getattr(
+            self._results, "pooled_spec_decode_acceptance_histogram", None
+        )
+        line = format_acceptance_histogram_line(histogram) if histogram else None
+        if line is not None:
+            console.print(f"  [cyan]{line}[/cyan]")
