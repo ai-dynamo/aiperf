@@ -55,7 +55,28 @@
     "LognormalParams": {
       "additionalProperties": true,
       "description": "Lognormal distribution parameters with real-space summary statistics.\n\nCan be constructed in two ways:\n1. Full: mu, sigma, mean, median all provided (e.g. from manifest.json or fit-stats)\n2. Simplified: just mean and median — mu/sigma auto-computed via model validator",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "shape"
+            ]
+          },
+          {
+            "required": [
+              "scale"
+            ]
+          }
+        ]
+      },
       "properties": {
+        "distribution": {
+          "const": "lognormal",
+          "default": "lognormal",
+          "description": "Distribution family tag; defaults to lognormal so untagged configs stay backward compatible",
+          "title": "Distribution",
+          "type": "string"
+        },
         "max": {
           "anyOf": [
             {
@@ -133,11 +154,19 @@
     },
     "MixtureDelayConfig": {
       "additionalProperties": true,
-      "description": "Two-component mixture model for inter-turn delays.\n\nAgentic turns (tool-call follow-ups) are fast; human turns are slow.\nA Bernoulli draw selects which component to sample from.",
+      "description": "Two-component mixture model for inter-turn delays.\n\nAgentic turns (tool-call follow-ups) are fast; human turns are slow.\nA Bernoulli draw selects which component to sample from. Each component is\nlognormal by default; tag a component with distribution \"weibull\" to use a\nWeibull instead.",
       "properties": {
         "agentic_delay": {
-          "$ref": "#/$defs/LognormalParams",
-          "description": "Fast delay distribution (tool-call follow-ups)"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LognormalParams"
+            },
+            {
+              "$ref": "#/$defs/WeibullParams"
+            }
+          ],
+          "description": "Fast delay distribution (tool-call follow-ups)",
+          "title": "Agentic Delay"
         },
         "agentic_fraction": {
           "default": 0.7,
@@ -148,8 +177,16 @@
           "type": "number"
         },
         "human_delay": {
-          "$ref": "#/$defs/LognormalParams",
-          "description": "Slow delay distribution (human think time)"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LognormalParams"
+            },
+            {
+              "$ref": "#/$defs/WeibullParams"
+            }
+          ],
+          "description": "Slow delay distribution (human think time)",
+          "title": "Human Delay"
         },
         "max": {
           "anyOf": [
@@ -172,6 +209,20 @@
     "NewTokensPerTurnConfig": {
       "additionalProperties": true,
       "description": "Lognormal config for new tokens per turn with truncation-bias correction.",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "shape"
+            ]
+          },
+          {
+            "required": [
+              "scale"
+            ]
+          }
+        ]
+      },
       "properties": {
         "bias": {
           "default": 1.0,
@@ -179,6 +230,13 @@
           "exclusiveMinimum": 0.0,
           "title": "Bias",
           "type": "number"
+        },
+        "distribution": {
+          "const": "lognormal",
+          "default": "lognormal",
+          "description": "Distribution family tag; defaults to lognormal so untagged configs stay backward compatible",
+          "title": "Distribution",
+          "type": "string"
         },
         "max": {
           "anyOf": [
@@ -334,6 +392,107 @@
         "max"
       ],
       "title": "TurnCountConfig",
+      "type": "object"
+    },
+    "WeibullParams": {
+      "additionalProperties": true,
+      "description": "Weibull distribution parameters with real-space summary statistics.\n\nCan be constructed in two ways:\n1. Full: shape, scale, mean, median all provided. mean/median are derived\n   summary statistics, so they are cross-checked against the distribution\n   implied by shape/scale and a mismatch is rejected.\n2. Simplified: just mean and median (mean > median) — shape/scale solved\n   numerically via a model validator",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "mu"
+            ]
+          },
+          {
+            "required": [
+              "sigma"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "distribution": {
+          "const": "weibull",
+          "description": "Distribution family tag; required so untagged configs keep parsing as lognormal",
+          "title": "Distribution",
+          "type": "string"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard upper bound (rejection sampled)",
+          "title": "Max"
+        },
+        "mean": {
+          "description": "Real-space mean (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Mean",
+          "type": "number"
+        },
+        "median": {
+          "description": "Real-space median (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Median",
+          "type": "number"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard lower bound (rejection sampled)",
+          "title": "Min"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weibull scale parameter lambda",
+          "title": "Scale"
+        },
+        "shape": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weibull shape parameter k",
+          "title": "Shape"
+        }
+      },
+      "required": [
+        "distribution",
+        "mean",
+        "median"
+      ],
+      "title": "WeibullParams",
       "type": "object"
     }
   },

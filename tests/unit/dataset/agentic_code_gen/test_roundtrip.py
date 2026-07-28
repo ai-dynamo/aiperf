@@ -16,8 +16,10 @@ from aiperf.dataset.agentic_code_gen.distributions import lognormal_from_mean_me
 from aiperf.dataset.agentic_code_gen.models import (
     CacheLayerConfig,
     Layer15GroupConfig,
+    MixtureDelayConfig,
     ResetConfig,
     SessionDistributionConfig,
+    WeibullParams,
 )
 from aiperf.dataset.agentic_code_gen.session_synthesizer import SessionSynthesizer
 from aiperf.dataset.agentic_code_gen.writer import write_dataset
@@ -349,6 +351,39 @@ class TestRoundtrip:
                 continue
             for other in l15_lists[1:]:
                 assert other == l15_lists[0], f"L1.5 mismatch in group {gid}"
+
+    def test_manifest_roundtrip_preserves_weibull_delay(self, tmp_path: Path) -> None:
+        """Weibull delay components survive synthesize -> manifest -> reload."""
+        config = SessionDistributionConfig(
+            inter_turn_delay=MixtureDelayConfig(
+                agentic_fraction=0.7,
+                agentic_delay=WeibullParams(
+                    distribution="weibull", mean=3_000, median=2_000
+                ),
+                human_delay=lognormal_from_mean_median(mean=45_000, median=30_000),
+            ),
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        sessions = synth.synthesize_sessions(5)
+
+        run_dir = tmp_path / "run"
+        _, manifest_path, quality_path = write_dataset(
+            sessions, run_dir, config, seed=42, config_name="weibull"
+        )
+
+        quality = orjson.loads(quality_path.read_bytes())
+        assert quality["config_summary"]["inter_turn_delay_agentic_mean_ms"] == 3_000
+
+        reloaded = load_config(str(manifest_path))
+        agentic = reloaded.inter_turn_delay.agentic_delay
+        assert isinstance(agentic, WeibullParams)
+        assert agentic.shape == pytest.approx(
+            config.inter_turn_delay.agentic_delay.shape, rel=1e-9
+        )
+        assert isinstance(
+            reloaded.inter_turn_delay.human_delay,
+            type(config.inter_turn_delay.human_delay),
+        )
 
     def test_manifest_can_be_used_as_config(self, tmp_path: Path) -> None:
         """Verify that a manifest.json from a run can be loaded as config."""
