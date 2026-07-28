@@ -13,7 +13,7 @@ This document provides attribution information for third-party software componen
 
 **Component Information:**
 - **Software**: FFmpeg
-- **Version**: 8.1.1
+- **Version**: 8.1.2
 - **Website**: https://ffmpeg.org/
 - **License**: LGPL v2.1+
 - **Usage**: Video and audio processing library (included in runtime container)
@@ -38,7 +38,7 @@ This document provides attribution information for third-party software componen
 **Source Code Availability:**
 
 The FFmpeg source code used to build this container is available at:
-- Official release: https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz
+- Official release: https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
 - Our build configuration is documented in the Dockerfile
 
 **Compliance Notes:**
