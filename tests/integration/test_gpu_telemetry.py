@@ -6,6 +6,7 @@ import platform
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.models.telemetry_models import TelemetryRecord
 from aiperf.gpu_telemetry.constants import AMDSMI_SOURCE_IDENTIFIER
@@ -349,3 +350,67 @@ class TestAMDSMITelemetry:
         assert not result.has_gpu_telemetry, "GPU telemetry should not be collected"
         jsonl_files = list(result.artifacts_dir.glob("*gpu_telemetry*.jsonl"))
         assert len(jsonl_files) == 0, f"Unexpected GPU telemetry files: {jsonl_files}"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestTelemetryVendorIsolation:
+    """Vendor namespacing: DCGM records must never contain amd_* metrics and
+    amdsmi records must never contain nvidia_* metrics."""
+
+    @pytest.mark.parametrize(
+        ("collector", "forbidden_prefix"),
+        [
+            param(
+                "dcgm",
+                "amd_",
+                marks=pytest.mark.skipif(
+                    platform.system() in ("Darwin", "Windows"),
+                    reason="DCGM telemetry requires Linux",
+                ),
+                id="dcgm-has-no-amd-metrics",
+            ),
+            param("amdsmi", "nvidia_", id="amdsmi-has-no-nvidia-metrics"),
+        ],
+    )  # fmt: skip
+    async def test_vendor_metric_isolation(
+        self,
+        collector: str,
+        forbidden_prefix: str,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No GPU metric key from one vendor appears in the other vendor's records."""
+        if collector == "amdsmi":
+            monkeypatch.setenv("AIPERF_MOCK_AMDSMI", "1")
+            telemetry_arg = "amdsmi"
+        else:
+            telemetry_arg = " ".join(aiperf_mock_server.dcgm_urls)
+
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model nvidia/llama-3.1-nemotron-70b-instruct \
+                --url {aiperf_mock_server.url} \
+                --tokenizer builtin \
+                --endpoint-type chat \
+                --gpu-telemetry {telemetry_arg} \
+                --streaming \
+                --request-count 25 \
+                --concurrency 1 \
+                --workers-max 1
+            """
+        )
+        assert result.has_gpu_telemetry
+        assert result.json.telemetry_data.endpoints is not None
+
+        for endpoint_data in result.json.telemetry_data.endpoints.values():
+            for gpu_data in endpoint_data.gpus.values():
+                forbidden = [
+                    k for k in gpu_data.metrics if k.startswith(forbidden_prefix)
+                ]
+                assert not forbidden, (
+                    f"{collector} collector produced metrics with forbidden "
+                    f"'{forbidden_prefix}' prefix: {forbidden}"
+                )
