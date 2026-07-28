@@ -9,6 +9,13 @@ Maintains consistent timing between turns for each user (`turn_gap`), simulating
 This timing directly affects KV cache hit rates: gaps that are too short keep caches
 artificially warm, while gaps that are too long allow cache entries to be evicted before reuse.
 
+By default the turn gap is the deterministic constant `num_users / request_rate` seconds.
+With `--user-centric-gap-distribution lognormal|weibull`, each turn gap is instead drawn
+per turn from the named distribution whose mean stays pinned to `num_users / request_rate`
+(preserving aggregate load) and whose median is user-supplied to control skew. Each user
+draws from an independent, deterministically seeded stream, so gap sequences are
+reproducible under `--random-seed`. New-user spawn scheduling keeps using the mean gap.
+
 Virtual History & Start Order
 -----------------------------
 Simulates steady-state from t=0 by distributing users across the "session lifetime"
@@ -64,10 +71,20 @@ from dataclasses import dataclass
 from math import gcd
 from typing import TYPE_CHECKING
 
+from aiperf.common import random_generator as rng
+from aiperf.common.distributions import (
+    LognormalParams,
+    WeibullParams,
+    sample_lognormal,
+    sample_weibull,
+)
+from aiperf.common.enums import UserCentricGapDistribution
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.credit.structs import Credit, TurnToSend
 
 if TYPE_CHECKING:
+    from numpy.random import Generator
+
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.config import CreditPhaseConfig
@@ -102,6 +119,8 @@ class User:
         max_turns: How many turns this user can send. Virtual history users have
             reduced max_turns (they've "already completed" some before t=0).
         order: Position in the initial stagger sequence (0 = fires first).
+        gap_rng: Per-user NumPy generator for sampled turn gaps, seeded
+            deterministically from user_id. None in fixed gap mode.
     """
 
     user_id: int
@@ -109,6 +128,7 @@ class User:
     next_send_time: float = 0.0
     max_turns: int = 0
     order: int = 0
+    gap_rng: Generator | None = None
 
     @property
     def x_correlation_id(self) -> str:
@@ -153,12 +173,24 @@ class UserCentricStrategy(AIPerfLoggerMixin):
                 "request_rate must be set and positive for user-centric rate mode"
             )
 
+        self._gap_distribution = self._config.user_centric_gap_distribution
+        self._gap_median = self._config.user_centric_gap_median
+        if (
+            self._gap_distribution != UserCentricGapDistribution.FIXED
+            and self._gap_median is None
+        ):
+            raise ValueError(
+                "user_centric_gap_median must be set when "
+                "user_centric_gap_distribution is lognormal or weibull"
+            )
+
         # Stagger is the smallest gap between any 2 users' first turns.
         # Request rate is requests/second, whereas stagger is seconds/request.
         self._stagger = 1 / self._request_rate
 
         # Computed in setup_phase
         self._turn_gap: float = 0.0
+        self._gap_params: LognormalParams | WeibullParams | None = None
         self._target_num_users = self._num_users
         self._adaptive_target_enabled = False
         self._session_to_user: dict[str, User] = {}
@@ -188,9 +220,19 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             next_send_time=target_perf_sec or 0.0,
             max_turns=max_turns or len(sampled.metadata.turns),
             order=order or 0,
+            gap_rng=self._derive_gap_rng(user_id),
         )
         self._session_to_user[user.x_correlation_id] = user
         return user
+
+    def _derive_gap_rng(self, user_id: int) -> Generator | None:
+        """Derive a per-user gap RNG so each user's gap stream is reproducible
+        under --random-seed regardless of how users' credit returns interleave."""
+        if self._gap_distribution == UserCentricGapDistribution.FIXED:
+            return None
+        return rng.derive(
+            f"timing.user_centric_rate.turn_gap.user.{user_id}"
+        ).numpy_generator
 
     async def setup_phase(self) -> None:
         """Pre-generate num_users initial users with timing and virtual history.
@@ -261,6 +303,33 @@ class UserCentricStrategy(AIPerfLoggerMixin):
     def _recompute_turn_gap(self, num_users: int) -> None:
         # num_users firing once per turn_gap gives: qps = num_users / turn_gap.
         self._turn_gap = num_users / self._request_rate
+        self._gap_params = self._solve_gap_params()
+
+    def _solve_gap_params(self) -> LognormalParams | WeibullParams | None:
+        """Solve the sampled gap distribution with its mean pinned to the fixed
+        turn gap, so the aggregate request rate is preserved."""
+        if self._gap_distribution == UserCentricGapDistribution.FIXED:
+            return None
+        if self._gap_median is None or self._gap_median >= self._turn_gap:
+            raise ValueError(
+                f"user_centric_gap_median ({self._gap_median}) must be strictly "
+                "less than the mean turn gap of num_users / request_rate = "
+                f"{self._turn_gap} seconds; lognormal and weibull turn-gap "
+                "sampling supports right-skewed gaps only (median < mean)"
+            )
+        if self._gap_distribution == UserCentricGapDistribution.WEIBULL:
+            return WeibullParams(
+                distribution="weibull", mean=self._turn_gap, median=self._gap_median
+            )
+        return LognormalParams(mean=self._turn_gap, median=self._gap_median)
+
+    def _next_turn_gap(self, user: User) -> float:
+        """Return the gap in seconds to apply before this user's next turn."""
+        if self._gap_params is None or user.gap_rng is None:
+            return self._turn_gap
+        if isinstance(self._gap_params, WeibullParams):
+            return float(sample_weibull(self._gap_params, user.gap_rng, size=1)[0])
+        return float(sample_lognormal(self._gap_params, user.gap_rng, size=1)[0])
 
     @property
     def target_users(self) -> int:
@@ -327,13 +396,19 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         if self._lifecycle.started_at_perf_ns is None:
             raise RuntimeError("started_at_perf_ns is not set in the lifecycle")
 
+        gap_note = (
+            f", gap_distribution={self._gap_distribution}, "
+            f"gap_median={self._gap_median}s"
+            if self._gap_distribution != UserCentricGapDistribution.FIXED
+            else ""
+        )
         self.info(
             f"User-centric mode: "
             f"qps={self._request_rate}, "
             f"{self._num_users} users, "
             f"session_turns={round(self._conversation_source.dataset_metadata.average_turn_count)}, "
             f"stagger={self._stagger:.3f}s, "
-            f"turn_gap={self._turn_gap:.3f}s"
+            f"turn_gap={self._turn_gap:.3f}s{gap_note}"
         )
 
         # Priority queue (heapq) of future spawn times in seconds (derived from stagger math)
@@ -359,7 +434,9 @@ class UserCentricStrategy(AIPerfLoggerMixin):
                 user.next_send_time,
                 self._credit_issuer.issue_credit(user.build_first_turn()),
             )
-            # Derive next spawn time based on estimated time to completion
+            # Derive next spawn time based on estimated time to completion.
+            # Always uses the mean turn gap: sampled per-turn gaps average out
+            # to the same mean, so the spawn cadence (and QPS) is unchanged.
             next_spawn_sec = user.next_send_time + (user.max_turns * self._turn_gap)
             heapq.heappush(spawn_queue, next_spawn_sec)
 
@@ -424,7 +501,9 @@ class UserCentricStrategy(AIPerfLoggerMixin):
 
         # If the next turn time already passed, the max() will
         # re-align their schedule to account for the delay.
-        user.next_send_time = max(current_sec, user.next_send_time + self._turn_gap)
+        user.next_send_time = max(
+            current_sec, user.next_send_time + self._next_turn_gap(user)
+        )
         self._scheduler.schedule_at_perf_sec(
             user.next_send_time,
             self._credit_issuer.issue_credit(turn),

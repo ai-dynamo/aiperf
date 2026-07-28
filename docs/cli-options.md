@@ -1249,6 +1249,17 @@ Enable user-centric rate limiting mode with the specified request rate (QPS). Ea
 
 The number of initial users to use for --user-centric-rate mode. Pass a comma-separated list (e.g. `--num-users 4,8,16`) to sweep over user counts; the converter promotes the list to a sweep on phases.profiling.users before AIPerfConfig validation.
 
+#### `--user-centric-gap-distribution` `<str>`
+
+Distribution of the per-user gap between turns for --user-centric-rate mode. `fixed`: deterministic constant gap of num_users / user_centric_rate seconds (default, the existing behavior). `lognormal` / `weibull`: draw each turn gap from the named distribution. The distribution mean is always pinned to num_users / user_centric_rate seconds to preserve the aggregate request rate; supply --user-centric-gap-median to control skew. Requires --user-centric-rate.
+<br/>_Choices: [`fixed`, `lognormal`, `weibull`]_
+<br/>_Default: `fixed`_
+
+#### `--user-centric-gap-median` `<float>`
+
+Median of the sampled per-user turn gap in seconds. Required when --user-centric-gap-distribution is lognormal or weibull; rejected for fixed. Must be strictly between 0 and the mean gap of num_users / user_centric_rate seconds (both distributions are right-skewed, so median &lt; mean). Requires --user-centric-rate.
+<br/>_Constraints: > 0_
+
 ### Request Cancellation
 
 #### `--request-cancellation-rate` `<float>`
@@ -2839,6 +2850,17 @@ Enable user-centric rate limiting mode with the specified request rate (QPS). Ea
 #### `--num-users` `<str>`
 
 The number of initial users to use for --user-centric-rate mode. Pass a comma-separated list (e.g. `--num-users 4,8,16`) to sweep over user counts; the converter promotes the list to a sweep on phases.profiling.users before AIPerfConfig validation.
+
+#### `--user-centric-gap-distribution` `<str>`
+
+Distribution of the per-user gap between turns for --user-centric-rate mode. `fixed`: deterministic constant gap of num_users / user_centric_rate seconds (default, the existing behavior). `lognormal` / `weibull`: draw each turn gap from the named distribution. The distribution mean is always pinned to num_users / user_centric_rate seconds to preserve the aggregate request rate; supply --user-centric-gap-median to control skew. Requires --user-centric-rate.
+<br/>_Choices: [`fixed`, `lognormal`, `weibull`]_
+<br/>_Default: `fixed`_
+
+#### `--user-centric-gap-median` `<float>`
+
+Median of the sampled per-user turn gap in seconds. Required when --user-centric-gap-distribution is lognormal or weibull; rejected for fixed. Must be strictly between 0 and the mean gap of num_users / user_centric_rate seconds (both distributions are right-skewed, so median &lt; mean). Requires --user-centric-rate.
+<br/>_Constraints: > 0_
 
 ### Request Cancellation
 

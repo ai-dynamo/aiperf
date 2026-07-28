@@ -19,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from aiperf.common.enums import UserCentricGapDistribution
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.common.types import PhaseKind
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
@@ -628,6 +629,30 @@ class UserCentricPhase(RatePhaseConfig):
         ),
     ]
 
+    gap_distribution: Annotated[
+        UserCentricGapDistribution,
+        Field(
+            default=UserCentricGapDistribution.FIXED,
+            description="Distribution of the per-user gap between turns. "
+            "fixed: deterministic constant gap of users / rate seconds. "
+            "lognormal / weibull: draw each turn gap from the named distribution "
+            "whose mean is pinned to users / rate seconds (preserving aggregate "
+            "load); gap_median controls skew.",
+        ),
+    ]
+
+    gap_median: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0,
+            description="Median of the sampled per-user turn gap in seconds. "
+            "Required for lognormal/weibull gap distributions and rejected for "
+            "fixed. Must be strictly less than the mean gap of "
+            "users / rate seconds (both distributions are right-skewed).",
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_user_centric_constraints(self) -> UserCentricPhase:
         """Validate user-centric mode constraints."""
@@ -646,7 +671,38 @@ class UserCentricPhase(RatePhaseConfig):
                 f">= --num-users ({self.users}). Each user needs at least one request."
             )
 
+        self._validate_gap_distribution()
         return self
+
+    def _validate_gap_distribution(self) -> None:
+        """Validate gap_distribution / gap_median cross-field constraints."""
+        if self.gap_distribution == UserCentricGapDistribution.FIXED:
+            if self.gap_median is not None:
+                raise ValueError(
+                    f"Phase '{self.name}': --user-centric-gap-median only applies "
+                    "to sampled gap distributions. Pass "
+                    "--user-centric-gap-distribution lognormal or weibull, or "
+                    "drop --user-centric-gap-median."
+                )
+            return
+
+        if self.gap_median is None:
+            raise ValueError(
+                f"Phase '{self.name}': --user-centric-gap-distribution "
+                f"{self.gap_distribution} requires --user-centric-gap-median "
+                "(median of the sampled turn gap in seconds)."
+            )
+
+        mean_gap = self.users / self.rate
+        if self.gap_median >= mean_gap:
+            raise ValueError(
+                f"Phase '{self.name}': --user-centric-gap-median "
+                f"({self.gap_median}) must be less than the mean turn gap of "
+                f"--num-users / --user-centric-rate = {mean_gap} seconds. "
+                "Lognormal and weibull turn-gap sampling keeps the mean pinned "
+                "to that value and supports right-skewed gaps only "
+                "(median < mean)."
+            )
 
 
 class FixedSchedulePhase(BasePhaseConfig):

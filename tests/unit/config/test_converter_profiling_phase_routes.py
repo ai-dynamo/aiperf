@@ -252,6 +252,58 @@ class TestNumUsersRequiresUserCentric:
         assert prof["users"] == 5
 
 
+class TestGapDistributionRequiresUserCentric:
+    def test_gap_distribution_with_request_rate_raises(self) -> None:
+        loadgen = CLIConfig(
+            user_centric_gap_distribution="lognormal",
+            request_rate=100.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError,
+            match="--user-centric-gap-distribution requires --user-centric-rate",
+        ):
+            build_profiling(user)
+
+    def test_gap_median_with_concurrency_mode_raises(self) -> None:
+        loadgen = CLIConfig(
+            user_centric_gap_median=5.0, request_count=10, concurrency=1
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError, match="--user-centric-gap-median requires --user-centric-rate"
+        ):
+            build_profiling(user)
+
+    def test_explicit_fixed_without_user_centric_rate_raises(self) -> None:
+        """Even the default value passed explicitly is rejected without the mode."""
+        loadgen = CLIConfig(
+            user_centric_gap_distribution="fixed", request_count=10, concurrency=1
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError,
+            match="--user-centric-gap-distribution requires --user-centric-rate",
+        ):
+            build_profiling(user)
+
+    def test_gap_flags_with_user_centric_route_to_phase(self) -> None:
+        loadgen = CLIConfig(
+            user_centric_rate=10.0,
+            num_users=5,
+            user_centric_gap_distribution="weibull",
+            user_centric_gap_median=0.3,
+            request_count=20,
+            conversation_turn_mean=2,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["gap_distribution"] == "weibull"
+        assert prof["gap_median"] == 0.3
+
+
 # ---------------------------------------------------------------------------
 # BUG 4b — --request-rate-ramp-duration without --request-rate
 # ---------------------------------------------------------------------------

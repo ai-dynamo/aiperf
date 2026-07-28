@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
+from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, UserCentricGapDistribution
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
@@ -302,6 +304,151 @@ class TestAdaptiveTargetUsers:
             spawn_queue, spawn_sec=10.0, user=MagicMock(max_turns=2)
         )
         assert spawn_queue == []
+
+
+GAP_SAMPLE_COUNT = 20_000
+
+
+def _make_gap_strategy(
+    *,
+    num_users: int = 4,
+    rate: float = 10.0,
+    distribution: UserCentricGapDistribution = UserCentricGapDistribution.FIXED,
+    median: float | None = None,
+) -> UserCentricStrategy:
+    """Build a strategy with a conversation source stub good enough to spawn users."""
+    cfg = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.USER_CENTRIC_RATE,
+        request_rate=rate,
+        num_users=num_users,
+        total_expected_requests=10,
+        user_centric_gap_distribution=distribution,
+        user_centric_gap_median=median,
+    )
+
+    def _sampled(x_correlation_id: str) -> MagicMock:
+        m = MagicMock()
+        m.x_correlation_id = x_correlation_id
+        return m
+
+    source = MagicMock()
+    source.next.side_effect = _sampled
+    strategy = UserCentricStrategy(
+        config=cfg,
+        conversation_source=source,
+        scheduler=MagicMock(),
+        stop_checker=MagicMock(),
+        credit_issuer=MagicMock(),
+        lifecycle=MagicMock(),
+    )
+    strategy._recompute_turn_gap(num_users)
+    return strategy
+
+
+def _draw_gaps(strategy: UserCentricStrategy, count: int) -> np.ndarray:
+    user = strategy._generate_next_user(max_turns=5)
+    return np.array([strategy._next_turn_gap(user) for _ in range(count)])
+
+
+class TestGapDistributionSampling:
+    def test_fixed_gap_is_constant_and_skips_rng(self) -> None:
+        strategy = _make_gap_strategy()
+        user = strategy._generate_next_user(max_turns=5)
+        assert user.gap_rng is None
+        gaps = [strategy._next_turn_gap(user) for _ in range(10)]
+        assert gaps == [pytest.approx(0.4)] * 10
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_sampled_gaps_vary_per_turn(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        strategy = _make_gap_strategy(distribution=distribution, median=0.2)
+        gaps = _draw_gaps(strategy, 100)
+        assert len(np.unique(gaps)) > 90
+        assert (gaps > 0).all()
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_sampled_gap_mean_pinned_to_num_users_over_rate(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        # mean gap = num_users / rate = 4 / 10.0 = 0.4s.
+        strategy = _make_gap_strategy(distribution=distribution, median=0.2)
+        gaps = _draw_gaps(strategy, GAP_SAMPLE_COUNT)
+        assert float(np.mean(gaps)) == pytest.approx(0.4, rel=0.05)
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_sampled_gap_median_matches_configured_median(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        strategy = _make_gap_strategy(distribution=distribution, median=0.2)
+        gaps = _draw_gaps(strategy, GAP_SAMPLE_COUNT)
+        assert float(np.median(gaps)) == pytest.approx(0.2, rel=0.05)
+
+    def test_gap_stream_deterministic_per_user_under_fixed_seed(self) -> None:
+        first = _draw_gaps(
+            _make_gap_strategy(
+                distribution=UserCentricGapDistribution.WEIBULL, median=0.2
+            ),
+            10,
+        )
+        second = _draw_gaps(
+            _make_gap_strategy(
+                distribution=UserCentricGapDistribution.WEIBULL, median=0.2
+            ),
+            10,
+        )
+        assert first.tolist() == second.tolist()
+
+    def test_gap_streams_differ_between_users(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.LOGNORMAL, median=0.2
+        )
+        user_1 = strategy._generate_next_user(max_turns=5)
+        user_2 = strategy._generate_next_user(max_turns=5)
+        gaps_1 = [strategy._next_turn_gap(user_1) for _ in range(5)]
+        gaps_2 = [strategy._next_turn_gap(user_2) for _ in range(5)]
+        assert gaps_1 != gaps_2
+
+    def test_missing_median_for_sampled_distribution_raises(self) -> None:
+        with pytest.raises(ValueError, match="user_centric_gap_median"):
+            _make_gap_strategy(distribution=UserCentricGapDistribution.LOGNORMAL)
+
+    def test_adaptive_rescale_below_median_raises_with_computed_mean(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.WEIBULL, median=0.3
+        )
+        # set_target_users(2) shrinks the mean gap to 2 / 10.0 = 0.2s < median.
+        with pytest.raises(ValueError, match=r"0\.2"):
+            strategy.set_target_users(2)
+
+    def test_adaptive_rescale_repins_sampled_mean(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.LOGNORMAL, median=0.2
+        )
+        strategy._spawn_queue = []
+        # set_target_users(8) grows the mean gap to 8 / 10.0 = 0.8s.
+        strategy.set_target_users(8)
+        gaps = _draw_gaps(strategy, GAP_SAMPLE_COUNT)
+        assert float(np.mean(gaps)) == pytest.approx(0.8, rel=0.05)
 
 
 class TestUserClass:

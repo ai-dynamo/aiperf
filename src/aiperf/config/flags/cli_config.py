@@ -53,6 +53,7 @@ from aiperf.common.enums import (
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
+    UserCentricGapDistribution,
     VideoAudioCodec,
     VideoFormat,
     VideoSynthType,
@@ -2632,6 +2633,39 @@ class CLIConfig(BaseConfig):
         BeforeValidator(parse_int_or_int_list),
         CLIParameter(
             name=("--num-users",),
+            group=Groups.USER_CENTRIC,
+        ),
+    ] = None
+
+    user_centric_gap_distribution: Annotated[
+        UserCentricGapDistribution,
+        Field(
+            description="Distribution of the per-user gap between turns for --user-centric-rate mode. "
+            "`fixed`: deterministic constant gap of num_users / user_centric_rate seconds (default, "
+            "the existing behavior). "
+            "`lognormal` / `weibull`: draw each turn gap from the named distribution. The distribution "
+            "mean is always pinned to num_users / user_centric_rate seconds to preserve the aggregate "
+            "request rate; supply --user-centric-gap-median to control skew. "
+            "Requires --user-centric-rate.",
+        ),
+        CLIParameter(
+            name=("--user-centric-gap-distribution",),
+            group=Groups.USER_CENTRIC,
+        ),
+    ] = UserCentricGapDistribution.FIXED
+
+    user_centric_gap_median: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Median of the sampled per-user turn gap in seconds. Required when "
+            "--user-centric-gap-distribution is lognormal or weibull; rejected for fixed. Must be "
+            "strictly between 0 and the mean gap of num_users / user_centric_rate seconds "
+            "(both distributions are right-skewed, so median < mean). "
+            "Requires --user-centric-rate.",
+        ),
+        CLIParameter(
+            name=("--user-centric-gap-median",),
             group=Groups.USER_CENTRIC,
         ),
     ] = None

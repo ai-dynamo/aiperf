@@ -6,16 +6,26 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 
 import numpy as np
 from numpy.random import Generator
 
-from aiperf.dataset.agentic_code_gen.models import (
+from aiperf.common.distributions import (
     LognormalParams,
-    MixtureDelayConfig,
     WeibullParams,
+    sample_lognormal,
+    sample_weibull,
 )
+from aiperf.dataset.agentic_code_gen.models import MixtureDelayConfig
+
+__all__ = [
+    "fit_from_samples",
+    "lognormal_from_mean_median",
+    "sample_delay_component",
+    "sample_lognormal",
+    "sample_mixture_delay",
+    "sample_weibull",
+]
 
 
 def lognormal_from_mean_median(mean: float, median: float) -> LognormalParams:
@@ -53,87 +63,6 @@ def fit_from_samples(samples: np.ndarray) -> LognormalParams:
     real_median = math.exp(mu)
 
     return LognormalParams(mu=mu, sigma=sigma, mean=real_mean, median=real_median)
-
-
-def _rejection_sample(
-    draw: Callable[[int], np.ndarray],
-    *,
-    lo: float | None,
-    hi: float | None,
-    clip_min: float | None,
-    max_attempts: int,
-    size: int,
-) -> np.ndarray:
-    """Draw *size* samples from *draw*, resampling any that fall outside [lo, hi].
-
-    Values still out of range after max_attempts are clamped, so the bounds hold
-    even when the distribution puts little mass inside them. clip_min is a hard
-    floor applied last.
-    """
-    samples = draw(size)
-    if lo is not None or hi is not None:
-        for _ in range(max_attempts):
-            mask = np.zeros(len(samples), dtype=bool)
-            if lo is not None:
-                mask |= samples < lo
-            if hi is not None:
-                mask |= samples > hi
-            if not mask.any():
-                break
-            samples[mask] = draw(int(mask.sum()))
-        if lo is not None:
-            samples = np.maximum(samples, lo)
-        if hi is not None:
-            samples = np.minimum(samples, hi)
-    if clip_min is not None:
-        samples = np.maximum(samples, clip_min)
-    return samples
-
-
-def sample_lognormal(
-    params: LognormalParams,
-    rng: Generator,
-    *,
-    size: int = 1,
-    clip_min: float | None = None,
-    max_attempts: int = 100,
-) -> np.ndarray:
-    """Draw samples from a lognormal distribution.
-
-    Uses rejection sampling for params.min and params.max (resample out-of-range
-    values). clip_min is a hard floor applied after rejection sampling.
-    """
-    return _rejection_sample(
-        lambda n: rng.lognormal(mean=params.mu, sigma=params.sigma, size=n),
-        lo=params.min,
-        hi=params.max,
-        clip_min=clip_min,
-        max_attempts=max_attempts,
-        size=size,
-    )
-
-
-def sample_weibull(
-    params: WeibullParams,
-    rng: Generator,
-    *,
-    size: int = 1,
-    clip_min: float | None = None,
-    max_attempts: int = 100,
-) -> np.ndarray:
-    """Draw samples from a Weibull distribution.
-
-    Uses rejection sampling for params.min and params.max (resample out-of-range
-    values). clip_min is a hard floor applied after rejection sampling.
-    """
-    return _rejection_sample(
-        lambda n: rng.weibull(params.shape, size=n) * params.scale,
-        lo=params.min,
-        hi=params.max,
-        clip_min=clip_min,
-        max_attempts=max_attempts,
-        size=size,
-    )
 
 
 def sample_delay_component(

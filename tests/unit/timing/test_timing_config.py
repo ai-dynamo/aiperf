@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, UserCentricGapDistribution
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.phases import ConcurrencyPhase, ConstantPhase
 from aiperf.plugin.enums import ArrivalPattern, PhaseType, TimingMode
@@ -36,6 +36,8 @@ _LOADGEN_FIELDS: frozenset[str] = frozenset(
         "prefill_concurrency",
         "request_rate",
         "user_centric_rate",
+        "user_centric_gap_distribution",
+        "user_centric_gap_median",
         "arrival_pattern",
         "request_count",
         "num_users",
@@ -319,6 +321,24 @@ class TestTimingConfigFromCLIConfig:
         cfg = _make_timing_config(user_centric_rate=15.0, num_users=4, turn_mean=2)
         p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
         assert p.request_rate == 15.0
+
+    def test_maps_user_centric_gap_fields(self) -> None:
+        cfg = _make_timing_config(
+            user_centric_rate=15.0,
+            num_users=3,
+            turn_mean=2,
+            user_centric_gap_distribution="lognormal",
+            user_centric_gap_median=0.1,
+        )
+        p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
+        assert p.user_centric_gap_distribution == UserCentricGapDistribution.LOGNORMAL
+        assert p.user_centric_gap_median == 0.1
+
+    def test_gap_fields_default_to_fixed_without_median(self) -> None:
+        cfg = _make_timing_config(user_centric_rate=15.0, num_users=4, turn_mean=2)
+        p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
+        assert p.user_centric_gap_distribution == UserCentricGapDistribution.FIXED
+        assert p.user_centric_gap_median is None
 
     def test_maps_num_sessions(self) -> None:
         cfg = _make_timing_config(num_sessions=50)

@@ -16,7 +16,7 @@ AIPerf determines how to schedule requests based on which CLI options you specif
 | `--request-rate` | Rate-based load testing | Schedule requests at a target QPS with configurable arrival patterns |
 | `--concurrency` (alone) | Saturation/throughput testing | Send requests as fast as possible within concurrency limits |
 | `--fixed-schedule` | Trace replay | Replay requests at exact timestamps from dataset |
-| `--user-centric-rate` | KV cache benchmarking | Per-user rate limiting with consistent turn gaps |
+| `--user-centric-rate` | KV cache benchmarking | Per-user rate limiting with a fixed turn gap of `num_users / rate` seconds by default; `--user-centric-gap-distribution lognormal\|weibull` samples each turn gap instead, keeping the mean pinned to `num_users / rate` and using `--user-centric-gap-median` to control skew |
 
 ### Option Priority
 
@@ -76,6 +76,8 @@ If measured QPS is consistently lower than `--request-rate`:
 | `--user-centric-rate` | ❌ | ❌ | 🔧 | Requires `--num-users` |
 | `--fixed-schedule` | ❌ | 🔧 | ❌ | Requires trace dataset with timestamps |
 | `--num-users` | ❌ | ❌ | 🔧 | Required with `--user-centric-rate`; **raises error** otherwise |
+| `--user-centric-gap-distribution` | ❌ | ❌ | ✅ | `fixed` (default), `lognormal`, or `weibull`; **raises error** without `--user-centric-rate` |
+| `--user-centric-gap-median` | ❌ | ❌ | ⚠️ | Required for `lognormal`/`weibull` gap distributions; **raises error** with `fixed` or without `--user-centric-rate` |
 | `--request-rate-ramp-duration` | ✅ | ❌ | ❌ | **Raises error** with `--fixed-schedule` or `--user-centric-rate` |
 
 ### Stop Conditions (at least one required)
