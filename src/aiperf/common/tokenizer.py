@@ -58,6 +58,9 @@ class _TiktokenAdapter:
     def decode(self, token_ids: list[int], **kwargs) -> str:
         return self._encoding.decode(token_ids)
 
+    def encode_batch(self, texts: list[str]) -> list[list[int]]:
+        return self._encoding.encode_batch(texts, allowed_special="all")
+
     def __call__(self, text: str, **kwargs) -> dict:
         return {"input_ids": self.encode(text)}
 
@@ -733,6 +736,35 @@ class Tokenizer:
         """
         self._require_init()
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
+
+    def encode_lengths_batch(
+        self, texts: list[str], chunk_size: int = 4096
+    ) -> list[int]:
+        """Return the token count for each text using chunked batch calls.
+
+        Processes texts in bounded chunks to avoid materialising the full token
+        corpus in memory at once. Uses tiktoken's native parallel encode_batch or
+        the HuggingFace tokenizer's batch __call__.
+
+        Args:
+            texts: List of strings to tokenize.
+            chunk_size: Maximum number of texts per batch call.
+
+        Returns:
+            List of token counts, one per input text.
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+        self._require_init()
+        lengths: list[int] = []
+        for i in range(0, len(texts), chunk_size):
+            chunk = texts[i : i + chunk_size]
+            if isinstance(self._tokenizer, _TiktokenAdapter):
+                lengths.extend(len(ids) for ids in self._tokenizer.encode_batch(chunk))
+            else:
+                result = self._tokenizer(chunk, **self._call_args)
+                lengths.extend(len(ids) for ids in result["input_ids"])
+        return lengths
 
     @property
     def resolved_name(self) -> str | None:
