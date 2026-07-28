@@ -1237,6 +1237,8 @@ mod tests {
                 "--dry-run".to_string(),
                 "--model".to_string(),
                 "test-model".to_string(),
+                "--endpoint-type".to_string(),
+                "chat".to_string(),
                 "--trace-idle-gap-cap-seconds".to_string(),
                 "12".to_string(),
                 "--system-idle-gap-cap-seconds".to_string(),
