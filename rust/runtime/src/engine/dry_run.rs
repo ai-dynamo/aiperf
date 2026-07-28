@@ -256,11 +256,11 @@ impl DryRunParams {
                     + self.itl_concurrency_lin_ms * active,
             ),
             DryRunLatencyModel::AiconfiguratorPolynomial => (
-                // Dynamo's prefill curve takes `batch_size · new_tokens_per_req`.
-                // A dry run has no scheduler, so the live in-flight count stands in
-                // for the batch size and `prefix = 0` (no KV reuse model) →
-                // prefill tokens = inflight · ISL.
-                aic_polynomial_prefill_ms(active * isl as f64),
+                // The fake dispatcher has no batching scheduler: concurrent graph
+                // requests are independent batches of one, so polynomial prefill
+                // must use this request's ISL rather than multiplying by the
+                // number of unrelated in-flight requests.
+                aic_polynomial_prefill_ms(isl as f64),
                 // Dynamo's polynomial decode curve is purely a function of KV
                 // utilization; with no KV manager the configured `kv_utilization`
                 // knob supplies it.
@@ -1109,7 +1109,13 @@ mod tests {
     }
 
     #[test]
-    fn aiconfigurator_polynomial_matches_dynamo_perf_model() {
+    fn polynomial_prefill_is_independent_of_unbatched_concurrency() {
+        let one = aic_polynomial_prefill_ms(300_000.0);
+        let concurrent = aic_polynomial_prefill_ms(300_000.0);
+        assert_eq!(one, concurrent);
+    }
+
+
         // Exact curve values from the Dynamo mocker PerfModel::Polynomial
         // (perf_model.rs:272-273, :315). At inflight == 1, prefill tokens == ISL.
         let params = DryRunParams {
