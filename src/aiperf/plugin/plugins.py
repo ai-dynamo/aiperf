@@ -939,10 +939,11 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, SpecDecodeAdapterType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.protocols import RecordObserverProtocol, RecordProcessorProtocol
     from aiperf.search_recipes._base import SearchRecipe
     from aiperf.search_recipes.post_process import PostProcessHandler
+    from aiperf.spec_decode.protocols import SpecDecodeAdapterProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
     from aiperf.timing.ramping import RampStrategyProtocol
     from aiperf.timing.strategies.core import TimingStrategyProtocol
@@ -1021,6 +1022,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.ANALYZER, "analyzer"], name_or_class_path: AnalyzerType | str) -> type[AnalyzerProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.ANALYZER, "analyzer"]) -> Iterator[tuple[PluginEntry, type[AnalyzerProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.SPEC_DECODE_ADAPTER, "spec_decode_adapter"], name_or_class_path: SpecDecodeAdapterType | str) -> type[SpecDecodeAdapterProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.SPEC_DECODE_ADAPTER, "spec_decode_adapter"]) -> Iterator[tuple[PluginEntry, type[SpecDecodeAdapterProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.ACCURACY_GRADER, "accuracy_grader"], name_or_class_path: AccuracyGraderType | str) -> type[AccuracyGraderProtocol]: ...
     @overload

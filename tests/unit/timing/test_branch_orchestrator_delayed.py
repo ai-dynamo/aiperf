@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.enums import ConversationBranchMode, CreditPhase, PrerequisiteKind
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -29,26 +29,7 @@ from aiperf.common.models import (
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
-
-
-def _mk_conv(
-    cid: str,
-    turns: list[TurnMetadata],
-    branches: list[ConversationBranchInfo],
-) -> ConversationMetadata:
-    return ConversationMetadata(conversation_id=cid, turns=turns, branches=branches)
-
-
-def _mk_source(conversations: list[ConversationMetadata]):
-    cs = MagicMock()
-    cs.dataset_metadata = DatasetMetadata(
-        conversations=conversations,
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
-    cs.get_metadata.side_effect = lambda cid: next(
-        c for c in conversations if c.conversation_id == cid
-    )
-    return cs
+from tests.unit.timing._shared_helpers import _mk_conv, _mk_source
 
 
 def _mk_credit(conv_id: str, corr_id: str, turn_index: int):
@@ -226,6 +207,100 @@ async def test_delayed_join_k1_regression_via_new_architecture():
     await orch.on_child_leaf_reached("corr-c0")
     issuer.dispatch_join_turn.assert_awaited_once()
     assert orch.stats.parents_resumed == 1
+
+
+@pytest.mark.asyncio
+async def test_overlap_branch_dispatches_from_parent_start_not_return() -> None:
+    branch = ConversationBranchInfo(
+        branch_id="root:overlap",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.SPAWN,
+        start_timestamp_ms=0.0,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(
+                timestamp_ms=0.0,
+                api_time_ms=5000.0,
+                branch_ids=[branch.branch_id],
+            ),
+            TurnMetadata(
+                timestamp_ms=6000.0,
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN,
+                        branch_id=branch.branch_id,
+                    )
+                ],
+            ),
+        ],
+        [branch],
+    )
+    root.replay_scope_id = "root"
+    child = _mk_conv("child", [TurnMetadata(timestamp_ms=0.0)], [])
+    cs = _mk_source([root, child])
+    child_session = MagicMock(
+        x_correlation_id="corr-child",
+        metadata=child,
+        effective_root_correlation_id="corr-root",
+    )
+    cs.start_branch_child.return_value = child_session
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    credit = _mk_credit("root", "corr-root", 0)
+    credit.phase = CreditPhase.PROFILING
+    credit.effective_root_correlation_id = "corr-root"
+
+    await orch.on_credit_issued(credit)
+
+    issuer.dispatch_first_turn.assert_awaited_once_with(child_session)
+    assert await orch.intercept(credit) is True
+    issuer.dispatch_first_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_overlap_dispatch_skips_fork_branches() -> None:
+    """FORK branches must not dispatch at credit-issue even when their
+    start_timestamp overlaps the parent turn; they sticky-clone parent
+    context that is only complete after the declaring turn returns.
+    """
+    branch = ConversationBranchInfo(
+        branch_id="root:fork-overlap",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.FORK,
+        start_timestamp_ms=0.0,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(
+                timestamp_ms=0.0,
+                api_time_ms=5000.0,
+                branch_ids=[branch.branch_id],
+            ),
+            TurnMetadata(),
+        ],
+        [branch],
+    )
+    root.replay_scope_id = "root"
+    child = _mk_conv("child", [TurnMetadata(timestamp_ms=0.0)], [])
+    cs = _mk_source([root, child])
+    cs.start_branch_child = MagicMock()
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    credit = _mk_credit("root", "corr-root", 0)
+    credit.phase = CreditPhase.PROFILING
+    credit.effective_root_correlation_id = "corr-root"
+
+    await orch.on_credit_issued(credit)
+
+    cs.start_branch_child.assert_not_called()
+    issuer.dispatch_first_turn.assert_not_awaited()
+    assert orch._overlap_dispatched_branches == set()
 
 
 @pytest.mark.asyncio

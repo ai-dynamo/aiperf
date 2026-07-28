@@ -8,6 +8,7 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
+import os
 import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -57,6 +58,29 @@ DEFAULT_INPUT_TOKENS = 5
 DEFAULT_OUTPUT_TOKENS = 2
 
 _REAL_SLEEP = asyncio.sleep
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _hf_offline_mode():
+    """Never load a real tokenizer over the network in unit tests.
+
+    Both HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE are set: the loader's
+    forkserver tokenizer preload (``aiperf.dataset._tokenizer_preload``) and the
+    tokenizer validator's prefetch path spawn subprocesses that inherit this env
+    and bypass any in-process ``Tokenizer.from_pretrained`` patch. Mirrors the
+    integration / component_integration suites. tiktoken builtins are local and
+    unaffected; a real HF load fails fast offline instead of downloading.
+    """
+    keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    prev = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = "1"
+    yield
+    for k, v in prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(autouse=True)
@@ -285,6 +309,33 @@ def reset_random_generator() -> Generator[None, None, None]:
 
     # Reset after each test to ensure clean state
     rng.reset()
+
+
+@pytest.fixture(autouse=True)
+def _disable_weka_parallel_reconstruction(monkeypatch):
+    """Force WekaTraceLoader serial reconstruction across ALL unit tests.
+
+    Any unit test that drives ``create_dataset()`` / ``convert_to_conversations()``
+    over a weka_trace fixture with >= ``WEKA_PARALLEL_THRESHOLD`` (default 8) traces
+    triggers the parallel path, which spawns a real multiprocessing Pool. Those
+    workers load a real tokenizer via ``Tokenizer.from_pretrained`` -- but unit
+    tests stub the tokenizer with a MagicMock that doesn't survive the process
+    boundary, so the workers never produce results and ``pool.imap`` hangs forever.
+    Under ``pytest -n auto`` this wedges the whole xdist worker ("node down: Not
+    properly terminated") and the run stalls until CI's 45-minute timeout, leaving
+    orphaned pool processes. Weka-pool callers are spread across ``dataset/``,
+    ``config/``, and ``common/scenario/``, so the guard must live at the unit-test
+    root, not in a per-subdir conftest.
+
+    Uses ``monkeypatch`` rather than manual save/restore so a per-test override of
+    the same setting unwinds LIFO through the one function-scoped monkeypatch (a
+    manual ``finally`` restore racing a per-test monkeypatch of the same global
+    leaked stale values across tests under xdist sharding). Tests that specifically
+    exercise the parallel path re-enable it via their own ``monkeypatch``.
+    """
+    from aiperf.common import environment as env_mod
+
+    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
 
 
 @pytest.fixture(autouse=True)

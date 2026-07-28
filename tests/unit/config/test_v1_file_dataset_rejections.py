@@ -83,6 +83,16 @@ def _file_user(mc_jsonl: Path, *, prompt_kwargs: dict | None = None) -> CLIConfi
             "--prompt-prefix-length",
             id="prefix-prompt-length",
         ),
+        param(
+            {"conversation_turn_mean": 3},
+            "--conversation-turn-mean",
+            id="conversation-turn-mean",
+        ),
+        param(
+            {"conversation_turn_delay_mean": 1.0},
+            "--conversation-turn-delay-mean",
+            id="conversation-turn-delay-mean",
+        ),
     ],
 )  # fmt: skip
 def test_synthetic_only_flag_rejected_on_file_dataset(
@@ -136,19 +146,30 @@ def test_mooncake_trace_without_synthetic_flags_validates_cleanly(
     assert str(datasets[0].path) == str(mc_jsonl)
 
 
-def test_isl_block_size_routes_to_file_dataset_block_size(mc_jsonl: Path) -> None:
-    """AIP-1016: --isl-block-size is NOT rejected on file datasets. It routes
-    onto the flat FileDataset.block_size field (not prompts.block_size, which
-    is stripped for file datasets), overriding the loader's default_block_size
-    plugin metadata. Needed for e.g. a Mooncake-format trace recorded at 16."""
-    user = _file_user(mc_jsonl, prompt_kwargs={"prompt_input_tokens_block_size": 16})
+@pytest.mark.parametrize(
+    "extra, expected_flag_fragment",
+    [
+        param({"conversation_turn_mean": 3}, "--conversation-turn-mean", id="conv-turn-scalar"),
+        param({"conversation_turn_mean": [1, 3]}, "--conversation-turn-mean", id="conv-turn-list"),
+        param({"prompt_input_tokens_mean": 128}, "--isl", id="isl-scalar"),
+        param({"prompt_input_tokens_mean": [128, 256]}, "--isl", id="isl-list"),
+        param({"prompt_prefix_length": 20}, "--prompt-prefix-length", id="prefix"),
+    ],
+)  # fmt: skip
+def test_synthetic_only_flag_rejected_on_public_dataset(
+    extra: dict, expected_flag_fragment: str
+) -> None:
+    """Synthetic-only flags must raise a clear ValueError on a PUBLIC dataset
+    (weka_hf) too -- not silently drop (scalar) or crash with extra_forbidden
+    (magic-list) as they did when the rejection was FILE-only."""
+    from aiperf.plugin.enums import PublicDatasetType
 
-    out = build_dataset(user)
-    assert out["type"] == "file"
-    assert out["block_size"] == 16
-    # It must land on the flat field, never on a (stripped) prompts subtable.
-    assert "prompts" not in out
-
-    # Full envelope validates and preserves the override.
-    aiperf_cfg = convert_cli_to_aiperf(user)
-    assert aiperf_cfg.benchmark.datasets[0].block_size == 16
+    user = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type="chat",
+        **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+        public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS,
+        **extra,
+    )
+    with pytest.raises(ValueError, match=expected_flag_fragment):
+        build_dataset(user)

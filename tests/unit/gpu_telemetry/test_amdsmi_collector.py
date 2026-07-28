@@ -60,11 +60,20 @@ def _make_mock_amdsmi(num_gpus: int = 2) -> MagicMock:
         [{"product_name": "AMD Instinct MI300X OAM"} for _ in range(num_gpus)]
     )
 
-    # Power: 287 W for GPU 0, 218 W for GPU 1 — average_socket_power is N/A.
+    # Power: 287 W / 218 W. socket_power is the ROCm 7.0+ primary probe;
+    # current_socket_power is the MI300+ fallback; average_socket_power is N/A.
     m.amdsmi_get_power_info.side_effect = by_idx(
         [
-            {"current_socket_power": 287, "average_socket_power": "N/A"},
-            {"current_socket_power": 218, "average_socket_power": "N/A"},
+            {
+                "socket_power": 287,
+                "current_socket_power": 287,
+                "average_socket_power": "N/A",
+            },
+            {
+                "socket_power": 218,
+                "current_socket_power": 218,
+                "average_socket_power": "N/A",
+            },
         ][:num_gpus]
     )
 
@@ -413,6 +422,30 @@ class TestCollection:
         records = await initialized_collector._loop_to_thread_collect()
         for r in records:
             assert r.telemetry_data.amd_power is None
+
+    @pytest.mark.asyncio
+    async def test_power_current_socket_power_fallback(
+        self, initialized_collector, mock_amdsmi
+    ):
+        # socket_power absent (pre-ROCm 7.0) → current_socket_power is used.
+        mock_amdsmi.amdsmi_get_power_info.side_effect = lambda h, *_: {
+            "current_socket_power": 312.0,
+            "average_socket_power": "N/A",
+        }
+        records = await initialized_collector._loop_to_thread_collect()
+        assert records[0].telemetry_data.amd_power == 312.0
+
+    @pytest.mark.asyncio
+    async def test_power_average_socket_power_fallback(
+        self, initialized_collector, mock_amdsmi
+    ):
+        # socket_power and current_socket_power both absent → average_socket_power
+        # used (Navi / MI200 and older parts).
+        mock_amdsmi.amdsmi_get_power_info.side_effect = lambda h, *_: {
+            "average_socket_power": 195.0,
+        }
+        records = await initialized_collector._loop_to_thread_collect()
+        assert records[0].telemetry_data.amd_power == 195.0
 
     @pytest.mark.asyncio
     async def test_throttle_status_is_snapshot_not_accumulation(

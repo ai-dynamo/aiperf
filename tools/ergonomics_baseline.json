@@ -28,6 +28,16 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/cli_commands/turn_messages.py",
+      "turn_messages"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
       "TaskManagerMixin._background_task_loop"
     ],
@@ -45,6 +55,11 @@
       "keyword-only-args",
       "src/aiperf/dataset/agentic_code_gen/reporting/cache_explorer.py",
       "_classify_turn_blocks"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.init_turn_0"
     ],
     [
       "keyword-only-args",
@@ -187,6 +202,11 @@
       "ServerMetricsParquetExporter._collect_scalar_rows"
     ],
     [
+      "keyword-only-args",
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager.create_and_store"
+    ],
+    [
       "module-state",
       "src/aiperf/common/aiperf_logger.py",
       "_ignored_files"
@@ -230,6 +250,11 @@
       "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_config_file"
     ],
     [
       "nesting-depth",

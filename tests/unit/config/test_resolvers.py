@@ -22,6 +22,7 @@ from aiperf.config.resolution.resolvers import (
     ConfigResolverChain,
     DatasetResolver,
     GpuMetricsResolver,
+    ScenarioResolver,
     TimingResolver,
     TokenizerResolver,
     _describe_phase,
@@ -268,6 +269,42 @@ class TestArtifactDirResolver:
         ArtifactDirResolver().resolve(run)
 
         assert "user_centric-users2-qps1.0" in run.artifact_dir.name
+
+    def test_resolve_purges_stale_output_fragments(self, minimal_config, tmp_path):
+        """Stale fragment files from a prior failed run are removed at resolve time."""
+        target = tmp_path / "artifacts"
+        target.mkdir()
+        fragments_dir = target / "output_fragments"
+        fragments_dir.mkdir()
+        stale = fragments_dir / "output_fragments_old_service_id.jsonl"
+        stale.write_text('{"session_num": 999}\n')
+
+        minimal_config.artifacts.export_outputs_json = True
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run)
+
+        assert not stale.exists()
+
+    def test_resolve_skips_fragment_purge_when_export_disabled(
+        self, minimal_config, tmp_path
+    ):
+        """Fragment directory is left alone when export_outputs_json is False."""
+        target = tmp_path / "artifacts"
+        target.mkdir()
+        fragments_dir = target / "output_fragments"
+        fragments_dir.mkdir()
+        stale = fragments_dir / "output_fragments_old_service_id.jsonl"
+        stale.write_text('{"session_num": 999}\n')
+
+        minimal_config.artifacts.export_outputs_json = False
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run)
+
+        assert stale.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -730,17 +767,21 @@ class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
         assert isinstance(chain, ConfigResolverChain)
-        assert len(chain._resolvers) == 6
+        assert len(chain._resolvers) == 7
 
     def test_resolver_order(self):
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
+        # ScenarioResolver sits AFTER DatasetResolver (needs resolved
+        # dataset_types for the loader-identity check) and BEFORE TimingResolver
+        # (locks per-phase timing_mode / duration before the duration sum).
         assert types == [
             ArtifactDirResolver,
             TokenizerResolver,
             GpuMetricsResolver,
             CommConfigResolver,
             DatasetResolver,
+            ScenarioResolver,
             TimingResolver,
         ]
 

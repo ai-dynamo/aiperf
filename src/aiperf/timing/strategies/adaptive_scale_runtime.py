@@ -134,7 +134,8 @@ class AdaptiveScaleRuntimeMixin:
     def _status_for_terminal_reason(reason: str) -> str:
         if reason == "max_control_value_reached_without_saturation":
             return "incomplete"
-        if reason.startswith("assessment_failed:") or reason in {
+        if reason.startswith(("assessment_failed:", "phase_failed:")) or reason in {
+            "phase_cancelled",
             "no_sustainable_concurrency_found",
             "sustain_failed_sla_unrecoverable",
             "sustain_failed_after_recovery",

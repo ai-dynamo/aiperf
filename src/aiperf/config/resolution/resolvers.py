@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset.resolver import DatasetResolver
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ __all__ = [
     "ConfigResolverChain",
     "DatasetResolver",
     "GpuMetricsResolver",
+    "ScenarioResolver",
     "TimingResolver",
     "TokenizerResolver",
     "build_default_resolver_chain",
@@ -104,6 +106,16 @@ class ArtifactDirResolver:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         run.resolved.artifact_dir_created = True
         _logger.debug(f"Artifact directory created: {artifact_dir}")
+
+        # Purge stale output fragments from a prior failed run. Fragment files
+        # use random service IDs as suffixes, so leftovers from a crashed run
+        # would silently contaminate the next outputs.json export.
+        if cfg.artifacts.export_outputs_json:
+            fragments_dir = artifact_dir / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+            if fragments_dir.exists():
+                for stale in fragments_dir.glob("output_fragments_*.jsonl"):
+                    stale.unlink(missing_ok=True)
+                _logger.debug("Purged stale output fragments")
 
         if run.cfg.artifacts.user_files and not for_probe:
             from aiperf.config.user_files import (
@@ -331,6 +343,29 @@ class CommConfigResolver:
         )
 
 
+class ScenarioResolver:
+    """Apply the named benchmark-scenario invariant lock, if configured.
+
+    Delegates to ``aiperf.common.scenario.apply_scenario`` which reads
+    ``run.cfg.scenario``; a None scenario is a no-op. Otherwise it auto-fills
+    scenario defaults onto ``run.cfg`` (e.g. profiling-phase ``timing_mode``,
+    ``duration``, ``endpoint.streaming``, the active dataset's cache-bust
+    target), validates the hard invariants, and stores a ``ScenarioOutcome`` on
+    ``run.resolved.scenario_outcome``. Raises ``ScenarioLockError`` on a hard
+    conflict unless ``run.cfg.unsafe_override`` downgrades it to warnings.
+
+    Ordered AFTER ``DatasetResolver`` (so ``run.resolved.dataset_types`` is
+    populated for the loader-identity check) and BEFORE ``TimingResolver`` (so
+    the locked per-phase ``timing_mode`` / ``duration`` are in place before the
+    duration sum).
+    """
+
+    def resolve(self, run: BenchmarkRun) -> None:
+        from aiperf.common.scenario import apply_scenario
+
+        apply_scenario(run)
+
+
 class TimingResolver:
     """Sum phase durations (plus grace_period), validate fixed_schedule timing data requirements."""
 
@@ -383,6 +418,7 @@ def build_default_resolver_chain() -> ConfigResolverChain:
             GpuMetricsResolver(),
             CommConfigResolver(),
             DatasetResolver(),
+            ScenarioResolver(),
             TimingResolver(),
         ]
     )

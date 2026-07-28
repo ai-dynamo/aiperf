@@ -59,22 +59,26 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 
 ```json
 {
-  "schema_version": "1.0",
-  "aiperf_version": "0.11.0",
+  "schema_version": "1.1",
+  "aiperf_version": "0.12.0",
   "benchmark_id": "550e8400-e29b-41d4-a716-446655440000",
   "summary": { ... },
+  "metrics_phase": "profiling",
   "metrics": { ... },
+  "warmup_metrics": { ... },
   "input_config": { ... }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | string | Schema version for this export format (e.g., `"1.0"`) |
-| `aiperf_version` | string or null | AIPerf version that generated this export (e.g., `"0.11.0"`). `null` if version unavailable. |
+| `schema_version` | string | Schema version for this export format (e.g., `"1.1"`) |
+| `aiperf_version` | string or null | AIPerf version that generated this export (e.g., `"0.12.0"`). `null` if version unavailable. |
 | `benchmark_id` | string or null | Unique UUID identifying this benchmark run. `null` if not available. |
-| [`summary`](#summary-section) | object | Collection metadata and endpoint information |
+| [`summary`](#summary-section) | object | Collection metadata and endpoint information. `phase_time_ranges` is present with at least a `profiling` entry when the profiling window is non-degenerate; `warmup` is the optional second key. |
+| `metrics_phase` | string | Benchmark phase represented by the top-level `metrics` field. Always `"profiling"` (kept for backward compatibility). |
 | [`metrics`](#metrics-section) | object | Metrics keyed by name, each containing type info and series data |
+| `warmup_metrics` | object or absent | Same shape as `metrics`, computed only over the warmup window. Present only when a warmup phase ran. Added in schema `1.1`. |
 | `input_config` | object | Serialized user configuration used for this benchmark run |
 
 ---
@@ -104,6 +108,7 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 | `start_time` | datetime | When metrics collection started (ISO 8601) |
 | `end_time` | datetime | When metrics collection ended (ISO 8601) |
 | [`endpoint_info`](#endpoint-info) | object | Per-endpoint collection metadata |
+| `phase_time_ranges` | object or absent | Nanosecond ranges used for phase-scoped aggregation (`profiling` / `warmup`). Each value is `{start_ns, end_ns}`. Keys are `CreditPhase` string values. Warmup aggregation prefers phase-tagged scrapes (`benchmark_phase == warmup`), so the dedicated end-of-warmup scrape is included without relying on timestamp-cap arithmetic. Present when at least one non-degenerate phase window was recorded. |
 
 ### Endpoint Info
 
@@ -877,9 +882,10 @@ for series in metric["series"]:
 
 ```json
 {
-  "schema_version": "1.0",
-  "aiperf_version": "0.11.0",
+  "schema_version": "1.1",
+  "aiperf_version": "0.12.0",
   "benchmark_id": "550e8400-e29b-41d4-a716-446655440000",
+  "metrics_phase": "profiling",
   "summary": {
     "endpoints_configured": [
       "http://localhost:10000/metrics",

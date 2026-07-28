@@ -14,6 +14,7 @@ Recipe sweep keys are envelope-prefixed (``phases.profiling.<...>``).
 from __future__ import annotations
 
 import pytest
+from pytest import param
 
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -55,11 +56,6 @@ def test_concurrency_ramp_overrides_extend_grid_range():
     assert values[-1] == 64
 
 
-def test_concurrency_ramp_invalid_step_count_raises():
-    with pytest.raises(ValueError, match="steps must be >= 2"):
-        ConcurrencyRamp().expand(make_ctx(concurrency_steps=1))
-
-
 def test_concurrency_ramp_does_not_require_streaming():
     out = ConcurrencyRamp().expand(make_ctx(streaming=False))
     assert out.sweep_parameters is not None
@@ -68,24 +64,27 @@ def test_concurrency_ramp_does_not_require_streaming():
 # ---- Adversarial cases ----
 
 
-def test_concurrency_ramp_lo_equals_hi_raises():
-    with pytest.raises(ValueError, match=r"concurrency-min.*must be <"):
-        ConcurrencyRamp().expand(make_ctx(concurrency_min=10, concurrency_max=10))
-
-
-def test_concurrency_ramp_lo_greater_than_hi_raises():
-    with pytest.raises(ValueError, match=r"concurrency-min.*must be <"):
-        ConcurrencyRamp().expand(make_ctx(concurrency_min=100, concurrency_max=4))
-
-
-def test_concurrency_ramp_zero_steps_raises():
-    with pytest.raises(ValueError, match="steps must be >= 2"):
-        ConcurrencyRamp().expand(make_ctx(concurrency_steps=0))
-
-
-def test_concurrency_ramp_negative_steps_raises():
-    with pytest.raises(ValueError, match="steps must be >= 2"):
-        ConcurrencyRamp().expand(make_ctx(concurrency_steps=-3))
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        param({"concurrency_steps": 1}, "steps must be >= 2", id="steps_one"),
+        param({"concurrency_steps": 0}, "steps must be >= 2", id="steps_zero"),
+        param({"concurrency_steps": -3}, "steps must be >= 2", id="steps_negative"),
+        param(
+            {"concurrency_min": 10, "concurrency_max": 10},
+            r"concurrency-min.*must be <",
+            id="lo_eq_hi",
+        ),
+        param(
+            {"concurrency_min": 100, "concurrency_max": 4},
+            r"concurrency-min.*must be <",
+            id="lo_gt_hi",
+        ),
+    ],
+)  # fmt: skip
+def test_concurrency_ramp_invalid_grid_raises(overrides, match):
+    with pytest.raises(ValueError, match=match):
+        ConcurrencyRamp().expand(make_ctx(**overrides))
 
 
 def test_concurrency_ramp_unknown_override_keys_silently_ignored():

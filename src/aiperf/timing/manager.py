@@ -140,6 +140,7 @@ class TimingManager(BaseComponentService):
             phase_publisher=self.phase_publisher,
             credit_router=self.sticky_router,
             dataset_metadata=self._dataset_metadata,
+            run=self.run,
         )
         await self._phase_orchestrator.initialize()
 

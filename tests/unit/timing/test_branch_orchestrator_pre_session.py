@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -125,7 +125,9 @@ async def test_pre_session_background_spawn_dispatches_before_turn_0():
 
     await orch.dispatch_pre_session_branches()
 
-    cs.start_pre_session_child.assert_called_once_with("early")
+    cs.start_pre_session_child.assert_called_once_with(
+        "early", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
+    )
     issuer.dispatch_first_turn.assert_awaited_once()
     # Parent has NOT had any credit; no branch_child dispatch happened.
     cs.start_branch_child.assert_not_called()
@@ -197,7 +199,9 @@ async def test_mixed_pre_and_post_branches_on_turn_0_no_double_dispatch():
     # Pre-session dispatch: only "early" should start.
     await orch.dispatch_pre_session_branches()
     assert cs.start_pre_session_child.call_count == 1
-    cs.start_pre_session_child.assert_called_once_with("early")
+    cs.start_pre_session_child.assert_called_once_with(
+        "early", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
+    )
     assert issuer.dispatch_first_turn.await_count == 1
 
     # Parent's turn 0 returns. intercept should fire post_child via

@@ -39,6 +39,7 @@ from pydantic import AfterValidator, BeforeValidator, Field
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AudioFormat,
+    CacheBustTarget,
     ConnectionReuseStrategy,
     ConvergenceStat,
     ExportLevel,
@@ -47,6 +48,7 @@ from aiperf.common.enums import (
     ImageSource,
     ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
+    PromptCorpus,
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
@@ -556,6 +558,19 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    hf_weka_dataset: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). "
+            "Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other "
+            "`--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.",
+        ),
+        CLIParameter(
+            name=("--hf-weka-dataset",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
     dataset_filters: Annotated[
         list[str],
         Field(
@@ -587,6 +602,54 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    ignore_trace_delays: Annotated[
+        bool,
+        Field(
+            description="Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, "
+            "Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back "
+            "instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode "
+            "before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).",
+        ),
+        CLIParameter(
+            name=("--ignore-trace-delays",),
+            group=Groups.INPUT,
+        ),
+    ] = False
+
+    use_think_time_only: Annotated[
+        bool,
+        Field(
+            description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) "
+            "instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded "
+            "`api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta "
+            "for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.",
+        ),
+        CLIParameter(
+            name=("--use-think-time-only",),
+            group=Groups.INPUT,
+        ),
+    ] = False
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Maximum peak prompt+output context length (tokens) per Weka root "
+                "trace. Weka loaders (--custom-dataset-type weka_trace or a weka "
+                "--public-dataset) drop whole traces whose *recorded* peak exceeds "
+                "this ceiling at load time (filter-then-cap before "
+                "--num-dataset-entries). Not a DatasetManager tokenize filter; "
+                "rejected for non-Weka formats."
+            ),
+        ),
+        CLIParameter(
+            name=("--max-context-length",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
     dataset_sampling_strategy: Annotated[
         DatasetSamplingStrategy | None,
         Field(
@@ -601,6 +664,21 @@ class CLIConfig(BaseConfig):
             group=Groups.INPUT,
         ),
     ] = None
+
+    allow_dataset_wrap: Annotated[
+        bool,
+        Field(
+            description="Allow weka/agentic replay to wrap (reuse distinct eligible "
+            "traces across concurrency lanes) when concurrency exceeds the loaded "
+            "pool. Defaults to False: over-subscription fails unless wrapping is "
+            "explicitly enabled.",
+        ),
+        CLIParameter(
+            name=("--allow-dataset-wrap",),
+            group=Groups.INPUT,
+            negative="--no-allow-dataset-wrap",
+        ),
+    ] = False
 
     random_seed: Annotated[
         int | None,
@@ -1020,6 +1098,42 @@ class CLIConfig(BaseConfig):
             group=Groups.PROMPT,
         ),
     ] = 1
+
+    prompt_corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            description="Source corpus for synthetic prompt text generation. "
+            "'sonnet' uses Shakespeare sonnets. "
+            "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
+            "Honored only for synthesized content (synthetic datasets and count/hash-id trace loaders); "
+            "verbatim formats ignore it. "
+            "When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; "
+            "agentic-coding loaders such as weka_trace default to 'coding').",
+        ),
+        CLIParameter(
+            name=("--prompt-corpus",),
+            group=Groups.PROMPT,
+        ),
+    ] = None
+
+    ##############################################################################
+    # Cache Bust
+    ##############################################################################
+    cache_bust: Annotated[
+        CacheBustTarget,
+        Field(
+            description=(
+                "Where (and how) to inject a per-conversation cache-bust marker. "
+                "Prefix variants prepend at token 0 (most aggressive); "
+                "suffix variants append after existing content. "
+                "'none' disables the feature (default)."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust",),
+            group=Groups.CACHE_BUST,
+        ),
+    ] = CacheBustTarget.NONE
 
     ##############################################################################
     # Prefix Prompt
@@ -1790,7 +1904,12 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.",
+            description=(
+                "Maximum output sequence length cap for top-level (parent) turns. "
+                "Turns with output_length > max_osl are capped to max_osl. "
+                "Subagent child turns are intentionally uncapped so their decode "
+                "load stays faithful; flat-chain sidecars still honor the cap."
+            ),
         ),
         CLIParameter(name=("--synthesis-max-osl",), group=Groups.SYNTHESIS),
     ] = None
@@ -1978,6 +2097,131 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    failed_request_threshold: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Abort the run early when (failed_records / total_records) exceeds this "
+            "ratio. Default None disables the check. Only PROFILING-phase records "
+            "count toward the ratio. A grace floor of max(concurrency, 10) records "
+            "must accumulate before the check is armed, so a single early failure "
+            "cannot kill the run. When the threshold is exceeded a "
+            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
+            "normal cancel path, partial results are still aggregated, and the run "
+            "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
+            "in record_processor_service so the rate measures real failures only.",
+        ),
+        CLIParameter(
+            name=("--failed-request-threshold",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    trajectory_start_min_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
+            "position within each trajectory, expressed as a fraction of the "
+            "trace's total turn count. Sampled per trajectory at trajectory-build "
+            "time; deterministic given --random-seed.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-min-ratio",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = 0.25
+
+    trajectory_start_max_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="AGENTIC_REPLAY only: upper bound (inclusive) on the random start "
+            "position within each trajectory, expressed as a fraction of the "
+            "trace's total turn count. The effective per-trace ceiling is "
+            "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
+            "after warmup.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-max-ratio",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = 0.75
+
+    burst_phase_starts: Annotated[
+        bool,
+        Field(
+            description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
+            "PROFILING-start dispatches into synchronized bursts instead of "
+            "spreading them by each request's recorded offset from t*. By "
+            "default (False) the phase starts are SPREAD: WARMUP requests are "
+            "aligned globally so every trajectory reaches its t* at the same "
+            "instant (the warmup end), and each lane's first PROFILING request "
+            "waits out its recorded gap after t* -- reproducing the recorded "
+            "arrival pattern at both phase boundaries. The rest of the replay "
+            "(inter-turn delays) is timing-faithful regardless of this flag; "
+            "it governs ONLY the burst-vs-spread of the two phase starts. Pass "
+            "--burst-phase-starts to fire each phase's first requests together "
+            "(faster concurrency ramp, synchronized start), e.g. for a "
+            "throughput-oriented run rather than a faithful arrival replay.",
+        ),
+        CLIParameter(
+            name=("--burst-phase-starts",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = False
+
+    trace_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
+            "For Weka trace replay, AIPerf looks at all parent and subagent request "
+            "submission timestamps within one root trace, compresses long gaps between "
+            "consecutive request submissions, and derives turn delays from the "
+            "compressed per-trace timeline. Original request api_time values are not "
+            "used to decide these idle gaps. When set for Weka, this takes precedence over "
+            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
+            "delays are not separately capped. Defaults to None (no per-trace "
+            "idle-gap compression).",
+        ),
+        CLIParameter(
+            name=("--trace-idle-gap-cap-seconds",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    ##############################################################################
+    # Scenario
+    ##############################################################################
+    scenario: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
+            "invariants raise ScenarioLockError at startup unless "
+            "--unsafe-override is also passed. Distinct from the sweep "
+            "``scenarios`` strategy (hand-picked named runs).",
+        ),
+        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
+    ] = None
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the aggregate output. No-op without "
+            "--scenario.",
+        ),
+        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
+    ] = False
+
     ##############################################################################
     # Warmup
     ##############################################################################
@@ -2006,6 +2250,40 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Additional agentic replay warmup duration in seconds. "
+            "After the normal snapshot warmup drains, AIPerf continues the live "
+            "trajectories without recorded idle delays and with one-token outputs, "
+            "then drains and resumes profiling from the resulting trajectory state "
+            "using each live stream's residual next-turn delay.",
+        ),
+        CLIParameter(
+            name=("--agentic-cache-warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    agentic_warmup_grace_period: Annotated[
+        float | None,
+        Field(
+            ge=0,
+            description="AGENTIC_REPLAY only: grace period in seconds the "
+            "auto-synthesized warmup barrier waits for in-flight priming requests "
+            "after the warmup burst sends. The agentic warmup is synthesized from "
+            "the profiling phase rather than a user-declared warmup phase, so it "
+            "does NOT honor `--warmup-grace-period` (which requires "
+            "`--warmup-duration`). If not set, the warmup barrier waits "
+            "indefinitely until every primed trajectory returns.",
+        ),
+        CLIParameter(
+            name=("--agentic-warmup-grace-period",),
             group=Groups.WARMUP,
         ),
     ] = None
@@ -2292,6 +2570,21 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--plot-required",),
+            group=Groups.OUTPUT,
+        ),
+    ] = False
+
+    export_outputs_json: Annotated[
+        bool,
+        Field(
+            description=(
+                "Export generated response text to outputs.json after the run. "
+                "When enabled, the raw generated-text payload for each request is "
+                "written to an outputs.json file in the artifact directory."
+            ),
+        ),
+        CLIParameter(
+            name=("--export-outputs-json",),
             group=Groups.OUTPUT,
         ),
     ] = False

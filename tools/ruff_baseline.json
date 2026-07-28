@@ -201,11 +201,6 @@
     ],
     [
       "ANN201",
-      "src/aiperf/post_processors/timeslice_metric_results_processor.py",
-      "TimesliceMetricResultsProcessor.get_timeslice_index"
-    ],
-    [
-      "ANN201",
       "src/aiperf/ui/dashboard/aiperf_textual_app.py",
       "AIPerfTextualApp.on_worker_update"
     ],
@@ -236,6 +231,16 @@
     ],
     [
       "C901",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
+    ],
+    [
+      "C901",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
+    ],
+    [
+      "C901",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
     ],
@@ -251,6 +256,11 @@
     ],
     [
       "C901",
+      "src/aiperf/config/flags/_converter_dataset.py",
+      "_build_prompts"
+    ],
+    [
+      "C901",
       "src/aiperf/config/flags/variant_parser.py",
       "parse_variant"
     ],
@@ -258,6 +268,16 @@
       "C901",
       "src/aiperf/config/sweep/expand.py",
       "_normalize_scenario_dataset_form"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
     ],
     [
       "C901",
@@ -276,8 +296,33 @@
     ],
     [
       "C901",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._preformat_payloads"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/generator/video.py",
       "VideoGenerator._get_ffmpeg_install_instructions"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_model_map"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_parallel"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
     ],
     [
       "C901",
@@ -501,8 +546,33 @@
     ],
     [
       "C901",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.dispatch_pre_session_branches"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._dispatch_snapshot_for_profiling"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._execute_warmup"
+    ],
+    [
+      "C901",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._snapshot_for"
     ],
     [
       "C901",
@@ -543,6 +613,11 @@
       "D103",
       "src/aiperf/common/optional_dependencies.py",
       "otel_dependency_message"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/scenario/registry.py",
+      "get_scenario"
     ],
     [
       "D103",

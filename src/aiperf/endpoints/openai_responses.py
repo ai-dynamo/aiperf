@@ -42,7 +42,9 @@ class ResponsesEndpoint(BaseEndpoint):
     # text parts contribute to the tokenisable text list, media parts
     # bump their respective counts.
     PART_TYPES: ClassVar[dict[MediaType, set[str]]] = {
-        MediaType.TEXT: {"input_text"},
+        # ``output_text`` appears on replayed assistant history items;
+        # omitting it undercounts ISL for multi-turn Responses payloads.
+        MediaType.TEXT: {"input_text", "output_text"},
         MediaType.IMAGE: {"input_image"},
         MediaType.AUDIO: {"input_audio"},
         # Responses API does not currently support video input.
@@ -150,26 +152,30 @@ class ResponsesEndpoint(BaseEndpoint):
     def build_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
         """Filter Responses-API replay-unsafe items out of raw_messages.
 
-        Same flatten-and-merge skeleton as ``BaseEndpoint.build_messages``
-        but drops output-only item types from each turn's
-        ``raw_messages`` before splicing. See
-        ``_REPLAY_UNSAFE_OUTPUT_ITEM_TYPES``.
+        Reuses ``BaseEndpoint._flatten_turns`` for the flatten-and-merge and
+        ``reset_context`` skeleton (sharing it avoids the drift that once let
+        this override silently drop the reset), supplying only the
+        Responses-specific per-item behaviour: dropping output-only item types
+        (see ``_REPLAY_UNSAFE_OUTPUT_ITEM_TYPES``) and tagging synthetic turns
+        with ``type: "message"``.
         """
-        messages: list[dict[str, Any]] = []
-        for turn in turns:
-            if turn.raw_messages:
-                for item in turn.raw_messages:
-                    if (
-                        isinstance(item, dict)
-                        and item.get("type") in self._REPLAY_UNSAFE_OUTPUT_ITEM_TYPES
-                    ):
-                        continue
-                    messages.append(item)
-                continue
+
+        def _transform(item: dict[str, Any]) -> dict[str, Any] | None:
+            if (
+                isinstance(item, dict)
+                and item.get("type") in self._REPLAY_UNSAFE_OUTPUT_ITEM_TYPES
+            ):
+                return None
+            return item
+
+        def _render(turn: Turn) -> dict[str, Any]:
             message = self._render_turn_message(turn)
             message["type"] = "message"
-            messages.append(message)
-        return messages
+            return message
+
+        return self._flatten_turns(
+            turns, transform_raw_item=_transform, render_synthetic=_render
+        )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format OpenAI Responses API request payload from RequestInfo."""

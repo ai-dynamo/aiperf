@@ -14,6 +14,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
+    PrivateAttr,
     RootModel,
     SerializationInfo,
     SerializeAsAny,
@@ -25,12 +26,13 @@ from pydantic.functional_validators import AfterValidator
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import (
+    CacheBustTarget,
     CreditPhase,
     MetricConsoleGroup,
     MetricValueTypeT,
-    SSEFieldType,
 )
 from aiperf.common.exceptions import InvalidInferenceResultError
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.dataset_models import Turn
@@ -38,12 +40,16 @@ from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult, TelemetryExportData
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
+from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
+_SSE_COMMENT_FIELD_NAME = "comment"
+_SSE_DATA_FIELD_NAME = "data"
+_SSE_DATA_PREFIX = "data:"
 
 
 class MetricResult(JsonMetricResult):
@@ -179,6 +185,36 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
     )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
+    )
     credit_issued_ns: int | None = Field(
         default=None,
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
@@ -232,6 +268,18 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
     )
+    context_overflow_skip: bool = Field(
+        default=False,
+        description="True iff the record was classified as a context-overflow event "
+        "AND the active scenario uses AGENTIC_REPLAY timing. Set on the worker side "
+        "by ``RecordProcessor`` and consumed by ``RecordsManager``: the record still "
+        "increments ``total_records`` (so the records-side counter stays in lockstep "
+        "with the credit-side ``final_requests_completed`` and the completion barrier "
+        "converges), but it is skipped from the error tracker, the per-record "
+        "accumulators (latency/throughput/etc.), and the stream exporters. Net effect: "
+        "the overflow event doesn't show up in any user-facing metric, while the run "
+        "still terminates cleanly.",
+    )
     agent_depth: int = Field(
         default=0,
         description="The DAG agent depth of the session that produced this record. 0 for root sessions, "
@@ -241,6 +289,13 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The x_correlation_id of the parent session that spawned this record's session via a "
         "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
+    )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. Stable "
+        "across the whole tree (root + every descendant subagent at any depth); equals x_correlation_id "
+        "for a root session. Groups every record of one agentic session (root + subagents) under a single "
+        "lane and lets analysis reconstruct exactly-N session-tree concurrency.",
     )
 
 
@@ -416,6 +471,13 @@ class ProfileResults(AIPerfBaseModel):
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
     )
+    context_overflow_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of AGENTIC_REPLAY context-overflow records skipped from "
+        "normal metric accumulation and stream export, retained only for "
+        "aggregate runtime submission validation.",
+    )
     phase_records: list[PhaseProfileResults] | None = Field(
         default=None,
         description="Internal per-phase metric summaries used for phase artifacts.",
@@ -503,7 +565,7 @@ class SSEField:
     was the #1 memory allocator.
     """
 
-    name: SSEFieldType | str
+    name: str
     """The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'."""
 
     value: str | None = None
@@ -611,6 +673,21 @@ class SSEMessage:
         if isinstance(raw_message, bytes):
             raw_message = raw_message.decode("utf-8")
 
+        if (
+            "\n" not in raw_message
+            and "\r" not in raw_message
+            and raw_message.startswith(_SSE_DATA_PREFIX)
+        ):
+            return cls(
+                perf_ns=perf_ns,
+                packets=[
+                    SSEField(
+                        name=_SSE_DATA_FIELD_NAME,
+                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(),
+                    )
+                ],
+            )
+
         message = cls(perf_ns=perf_ns)
         for line in raw_message.splitlines():
             if not (line := line.strip()):
@@ -643,11 +720,11 @@ class SSEMessage:
 
             if field_name == "":
                 # Field name is empty, so this is a comment
-                field_name = SSEFieldType.COMMENT
+                field_name = _SSE_COMMENT_FIELD_NAME
 
             # Spec says strip only one leading space; we strip() all whitespace
             # to normalize inconsistent servers for downstream exact comparisons
-            # (e.g. "[DONE]", SSEEventType.ERROR).
+            # (e.g. "[DONE]", "error").
             message.packets.append(
                 SSEField(name=field_name.strip(), value=value.strip())
             )
@@ -662,10 +739,13 @@ class SSEMessage:
         Returns:
             str: The combined data contents of the SSE message, joined by newlines.
         """
+        if len(self.packets) == 1 and self.packets[0].name == _SSE_DATA_FIELD_NAME:
+            return self.packets[0].value or ""
+
         return "\n".join(
             packet.value
             for packet in self.packets
-            if packet.name == SSEFieldType.DATA and packet.value
+            if packet.name == _SSE_DATA_FIELD_NAME and packet.value
         )
 
     def get_raw(self) -> Any | None:
@@ -682,7 +762,10 @@ class SSEMessage:
         """Get the JSON representation of the response."""
         data_content = None
         try:
-            data_content = self.get_text()
+            if len(self.packets) == 1 and self.packets[0].name == _SSE_DATA_FIELD_NAME:
+                data_content = self.packets[0].value
+            else:
+                data_content = self.get_text()
             if data_content in ("", None, "[DONE]"):
                 return None
             return load_json_str(data_content)
@@ -755,6 +838,36 @@ class RecordContext(AIPerfBaseModel):
         ...,
         description="The index of the turn in the conversation (if applicable).",
     )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
+    )
     x_request_id: str = Field(
         ...,
         description="The X-Request-ID header of the request. This is a unique ID for the request.",
@@ -782,6 +895,14 @@ class RecordContext(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this session via a DAG "
         "subagent fork. None for root sessions. Sourced from the originating Credit.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. "
+        "Stable across the whole tree (root + every descendant subagent at any depth); equals "
+        "x_correlation_id for a root session. Sourced from the originating Credit. Use to group "
+        "every record of one agentic session (root + subagents) and to reconstruct exactly-N "
+        "session-tree concurrency in analysis.",
+    )
 
     # --- Hoisted metric inputs (avoid shipping full Turn structs) -------------
 
@@ -803,23 +924,30 @@ class RecordContext(AIPerfBaseModel):
         "record-enrichment time so the record processor reads it directly off the record without "
         "the full ``turns`` list on the wire. None for non-ASR requests.",
     )
-
-    # --- Records-pipeline reads (read by inference_result_parser, raw_record_writer) ----
-
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations. "
-        "Read by the records pipeline (``inference_result_parser``, ``raw_record_writer_processor``) for response parsing and raw export.",
-    )
-    system_message: str | None = Field(
+    scheduled_send_ms: FiniteFloat | None = Field(
         default=None,
-        description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time. Read by the records pipeline.",
+        description="Absolute schedule timestamp (ms, schedule-relative) from the "
+        "dispatched turn's ``Turn.timestamp``. Populated at record-enrichment time "
+        "so fixed-schedule replay lag metrics can read it off the slim record "
+        "without the full ``turns`` list on the wire. None for delay-scheduled "
+        "continuation turns and non-fixed-schedule datasets.",
     )
-    user_context_message: str | None = Field(
+
+    # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
+
+    cache_bust_marker: str | None = Field(
         default=None,
-        description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time. Read by the records pipeline.",
+        description="Pre-rendered cache-bust marker text for this request, "
+        "sourced from ``Credit.cache_bust_marker``. Already includes whitespace "
+        "boundaries. None when the cache-bust feature is disabled or no marker "
+        "applied to this request. Exported in the raw JSONL so a replay tool "
+        "can correlate the inserted bytes with the originating session.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected for this request, sourced "
+        "from ``Credit.cache_bust_target``. None when cache-bust is disabled. "
+        "Pairs with ``cache_bust_marker`` for raw-JSONL provenance.",
     )
 
 
@@ -838,6 +966,29 @@ class RequestInfo(RecordContext):
     model_endpoint: ModelEndpointInfo = Field(
         ...,
         description="The model endpoint that the request was sent to.",
+    )
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request, consumed by "
+        "``format_payload`` to build the wire body. Lives on ``RequestInfo`` "
+        "(not ``RecordContext``) so the full Turn list never crosses the "
+        "ZMQ hop to the record processor — only the canonical "
+        "``payload_bytes`` travel.",
+    )
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message extracted from "
+        "``Conversation.system_message`` at request time. Consumed by the "
+        "endpoint's ``format_payload`` (or top-level ``instructions`` on the "
+        "Responses API) and inlined into ``payload_bytes`` before transport; "
+        "lives on ``RequestInfo`` because the record processor reads only "
+        "``payload_bytes`` downstream.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context message extracted "
+        "from ``Conversation.user_context_message`` at request time. Same "
+        "inlining contract as ``system_message``.",
     )
     endpoint_headers: dict[str, str] = Field(
         default_factory=dict,
@@ -873,6 +1024,11 @@ class RequestInfo(RecordContext):
 
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
+
+    _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
+    """Memoized endpoint-final parsed responses, local to this process and never
+    serialized. Populated by endpoint response processing and treated as read-only.
+    Records are single-pass; responses must be complete before memoization."""
 
     request_info: RecordContext | None = Field(
         default=None,
@@ -924,6 +1080,15 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The error details if the request failed.",
     )
+    context_overflow: bool = Field(
+        default=False,
+        description="True iff this request's error response was classified "
+        "as a server-side context-overflow event by "
+        "``aiperf.common.scenario.is_context_overflow_response`` "
+        "(InferenceX AgentX scenario, RFC section 7). Set on the worker side at "
+        "response-parsing time; consumed by the ``ContextOverflowCountMetric`` "
+        "aggregate counter.",
+    )
     credit_drop_latency: int | None = Field(
         default=None,
         description="The latency of the credit drop in nanoseconds from when it was first received by a Worker to when the inference request was actually sent. "
@@ -940,11 +1105,6 @@ class RequestRecord(AIPerfBaseModel):
         description="Comprehensive trace data captured via a trace config. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="Deep copy of the request turns. This is a copy of the turns from request_info, "
-        "made to avoid mutating the original session data when stripping multimodal content.",
     )
 
     @field_validator("trace_data", mode="before")
@@ -1262,6 +1422,12 @@ class ParsedResponse:
     metadata: dict[str, Any] = field(default_factory=dict)
     """Additional metadata from the response useful for analysis (rate limits, content filters, etc.)."""
 
+    spec_decode_stats: dict[str, Any] | None = None
+    """Raw per-choice speculative-decoding payload captured from the wire (e.g.
+    vLLM's ``choices[].speculative_decoding_stats``), or None when absent. Left
+    uninterpreted here; a ``SpecDecodeAdapterProtocol`` converts it into the
+    engine-neutral ``SpecDecodeAcceptanceRecord`` at record-assembly time."""
+
     def __post_init__(self) -> None:
         # Coerce raw dicts to Usage, since dataclass __init__ doesn't run
         # Pydantic validation like BaseModel did.
@@ -1322,6 +1488,14 @@ class ParsedResponseRecord:
 
     media_counts: MediaCounts = field(default_factory=MediaCounts)
     """Multimodal content-part counts derived once from the wire payload (images/audios/videos)."""
+
+    spec_decode_acceptance: SpecDecodeAcceptanceRecord | None = None
+    """Engine-neutral per-request speculative-decoding acceptance record, filled
+    by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
+    stats. ``None`` when: spec decode is off or the request had no verify steps
+    (no payload); the request produced multiple sequences (``n > 1``, which is
+    suppressed); no registered adapter recognized the payload; or the payload
+    was malformed and the adapter rejected it."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
@@ -1485,4 +1659,18 @@ class RawRecordInfo(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    cache_bust_marker: str | None = Field(
+        default=None,
+        description="Cache-bust marker text injected into the wire payload for "
+        "this request, copied from the originating ``Credit``. None when the "
+        "cache-bust feature is disabled. Surfaced here so raw-JSONL consumers "
+        "can correlate inserted bytes with the originating session without "
+        "re-parsing ``payload``.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected (``system_prefix``, "
+        "``system_suffix``, ``first_turn_prefix``, or ``first_turn_suffix``). "
+        "None when cache-bust is disabled.",
     )

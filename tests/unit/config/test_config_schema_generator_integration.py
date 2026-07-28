@@ -430,6 +430,68 @@ def test_generated_schema_rejects_user_centric_rate_series() -> None:
             ),
             id="compact-adaptive-sla",
         ),
+        param(
+            _minimal_benchmark_config(
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 600,
+                        "concurrency": 200,
+                        "adaptiveScale": {
+                            "enabled": True,
+                            "control": {
+                                "variable": "concurrency",
+                                "min": 20,
+                                "max": 200,
+                            },
+                            "assessmentPeriod": 30,
+                            "sustainDuration": 120,
+                            "sla": {"request_latency": {"p95": {"le": 30000}}},
+                        },
+                    }
+                ]
+            ),
+            id="nested-adaptive-scale",
+        ),
+        param(
+            _minimal_benchmark_config(
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 600,
+                        "concurrency": 200,
+                        "adaptive_scale": {
+                            "enabled": True,
+                            "control": {
+                                "variable": "concurrency",
+                                "min": 20,
+                                "max": 200,
+                            },
+                            "assessment_period": 30,
+                            "sustain_duration": 120,
+                            "sla": {"request_latency": {"p95": {"le": 30000}}},
+                        },
+                    }
+                ]
+            ),
+            id="nested-adaptive-scale-snake-case",
+        ),
+        param(
+            _minimal_benchmark_config(
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "fixed_schedule",
+                        "requests": 1,
+                        "duration": 10,
+                        "adaptive_scale": {"enabled": False},
+                    }
+                ]
+            ),
+            id="fixed-schedule-disabled-adaptive-scale-block",
+        ),
     ],
 )  # fmt: skip
 def test_generated_schema_accepts_runtime_normalization_special_cases(
@@ -444,6 +506,206 @@ def test_generated_schema_accepts_runtime_normalization_special_cases(
     AIPerfConfig.model_validate(copy.deepcopy(config))
 
     _assert_schema_accepts(schema, config)
+
+
+def test_generated_schema_accepts_nested_adaptive_scale_numeric_templates() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": True,
+                    "control": {
+                        "variable": "concurrency",
+                        "min": "${ADAPTIVE_MIN:1}",
+                        "max": "{{ adaptive_max }}",
+                    },
+                    "assessmentPeriod": "${ADAPTIVE_WINDOW:30}",
+                    "minCompletedRequests": "{{ min_completed }}",
+                    "sustainDuration": "${ADAPTIVE_SUSTAIN:120}",
+                    "strategy": {
+                        "type": "ramp_until_fail",
+                        "baseStep": "{{ base_step }}",
+                        "maxStepMultiplier": "${MAX_STEP_MULTIPLIER:2}",
+                        "stepPercent": "{{ step_percent }}",
+                    },
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    _assert_schema_accepts(schema, config)
+
+
+def test_generated_schema_accepts_nested_adaptive_scale_string_enabled() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": "false",
+                    "sustainDuration": 120,
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    AIPerfConfig.model_validate(copy.deepcopy(config))
+    _assert_schema_accepts(schema, config)
+
+
+def test_generated_schema_rejects_nested_adaptive_scale_alias_invalid_bounds() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": True,
+                    "minConcurrency": 0,
+                    "maxConcurrency": 0,
+                    "sustainDuration": 120,
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+    assert _schema_error_messages(schema, config)
+
+
+def test_generated_schema_rejects_nested_adaptive_scale_invalid_bounds() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": True,
+                    "control": {"variable": "concurrency", "min": 0, "max": 0},
+                    "assessmentPeriod": 0,
+                    "minCompletedRequests": 0,
+                    "sustainDuration": 0,
+                    "strategy": {
+                        "type": "ramp_until_fail",
+                        "baseStep": 0,
+                        "maxStepMultiplier": 0,
+                        "stepPercent": 0,
+                    },
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    messages = _schema_error_messages(schema, config)
+    assert messages
+    assert any("not valid under any of the given schemas" in msg for msg in messages)
+
+
+def test_generated_schema_rejects_nested_adaptive_scale_unknown_keys() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": {
+                    "enabled": True,
+                    "typo": 1,
+                    "control": {"variable": "concurrency", "min": 1, "max": 200},
+                    "sustain_duration": 120,
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError, match="unsupported field"):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+    assert _schema_error_messages(schema, config)
+
+
+def test_config_rejects_adaptive_search_with_adaptive_scale_phase() -> None:
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": {
+                    "enabled": True,
+                    "control": {"variable": "concurrency", "min": 20, "max": 200},
+                    "sustain_duration": 120,
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ],
+    )
+    config["sweep"] = {
+        "type": "adaptive_search",
+        "search_space": [
+            {
+                "path": "phases.profiling.concurrency",
+                "lo": 1,
+                "hi": 1000,
+                "kind": "int",
+            }
+        ],
+        "objectives": [
+            {
+                "metric": "output_token_throughput",
+                "stat": "avg",
+                "direction": "maximize",
+            }
+        ],
+        "max_iterations": 6,
+    }
+
+    with pytest.raises(ValidationError, match="adaptive_search sweeps cannot"):
+        AIPerfConfig.model_validate(config)
+
+
+def test_generated_schema_rejects_fixed_schedule_adaptive_scale() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "fixed",
+                "type": "fixed_schedule",
+                "requests": 1,
+                "duration": 10,
+                "adaptiveScale": True,
+                "adaptiveSustainDuration": 5,
+                "sla": {"request_latency": {"p95": {"le": 30000}}},
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError, match="fixed_schedule"):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+    assert _schema_error_messages(schema, config)
 
 
 @pytest.mark.parametrize(

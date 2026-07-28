@@ -13,7 +13,11 @@ from aiperf.common.constants import (
     NANOS_PER_MILLIS,
     NANOS_PER_SECOND,
 )
-from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
+from aiperf.common.enums import (
+    CreditPhase,
+    PrometheusMetricType,
+    ServerMetricsFormat,
+)
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models import MetricResult
@@ -21,6 +25,7 @@ from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
     HistogramMetricData,
+    MetricSample,
     ServerMetricsEndpointInfo,
     ServerMetricsEndpointSummary,
     ServerMetricsRecord,
@@ -33,6 +38,8 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.server_metrics.export_stats import compute_stats
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import (
+    HistogramTimeSeries,
+    ScalarTimeSeries,
     ServerMetricsHierarchy,
     ServerMetricsTimeSeries,
 )
@@ -99,6 +106,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._slice_duration: float | None = self.run.cfg.artifacts.slice_duration
         # Lightweight timestamp storage for query_time_range() (analyzer support)
         self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
+        # Latest WARMUP-tagged scrape timestamp. The end-of-warmup scrape is
+        # captured after the warmup CREDIT_PHASE_COMPLETE message, so it lands
+        # strictly after warmup_end_ns and would otherwise be excluded from
+        # warmup aggregation.
+        self._last_warmup_record_ns: int | None = None
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -118,6 +130,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
         self._timestamps_ns.append(record.timestamp_ns)
+        if record.benchmark_phase == CreditPhase.WARMUP:
+            self._last_warmup_record_ns = max(
+                self._last_warmup_record_ns or 0, record.timestamp_ns
+            )
         self._server_metrics_hierarchy.add_record(record)
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
@@ -125,7 +141,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         await self.process_server_metrics_record(record)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
-        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        """Return a boolean mask where True marks records in ``[start_ns, end_ns)``.
+
+        Half-open by design to match ``AccumulatorProtocol.query_time_range``
+        and the metrics accumulator. Distinct from per-series
+        ``get_time_mask`` / ``get_indices_for_filter``, which use inclusive
+        ``[start_ns, end_ns]`` for Prometheus sample windows.
+        """
         if len(self._timestamps_ns) == 0:
             return np.array([], dtype=bool)
         ts = self._timestamps_ns.data
@@ -141,6 +163,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         Reads the profiling window from ``ctx.start_ns/ctx.end_ns`` (excludes
         warmup; reference points before start_ns drive counter/histogram deltas)
         and the warmup window from ``ctx.warmup_start_ns/ctx.warmup_end_ns``.
+        Exported ``warmup_end_ns`` is the aggregation window end (may extend
+        past the credit-phase complete timestamp to include the end-of-warmup
+        scrape) so ``phase_time_ranges["warmup"]`` matches
+        ``warmup_endpoint_summaries``.
 
         Returns:
             ServerMetricsResults containing endpoint summaries with computed statistics,
@@ -161,24 +187,46 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         if not self._server_metrics_hierarchy.endpoints:
             return None
 
-        endpoint_summaries = self._compute_endpoint_summaries(
-            start_ns,
-            end_ns,
+        endpoint_summaries = self._compute_phase_endpoint_summaries(
+            CreditPhase.PROFILING,
             self._slice_duration,
             include_final_collection=not ctx.is_phase_scoped,
         )
+        if not endpoint_summaries:
+            endpoint_summaries = self._compute_endpoint_summaries(
+                start_ns,
+                end_ns,
+                self._slice_duration,
+                include_final_collection=not ctx.is_phase_scoped,
+            )
         warmup_endpoint_summaries = None
+        # Prefer a single consistent end for aggregation + export
+        # (phase_time_ranges["warmup"]): extend past credit-phase complete to
+        # include the dedicated end-of-warmup scrape when present.
+        warmup_summary_end_ns = warmup_end_ns
+        if self._last_warmup_record_ns is not None:
+            warmup_summary_end_ns = (
+                self._last_warmup_record_ns
+                if warmup_end_ns is None
+                else max(warmup_end_ns, self._last_warmup_record_ns)
+            )
         if (
             warmup_start_ns is not None
             and warmup_end_ns is not None
             and warmup_start_ns < warmup_end_ns
         ):
-            warmup_endpoint_summaries = self._compute_endpoint_summaries(
-                warmup_start_ns,
-                warmup_end_ns,
+            warmup_endpoint_summaries = self._compute_phase_endpoint_summaries(
+                CreditPhase.WARMUP,
                 self._slice_duration,
                 include_final_collection=False,
             )
+            if not warmup_endpoint_summaries:
+                warmup_endpoint_summaries = self._compute_endpoint_summaries(
+                    warmup_start_ns,
+                    warmup_summary_end_ns,
+                    self._slice_duration,
+                    include_final_collection=False,
+                )
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
         results = ServerMetricsResults(
@@ -191,12 +239,29 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             endpoints_successful=endpoint_list,
             error_summary=error_summary or [],
             warmup_start_ns=warmup_start_ns,
-            warmup_end_ns=warmup_end_ns,
+            warmup_end_ns=warmup_summary_end_ns,
         )
 
         # Export Parquet file directly from accumulator if format is enabled.
-        # Widen the export window to include the final per-endpoint collection,
-        # which may land after end_ns (e.g. a scrape completing post-benchmark).
+        # The Parquet is a single whole-run artifact: skip phase-scoped exports
+        # (phase_index set) so per-phase windows don't overwrite it in a
+        # multi-phase run. Mirrors the multi-phase guard from main (#1150).
+        if ctx.phase_index is None:
+            await self._export_parquet_widened(start_ns, end_ns)
+
+        return results
+
+    async def _export_parquet_widened(self, start_ns: int, end_ns: int) -> None:
+        """Export the Parquet artifact over the collection-widened window.
+
+        Widens the window to include the final per-endpoint collection, which
+        may land after end_ns (e.g. a scrape completing post-benchmark). Skips
+        degenerate windows: TimeRangeFilter rejects start >= end, and a raise
+        here propagates out of export_results and is swallowed into a None
+        result (records_manager _publish_server_metrics_results), losing ALL
+        server metrics. Mirrors the guards at the per-endpoint / warmup /
+        json_exporter sites.
+        """
         export_end_ns = max(
             end_ns,
             *(
@@ -204,17 +269,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 for time_series in self._server_metrics_hierarchy.endpoints.values()
             ),
         )
-        # Skip degenerate windows: TimeRangeFilter rejects start >= end, and a
-        # raise here propagates out of export_results and is swallowed into a
-        # None result (records_manager _publish_server_metrics_results), losing
-        # ALL server metrics. Mirrors the guards at the per-endpoint / warmup /
-        # json_exporter sites.
-        if ctx.phase_index is None and start_ns < export_end_ns:
+        if start_ns < export_end_ns:
             await self._export_parquet_if_enabled(
                 TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
             )
-
-        return results
 
     def _compute_endpoint_summaries(
         self,
@@ -308,6 +366,165 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     )
 
             info_filter = None if include_final_collection else time_filter
+            summaries[endpoint_display] = ServerMetricsEndpointSummary(
+                endpoint_url=endpoint_url,
+                info=self._compute_endpoint_info(time_series, info_filter),
+                metrics=metrics,
+            )
+
+        return summaries
+
+    def _build_phase_filtered_scalar_series(
+        self,
+        data: ScalarTimeSeries,
+        phase: CreditPhase,
+    ) -> tuple[ScalarTimeSeries, int, int] | None:
+        phase_indices = np.flatnonzero(data.get_phase_mask(phase))
+        if len(phase_indices) == 0:
+            return None
+
+        filtered = ScalarTimeSeries()
+        first_idx = int(phase_indices[0])
+        if first_idx > 0:
+            filtered.append(
+                int(data.timestamps[first_idx - 1]),
+                MetricSample(value=float(data.values[first_idx - 1])),
+            )
+        for idx in phase_indices:
+            filtered.append(
+                int(data.timestamps[idx]),
+                MetricSample(value=float(data.values[idx])),
+            )
+        return (
+            filtered,
+            int(data.timestamps[first_idx]),
+            int(data.timestamps[phase_indices[-1]]),
+        )
+
+    def _build_phase_filtered_histogram_series(
+        self,
+        data: HistogramTimeSeries,
+        phase: CreditPhase,
+    ) -> tuple[HistogramTimeSeries, int, int] | None:
+        phase_indices = np.flatnonzero(data.get_phase_mask(phase))
+        if len(phase_indices) == 0:
+            return None
+
+        filtered = HistogramTimeSeries()
+        first_idx = int(phase_indices[0])
+
+        def _append(idx: int) -> None:
+            filtered.append(
+                int(data.timestamps[idx]),
+                MetricSample(
+                    buckets={k: float(v) for k, v in data.get_bucket_dict(idx).items()},
+                    sum=float(data.sums[idx]),
+                    count=float(data.counts[idx]),
+                ),
+            )
+
+        if first_idx > 0:
+            _append(first_idx - 1)
+        for idx in phase_indices:
+            _append(int(idx))
+        return (
+            filtered,
+            int(data.timestamps[first_idx]),
+            int(data.timestamps[phase_indices[-1]]),
+        )
+
+    def _compute_phase_endpoint_summaries(
+        self,
+        phase: CreditPhase,
+        slice_duration: float | None = None,
+        *,
+        include_final_collection: bool,
+    ) -> dict[str, ServerMetricsEndpointSummary]:
+        """Compute per-endpoint summaries from samples whose record phase matches ``phase``."""
+        summaries: dict[str, ServerMetricsEndpointSummary] = {}
+
+        for (
+            endpoint_url,
+            time_series,
+        ) in self._server_metrics_hierarchy.endpoints.items():
+            endpoint_display = normalize_endpoint_display(endpoint_url)
+            metrics: dict[
+                str,
+                GaugeMetricData
+                | CounterMetricData
+                | HistogramMetricData
+                | UnknownMetricData,
+            ] = {}
+            phase_start_ns: int | None = None
+            phase_end_ns: int | None = None
+
+            for metric_key, metric_entry in time_series.metrics.items():
+                filtered_series: (
+                    tuple[ScalarTimeSeries, int, int]
+                    | tuple[HistogramTimeSeries, int, int]
+                    | None
+                )
+                if isinstance(metric_entry.data, ScalarTimeSeries):
+                    filtered_series = self._build_phase_filtered_scalar_series(
+                        metric_entry.data,
+                        phase,
+                    )
+                else:
+                    filtered_series = self._build_phase_filtered_histogram_series(
+                        metric_entry.data,
+                        phase,
+                    )
+                if filtered_series is None:
+                    continue
+
+                series_data, start_ns, end_ns = filtered_series
+                phase_start_ns = (
+                    start_ns
+                    if phase_start_ns is None
+                    else min(phase_start_ns, start_ns)
+                )
+                phase_end_ns = (
+                    end_ns if phase_end_ns is None else max(phase_end_ns, end_ns)
+                )
+                time_filter = TimeRangeFilter(
+                    start_ns=start_ns,
+                    end_ns=end_ns if end_ns > start_ns else start_ns + 1,
+                )
+                series_stats = compute_stats(
+                    metric_entry.metric_type,
+                    series_data,
+                    time_filter,
+                    labels=metric_key.labels_dict,
+                    slice_duration=slice_duration,
+                )
+                if series_stats is None:
+                    continue
+
+                base_name = metric_key.name
+                if base_name in metrics:
+                    metrics[base_name].series.append(series_stats)
+                    continue
+
+                DataClass = _METRIC_DATA_CLASSES.get(metric_entry.metric_type)
+                if DataClass is not None:
+                    metrics[base_name] = DataClass(
+                        description=metric_entry.description,
+                        series=[series_stats],
+                    )
+
+            if not metrics:
+                continue
+
+            info_filter = None
+            if not include_final_collection and phase_start_ns is not None:
+                info_filter = TimeRangeFilter(
+                    start_ns=phase_start_ns,
+                    end_ns=(
+                        phase_end_ns
+                        if phase_end_ns is not None and phase_end_ns > phase_start_ns
+                        else phase_start_ns + 1
+                    ),
+                )
             summaries[endpoint_display] = ServerMetricsEndpointSummary(
                 endpoint_url=endpoint_url,
                 info=self._compute_endpoint_info(time_series, info_filter),
@@ -679,7 +896,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
     @staticmethod
     def _to_pct(fraction: float) -> float:
-        """Normalize a 0-1 gauge fraction to a 0-100 percentage."""
+        """Normalize a Prometheus ratio gauge to a 0-100 percentage.
+
+        Values in ``[0, 1]`` are treated as ratios (e.g. SGLang
+        ``sglang:cache_hit_rate``, ``sglang:token_usage``) and scaled by 100.
+        Values ``> 1`` are treated as already-percent (some vLLM ``*_perc``
+        series emit 0-100). A server that encoded a sub-1% reading as an
+        already-percent value in ``(0, 1]`` (e.g. ``0.8`` meaning 0.8%) cannot
+        be distinguished from an 80% ratio and will be scaled — prefer
+        counter-pair sources when available.
+        """
         return fraction * 100.0 if fraction <= 1.0 else fraction
 
     @staticmethod

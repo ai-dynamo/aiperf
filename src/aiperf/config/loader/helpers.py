@@ -18,7 +18,9 @@ from aiperf.config.comm.build import build_comm_config
 if TYPE_CHECKING:
     from aiperf.common.enums import (
         AIPerfLogLevel,
+        CacheBustTarget,
         GPUTelemetryMode,
+        PromptCorpus,
         ServerMetricsFormat,
     )
     from aiperf.config.comm import BaseZMQCommunicationConfig
@@ -73,6 +75,39 @@ class BenchmarkHelpersMixin:
             for phase in self.phases  # type: ignore[attr-defined]
             if phase.kind == "warmup"
         ]
+
+    def get_cache_bust_target(self) -> CacheBustTarget:
+        """Resolve the active dataset's cache-bust target (single engine read).
+
+        The DAG/agentic engine threads this one value into the
+        ``BranchOrchestrator`` / conversation source. Home differs by dataset
+        kind:
+
+        - synthetic: ``default_dataset.prompts.cache_bust.target`` (guard a
+          ``None`` ``prompts`` -> NONE);
+        - file: ``default_dataset.cache_bust.target``;
+        - otherwise NONE.
+        """
+        from aiperf.common.enums import CacheBustTarget
+
+        dataset = self.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        if prompts is not None:
+            cache_bust = getattr(prompts, "cache_bust", None)
+            if cache_bust is not None:
+                return cache_bust.target
+        cache_bust = getattr(dataset, "cache_bust", None)
+        if cache_bust is not None:
+            return cache_bust.target
+        return CacheBustTarget.NONE
+
+    def get_prompt_corpus(self) -> PromptCorpus | None:
+        """Resolve the active dataset's authored ``prompts.corpus``."""
+        dataset = self.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        if prompts is None:
+            return None
+        return getattr(prompts, "corpus", None)
 
     # ==========================================================================
     # CONVENIENCE PROPERTIES

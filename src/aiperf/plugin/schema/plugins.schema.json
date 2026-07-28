@@ -146,6 +146,14 @@
         "$ref": "#/$defs/AnalyzerPlugin"
       }
     },
+    "spec_decode_adapter": {
+      "title": "Spec Decode Adapter Plugins",
+      "type": "object",
+      "description": "Spec-decode adapters read an engine's raw per-request speculative-decoding\npayload off the parsed responses and fill the engine-neutral\nSpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the\nmetrics layer. Auto-detected: adapters are tried in priority order and the\nfirst whose can_adapt() recognizes the payload wins.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SpecDecodeAdapterPlugin"
+      }
+    },
     "accuracy_grader": {
       "title": "Accuracy Grader Plugins",
       "type": "object",
@@ -657,6 +665,12 @@
               "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids (e.g. 16 for Bailian, 512 for Mooncake).",
               "title": "Default Block Size"
             },
+            "default_prompt_corpus": {
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for coding agent traces (e.g. weka_trace) override to 'coding' so reconstructed prompts resemble real tool-use content.",
+              "title": "Default Prompt Corpus",
+              "type": "string"
+            },
             "category": {
               "anyOf": [
                 {
@@ -741,6 +755,32 @@
               "default": null,
               "description": "HuggingFace dataset subset/config name. Only needed for datasets with multiple configs.",
               "title": "Hf Subset"
+            },
+            "is_trace": {
+              "default": false,
+              "description": "Whether this loader handles trace-format datasets. Trace public datasets reuse hash_ids-based prompt generation, require a tokenizer, and prefer sequential sampling. Mirrors the field of the same name on CustomDatasetLoaderMetadata so trace loaders can live in either pipeline.",
+              "title": "Is Trace",
+              "type": "boolean"
+            },
+            "default_block_size": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids.",
+              "title": "Default Block Size"
+            },
+            "default_prompt_corpus": {
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for coding agent traces override to 'coding'.",
+              "title": "Default Prompt Corpus",
+              "type": "string"
             },
             "prompt_column": {
               "anyOf": [
@@ -988,6 +1028,12 @@
               "default": false,
               "description": "Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",
               "title": "Requires Inline Media",
+              "type": "boolean"
+            },
+            "consumes_system_message": {
+              "default": false,
+              "description": "Whether endpoint sends RequestInfo.system_message on the wire (e.g. a leading system role for chat, top-level instructions for responses). When False, the multi-turn loader does not hoist a leading system turn into the conversation system_message, since it would be silently dropped.",
+              "title": "Consumes System Message",
               "type": "boolean"
             }
           },
@@ -1280,6 +1326,47 @@
       ],
       "title": "Analyzer Plugin",
       "description": "Analyzers run at summarize time and join across accumulators, reading peer\nstate from the SummaryContext to compute cross-accumulator metrics (e.g.\nenergy efficiency joins GPU telemetry to inference tokens). They store no\nrecords and declare the accumulators they require; skipped when any is absent.\nOne-to-many mapping: multiple analyzers loaded simultaneously."
+    },
+    "SpecDecodeAdapterPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Spec Decode Adapter Plugin",
+      "description": "Spec-decode adapters read an engine's raw per-request speculative-decoding\npayload off the parsed responses and fill the engine-neutral\nSpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the\nmetrics layer. Auto-detected: adapters are tried in priority order and the\nfirst whose can_adapt() recognizes the payload wins."
     },
     "AccuracyGraderPlugin": {
       "type": "object",
