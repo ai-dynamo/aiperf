@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common import random_generator as rng
@@ -102,7 +103,6 @@ class ShareGPTLoader(BasePublicDatasetLoader):
             f"Validating {self.tag} dataset and constructing conversation dataset"
         )
 
-        # Pass 1: extract all (prompt, completion) pairs per entry without tokenizing.
         all_entry_pairs: list[list[tuple[str, str]]] = []
         for entry in dataset:
             conversations = entry.get("conversations", [])
@@ -113,7 +113,6 @@ class ShareGPTLoader(BasePublicDatasetLoader):
                 self._sharegpt_prompt_completion_pairs(conversations)
             )
 
-        # Build a flat text list interleaved as [prompt0, completion0, prompt1, ...].
         # flat_pair_offset[e] is the pair index (not text index) where entry e starts.
         flat_texts: list[str] = []
         flat_pair_offset: list[int] = []
@@ -123,12 +122,11 @@ class ShareGPTLoader(BasePublicDatasetLoader):
                 flat_texts.append(prompt)
                 flat_texts.append(completion)
 
-        # Pass 2: single batch-encode call for all texts.
         all_lengths = (
-            self.tokenizer.encode_lengths_batch(flat_texts) if flat_texts else []
+            await asyncio.to_thread(self.tokenizer.encode_lengths_batch, flat_texts)
+            if flat_texts
+            else []
         )
-
-        # Pass 3: validate lengths and build Conversation objects.
         filtered_dataset = []
         skipped_entries = 0
         for entry_idx, pairs in enumerate(all_entry_pairs):

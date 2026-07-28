@@ -410,6 +410,9 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
             # Create MagicMock methods that you can assert on
             self.encode = MagicMock(side_effect=self._mock_encode)
             self.decode = MagicMock(side_effect=self._mock_decode)
+            self.encode_lengths_batch = MagicMock(
+                side_effect=self._mock_encode_lengths_batch
+            )
 
         @classmethod
         def from_pretrained(
@@ -434,7 +437,7 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
         def _mock_decode(self, token_ids, **kwargs):
             return " ".join([f"token_{t}" for t in token_ids])
 
-        def encode_lengths_batch(self, texts: list[str]) -> list[int]:
+        def _mock_encode_lengths_batch(self, texts: list[str]) -> list[int]:
             return [len(self._mock_encode(t)) for t in texts]
 
     return MockTokenizer

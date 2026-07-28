@@ -167,7 +167,7 @@ class TestShareGPTLoader:
     @pytest.mark.timeout(5)
     async def test_convert_to_conversations_uses_batch_encoding_not_sequential(
         self, sharegpt_loader: ShareGPTLoader
-    ):
+    ) -> None:
         """convert_to_conversations must call encode_lengths_batch, never per-entry encode().
 
         The ShareGPT dataset has ~90K entries. Sequential encode() calls for every
@@ -196,3 +196,4 @@ class TestShareGPTLoader:
         conversations = await sharegpt_loader.convert_to_conversations(dataset)
         assert len(conversations) == 5_000
         assert sharegpt_loader.tokenizer.encode.call_count == 0
+        assert sharegpt_loader.tokenizer.encode_lengths_batch.call_count == 1
