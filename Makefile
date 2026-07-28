@@ -148,7 +148,7 @@ check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instruct
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
 
-install: install-app install-mock-server #? install the project and mock server in editable mode.
+install: install-app install-mock-server install-mock-amdsmi #? install the project and mock server in editable mode.
 
 install-app: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]"
