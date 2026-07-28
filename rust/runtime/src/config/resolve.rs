@@ -752,11 +752,11 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // and subagent children across cell processes, breaking join gating — reject
     // it with a clear error (use `--weka-semantics graph-ir` for cellular weka).
     if inputs.system_idle_gap_cap_seconds.is_some()
-        && !matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx"))
+        && !matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx") | Some("graph-ir") | Some("graphir") | Some("graph_ir"))
     {
         anyhow::bail!(
-            "--system-idle-gap-cap-seconds requires legacy Weka / agentic_replay \
-             (set --weka-semantics legacy or --scenario inferencex-agentx-mvp)"
+            "--system-idle-gap-cap-seconds requires a Weka replay mode \
+             (set --weka-semantics legacy or graph-ir)"
         );
     }
     if matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx")) {
