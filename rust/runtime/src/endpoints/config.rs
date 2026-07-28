@@ -89,7 +89,7 @@ pub struct RawEndpointConfig {
     /// Whether the mode was supplied explicitly.
     pub wait_for_model_mode_set: bool,
     /// Emit `max_tokens` instead of `max_completion_tokens` for chat.
-    #[serde(rename = "use_legacy_max_tokens")]
+    #[serde(default, rename = "use_legacy_max_tokens")]
     pub use_legacy_max_tokens: bool,
     /// Request usage in streaming frames when supported.
     pub use_server_token_count: bool,
@@ -204,7 +204,7 @@ pub struct EndpointConfig {
     /// Whether the mode was supplied explicitly.
     pub wait_for_model_mode_set: bool,
     /// Emit `max_tokens` instead of `max_completion_tokens` for chat.
-    #[serde(rename = "use_legacy_max_tokens")]
+    #[serde(default, rename = "use_legacy_max_tokens")]
     pub use_legacy_max_tokens: bool,
     /// Request usage in streaming frames when supported.
     pub use_server_token_count: bool,
@@ -594,7 +594,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn endpoint_control_hook_paths_must_be_relative() {
+    fn resolved_endpoint_defaults_legacy_max_tokens_when_omitted() {
+        let value = serde_json::json!({
+            "urls": ["http://127.0.0.1:8000"],
+            "streaming": false,
+            "timeout_seconds": 60.0,
+            "polling_interval_seconds": 0.1,
+            "download_video_content": false,
+            "wait_for_model_timeout": 0.0,
+            "wait_for_model_interval": 5.0,
+            "wait_for_model_mode": "inference",
+            "wait_for_model_interval_set": false,
+            "wait_for_model_mode_set": false,
+            "use_server_token_count": false,
+            "headers": {},
+            "extra": null
+        });
+        let decoded: EndpointConfig = serde_json::from_value(value).expect("decode endpoint");
+        assert!(!decoded.use_legacy_max_tokens);
+    }
+
+
         let error = RawEndpointConfig {
             urls: vec!["http://127.0.0.1:8000".to_string()],
             reset_kv_cache: Some(ResetKvCacheConfig {
