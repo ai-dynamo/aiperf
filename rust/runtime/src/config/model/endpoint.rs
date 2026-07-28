@@ -28,6 +28,26 @@ pub enum ConnectionReuse {
     StickyUserSessions,
 }
 
+fn default_timeout_seconds() -> f64 {
+    21_600.0
+}
+
+fn default_connection_reuse() -> ConnectionReuse {
+    ConnectionReuse::Pooled
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_connection_limit() -> u32 {
+    1000
+}
+
+fn default_keepalive_timeout() -> f64 {
+    5.0
+}
+
 /// Readiness-probe mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,21 +104,28 @@ pub struct Endpoint {
     #[serde(rename = "type")]
     pub endpoint_type: EndpointType,
     /// Whether to request server-sent-events streaming.
+    #[serde(default)]
     pub streaming: bool,
     /// Emit `max_tokens` instead of `max_completion_tokens`.
     #[serde(default, rename = "use_legacy_max_tokens", alias = "useLegacyMaxTokens")]
     pub use_legacy_max_tokens: bool,
     /// Trust the server's reported token counts over local tokenization.
+    #[serde(default)]
     pub use_server_token_count: bool,
     /// Per-request timeout, in seconds.
+    #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: f64,
     /// Connection-reuse policy.
+    #[serde(default = "default_connection_reuse")]
     pub connection_reuse: ConnectionReuse,
     /// Verify TLS certificates.
+    #[serde(default = "default_true")]
     pub ssl_verify: bool,
     /// Maximum concurrent connections.
+    #[serde(default = "default_connection_limit")]
     pub connection_limit: u32,
     /// Idle keep-alive timeout, in seconds.
+    #[serde(default = "default_keepalive_timeout")]
     pub keepalive_timeout: f64,
     /// Download video content referenced by responses.
     pub download_video_content: bool,
