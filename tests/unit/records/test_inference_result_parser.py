@@ -44,6 +44,7 @@ def spy_tokenizer():
 def server_token_parser(setup_inference_parser):
     """Parser with server token count enabled."""
     setup_inference_parser.run.cfg.endpoint.use_server_token_count = True
+    setup_inference_parser._isl_correction_enabled = True
     return setup_inference_parser
 
 
@@ -1177,12 +1178,12 @@ class TestMTPMultiTurnISLCorrection:
         result = await parser.process_valid_record(rec1)
         assert result.token_counts.input == 2075
 
-    async def test_no_delta_accumulated_when_tokenization_disabled(
+    async def test_no_delta_accumulated_when_correction_disabled(
         self, server_token_parser, sample_turn
     ):
-        """When disable_tokenization=True, no delta is accumulated and ISL is not corrected."""
+        """When _isl_correction_enabled=False, no delta is accumulated and ISL is not corrected."""
         parser = server_token_parser
-        parser.disable_tokenization = True
+        parser._isl_correction_enabled = False
 
         rec0 = self._make_record(sample_turn, turn_index=0, is_final_turn=False)
         get_tok = AsyncMock()

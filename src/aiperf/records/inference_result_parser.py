@@ -63,6 +63,27 @@ class InferenceResultParser(CommunicationMixin):
             run.cfg, endpoint_meta
         )
         self._session_isl_corrections: dict[str, int] = {}
+        # ISL correction for MTP+synthetic-rejection multi-turn runs requires:
+        # (a) server token counts active — otherwise there is no delta to accumulate, and
+        # (b) a single RecordProcessor instance — ZMQ PUSH/PULL distributes records
+        #     round-robin, so turns for the same session can land on different instances,
+        #     making per-instance session state unreliable with multiple processors.
+        _rp_count: int | None = run.cfg.runtime.record_processors
+        self._isl_correction_enabled: bool = (
+            run.cfg.endpoint.use_server_token_count
+            and (_rp_count is None or _rp_count == 1)
+        )
+        if (
+            run.cfg.endpoint.use_server_token_count
+            and _rp_count is not None
+            and _rp_count > 1
+        ):
+            self.warning(
+                f"use_server_token_count is active with {_rp_count} record processors. "
+                "Per-session ISL correction for MTP+synthetic-rejection multi-turn runs "
+                "requires all turns in a session to be processed by the same instance. "
+                "ISL may be undercounted when record_processors > 1."
+            )
         self.debug(
             lambda: (
                 f"Created endpoint for {self.model_endpoint.endpoint.type}, "
@@ -544,7 +565,11 @@ class InferenceResultParser(CommunicationMixin):
         session_id = ctx.x_correlation_id if ctx is not None else None
         is_final_turn = ctx.is_final_turn if ctx is not None else True
 
-        if session_id and input_token_count is not None:
+        if (
+            self._isl_correction_enabled
+            and session_id
+            and input_token_count is not None
+        ):
             correction = self._session_isl_corrections.get(session_id, 0)
             if correction:
                 input_token_count = max(0, input_token_count + correction)
@@ -553,10 +578,10 @@ class InferenceResultParser(CommunicationMixin):
         # turn — there is no next turn to correct, and skipping avoids wasted
         # tokenization).
         if (
-            session_id
+            self._isl_correction_enabled
+            and session_id
             and not is_final_turn
             and output_token_count is not None
-            and not self.disable_tokenization
             and request_record.model_name is not None
         ):
             try:
@@ -580,7 +605,7 @@ class InferenceResultParser(CommunicationMixin):
                 )
 
         # Release session state after the final turn to prevent unbounded growth.
-        if session_id and is_final_turn:
+        if self._isl_correction_enabled and session_id and is_final_turn:
             self._session_isl_corrections.pop(session_id, None)
 
         token_counts = TokenCounts(
