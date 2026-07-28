@@ -522,6 +522,7 @@ Inputs, endpoints, and graph:
 - [`docs/specs/graph-runtime.md`](docs/specs/graph-runtime.md) — the Graph-IR runtime:
   deterministic async dataflow, the recorded-trace compilers, and the
   trajectory-snapshot/warmup-priming subsystem.
+- [`docs/specs/graph-ir-system-idle-gap.md`](docs/specs/graph-ir-system-idle-gap.md) — Graph-IR system idle-gap cap at the centralized node firing gate.
 - [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
   the model-independent-branching contract: pinned/recorded/weighted conditional
   branching and recorded non-LLM content resolved and folded into the flat
