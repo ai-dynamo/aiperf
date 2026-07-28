@@ -1115,7 +1115,8 @@ mod tests {
         assert_eq!(one, concurrent);
     }
 
-
+    #[test]
+    fn aiconfigurator_polynomial_matches_dynamo_perf_model() {
         // Exact curve values from the Dynamo mocker PerfModel::Polynomial
         // (perf_model.rs:272-273, :315). At inflight == 1, prefill tokens == ISL.
         let params = DryRunParams {
