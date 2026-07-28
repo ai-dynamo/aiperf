@@ -7,6 +7,10 @@
 use crate::config::model::{DispatchMode, HopRouting};
 use serde::{Deserialize, Serialize};
 
+fn default_cells() -> u32 {
+    1
+}
+
 /// The typed worker/cell runtime policy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Runtime {
@@ -18,6 +22,7 @@ pub struct Runtime {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workers_max: Option<u32>,
     /// Cellular (multi-process) cell count; `1` is the single-process path.
+    #[serde(default = "default_cells")]
     pub cells: u32,
     /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`).
     /// Absent (`None`) omits the wire field, which the runner decodes as
