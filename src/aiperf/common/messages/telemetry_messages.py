@@ -24,9 +24,9 @@ class TelemetryRecordsMessage(BaseServiceMessage):
         ...,
         description="The ID of the telemetry data collector that collected the records.",
     )
-    dcgm_url: str = Field(
+    telemetry_source_url: str = Field(
         ...,
-        description="The DCGM endpoint URL that was contacted (e.g., 'http://localhost:9400/metrics')",
+        description="Source identifier URL for the collector that produced the records",
     )
     records: list[TelemetryRecord] = Field(
         ..., description="The telemetry records collected from GPU monitoring"

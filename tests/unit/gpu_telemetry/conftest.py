@@ -76,7 +76,7 @@ def sample_telemetry_records():
     return [
         TelemetryRecord(
             timestamp_ns=1000000000,
-            dcgm_url="http://localhost:9401/metrics",
+            telemetry_source_url="http://localhost:9401/metrics",
             gpu_index=0,
             gpu_model_name="NVIDIA RTX 6000 Ada Generation",
             gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
@@ -107,7 +107,7 @@ def multi_gpu_telemetry_records():
         records.append(
             TelemetryRecord(
                 timestamp_ns=timestamp,
-                dcgm_url="http://localhost:9401/metrics",
+                telemetry_source_url="http://localhost:9401/metrics",
                 gpu_index=0,
                 gpu_model_name="NVIDIA RTX 6000 Ada Generation",
                 gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
@@ -128,7 +128,7 @@ def multi_gpu_telemetry_records():
         records.append(
             TelemetryRecord(
                 timestamp_ns=timestamp + 1000,
-                dcgm_url="http://localhost:9401/metrics",
+                telemetry_source_url="http://localhost:9401/metrics",
                 gpu_index=1,
                 gpu_model_name="NVIDIA RTX 6000 Ada Generation",
                 gpu_uuid="GPU-12345678-1234-1234-1234-123456789abc",
@@ -149,7 +149,7 @@ def multi_gpu_telemetry_records():
         records.append(
             TelemetryRecord(
                 timestamp_ns=timestamp + 2000,
-                dcgm_url="http://localhost:9401/metrics",
+                telemetry_source_url="http://localhost:9401/metrics",
                 gpu_index=2,
                 gpu_model_name="NVIDIA H100 PCIe",
                 gpu_uuid="GPU-87654321-4321-4321-4321-cba987654321",
