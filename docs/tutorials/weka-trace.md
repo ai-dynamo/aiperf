@@ -56,6 +56,24 @@ aiperf profile ... --input-file artifacts/kv-cache-tester/traces/
 aiperf profile ... --input-file artifacts/kv-cache-tester/traces/trace_0001.json
 ```
 
+### Dynamo Request Trace v1
+
+Convert a native Dynamo `dynamo.request.trace.v1` capture before loading it as a Weka dataset:
+
+```bash
+aiperf dynamo-trace /path/to/request-trace.jsonl.gz --output ./weka-traces
+
+aiperf profile \
+    --url localhost:8000 \
+    --model your-model \
+    --tokenizer your-tokenizer \
+    --input-file ./weka-traces \
+    --custom-dataset-type weka_trace \
+    --fixed-schedule
+```
+
+The converter accepts JSONL and JSONL.GZ native captures, preserves `request_received_ms` timing and `input_sequence_hashes`, and maps direct `agent_context.parent_session_id` children to Weka subagents. Request records without replay metadata, malformed records, and nested agent trees fail before any output is written.
+
 ### Filtering
 
 Standard trace filters apply:
