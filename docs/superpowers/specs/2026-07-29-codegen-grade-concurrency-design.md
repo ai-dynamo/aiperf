@@ -110,7 +110,7 @@ self._reader_task: asyncio.Task[None] | None = None
 
 Runs as a persistent `asyncio.Task` for the lifetime of the worker process.
 
-```
+```text
 loop:
     line = await proc.stdout.readline()
     if not line:                              # EOF — worker died

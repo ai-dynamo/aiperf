@@ -293,6 +293,8 @@ navigation:
     path: dev/sweep-orchestrator.md
   - page: YAML Config Future Goals
     path: dev/yaml-config-future-goals.md
+  - page: Codegen Grade Concurrency — Design Spec
+    path: superpowers/specs/2026-07-29-codegen-grade-concurrency-design.md
 
 - section: Troubleshooting
   collapsed: true

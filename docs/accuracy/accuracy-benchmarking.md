@@ -107,7 +107,7 @@ cached under `~/.cache/huggingface/datasets/`.
 `datasets<4`. `datasets>=4` dropped support for repository loading scripts
 entirely, and the loader surfaces a clear error when it detects this:
 
-```
+```text
 lcb_codegeneration: cannot load 'livecodebench/code_generation_lite'
 on `datasets>=4` — LCB still ships a repository loading script that
 `datasets>=4` no longer executes. Pin to an earlier release:
