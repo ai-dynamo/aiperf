@@ -204,10 +204,7 @@ def validate_system_message_placement(
     placement rule does not apply to them.
     """
     for sid, conv in conversations.items():
-        if (
-            getattr(conv, "context_mode", None)
-            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-        ):
+        if conv.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
             continue
         is_fork_child = sid in parent_of
         for idx, turn in enumerate(conv.turns):

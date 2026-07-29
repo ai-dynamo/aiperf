@@ -144,6 +144,8 @@ By default DAG conversations accumulate multi-turn history and thread live infer
 {"session_id": "t0-a", "context_mode": "message_array_with_responses", "turns": [ /* each turn = its own full array */ ]}
 ```
 
+Under this mode each turn may also carry its **own** system prompt (the non-root system-placement rule is waived, since each turn is its own array), and typed multimodal blocks (`image_url`, `projection_embedding`) pass through verbatim. Note that a non-standard block like `projection_embedding` requires a server that understands it; a vanilla OpenAI-compatible server will reject it.
+
 ### Per-turn shape
 
 Each turn is a flat object validated against a strict schema (`DagTurn` in `src/aiperf/dataset/loader/dag_jsonl_models.py`). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:

@@ -113,10 +113,21 @@ async def test_per_round_spine_fires_distinct_payloads_request_free(
 
     projs = [c for r in recs for c in _proj_blocks(r)]
     assert projs, "no projection_embedding block reached the wire"
-    p0 = projs[0]
-    assert p0["projection_model"] == "visual_tokens_binarized"
-    assert p0["inputs"][0]["shape"] == [512, 512]
-    assert p0["kwargs"] == {"input_dimension": [512, 512]}
+    # Full deep-equal: the typed block is preserved byte-for-byte with no field
+    # loss (projection_model / inputs[].{name,dtype,shape,data} / kwargs).
+    assert projs[0] == {
+        "type": "projection_embedding",
+        "projection_model": "visual_tokens_binarized",
+        "inputs": [
+            {
+                "name": "visual_tokens",
+                "dtype": "float32",
+                "shape": [512, 512],
+                "data": "AAAA",
+            }
+        ],
+        "kwargs": {"input_dimension": [512, 512]},
+    }
 
     # Deep-equal (acceptance criterion): a turn's wire messages == its authored
     # array exactly -- no accumulation, no field loss, no injected messages.
