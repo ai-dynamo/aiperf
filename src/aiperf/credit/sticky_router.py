@@ -281,6 +281,7 @@ class StickyCreditRouter(CommunicationMixin):
         self._on_first_token_callback: (
             Callable[[FirstToken], Awaitable[None]] | None
         ) = None
+        self._on_fatal_error: Callable[[BaseException], None] | None = None
 
         # Sticky sessions: routing_key -> _StickyEntry
         # Routes all turns of a conversation (and DAG children pinned to it) to the
@@ -316,6 +317,17 @@ class StickyCreditRouter(CommunicationMixin):
         """Set callback for credit returns (enables concurrency control)."""
         self._on_return_callback = callback
 
+    def set_fatal_error_callback(
+        self, callback: Callable[[BaseException], None]
+    ) -> None:
+        """Register a sink for fatal request-free control-node failures.
+
+        Called (synchronously) when a detached virtual-return callback raises,
+        so the failure can be recorded on the phase and surfaced instead of
+        being logged and swallowed.
+        """
+        self._on_fatal_error = callback
+
     def set_first_token_callback(
         self, callback: Callable[[FirstToken], Awaitable[None]]
     ) -> None:
@@ -350,20 +362,23 @@ class StickyCreditRouter(CommunicationMixin):
     async def _fire_virtual_return(self, credit_return: CreditReturn) -> None:
         """Deliver a synthesized no_request CreditReturn to the return consumer.
 
-        Runs as a detached task (scheduled via ``execute_async``). Exceptions are
-        logged here rather than surfacing only through asyncio's default
+        Runs as a detached task (scheduled via ``execute_async``). On failure the
+        error is logged AND forwarded to the fatal-error sink so it surfaces to
+        the phase (which re-raises it) instead of only reaching asyncio's default
         "Task exception was never retrieved" handler -- otherwise a failure on the
         spawn-dispatch path (``intercept``) would become an opaque phase-timeout
-        hang with no structured log.
+        hang with the graph silently stuck.
         """
         try:
             await self._on_return_callback("", credit_return)
-        except Exception:
+        except Exception as e:
             self.exception(
                 lambda: f"virtual no_request return callback failed for credit "
                 f"{credit_return.credit.id} (x_correlation_id="
                 f"{credit_return.credit.x_correlation_id})"
             )
+            if self._on_fatal_error is not None:
+                self._on_fatal_error(e)
 
     async def send_credit(self, credit: Credit) -> None:
         """Determine the worker based on sticky sessions or least-loaded and send the credit to the worker.

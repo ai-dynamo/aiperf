@@ -209,12 +209,24 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._credit_router.set_first_token_callback(
             self._callback_handler.on_first_token
         )
+        self._credit_router.set_fatal_error_callback(self._record_control_fatal_error)
 
         # Phase configuration
         self._ordered_phase_configs = config.phase_configs
 
         # Active phase runners (for cancellation) - multiple possible with seamless mode
         self._active_runners: list[PhaseRunner] = []
+
+    def _record_control_fatal_error(self, error: BaseException) -> None:
+        """Record a fatal request-free control-node failure on the active phase.
+
+        The callback handler's ``progress`` is the running phase's tracker (set
+        per-run), so record there; the runner re-raises it after its drain wait.
+        Guarded because a failure could in principle arrive between phases.
+        """
+        progress = getattr(self._callback_handler, "progress", None)
+        if progress is not None:
+            progress.record_fatal_error(error)
 
     @property
     def conversation_source(self) -> ConversationSource:

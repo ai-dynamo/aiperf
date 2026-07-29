@@ -1123,6 +1123,13 @@ class PhaseRunner(TaskManagerMixin):
                 stats, branch_stats=self._snapshot_branch_stats()
             )
 
+        # After the phase has finalized and released its slots (finally above),
+        # re-raise any fatal request-free control-node failure (recorded on the
+        # progress tracker via the router's fatal-error sink) so the run exits
+        # with a visible error instead of reporting the graph as complete.
+        if self._progress.fatal_error is not None:
+            raise self._progress.fatal_error
+
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
         session_released, prefill_released = (

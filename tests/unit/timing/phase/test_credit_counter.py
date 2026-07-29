@@ -350,3 +350,18 @@ class TestCreditIdUniqueness:
         assert len(set(ids)) == len(ids)
         # Only the two real credits advanced the billable counter.
         assert c.requests_sent == 2
+
+
+def test_progress_record_fatal_error_stores_and_unblocks():
+    from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
+
+    progress = PhaseProgressTracker(cfg())
+    assert progress.fatal_error is None
+    assert not progress.all_credits_returned_event.is_set()
+    err = RuntimeError("control node failed")
+    progress.record_fatal_error(err)
+    assert progress.fatal_error is err
+    assert progress.all_credits_returned_event.is_set()
+    # Only the first error is kept.
+    progress.record_fatal_error(RuntimeError("second"))
+    assert progress.fatal_error is err

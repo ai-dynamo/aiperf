@@ -1387,3 +1387,33 @@ class TestStickyCreditRouterDAGChildren:
 
         assert "root" in router._sticky_sessions
         assert router._workers["worker-A"].active_sessions == 1
+
+
+class TestVirtualReturnFatalError:
+    """A failing request-free virtual-return callback must be forwarded to the
+    fatal-error sink (so the phase surfaces it) instead of being swallowed."""
+
+    async def test_virtual_return_failure_forwarded_to_fatal_sink(
+        self, benchmark_run
+    ) -> None:
+        from aiperf.credit.messages import CreditReturn
+
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+
+        async def failing_return(worker_id, credit_return):
+            raise RuntimeError("intercept blew up")
+
+        router.set_return_callback(failing_return)
+        captured: list[BaseException] = []
+        router.set_fatal_error_callback(captured.append)
+
+        credit = make_credit(id=1, corr_id="c", turn=0, num_turns=1)
+        await router._fire_virtual_return(
+            CreditReturn(
+                credit=credit, cancelled=False, error=None, first_token_sent=False
+            )
+        )
+
+        assert len(captured) == 1
+        assert isinstance(captured[0], RuntimeError)
+        assert "intercept blew up" in str(captured[0])
