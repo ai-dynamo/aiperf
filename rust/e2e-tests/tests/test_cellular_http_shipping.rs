@@ -439,7 +439,9 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         observables.join("\n")
     );
 
-    // The controller copies one cell's identical seeded inputs document.
+    // The controller merges the per-cell inputs slices back into the full seeded document:
+    // re-interleaved round-robin (the inverse of the partition) with each payload body's
+    // bytes carried through verbatim, so it is byte-identical to the single-process file.
     let inputs_base = std::fs::read(
         baseline
             .artifacts
