@@ -42,14 +42,18 @@ def test_sample_ordinal_stable_for_orchestrator_roots_only():
     sessions get None. Two instances of the same orchestrator get distinct
     ordinals so their draws are independent."""
     from aiperf.common.models import DatasetMetadata
+    from aiperf.common.models.dataset_models import ThinkTimeSpec
     from aiperf.plugin.enums import DatasetSamplingStrategy
     from aiperf.timing.conversation_source import ConversationSource
 
+    # Only orchestrators with a sampled distribution store the ordinal (the sole
+    # consumer); a fixed / fire-and-forget orchestrator would not leak an entry.
     orch = ConversationMetadata(
         conversation_id="start",
         turns=[TurnMetadata(timestamp_ms=0.0, no_request=True)],
         agent_depth=0,
         is_orchestrator=True,
+        think_time=ThinkTimeSpec(sigma=0.5),
     )
     plain = ConversationMetadata(
         conversation_id="plain",
@@ -72,3 +76,7 @@ def test_sample_ordinal_stable_for_orchestrator_roots_only():
     assert src.sample_ordinal(s0.x_correlation_id) == 0
     assert src.sample_ordinal(s1.x_correlation_id) == 1
     assert src.sample_ordinal(sp.x_correlation_id) is None
+    # Eviction at END bounds the map (no unbounded growth over a duration run).
+    src.forget_ordinal(s0.x_correlation_id)
+    assert src.sample_ordinal(s0.x_correlation_id) is None
+    assert src.sample_ordinal(s1.x_correlation_id) == 1  # others unaffected

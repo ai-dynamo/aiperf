@@ -201,7 +201,10 @@ class ConversationSource:
         )
         seq = self._sample_seq
         self._sample_seq += 1
-        if metadata.is_orchestrator:
+        # Store only when a sampled think-time distribution is present -- that is
+        # the ONLY consumer of the ordinal. Fixed-think and fire-and-forget
+        # orchestrators never read it, so storing them would leak unused entries.
+        if metadata.is_orchestrator and metadata.think_time is not None:
             self._orchestrator_ordinal[session.x_correlation_id] = seq
         return session
 
@@ -213,6 +216,12 @@ class ConversationSource:
         it can key a reproducible per-instance think-time draw.
         """
         return self._orchestrator_ordinal.get(x_correlation_id)
+
+    def forget_ordinal(self, x_correlation_id: str) -> None:
+        """Drop a graph instance's stored ordinal once it reaches END, bounding
+        the map to in-flight sampled orchestrators (no unbounded growth over a
+        long duration run). Idempotent."""
+        self._orchestrator_ordinal.pop(x_correlation_id, None)
 
     def get_metadata(self, conversation_id: str) -> ConversationMetadata:
         """Get metadata for a specific conversation."""

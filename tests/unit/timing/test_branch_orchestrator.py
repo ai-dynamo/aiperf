@@ -93,8 +93,14 @@ async def test_intercept_uses_get_metadata():
         def get_metadata(self, conversation_id):
             return self._meta
 
+        def sample_ordinal(self, x_correlation_id):
+            return None
+
+        def forget_ordinal(self, x_correlation_id):
+            pass
+
     parent_meta = MagicMock()
-    parent_meta.turns = [MagicMock(branch_ids=[])]
+    parent_meta.turns = [MagicMock(branch_ids=[], delay_ms=0.0)]
     parent_meta.branches = []
     source = _FakeSource(parent_meta)
     orch = BranchOrchestrator(conversation_source=source, credit_issuer=MagicMock())

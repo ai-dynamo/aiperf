@@ -839,8 +839,10 @@ class BranchOrchestrator:
                 await self._spawn_children_and_register_gates(credit, branch_ids)
             elif getattr(credit, "no_request", False):
                 # Terminal request-free gate (no branches to spawn): all rounds
-                # drained, so this graph instance reached END.
+                # drained, so this graph instance reached END. All think-times
+                # are resolved, so drop its sampling ordinal to bound the map.
                 self.stats.graphs_completed_to_end += 1
+                self._cs.forget_ordinal(credit.x_correlation_id)
             return self._maybe_suspend_parent(credit)
 
     async def _spawn_children_and_register_gates(

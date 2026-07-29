@@ -204,6 +204,19 @@ async def runner(
 
 
 class TestPhaseRunnerLifecycle:
+    async def test_fatal_control_node_failure_is_reraised_not_swallowed(
+        self, runner: PhaseRunner
+    ) -> None:
+        """A recorded request-free control-node failure must be re-raised. The
+        fatal-error callback also sets all_credits_returned_event, which drives
+        the wait's "all returned" early-return fast path -- so the surfacing
+        check must run AFTER the wait (never bypassed by that early return)."""
+        runner._raise_if_control_node_failed()  # no fatal error -> no-op
+        err = RuntimeError("virtual return callback blew up")
+        runner._progress.record_fatal_error(err)
+        with pytest.raises(RuntimeError, match="blew up"):
+            runner._raise_if_control_node_failed()
+
     async def test_baseline_boundary_capture_is_fire_and_forget(
         self, runner: PhaseRunner, pub: MagicMock
     ) -> None:

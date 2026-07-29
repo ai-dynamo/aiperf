@@ -385,6 +385,13 @@ class PhaseRunner(TaskManagerMixin):
             ramper.stop()
         self._scheduler.cancel_all()
 
+    def _raise_if_control_node_failed(self) -> None:
+        """Re-raise a fatal request-free control-node failure recorded on the
+        progress tracker (via the router's fatal-error sink), so the phase exits
+        with a visible error instead of reporting the graph as complete."""
+        if self._progress.fatal_error is not None:
+            raise self._progress.fatal_error
+
     def _on_return_wait_complete(self, task: asyncio.Task) -> None:
         """Handle completion of background return wait task (seamless mode).
 
@@ -394,6 +401,14 @@ class PhaseRunner(TaskManagerMixin):
         if self._progress_task:
             self._progress_task.cancel()
 
+        # Seamless path: a fatal request-free control-node failure recorded
+        # during the background wait must not be reported as a clean phase
+        # completion. Surface it prominently instead of signalling success.
+        if self._progress.fatal_error is not None:
+            self.error(
+                lambda: "fatal request-free control-node failure in seamless "
+                f"phase {self._config.phase}: {self._progress.fatal_error!r}"
+            )
         if self._on_phase_complete:
             self._on_phase_complete()
 
@@ -606,6 +621,11 @@ class PhaseRunner(TaskManagerMixin):
         else:
             await self._wait_for_returning_complete(strategy, phase_id=phase_id)
             self._progress_task.cancel()
+            # Surface a fatal control-node failure recorded during the wait.
+            # Checked HERE -- after the wait returns via ANY of its exit paths,
+            # including the "all credits already returned" fast path that the
+            # fatal-error callback itself unblocks -- so it is never swallowed.
+            self._raise_if_control_node_failed()
 
         for ramper in self._rampers:
             ramper.stop()
@@ -1122,13 +1142,6 @@ class PhaseRunner(TaskManagerMixin):
             await self._phase_publisher.publish_phase_complete(
                 stats, branch_stats=self._snapshot_branch_stats()
             )
-
-        # After the phase has finalized and released its slots (finally above),
-        # re-raise any fatal request-free control-node failure (recorded on the
-        # progress tracker via the router's fatal-error sink) so the run exits
-        # with a visible error instead of reporting the graph as complete.
-        if self._progress.fatal_error is not None:
-            raise self._progress.fatal_error
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
