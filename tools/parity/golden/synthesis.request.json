@@ -14,6 +14,7 @@
       "datasets": [
         {
           "entries": 10,
+          "format": "single_turn",
           "options": {},
           "path": "/tmp/trace.jsonl",
           "sampling": "sequential",
