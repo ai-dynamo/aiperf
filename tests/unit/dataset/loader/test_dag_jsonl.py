@@ -566,6 +566,106 @@ def test_orchestrator_rounds_synthesizes_gated_spine(tmp_path):
     assert not start.turns[2].branch_ids
 
 
+def test_orchestrator_rounds_list_authors_distinct_branches_per_round(tmp_path):
+    """A per-round ``rounds`` list synthesizes a gated spine where each round
+    fans out its OWN branch sessions (not one repeated template) and applies its
+    OWN think-time. The terminal gate carries no branches and no think-time."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": [
+                    {"spawns": ["t0-a", "t0-b"], "think_time_ms": 12000.0},
+                    {"spawns": ["t1-a", "t1-b"], "think_time_ms": 31000.0},
+                ],
+            },
+            {
+                "session_id": "t0-a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+            {
+                "session_id": "t0-b",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+            {
+                "session_id": "t1-a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+            {
+                "session_id": "t1-b",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    start = by_id["start"]
+    assert start.is_orchestrator is True
+    # 2 spawning turns + terminal gate.
+    assert len(start.turns) == 3
+    assert all(t.no_request is True for t in start.turns)
+    # Per-round think-time rides the spawning turns; the terminal gate has none.
+    assert [t.delay for t in start.turns[:-1]] == [12000.0, 31000.0]
+    assert not start.turns[-1].delay
+    # Each round fans out its OWN distinct branch sessions.
+    children_by_branch = {b.branch_id: b.child_conversation_ids for b in start.branches}
+    assert children_by_branch[start.turns[0].branch_ids[0]] == ["t0-a", "t0-b"]
+    assert children_by_branch[start.turns[1].branch_ids[0]] == ["t1-a", "t1-b"]
+    assert not start.turns[2].branch_ids
+
+
+def test_orchestrator_rounds_list_missing_branch_rejected(tmp_path):
+    """A per-round branch id that names no conversation in the file is rejected
+    at load, like any other unknown spawn target."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": [{"spawns": ["t0-a"]}, {"spawns": ["t1-a"]}],
+            },
+            {
+                "session_id": "t0-a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError, match="t1-a"):
+        DagJsonlLoader(path).load()
+
+
+def test_branch_context_mode_opt_in_payload_isolation(tmp_path):
+    """A branch may author ``context_mode: message_array_with_responses`` for
+    payload isolation -- each turn is sent as its own authored message array with
+    no accumulation of prior turns or live responses. Conversations that omit it
+    keep the DAG default (DELTAS_WITHOUT_RESPONSES)."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": [{"spawns": ["b0"]}],
+            },
+            {
+                "session_id": "b0",
+                "context_mode": "message_array_with_responses",
+                "turns": [_turn("u")],
+            },
+            {"session_id": "plain", "turns": [_turn("x")]},
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    assert (
+        by_id["b0"].context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+    )
+    assert (
+        by_id["plain"].context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+    )
+
+
 def test_rounds_rejected_without_orchestrator(tmp_path):
     path = write_lines(
         tmp_path,

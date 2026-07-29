@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.dataset.loader.models import validate_chat_messages
 
@@ -181,6 +182,36 @@ class DagTurn(AIPerfBaseModel):
         return v
 
 
+class DagRound(AIPerfBaseModel):
+    """One independently-authored round of an orchestrator ``rounds`` spine.
+
+    Used in the LIST form of :attr:`DagConversation.rounds`. Each round declares
+    its OWN branch session ids (and optional think-time), so the rounds are
+    distinct authored stages -- different system prompts, growing pre-baked
+    history, different multimodal payloads per round -- instead of the integer
+    ``rounds`` form that re-fires one shared branch set every round.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    spawns: list[str] = Field(
+        min_length=1,
+        description="This round's SPAWN branch session ids. Fanned out in "
+        "parallel when the round fires; the next round waits (join=all) for ALL "
+        "of them before firing. Each id must name another conversation in the "
+        "file; authored independently per round. The round is identified in raw "
+        "export by these branch session ids (each round uses distinct ones).",
+    )
+    think_time_ms: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Optional per-round think-time (milliseconds) the coordinator "
+        "waits after this round's branches drain, before releasing the next "
+        "round. Overrides the conversation-level 'think_time_ms' for this round; "
+        "when 'think_time_sigma' is set it is the lognormal median for this round.",
+    )
+
+
 class DagConversation(AIPerfBaseModel):
     """One line of a DAG JSONL file: a session with ordered turns."""
 
@@ -236,16 +267,29 @@ class DagConversation(AIPerfBaseModel):
     think_time_max_ms: float | None = Field(
         default=None, ge=0.0, description="Optional upper clamp on the sampled draw."
     )
-    rounds: int | None = Field(
+    rounds: int | list[DagRound] | None = Field(
         default=None,
-        ge=1,
-        description="Orchestrator-only. When set, synthesize a gated 'spine' of N "
-        "rounds instead of a single fire-and-forget turn: each round spawns the "
-        "conversation-level 'spawns' children, and the next round waits (join=all) "
-        "for ALL of them to complete before firing. Produces N+1 request-free turns "
-        "(N spawning turns + a terminal gate). Use this for a chained agentic "
-        "conversation whose turns are paced by per-round waiting. When unset, the "
-        "orchestrator synthesizes a single fire-and-forget turn (default behavior).",
+        description="Orchestrator-only. Synthesize a gated 'spine' instead of a "
+        "single fire-and-forget turn. Two forms:\n"
+        "- INT (N): N rounds that each re-fire the SHARED conversation-level "
+        "'spawns' children -- one repeated branch template.\n"
+        "- LIST of DagRound: each round authors its OWN 'spawns' (and optional "
+        "per-round think-time), so the rounds are distinct stages rather than "
+        "repetitions -- different prompts/history/multimodal per round.\n"
+        "Either form produces N+1 request-free turns (N spawning turns, each of "
+        "which the next round waits on with join=all, plus a terminal gate). "
+        "When unset, the orchestrator synthesizes a single fire-and-forget turn.",
+    )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Optional per-conversation context mode. When omitted, DAG "
+        "conversations default to DELTAS_WITHOUT_RESPONSES (multi-turn chat that "
+        "accumulates prior turns and threads live inference responses into the "
+        "history). Set 'message_array_with_responses' for payload isolation: each "
+        "turn is sent as its OWN complete authored message array with NO "
+        "accumulation of prior turns or live responses -- required when every "
+        "turn independently authors its own system prompt, pre-baked history, and "
+        "multimodal payload (e.g. an orchestrator spine's branch sessions).",
     )
     pre_session_spawns: list[str] = Field(
         default_factory=list,
@@ -259,22 +303,7 @@ class DagConversation(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def _validate_orchestrator(self) -> "DagConversation":
-        if self.orchestrator:
-            if self.turns:
-                raise ValueError(
-                    "orchestrator conversation must have an empty authored 'turns' "
-                    "list (the loader synthesizes its single no-op turn)"
-                )
-            if not self.spawns:
-                raise ValueError(
-                    "orchestrator conversation requires a non-empty 'spawns'"
-                )
-            if self.pre_session_spawns:
-                raise ValueError(
-                    "orchestrator conversation must not set 'pre_session_spawns'; "
-                    "use conversation-level 'spawns' instead"
-                )
-        else:
+        if not self.orchestrator:
             if self.rounds is not None:
                 raise ValueError(
                     "'rounds' is only valid on an orchestrator conversation "
@@ -284,7 +313,44 @@ class DagConversation(AIPerfBaseModel):
                 raise ValueError(
                     "'turns' must be non-empty unless 'orchestrator' is true"
                 )
+            return self
+
+        if self.turns:
+            raise ValueError(
+                "orchestrator conversation must have an empty authored 'turns' "
+                "list (the loader synthesizes its single no-op turn)"
+            )
+        self._validate_orchestrator_rounds()
+        if self.pre_session_spawns:
+            raise ValueError(
+                "orchestrator conversation must not set 'pre_session_spawns'; "
+                "use conversation-level 'spawns' instead"
+            )
         return self
+
+    def _validate_orchestrator_rounds(self) -> None:
+        """Validate the spawns/rounds shape of an orchestrator conversation.
+
+        LIST-form ``rounds`` authors branches per round (so conversation-level
+        ``spawns`` must be omitted); the INT/absent form re-fires the shared
+        conversation-level ``spawns``.
+        """
+        if isinstance(self.rounds, list):
+            if not self.rounds:
+                raise ValueError("orchestrator 'rounds' list must be non-empty")
+            if self.spawns:
+                raise ValueError(
+                    "with a per-round 'rounds' list, omit conversation-level "
+                    "'spawns' (each round declares its own 'spawns')"
+                )
+            return
+        if isinstance(self.rounds, int) and self.rounds < 1:
+            raise ValueError("'rounds' count must be >= 1")
+        if not self.spawns:
+            raise ValueError(
+                "orchestrator conversation requires a non-empty 'spawns' "
+                "(or a per-round 'rounds' list)"
+            )
 
     @model_validator(mode="after")
     def _validate_think_time(self) -> "DagConversation":

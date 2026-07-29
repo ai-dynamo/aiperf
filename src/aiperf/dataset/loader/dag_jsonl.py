@@ -196,7 +196,13 @@ class DagJsonlLoader(BaseFileLoader):
             self._resolve_and_validate()
             self._roots = self._compute_roots()
             for sid, conv in self._conversations.items():
-                conv.context_mode = ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+                # Respect an author-declared context mode (e.g.
+                # MESSAGE_ARRAY_WITH_RESPONSES for payload-isolated turns that
+                # send each turn's authored message array as-is, with no
+                # accumulation of prior turns or live responses). Default to the
+                # accumulating multi-turn-chat mode when unset.
+                if conv.context_mode is None:
+                    conv.context_mode = ConversationContextMode.DELTAS_WITHOUT_RESPONSES
                 conv.is_root = sid in self._roots
             # v1 orchestrator capability check - surface any unsupported
             # prereq/branch shapes before any credit is issued.
@@ -287,11 +293,31 @@ class DagJsonlLoader(BaseFileLoader):
             # ``_release_blocked_join``. The terminal gate (turn N) spawns no
             # further round, so it carries NO think-time: stamping it would delay
             # session completion by one spurious think interval per spine.
-            think_ms = dag_conv.think_time_ms or 0.0
-            for k in range(dag_conv.rounds):
-                turns.append(Turn(no_request=True, delay=think_ms))
+            # Normalize both ``rounds`` forms to a per-round (spawns, think_ms)
+            # plan. INT form: N rounds re-firing the shared conversation-level
+            # ``spawns``. LIST form: each round authors its own ``spawns`` (and
+            # optional per-round think-time, overriding the conversation default)
+            # so the rounds are distinct stages rather than one repeated template.
+            default_think_ms = dag_conv.think_time_ms or 0.0
+            if isinstance(dag_conv.rounds, list):
+                round_plans = [
+                    (
+                        list(r.spawns),
+                        r.think_time_ms
+                        if r.think_time_ms is not None
+                        else default_think_ms,
+                    )
+                    for r in dag_conv.rounds
+                ]
+            else:
+                round_plans = [
+                    (list(dag_conv.spawns), default_think_ms)
+                    for _ in range(dag_conv.rounds)
+                ]
+            for k, (round_spawns, round_think_ms) in enumerate(round_plans):
+                turns.append(Turn(no_request=True, delay=round_think_ms))
                 inline_forks_per_turn.append([])
-                inline_spawns_per_turn.append([(list(dag_conv.spawns), k + 1)])
+                inline_spawns_per_turn.append([(round_spawns, k + 1)])
             turns.append(Turn(no_request=True))
             inline_forks_per_turn.append([])
             inline_spawns_per_turn.append([])
@@ -313,6 +339,7 @@ class DagJsonlLoader(BaseFileLoader):
             turns=turns,
             is_orchestrator=dag_conv.orchestrator,
             think_time=think_time_spec,
+            context_mode=dag_conv.context_mode,
         )
         self._inline_forks[sid] = inline_forks_per_turn
         self._inline_spawns[sid] = inline_spawns_per_turn

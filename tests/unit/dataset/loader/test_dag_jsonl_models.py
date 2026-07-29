@@ -88,3 +88,33 @@ class TestDagConversationOrchestrator:
     def test_empty_turns_without_orchestrator_rejected(self):
         with pytest.raises(ValueError):
             DagConversation(session_id="s", turns=[])
+
+    def test_rounds_list_authors_per_round_spawns(self):
+        conv = DagConversation(
+            session_id="start",
+            orchestrator=True,
+            rounds=[
+                {"spawns": ["t0-a", "t0-b"], "think_time_ms": 12000.0},
+                {"spawns": ["t1-a", "t1-b"]},
+            ],
+        )
+        assert [r.spawns for r in conv.rounds] == [["t0-a", "t0-b"], ["t1-a", "t1-b"]]
+        assert conv.rounds[0].think_time_ms == 12000.0
+        assert conv.rounds[1].think_time_ms is None
+
+    def test_rounds_list_rejects_conversation_level_spawns(self):
+        with pytest.raises(ValueError, match="per-round"):
+            DagConversation(
+                session_id="s",
+                orchestrator=True,
+                rounds=[{"spawns": ["a"]}],
+                spawns=["x"],
+            )
+
+    def test_rounds_empty_list_rejected(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            DagConversation(session_id="s", orchestrator=True, rounds=[])
+
+    def test_dag_round_requires_non_empty_spawns(self):
+        with pytest.raises(ValueError):
+            DagConversation(session_id="s", orchestrator=True, rounds=[{"spawns": []}])
