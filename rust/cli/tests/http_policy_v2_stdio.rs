@@ -166,7 +166,8 @@ fn scheduled_request(
                     "type": "synthetic",
                     "entries": requests,
                     "sampling": "sequential",
-                    "prompts": {"isl": {"value": 4.0}, "osl": {"value": 1.0}}
+                    "turn_delay_ratio": 1.0,
+                    "prompts": {"batch_size": 1, "isl": {"value": 4.0}, "osl": {"value": 1.0}}
                 }],
                 "tokenizer": {
                     "name": "cl100k_base",
@@ -380,7 +381,8 @@ fn tls_request(artifact_dir: &std::path::Path, endpoint_url: &str, ssl_verify: b
                     "type": "synthetic",
                     "entries": 1,
                     "sampling": "sequential",
-                    "prompts": {"isl": {"value": 4.0}, "osl": {"value": 1.0}}
+                    "turn_delay_ratio": 1.0,
+                    "prompts": {"batch_size": 1, "isl": {"value": 4.0}, "osl": {"value": 1.0}}
                 }],
                 "tokenizer": {
                     "name": "cl100k_base",
