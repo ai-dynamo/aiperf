@@ -894,6 +894,7 @@
           "duration": 30.0,
           "exclude_from_results": false,
           "grace_period": 15.0,
+          "kind": "profiling",
           "name": "profiling",
           "prefill_concurrency": 4,
           "prefill_ramp": {

@@ -899,6 +899,7 @@
         {
           "concurrency": 4,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "prefill_concurrency": 2,
           "prefill_ramp": {

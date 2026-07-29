@@ -936,6 +936,7 @@
         {
           "concurrency": 2,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "requests": 5,
           "seamless": false,

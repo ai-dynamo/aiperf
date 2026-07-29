@@ -844,6 +844,7 @@
           "auto_offset": false,
           "end_offset": 4,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "seamless": false,
           "start_offset": 1,

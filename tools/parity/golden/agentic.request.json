@@ -902,6 +902,7 @@
           "agentic_cache_warmup_duration": 30.0,
           "concurrency": 1,
           "exclude_from_results": true,
+          "kind": "warmup",
           "name": "warmup",
           "seamless": false,
           "type": "concurrency"
@@ -909,6 +910,7 @@
         {
           "concurrency": 1,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "requests": 10,
           "seamless": false,

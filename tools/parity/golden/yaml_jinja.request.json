@@ -919,6 +919,7 @@
         {
           "concurrency": 8,
           "exclude_from_results": true,
+          "kind": "warmup",
           "name": "warmup",
           "requests": 80,
           "seamless": false,
@@ -929,6 +930,7 @@
           "duration": 120.0,
           "exclude_from_results": false,
           "grace_period": 60.0,
+          "kind": "profiling",
           "name": "profiling",
           "rate": 30.0,
           "rate_ramp": {

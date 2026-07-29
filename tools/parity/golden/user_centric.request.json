@@ -902,6 +902,7 @@
       "phases": [
         {
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "rate": 2.0,
           "requests": 20,

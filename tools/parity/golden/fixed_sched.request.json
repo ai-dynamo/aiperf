@@ -871,6 +871,7 @@
         {
           "auto_offset": true,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "requests": 2,
           "seamless": false,

@@ -862,6 +862,7 @@
         {
           "concurrency": 4,
           "exclude_from_results": true,
+          "kind": "warmup",
           "name": "warmup",
           "requests": 10,
           "seamless": false,
@@ -870,6 +871,7 @@
         {
           "concurrency": 8,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "requests": 20,
           "seamless": false,

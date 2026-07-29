@@ -893,6 +893,7 @@
         {
           "concurrency": 1,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "rate": 5.0,
           "requests": 2,

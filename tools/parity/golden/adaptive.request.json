@@ -931,6 +931,7 @@
           "concurrency": 8,
           "duration": 30.0,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "seamless": false,
           "type": "concurrency"

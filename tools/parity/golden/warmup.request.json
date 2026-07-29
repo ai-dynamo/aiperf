@@ -905,6 +905,7 @@
         {
           "concurrency": 1,
           "exclude_from_results": true,
+          "kind": "warmup",
           "name": "warmup",
           "requests": 3,
           "seamless": false,
@@ -913,6 +914,7 @@
         {
           "concurrency": 1,
           "exclude_from_results": false,
+          "kind": "profiling",
           "name": "profiling",
           "requests": 5,
           "seamless": false,
