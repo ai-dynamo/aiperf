@@ -237,8 +237,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let input_file =
         input_file.ok_or_else(|| anyhow::anyhow!("analyze-trace requires an input file"))?;
     if !input_file.exists() {
-        println!("Error: Input file not found: {}", input_file.display());
-        return Ok(0);
+        anyhow::bail!("Input file not found: {}", input_file.display());
     }
 
     let records = read_trace(&input_file)?;

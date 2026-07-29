@@ -30,6 +30,9 @@ profile.html
 # Bundled template data (sample mooncake-trace files) is intentionally tracked.
 !src/aiperf/config/templates/data/*.jsonl
 !tests/fixtures/**/*.jsonl
+# Golden-parity trace inputs. Their goldens are tracked, so the inputs must be too
+# or the parity tests cannot run from a clean clone.
+!tools/parity/**/*.jsonl
 !tests/unit/plot/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/
