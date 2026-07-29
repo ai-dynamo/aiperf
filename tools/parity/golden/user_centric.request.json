@@ -68,6 +68,31 @@
               "header": "Accuracy Unparsed",
               "internal": true
             },
+            "active_decode_throughput": {
+              "display_order": 3100,
+              "group": "active",
+              "header": "Active Decode Throughput"
+            },
+            "active_decode_throughput_per_user": {
+              "display_order": 3102,
+              "group": "active",
+              "header": "Active Decode Throughput Per User"
+            },
+            "active_prefill_throughput": {
+              "display_order": 3101,
+              "group": "active",
+              "header": "Active Prefill Throughput"
+            },
+            "active_prefill_throughput_per_user": {
+              "display_order": 3103,
+              "group": "active",
+              "header": "Active Prefill Throughput Per User"
+            },
+            "active_total_throughput": {
+              "display_order": 3104,
+              "group": "active",
+              "header": "Active Total Throughput"
+            },
             "audio_duration": {
               "display_order": 870,
               "group": "none",
@@ -87,10 +112,59 @@
               "header": "Credit Drop Latency",
               "internal": true
             },
+            "credit_to_start_latency": {
+              "group": "none",
+              "header": "Credit To Start Latency"
+            },
             "e2e_output_token_throughput": {
               "display_order": 510,
               "group": "default",
               "header": "E2E Output Token Throughput"
+            },
+            "effective_concurrency": {
+              "display_order": 3000,
+              "group": "effective",
+              "header": "Effective Concurrency"
+            },
+            "effective_decode_concurrency": {
+              "display_order": 3003,
+              "group": "effective",
+              "header": "Effective Decode Concurrency"
+            },
+            "effective_decode_throughput": {
+              "display_order": 3001,
+              "group": "effective",
+              "header": "Effective Decode Throughput"
+            },
+            "effective_decode_throughput_per_user": {
+              "display_order": 3006,
+              "group": "effective",
+              "header": "Effective Decode Throughput Per User"
+            },
+            "effective_latency": {
+              "display_order": 3009,
+              "group": "effective",
+              "header": "Effective Latency (CO-aware)"
+            },
+            "effective_prefill_concurrency": {
+              "display_order": 3004,
+              "group": "effective",
+              "header": "Effective Prefill Concurrency"
+            },
+            "effective_prefill_throughput": {
+              "display_order": 3002,
+              "group": "effective",
+              "header": "Effective Prefill Throughput"
+            },
+            "effective_prefill_throughput_per_user": {
+              "display_order": 3007,
+              "group": "effective",
+              "header": "Effective Prefill Throughput Per User"
+            },
+            "effective_total_throughput": {
+              "display_order": 3005,
+              "group": "effective",
+              "header": "Effective Total Throughput"
             },
             "energy_per_user": {
               "display_order": 903,
@@ -363,6 +437,11 @@
               "display_order": 200,
               "group": "default",
               "header": "Time to Second Token"
+            },
+            "tokens_in_flight": {
+              "display_order": 3008,
+              "group": "effective",
+              "header": "Tokens In Flight"
             },
             "total_error_isl": {
               "error_only": true,
