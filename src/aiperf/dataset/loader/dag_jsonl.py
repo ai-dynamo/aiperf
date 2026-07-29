@@ -256,6 +256,46 @@ class DagJsonlLoader(BaseFileLoader):
                 "parsed); supply at least one conversation line"
             )
 
+    def _build_think_time_spec(
+        self, dag_conv: DagConversation, cap_ms: float | None
+    ) -> ThinkTimeSpec | None:
+        """Build the sampled think-time spec, folding the delay cap into its
+        bounds. Both bounds are clamped so ``min <= max`` holds even when an
+        authored bound already exceeds the cap. None when no distribution."""
+        if dag_conv.think_time_sigma is None:
+            return None
+        spec_min = dag_conv.think_time_min_ms
+        spec_max = dag_conv.think_time_max_ms
+        if cap_ms is not None:
+            spec_max = cap_ms if spec_max is None else min(spec_max, cap_ms)
+            if spec_min is not None:
+                spec_min = min(spec_min, cap_ms)
+        return ThinkTimeSpec(
+            sigma=dag_conv.think_time_sigma, min_ms=spec_min, max_ms=spec_max
+        )
+
+    @staticmethod
+    def _build_round_plans(
+        dag_conv: DagConversation,
+    ) -> list[tuple[list[str], float]]:
+        """Normalize both ``rounds`` forms to a per-round ``(spawns, think_ms)``
+        plan. INT form re-fires the shared conversation-level ``spawns``; LIST
+        form authors each round's own ``spawns`` (and optional think-time)."""
+        default_think_ms = dag_conv.think_time_ms or 0.0
+        if isinstance(dag_conv.rounds, list):
+            return [
+                (
+                    list(r.spawns),
+                    r.think_time_ms
+                    if r.think_time_ms is not None
+                    else default_think_ms,
+                )
+                for r in dag_conv.rounds
+            ]
+        return [
+            (list(dag_conv.spawns), default_think_ms) for _ in range(dag_conv.rounds)
+        ]
+
     def _parse_one_line(self, lineno: int, raw: bytes) -> None:
         prefix = f"failed to parse DAG JSONL '{self._path}'"
         try:
@@ -279,21 +319,7 @@ class DagJsonlLoader(BaseFileLoader):
         # sampled think-time can exceed the cap.
         cap_seconds = self._delay_cap_tracker.cap_seconds
         cap_ms = cap_seconds * 1000.0 if cap_seconds is not None else None
-        think_time_spec: ThinkTimeSpec | None = None
-        if dag_conv.think_time_sigma is not None:
-            spec_min = dag_conv.think_time_min_ms
-            spec_max = dag_conv.think_time_max_ms
-            if cap_ms is not None:
-                # Clamp both bounds to the cap so min <= max holds even when an
-                # authored bound already exceeds the cap.
-                spec_max = cap_ms if spec_max is None else min(spec_max, cap_ms)
-                if spec_min is not None:
-                    spec_min = min(spec_min, cap_ms)
-            think_time_spec = ThinkTimeSpec(
-                sigma=dag_conv.think_time_sigma,
-                min_ms=spec_min,
-                max_ms=spec_max,
-            )
+        think_time_spec = self._build_think_time_spec(dag_conv, cap_ms)
         if dag_conv.orchestrator and dag_conv.rounds is not None:
             # Gated spine: N request-free rounds. Each round-k turn spawns the
             # conversation-level ``spawns`` children with an explicit
@@ -308,28 +334,9 @@ class DagJsonlLoader(BaseFileLoader):
             # ``_release_blocked_join``. The terminal gate (turn N) spawns no
             # further round, so it carries NO think-time: stamping it would delay
             # session completion by one spurious think interval per spine.
-            # Normalize both ``rounds`` forms to a per-round (spawns, think_ms)
-            # plan. INT form: N rounds re-firing the shared conversation-level
-            # ``spawns``. LIST form: each round authors its own ``spawns`` (and
-            # optional per-round think-time, overriding the conversation default)
-            # so the rounds are distinct stages rather than one repeated template.
-            default_think_ms = dag_conv.think_time_ms or 0.0
-            if isinstance(dag_conv.rounds, list):
-                round_plans = [
-                    (
-                        list(r.spawns),
-                        r.think_time_ms
-                        if r.think_time_ms is not None
-                        else default_think_ms,
-                    )
-                    for r in dag_conv.rounds
-                ]
-            else:
-                round_plans = [
-                    (list(dag_conv.spawns), default_think_ms)
-                    for _ in range(dag_conv.rounds)
-                ]
-            for k, (round_spawns, round_think_ms) in enumerate(round_plans):
+            for k, (round_spawns, round_think_ms) in enumerate(
+                self._build_round_plans(dag_conv)
+            ):
                 # Clamp the stamped (fixed / median) think-time to the delay cap.
                 capped_delay = self._delay_cap_tracker.clamp(round_think_ms)
                 turns.append(Turn(no_request=True, delay=capped_delay))
