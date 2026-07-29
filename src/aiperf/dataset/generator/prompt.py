@@ -528,7 +528,7 @@ class PromptGenerator(BaseGenerator):
             if not self._allowed_tokens:
                 raise NotInitializedError("Random vocab corpus is not initialized.")
             n = len(self._allowed_tokens)
-            offset = self._corpus_rng.randrange(n)
+            offset = int(self._corpus_rng.integers(0, n))
             idx = self._random_request_index
             self._random_request_index += 1
             return [
