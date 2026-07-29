@@ -473,11 +473,13 @@ async fn scheduled_pair_serves_generated_image_urls_for_the_full_run_lifecycle()
                     "streaming": true,
                     "wait_for_model_timeout": 0.0
                 },
-                "content_server": {
-                    "host": "127.0.0.1",
-                    "port": content_port,
-                    "content_dir": content_dir,
-                    "max_tracked_records": 100
+                "sidecars": {
+                    "content_server": {
+                        "host": "127.0.0.1",
+                        "port": content_port,
+                        "content_dir": content_dir,
+                        "max_tracked_records": 100
+                    }
                 },
                 "datasets": [{
                     "type": "synthetic",
