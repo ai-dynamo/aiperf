@@ -827,12 +827,20 @@ class BranchOrchestrator:
         # which sleeps before dispatching the gated turn -- not under the lock).
         await self._maybe_apply_root0_think_ms(credit)
 
+        # Graph-admission event: turn 0 of a request-free orchestrator instance.
+        if getattr(credit, "no_request", False) and credit.turn_index == 0:
+            self.stats.graphs_admitted += 1
+
         parent_corr = credit.x_correlation_id
 
         async with self._parent_locks[parent_corr]:
             branch_ids = self.get_branch_ids(credit)
             if branch_ids:
                 await self._spawn_children_and_register_gates(credit, branch_ids)
+            elif getattr(credit, "no_request", False):
+                # Terminal request-free gate (no branches to spawn): all rounds
+                # drained, so this graph instance reached END.
+                self.stats.graphs_completed_to_end += 1
             return self._maybe_suspend_parent(credit)
 
     async def _spawn_children_and_register_gates(

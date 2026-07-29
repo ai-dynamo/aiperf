@@ -147,3 +147,7 @@ async def test_per_round_spine_fires_distinct_payloads_request_free(
     assert bs.children_spawned == 8
     assert bs.children_completed == 8
     assert bs.children_errored == 0
+    # Graph-admission / END events: both instances admitted and both reached END
+    # (equal counts => every admitted graph completed; completion is reconstructable).
+    assert bs.graphs_admitted == 2
+    assert bs.graphs_completed_to_end == 2
