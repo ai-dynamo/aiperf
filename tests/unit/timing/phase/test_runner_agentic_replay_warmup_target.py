@@ -158,6 +158,23 @@ class TestAgenticReplayWarmupTarget:
         runner = _make_runner(_warmup_config(concurrency=2), src)
         assert runner._config.total_expected_requests == 6
 
+    async def test_cache_warmup_target_uses_actual_lane_count(self) -> None:
+        """The placeholder is re-anchored to the actual wrap-filled trajectory lanes."""
+        src = MagicMock()
+        src.dataset_metadata = None
+        src.trajectories = [MagicMock(), MagicMock(), MagicMock()]
+        config = _warmup_config(concurrency=4).model_copy(
+            update={
+                "agentic_cache_warmup_duration_sec": 600.0,
+                "agentic_cache_warmup_requests_per_lane": 10,
+                "total_expected_requests": 40,
+            }
+        )
+
+        runner = _make_runner(config, src)
+
+        assert runner._config.total_expected_requests == 30
+
     async def test_profiling_not_reanchored_to_warmup_count(self) -> None:
         """PROFILING must NOT be re-anchored to warmup_credit_count."""
         src = MagicMock()

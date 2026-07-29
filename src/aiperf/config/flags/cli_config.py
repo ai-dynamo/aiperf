@@ -2468,6 +2468,22 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    agentic_cache_warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            gt=0,
+            description="Deterministic agentic cache-pressure warmup request "
+            "budget per concurrency lane. For example, 10 with concurrency 16 "
+            "caps warmup at 160 wire requests, including initial snapshot "
+            "priming. Requires --agentic-cache-warmup-duration, which remains "
+            "the safety deadline.",
+        ),
+        CLIParameter(
+            name=("--agentic-cache-warmup-requests-per-lane",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
     agentic_warmup_grace_period: Annotated[
         float | None,
         Field(

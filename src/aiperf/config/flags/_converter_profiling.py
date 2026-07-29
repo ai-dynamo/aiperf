@@ -61,6 +61,7 @@ _AGENTIC_REPLAY_ROUTES: tuple[str, ...] = (
     "burst_phase_starts",
     "system_idle_gap_cap_seconds",
     "agentic_cache_warmup_duration",
+    "agentic_cache_warmup_requests_per_lane",
     "agentic_warmup_grace_period",
 )
 

@@ -68,6 +68,21 @@ def test_agentic_cache_warmup_duration_overrides_yaml_profiling_phase(
     assert _profiling_phase(cfg).agentic_cache_warmup_duration == 30.0
 
 
+def test_agentic_cache_warmup_request_budget_overrides_yaml_profiling_phase(
+    tmp_path: pathlib.Path,
+) -> None:
+    cfg = resolve_config(
+        _cli(
+            agentic_cache_warmup_duration=30.0,
+            agentic_cache_warmup_requests_per_lane=10,
+        ),
+        _agentic_yaml(tmp_path),
+    )
+    phase = _profiling_phase(cfg)
+    assert phase.agentic_cache_warmup_duration == 30.0
+    assert phase.agentic_cache_warmup_requests_per_lane == 10
+
+
 def test_agentic_replay_sibling_flags_override_yaml_profiling_phase() -> None:
     """The four sibling agentic-replay phase flags overlay the profiling phase."""
     cfg = resolve_config(

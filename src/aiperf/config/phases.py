@@ -364,6 +364,20 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
+    agentic_cache_warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            default=None,
+            gt=0,
+            description="AGENTIC_REPLAY only: deterministic cache-pressure "
+            "warmup request budget per concurrency lane. The total warmup "
+            "wire-request cap is this value multiplied by the number of live "
+            "trajectory lanes, including the initial snapshot-priming "
+            "requests. Requires agentic_cache_warmup_duration, which remains "
+            "the safety deadline; warmup stops when either limit is reached.",
+        ),
+    ]
+
     agentic_warmup_grace_period: Annotated[
         float | None,
         Field(

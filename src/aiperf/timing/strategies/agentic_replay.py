@@ -179,6 +179,17 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             if isinstance(cache_warmup_duration, int | float)
             else None
         )
+        cache_warmup_requests_per_lane = getattr(
+            config, "agentic_cache_warmup_requests_per_lane", None
+        )
+        self._cache_warmup_requests_per_lane: int | None = (
+            int(cache_warmup_requests_per_lane)
+            if isinstance(cache_warmup_requests_per_lane, int)
+            else None
+        )
+        self._cache_warmup_requests_by_lane: Counter[int] = Counter()
+        self._cache_warmup_request_budget_reached = False
+        self._quota_handoff_starts: dict[str, TurnToSend] = {}
         self._baseline_warmup_returns: dict[str, Credit] = {}
         self._baseline_correlations: set[str] = set()
         self._accelerated_warmup_started = False
@@ -398,6 +409,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """
         if self._has_tree_registry:
             self._session_tree_registry.set_drain_callback(self._on_tree_drained)
+        if (
+            self.config.phase == CreditPhase.WARMUP
+            and self._cache_warmup_requests_per_lane is not None
+        ):
+            self.credit_issuer.set_turn_admission(self._admit_cache_warmup_turn)
         if self.config.phase == CreditPhase.PROFILING:
             for trajectory in self.conversation_source.trajectories:
                 self._seed_trajectory_replay_prefix(trajectory)
@@ -421,6 +437,49 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     f"still count toward concurrency); rootless lanes recycle into a "
                     f"fresh root once their background subagents drain"
                 )
+
+    def _cache_warmup_lane(self, turn_or_credit: TurnToSend | Credit) -> int:
+        """Resolve a warmup turn or credit to its stable trajectory lane."""
+        lane = self._root_to_lane.get(turn_or_credit.effective_root_correlation_id)
+        if lane is None:
+            lane = self._correlation_to_lane.get(turn_or_credit.x_correlation_id)
+        if lane is None:
+            raise RuntimeError(
+                "Agentic cache warmup could not resolve a request to a "
+                f"trajectory lane: correlation_id={turn_or_credit.x_correlation_id!r}, "
+                "root_correlation_id="
+                f"{turn_or_credit.effective_root_correlation_id!r}"
+            )
+        return lane
+
+    def _admit_cache_warmup_turn(self, turn: TurnToSend) -> bool:
+        """Atomically reserve one request from a lane's deterministic quota."""
+        assert self._cache_warmup_requests_per_lane is not None
+        lane = self._cache_warmup_lane(turn)
+        if (
+            self._cache_warmup_requests_by_lane[lane]
+            >= self._cache_warmup_requests_per_lane
+        ):
+            if turn.agent_depth == 0 and (
+                turn.turn_index == 0 or turn.is_session_start
+            ):
+                self._quota_handoff_starts[turn.effective_root_correlation_id] = turn
+            return False
+        self._cache_warmup_requests_by_lane[lane] += 1
+        if not self._cache_warmup_request_budget_reached and all(
+            self._cache_warmup_requests_by_lane[lane_index]
+            >= self._cache_warmup_requests_per_lane
+            for lane_index in range(len(self.conversation_source.trajectories))
+        ):
+            self._cache_warmup_request_budget_reached = True
+            self.credit_issuer.replay_gate.pause_releases()
+            self.info(
+                "WARMUP cache pressure request budget reached: "
+                f"{self._cache_warmup_requests_per_lane} requests on each of "
+                f"{len(self.conversation_source.trajectories)} lanes; "
+                "draining requests"
+            )
+        return True
 
     async def execute_phase(self) -> None:
         """Dispatch initial credits for the phase."""
@@ -590,6 +649,23 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 prepared.append((turn, lead_ms))
                 self._baseline_correlations.add(turn.x_correlation_id)
                 self._root_to_lane[turn.effective_root_correlation_id] = lane
+
+        if self._cache_warmup_requests_per_lane is not None:
+            baseline_counts = Counter(
+                self._cache_warmup_lane(turn) for turn, _ in prepared
+            )
+            oversized = {
+                lane: count
+                for lane, count in baseline_counts.items()
+                if count > self._cache_warmup_requests_per_lane
+            }
+            if oversized:
+                raise ValueError(
+                    "Agentic cache warmup requests-per-lane budget is smaller "
+                    "than the required snapshot-priming dispatch count for "
+                    f"lane(s) {oversized}; increase "
+                    "--agentic-cache-warmup-requests-per-lane."
+                )
 
         # Nothing to warm: every lane's first request is at/after t* (no turn
         # precedes t*), so no warmup credit will dispatch. The count path that
@@ -960,6 +1036,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             pending_by_root = dict(pending_by_root_getter())
         else:
             pending_by_root = {}
+        for root_correlation_id, turn in self._quota_handoff_starts.items():
+            pending_by_root.setdefault(root_correlation_id, ())
+            pending_by_root[root_correlation_id] += (turn,)
         pending_turns_getter = getattr(
             self.credit_issuer.replay_gate, "pending_turns", None
         )

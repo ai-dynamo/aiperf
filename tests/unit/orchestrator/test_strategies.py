@@ -312,6 +312,7 @@ class TestFixedTrialsStrategy:
                     "concurrency": 1,
                     "timing_mode": TimingMode.AGENTIC_REPLAY,
                     "agentic_cache_warmup_duration": 30.0,
+                    "agentic_cache_warmup_requests_per_lane": 10,
                 },
             ],
         )
@@ -320,6 +321,12 @@ class TestFixedTrialsStrategy:
         first_config = strategy.get_next_config(config, [])
         assert (
             first_config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
+        )
+        assert (
+            first_config.get_profiling_phases()[
+                0
+            ].agentic_cache_warmup_requests_per_lane
+            == 10
         )
 
         results = [
@@ -335,9 +342,14 @@ class TestFixedTrialsStrategy:
         second_config = strategy.get_next_config(config, results)
         for phase in second_config.get_profiling_phases():
             assert phase.agentic_cache_warmup_duration is None
+            assert phase.agentic_cache_warmup_requests_per_lane is None
 
         # Original config untouched (deep copy).
         assert config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
+        assert (
+            config.get_profiling_phases()[0].agentic_cache_warmup_requests_per_lane
+            == 10
+        )
 
     def test_get_run_path(self):
         """Test get_run_path returns correct path structure."""

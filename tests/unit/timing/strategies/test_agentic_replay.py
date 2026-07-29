@@ -77,6 +77,7 @@ def _make_strategy(
     run: object | None = None,
     dataset: DatasetMetadata | None = None,
     cache_warmup_duration: float | None = None,
+    cache_warmup_requests_per_lane: int | None = None,
     progress: MagicMock | None = None,
 ) -> tuple[
     AgenticReplayStrategy, AsyncMock, LoopScheduler | MagicMock, TrajectorySource
@@ -88,6 +89,7 @@ def _make_strategy(
     cfg.phase = phase
     cfg.concurrency = len(trajectories)
     cfg.agentic_cache_warmup_duration_sec = cache_warmup_duration
+    cfg.agentic_cache_warmup_requests_per_lane = cache_warmup_requests_per_lane
     issuer = issuer if issuer is not None else AsyncMock()
     issuer.replay_gate = MagicMock()
     issuer.replay_gate.completed_prefixes.return_value = ()
@@ -283,6 +285,46 @@ async def test_cache_warmup_starts_after_baseline_and_removes_idle_delay():
     issuer.set_max_tokens_override.assert_called_once_with(1)
     scheduler.schedule_later.assert_called_once()
     assert scheduler.schedule_later.call_args.args[0] == 600.0
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_request_budget_is_enforced_per_lane():
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(2)
+    ]
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_duration=600.0,
+        cache_warmup_requests_per_lane=2,
+    )
+    issuer.set_turn_admission = MagicMock()
+
+    await strategy.setup_phase()
+
+    admission = issuer.set_turn_admission.call_args.args[0]
+    lane_0 = TurnToSend(
+        conversation_id="trace_0",
+        x_correlation_id=trajectories[0].x_correlation_id,
+        turn_index=0,
+        num_turns=4,
+    )
+    lane_1 = TurnToSend(
+        conversation_id="trace_1",
+        x_correlation_id=trajectories[1].x_correlation_id,
+        turn_index=0,
+        num_turns=4,
+    )
+    strategy._correlation_to_lane[lane_0.x_correlation_id] = 0
+    strategy._correlation_to_lane[lane_1.x_correlation_id] = 1
+
+    assert admission(lane_0) is True
+    assert admission(lane_0) is True
+    assert admission(lane_0) is False
+    assert admission(lane_1) is True
+    assert admission(lane_1) is True
+    assert admission(lane_1) is False
+    issuer.replay_gate.pause_releases.assert_called_once_with()
 
 
 @pytest.mark.asyncio

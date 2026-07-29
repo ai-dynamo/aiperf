@@ -150,22 +150,26 @@ class PhaseRunner(TaskManagerMixin):
         elif (
             config.timing_mode == TimingMode.AGENTIC_REPLAY
             and config.phase == CreditPhase.WARMUP
-            and not self._cache_warmup_enabled
         ):
-            # AGENTIC_REPLAY warmup dispatches one priming credit per warmable
-            # stream (root + each mid-flight subagent at t*), which exceeds the
-            # `concurrency` placeholder when lanes hold multiple streams. Without
-            # this re-anchor the concurrency-sized barrier fires early and cancels
-            # the closest-to-t* priming credits -- under-priming the server cache
-            # and masking warmup failures for the cancelled streams. Re-anchor the
-            # barrier to the actual dispatch count (``warmup_credit_count``
-            # promises exactly this). Single-stream lanes already equal
-            # concurrency, so this is a no-op for them.
-            warmup_count = getattr(conversation_source, "warmup_credit_count", None)
-            if warmup_count:
+            requests_per_lane = getattr(
+                config, "agentic_cache_warmup_requests_per_lane", None
+            )
+            if self._cache_warmup_enabled and requests_per_lane is not None:
+                lane_count = len(getattr(conversation_source, "trajectories", ()))
+                request_cap = requests_per_lane * lane_count
                 self._config = config.model_copy(
-                    update={"total_expected_requests": warmup_count}
+                    update={"total_expected_requests": request_cap}
                 )
+            elif not self._cache_warmup_enabled:
+                # AGENTIC_REPLAY warmup dispatches one priming credit per
+                # warmable stream (root + each mid-flight subagent at t*), which
+                # exceeds the `concurrency` placeholder when lanes hold multiple
+                # streams. Re-anchor the barrier to the actual dispatch count.
+                warmup_count = getattr(conversation_source, "warmup_credit_count", None)
+                if warmup_count:
+                    self._config = config.model_copy(
+                        update={"total_expected_requests": warmup_count}
+                    )
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
