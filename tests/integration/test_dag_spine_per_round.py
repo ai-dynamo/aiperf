@@ -95,6 +95,41 @@ async def test_per_round_spine_fires_distinct_payloads_request_free(
         "payload isolation violated: turn 1 accumulated turn 0's content"
     )
 
+    # Per-node system prompts: a LATER turn's OWN distinct system prompt reaches
+    # the wire (each round-turn authors its own; not just turn 0).
+    assert any("t0-a-sys3" in t for t in texts), (
+        "per-turn system prompt on a non-first turn did not reach the wire"
+    )
+
+    # Verbatim multimodal: a typed projection_embedding block is sent as a
+    # STRUCTURED object (not stringified / field-dropped), field-complete.
+    def _proj_blocks(rec):
+        for m in (rec.payload or {}).get("messages", []):
+            content = m.get("content")
+            if isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get("type") == "projection_embedding":
+                        yield c
+
+    projs = [c for r in recs for c in _proj_blocks(r)]
+    assert projs, "no projection_embedding block reached the wire"
+    p0 = projs[0]
+    assert p0["projection_model"] == "visual_tokens_binarized"
+    assert p0["inputs"][0]["shape"] == [512, 512]
+    assert p0["kwargs"] == {"input_dimension": [512, 512]}
+
+    # Deep-equal (acceptance criterion): a turn's wire messages == its authored
+    # array exactly -- no accumulation, no field loss, no injected messages.
+    t0a_turn1 = next(
+        r
+        for r in recs
+        if r.metadata.conversation_id == "t0-a" and r.metadata.turn_index == 1
+    )
+    assert t0a_turn1.payload["messages"] == [
+        {"role": "system", "content": "t0-a-sys1"},
+        {"role": "user", "content": "t0-a-u1"},
+    ]
+
     # 2 instances x 2 rounds x 2 branches = 8 children, all completed (no hang/over-fire).
     bs = result.json.branch_stats if result.json else None
     assert bs is not None

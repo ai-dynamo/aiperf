@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader.dag_jsonl_models import DagFork
 
@@ -196,8 +196,19 @@ def validate_system_message_placement(
     FORK parent). Every other turn would place its ``system`` entry at
     position > 0 in the wire payload after the pure-append merge, which
     Qwen3-VL and similar chat templates silently drop.
+
+    Exception: ``MESSAGE_ARRAY_WITH_RESPONSES`` conversations are NOT merged --
+    each turn is sent as its own complete authored array, so a per-turn system
+    message sits at index 0 of its own payload and is honored. Payload-isolated
+    branches legitimately author a distinct system prompt on every turn, so the
+    placement rule does not apply to them.
     """
     for sid, conv in conversations.items():
+        if (
+            getattr(conv, "context_mode", None)
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        ):
+            continue
         is_fork_child = sid in parent_of
         for idx, turn in enumerate(conv.turns):
             is_accumulator_root = idx == 0 and not is_fork_child

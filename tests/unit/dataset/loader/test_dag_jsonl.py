@@ -23,6 +23,11 @@ def _turn(content: str, **extras) -> dict:
     return t
 
 
+def _msg(content: str) -> dict:
+    """A single user message object."""
+    return {"role": "user", "content": content}
+
+
 def test_loads_simple_fork(tmp_path):
     path = write_lines(
         tmp_path,
@@ -664,6 +669,82 @@ def test_branch_context_mode_opt_in_payload_isolation(tmp_path):
     assert (
         by_id["plain"].context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
     )
+
+
+def test_isolation_mode_allows_per_turn_system_prompt(tmp_path):
+    """Under message_array_with_responses each turn is sent as its own complete
+    array, so a distinct system prompt on a LATER turn sits at index 0 of its own
+    payload and is honored -- the non-root placement rule must not reject it
+    (required for per-node authored system prompts)."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": [{"spawns": ["a"]}],
+            },
+            {
+                "session_id": "a",
+                "context_mode": "message_array_with_responses",
+                "turns": [
+                    {"messages": [{"role": "system", "content": "sys0"}, _msg("u0")]},
+                    {"messages": [{"role": "system", "content": "sys1"}, _msg("u1")]},
+                ],
+            },
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    t1 = by_id["a"].turns[1].raw_messages
+    assert [m["role"] for m in t1] == ["system", "user"]
+    assert next(m["content"] for m in t1 if m["role"] == "system") == "sys1"
+
+
+def test_accumulating_mode_still_rejects_non_root_system_prompt(tmp_path):
+    """The placement rule still applies to accumulating (deltas) conversations,
+    where a later-turn system message lands mid-array after the append-merge and
+    is silently dropped by chat templates."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "root",
+                "turns": [
+                    {"messages": [{"role": "system", "content": "s0"}, _msg("u0")]},
+                    {"messages": [{"role": "system", "content": "s1"}, _msg("u1")]},
+                ],
+            }
+        ],
+    )
+    with pytest.raises(DagLoadError, match="non-root turns may not contain a 'system'"):
+        DagJsonlLoader(path).load()
+
+
+def test_rounds_list_with_sigma_builds_sampled_think_time(tmp_path):
+    """List-form rounds with conversation-level ``think_time_sigma`` produce a
+    sampled think-time spec; each round's ``think_time_ms`` is its per-round
+    median, stamped as that spawning turn's delay."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "think_time_ms": 100.0,
+                "think_time_sigma": 0.5,
+                "rounds": [
+                    {"spawns": ["a"], "think_time_ms": 12000.0},
+                    {"spawns": ["b"], "think_time_ms": 31000.0},
+                ],
+            },
+            {"session_id": "a", "turns": [_turn("x")]},
+            {"session_id": "b", "turns": [_turn("x")]},
+        ],
+    )
+    start = {c.session_id: c for c in DagJsonlLoader(path).load()}["start"]
+    assert start.think_time is not None
+    assert start.think_time.sigma == 0.5
+    assert [t.delay for t in start.turns[:-1]] == [12000.0, 31000.0]
 
 
 def test_rounds_rejected_without_orchestrator(tmp_path):
