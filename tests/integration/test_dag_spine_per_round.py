@@ -129,17 +129,27 @@ async def test_per_round_spine_fires_distinct_payloads_request_free(
         "kwargs": {"input_dimension": [512, 512]},
     }
 
-    # Deep-equal (acceptance criterion): a turn's wire messages == its authored
-    # array exactly -- no accumulation, no field loss, no injected messages.
-    t0a_turn1 = next(
-        r
-        for r in recs
-        if r.metadata.conversation_id == "t0-a" and r.metadata.turn_index == 1
-    )
-    assert t0a_turn1.payload["messages"] == [
-        {"role": "system", "content": "t0-a-sys1"},
-        {"role": "user", "content": "t0-a-u1"},
+    # Deep-equal EVERY captured body against its authored array (Cristian's
+    # "exact payloads" acceptance test): for all 24 nodes -- including the
+    # per-turn system prompts and the projection block -- the wire messages must
+    # equal the authored messages exactly, with no accumulation, field loss,
+    # reordering, or injected messages.
+    fixture_rows = [
+        orjson.loads(line) for line in FIXTURE.read_bytes().splitlines() if line.strip()
     ]
+    authored: dict[tuple[str, int], list] = {}
+    for row in fixture_rows:
+        if row.get("orchestrator"):
+            continue
+        for i, t in enumerate(row.get("turns", [])):
+            authored[(row["session_id"], i)] = t["messages"]
+
+    for rec in recs:
+        key = (rec.metadata.conversation_id, rec.metadata.turn_index)
+        assert key in authored, f"unexpected wire node {key}"
+        assert rec.payload["messages"] == authored[key], (
+            f"wire body != authored body at {key}"
+        )
 
     # 2 instances x 2 rounds x 2 branches = 8 children, all completed (no hang/over-fire).
     bs = result.json.branch_stats if result.json else None
