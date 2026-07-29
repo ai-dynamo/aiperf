@@ -540,17 +540,19 @@ fn assert_exec_binary_fresh(path: &Path, built_at: SystemTime) {
     let message = format!(
         "the `aiperf` binary under test is STALE by {stale_for}.\n\
          \x20 binary: {}\n\
-         \x20 newer source: {}\n\
-         Rebuild before running the suite:  cargo build -p aiperf-cli\n\
-         Set AIPERF_E2E_ALLOW_STALE_BIN=1 to test this binary anyway.",
+         \x20 newer source: {}",
         path.display(),
         source.display(),
     );
     if std::env::var_os("AIPERF_E2E_ALLOW_STALE_BIN").is_some() {
-        eprintln!("warning: {message}");
+        eprintln!("warning: {message}\nProceeding anyway: AIPERF_E2E_ALLOW_STALE_BIN is set.");
         return;
     }
-    panic!("{message}");
+    panic!(
+        "{message}\n\
+         Rebuild before running the suite:  cargo build -p aiperf-cli\n\
+         Set AIPERF_E2E_ALLOW_STALE_BIN=1 to test this binary anyway."
+    );
 }
 
 /// The `rust/` workspace root, i.e. the directory holding `cli/` and `runtime/`.
