@@ -96,39 +96,21 @@ export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or any published subset
 
 The env var is read at every `load_problems` call (no module-reload needed)
 and is passed as the positional `name` arg to
-`load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)` —
+`load_dataset("livecodebench/code_generation_lite", name, split="test")` —
 the standard HF config-name selector, matching lighteval's `hf_subset=`
-usage. `trust_remote_code=True` is set by the loader so LCB's
-dataset-loading script can execute on `datasets` v4+ (which dropped
-the implicit-trust default); this mirrors lighteval's reference path
-(`get_dataset_config_names(..., trust_remote_code=True)` plus
-`trust_dataset=True` on the task config). Nothing is bundled with the
-aiperf wheel — all subsets are fetched on-demand and cached under
+usage. `livecodebench/code_generation_lite` is in Parquet format on
+HuggingFace Hub, so no `trust_remote_code` opt-in is needed (`datasets` v4
+removed that parameter entirely). Nothing is bundled with the aiperf wheel —
+all subsets are fetched on-demand and cached under
 `~/.cache/huggingface/datasets/`.
 
-**Compatibility:** the positional-name API is the standard HF
-`load_dataset` shape, and the explicit `trust_remote_code=True` opt-in
-means the loader works on `datasets` v3 **and** v4+ without operator
-env-var fiddling. If a future LCB release renames or removes the
-pinned subset, the loader raises `RuntimeError` prefixed
-`lcb_codegeneration: failed to load …`; recover by bumping the env var:
+If a future LCB release renames or removes the pinned subset, the loader
+raises `RuntimeError` prefixed `lcb_codegeneration: failed to load …`;
+recover by bumping the env var:
 
 ```bash
 export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or whatever LCB now ships
 ```
-
-The remap also surfaces the installed `datasets` version when ≥ 4 in
-case you've explicitly disabled remote-code execution at the env level
-(`HF_DATASETS_TRUST_REMOTE_CODE=0`); the safest workaround there is to
-install a compatible `datasets`:
-
-```bash
-uv pip install 'datasets>=3.0,<4'
-```
-
-The error message names which condition fired (it includes the installed
-`datasets` version when ≥ 4) so operators get an actionable next step
-without reading the source.
 
 ## MMLU chain-of-thought and reasoning models
 

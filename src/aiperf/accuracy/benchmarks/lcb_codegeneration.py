@@ -185,7 +185,9 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
         ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` without source edits.
         ``livecodebench/code_generation_lite`` is in Parquet format on
         HuggingFace Hub, so no ``trust_remote_code`` opt-in is needed
-        (and ``datasets`` v4 removed that parameter entirely).
+        (and ``datasets`` v4 removed that parameter entirely). This
+        intentionally diverges from lighteval's ``trust_dataset=True``
+        opt-in, which was only needed when LCB shipped a loading script.
         """
         release_tag = Environment.ACCURACY.LCB_RELEASE_TAG
         try:
