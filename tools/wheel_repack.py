@@ -138,6 +138,22 @@ def platform_tag_for(binary: Path) -> str:
     return manylinux_tag(max(versions), platform.machine())
 
 
+def rewrite_wheel_tag(wheel_text: str, tag: str) -> str:
+    """Force ``dist-info/WHEEL`` to one ``Tag:`` line and a platlib root.
+
+    A pure-Python backend emits ``Root-Is-Purelib: true``; this wheel carries an
+    ELF in ``.data/scripts/`` and its tree must land in platlib, so pin it false.
+    """
+    lines = [
+        line
+        for line in wheel_text.splitlines()
+        if not line.startswith(("Tag:", "Root-Is-Purelib:"))
+    ]
+    lines.append("Root-Is-Purelib: false")
+    lines.append(f"Tag: {tag}")
+    return "\n".join(lines) + "\n"
+
+
 def _record_hash(data: bytes) -> str:
     """Return the RECORD digest string ``sha256=<urlsafe-b64, no padding>``."""
     digest = hashlib.sha256(data).digest()
@@ -163,38 +179,50 @@ def _dist_and_version(wheel: Path) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def repack(wheel: Path, binary: Path) -> None:
-    """Inject ``binary`` into ``wheel`` as the data-scripts ``aiperf`` command."""
+def repack(wheel: Path, binary: Path) -> Path:
+    """Inject ``binary`` as the wheel's ``aiperf`` script and retag the wheel.
+
+    Safe to re-run on an already-repacked wheel: prior script/WHEEL/RECORD
+    entries are dropped and rebuilt rather than duplicated.
+    """
     distribution, version = _dist_and_version(wheel)
     script_arcname = f"{distribution}-{version}.data/scripts/{_SCRIPT_NAME}"
     record_arcname = f"{distribution}-{version}.dist-info/RECORD"
+    wheel_arcname = f"{distribution}-{version}.dist-info/WHEEL"
+
+    platform_tag = platform_tag_for(binary)
+    full_tag = f"py3-none-{platform_tag}"
 
     binary_bytes = binary.read_bytes()
-    binary_record_line = (
-        f"{script_arcname},{_record_hash(binary_bytes)},{len(binary_bytes)}"
-    )
+    rewritten = (script_arcname, record_arcname, wheel_arcname)
 
     with zipfile.ZipFile(wheel) as zf:
         names = zf.namelist()
-        if record_arcname not in names:
-            raise FileNotFoundError(f"{record_arcname} missing from {wheel.name}")
-        # Preserve every entry except the one we replace/insert and RECORD, which
-        # we regenerate from the surviving lines + the new binary line.
+        for required in (record_arcname, wheel_arcname):
+            if required not in names:
+                raise FileNotFoundError(f"{required} missing from {wheel.name}")
+        # Preserve every entry except the three we regenerate below.
         preserved = [
             (info, zf.read(info.filename))
             for info in zf.infolist()
-            if info.filename not in (script_arcname, record_arcname)
+            if info.filename not in rewritten
         ]
         record_text = zf.read(record_arcname).decode("utf-8")
+        wheel_text = zf.read(wheel_arcname).decode("utf-8")
+
+    new_wheel_meta = rewrite_wheel_tag(wheel_text, full_tag).encode("utf-8")
 
     kept_lines = [
         line
         for line in record_text.splitlines()
-        if line.strip()
-        and not line.startswith(f"{script_arcname},")
-        and not line.startswith(f"{record_arcname},")
+        if line.strip() and not any(line.startswith(f"{name},") for name in rewritten)
     ]
-    kept_lines.append(binary_record_line)
+    kept_lines.append(
+        f"{script_arcname},{_record_hash(binary_bytes)},{len(binary_bytes)}"
+    )
+    kept_lines.append(
+        f"{wheel_arcname},{_record_hash(new_wheel_meta)},{len(new_wheel_meta)}"
+    )
     # RECORD lists itself last with empty hash/size (PEP 376).
     kept_lines.append(f"{record_arcname},,")
     new_record = ("\n".join(kept_lines) + "\n").encode("utf-8")
@@ -207,8 +235,14 @@ def repack(wheel: Path, binary: Path) -> None:
         script_info.external_attr = _EXEC_EXTERNAL_ATTR
         script_info.compress_type = zipfile.ZIP_DEFLATED
         out.writestr(script_info, binary_bytes)
+        out.writestr(wheel_arcname, new_wheel_meta)
         out.writestr(record_arcname, new_record)
-    tmp.replace(wheel)
+
+    target = wheel.with_name(f"{distribution}-{version}-{full_tag}.whl")
+    tmp.replace(target)
+    if target != wheel and wheel.exists():
+        wheel.unlink()
+    return target
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -238,8 +272,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: binary not found: {binary}", file=sys.stderr)
         return 1
     wheel = args.wheel or _find_wheel(args.wheel_dir)
-    repack(wheel, binary)
-    print(f"repacked {wheel.name}: injected {binary} as scripts/{_SCRIPT_NAME}")
+    out = repack(wheel, binary)
+    print(f"repacked: {out}")
     return 0
 
 
