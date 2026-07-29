@@ -3,25 +3,13 @@
 mod common;
 use common::*;
 
-// The three bodies below assert only that a profile run completes and counted the
+// The two bodies below assert only that a profile run completes and counted the
 // requests it was told to send — true of any healthy run, so they cannot fail for
 // the reason they are named for. Each needs a capability this harness does not
 // have, named per test. Promoting them without that would add false greens.
-
-#[tokio::test]
-#[ignore = "needs an in-harness OTLP receiver to assert exported spans/metrics; \
-            as written this asserts only that a run completes"]
-async fn test_otel_fixture_profile_completes() {
-    let h = AIPerfHarness::new().await;
-    let r = h.run(&format!(
-        "--model mock-model --url {}/v1/chat/completions --streaming \
-         --synthetic-input-tokens-mean 8 --output-tokens-mean 1 \
-         --request-count 80 --concurrency 2 --ui none",
-        h.mock.url
-    ));
-    assert!(r.success());
-    assert_eq!(r.artifacts.request_count() as u32, 80);
-}
+//
+// The OTLP stub that sat here is gone: `test_export_otlp_mlflow.rs` now stands up an
+// in-harness collector and reads the decoded protobuf body.
 
 #[tokio::test]
 #[ignore = "needs the mock server's request-recording output read back to assert what was \
