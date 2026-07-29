@@ -31,7 +31,7 @@ With defaults this issues:
 
 | Hook | When | Default path |
 |------|------|--------------|
-| KV-cache reset | Once per logical cell, before warmup/profiling | `POST {origin}/reset_prefix_cache` |
+| KV-cache reset | Once per logical cell, before services start (so before warmup) | `POST {origin}/reset_prefix_cache` |
 | Profiler start | Before each `CreditPhase.PROFILING` runner | `POST {origin}/start_profile` |
 | Profiler stop | After that profiling runner finishes | `POST {origin}/stop_profile` |
 
@@ -42,37 +42,40 @@ With defaults this issues:
 Under `endpoint`, both hooks accept a bool or an object:
 
 ```yaml
-endpoint:
-  url: http://localhost:8000
-  type: chat
-  model_names: [your-model]
-  # Disabled (default when omitted)
-  reset_kv_cache: false
-  server_profiler: false
+benchmark:
+  models: [your-model]
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+    # Disabled (default when omitted)
+    reset_kv_cache: false
+    server_profiler: false
 ```
 
 ```yaml
-endpoint:
-  url: http://localhost:8000
-  type: chat
-  model_names: [your-model]
-  # Enabled with defaults
-  reset_kv_cache: true
-  server_profiler: true
+benchmark:
+  models: [your-model]
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+    # Enabled with defaults
+    reset_kv_cache: true
+    server_profiler: true
 ```
 
 ```yaml
-endpoint:
-  url: http://localhost:8000
-  type: chat
-  model_names: [your-model]
-  reset_kv_cache:
-    path: /v1/admin/reset_prefix_cache
-    timeout_seconds: 30
-  server_profiler:
-    start_path: /v1/admin/start_profile
-    stop_path: /v1/admin/stop_profile
-    timeout_seconds: 15
+benchmark:
+  models: [your-model]
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+    reset_kv_cache:
+      path: /v1/admin/reset_prefix_cache
+      timeout_seconds: 30
+    server_profiler:
+      start_path: /v1/admin/start_profile
+      stop_path: /v1/admin/stop_profile
+      timeout_seconds: 15
 ```
 
 ## CLI flags
@@ -132,6 +135,17 @@ sequenceDiagram
 - **Profiler** is owned by `TimingManager` / `PhaseOrchestrator`. Workers
   never fire control hooks.
 - Warmup phases never start or stop the profiler.
+- **The reset is a per-cell isolation boundary, not a cold-cache
+  guarantee for the profiling phase.** It fires before the benchmark
+  services start, so if the run also has a warmup phase, warmup traffic
+  repopulates the prefix cache before profiling begins. That is the
+  intended behavior: the hook exists so one sweep cell (or multi-run
+  trial) cannot inherit cache state from the previous one, and warmup
+  exists precisely so profiling measures a steady-state server. If you
+  want profiling to measure genuinely cold-cache behavior, drop warmup
+  from the config (`--warmup-request-count 0`, or omit the warmup phase)
+  so the reset is the last thing that touches the server before
+  profiling load starts.
 - Multi-URL endpoints: control POSTs go to each **unique** origin
   (`scheme://host:port`); duplicate path-qualified URLs on the same host
   are deduplicated. A partial profiler-start failure best-effort stops

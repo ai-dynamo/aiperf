@@ -12867,6 +12867,9 @@
         "resetKvCache": {
           "anyOf": [
             {
+              "type": "boolean"
+            },
+            {
               "$ref": "#/$defs/ResetKvCacheConfig"
             },
             {
@@ -12878,6 +12881,9 @@
         },
         "serverProfiler": {
           "anyOf": [
+            {
+              "type": "boolean"
+            },
             {
               "$ref": "#/$defs/ServerProfilerConfig"
             },
