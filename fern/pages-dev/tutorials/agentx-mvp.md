@@ -131,8 +131,10 @@ what you must set, what you may tune, and what you shouldn't touch:
 - **`--concurrency`** sets how many session trees stay live throughout the
   run, i.e. the sustained load. It must be a single integer under
   `--scenario`; comma-list sweeps are rejected. When concurrency exceeds the
-  number of distinct loaded traces, the run **fails** unless you pass
-  `--allow-dataset-wrap`; cache-bust alone does not enable wrapping.
+  number of distinct loaded traces, the trace pool wraps — the scenario locks
+  `--cache-bust first_turn_prefix`, and an active cache-bust target satisfies
+  the wrap opt-in. Without cache-bust, wrapping still requires
+  `--allow-dataset-wrap`.
 - `--url`, `--endpoint-type chat`, `--use-server-token-count`, and `--ui`
   round out the group ([`--use-server-token-count`](#tokenization-options---apply-chat-template-and---use-server-token-count)
   is explained below).
@@ -178,7 +180,8 @@ explicit value is honored *silently*, with no error and no change to the
   *not* caught by the scenario locks — the run still stamps
   `submission_valid: true` — so use it only for smoke tests, never for runs
   you intend to compare against other AgentX MVP results. If your smoke
-  concurrency exceeds N, pass `--allow-dataset-wrap` or lower concurrency.
+  concurrency exceeds N, the locked cache-bust target lets the pool wrap; with
+  cache-bust off you would need `--allow-dataset-wrap` or a lower concurrency.
 
 You don't need to touch the scheduling or warmup knobs: the scenario picks
 the agentic-replay scheduler and auto-fills the values shown above. Don't
@@ -367,9 +370,9 @@ trajectory-based warmup specific to the agentic-replay scheduler.
 
 Here's the picture. You set `--concurrency 100`. The scheduler builds 100
 active trajectory lanes, drawing traces from the dataset sampler. Filling more
-lanes than distinct loaded roots requires `--allow-dataset-wrap` (cache-bust
-alone does not enable wrapping); without it, an undersized pool is capped with
-a warning rather than silently wrap-filled. When wrapping is enabled, the same
+lanes than distinct loaded roots requires `--allow-dataset-wrap` or an active
+`--cache-bust` target (which the scenario locks on); without either, an
+undersized pool is capped with a warning rather than silently wrap-filled. When wrapping is enabled, the same
 trace can back multiple lanes, each with a deterministic per-lane start
 position. For each lane, it samples a random starting instant `t*` somewhere
 between 0% and 100% of that trace's recorded duration (the
@@ -471,8 +474,8 @@ A few wrinkles worth knowing:
 - **Concurrency may exceed the number of usable traces only with wrap enabled.**
   Traces too short to split into a warmup + profiling turn are skipped (the
   pool is capped with a warning when it cannot fill after skips). Filling
-  more lanes than distinct loaded roots requires `--allow-dataset-wrap` —
-  cache-bust alone does not enable wrapping. With wrap on, one source trace
+  more lanes than distinct loaded roots requires `--allow-dataset-wrap` or an
+  active `--cache-bust` target. With wrap on, one source trace
   can back several lanes (each keeping its own start position and recycle
   behavior). An *empty* pool after filtering is still an error.
 - **Profiling ends** when `--benchmark-duration` elapses. Anything in flight
