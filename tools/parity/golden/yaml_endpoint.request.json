@@ -43,6 +43,7 @@
         },
         "http2": false,
         "keepalive_timeout": 300.0,
+        "proxy_from_env": false,
         "request_content_type": "multipart_form_data",
         "session_header": "x-session",
         "ssl_verify": true,

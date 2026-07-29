@@ -34,6 +34,7 @@
         "headers": {},
         "http2": false,
         "keepalive_timeout": 300.0,
+        "proxy_from_env": false,
         "ssl_verify": true,
         "streaming": false,
         "timeout_seconds": 30.0,

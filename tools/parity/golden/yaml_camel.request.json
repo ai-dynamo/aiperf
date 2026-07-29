@@ -42,6 +42,7 @@
         "headers": {},
         "http2": false,
         "keepalive_timeout": 300.0,
+        "proxy_from_env": false,
         "session_header": "x-s",
         "ssl_verify": true,
         "streaming": true,
