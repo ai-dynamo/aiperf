@@ -192,6 +192,7 @@ fn config(
         start_min_ratio: 0.0,
         start_max_ratio: 1.0,
         idle_gap_cap_ms: None,
+        system_idle_gap_cap_ms: None,
         burst_phase_starts: false,
         random_seed: 1,
         benchmark_id: "bench".into(),
