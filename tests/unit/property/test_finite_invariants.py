@@ -371,6 +371,11 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     "SpecDecodeAcceptanceRecord.acceptance_histogram",
     "SpecDecodeAcceptanceRecord.per_step_accepted",
     "SpecDecodeAcceptanceRecord.per_step_drafted",
+    # Pooled acceptance histograms ({accepted_draft_count: steps}). Same reason as
+    # above -- a field-level ge bound cannot apply to a dict container; the counts
+    # are non-negative by construction (summed from the neutral record's histogram).
+    "ProfileResults.pooled_spec_decode_acceptance_histogram",
+    "JsonExportData.pooled_spec_decode_acceptance_histogram",
 }
 
 
