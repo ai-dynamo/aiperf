@@ -1,0 +1,16 @@
+{
+  "input_config": {
+    "models": {
+      "items": [
+        {
+          "name": "modelA"
+        }
+      ]
+    },
+    "datasets": [
+      {
+        "format": "speed_bench_coding"
+      }
+    ]
+  }
+}

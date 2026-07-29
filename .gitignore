@@ -33,6 +33,10 @@ profile.html
 # Golden-parity trace inputs. Their goldens are tracked, so the inputs must be too
 # or the parity tests cannot run from a clean clone.
 !tools/parity/**/*.jsonl
+# The speed-bench fixture run dirs live under an `artifacts/` path, which the
+# blanket `artifacts/` rule above would otherwise swallow.
+!tools/parity/speed_bench/artifacts/
+!tools/parity/speed_bench/artifacts/**
 !tests/unit/plot/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/

@@ -1,0 +1,13 @@
+{
+  "metrics": {
+    "sglang:spec_accept_length": {
+      "series": [
+        {
+          "stats": {
+            "avg": 4.25
+          }
+        }
+      ]
+    }
+  }
+}
