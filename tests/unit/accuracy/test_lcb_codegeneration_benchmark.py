@@ -28,6 +28,7 @@ from aiperf.accuracy.benchmarks.lcb_codegeneration import (
     _prepare_prompt,
 )
 from aiperf.accuracy.models import BenchmarkProblem
+from aiperf.common.environment import Environment
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
@@ -310,7 +311,9 @@ class TestPinnedDatasetLoad:
             ) as exc:
                 await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
         assert isinstance(exc.value.__cause__, ValueError)
-        assert "AIPERF_ACCURACY_LCB_RELEASE_TAG" in str(exc.value)
+        message = str(exc.value)
+        assert Environment.ACCURACY.LCB_RELEASE_TAG in message
+        assert "AIPERF_ACCURACY_LCB_RELEASE_TAG" in message
 
 
 class TestPathologicalDatasetRows:
