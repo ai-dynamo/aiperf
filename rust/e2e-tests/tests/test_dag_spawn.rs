@@ -54,7 +54,11 @@ fn roles_contents(messages: &Value) -> Vec<(Option<String>, Option<String>)> {
 }
 
 #[tokio::test]
-#[ignore = "requires emitted DAG spawn label and context fields"]
+// Fails on the spawned child's `metadata.parent_correlation_id`, which is null rather
+// than the root's `x_correlation_id`: spawn parent linkage is not emitted. The
+// `branch_stats` block this also asserts on is likewise unexported.
+#[ignore = "needs metadata.parent_correlation_id on spawned DAG children and a branch_stats \
+            export block; both are absent today"]
 async fn test_spawn_child_has_fresh_context_and_is_not_sticky_pinned() {
     assert!(
         std::path::Path::new(FIXTURE).exists(),

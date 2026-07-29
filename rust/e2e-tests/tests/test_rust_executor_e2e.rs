@@ -3,8 +3,14 @@
 mod common;
 use common::*;
 
+// The three bodies below assert only that a profile run completes and counted the
+// requests it was told to send — true of any healthy run, so they cannot fail for
+// the reason they are named for. Each needs a capability this harness does not
+// have, named per test. Promoting them without that would add false greens.
+
 #[tokio::test]
-#[ignore = "requires Python OTLP collector and adaptive chat-handler fixtures"]
+#[ignore = "needs an in-harness OTLP receiver to assert exported spans/metrics; \
+            as written this asserts only that a run completes"]
 async fn test_otel_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
@@ -18,7 +24,8 @@ async fn test_otel_fixture_profile_completes() {
 }
 
 #[tokio::test]
-#[ignore = "requires Python request-capture, tokenizer, and dataset fixtures"]
+#[ignore = "needs the mock server's request-recording output read back to assert what was \
+            actually sent on the wire; as written this asserts only that a run completes"]
 async fn test_request_capture_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
@@ -32,7 +39,8 @@ async fn test_request_capture_fixture_profile_completes() {
 }
 
 #[tokio::test]
-#[ignore = "requires a Python handler that captures client peer ports"]
+#[ignore = "needs per-request client peer ports surfaced by the mock server to prove one \
+            connection was reused; as written this asserts only that a run completes"]
 async fn test_connection_reuse_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(

@@ -135,7 +135,11 @@ fn ns(meta: &Value, key: &str) -> i64 {
 }
 
 #[tokio::test]
-#[ignore = "requires distinct DAG correlation IDs for each branch"]
+// Fails on `metadata.x_correlation_id`: every record carries one shared value, so the
+// per-branch/parent lineage this asserts (3 distinct IDs, children pointing at the
+// root, `agent_depth`) is not emitted yet. Everything below that point is untested.
+#[ignore = "needs per-branch metadata.x_correlation_id/parent_correlation_id/agent_depth \
+            emitted for DAG records; today one shared correlation ID is emitted for all"]
 async fn test_full_dag_payload_merge_and_stats() {
     assert!(
         std::path::Path::new(FIXTURE).exists(),

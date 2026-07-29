@@ -6,8 +6,14 @@ use common::*;
 
 use aiperf_mock_server::config::MockServerConfig;
 
+// `--ui-type`/`--ui` is accepted by clap (flags.rs:518) and then never read: no
+// consumer of `flags.ui_type` exists, so there is no dashboard renderer to
+// exercise and `--ui dashboard` is inert. This body passes for that reason
+// alone, which is why it stays ignored rather than being promoted — its
+// remaining assertions are duration-termination, already covered elsewhere.
 #[tokio::test]
-#[ignore = "requires executable dashboard UI capability"]
+#[ignore = "no dashboard UI exists to exercise: --ui-type is parsed but never consumed, \
+            so this asserts only duration-based termination"]
 async fn test_duration_based_termination() {
     let mut cfg = MockServerConfig::default();
     cfg.ttft = 10.0;
