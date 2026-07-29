@@ -43,7 +43,8 @@ use crate::phase_runtime::{
 };
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{
-    ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, NoopPhaseObserver,
+    ClockPhaseOrchestrator, ClockPhaseRunnerFactory, GracePeriod, LocalPhaseFuture,
+    NoopPhaseObserver,
     PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory,
     PhaseObserver, PhaseReturn, PhaseSend, PhaseStats, RampDriver, SlotPool, drive_phases,
     make_interval_generator,
@@ -55,7 +56,8 @@ use uuid::Uuid;
 use crate::engine::execute::{
     AdaptiveScheduledPhaseController, RampActuatorRngRoots, adaptive_run_config,
     integer_adaptive_bound, metrics_phase, phase_config, phase_seamless_to_next,
-    push_concurrency_ramp_driver, push_rate_ramp_driver, ramp_strategy, seconds_to_u64_ns,
+    push_concurrency_ramp_driver, push_rate_ramp_driver, ramp_strategy, seconds_to_ns,
+    seconds_to_u64_ns,
 };
 use crate::engine::graph_execution::{
     ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, GraphExecutionEvent,
@@ -238,6 +240,45 @@ pub fn graph_pressure_grace_sec(user_grace: Option<f64>, cache_pressure: f64) ->
         Some(grace) => grace,
         None => cache_pressure.min(PRESSURE_DRAIN_GRACE_CAP_SEC),
     }
+}
+
+/// Give a fully unbound warmup phase a real deadline derived from the run's
+/// profiling budget.
+///
+/// Scenario locks (AgentX lane-prime) author a warmup with no request, session,
+/// or duration bound. Without a duration the phase lifecycle's `time_left_ns`
+/// returns `None` for both the sending and the return wait, so neither
+/// `stop_issuing` nor `cancel_inflight` is ever reachable: one slow trajectory
+/// instance runs to completion no matter how long it takes, and
+/// `--benchmark-duration` bounds only profiling. Bound the warmup by the
+/// profiling budget (capped at [`PRESSURE_DRAIN_GRACE_CAP_SEC`]) and, absent an
+/// authored grace, cancel in flight at that deadline instead of waiting forever.
+fn bound_unbound_warmup_phases(phases: &[PhaseSpec], configs: &mut [PhaseConfig]) -> Result<()> {
+    let Some(budget) = phases
+        .iter()
+        .filter(|phase| !phase.common().exclude_from_results)
+        .find_map(|phase| phase.common().duration)
+    else {
+        return Ok(());
+    };
+    let deadline_ns = seconds_to_ns(graph_pressure_grace_sec(None, budget))?;
+    for (spec, config) in phases.iter().zip(configs.iter_mut()) {
+        let common = spec.common();
+        if config.kind != PhaseKind::Warmup
+            || config.stop.expected_duration_ns.is_some()
+            || config.stop.total_expected_requests.is_some()
+            || config.stop.expected_num_sessions.is_some()
+            || common.agentic_cache_warmup_duration.is_some()
+        {
+            continue;
+        }
+        config.stop.expected_duration_ns = Some(deadline_ns);
+        if common.grace_period.is_none() {
+            config.grace_period = GracePeriod::Finite(0);
+        }
+        config.validate()?;
+    }
+    Ok(())
 }
 
 struct PreparedGraphPhase {
@@ -1770,6 +1811,9 @@ pub(crate) async fn run_graph_phases(
         .enumerate()
         .map(|(index, spec)| phase_config(spec, phase_seamless_to_next(phases, index)))
         .collect::<Result<Vec<_>>>()?;
+    let mut phase_configs = phase_configs;
+    bound_unbound_warmup_phases(phases, &mut phase_configs)?;
+    let phase_configs = phase_configs;
     let prepared = prepared
         .into_iter()
         .zip(&phase_configs)
