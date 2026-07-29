@@ -239,8 +239,39 @@ fn goldens_roundtrip_through_native_type() {
     }
 }
 
+/// Materialize the dataset inputs the CLI fixtures name.
+///
+/// The `.args` fixtures and their goldens pin absolute `/tmp` paths, so the
+/// files cannot be relocated into a tempdir without regenerating every golden.
+/// `load::resolve` reads a `--fixed-schedule` input to derive its request bound
+/// (`load.rs:222`), so `sched.jsonl`/`s.jsonl` must carry exactly the two
+/// non-empty lines the `fixed_sched`/`sched_offset` goldens record; the other
+/// two paths are only canonicalized, never read. Writing them here keeps the
+/// suite from depending on residue left by an earlier run.
+fn ensure_fixture_inputs() {
+    const ENTRY: &str = concat!(
+        r#"{"timestamp":0,"input_length":8,"output_length":4}"#,
+        "\n",
+        r#"{"timestamp":1000,"input_length":8,"output_length":4}"#,
+        "\n",
+    );
+    for name in ["sched.jsonl", "s.jsonl", "t.jsonl", "trace.jsonl"] {
+        let path = std::path::Path::new("/tmp").join(name);
+        std::fs::write(&path, ENTRY)
+            .unwrap_or_else(|e| panic!("write fixture input {}: {e}", path.display()));
+    }
+    let parity = std::path::Path::new("/tmp/aiperf-parity");
+    std::fs::create_dir_all(parity).unwrap_or_else(|e| panic!("create {}: {e}", parity.display()));
+    for name in ["sched.jsonl", "production_trace.jsonl"] {
+        let path = parity.join(name);
+        std::fs::write(&path, ENTRY)
+            .unwrap_or_else(|e| panic!("write fixture input {}: {e}", path.display()));
+    }
+}
+
 #[test]
 fn loader_reproduces_goldens() {
+    ensure_fixture_inputs();
     for fixture in FIXTURES {
         let golden = load_golden(fixture);
         let flags = ProfileFlags::parse_from_args(&fixture_args(fixture))
@@ -318,6 +349,7 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
 
 #[test]
 fn yaml_configs_reproduce_goldens() {
+    ensure_fixture_inputs();
     for (config, golden_stem, artifact_dir) in YAML_FIXTURES {
         let golden = load_golden(golden_stem);
         let cfg = format!("../../tools/parity/configs/{config}.yaml");
