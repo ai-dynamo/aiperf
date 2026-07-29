@@ -104,9 +104,11 @@ class _AccuracySettings(BaseSettings):
         "are reproducible across runs and branches. Default "
         "``v4_v5`` matches lighteval's base subset; bump (e.g. to "
         "``v6``) when the team rebaselines against a newer snapshot. "
-        "The loader always passes ``trust_remote_code=True`` so LCB's "
-        "dataset-loading script can execute on ``datasets`` v4+ "
-        "(mirrors lighteval's reference opt-in). Consumed by "
+        "``trust_remote_code=True`` is required because LCB ships a "
+        "repository loading script; this is only compatible with "
+        "``datasets<4`` (``datasets>=4`` dropped loading-script support "
+        "entirely — the loader surfaces a clear error with a "
+        "``datasets<4`` pin). Consumed by "
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
     )
 
