@@ -11,10 +11,13 @@
 # `python -m aiperf.cli` through `run_env(.., AIPERF_RUNTIME_ENGINE=python)` for the
 # control half. Without the venv those halves fail to spawn.
 #
-# The suite forces `HF_HUB_OFFLINE=1` in every child (`e2e-tests/tests/common/mod.rs`),
-# so any tokenizer it needs must already be in the runner's HF cache. Tokenizers are
-# pre-fetched explicitly below rather than left to a cache-miss at test time, where
-# offline mode turns the miss into an opaque run failure.
+# The suite sets `HF_HUB_OFFLINE=1` in every child (`e2e-tests/tests/common/mod.rs`),
+# but that binds only the python-engine children: the native path downloads through
+# `hf-hub` 0.4.3, which reads `HF_HOME` and has no offline switch at all
+# (`hf-hub-0.4.3/src/lib.rs:14`). So a cold cache is survivable for the Rust half and
+# fatal for the parity half. Tokenizers are pre-fetched below so the parity tests have
+# a warm cache, and so the Rust half does not serialize N first-run downloads into the
+# test wall-clock.
 
 name: Rust E2E Tests
 
@@ -59,11 +62,17 @@ jobs:
           from transformers import AutoTokenizer
 
           MODELS = [
-              "openai/gpt-oss-120b",
+              "openai/gpt-oss-120b",  # DEFAULT_MODEL — by far the most used
               "Qwen/Qwen3-0.6B",
+              "Qwen/Qwen2.5-32B-Instruct",
+              "Qwen/Qwen2.5-Coder-32B-Instruct",
               "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
               "microsoft/phi-4",
+              "microsoft/Phi-4-reasoning",
               "mistralai/Mixtral-8x7B-Instruct-v0.1",
+              "nvidia/llama-3.1-nemotron-70b-instruct",
+              "nomic-ai/nomic-embed-text-v1.5",
+              "gpt2",
           ]
           for name in MODELS:
               try:
