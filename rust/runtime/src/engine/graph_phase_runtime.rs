@@ -230,6 +230,34 @@ pub const PRESSURE_DRAIN_GRACE_CAP_SEC: f64 = 300.0;
 /// Maximum handoff residual delay in seconds.
 pub const HANDOFF_RESIDUAL_CAP_SEC: f64 = 60.0;
 
+/// Maximum injected deadline for an otherwise unbound warmup phase, in seconds.
+///
+/// Distinct from [`PRESSURE_DRAIN_GRACE_CAP_SEC`]: that caps how long a drain may
+/// linger after issuance stops, this caps how long priming itself may run.
+pub const UNBOUND_WARMUP_DEADLINE_CAP_SEC: f64 = 300.0;
+
+/// Fraction of the profiling budget an unbound warmup may consume before its
+/// injected deadline fires, so priming cannot dominate a short run.
+pub const UNBOUND_WARMUP_BUDGET_FRACTION: f64 = 0.25;
+
+/// Floor for the injected unbound-warmup deadline, in seconds.
+///
+/// A very short profiling budget would otherwise scale the warmup to a fraction
+/// of a second and cancel every lane before its first turn completes.
+pub const UNBOUND_WARMUP_DEADLINE_FLOOR_SEC: f64 = 30.0;
+
+/// Injected deadline for an unbound warmup, derived from the profiling budget.
+///
+/// A fraction of the budget, floored so short runs still prime, and capped so
+/// long runs do not spend minutes-to-hours priming.
+pub fn unbound_warmup_deadline_sec(budget: f64) -> f64 {
+    (budget * UNBOUND_WARMUP_BUDGET_FRACTION)
+        .max(UNBOUND_WARMUP_DEADLINE_FLOOR_SEC)
+        .min(UNBOUND_WARMUP_DEADLINE_CAP_SEC)
+        // Never exceed the profiling budget the warmup precedes.
+        .min(budget)
+}
+
 /// Microseconds per second, the [`Clock`]-ledger scale the warmup handoff walls
 /// (`clock.now_ns() / 1000`) and `chop_trie_at_frontier` residuals share.
 const MICROS_PER_SECOND: f64 = 1_000_000.0;
@@ -250,18 +278,24 @@ pub fn graph_pressure_grace_sec(user_grace: Option<f64>, cache_pressure: f64) ->
 /// returns `None` for both the sending and the return wait, so neither
 /// `stop_issuing` nor `cancel_inflight` is ever reachable: one slow trajectory
 /// instance runs to completion no matter how long it takes, and
-/// `--benchmark-duration` bounds only profiling. Bound the warmup by the
-/// profiling budget (capped at [`PRESSURE_DRAIN_GRACE_CAP_SEC`]) and, absent an
+/// `--benchmark-duration` bounds only profiling. Bound the warmup by
+/// [`unbound_warmup_deadline_sec`] of the profiling budget and, absent an
 /// authored grace, cancel in flight at that deadline instead of waiting forever.
+///
+/// The budget is the shortest duration authored across the non-excluded phases so
+/// a sweep's warmup cannot be sized off a long phase and then dominate a short
+/// one.
 fn bound_unbound_warmup_phases(phases: &[PhaseSpec], configs: &mut [PhaseConfig]) -> Result<()> {
     let Some(budget) = phases
         .iter()
         .filter(|phase| !phase.common().exclude_from_results)
-        .find_map(|phase| phase.common().duration)
+        .filter_map(|phase| phase.common().duration)
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+        .min_by(f64::total_cmp)
     else {
         return Ok(());
     };
-    let deadline_ns = seconds_to_ns(graph_pressure_grace_sec(None, budget))?;
+    let deadline_ns = seconds_to_ns(unbound_warmup_deadline_sec(budget))?;
     for (spec, config) in phases.iter().zip(configs.iter_mut()) {
         let common = spec.common();
         if config.kind != PhaseKind::Warmup
@@ -737,7 +771,9 @@ impl GraphPressureRecycle {
         let deadline_ns = self.clock.now_ns().saturating_add(self.duration_ns);
         // One event loop owns the shared recycle cursor.
         let next_index = Rc::new(Cell::new(cursor));
-        let (done_tx, mut done_rx) = mpsc::unbounded_channel::<()>();
+        // Lane-completion barrier only: each lane sends exactly once, so the
+        // channel is bounded at the lane count and can never block or grow.
+        let (done_tx, mut done_rx) = mpsc::channel::<()>(pass0.len());
         for (lane_index, &start_template) in pass0.iter().enumerate() {
             let clock = self.clock.clone();
             let placement = self.placement.clone();
@@ -822,7 +858,7 @@ impl GraphPressureRecycle {
                     progress.lanes.set_corpus_cursor(next_index.get());
                     template_index = draw.index(drawn, n);
                 }
-                let _ = done_tx.send(());
+                let _ = done_tx.send(()).await;
             });
         }
         drop(done_tx);
@@ -2868,9 +2904,10 @@ mod tests {
 
         bound_unbound_warmup_phases(&phases, &mut configs).unwrap();
 
+        // A quarter of the 120s budget is below the floor, so the floor applies.
         assert_eq!(
             configs[0].stop.expected_duration_ns,
-            Some(seconds_to_ns(120.0).unwrap())
+            Some(seconds_to_ns(30.0).unwrap())
         );
         assert_eq!(configs[0].grace_period, GracePeriod::Finite(0));
         // Profiling keeps its own authored budget and grace policy.
@@ -4275,6 +4312,192 @@ mod tests {
                 .borrow()
                 .iter()
                 .all(|id| id.starts_with("a::") || id.starts_with("b::"))
+        );
+    }
+
+    /// A placement that records dispatch instants and, once the cancel latch is
+    /// tripped, cuts the in-flight trace the way `cancel_inflight` does.
+    struct DeadlinePlacement {
+        clock: Rc<dyn crate::clock::Clock>,
+        per_trace_ns: i64,
+        cancelled: Rc<Cell<bool>>,
+        /// Clock instant at which each trace was admitted.
+        starts: Rc<RefCell<Vec<i64>>>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl crate::graph::execution::TracePlacement for DeadlinePlacement {
+        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+            self.starts.borrow_mut().push(self.clock.now_ns());
+            self.clock.clone().sleep(self.per_trace_ns).await;
+            if self.cancelled.get() {
+                return Err(TraceError::Cancelled("cut in flight".into()));
+            }
+            Ok(())
+        }
+    }
+
+    fn deadline_recycle(
+        clock: Rc<dyn crate::clock::Clock>,
+        placement: Rc<dyn crate::graph::execution::TracePlacement>,
+        cancelled: Rc<Cell<bool>>,
+        duration_ns: i64,
+    ) -> Rc<GraphPressureRecycle> {
+        let progress = Rc::new(GraphPhaseProgress::new(
+            Rc::new(RecordingGraphPhaseProgressSink::default()),
+            Rc::new(GraphPhaseFailures::default()),
+            Rc::new(RefCell::new(GraphWorkloadReport::default())),
+            clock.clone(),
+            Rc::new(GraphLaneLedger::default()),
+            true,
+            Rc::new(RefCell::new(Vec::new())),
+        ));
+        Rc::new(GraphPressureRecycle {
+            clock,
+            placement,
+            progress,
+            templates: Rc::new(vec![PressureTemplate {
+                plan: pressure_one_node_plan("a"),
+                template_id: "a".into(),
+                t_star_us: 0.0,
+                duration_us: 0.0,
+                original_plan: pressure_one_node_plan("a"),
+            }]),
+            duration_ns,
+            lane_target: 1,
+            session_limit: None,
+            recycle_bounded: false,
+            t_star: TStarWindow::default(),
+            cancelled,
+            pressure_lane_count: Cell::new(0),
+            prime_once: false,
+        })
+    }
+
+    #[test]
+    fn pressure_recycle_issues_no_trace_after_the_duration_deadline() {
+        let sim = Rc::new(crate::clock::SimClock::new());
+        let clock: Rc<dyn crate::clock::Clock> = sim.clone();
+        let cancelled = Rc::new(Cell::new(false));
+        let starts = Rc::new(RefCell::new(Vec::new()));
+        // Each trace outlives the whole duration budget, so the very first
+        // instance already carries the loop past its deadline.
+        let placement: Rc<dyn crate::graph::execution::TracePlacement> =
+            Rc::new(DeadlinePlacement {
+                clock: clock.clone(),
+                per_trace_ns: 500,
+                cancelled: cancelled.clone(),
+                starts: starts.clone(),
+            });
+        let deadline_ns = 100;
+        let recycle = deadline_recycle(clock.clone(), placement, cancelled, deadline_ns);
+        let run_recycle = recycle.clone();
+        let outcome = crate::graph::runtime::drive_sim(sim, move |_handle| async move {
+            run_recycle.run().await;
+        });
+        assert!(!outcome.deadlocked);
+
+        let starts = starts.borrow();
+        assert_eq!(
+            starts.len(),
+            1,
+            "the loop issued {} traces; nothing may be admitted past the deadline",
+            starts.len()
+        );
+        assert!(
+            starts.iter().all(|start| *start <= deadline_ns),
+            "trace admitted after the deadline: {starts:?}"
+        );
+        // The overrun is the in-flight trace, which the phase lifecycle cuts via
+        // `cancel_inflight`; the recycle loop only stops the next issuance.
+        assert_eq!(clock.now_ns(), 500);
+    }
+
+    #[test]
+    fn pressure_recycle_lane_ends_on_a_cancelled_in_flight_trace() {
+        let sim = Rc::new(crate::clock::SimClock::new());
+        let clock: Rc<dyn crate::clock::Clock> = sim.clone();
+        let cancelled = Rc::new(Cell::new(false));
+        let starts = Rc::new(RefCell::new(Vec::new()));
+        let placement: Rc<dyn crate::graph::execution::TracePlacement> =
+            Rc::new(DeadlinePlacement {
+                clock: clock.clone(),
+                per_trace_ns: 10,
+                cancelled: cancelled.clone(),
+                starts: starts.clone(),
+            });
+        // A large budget: only the cancel latch can end this lane.
+        let recycle = deadline_recycle(clock.clone(), placement, cancelled.clone(), 1_000_000);
+        let run_recycle = recycle.clone();
+        let latch = recycle.clone();
+        let outcome = crate::graph::runtime::drive_sim(sim, move |_handle| async move {
+            let cancel_at = latch.clock.clone();
+            tokio::task::spawn_local(async move {
+                cancel_at.clone().sleep(35).await;
+                latch.cancel();
+            });
+            run_recycle.run().await;
+        });
+        assert!(!outcome.deadlocked);
+        assert!(
+            clock.now_ns() < 1_000_000,
+            "lane ran to its duration budget instead of ending on cancellation"
+        );
+        assert!(
+            !starts.borrow().is_empty(),
+            "no trace was ever admitted before cancellation"
+        );
+    }
+
+    #[test]
+    fn unbound_warmup_deadline_is_a_floored_capped_fraction_of_the_budget() {
+        // Floor dominates a short budget.
+        assert_eq!(unbound_warmup_deadline_sec(120.0), 30.0);
+        // Fraction applies in the middle of the range.
+        assert_eq!(unbound_warmup_deadline_sec(400.0), 100.0);
+        // Cap dominates a long budget.
+        assert_eq!(unbound_warmup_deadline_sec(7_200.0), 300.0);
+        // The warmup never outlasts the profiling phase it precedes.
+        assert_eq!(unbound_warmup_deadline_sec(10.0), 10.0);
+    }
+
+    #[test]
+    fn unbound_warmup_deadline_uses_the_shortest_non_excluded_budget() {
+        let warmup: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "warmup",
+            "exclude_from_results": true,
+            "concurrency": 2,
+        }))
+        .unwrap();
+        let long: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "concurrency": 2,
+            "duration": 4_000.0,
+        }))
+        .unwrap();
+        let short: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling-short",
+            "exclude_from_results": false,
+            "concurrency": 2,
+            "duration": 20.0,
+        }))
+        .unwrap();
+        let phases = vec![warmup, long, short];
+        let mut configs = phases
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| phase_config(spec, phase_seamless_to_next(&phases, index)))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        bound_unbound_warmup_phases(&phases, &mut configs).unwrap();
+        assert_eq!(
+            configs[0].stop.expected_duration_ns,
+            Some(seconds_to_ns(20.0).unwrap()),
+            "the warmup must be sized off the shortest profiling budget"
         );
     }
 

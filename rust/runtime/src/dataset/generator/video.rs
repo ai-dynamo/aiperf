@@ -417,6 +417,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
     fn ffmpeg_encodes_a_real_video_with_audio() {
         let config = SyntheticVideoConfig {
             batch_size: 1,

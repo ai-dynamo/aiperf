@@ -414,6 +414,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires ffmpeg for mp3 encoding"]
     fn ffmpeg_mp3_round_trip_is_decodable() {
         let config = SyntheticAudioConfig {
             batch_size: 1,
