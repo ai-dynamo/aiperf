@@ -95,6 +95,23 @@ def test_rename_moves_the_data_dir_to_the_new_distribution_name(
     assert sorted(listed) == sorted(names), "RECORD must list every member exactly once"
 
 
+def test_default_suffix_does_not_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A second default rename keeps `aiperf-nightly`, not `aiperf-nightly-nightly`."""
+    wheel = _wheel_with_executable_script(tmp_path)
+    monkeypatch.setattr("sys.argv", ["rename_wheel.py", str(wheel)])
+    assert rename_wheel.main() == 0
+    once = next(tmp_path.glob("aiperf_nightly-*.whl"))
+
+    monkeypatch.setattr("sys.argv", ["rename_wheel.py", str(once)])
+    assert rename_wheel.main() == 0
+    twice = next(tmp_path.glob("aiperf_nightly-*.whl"))
+
+    with zipfile.ZipFile(twice) as zf:
+        names = zf.namelist()
+    assert not any("nightly_nightly" in n or "nightly-nightly" in n for n in names)
+    assert "aiperf_nightly-0.11.0.data/scripts/aiperf" in names
+
+
 def test_rename_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     once = _rename(
         monkeypatch, _wheel_with_executable_script(tmp_path), "aiperf-nightly"

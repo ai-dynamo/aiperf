@@ -16,7 +16,7 @@ CPython ABI, the repack also rewrites ``dist-info/WHEEL`` to
 with ``Root-Is-Purelib: false``.
 
 Usage:
-    python tools/wheel_repack.py --wheel-dir dist --binary rust/target/release/aiperf
+    python tools/wheel_repack.py --wheel-dir dist --binary rust/target/optimized/aiperf
 
 The wheel is rewritten to a new file named for its final tag and the input is
 unlinked. Re-running on an already-repacked wheel replaces the injected binary and
@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--binary",
         type=Path,
-        default=Path("rust/target/release/aiperf"),
+        default=Path("rust/target/optimized/aiperf"),
         help="path to the compiled aiperf binary to inject",
     )
     args = parser.parse_args(argv)

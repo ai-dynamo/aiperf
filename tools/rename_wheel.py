@@ -224,7 +224,13 @@ def main() -> int:
             log.error("METADATA has no Name field")
             return 1
         current_name = name_match.group(1).strip()
-        new_name = args.new_name or f"{current_name}-nightly"
+        # Re-suffixing an already-renamed wheel would yield `aiperf-nightly-nightly`.
+        if args.new_name:
+            new_name = args.new_name
+        elif current_name.endswith("-nightly"):
+            new_name = current_name
+        else:
+            new_name = f"{current_name}-nightly"
         log.info("distribution name: %s -> %s", current_name, new_name)
 
         new_metadata_text = re.sub(
