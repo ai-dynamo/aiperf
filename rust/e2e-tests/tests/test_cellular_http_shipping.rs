@@ -92,8 +92,11 @@ fn run_full_coverage(h: &AIPerfHarness, cells: u32, force_http: bool) -> RunResu
     let cfg = tmp.path().join("full_coverage.yaml");
     std::fs::write(&cfg, full_coverage_config(&h.mock.url, cells)).unwrap();
     // Surface just the cellular artifact-upload observable at `info`; everything else
-    // stays at the runner's default `warn`.
-    let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
+    // stays at the runner's default `warn`. `aiperf=info` is required alongside it: the
+    // upload event fires in the `--execute` child, and the parent re-emits forwarded child
+    // lines under target `aiperf` (`cli/src/execute.rs`) into the `logs/aiperf.log` it owns.
+    let mut env: Vec<(&str, &str)> =
+        vec![("AIPERF_LOG", "warn,aiperf=info,aiperf_cellular_artifact=info")];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
     }
