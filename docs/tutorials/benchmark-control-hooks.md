@@ -142,10 +142,15 @@ sequenceDiagram
   intended behavior: the hook exists so one sweep cell (or multi-run
   trial) cannot inherit cache state from the previous one, and warmup
   exists precisely so profiling measures a steady-state server. If you
-  want profiling to measure genuinely cold-cache behavior, drop warmup
-  from the config (`--warmup-request-count 0`, or omit the warmup phase)
-  so the reset is the last thing that touches the server before
-  profiling load starts.
+  want profiling to measure genuinely cold-cache behavior, run without a
+  warmup phase at all so the reset is the last thing that touches the
+  server before profiling load starts. Warmup is opt-in: omit
+  `--warmup-request-count` / `--warmup-num-sessions` /
+  `--warmup-duration` on the CLI, or omit the `warmup:` block (and any
+  `exclude_from_results` warmup phase) in YAML. Note that
+  `--warmup-request-count 0` is **not** the way to do this — the flag is
+  constrained to `> 0` and a `0` fails validation with `Input should be
+  greater than 0`.
 - Multi-URL endpoints: control POSTs go to each **unique** origin
   (`scheme://host:port`); duplicate path-qualified URLs on the same host
   are deduplicated. A partial profiler-start failure best-effort stops
