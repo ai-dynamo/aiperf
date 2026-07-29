@@ -82,6 +82,8 @@ navigation:
             path: ../pages-dev/tutorials/spec-bench.md
           - page: Profile with SPEED-Bench Dataset
             path: ../pages-dev/tutorials/speed-bench.md
+          - page: Per-Request Speculative-Decoding Metrics
+            path: ../pages-dev/tutorials/spec-decode-metrics.md
           - page: Profile with Bailian Traces
             path: ../pages-dev/tutorials/bailian-trace.md
           - page: Profile with BurstGPT Traces
