@@ -1513,6 +1513,12 @@ class BranchOrchestrator:
         # exponent below math.exp's overflow threshold (~709) so no draw can raise
         # OverflowError even if inputs are pathological.
         draw = median_ms * math.exp(min(stream.normal(0.0, spec.sigma), 700.0))
+        # Even with the exponent capped, ``median * exp(700)`` can overflow to
+        # inf for a large median (Cristian's spec uses 31 s medians). Reject a
+        # non-finite draw so it never reaches asyncio.sleep -- fall back to the
+        # (load-clamped, finite) median.
+        if not math.isfinite(draw):
+            draw = median_ms
         if spec.min_ms is not None:
             draw = max(draw, spec.min_ms)
         if spec.max_ms is not None:
@@ -1540,7 +1546,7 @@ class BranchOrchestrator:
         think_ms = self._sample_think_ms(
             credit.conversation_id, credit.x_correlation_id, 0, median_ms
         )
-        if think_ms > 0.0:
+        if think_ms > 0.0 and math.isfinite(think_ms):
             await asyncio.sleep(think_ms / 1000.0)
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
@@ -1551,7 +1557,7 @@ class BranchOrchestrator:
         # Per-round think-time: wait after this round's branches have all drained
         # and before the gated turn fires (which releases the next round).
         think_ms = self._resolve_think_ms(pending)
-        if think_ms > 0.0:
+        if think_ms > 0.0 and math.isfinite(think_ms):
             await asyncio.sleep(think_ms / 1000.0)
         issued = await self._issuer.dispatch_join_turn(pending)
         if issued:
