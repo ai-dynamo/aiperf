@@ -5,7 +5,8 @@
 
 Repacks the wheel with:
   - updated METADATA `Name:` field
-  - renamed `*.dist-info/` directory
+  - renamed `*.dist-info/` and `*.data/` directories
+  - per-entry permissions carried over from the input archive
   - regenerated RECORD with fresh sha256/size for every file
   - new filename per PEP 491
 
@@ -22,6 +23,7 @@ import hashlib
 import io
 import logging
 import re
+import stat
 import tempfile
 import zipfile
 from pathlib import Path
@@ -193,9 +195,16 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         log.debug("extracting to %s", root)
+        # `extractall` discards the archive's permission bits, and repacking with
+        # `writestr(str, ...)` would invent mode 0o600. Capture each member's
+        # `external_attr` here so the repack can replay it verbatim.
+        src_infos: dict[str, zipfile.ZipInfo] = {}
         with zipfile.ZipFile(src) as zf:
             zf.extractall(root)
             log.debug("extracted %d entries", len(zf.namelist()))
+            for info in zf.infolist():
+                if not info.is_dir():
+                    src_infos[info.filename] = info
 
         dist_info_dirs = [
             d for d in root.iterdir() if d.is_dir() and d.name.endswith(".dist-info")
@@ -239,6 +248,37 @@ def main() -> int:
             )
             dist_info.rename(new_dist_info)
 
+        # Maps a repacked relative path back to its arcname in the input archive,
+        # so renamed directories still find their original permission bits.
+        dir_renames: list[tuple[str, str]] = []
+        if new_dist_info != dist_info:
+            dir_renames.append((f"{new_dist_info.name}/", f"{dist_info.name}/"))
+
+        # PEP 427 keys the data directory off the distribution name too; leaving it
+        # under the old name works by accident and is a latent trap.
+        data_dirs = [
+            d for d in root.iterdir() if d.is_dir() and d.name.endswith(".data")
+        ]
+        if len(data_dirs) > 1:
+            log.error("expected at most one .data dir, found %d", len(data_dirs))
+            return 1
+        for data_dir in data_dirs:
+            new_data = root / f"{new_file_name_part}-{version}.data"
+            if new_data == data_dir:
+                continue
+            if new_data.exists():
+                log.error("target data dir already exists: %s", new_data.name)
+                return 1
+            log.debug("renaming data dir: %s -> %s", data_dir.name, new_data.name)
+            data_dir.rename(new_data)
+            dir_renames.append((f"{new_data.name}/", f"{data_dir.name}/"))
+
+        def source_arcname(rel: str) -> str:
+            for new_prefix, old_prefix in dir_renames:
+                if rel.startswith(new_prefix):
+                    return old_prefix + rel[len(new_prefix) :]
+            return rel
+
         if not args.no_patch_source and current_name != new_name:
             patched = patch_source_version_calls(
                 root, new_dist_info, current_name, new_name
@@ -271,7 +311,19 @@ def main() -> int:
                 data = f.read_bytes()
                 hashval = sha256_record(data)
                 record_rows.append((rel, hashval, str(len(data))))
-                zf.writestr(rel, data)
+                src_info = src_infos.get(source_arcname(rel))
+                info = zipfile.ZipInfo(rel)
+                if src_info is not None:
+                    info.date_time = src_info.date_time
+                    info.external_attr = src_info.external_attr
+                    info.create_system = src_info.create_system
+                if info.external_attr >> 16 == 0:
+                    # Some producers emit external_attr 0; writing mode 0 would be
+                    # worse than a sane regular-file default.
+                    info.external_attr = (stat.S_IFREG | 0o644) << 16
+                    info.create_system = 3  # Unix, so the mode bits are honored
+                info.compress_type = zipfile.ZIP_DEFLATED
+                zf.writestr(info, data)
                 total_bytes += len(data)
                 if trace_files:
                     log.debug("  + %s (%d bytes, %s)", rel, len(data), hashval)

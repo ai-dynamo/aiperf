@@ -89,20 +89,16 @@ match. `RECORD` is regenerated so both the injected script and the rewritten
 The single wheel installs across the whole `requires-python = ">=3.11,<3.14"`
 range (`pyproject.toml:31`).
 
-### Known documentation drift
+### The nightly rename
 
-- **`tools/rename_wheel.py` drops the executable bit.** It repacks with
-  `zf.writestr(rel, data)` (`:274`), which does not carry `external_attr`, so
-  `.data/scripts/aiperf` goes from `0o100755` in the repacked wheel to `0o600` in
-  the `aiperf-nightly` variant.
-
-## Future requirements
-
-1. **Preserve the executable bit through the nightly rename.**
-   `tools/rename_wheel.py:274` MUST write `.data/scripts/aiperf` with its
-   `external_attr` intact so the `aiperf-nightly` variant installs an executable
-   `aiperf`, or the record MUST state explicitly that the variant is
-   non-executable.
+`tools/rename_wheel.py` produces the `aiperf-nightly` variant from a built wheel
+without rebuilding. It rewrites METADATA `Name:`, renames both the `*.dist-info/`
+and the `*.data/` directory to the new distribution name, patches in-wheel
+`version("<old>")` lookups, and regenerates `RECORD`. Repacking replays each
+input member's `ZipInfo` (`external_attr`, `date_time`, `create_system`), so
+`.data/scripts/aiperf` keeps mode `0o100755` and the nightly variant installs an
+executable `aiperf`; entries whose source `external_attr` is zero fall back to
+`S_IFREG | 0o644`. The rename is idempotent.
 
 ## Source anchors
 
