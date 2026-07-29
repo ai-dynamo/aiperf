@@ -501,6 +501,29 @@ def test_duplicate_hash_ids_in_request_inflate_theoretical_hit_to_full(tmp_path)
     )
 
 
+def test_equal_context_retry_reemits_nonempty_full_prompt(tmp_path):
+    """An identical retry must not become an invalid empty user message."""
+    trace = _base_trace(
+        [
+            _normal(0.0, [1, 2], in_tokens=128),
+            _normal(1.0, [1, 2], in_tokens=128),
+        ],
+        trace_id="equal_retry",
+    )
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config())
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    first, retry = convs[0].turns
+
+    assert first.raw_messages
+    assert retry.raw_messages == first.raw_messages
+    assert retry.reset_context is True
+    assert retry.raw_messages[-1]["role"] == "user"
+    assert retry.raw_messages[-1]["content"]
+
+
 def test_empty_requests_trace_reconstructs_empty_conversation(tmp_path):
     """A trace with zero requests yields a single empty Conversation, no crash."""
     trace = _base_trace([], trace_id="empty_trace")

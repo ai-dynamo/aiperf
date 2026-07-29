@@ -254,8 +254,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
         # Idle-gap cap (ms) for the t* boundary the load-time warp can't see (t*
         # is the sampling instant, not a request). Consumed two ways:
-        #   - WARMUP: clamps each warmup lead so priming doesn't start hours
-        #     early (``_capped_warmup_lead_ms``); priming spacing is meaningless.
+        #   - WARMUP: this cap and the global system-idle cap both clamp each
+        #     warmup lead so priming doesn't start hours early
+        #     (``_capped_warmup_lead_ms``); priming spacing is meaningless.
         #   - PROFILING: a single uniform shift caps the leading idle (t* ->
         #     earliest stream) while preserving recorded inter-stream spacing
         #     (``_leading_idle_shift_ms``); a per-stream clamp would collapse
@@ -548,9 +549,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         PROFILING dispatch offsets are NOT clamped this way -- see
         :meth:`_leading_idle_shift_ms`.
         """
-        if self._phase_offset_cap_ms is not None:
-            return min(lead_ms, self._phase_offset_cap_ms)
-        return lead_ms
+        caps_ms = [
+            cap
+            for cap in (
+                self._phase_offset_cap_ms,
+                (
+                    self._system_idle_gap_cap_seconds * MILLIS_PER_SECOND
+                    if self._system_idle_gap_cap_seconds is not None
+                    else None
+                ),
+            )
+            if cap is not None
+        ]
+        return min(lead_ms, *caps_ms) if caps_ms else lead_ms
 
     def _leading_idle_shift_ms(self, offsets: Iterable[float]) -> float:
         """Excess to subtract UNIFORMLY from every PROFILING dispatch offset so
@@ -878,15 +889,21 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             await self.credit_issuer.issue_credit(turn)
 
     async def _issue_child_continuation_or_drain(self, turn: TurnToSend) -> None:
-        """Dispatch a DAG child continuation, draining the join on refusal.
+        """Dispatch a DAG child continuation, draining terminal refusals.
 
         ``dispatch_child_turn`` returns True iff the turn reached the wire; on
-        any refusal (e.g. the ``--request-count`` cap) notify the orchestrator
-        so the parent's join drains deterministically instead of deadlocking on
-        a child whose remaining turns will never be issued.
+        a terminal refusal notify the orchestrator so the parent's join drains
+        deterministically instead of deadlocking on a child whose remaining
+        turns will never be issued. Accelerated warmup refusals are different:
+        the remaining child and its active join are persisted for profiling, so
+        marking the child stopped here would release the parent prematurely.
         """
         on_wire = await self.credit_issuer.dispatch_child_turn(turn)
-        if not on_wire and self.branch_orchestrator is not None:
+        if (
+            not on_wire
+            and self.branch_orchestrator is not None
+            and not self.allows_pending_branch_handoff_after_sending_complete
+        ):
             await self.branch_orchestrator.on_child_stopped(turn.x_correlation_id)
 
     async def finalize_phase(self) -> None:
@@ -1460,11 +1477,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         DAG child continuations (``agent_depth > 0``) go through the single
         child-issuance chokepoint (``_issue_child_continuation_or_drain``) so a
-        ``--request-count`` cap refusal is routed to ``on_child_stopped`` (drain
-        the parent join) instead of being silently swallowed by the discarded
-        ``issue_credit`` return -- including on the delayed (``delay_ms``) path,
-        where the refusal would otherwise fire long after the callback handler
-        decided the child could proceed. Root continuations keep ``issue_credit``.
+        terminal refusal is routed to ``on_child_stopped`` (drain the parent
+        join) instead of being silently swallowed by the discarded
+        ``issue_credit`` return. A warmup cutoff is preserved for profiling
+        handoff instead. This applies equally to delayed continuations, whose
+        refusal may happen after the callback handler decided the child could
+        proceed. Root continuations keep ``issue_credit``.
         """
         next_meta = self.conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit, next_meta)

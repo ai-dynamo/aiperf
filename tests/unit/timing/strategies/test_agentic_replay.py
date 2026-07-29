@@ -819,8 +819,10 @@ async def test_warmup_lead_clamped_to_idle_gap_cap():
         credit_issuer=issuer,
         lifecycle=lifecycle,
     )
-    # Idle-gap cap of 60s (what the agentx scenario sets).
-    strategy._phase_offset_cap_ms = 60_000.0
+    # The AgentX scenario sets the global system-idle cap, not the per-trace
+    # timestamp-warp cap. Warmup priming must honor that real configuration.
+    strategy._phase_offset_cap_ms = None
+    strategy._system_idle_gap_cap_seconds = 60.0
 
     await strategy.setup_phase()
     await strategy.execute_phase()
