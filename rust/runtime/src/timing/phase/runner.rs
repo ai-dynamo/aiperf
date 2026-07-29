@@ -680,6 +680,7 @@ impl ClockPhaseRunner {
         }
         let finalize_result = self.inner.execution.finalize().await;
         let stats = self.stats();
+        Self::warn_if_no_request_completed(&stats, reason);
         self.inner.observer.on_progress(stats.clone());
         self.inner
             .observer
@@ -687,6 +688,44 @@ impl ClockPhaseRunner {
         self.stop_progress_loop();
         finalize_result.map_err(PhaseRunError::Execution)?;
         Ok(stats)
+    }
+
+    /// Warn when a deadline-terminated phase issued work but completed none of
+    /// it, the shape that otherwise silently yields empty metrics and an empty
+    /// per-record export: every request was still in flight at the deadline and
+    /// cancelled requests emit no record.
+    fn warn_if_no_request_completed(stats: &PhaseStats, reason: PhaseCompletionReason) {
+        if !matches!(
+            reason,
+            PhaseCompletionReason::GraceTimeout | PhaseCompletionReason::ForceCompleted
+        ) {
+            return;
+        }
+        let sent = stats.final_requests_sent.unwrap_or(stats.requests_sent);
+        let completed = stats
+            .final_requests_completed
+            .unwrap_or(stats.requests_completed);
+        if sent == 0 || completed > 0 {
+            return;
+        }
+        let elapsed_ns = stats
+            .start_ns
+            .zip(stats.requests_end_ns)
+            .map(|(start, end)| end.saturating_sub(start));
+        tracing::warn!(
+            phase_id = %stats.phase_id,
+            kind = ?stats.kind,
+            requests_sent = sent,
+            requests_cancelled = stats
+                .final_requests_cancelled
+                .unwrap_or(stats.requests_cancelled),
+            expected_duration_ns = ?stats.expected_duration_ns,
+            elapsed_ns = ?elapsed_ns,
+            "phase deadline elapsed before any request completed; every request \
+             was cancelled in flight, so no records were retained and metrics \
+             will be empty. Raise the phase duration above the observed \
+             per-request latency, or lower the request size"
+        );
     }
 
     async fn finalize_failure(&self) {
