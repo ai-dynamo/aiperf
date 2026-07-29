@@ -167,6 +167,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 start_min_ratio=config.trajectory_start_min_ratio,
                 start_max_ratio=config.trajectory_start_max_ratio,
                 allow_dataset_wrap=config.allow_dataset_wrap,
+                cache_bust_enabled=config.cache_bust_enabled,
                 expected_num_sessions=(
                     profiling.expected_num_sessions if profiling is not None else None
                 ),

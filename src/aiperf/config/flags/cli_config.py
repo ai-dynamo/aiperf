@@ -671,7 +671,8 @@ class CLIConfig(BaseConfig):
             description="Allow weka/agentic replay to wrap (reuse distinct eligible "
             "traces across concurrency lanes) when concurrency exceeds the loaded "
             "pool. Defaults to False: over-subscription fails unless wrapping is "
-            "explicitly enabled.",
+            "explicitly enabled or an active --cache-bust target already keeps "
+            "repeated-trace traffic distinct.",
         ),
         CLIParameter(
             name=("--allow-dataset-wrap",),
