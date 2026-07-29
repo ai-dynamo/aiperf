@@ -1343,6 +1343,7 @@ mod tests {
                     corpus: Some("random".into()),
                 }),
                 synthesis: None,
+                cache_bust: None,
                 prefetch_media_urls: false,
             },
             "weka_trace",
