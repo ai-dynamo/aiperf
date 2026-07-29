@@ -24,16 +24,6 @@ async fn test_qmc_sobol_coordinates_match_sampling_design() {}
 #[ignore = "requires Latin-hypercube sampling-design artifact"]
 async fn test_qmc_latin_hypercube_coordinates_match_sampling_design() {}
 
-/// Trials with `repeated` iteration order build the canonical `profile_runs/trial_*` tree.
-#[tokio::test]
-#[ignore = "requires repeated trial artifact tree"]
-async fn test_trials_use_both_iteration_orders_and_canonical_artifact_trees_repeated() {}
-
-/// Trials with `independent` iteration order build the canonical `*/profile_runs/trial_*` tree.
-#[tokio::test]
-#[ignore = "requires independent trial artifact tree"]
-async fn test_trials_use_both_iteration_orders_and_canonical_artifact_trees_independent() {}
-
 /// `cv` requires `min_runs=2` and completes after two matching runs.
 #[tokio::test]
 #[ignore = "requires cv convergence internals"]
