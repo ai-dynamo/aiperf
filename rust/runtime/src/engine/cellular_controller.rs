@@ -1184,12 +1184,12 @@ pub fn run_cellular(
         // wrote its merged per-record artifacts (records/raw/CSV/parquet/outputs) there.
         // The controller concatenates them into the real artifact dir (the per-cell dirs
         // are the shards), preserving row-set identity with completion
-        // order accepted), before `_scratch` removes `temp_root`. `inputs.json` is NOT
-        // concatenated (a single FULL-dataset document, not per-record rows): every cell
-        // generated the identical inputs.json over the same resident
-        // dataset, so the controller copies ONE cell's copy verbatim
-        // (`copy_cell_inputs_json`). inputs.json is always-on (`rust_wire`), so without
-        // this the cellular run would silently drop it / break GenAI-Perf compat.
+        // order accepted), before `_scratch` removes `temp_root`. `inputs.json` takes its
+        // own merge (`merge_cell_inputs_json`): it holds per-session rows, and each cell
+        // generated it over the slice of the resident dataset THAT cell owns, so the
+        // controller unions the slices and re-sorts by `session_id` rather than copying one
+        // cell's file. inputs.json is always-on (`rust_wire`), so without this the cellular
+        // run would silently drop it / break GenAI-Perf compat.
         //
         // The files are controller-local in two cases, both handled here:
         // - SAME-HOST (`!is_k8s`): every cell wrote directly to its controller-local
@@ -1211,9 +1211,9 @@ pub fn run_cellular(
                 .map(|cell_id| concat_source_root.join(format!("cell-{cell_id}")))
                 .collect();
             // Per-record artifacts (records/raw/CSV/parquet/outputs) are concatenated only
-            // when requested; inputs.json (a single full-dataset doc) is copied whenever a
-            // cell produced one, independent of the per-record request set. `artifacts` was
-            // parsed once at the top of the run (identically to the cell's execute path).
+            // when requested; inputs.json is merged whenever any cell produced one,
+            // independent of the per-record request set. `artifacts` was parsed once at the
+            // top of the run (identically to the cell's execute path).
             if !requested_per_record_artifacts(envelope).is_empty() {
                 crate::engine::shard_artifacts::concatenate_cell_artifacts(
                     &cell_dirs,
@@ -1222,12 +1222,12 @@ pub fn run_cellular(
                 )
                 .context("concatenating per-cell per-record artifacts")?;
             }
-            crate::engine::shard_artifacts::copy_cell_inputs_json(
+            crate::engine::shard_artifacts::merge_cell_inputs_json(
                 &cell_dirs,
                 artifact_dir,
                 &artifacts,
             )
-            .context("copying per-cell inputs.json")?;
+            .context("merging per-cell inputs.json")?;
         }
 
         // Stop the upload server (also dropped on any bail path).

@@ -124,9 +124,9 @@ pub(crate) fn concatenate_shard_artifacts(
 ///
 /// Cleanup of the cell dirs is owned by the controller's `ScratchTreeGuard` (it removes
 /// the whole `temp_root`), so this fn — unlike [`concatenate_shard_artifacts`] — never
-/// deletes its sources. `inputs.json` is NOT merged here: it is a single FULL-dataset
-/// document (not per-record rows), generated identically by every cell, so the controller
-/// COPIES one cell's copy verbatim via [`copy_cell_inputs_json`] rather than concatenating.
+/// deletes its sources. `inputs.json` is NOT merged here: it is a session document rather
+/// than per-record rows, so the controller merges it separately (union of the per-cell
+/// slices, re-sorted by `session_id`) via [`merge_cell_inputs_json`].
 pub(crate) fn concatenate_cell_artifacts(
     cell_dirs: &[PathBuf],
     artifact_dir: &Path,
@@ -170,17 +170,21 @@ fn concatenate_artifacts(
     Ok(())
 }
 
-/// Copy one cell's `inputs.json` verbatim into the real artifact dir.
+/// Merge every cell's `inputs.json` into one full-dataset document.
 ///
-/// Unlike per-record artifacts, `inputs.json` is a full-dataset document generated
-/// identically by every cell from the same dataset and seed. Each cell's
-/// `cell_dir.join(relative)` is byte-identical, so there is nothing to merge. The
-/// controller simply copies the FIRST cell dir that produced the file into
-/// `artifact_dir.join(relative)`, so a cellular run emits the exact same `inputs.json`
-/// as the single-cell run (GenAI-Perf compat, always-on per `rust_wire`). A no-op when
-/// no cell wrote the file (e.g. inputs disabled). Sources are owned by the controller's
+/// A cell's `inputs.json` covers only the conversations THAT cell owns: the round-robin
+/// partition (`position % cell_count == cell_id`) slices the resident dataset before the
+/// document is generated, so cell `k` lists sessions `k, k+C, k+2C, …`. The slices are
+/// disjoint and tile the dataset exactly once, so their union is the single-process
+/// document — which is why this merges rather than copying one cell's file (copying cell
+/// 0's would emit `ceil(n/C)` of `n` sessions with a stride-`C` id gap).
+///
+/// Rows are sorted by `session_id` to recover the single-process document's
+/// conversation-id order, so a cellular run emits the same `inputs.json` as the
+/// single-cell run (GenAI-Perf compat, always-on per `rust_wire`). A no-op when no cell
+/// wrote the file (e.g. inputs export disabled). Sources are owned by the controller's
 /// `ScratchTreeGuard`, so — like [`concatenate_cell_artifacts`] — this never deletes them.
-pub(crate) fn copy_cell_inputs_json(
+pub(crate) fn merge_cell_inputs_json(
     cell_dirs: &[PathBuf],
     artifact_dir: &Path,
     artifacts: &ArtifactSpec,
@@ -188,27 +192,48 @@ pub(crate) fn copy_cell_inputs_json(
     let Some(relative) = &artifacts.inputs_path else {
         return Ok(());
     };
-    let Some(source) = cell_dirs
-        .iter()
-        .map(|dir| dir.join(relative))
-        .find(|path| path.exists())
-    else {
-        // No cell produced an inputs.json (e.g. inputs export disabled); nothing to copy.
+    let mut sessions: Vec<serde_json::Value> = Vec::new();
+    let mut any_source = false;
+    for source in cell_dirs.iter().map(|dir| dir.join(relative)) {
+        if !source.exists() {
+            continue;
+        }
+        any_source = true;
+        let bytes = std::fs::read(&source)
+            .with_context(|| format!("reading cell inputs.json {}", source.display()))?;
+        let doc: serde_json::Value = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parsing cell inputs.json {}", source.display()))?;
+        if let Some(rows) = doc.get("data").and_then(serde_json::Value::as_array) {
+            sessions.extend(rows.iter().cloned());
+        }
+    }
+    if !any_source {
+        // No cell produced an inputs.json (e.g. inputs export disabled); nothing to write.
         return Ok(());
-    };
+    }
+    sessions.sort_by_cached_key(|row| {
+        row.get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    });
     let final_path = artifact_dir.join(relative);
     if let Some(parent) = final_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating inputs.json directory {}", parent.display()))?;
     }
-    std::fs::copy(&source, &final_path).with_context(|| {
-        format!(
-            "copying cell inputs.json {} -> {}",
-            source.display(),
-            final_path.display()
-        )
-    })?;
-    Ok(())
+    let document = serde_json::json!({ "data": sessions });
+    let file = std::fs::File::create(&final_path)
+        .with_context(|| format!("creating merged inputs.json {}", final_path.display()))?;
+    let mut writer = std::io::BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, &document)
+        .with_context(|| format!("serializing merged inputs.json {}", final_path.display()))?;
+    writer
+        .write_all(b"\n")
+        .with_context(|| format!("writing merged inputs.json {}", final_path.display()))?;
+    writer
+        .flush()
+        .with_context(|| format!("flushing merged inputs.json {}", final_path.display()))
 }
 
 /// Byte-append each existing shard JSONL file into `final_path` in shard order. The
@@ -707,5 +732,66 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.path().join("outputs.json")).unwrap())
                 .unwrap();
         assert_eq!(outputs["data"].as_array().unwrap().len(), 0);
+    }
+
+    /// Each cell's file covers only its round-robin slice (`position % C == cell_id`),
+    /// so the controller must union them and restore `session_id` order — copying one
+    /// cell's file would emit a stride-`C` subset of the sessions.
+    #[test]
+    fn merged_inputs_json_unions_cell_slices_in_session_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifacts = ArtifactSpec {
+            inputs_path: Some(PathBuf::from("inputs.json")),
+            ..ArtifactSpec::default()
+        };
+        let cell_count = 3usize;
+        let total = 7usize;
+        let cell_dirs: Vec<PathBuf> = (0..cell_count)
+            .map(|cell_id| dir.path().join(format!("cell-{cell_id}")))
+            .collect();
+        for (cell_id, cell_dir) in cell_dirs.iter().enumerate() {
+            std::fs::create_dir_all(cell_dir).unwrap();
+            let rows: Vec<serde_json::Value> = (0..total)
+                .filter(|position| position % cell_count == cell_id)
+                .map(|position| {
+                    serde_json::json!({
+                        "session_id": format!("session_{position:06}"),
+                        "payloads": [{"prompt": format!("p{position}")}],
+                    })
+                })
+                .collect();
+            std::fs::write(
+                cell_dir.join("inputs.json"),
+                serde_json::to_vec(&serde_json::json!({ "data": rows })).unwrap(),
+            )
+            .unwrap();
+        }
+
+        merge_cell_inputs_json(&cell_dirs, dir.path(), &artifacts).unwrap();
+
+        let merged: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("inputs.json")).unwrap()).unwrap();
+        let ids: Vec<&str> = merged["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["session_id"].as_str().unwrap())
+            .collect();
+        let expected: Vec<String> = (0..total)
+            .map(|position| format!("session_{position:06}"))
+            .collect();
+        assert_eq!(ids, expected, "union of the slices, ordered by session_id");
+    }
+
+    #[test]
+    fn merged_inputs_json_is_a_noop_without_cell_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifacts = ArtifactSpec {
+            inputs_path: Some(PathBuf::from("inputs.json")),
+            ..ArtifactSpec::default()
+        };
+        let cell_dirs = vec![dir.path().join("cell-0"), dir.path().join("cell-1")];
+        merge_cell_inputs_json(&cell_dirs, dir.path(), &artifacts).unwrap();
+        assert!(!dir.path().join("inputs.json").exists());
     }
 }
