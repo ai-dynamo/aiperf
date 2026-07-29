@@ -296,10 +296,21 @@ impl<M: WireMessage> TraceExecutor<M> {
                 ctx.set_first_token(node_id, self.loop_wall_us());
             }
         };
-        let reply = self
+        // An in-flight dispatch must lose the race against cancellation, exactly as
+        // the flat arm does: after the phase deadline + grace the trace context is
+        // aborted, and dropping the dispatch future is what actually stops the
+        // request (and, under a virtual clock, its remaining modeled latency).
+        // Without this select the node would run to its full terminal and keep
+        // scheduling successors long past the boundary.
+        let dispatch = self
             .sink
-            .dispatch_with_options(node_id, messages, node.max_tokens, options, &on_first_token)
-            .await;
+            .dispatch_with_options(node_id, messages, node.max_tokens, options, &on_first_token);
+        tokio::pin!(dispatch);
+        let reply = tokio::select! {
+            biased;
+            () = ctx.await_abort() => return Ok(None),
+            result = &mut dispatch => result,
+        };
         let value = match reply {
             Ok(reply) if reply.status == GraphReplyStatus::Completed => {
                 permit.on_terminal(GraphReplyStatus::Completed);
