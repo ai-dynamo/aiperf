@@ -188,14 +188,18 @@ def validate_dataset_wrap_policy(
     expected_num_sessions: int | None,
     total_expected_requests: int | None,
     expected_duration_sec: float | None,
+    cache_bust_enabled: bool = False,
 ) -> None:
     """Fail loud when concurrency over-subscribes a non-wrapping corpus.
 
-    Wrapping is opt-in. Cache-bust alone does **not** enable wrap. One-pass runs (no
+    Wrapping is opt-in, but an active cache-bust target satisfies the opt-in: the
+    hazard wrapping guards against is repeated traces replaying byte-identical
+    prompts and inflating KV-cache hit rates, and a per-conversation cache-bust
+    marker already keeps that traffic distinct. One-pass runs (no
     sessions/requests/duration bound) and session budgets that fit the distinct
     pool are allowed even when concurrency exceeds the corpus.
     """
-    if allow_dataset_wrap:
+    if allow_dataset_wrap or cache_bust_enabled:
         return
     one_pass = (
         expected_num_sessions is None
@@ -210,8 +214,9 @@ def validate_dataset_wrap_policy(
         raise ValueError(
             f"concurrency {concurrency} exceeds the {distinct} distinct loaded "
             "traces while dataset wrapping is disabled; reduce concurrency to "
-            f"at most {distinct}, bound sessions within the loaded corpus, or "
-            "set dataset.synthesis.allow_dataset_wrap=true / --allow-dataset-wrap"
+            f"at most {distinct}, bound sessions within the loaded corpus, "
+            "enable a cache-bust target, or set "
+            "dataset.synthesis.allow_dataset_wrap=true / --allow-dataset-wrap"
         )
 
 
@@ -237,6 +242,7 @@ class TrajectorySource(ConversationSource):
         expected_num_sessions: int | None = None,
         total_expected_requests: int | None = None,
         expected_duration_sec: float | None = None,
+        cache_bust_enabled: bool = False,
     ) -> None:
         super().__init__(
             dataset_metadata=dataset_metadata, dataset_sampler=dataset_sampler
@@ -268,6 +274,7 @@ class TrajectorySource(ConversationSource):
             expected_num_sessions=expected_num_sessions,
             total_expected_requests=total_expected_requests,
             expected_duration_sec=expected_duration_sec,
+            cache_bust_enabled=cache_bust_enabled,
         )
         self._concurrency = concurrency
         self._pool_size = pool_size
@@ -280,8 +287,9 @@ class TrajectorySource(ConversationSource):
         # exceeds the pool). Trace SELECTION and the snapshot/t* fast-forward are
         # decoupled: each lane snapshots its sampled trace independently, seeded
         # by the absolute lane index, so repeated traces resume at different t*.
-        # Wrapping requires ``allow_dataset_wrap`` (or a one-pass / in-corpus
-        # session budget); see ``validate_dataset_wrap_policy``.
+        # Wrapping requires ``allow_dataset_wrap``, an active cache-bust target,
+        # or a one-pass / in-corpus session budget; see
+        # ``validate_dataset_wrap_policy``.
         self._target_size = concurrency
         self.trajectories: list[Trajectory] = self._build_trajectories()
 
