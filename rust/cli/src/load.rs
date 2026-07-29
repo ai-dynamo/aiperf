@@ -1888,7 +1888,7 @@ mod tests {
     #[test]
     fn agentic_cache_warmup_accepted_under_legacy_weka() {
         for semantics in ["legacy", "graph-ir"] {
-            run_on_big_stack(|| {
+            run_on_big_stack(move || {
                 let flags = parse(&[
                     "-m",
                     "mock-model",
