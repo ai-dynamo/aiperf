@@ -102,6 +102,11 @@ fn default_isl() -> Distribution {
     }
 }
 
+/// Sequential order, matching `load.rs`/`yaml.rs`.
+fn default_sampling() -> Sampling {
+    Sampling("sequential".into())
+}
+
 /// An entirely unauthored prompts block, matching `yaml.rs::extract_prompts`.
 fn default_prompts() -> Prompts {
     Prompts {
@@ -310,6 +315,7 @@ pub struct Synthetic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rankings: Option<Rankings>,
     /// Sampling order.
+    #[serde(default = "default_sampling")]
     pub sampling: Sampling,
     /// Turns-per-session distribution (multi-turn; present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -341,6 +347,7 @@ pub struct FileDataset {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
     /// Sampling order.
+    #[serde(default = "default_sampling")]
     pub sampling: Sampling,
     /// Format-specific loader options (open bag).
     #[serde(default)]
@@ -388,6 +395,7 @@ pub struct PublicDataset {
     #[serde(default)]
     pub options: serde_json::Map<String, serde_json::Value>,
     /// Sampling order.
+    #[serde(default = "default_sampling")]
     pub sampling: Sampling,
     /// Number of dataset entries (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
