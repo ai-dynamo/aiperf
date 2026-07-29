@@ -273,9 +273,7 @@ class TestPinnedDatasetLoad:
         mock_load.assert_called_once()
         args, kwargs = mock_load.call_args
         assert args == (DATASET_NAME, Environment.ACCURACY.LCB_RELEASE_TAG)
-        # No trust_remote_code: datasets v4 removed the parameter and
-        # livecodebench/code_generation_lite is now in Parquet format.
-        assert kwargs == {"split": "test"}
+        assert kwargs == {"split": "test", "trust_remote_code": True}
 
     @pytest.mark.asyncio
     async def test_env_override_changes_release_tag(self, monkeypatch) -> None:
@@ -314,6 +312,23 @@ class TestPinnedDatasetLoad:
         message = str(exc.value)
         assert Environment.ACCURACY.LCB_RELEASE_TAG in message
         assert "AIPERF_ACCURACY_LCB_RELEASE_TAG" in message
+
+    @pytest.mark.asyncio
+    async def test_datasets_v4_script_error_remapped(self) -> None:
+        with patch(
+            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
+            side_effect=RuntimeError(
+                "Dataset scripts are no longer supported, "
+                "but found code_generation_lite.py"
+            ),
+        ):
+            bench = LCBCodeGenerationBenchmark(run=_make_run())
+            with pytest.raises(RuntimeError, match=r"datasets>=4") as exc:
+                await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
+        assert isinstance(exc.value.__cause__, RuntimeError)
+        message = str(exc.value)
+        assert "datasets<4" in message
+        assert "datasets>=4" in message
 
 
 class TestPathologicalDatasetRows:
