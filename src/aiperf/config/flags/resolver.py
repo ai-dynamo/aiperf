@@ -428,9 +428,22 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     left untouched so a
     user passing ``--request-count 10`` with ``warmup_profiling.yaml``
     doesn't clobber the warmup ramp.
+
+    The AGENTIC_REPLAY phase fields (``--agentic-cache-warmup-duration``,
+    ``--burst-phase-starts``, ``--failed-request-threshold``,
+    ``--trajectory-start-min/max-ratio``) live on ``BasePhaseConfig`` and
+    are overlaid via the same converter helper the CLI-only path uses, so a
+    ``-f scenario.yaml --agentic-cache-warmup-duration 30`` honors the
+    documented "CLI flags override values from the config file" contract.
     """
-    fields_set = cli.model_fields_set & LOADGEN_FIELDS
-    if not fields_set:
+    from aiperf.config.flags._converter_profiling import (
+        _AGENTIC_REPLAY_ROUTES,
+        _apply_agentic_replay_fields,
+    )
+
+    loadgen_set = cli.model_fields_set & LOADGEN_FIELDS
+    agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
+    if not loadgen_set and not agentic_set:
         return
 
     benchmark = merged.get("benchmark")
@@ -444,15 +457,15 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     if target is None:
         return
 
-    _reject_loadgen_target_collisions(fields_set)
+    _reject_loadgen_target_collisions(loadgen_set)
 
-    if "request_rate_series" in fields_set and cli.request_rate_series is not None:
+    if "request_rate_series" in loadgen_set and cli.request_rate_series is not None:
         from aiperf.config.rate_series import RateSeriesConfig
 
         series = RateSeriesConfig(path=str(cli.request_rate_series))
         target["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
         target.pop("rate", None)
-        if "arrival_pattern" in fields_set:
+        if "arrival_pattern" in loadgen_set:
             target["type"] = {
                 ArrivalPattern.POISSON: PhaseType.POISSON,
                 ArrivalPattern.GAMMA: PhaseType.GAMMA,
@@ -460,12 +473,14 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
             }.get(cli.arrival_pattern, PhaseType.POISSON)
 
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
-        if attr not in fields_set:
+        if attr not in loadgen_set:
             continue
         value = getattr(cli, attr)
         if value is None:
             continue
         target[key] = value
+
+    _apply_agentic_replay_fields(target, cli)
 
 
 def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:

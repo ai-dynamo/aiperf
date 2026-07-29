@@ -81,6 +81,12 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        # BurstGPT overrides the base load_dataset (CSV, not JSONL records), so it
+        # must set up the per-file hash_id scope itself (clears the prompt cache
+        # and reseeds the corpus RNG with this file's trace_id) the same way
+        # BaseTraceDatasetLoader.load_dataset does.
+        self._delay_cap_tracker.reset()
+        self._init_trace_scope()
         items: list[BurstGPTTrace] = []
 
         with open(self.filename, newline="", encoding="utf-8") as f:

@@ -345,11 +345,11 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         if self._telemetry_disabled or not self._collectors:
             return
         errors: list[str] = []
-        for source_url, collector in list(self._collectors.items()):
+        for telemetry_source_url, collector in list(self._collectors.items()):
             try:
                 await collector.collect_and_process_metrics()
             except Exception as exc:  # one failed endpoint should not skip others
-                errors.append(f"{source_url}: {type(exc).__name__}: {exc}")
+                errors.append(f"{telemetry_source_url}: {type(exc).__name__}: {exc}")
         if errors:
             raise RuntimeError("; ".join(errors))
 
@@ -369,12 +369,12 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             return
 
         started_count = 0
-        for source_url, collector in self._collectors.items():
+        for telemetry_source_url, collector in self._collectors.items():
             try:
                 await collector.start()
                 started_count += 1
             except Exception as e:  # fault-tolerant telemetry
-                self.error(f"Failed to start collector for {source_url}: {e}")
+                self.error(f"Failed to start collector for {telemetry_source_url}: {e}")
 
         if started_count == 0:
             self.warning("No GPU telemetry collectors successfully started")
@@ -421,13 +421,15 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
 
         self.info("GPU Telemetry: Profiling complete, capturing final metrics...")
 
-        for dcgm_url, collector in list(self._collectors.items()):
+        for telemetry_source_url, collector in list(self._collectors.items()):
             try:
                 await collector.collect_and_process_metrics()
-                self.debug(f"GPU Telemetry: Captured final state from {dcgm_url}")
+                self.debug(
+                    f"GPU Telemetry: Captured final state from {telemetry_source_url}"
+                )
             except Exception as e:
                 self.warning(
-                    f"GPU Telemetry: Failed to capture final state from {dcgm_url}: {e}"
+                    f"GPU Telemetry: Failed to capture final state from {telemetry_source_url}: {e}"
                 )
 
         await self._stop_all_collectors()
@@ -465,11 +467,11 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         if not self._collectors:
             return
 
-        for source_url, collector in self._collectors.items():
+        for telemetry_source_url, collector in self._collectors.items():
             try:
                 await collector.stop()
             except Exception as e:  # fault-tolerant telemetry
-                self.error(f"Failed to stop collector for {source_url}: {e}")
+                self.error(f"Failed to stop collector for {telemetry_source_url}: {e}")
 
     async def _on_telemetry_records(
         self, records: list[TelemetryRecord], collector_id: str
@@ -488,11 +490,11 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             return
 
         try:
-            dcgm_url = self._collector_id_to_url.get(collector_id, "")
+            telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
             message = TelemetryRecordsMessage(
                 service_id=self.service_id,
                 collector_id=collector_id,
-                dcgm_url=dcgm_url,
+                telemetry_source_url=telemetry_source_url,
                 records=records,
                 error=None,
             )
@@ -514,11 +516,11 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         """
 
         try:
-            dcgm_url = self._collector_id_to_url.get(collector_id, "")
+            telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
             error_message = TelemetryRecordsMessage(
                 service_id=self.service_id,
                 collector_id=collector_id,
-                dcgm_url=dcgm_url,
+                telemetry_source_url=telemetry_source_url,
                 records=[],
                 error=error,
             )

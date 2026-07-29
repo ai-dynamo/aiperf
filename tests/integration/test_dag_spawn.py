@@ -54,7 +54,7 @@ def _roles_contents(messages: list[dict]) -> list[tuple[str, str | None]]:
 class TestDagSpawnEndToEnd:
     """End-to-end DAG benchmark exercising SPAWN-mode (fresh-context) branches."""
 
-    async def test_spawn_child_has_fresh_context_and_is_not_sticky_pinned(
+    async def test_spawn_child_has_fresh_context(
         self,
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,

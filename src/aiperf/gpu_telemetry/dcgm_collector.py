@@ -178,7 +178,7 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
 
             record = TelemetryRecord(
                 timestamp_ns=current_timestamp,
-                dcgm_url=self.endpoint_url,
+                telemetry_source_url=self.endpoint_url,
                 **metadata.model_dump(),
                 telemetry_data=TelemetryMetrics(**scaled_metrics),
             )

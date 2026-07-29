@@ -301,6 +301,16 @@ class FixedTrialsStrategy(ExecutionStrategy):
 
         Removes phases that have exclude_from_results=True (warmup phases).
 
+        AGENTIC_REPLAY warmup is not a stored ``exclude_from_results`` phase: it
+        is synthesized on the fly from the surviving profiling phase by
+        ``TimingConfig.from_run`` -> ``_build_agentic_warmup_config``, which
+        reads ``agentic_cache_warmup_duration`` off the profiling
+        ``PhaseConfig``. Stripping ``exclude_from_results`` phases therefore
+        leaves the accelerated cache-pressure substage intact, and it would
+        re-run on every trial. Zero the field on each profiling phase so the
+        synthesized agentic warmup (including the cache-pressure substage) is
+        fully suppressed on trials 2+, matching the no-warmup contract.
+
         Args:
             config: Original configuration
 
@@ -309,6 +319,8 @@ class FixedTrialsStrategy(ExecutionStrategy):
         """
         config = config.model_copy(deep=True)
         config.phases = [p for p in config.phases if not p.exclude_from_results]
+        for phase in config.get_profiling_phases():
+            phase.agentic_cache_warmup_duration = None
         return config
 
 

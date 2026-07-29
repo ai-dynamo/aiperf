@@ -284,6 +284,43 @@ class LoopScheduler:
         self.cancel_all_pending()
         return self.cancel_all_running()
 
+    def cap_pending_delay(self, max_delay_sec: float) -> float:
+        """Shift every pending timer uniformly when the next is too far away.
+
+        Running tasks are unaffected. Applying the same shift to every pending
+        timer preserves their ordering and relative spacing.
+
+        Args:
+            max_delay_sec: Maximum delay from now to the earliest pending timer.
+
+        Returns:
+            Seconds removed from the pending schedule, or zero when no shift
+            was needed.
+        """
+        if max_delay_sec < 0:
+            raise ValueError("max_delay_sec must be non-negative")
+        if not self._handles:
+            return 0.0
+
+        now = self._loop.time()
+        earliest = min(handle.when() for handle, _ in self._handles.values())
+        shift_sec = earliest - now - max_delay_sec
+        if shift_sec <= 0:
+            return 0.0
+
+        items = list(self._handles.values())
+        self._handles.clear()
+        for handle, coro in items:
+            target = max(now, handle.when() - shift_sec)
+            handle.cancel()
+            handle_container = [None]
+            replacement = self._loop.call_at(
+                target, self._safe_callback, handle_container, coro
+            )
+            handle_container[0] = replacement
+            self._track_handle_and_return_id(replacement, coro)
+        return shift_sec
+
     @property
     def pending_count(self) -> int:
         """Scheduled timers not yet fired."""

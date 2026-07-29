@@ -148,6 +148,7 @@ class TimingManager(BaseComponentService):
             dataset_metadata=self._dataset_metadata,
             control_hooks=control_hooks,
             control_headers=control_headers,
+            run=self.run,
         )
         await self._phase_orchestrator.initialize()
 

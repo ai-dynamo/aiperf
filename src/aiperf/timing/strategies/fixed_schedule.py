@@ -142,8 +142,12 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(
         self,
         credit: Credit,
+        *,
+        error: str | None = None,
     ) -> None:
         """Handle credit return: dispatch next turn based on trace timing.
+
+        ``error`` is accepted for protocol parity and ignored here.
 
         Calculates delay from timestamp_ms or delay_ms metadata, then issues
         credit immediately (delay=0) or schedules for later (delay>0).

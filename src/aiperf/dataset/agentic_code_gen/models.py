@@ -35,7 +35,26 @@ def _maybe_round(value: float, digits: int | None) -> float:
 
 
 def percentile_stats(arr: np.ndarray, digits: int | None = 2) -> PercentileStats:
-    """Compute PercentileStats from a numpy array."""
+    """Compute PercentileStats from a numpy array.
+
+    An empty array yields a zeroed result (count=0, all stats 0.0) rather than
+    raising. np.percentile([], q) raises IndexError and np.mean([]) is NaN, so
+    without this an all-empty (every-session-zero-turns) dataset would crash
+    report generation in build_report_data, whose hash_id_block_count /
+    request_latency / session_duration stats are computed unconditionally.
+    """
+    if len(arr) == 0:
+        return PercentileStats(
+            count=0,
+            mean=0.0,
+            std=0.0,
+            median=0.0,
+            p05=0.0,
+            p25=0.0,
+            p75=0.0,
+            p95=0.0,
+            p99=0.0,
+        )
     return PercentileStats(
         count=len(arr),
         mean=_maybe_round(float(np.mean(arr)), digits),

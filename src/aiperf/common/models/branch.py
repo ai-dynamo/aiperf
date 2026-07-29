@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator
 
-from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.enums import ConversationBranchMode, SubagentType
 from aiperf.common.models.base_models import AIPerfBaseModel
 
 
@@ -15,10 +15,11 @@ class ConversationBranchInfo(AIPerfBaseModel):
     """Describes a DAG branch from a parent turn to one or more child conversations.
 
     One primitive unifies aiperf's native FORK semantics (child inherits
-    parent turn_list + sticky-routes to parent worker) with pre-session
-    SPAWN semantics (fresh context, free routing, optionally dispatched
-    before the parent's first turn). The ``mode`` field discriminates
-    the two; the ``dispatch_timing`` field gates pre-session SPAWN.
+    parent turn_list + sticky-routes to parent worker) with SPAWN semantics
+    (fresh context, sticky co-locate while the parent entry is live, no
+    SPAWN refcount bump; optionally dispatched before the parent's first
+    turn). The ``mode`` field discriminates the two; the ``dispatch_timing``
+    field gates pre-session SPAWN.
 
     Disambiguation note: this "branch" is a DAG conversation branch (a
     parent turn fanning out to one or more child conversations). Not a
@@ -57,15 +58,33 @@ class ConversationBranchInfo(AIPerfBaseModel):
         "reserved for SPAWN (background pre-session sub-agent dispatch); "
         "the field validator rejects ``pre`` when mode is FORK.",
     )
-    background: bool = Field(
+    is_background: bool = Field(
         default=False,
-        description="If True (FORK only), the parent's must-be-last-turn rule "
-        "is waived for this branch and the parent continues running its "
-        "remaining turns after the fork dispatches. Children still inherit "
-        "context and sticky-route to the parent's worker — only the parent's "
-        "termination is changed. Default False (parent terminates after fork). "
-        "Ignored for SPAWN-mode branches (SPAWN parents always continue; use "
-        "``DagSpawn.join_at`` to control suspension).",
+        description="Fire-and-forget branch: the parent's must-be-last-turn "
+        "rule is waived and the parent continues running its remaining turns "
+        "after this branch dispatches. For FORK branches the children still "
+        "inherit context and sticky-route to the parent's worker (only the "
+        "parent's termination is changed; emitted by the dag_jsonl loader for "
+        "background forks). For SPAWN branches it marks a fire-and-forget "
+        "sub-agent (fresh context, no rejoin). Default False. Renamed from "
+        "``background`` to align with the agentx engine reader "
+        "(``BranchOrchestrator``/``TrajectorySource`` read ``is_background``).",
+    )
+    subagent_type: SubagentType | None = Field(
+        default=None,
+        description="SPAWN-mode classification used for agentic-benchmark bucket "
+        "metrics. Must be None when mode=FORK (FORK children inherit the "
+        "parent's role).",
+    )
+    start_timestamp_ms: int | float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Absolute wall-clock timestamp, in milliseconds, when this branch's "
+            "children entered the live trace timeline. Used by agentic replay "
+            "to reconstruct in-flight subagents when sampling a mid-trace "
+            "snapshot."
+        ),
     )
 
     @field_validator("dispatch_timing")
@@ -79,5 +98,23 @@ class ConversationBranchInfo(AIPerfBaseModel):
                 "(background pre-session sub-agent dispatch). FORK children "
                 "inherit the parent's context and must dispatch after the "
                 "parent turn - drop dispatch_timing or change mode to SPAWN."
+            )
+        return v
+
+    # ``is_background=True`` is valid for FORK branches: the parent keeps
+    # running while the child executes. ``subagent_type`` remains SPAWN-only,
+    # which preserves the classification boundary without rejecting background
+    # forks.
+    @field_validator("subagent_type")
+    @classmethod
+    def _validate_subagent_type(
+        cls, v: SubagentType | None, info: ValidationInfo
+    ) -> SubagentType | None:
+        if v is not None and info.data.get("mode") == ConversationBranchMode.FORK:
+            raise ValueError(
+                "subagent_type is a SPAWN-only classification (used for "
+                "agentic-benchmark bucket metrics). FORK children inherit the "
+                "parent's role; they have no subagent_type. Drop the field or "
+                "change mode to SPAWN."
             )
         return v

@@ -233,7 +233,22 @@ class TestCreditReturnBasicFlow:
             credit.is_final_turn,
             False,  # cancelled=False
             errored=False,
+            is_child=False,  # agent_depth=0 root credit
         )
+
+    async def test_on_credit_return_checks_global_idle_after_dispatch(
+        self, registered_handler, mock_progress, mock_strategy
+    ):
+        """The strategy sees the final in-flight count after return dispatch."""
+        mock_progress.in_flight = 0
+        credit = make_credit(turn_index=0, num_turns=2)
+
+        await registered_handler.on_credit_return(
+            "worker-1", make_credit_return(credit)
+        )
+
+        mock_strategy.handle_credit_return.assert_awaited_once()
+        mock_strategy.enforce_system_idle_cap.assert_called_once_with(0)
 
     async def test_on_credit_return_tracks_cancelled_status(
         self, registered_handler, mock_progress
@@ -248,6 +263,7 @@ class TestCreditReturnBasicFlow:
             credit.is_final_turn,
             True,  # cancelled=True
             errored=False,
+            is_child=False,  # agent_depth=0 root credit
         )
 
     async def test_on_credit_return_notifies_result_aware_strategy(
@@ -405,7 +421,7 @@ class TestNextTurnDispatch:
         credit = make_credit(turn_index=0, num_turns=3)
         credit_return = make_credit_return(credit)
         await registered_handler.on_credit_return("worker-1", credit_return)
-        mock_strategy.handle_credit_return.assert_called_once_with(credit)
+        mock_strategy.handle_credit_return.assert_called_once_with(credit, error=None)
 
         # Stop condition reached
         mock_strategy.reset_mock()
@@ -414,6 +430,364 @@ class TestNextTurnDispatch:
         credit_return2 = make_credit_return(credit2)
         await registered_handler.on_credit_return("worker-1", credit_return2)
         mock_strategy.handle_credit_return.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warmup_open_tree_uses_registry_terminal_path(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """Accelerated warmup roots drain through SessionTreeRegistry."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(phase=CreditPhase.WARMUP)
+
+    await handler.on_credit_return("worker-1", make_credit_return(credit))
+
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+    mock_concurrency.release_session_slot.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_root_context_overflow_calls_registry_on_root_terminal(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """Non-final root context-overflow must clear root_pending via registry.
+
+    Agentic replay early-returns under the tree registry expecting the
+    callback handler to have already called ``on_root_terminal``; gating that
+    call on ``is_final_turn`` alone leaks the session slot forever.
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)  # non-final
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(
+            credit,
+            error="This model's maximum context length is 131072 tokens",
+        ),
+    )
+
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+    mock_strategy.handle_credit_return.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_final_turn_context_overflow_still_runs_intercept(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """A FINAL-turn context-overflow is NOT overflow_terminal.
+
+    overflow_terminal is scoped to non-final turns (a mid-trajectory death);
+    on the authored final turn, intercept must still run so the turn's declared
+    DAG children dispatch, and the tree is marked terminal because it is the
+    final turn -- not because the error was an overflow.
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    orchestrator = MagicMock()
+    orchestrator.intercept = AsyncMock(return_value=False)
+    orchestrator.set_drain_observer = MagicMock()
+    handler.set_branch_orchestrator(orchestrator)
+
+    credit = make_credit(turn_index=4, num_turns=5)  # final turn
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(
+            credit,
+            error="This model's maximum context length is 131072 tokens",
+        ),
+    )
+
+    orchestrator.intercept.assert_awaited_once_with(credit)
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_root_non_overflow_error_skips_registry_on_root_terminal(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """Generic mid-trajectory errors must not mark the root terminal."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error="Internal server error: pool exhausted"),
+    )
+
+    registry.on_root_terminal.assert_not_called()
+    mock_strategy.handle_credit_return.assert_awaited_once()
+
+
+_OVERFLOW_ERROR = "This model's maximum context length is 131072 tokens"
+
+
+@pytest.mark.asyncio
+async def test_overflow_skips_intercept_and_runs_terminal_path(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+):
+    """Overflow terminal must not honor gated-suspend early-return (R1).
+
+    Even when ``intercept`` would return True (gated next turn), a
+    context-overflow root return must still call ``on_root_terminal``,
+    ``strategy.handle_credit_return`` (overflow recycle), and skip calling
+    intercept entirely.
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)  # non-final
+    assert not credit.is_final_turn
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error=_OVERFLOW_ERROR),
+    )
+
+    mock_branch_orchestrator.intercept.assert_not_awaited()
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+    mock_strategy.handle_credit_return.assert_awaited_once_with(
+        credit, error=_OVERFLOW_ERROR
+    )
+
+
+@pytest.mark.asyncio
+async def test_overflow_with_intercept_true_still_records_warmup_failure(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_branch_orchestrator,
+):
+    """Overflow must reach ``_handle_warmup_failure`` despite gated intercept (R4)."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    strategy = MagicMock()
+    strategy.handle_credit_return = AsyncMock()
+    strategy.record_warmup_failure = MagicMock()
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=strategy,
+    )
+    credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+    assert not credit.is_final_turn
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error=_OVERFLOW_ERROR),
+    )
+
+    mock_branch_orchestrator.intercept.assert_not_awaited()
+    strategy.record_warmup_failure.assert_called_once_with(credit.conversation_id)
+    strategy.handle_credit_return.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_non_overflow_warmup_gated_intercept_still_records_warmup_failure(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_branch_orchestrator,
+):
+    """Non-overflow WARMUP + gated intercept must still record warmup failure.
+
+    Accelerated cache-pressure warmup enables DAG intercept during WARMUP.
+    A plain HTTP error on a gated root must not early-return past
+    ``record_warmup_failure`` / live abort (overflow already skips intercept).
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    strategy = MagicMock()
+    strategy.handle_credit_return = AsyncMock()
+    strategy.record_warmup_failure = MagicMock()
+    strategy.wants_returns_after_sending_complete = False
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=strategy,
+    )
+    credit = make_credit(turn_index=0, num_turns=5, phase=CreditPhase.WARMUP)
+    assert not credit.is_final_turn
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error="Internal server error: pool exhausted"),
+    )
+
+    mock_branch_orchestrator.intercept.assert_awaited_once_with(credit)
+    strategy.record_warmup_failure.assert_called_once_with(credit.conversation_id)
+    strategy.handle_credit_return.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_overflow_gated_suspend_still_early_returns(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+):
+    """Non-overflow gated suspend must still early-return past strategy dispatch."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error="Internal server error: pool exhausted"),
+    )
+
+    mock_branch_orchestrator.intercept.assert_awaited_once_with(credit)
+    registry.on_root_terminal.assert_not_called()
+    mock_strategy.handle_credit_return.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_handoff_allows_paused_dag_work(
+    callback_handler,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+):
+    """A drained accelerated-warmup phase completes on in_flight==0 even with
+    the orchestrator still holding paused (handoff) branch work."""
+    mock_progress.increment_returned = MagicMock(return_value=True)
+    mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+    mock_progress.in_flight = 0
+    mock_lifecycle.is_sending_complete = True
+    mock_strategy.allows_pending_branch_handoff_after_sending_complete = True
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+    callback_handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+
+    credit = make_credit(
+        phase=CreditPhase.WARMUP,
+        turn_index=0,
+        num_turns=2,
+    )
+    await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+    assert mock_progress.all_credits_returned_event.is_set()
+    mock_branch_orchestrator.has_pending_branch_work.assert_called_once_with()
 
 
 # =============================================================================
@@ -524,7 +898,7 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled, errored=False
+            credit.is_final_turn, cancelled, errored=False, is_child=False
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()
@@ -767,67 +1141,255 @@ class TestDrainObserverWiring:
         assert mock_progress.all_credits_returned_event.is_set()
 
 
-class TestAbortObserverWiring:
-    """``AIPERF_DAG_FAIL_FAST=true`` fires an abort observer from the
-    orchestrator's fail-fast handler; the callback handler must cancel
-    every active phase lifecycle so the strategy loop stops issuing new
-    wire credits. Without this, only the parent of the errored child was
-    aborted while unrelated roots kept firing — the budget ran out as
-    if FAIL_FAST were disabled.
+# Test: WARMUP Terminal-Failure Accumulation + Live Early-Abort
+
+
+class TestWarmupFailureRecording:
+    """A terminal WARMUP root failure must be recorded via the strategy hook.
+
+    A WARMUP credit primes turn k_i (the last request before t*); PROFILING
+    resumes the same trajectory at k_i+1, so a warmed turn for a session active
+    at t* is NEVER the trajectory's final turn (is_final_turn is False). The
+    gate must therefore fire on a NON-final WARMUP root credit that returns with
+    a terminal error/cancellation; gating it on is_final_turn made the whole
+    safety mechanism dead.
     """
 
-    def test_set_branch_orchestrator_registers_abort_observer(self, callback_handler):
-        """Attaching an orchestrator must register an abort callback;
-        detaching (set None) must clear it."""
-        orchestrator = MagicMock()
-        orchestrator.set_drain_observer = MagicMock()
-        orchestrator.set_abort_observer = MagicMock()
+    @pytest.fixture
+    def warmup_strategy(self):
+        """Mock strategy exposing the record_warmup_failure hook."""
+        mock = MagicMock()
+        mock.handle_credit_return = AsyncMock()
+        mock.record_warmup_failure = MagicMock()
+        return mock
 
-        callback_handler.set_branch_orchestrator(orchestrator)
-        orchestrator.set_abort_observer.assert_called_once()
-        assert callable(orchestrator.set_abort_observer.call_args.args[0])
-
-        callback_handler.set_branch_orchestrator(None)
-        orchestrator.set_abort_observer.assert_called_with(None)
-
-    def test_abort_observer_cancels_lifecycle_and_signals_return_event(
+    @pytest.fixture
+    def warmup_handler(
         self,
-        registered_handler,
+        callback_handler,
         mock_progress,
         mock_lifecycle,
-        mock_branch_orchestrator,
+        mock_stop_checker,
+        warmup_strategy,
     ):
-        """Fail-fast fires the abort observer; the callback handler must
-        cancel the active phase's lifecycle (so LifecycleStopCondition
-        gates further issuance) and set ``all_credits_returned_event`` so
-        the phase runner unblocks rather than waiting for credits that
-        will never be issued.
-        """
-        mock_lifecycle.is_complete = False
-        mock_lifecycle.cancel = MagicMock()
+        callback_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        return callback_handler
 
-        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
-        callback = mock_branch_orchestrator.set_abort_observer.call_args.args[0]
-        callback()
+    async def test_non_final_warmup_credit_error_records_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """A NON-final WARMUP root credit returning with an error MUST record a
+        warmup failure (the gate must not require is_final_turn)."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        assert not credit.is_final_turn  # the case the old gate silently dropped
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
 
-        mock_lifecycle.cancel.assert_called_once_with()
-        assert mock_progress.all_credits_returned_event.is_set()
+        await warmup_handler.on_credit_return("worker-1", credit_return)
 
-    def test_abort_observer_skips_completed_phase_handlers(
+        warmup_strategy.record_warmup_failure.assert_called_once_with(
+            credit.conversation_id
+        )
+
+    async def test_non_final_warmup_credit_cancelled_records_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """Cancellation (not just error) on a non-final WARMUP credit also counts."""
+        credit = make_credit(turn_index=1, num_turns=4, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(
+            credit, cancelled=True, first_token_sent=False
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once_with(
+            credit.conversation_id
+        )
+
+    async def test_successful_warmup_credit_does_not_record_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """A clean WARMUP return (no error, not cancelled) records nothing."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(credit)
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+    async def test_warmup_child_failure_does_not_record(
+        self, warmup_handler, warmup_strategy
+    ):
+        """The gate is root-only (agent_depth == 0): a failed WARMUP child does
+        not count toward trajectory warmup failure."""
+        credit = make_credit(
+            turn_index=0, num_turns=2, agent_depth=1, phase=CreditPhase.WARMUP
+        )
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+
+class TestWarmupEarlyAbort:
+    """Live early-abort: the first terminal WARMUP failure fires on_warmup_abort.
+
+    A single terminal warmup failure means PROFILING must not start, so the
+    handler broadcasts ProfileCancelCommand (via the injected callback) on the
+    FIRST failure rather than waiting for the full warmup drain + teardown
+    ``report_warmup_failures`` raise. The callback fires at most once per run.
+    """
+
+    @pytest.fixture
+    def abort_cb(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def warmup_strategy(self):
+        mock = MagicMock()
+        mock.handle_credit_return = AsyncMock()
+        mock.record_warmup_failure = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def early_abort_handler(
         self,
-        registered_handler,
+        mock_concurrency,
         mock_progress,
         mock_lifecycle,
-        mock_branch_orchestrator,
+        mock_stop_checker,
+        warmup_strategy,
+        abort_cb,
     ):
-        """A phase whose lifecycle is already complete must be skipped —
-        re-cancelling it would be wrong (the phase has already finalized).
-        """
-        mock_lifecycle.is_complete = True
-        mock_lifecycle.cancel = MagicMock()
+        handler = CreditCallbackHandler(mock_concurrency, on_warmup_abort=abort_cb)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        return handler
 
-        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
-        callback = mock_branch_orchestrator.set_abort_observer.call_args.args[0]
-        callback()
+    async def test_first_warmup_failure_fires_abort_once(
+        self, early_abort_handler, abort_cb
+    ):
+        """First terminal warmup failure both records and fires the abort once."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
 
-        mock_lifecycle.cancel.assert_not_called()
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_awaited_once()
+
+    async def test_subsequent_warmup_failures_do_not_refire_abort(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """Only the first failure fires the abort; later failures still record."""
+        for idx in range(3):
+            credit = make_credit(
+                credit_id=idx,
+                conversation_id=f"conv{idx}",
+                turn_index=0,
+                num_turns=3,
+                phase=CreditPhase.WARMUP,
+            )
+            credit_return = CreditReturn(
+                credit=credit,
+                cancelled=False,
+                first_token_sent=False,
+                error="server 500",
+            )
+            await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_awaited_once()
+        assert warmup_strategy.record_warmup_failure.call_count == 3
+
+    async def test_successful_warmup_return_does_not_fire_abort(
+        self, early_abort_handler, abort_cb
+    ):
+        """A clean warmup return never fires the abort."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(credit)
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_not_awaited()
+
+    async def test_publish_failure_resets_trigger_flag(
+        self, mock_concurrency, mock_progress, mock_lifecycle, mock_stop_checker
+    ):
+        """If the abort broadcast raises, the flag resets so a later return retries
+        and the teardown backstop can still fire."""
+        failing_cb = AsyncMock(side_effect=RuntimeError("bus down"))
+        strategy = MagicMock()
+        strategy.handle_credit_return = AsyncMock()
+        strategy.record_warmup_failure = MagicMock()
+        handler = CreditCallbackHandler(mock_concurrency, on_warmup_abort=failing_cb)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=strategy,
+        )
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="500"
+        )
+
+        await handler.on_credit_return("worker-1", credit_return)
+
+        failing_cb.assert_awaited_once()
+        strategy.record_warmup_failure.assert_called_once()
+        assert handler._warmup_abort_triggered is False
+
+    def test_on_warmup_abort_property(self, mock_concurrency, abort_cb):
+        """The public property exposes the wired callback (None when unwired)."""
+        assert CreditCallbackHandler(mock_concurrency).on_warmup_abort is None
+        assert (
+            CreditCallbackHandler(
+                mock_concurrency, on_warmup_abort=abort_cb
+            ).on_warmup_abort
+            is abort_cb
+        )
+
+    async def test_unwired_handler_records_but_does_not_abort(
+        self,
+        warmup_strategy,
+        mock_concurrency,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+    ):
+        """With no on_warmup_abort wired, the failure still records (the teardown
+        backstop remains the only abort path)."""
+        handler = CreditCallbackHandler(mock_concurrency)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="500"
+        )
+
+        await handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once()
+        assert handler._warmup_abort_triggered is False

@@ -65,7 +65,9 @@ class TimingStrategyProtocol(Protocol):
         """
         ...
 
-    async def handle_credit_return(self, credit: Credit) -> None:
+    async def handle_credit_return(
+        self, credit: Credit, *, error: str | None = None
+    ) -> None:
         """Handle credit return: dispatch next turn if applicable.
 
         Called when a worker completes a turn. Determines if a subsequent turn
@@ -77,7 +79,11 @@ class TimingStrategyProtocol(Protocol):
         (e.g., is_final_turn).
 
         Args:
-            credit: Completed credit with conversation/turn info
+            credit: Completed credit with conversation/turn info.
+            error: Free-form error message string from the worker's transport
+                or server error path. ``None`` on success / cancellation.
+                Most strategies ignore this; ``AgenticReplayStrategy`` uses it
+                to terminate trajectories early on context-overflow errors.
         """
         ...
 

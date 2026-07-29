@@ -82,7 +82,7 @@ class TestPrometheusMetricParsing:
         assert len(records) == 1
 
         record = records[0]
-        assert record.dcgm_url == "http://localhost:9401/metrics"
+        assert record.telemetry_source_url == "http://localhost:9401/metrics"
         assert record.gpu_index == 0
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
         assert record.gpu_uuid.startswith("GPU-")

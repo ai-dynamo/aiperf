@@ -841,7 +841,7 @@ def create_metric_records_data(
 def make_telemetry_record(
     *,
     timestamp_ns: int = 1_000_000_000,
-    dcgm_url: str = "http://node1:9401/metrics",
+    telemetry_source_url: str = "http://node1:9401/metrics",
     gpu_index: int = 0,
     gpu_uuid: str = "GPU-test",
     gpu_model_name: str = "Test GPU",
@@ -866,7 +866,7 @@ def make_telemetry_record(
     """
     return TelemetryRecord(
         timestamp_ns=timestamp_ns,
-        dcgm_url=dcgm_url,
+        telemetry_source_url=telemetry_source_url,
         gpu_index=gpu_index,
         gpu_uuid=gpu_uuid,
         gpu_model_name=gpu_model_name,

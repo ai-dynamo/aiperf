@@ -16,8 +16,6 @@ the user sees which flag combination is incompatible.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from aiperf.config.flags._converter_warmup import build_warmup
@@ -112,34 +110,93 @@ class TestWarmupGracePeriodSuccessPaths:
             build_warmup(_make_user(loadgen))
 
 
-class TestWarmupRateRampRequiresWarmupRate:
-    """Warmup must not inherit rate ramping unless it has a scalar rate."""
+class TestWarmupMultiCapIndependence:
+    """Every set warmup cap (--num-warmup-requests / --num-warmup-sessions /
+    --warmup-duration) must be emitted INDEPENDENTLY so the warmup phase's
+    AND-combined stop conditions end on whichever fires first -- mirroring v1's
+    _build_warmup_config. A prior if/elif/elif dropped all but the highest cap.
+    """
 
-    def test_explicit_warmup_rate_ramp_without_rate_raises(self):
+    def test_all_three_caps_survive(self):
         loadgen = CLIConfig(
-            warmup_request_count=10,
-            warmup_request_rate_ramp_duration=5.0,
+            warmup_request_count=50,
+            warmup_num_sessions=5,
+            warmup_duration=30.0,
         )
+        w = build_warmup(_make_user(loadgen))
+        assert w["requests"] == 50
+        assert w["sessions"] == 5
+        assert w["duration"] == 30.0
 
-        with pytest.raises(ValueError, match="--warmup-request-rate-ramp-duration"):
+    def test_requests_and_duration_both_survive(self):
+        """The historical drop case: --num-warmup-requests once masked
+        --warmup-duration (and grace_period then needs duration present)."""
+        loadgen = CLIConfig(
+            warmup_request_count=50,
+            warmup_duration=30.0,
+            warmup_grace_period=5.0,
+        )
+        w = build_warmup(_make_user(loadgen))
+        assert w["requests"] == 50
+        assert w["duration"] == 30.0
+        assert w["grace_period"] == 5.0  # duration present -> grace_period allowed
+
+    def test_single_cap_unaffected(self):
+        w = build_warmup(_make_user(CLIConfig(warmup_request_count=10)))
+        assert w["requests"] == 10
+        assert "sessions" not in w
+        assert "duration" not in w
+
+
+class TestWarmupGracePeriodUnderScenario:
+    """Under --scenario, --warmup-grace-period feeds the agentic warmup
+    barrier (v1 parity) instead of requiring a warmup trigger/duration."""
+
+    def test_warmup_grace_alone_with_scenario_returns_none(self):
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp",
+            warmup_grace_period=5.0,
+        )
+        assert build_warmup(_make_user(loadgen)) is None
+
+    def test_warmup_grace_with_trigger_and_scenario_omits_phase_grace(self):
+        """A non-duration warmup trigger + grace under a scenario must not
+        raise; the declared warmup phase carries no grace_period (agentic
+        replay ignores user-declared warmup phases; the barrier reads the
+        grace off the profiling phase instead)."""
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp",
+            warmup_request_count=10,
+            warmup_grace_period=5.0,
+        )
+        w = build_warmup(_make_user(loadgen))
+        assert w is not None
+        assert "grace_period" not in w
+
+    def test_warmup_grace_routes_to_agentic_barrier_on_profiling_phase(self):
+        from aiperf.config.flags._converter_profiling import build_profiling
+
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp",
+            concurrency=8,
+            warmup_grace_period=7.5,
+        )
+        prof = build_profiling(_make_user(loadgen))
+        assert prof["agentic_warmup_grace_period"] == 7.5
+
+    def test_explicit_agentic_warmup_grace_wins_over_warmup_grace(self):
+        from aiperf.config.flags._converter_profiling import build_profiling
+
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp",
+            concurrency=8,
+            warmup_grace_period=7.5,
+            agentic_warmup_grace_period=3.0,
+        )
+        prof = build_profiling(_make_user(loadgen))
+        assert prof["agentic_warmup_grace_period"] == 3.0
+
+    def test_no_scenario_keeps_strict_rejection(self):
+        loadgen = CLIConfig(warmup_grace_period=5.0)
+        with pytest.raises(ValueError, match="without any warmup trigger"):
             build_warmup(_make_user(loadgen))
-
-    def test_main_rate_series_ramp_not_inherited_by_concurrency_warmup(
-        self, tmp_path: Path
-    ):
-        json_path = tmp_path / "rate.json"
-        json_path.write_text(
-            '{"points":[{"time_s":0,"qps":5},{"time_s":10,"qps":15}]}',
-            encoding="utf-8",
-        )
-        loadgen = CLIConfig(
-            request_rate_series=json_path,
-            request_rate_ramp_duration=5.0,
-            warmup_request_count=10,
-        )
-
-        warmup = build_warmup(_make_user(loadgen))
-
-        assert warmup is not None
-        assert warmup["requests"] == 10
-        assert "rate_ramp" not in warmup

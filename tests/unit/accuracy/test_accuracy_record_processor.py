@@ -76,6 +76,15 @@ class TestAccuracyRecordProcessorInit:
         with pytest.raises(PostProcessorDisabled):
             AccuracyRecordProcessor(run=run, service_id="test")
 
+    @pytest.mark.asyncio
+    async def test_on_stop_closes_grader(self, monkeypatch) -> None:
+        """The @on_stop hook releases the grader's resources (e.g. the LCB
+        code-execution worker subprocess) on graceful shutdown."""
+        processor = _make_processor(monkeypatch)
+        processor.grader.aclose = AsyncMock()
+        await processor._close_grader()
+        processor.grader.aclose.assert_awaited_once()
+
 
 class TestAccuracyRecordProcessorOnDatasetConfigured:
     def test_populates_ground_truths_from_metadata(self, monkeypatch) -> None:

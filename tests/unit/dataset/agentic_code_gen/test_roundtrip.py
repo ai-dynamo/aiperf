@@ -129,6 +129,53 @@ class TestRoundtrip:
                     f"not in [1, {block_size}]"
                 )
 
+    def test_shared_hash_ids_have_consistent_block_size(self, tmp_path: Path) -> None:
+        """Regression: a hash_id shared across rows must always represent the
+        same number of tokens.
+
+        The trace loader reconstructs each non-final block as ``block_size`` and
+        the final block as ``input_length - (n-1) * block_size``, then rejects
+        any hash_id seen at two different sizes with a ``ConfigurationError``. A
+        small L2 remainder must not be absorbed into the last shared prefix
+        (L1/L1.5) block: that would make the shared hash_id a partial final
+        block in one session and a full block in another, so ``aiperf profile``
+        would fail to replay the synthesized dataset. The per-row invariant
+        tests above do NOT catch this -- it is a cross-row property.
+        """
+        config = SessionDistributionConfig()
+        synth = SessionSynthesizer(config, seed=42)
+        sessions = synth.synthesize_sessions(200)
+
+        run_dir = tmp_path / "run"
+        jsonl_path, _, _ = write_dataset(
+            sessions, run_dir, config, seed=42, config_name="default"
+        )
+        block_size = config.block_size
+
+        hash_id_tokens: dict[int, int] = {}
+        with jsonl_path.open("rb") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                row = orjson.loads(line)
+                hash_ids = row["hash_ids"]
+                input_length = row["input_length"]
+                n = len(hash_ids)
+                for i, h in enumerate(hash_ids):
+                    tokens = (
+                        block_size if i < n - 1 else input_length - (n - 1) * block_size
+                    )
+                    if h in hash_id_tokens:
+                        assert hash_id_tokens[h] == tokens, (
+                            f"line {line_num}: hash_id {h} derives to {tokens} "
+                            f"tokens but was already materialized at "
+                            f"{hash_id_tokens[h]} tokens; a shared hash_id must "
+                            f"map to a single fixed block size"
+                        )
+                    else:
+                        hash_id_tokens[h] = tokens
+
     def test_cache_invariants_at_scale(self, tmp_path: Path) -> None:
         config = SessionDistributionConfig()
         synth = SessionSynthesizer(config, seed=42)
