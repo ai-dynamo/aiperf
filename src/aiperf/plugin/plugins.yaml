@@ -1305,6 +1305,14 @@ console_exporter:
       Console exporter for primary benchmark metrics. Displays formatted metric
       tables to stdout for user-facing results. Always loaded.
 
+  spec_decode:
+    class: aiperf.exporters.console_spec_decode_exporter:ConsoleSpecDecodeExporter
+    description: |
+      Dedicated console section for speculative-decoding acceptance: the Spec
+      Decode metric table followed immediately by the one-line pooled
+      accepted-draft histogram. Renders nothing when no request carried
+      spec-decode acceptance stats.
+
   gpu_vendor_disclaimer:
     class: aiperf.exporters.console_gpu_vendor_disclaimer_exporter:ConsoleGpuVendorDisclaimerExporter
     description: |
