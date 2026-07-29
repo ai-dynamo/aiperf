@@ -899,6 +899,7 @@
       ],
       "runtime": {
         "cells": 4,
+        "hop_routing": "round-robin",
         "workers": null,
         "workers_min": null
       },
