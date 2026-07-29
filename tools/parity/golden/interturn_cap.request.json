@@ -13,7 +13,6 @@
       },
       "datasets": [
         {
-          "format": "single_turn",
           "options": {
             "inter_turn_delay_cap_seconds": 2.0
           },

@@ -14,7 +14,6 @@
       "datasets": [
         {
           "entries": 2,
-          "format": "single_turn",
           "options": {},
           "path": "/tmp/trace.jsonl",
           "random_seed": 42,

@@ -13,7 +13,6 @@
       },
       "datasets": [
         {
-          "format": "single_turn",
           "options": {},
           "path": "/tmp/s.jsonl",
           "sampling": "sequential",
