@@ -822,6 +822,11 @@ class BranchOrchestrator:
         # ``_maybe_suspend_parent`` (which returns False for them), so the
         # agentic tree-descendant path is unaffected.
 
+        # Root0 pre-delay: applied before round 0's branches fire, outside the
+        # per-parent lock (mirrors the between-round wait in _release_blocked_join,
+        # which sleeps before dispatching the gated turn -- not under the lock).
+        await self._maybe_apply_root0_think_ms(credit)
+
         parent_corr = credit.x_correlation_id
 
         async with self._parent_locks[parent_corr]:
@@ -1468,29 +1473,67 @@ class BranchOrchestrator:
         # here. Spine gates are ``no_request``; normal DAG gates are not.
         if not pending.parent_no_request_on_gated_turn:
             return 0.0
-        median_ms = pending.parent_delay_ms_on_gated_turn
-        spec = self._think_time_by_conv.get(pending.parent_conversation_id)
+        return self._sample_think_ms(
+            pending.parent_conversation_id,
+            pending.parent_x_correlation_id,
+            pending.gated_turn_index,
+            pending.parent_delay_ms_on_gated_turn,
+        )
+
+    def _sample_think_ms(
+        self,
+        conversation_id: str,
+        x_correlation_id: str,
+        round_index: int,
+        median_ms: float,
+    ) -> float:
+        """Resolve one round's think-time (ms) around ``median_ms``.
+
+        Fixed when the conversation declared no distribution; otherwise a
+        lognormal draw seeded on a STABLE per-(instance, round) key so runs
+        reproduce under ``--random-seed``. The orchestrator root's deterministic
+        sampling ordinal replaces its random-UUID ``x_correlation_id`` (which
+        varies per run); fall back to the id only if the ordinal is unavailable.
+        """
+        spec = self._think_time_by_conv.get(conversation_id)
         if spec is None or median_ms <= 0.0:
             return median_ms
-        # Seed the draw on a STABLE per-(instance, round) key so runs reproduce
-        # under --random-seed. The orchestrator root's deterministic sampling
-        # ordinal replaces its random-UUID x_correlation_id (which varies per
-        # run and defeated reproducibility); fall back to the id only if the
-        # ordinal is somehow unavailable.
-        ordinal = self._cs.sample_ordinal(pending.parent_x_correlation_id)
-        instance_key = (
-            str(ordinal) if ordinal is not None else pending.parent_x_correlation_id
-        )
-        stream = _rng.derive(f"dag_think:{instance_key}:{pending.gated_turn_index}")
+        ordinal = self._cs.sample_ordinal(x_correlation_id)
+        instance_key = str(ordinal) if ordinal is not None else x_correlation_id
+        stream = _rng.derive(f"dag_think:{instance_key}:{round_index}")
         # Lognormal with median == median_ms: median * exp(N(0, sigma)). Cap the
         # exponent below math.exp's overflow threshold (~709) so no draw can raise
-        # OverflowError on the join-release path even if inputs are pathological.
+        # OverflowError even if inputs are pathological.
         draw = median_ms * math.exp(min(stream.normal(0.0, spec.sigma), 700.0))
         if spec.min_ms is not None:
             draw = max(draw, spec.min_ms)
         if spec.max_ms is not None:
             draw = min(draw, spec.max_ms)
         return draw
+
+    async def _maybe_apply_root0_think_ms(self, credit) -> None:
+        """Apply the orchestrator root's turn-0 think-time before round 0 fires.
+
+        Between-round waits ride the gated join (``_release_blocked_join``), but
+        round 0 has no join -- so root0's authored delay (the pre-delay before
+        the graph's first branches) would otherwise be dropped. Applied here on
+        the turn-0 return, before its branches spawn, mirroring the later rounds.
+        Only orchestrator spine turn-0 credits qualify (``no_request`` +
+        ``turn_index == 0``); normal roots are paced by the strategy.
+        """
+        if credit.turn_index != 0 or not getattr(credit, "no_request", False):
+            return
+        meta = self._cs.get_metadata(credit.conversation_id)
+        if not meta.turns:
+            return
+        median_ms = float(meta.turns[0].delay_ms or 0.0)
+        if median_ms <= 0.0:
+            return
+        think_ms = self._sample_think_ms(
+            credit.conversation_id, credit.x_correlation_id, 0, median_ms
+        )
+        if think_ms > 0.0:
+            await asyncio.sleep(think_ms / 1000.0)
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""
