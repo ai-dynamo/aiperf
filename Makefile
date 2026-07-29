@@ -28,7 +28,7 @@
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
-		check-agent-files-sync
+		check-agent-files-sync test-e2e-rust
 
 
 # Include user-defined environment variables
@@ -45,7 +45,14 @@ CARGO_MANIFEST := rust/Cargo.toml
 # the manifest through `CARGO_BUILD`, which places the flag after `build`.
 CARGO := cargo
 CARGO_BUILD := $(CARGO) build --manifest-path $(CARGO_MANIFEST)
+CARGO_TEST := $(CARGO) test --manifest-path $(CARGO_MANIFEST)
 RUST_TARGET := rust/target
+
+# Each Rust e2e test binds a mock server and forks an `aiperf` child that itself
+# spawns one worker per core, so libtest's default parallelism (one thread per
+# core) oversubscribes badly. Four keeps wall-clock reasonable without starving
+# the runs of CPU; override for a beefier machine.
+E2E_TEST_THREADS ?= 4
 
 # Default the make-driven workflow to the native Rust execution path. These are
 # already the code defaults (src/aiperf/common/environment.py); exporting them
@@ -312,6 +319,19 @@ ci-install: #? CI-only environment setup: venv + project + plugin artifacts. No 
 	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-overloads
 
 	@printf "$(bold)$(green)Done!$(reset)\n"
+
+test-e2e-rust: native-cli #? run the Rust product e2e suite against a freshly built native `aiperf`.
+	@printf "$(bold)$(blue)Running Rust e2e suite (aiperf-e2e-tests)...$(reset)\n"
+	@# The harness drives the real `aiperf` binary as a subprocess. It cannot use
+	@# CARGO_BIN_EXE_aiperf (that is only defined for bins in the *same* package, and
+	@# aiperf-e2e-tests declares none), so it resolves the binary by path and panics if
+	@# it is older than the newest Rust source. `native-cli` above builds it; pinning
+	@# AIPERF_E2E_BIN makes the resolution explicit instead of relying on the
+	@# current_exe() ancestor walk finding the right profile.
+	@# --test-threads is capped: every e2e test stands up a mock server and forks an
+	@# `aiperf` process, so the default (one thread per core) oversubscribes CI runners.
+	$(activate_venv) && AIPERF_E2E_BIN=$(abspath $(RUST_TARGET)/release/aiperf) \
+		$(CARGO_TEST) -p aiperf-e2e-tests -- --test-threads=$(E2E_TEST_THREADS)
 
 test-all: #? run all tests (unit, component integration, and integration).
 	make test --no-print-directory

@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Runs the Rust product e2e suite (`rust/e2e-tests`), which drives the real
+# `aiperf` binary as a subprocess against an in-process `aiperf-mock-server` and
+# asserts on the artifacts it wrote. This is the only CI job that executes cargo.
+#
+# Why the Python env is set up despite this being a Rust suite: several tests are
+# rust-vs-python engine parity tests (`test_port_raw_parity.rs`,
+# `test_rust_python_latency_parity.rs`, `test_seeded_poisson_parity.rs`) and drive
+# `python -m aiperf.cli` through `run_env(.., AIPERF_RUNTIME_ENGINE=python)` for the
+# control half. Without the venv those halves fail to spawn.
+#
+# The suite forces `HF_HUB_OFFLINE=1` in every child (`e2e-tests/tests/common/mod.rs`),
+# so any tokenizer it needs must already be in the runner's HF cache. Tokenizers are
+# pre-fetched explicitly below rather than left to a cache-miss at test time, where
+# offline mode turns the miss into an opaque run failure.
+
+name: Rust E2E Tests
+
+on:
+  push:
+    branches:
+      - 'pull-request/*'
+      - main
+    paths:
+      - 'rust/**'
+      - 'src/aiperf/**'
+      - 'Makefile'
+      - 'pyproject.toml'
+      - '.github/workflows/rust-e2e-tests.yml'
+
+jobs:
+  rust-e2e:
+    name: Product e2e (mock server + native aiperf)
+    runs-on: prod-aiperf-builder-amd-v1
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          cargo --version
+          rustc --version
+
+      - name: Set up project environment
+        run: make first-time-setup
+
+      - name: Pre-fetch tokenizers into the HF cache
+        # The e2e children run with HF_HUB_OFFLINE=1, so every tokenizer the suite
+        # names must be resident before the tests start. Keep this list in step with
+        # the `--model`/`--tokenizer` values used under rust/e2e-tests/tests/.
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python3 - <<'PY'
+          from transformers import AutoTokenizer
+
+          MODELS = [
+              "openai/gpt-oss-120b",
+              "Qwen/Qwen3-0.6B",
+              "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+              "microsoft/phi-4",
+              "mistralai/Mixtral-8x7B-Instruct-v0.1",
+          ]
+          for name in MODELS:
+              try:
+                  AutoTokenizer.from_pretrained(name)
+                  print(f"cached {name}")
+              except Exception as exc:  # gated/renamed repos must not fail the job here
+                  print(f"SKIP {name}: {exc}")
+          PY
+
+      - name: Run Rust e2e suite
+        run: make test-e2e-rust
+
+      - name: Upload failing run artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: rust-e2e-artifacts
+          path: |
+            rust/e2e-tests/**/artifacts/**
+            /tmp/aiperf*/**
+          if-no-files-found: ignore
+          retention-days: 7
