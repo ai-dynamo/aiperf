@@ -1854,9 +1854,10 @@ mod tests {
         });
     }
 
-    /// `--agentic-cache-warmup-duration` on a non-agentic run (no scenario / no
-    /// `--weka-semantics legacy`) is rejected: the accelerated cache-warmup
-    /// substage would be silently dropped, so the flag is an invisible no-op.
+    /// `--agentic-cache-warmup-duration` on a non-weka run (no scenario, no
+    /// `--weka-semantics`) is rejected: neither weka arm lowers the run, so the
+    /// accelerated cache-warmup substage reaches no consumer and the flag is an
+    /// invisible no-op.
     #[test]
     fn agentic_cache_warmup_rejected_without_agentic_replay() {
         run_on_big_stack(|| {
@@ -1870,42 +1871,47 @@ mod tests {
                 "--agentic-cache-warmup-duration",
                 "5",
             ]);
-            let err = super::resolve(&flags).expect_err("guard must reject non-agentic run");
+            let err = super::resolve(&flags).expect_err("guard must reject non-weka run");
             assert!(
                 err.to_string()
-                    .contains("--agentic-cache-warmup-duration requires the agentic_replay"),
+                    .contains("--agentic-cache-warmup-duration requires a weka reconstruction run"),
                 "unexpected error: {err}"
             );
         });
     }
 
-    /// Under `--weka-semantics legacy` the run resolves to the agentic_replay
-    /// timing mode, so `--agentic-cache-warmup-duration` passes the guard (any
-    /// failure must not be the guard's own rejection).
+    /// Both weka arms consume the accelerated cache-warmup substage, so
+    /// `--agentic-cache-warmup-duration` passes the guard under either
+    /// `--weka-semantics` value (any failure must not be the guard's own
+    /// rejection). `graph-ir` regressed once: the guard accepted only the legacy
+    /// spelling while `build_pressure_recycle` consumed the value on both arms.
     #[test]
     fn agentic_cache_warmup_accepted_under_legacy_weka() {
-        run_on_big_stack(|| {
-            let flags = parse(&[
-                "-m",
-                "mock-model",
-                "--endpoint-type",
-                "chat",
-                "-u",
-                "http://localhost:8000",
-                "--streaming",
-                "--weka-semantics",
-                "legacy",
-                "--agentic-cache-warmup-duration",
-                "5",
-            ]);
-            if let Err(err) = super::resolve(&flags) {
-                assert!(
-                    !err.to_string()
-                        .contains("--agentic-cache-warmup-duration requires the agentic_replay"),
-                    "guard must not fire under legacy weka: {err}"
-                );
-            }
-        });
+        for semantics in ["legacy", "graph-ir"] {
+            run_on_big_stack(|| {
+                let flags = parse(&[
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "-u",
+                    "http://localhost:8000",
+                    "--streaming",
+                    "--weka-semantics",
+                    semantics,
+                    "--agentic-cache-warmup-duration",
+                    "5",
+                ]);
+                if let Err(err) = super::resolve(&flags) {
+                    assert!(
+                        !err.to_string().contains(
+                            "--agentic-cache-warmup-duration requires a weka reconstruction run"
+                        ),
+                        "guard must not fire under --weka-semantics {semantics}: {err}"
+                    );
+                }
+            });
+        }
     }
 
     /// An unknown `--scenario` name is rejected during resolution.

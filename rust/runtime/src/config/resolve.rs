@@ -791,20 +791,19 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             ),
         }
     }
-    // Restrict `--agentic-cache-warmup-duration` to the agentic_replay (legacy
-    // weka) timing mode. The accelerated cache-warmup substage is consumed solely
-    // by the agentic_replay lowering; on any other run the value is silently
-    // dropped, so an unguarded flag is an invisible no-op. Reject it instead
-    // (ports Python's `validate_agentic_cache_warmup`). The resolved timing mode
-    // is agentic_replay exactly when `weka_semantics` is legacy/agentx (the
-    // scenario-declared or `--weka-semantics`-forced legacy path).
-    if inputs.agentic_cache_warmup_duration.is_some()
-        && !matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx"))
-    {
+    // Restrict `--agentic-cache-warmup-duration` to a weka reconstruction run.
+    // Both weka arms consume the accelerated cache-warmup substage: the legacy
+    // arm through `lower_legacy_agentic` (which recovers the value from the
+    // authored phases and threads it onto its synthesized warmup barrier), and
+    // the graph-ir arm through `build_pressure_recycle` in
+    // `graph_phase_runtime`. Outside weka the value reaches no consumer and is
+    // silently dropped, so an unguarded flag there is an invisible no-op; reject
+    // it instead (ports Python's `validate_agentic_cache_warmup`).
+    if inputs.agentic_cache_warmup_duration.is_some() && weka_semantics.is_none() {
         anyhow::bail!(
-            "--agentic-cache-warmup-duration requires the agentic_replay timing mode \
-             (set by --scenario inferencex-agentx-mvp or --weka-semantics legacy); \
-             the resolved timing mode is not agentic_replay."
+            "--agentic-cache-warmup-duration requires a weka reconstruction run \
+             (set by --scenario inferencex-agentx-mvp or --weka-semantics \
+             legacy|graph-ir); this run resolves to neither weka arm."
         );
     }
     let loadgen_overlay = crate::config::phase_validate::LoadgenOverlay::from_inputs(&inputs);
