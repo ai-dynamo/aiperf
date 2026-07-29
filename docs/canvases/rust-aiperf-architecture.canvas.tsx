@@ -287,7 +287,6 @@ function ProcessesView() {
         <text x={28} y={159} fontSize={10} fontWeight={700} fill={t.text.tertiary}>LIBRARIES</text>
         <Box t={t} x={235} y={178} w={430} h={82} title="aiperf" sub="runtime composition + runner_protocol + 16 absorbed modules" accent={green} />
         <Box t={t} x={335} y={318} w={230} h={62} title="loadgen-core" sub="Dispatchable · RequestSink · RequestObserver" accent={orange} />
-        <Box t={t} x={28} y={318} w={220} h={62} title="pyext" sub="packaging-only pyo3 cdylib" muted />
         <Box t={t} x={652} y={318} w={220} h={62} title="e2e harness" sub="product-level integration tests" muted />
 
         <Edge d="M450,110 L450,178" color={line} marker="proc" />
@@ -314,8 +313,7 @@ function ProcessesView() {
           <Text><Code>aiperf-mock-server</Code> → <Code>aiperf</Code>; execute mode and mock do not depend on each other</Text>
         </Stack>
         <Callout tone="neutral" title="Packaging">
-          <Code>pyext</Code> is the wheel’s compiled binding target and is not in the execution path. The workspace
-          still contains and packages the older <Code>aiperf-runner</Code> crate, but the default CLI path self re-execs.
+          The workspace still contains and packages the older <Code>aiperf-runner</Code> crate, but the default CLI path self re-execs.
         </Callout>
       </Grid>
       <EvidenceButtons

@@ -108,6 +108,7 @@ dependencies = [
 name = "aiperf-e2e-tests"
 version = "0.0.0"
 dependencies = [
+ "aiperf-cli",
  "aiperf-mock-server",
  "aiperf-runtime",
  "arrow",
@@ -115,7 +116,9 @@ dependencies = [
  "base64 0.22.1",
  "glob",
  "nix 0.29.0",
+ "opentelemetry-proto",
  "parquet 58.3.0",
+ "prost 0.14.4",
  "regex",
  "reqwest",
  "serde_json",
@@ -165,13 +168,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "aiperf-pyext"
-version = "0.0.0"
-dependencies = [
- "pyo3",
 ]
 
 [[package]]

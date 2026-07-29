@@ -1116,7 +1116,7 @@ explainer "SDK Generic Catalog" {
     caption: "Left-edge color groups cards; the grid wraps by column count."
     render: @scene {
       sdk.Header(id = "cards-h", title = "SDK.CARDGRID", caption = "titled cards", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
-      sdk.CardGrid(id = "cards-demo", columns = 2, cards = [{ title: "aiperf-cli", detail: "CLI, routing, self-execution", accent: "green" }, { title: "aiperf-runtime", detail: "clocks, transports, metrics", accent: "green" }, { title: "aiperf-mock-server", detail: "deterministic inference target", accent: "black" }, { title: "pyext", detail: "pyo3 packaging module", accent: "gray" }], x = 231, y = 232.2)
+      sdk.CardGrid(id = "cards-demo", columns = 2, cards = [{ title: "aiperf-cli", detail: "CLI, routing, self-execution", accent: "green" }, { title: "aiperf-runtime", detail: "clocks, transports, metrics", accent: "green" }, { title: "aiperf-mock-server", detail: "deterministic inference target", accent: "black" }], x = 231, y = 232.2)
       timeline main { at 0 reveal cards-h duration 180 after cards-h reveal cards-demo duration 300 }
     }
   }

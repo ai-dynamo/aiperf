@@ -97,12 +97,10 @@ export function ProcessesPage(): React.JSX.Element {
             title: "Packaging and tests",
             diagram: (
               <Diagram>
-                <NodeChip>pyext</NodeChip>
-                <MiniArrow />
                 <NodeChip accent>e2e</NodeChip>
               </Diagram>
             ),
-            children: "pyext is the wheel's pyo3 cdylib binding, off the execution path; e2e drives product integration.",
+            children: "e2e drives product integration.",
           },
           {
             accent: "red",

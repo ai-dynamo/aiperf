@@ -61,10 +61,9 @@ The Cargo workspace uses edition 2024 and resolver 3.
 - `aiperf-runtime`: library-only runtime composition. It contains clocks, datasets, endpoints, transports, scheduling, graph execution, metrics, exporters, accuracy, adaptive control, telemetry, content serving, cellular support, extension registration, and the feature-gated v2 engine. The `dispatch` module defines `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `ObservedUsage`, endpoint observations, `TraceCollector`, and `CollectorObserver`.
 - `aiperf-cli`: library plus the `aiperf` binary. It owns command routing, Config v2 loading and expansion, profile projection, self-execution, cellular roles, native searches and sweeps, result rendering, and process signals.
 - `aiperf-mock-server`: standalone HTTP/gRPC inference target with deterministic response generation, latency models, error injection, usage accounting, telemetry, TLS, UDS, balancing, accuracy fixtures, and request recording.
-- `pyext`: packaging-only pyo3 module exposed as `aiperf._native` in the wheel.
 - `aiperf-e2e-tests` (`rust/e2e-tests`): product integration harness and tests.
 
-Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `aiperf-e2e-tests` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `pyext` depends directly on pyo3. The CLI and mock server are independent executables.
+Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `aiperf-e2e-tests` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. The CLI and mock server are independent executables.
 
 ## Runtime modules
 
@@ -190,7 +189,7 @@ make wheel
 make install-app
 ```
 
-`make wheel` builds the pyo3 module with maturin and injects `rust/target/release/aiperf` into the wheel's scripts directory through `tools/wheel_repack.py`. The installed `aiperf` command is the native binary. `CLI_FEATURES` selects the packaged binary feature set.
+`make wheel` builds the pure-Python wheel with hatchling and injects `rust/target/optimized/aiperf` into the wheel's scripts directory through `tools/wheel_repack.py`, which also sets the `py3-none-<platform>` tag from that binary's glibc floor. The installed `aiperf` command is the native binary. `CLI_FEATURES` selects the packaged binary feature set.
 
 Product commands:
 

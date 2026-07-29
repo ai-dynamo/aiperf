@@ -53,14 +53,14 @@ explainer "Rust Architecture" {
   slide "Workspace map" {
     eyebrow: "Workspace map"
     title: "Five crates, one dependency direction"
-    lede: "The Rust workspace is intentionally small. Capability flows cli → runtime, and runtime owns the transport-neutral dispatch seam as an in-crate module. Mock server and e2e are separate targets; pyext is packaging-only."
+    lede: "The Rust workspace is intentionally small. Capability flows cli → runtime, and runtime owns the transport-neutral dispatch seam as an in-crate module. Mock server and e2e are separate targets."
     narration: "The Rust workspace stays small. Capability flows from aiperf-cli into aiperf-runtime, which owns the dispatch module directly."
     term: {
       word: "runtime::dispatch"
       meaning: "Transport-neutral observer and sink vocabulary living inside aiperf-runtime, with no HTTP, gRPC, or engine dependencies of its own."
     }
     points: [
-      "Members: runtime, cli, mock-server, e2e, pyext (loadgen-core merged into runtime).",
+      "Members: runtime, cli, mock-server, e2e, bench-tools (loadgen-core merged into runtime).",
       "aiperf-cli depends on aiperf-runtime with the engine feature.",
       "aiperf-mock-server is a standalone benchmark target."
     ]

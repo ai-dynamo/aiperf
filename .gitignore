@@ -5,8 +5,6 @@
 *.pyc
 # personal ops runbooks belong in ~/.claude/workflows/, not the repo
 .workflows/
-# maturin-compiled native extension (built into the wheel, never checked in)
-src/aiperf/*.so
 .coverage
 __pycache__/
 .venv/
@@ -66,10 +64,6 @@ tests/scripts/.chaos_runs/
 
 # Rust build artifacts
 target/
-
-# Interned native runner bundled into the aiperf wheel by `make bundle-runner`
-# (maturin `include` glob). Built artifact — never committed.
-src/aiperf/_bin/
 
 # Node.js dependencies
 node_modules/

@@ -63,14 +63,14 @@ explainer "Rust Architecture Atlas" {
   slide "Crate graph" {
     eyebrow: "2 · Processes"
     title: "Crate graph and process roles"
-    lede: "Compile-time capability flows `aiperf-cli` → `aiperf-runtime`, which owns the dispatch seam as an in-crate module. The entry process and its `--execute` child share one binary; `aiperf-mock-server` links runtime independently; `pyext` and `e2e` stay off the hot path."
+    lede: "Compile-time capability flows `aiperf-cli` → `aiperf-runtime`, which owns the dispatch seam as an in-crate module. The entry process and its `--execute` child share one binary; `aiperf-mock-server` links runtime independently; `e2e` stays off the hot path."
     narration: "Capability flows from aiperf-cli into aiperf-runtime, which owns the dispatch module directly. Mock server and packaging crates stay outside that execute dependency edge."
     term: {
       word: "aiperf-runtime"
       meaning: "Library crate that owns clocks, transports, datasets, engine, cellular, dispatch, and metrics composition."
     }
     points: [
-      "Workspace members: runtime, cli, mock-server, e2e, pyext (loadgen-core merged into runtime).",
+      "Workspace members: runtime, cli, mock-server, e2e, bench-tools (loadgen-core merged into runtime).",
       "Solid edges are Cargo deps or self re-exec; dashed edges are network or optional features.",
       "Evidence: `rust/cli/Cargo.toml`, `rust/runtime/Cargo.toml`, `rust/runtime/src/dispatch/`."
     ]
@@ -83,7 +83,7 @@ explainer "Rust Architecture Atlas" {
       sdk.Edge(id = "a1b", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94, fill: "none" })
       sdk.Panel(id = "loadgen", title = "dispatch", detail = "in-crate module", x = 1311, y = 270, width = 486, height = 243, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "mock1", title = "mock-server", detail = "→ runtime", x = 690, y = 648, width = 432, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "pyext", title = "pyext / e2e", detail = "off hot path", x = 1230, y = 648, width = 378, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "e2e", title = "e2e", detail = "off hot path", x = 1230, y = 648, width = 378, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal hdr1 duration 280
         after hdr1 reveal cli duration 280
@@ -92,7 +92,7 @@ explainer "Rust Architecture Atlas" {
         after a1a reveal loadgen duration 280
         after loadgen reveal mock1 duration 280
         after loadgen trace a1b duration 420
-        after a1b reveal pyext duration 280
+        after a1b reveal e2e duration 280
       }
     }
   }

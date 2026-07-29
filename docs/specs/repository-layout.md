@@ -26,11 +26,10 @@ prefix and sit directly under `rust/`.
 | `rust/cli` | `aiperf-cli` | `aiperf_cli` |
 | `rust/mock-server` | `aiperf-mock-server` | `aiperf_mock_server` |
 | `rust/e2e-tests` | `aiperf-e2e-tests` | `aiperf_e2e_tests` |
-| `rust/pyext` | `aiperf-pyext` | `_native` |
 
 Direct dependency direction is `aiperf-cli` → `aiperf-runtime`;
-`aiperf-mock-server` → `aiperf-runtime`; `aiperf-pyext` → pyo3. The CLI and mock
-server are independent executables.
+`aiperf-mock-server` → `aiperf-runtime`. The CLI and mock server are independent
+executables.
 
 ### Crate responsibilities
 
@@ -45,9 +44,6 @@ server are independent executables.
   Config v2 loading and expansion, profile projection, self-execution, cellular
   roles, native searches and sweeps, result rendering, and process signals.
 - `aiperf-mock-server`: standalone HTTP/gRPC inference target.
-- `aiperf-pyext`: packaging-only pyo3 `cdylib` maturin compiles into
-  `aiperf._native`. `make wheel` repacks the `aiperf` binary into the wheel's
-  scripts directory through `tools/wheel_repack.py`.
 - `aiperf-e2e-tests`: product integration harness.
 
 ### Naming rules
@@ -61,9 +57,7 @@ The MUST/SHOULD words are normative for any new package:
 3. AIPerf-owned packages do not claim bare generic names (`clock`, `metrics`,
    `transport`, `runner`).
 4. Rust identifiers use Cargo's hyphen-to-underscore mapping; a package does not
-   add a custom `[lib].name` to remove the `aiperf_` prefix. The required
-   exception is `aiperf-pyext`: its `[lib].name = "_native"` makes maturin emit
-   the configured `aiperf._native` extension module.
+   add a custom `[lib].name` to remove the `aiperf_` prefix.
 5. Code, scripts, CI, and documentation treat Cargo metadata as the authority for
    package identity, never a directory basename.
 
