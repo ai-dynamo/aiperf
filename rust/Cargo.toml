@@ -101,6 +101,12 @@ url = "2"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+# The shipped binary is what `make wheel` injects, so its symbol table rides
+# along in the wheel. `strip = "debuginfo"` recovers almost nothing (the weight
+# is the symtab, not debug sections); "symbols" drops ~8 MB of binary and ~3 MB
+# of compressed wheel. Cost: panic backtraces from a packaged build show
+# addresses, not frame names — reproduce under `--release` to get names back.
+strip = "symbols"
 
 # For standalone debug/benchmark-comparison utilities, not shipped product
 # binaries: `cargo build --profile bench-tools -p aiperf-bench-tools`. Same as
