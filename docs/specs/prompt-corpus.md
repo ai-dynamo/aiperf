@@ -42,7 +42,7 @@ replayed verbatim:
 
 - synthetic datasets;
 - count/hash-based file trace loaders such as `mooncake_trace`,
-  `bailian_trace`, and `burst_gpt`;
+  `bailian_trace`, and `burst_gpt_trace`;
 - recorded-graph adapters such as `weka_trace`, `dynamo_trace`, and
   `aiperf_trace`.
 

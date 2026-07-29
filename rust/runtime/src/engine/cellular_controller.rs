@@ -1643,7 +1643,7 @@ const CELLULAR_MULTI_TURN_FILE_FORMATS: [&str; 9] = [
     "multi_turn",
     "mooncake_trace",
     "bailian_trace",
-    "burst_gpt",
+    "burst_gpt_trace",
     "sagemaker_data_capture",
     "inputs_json",
     "sharegpt",

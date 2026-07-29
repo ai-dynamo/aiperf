@@ -852,7 +852,7 @@ fn prepared_prompt_generator_flags_cover_entire_supported_catalog() {
     }
 
     assert_eq!(BENCHMARK_FORMATS.len(), 22);
-    assert_eq!(registry_format_name("burst_gpt_trace"), "burst_gpt");
+    assert_eq!(registry_format_name("burst_gpt_trace"), "burst_gpt_trace");
     assert!(!needs_prepared_prompt_generator("not_a_format"));
 }
 

@@ -39,7 +39,7 @@ input.
 ### Pipeline
 
 - **Loaders** parse each real format: synthetic, single/multi-turn JSONL,
-  random-pool, mooncake/bailian/burst_gpt traces, `dag_jsonl`, raw-payload,
+  random-pool, mooncake/bailian/burst-GPT traces, `dag_jsonl`, raw-payload,
   sharegpt, Hugging Face public datasets, and accuracy fixtures.
 - **Composition** does turn finalization, ISL/OSL sequence-distribution sampling,
   context injection, model selection, and `max_tokens`.

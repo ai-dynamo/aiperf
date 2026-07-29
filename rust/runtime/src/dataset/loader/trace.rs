@@ -556,7 +556,7 @@ struct BurstRow {
 #[async_trait]
 impl DatasetLoader for BurstGptTraceDatasetLoader {
     fn name(&self) -> &str {
-        "burst_gpt"
+        "burst_gpt_trace"
     }
     fn can_load(&self, probe: &DatasetProbe) -> bool {
         let Some(path) = &probe.path else {

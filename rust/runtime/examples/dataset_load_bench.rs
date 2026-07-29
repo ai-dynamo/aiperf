@@ -84,7 +84,7 @@ pub const BENCHMARK_FORMATS: &[BenchmarkFormat] = &[
     },
     BenchmarkFormat {
         name: "burst_gpt_trace",
-        registry_name: "burst_gpt",
+        registry_name: "burst_gpt_trace",
         prepare_prompt_generator: true,
         opaque_token_counts: false,
     },

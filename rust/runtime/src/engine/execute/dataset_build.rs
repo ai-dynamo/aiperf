@@ -563,7 +563,7 @@ pub(crate) async fn build_file_dataset(
             ensure!(
                 matches!(
                     spec.format.as_str(),
-                    "mooncake_trace" | "bailian_trace" | "burst_gpt"
+                    "mooncake_trace" | "bailian_trace" | "burst_gpt_trace"
                 ),
                 "trace synthesis is not supported by file format {:?}",
                 spec.format
