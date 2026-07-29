@@ -772,6 +772,39 @@ def test_rounds_list_with_sigma_builds_sampled_think_time(tmp_path):
     assert [t.delay for t in start.turns[:-1]] == [12000.0, 31000.0]
 
 
+def test_orchestrator_think_time_respects_delay_cap(tmp_path):
+    """The configured inter-turn delay cap bounds orchestrator think-time: each
+    stamped fixed/median delay is clamped, and the sampled distribution's bounds
+    are folded to the cap (min stays <= max even when authored above it)."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "think_time_ms": 250.0,
+                "think_time_sigma": 0.6,
+                "think_time_min_ms": 10.0,
+                "think_time_max_ms": 9999.0,
+                "rounds": [
+                    {"spawns": ["a"], "think_time_ms": 250.0},
+                    {"spawns": ["b"], "think_time_ms": 800.0},
+                ],
+            },
+            {"session_id": "a", "turns": [_turn("x")]},
+            {"session_id": "b", "turns": [_turn("x")]},
+        ],
+    )
+    loader = DagJsonlLoader(path)
+    loader._delay_cap_tracker.cap_seconds = 0.1  # 100 ms cap
+    start = {c.session_id: c for c in loader.load()}["start"]
+    # Both stamped round delays clamped to the cap; terminal gate carries none.
+    assert [t.delay for t in start.turns] == [100.0, 100.0, None]
+    # Sampled distribution bounds folded to the cap.
+    assert start.think_time.max_ms == 100.0
+    assert start.think_time.min_ms == 10.0
+
+
 def test_rounds_rejected_without_orchestrator(tmp_path):
     path = write_lines(
         tmp_path,

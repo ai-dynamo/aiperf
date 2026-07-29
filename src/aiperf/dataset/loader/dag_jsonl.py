@@ -272,12 +272,27 @@ class DagJsonlLoader(BaseFileLoader):
         turns: list[Turn] = []
         inline_forks_per_turn: list[list[DagFork]] = []
         inline_spawns_per_turn: list[list[tuple[list[str], int | None]]] = []
+        # The configured inter-turn delay cap (``--inter-turn-delay-cap-seconds``)
+        # bounds orchestrator think-time exactly as it bounds trace-replay delays.
+        # Apply it at load time: fold it into the sampled distribution's clamps
+        # AND onto each stamped fixed delay below, so neither a fixed nor a
+        # sampled think-time can exceed the cap.
+        cap_seconds = self._delay_cap_tracker.cap_seconds
+        cap_ms = cap_seconds * 1000.0 if cap_seconds is not None else None
         think_time_spec: ThinkTimeSpec | None = None
         if dag_conv.think_time_sigma is not None:
+            spec_min = dag_conv.think_time_min_ms
+            spec_max = dag_conv.think_time_max_ms
+            if cap_ms is not None:
+                # Clamp both bounds to the cap so min <= max holds even when an
+                # authored bound already exceeds the cap.
+                spec_max = cap_ms if spec_max is None else min(spec_max, cap_ms)
+                if spec_min is not None:
+                    spec_min = min(spec_min, cap_ms)
             think_time_spec = ThinkTimeSpec(
                 sigma=dag_conv.think_time_sigma,
-                min_ms=dag_conv.think_time_min_ms,
-                max_ms=dag_conv.think_time_max_ms,
+                min_ms=spec_min,
+                max_ms=spec_max,
             )
         if dag_conv.orchestrator and dag_conv.rounds is not None:
             # Gated spine: N request-free rounds. Each round-k turn spawns the
@@ -315,7 +330,9 @@ class DagJsonlLoader(BaseFileLoader):
                     for _ in range(dag_conv.rounds)
                 ]
             for k, (round_spawns, round_think_ms) in enumerate(round_plans):
-                turns.append(Turn(no_request=True, delay=round_think_ms))
+                # Clamp the stamped (fixed / median) think-time to the delay cap.
+                capped_delay = self._delay_cap_tracker.clamp(round_think_ms)
+                turns.append(Turn(no_request=True, delay=capped_delay))
                 inline_forks_per_turn.append([])
                 inline_spawns_per_turn.append([(round_spawns, k + 1)])
             turns.append(Turn(no_request=True))

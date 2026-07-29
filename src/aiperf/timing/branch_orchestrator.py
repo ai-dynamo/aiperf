@@ -1472,9 +1472,16 @@ class BranchOrchestrator:
         spec = self._think_time_by_conv.get(pending.parent_conversation_id)
         if spec is None or median_ms <= 0.0:
             return median_ms
-        stream = _rng.derive(
-            f"dag_think:{pending.parent_x_correlation_id}:{pending.gated_turn_index}"
+        # Seed the draw on a STABLE per-(instance, round) key so runs reproduce
+        # under --random-seed. The orchestrator root's deterministic sampling
+        # ordinal replaces its random-UUID x_correlation_id (which varies per
+        # run and defeated reproducibility); fall back to the id only if the
+        # ordinal is somehow unavailable.
+        ordinal = self._cs.sample_ordinal(pending.parent_x_correlation_id)
+        instance_key = (
+            str(ordinal) if ordinal is not None else pending.parent_x_correlation_id
         )
+        stream = _rng.derive(f"dag_think:{instance_key}:{pending.gated_turn_index}")
         # Lognormal with median == median_ms: median * exp(N(0, sigma)). Cap the
         # exponent below math.exp's overflow threshold (~709) so no draw can raise
         # OverflowError on the join-release path even if inputs are pathological.

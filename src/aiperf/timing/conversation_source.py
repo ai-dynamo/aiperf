@@ -175,6 +175,14 @@ class ConversationSource:
         self._metadata_lookup: dict[str, ConversationMetadata] = {
             conv.conversation_id: conv for conv in dataset_metadata.conversations
         }
+        # Monotonic per-sample ordinal. ``next()`` is synchronous (no await), so
+        # this increments atomically in the seeded sampler's call order -- a
+        # STABLE per-instance id across runs under ``--random-seed``. Recorded
+        # only for orchestrator roots (bounded to the graph-instance count), which
+        # need a reproducible key for think-time sampling because their random
+        # UUID ``x_correlation_id`` cannot seed a reproducible draw.
+        self._sample_seq = 0
+        self._orchestrator_ordinal: dict[str, int] = {}
 
     @property
     def dataset_metadata(self) -> DatasetMetadata:
@@ -186,11 +194,25 @@ class ConversationSource:
         conversation_id = self._dataset_sampler.next_conversation_id()
         metadata = self._metadata_lookup[conversation_id]
 
-        return SampledSession(
+        session = SampledSession(
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=x_correlation_id or str(uuid.uuid4()),
         )
+        seq = self._sample_seq
+        self._sample_seq += 1
+        if metadata.is_orchestrator:
+            self._orchestrator_ordinal[session.x_correlation_id] = seq
+        return session
+
+    def sample_ordinal(self, x_correlation_id: str) -> int | None:
+        """Deterministic sampling ordinal for an orchestrator root instance.
+
+        Returns None for non-orchestrator sessions. Stable across runs under the
+        same ``--random-seed`` (unlike the random-UUID ``x_correlation_id``), so
+        it can key a reproducible per-instance think-time draw.
+        """
+        return self._orchestrator_ordinal.get(x_correlation_id)
 
     def get_metadata(self, conversation_id: str) -> ConversationMetadata:
         """Get metadata for a specific conversation."""
