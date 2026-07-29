@@ -3,14 +3,20 @@
 
 # Build
 #
-# maturin compiles the pyo3 `aiperf._native` module (rust/pyext) and interns the
-# unified native `aiperf` executable (entry point + execution engine) into this one
-# wheel as package data (`aiperf/_bin/aiperf`) — see [tool.maturin] below.
-# Because the wheel carries a compiled binary it is platform + CPython-ABI specific
-# (no longer `py3-none-any`).
+# The wheel carries two independent halves: the pure-Python `src/aiperf` tree,
+# packaged by hatchling, and the native `aiperf` executable, injected afterward by
+# `tools/wheel_repack.py` at `<dist>-<ver>.data/scripts/aiperf`. PEP 427 makes pip
+# install `*.data/scripts/` entries straight into the environment's `bin/`, so the
+# `aiperf` command IS that ELF — there is no Python launcher shim, and the binary is
+# NOT interned as package data.
+#
+# Nothing in the wheel links a CPython ABI, so the tag is `py3-none-<platform>`:
+# platform-specific because of the ELF, interpreter-agnostic across the whole
+# `requires-python` range. `wheel_repack.py` sets that tag from the binary's own
+# glibc floor.
 [build-system]
-requires = ["maturin>=1.9,<2"]
-build-backend = "maturin"
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
 
 [project]
 name = "aiperf"
@@ -98,21 +104,22 @@ aiperf-python = "aiperf.entrypoint:main"
 [project.entry-points."aiperf.plugins"]
 aiperf = "aiperf.plugin:plugins.yaml"
 
-# maturin build backend. It compiles the pyo3 cdylib at rust/pyext into
-# `aiperf/_native.<abi>.so` and packages the `src/aiperf` Python tree. The
-# unified `aiperf` binary (entry point + execution engine) is NOT built by maturin
-# (`bindings = "bin"` is illegal alongside `[project.scripts]`) and is NOT interned
-# as package data; instead the Makefile `wheel` target repacks the built wheel to
-# inject the binary into `aiperf-<ver>.data/scripts/aiperf` so pip installs it
-# directly as the `aiperf` command. See the Makefile `wheel`/`bundle-cli` targets,
-# tools/wheel_repack.py, and the Dockerfile wheel-builder stage.
-[tool.maturin]
-bindings = "pyo3"
-manifest-path = "rust/pyext/Cargo.toml"
-python-source = "src"
-module-name = "aiperf._native"
-profile = "release"
-strip = true
+# hatchling includes EVERY file under the declared package directory, not just
+# `.py`. That matters: `src/aiperf` carries 130 non-`.py` files across ten
+# directories (operator UI `.js`/`.css`/`.html`, config templates, generator
+# assets, plugin manifests, the JSON schema), and an enumerated `package-data`
+# pattern list would silently drop them.
+[tool.hatch.build.targets.wheel]
+packages = ["src/aiperf"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/aiperf",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    "ATTRIBUTIONS.md",
+]
 
 [project.optional-dependencies]
 mlflow = [

@@ -2,20 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """Inject the native `aiperf` binary into a built wheel's scripts directory.
 
-maturin (``bindings = "pyo3"``) cannot install a native executable as the
-``aiperf`` console script directly (``bindings = "bin"`` is illegal alongside a
-pyo3 module + ``[project.scripts]``). So we build the wheel normally, then repack
-it here: the compiled binary is added at ``<distribution>-<version>.data/scripts/
-aiperf`` (mode 0755) and the ``RECORD`` is rewritten with its hash + size. pip
-installs files under ``*.data/scripts/`` straight into the environment's bin
-directory (PEP 427), so the ``aiperf`` command becomes the ELF binary itself with
-no Python launcher shim.
+hatchling builds a pure-Python wheel from ``src/aiperf``; it has no way to install
+a native executable as the ``aiperf`` console script. So we build that wheel
+normally, then repack it here: the compiled binary is added at
+``<distribution>-<version>.data/scripts/aiperf`` (mode 0755) and the ``RECORD`` is
+rewritten with its hash + size. pip installs files under ``*.data/scripts/``
+straight into the environment's bin directory (PEP 427), so the ``aiperf`` command
+becomes the ELF binary itself with no Python launcher shim.
+
+Because the ELF makes the wheel platform-specific while nothing in it links a
+CPython ABI, the repack also rewrites ``dist-info/WHEEL`` to
+``Tag: py3-none-<platform>`` (platform derived from the binary's own glibc floor)
+with ``Root-Is-Purelib: false``.
 
 Usage:
     python tools/wheel_repack.py --wheel-dir dist --binary rust/target/release/aiperf
 
-The wheel is edited in place (rewritten). Re-running on an already-repacked wheel
-replaces the injected binary, so the step is idempotent.
+The wheel is rewritten to a new file named for its final tag and the input is
+unlinked. Re-running on an already-repacked wheel replaces the injected binary and
+yields the same name, so the step is idempotent.
 """
 
 from __future__ import annotations

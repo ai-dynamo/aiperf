@@ -70,10 +70,9 @@ FROM base AS wheel-builder
 
 WORKDIR /workspace
 
-# The native runner is compiled from source with maturin (ai-dynamo's model),
-# so the wheel-builder needs a Rust toolchain, a C toolchain for linking, git for
-# cargo to fetch the pinned dynamo git dep, and maturin[patchelf] for the
-# manylinux auditwheel repair.
+# The wheel is built by hatchling (pure Python) and then retagged by
+# tools/wheel_repack.py, which injects the native binary and derives the
+# manylinux tag from that binary's own glibc floor.
 RUN apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
@@ -88,7 +87,7 @@ RUN apt-get update -y \
 # files at build time; expose protoc explicitly, matching ai-dynamo's builder.
 ENV PATH="/root/.cargo/bin:${PATH}" \
     PROTOC=/usr/bin/protoc
-RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
+RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "hatchling>=1.27,<2" build
 
 # Runner feature profile selected at build time:
 #   offline (default) — full-fat: crate default features `dynosim` + `parquet`.
@@ -105,13 +104,13 @@ ARG AIPERF_RUNNER_PROFILE=offline
 # cargo fetches it directly during the build — no adjacent checkout is staged and
 # no build arg drives it; bump the rev in rust/runtime/Cargo.toml to move the pin.
 
-# Copy the frontend sources plus the Rust workspace the interned wheel compiles.
-# The single wheel's pyproject.toml is the repo-root one (maturin backend,
-# rust/pyext cdylib + interned aiperf-runner). src/ is copied to /workspace/src
-# (not flattened) so the real repo layout is preserved: the Rust build
+# Copy the frontend sources plus the Rust workspace, which now builds only the
+# `aiperf-cli` binary. The single wheel's pyproject.toml is the repo-root one
+# (hatchling backend). src/ is copied to /workspace/src (not flattened) so the
+# real repo layout is preserved: the Rust build
 # `include_bytes!`/`include_str!`s a few Python-tree assets via
-# `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and maturin's
-# `python-source = "src"` packages the src-layout frontend.
+# `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and hatchling's
+# `packages = ["src/aiperf"]` packages the src-layout frontend.
 COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md /workspace/
 COPY src /workspace/src
 # .cargo/config.toml sets `--cfg tokio_unstable`, required to compile dynosim's
@@ -121,12 +120,11 @@ COPY .cargo /workspace/.cargo
 COPY rust /workspace/rust
 
 # Build the unified `aiperf` binary (entry point + execution engine, lto=fat) per
-# AIPERF_RUNNER_PROFILE, then build the ONE maturin wheel and repack it. maturin
-# compiles the rust/pyext `aiperf._native` cdylib, packages `src/aiperf`, and runs
-# its built-in auditwheel repair to emit a manylinux-tagged wheel; the repack step
-# then injects the binary into `aiperf-<ver>.data/scripts/aiperf` so pip installs
-# it directly as the `aiperf` command (no Python launcher shim). `bindings = "bin"`
-# is not used (illegal with a pyo3 module + `[project.scripts]`).
+# AIPERF_RUNNER_PROFILE, then build the ONE wheel and repack it. hatchling packages
+# `src/aiperf` as a pure-Python wheel; the repack step injects the binary into
+# `aiperf-<ver>.data/scripts/aiperf` so pip installs it directly as the `aiperf`
+# command (no Python launcher shim), and retags the wheel `py3-none-<platform>`
+# from the binary's own glibc floor.
 RUN cd /workspace \
     && case "${AIPERF_RUNNER_PROFILE}" in \
          offline) CLI_FEATURES="--features full" ;; \
@@ -134,7 +132,7 @@ RUN cd /workspace \
          *) echo "unknown AIPERF_RUNNER_PROFILE='${AIPERF_RUNNER_PROFILE}' (expected 'offline' or 'online')" >&2; exit 1 ;; \
        esac \
     && cargo build --manifest-path rust/Cargo.toml --profile optimized -p aiperf-cli ${CLI_FEATURES} \
-    && maturin build --release --out /dist \
+    && python -m build --wheel --outdir /dist \
     && python tools/wheel_repack.py --wheel-dir /dist --binary rust/target/optimized/aiperf
 
 # Export-only stage: scratch-based so `docker buildx build --target

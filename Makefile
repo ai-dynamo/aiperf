@@ -210,11 +210,12 @@ CLI_FEATURES ?= --features full
 bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable), fat-LTO optimized, for packaging.
 	$(CARGO_BUILD) --profile optimized -p aiperf-cli $(CLI_FEATURES)
 
-wheel: bundle-cli #? build the single aiperf wheel (maturin, manylinux) and repack the native binary into it.
-	$(activate_venv) && uv pip install "maturin[patchelf]" \
-		&& maturin build --release --out dist
-	# maturin can't install a native executable as the `aiperf` console script, so
-	# repack the built wheel to inject $(RUST_TARGET)/optimized/aiperf into its scripts dir.
+wheel: bundle-cli #? build the single aiperf wheel (hatchling) and repack the native binary into it.
+	$(activate_venv) && uv pip install "hatchling>=1.27,<2" build \
+		&& python -m build --wheel --outdir dist
+	# hatchling builds a pure-Python wheel; the repack injects
+	# $(RUST_TARGET)/optimized/aiperf into its scripts dir and retags it
+	# py3-none-<platform> from the binary's own glibc floor.
 	$(activate_venv) && python tools/wheel_repack.py --wheel-dir dist --binary $(RUST_TARGET)/optimized/aiperf
 
 docker: #? build the docker image.
