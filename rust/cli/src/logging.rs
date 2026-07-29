@@ -91,18 +91,51 @@ pub fn set_log_file(artifact_dir: &Path) {
 
 const DEFAULT_LEVEL: &str = "info";
 
+/// Targets the verbose flags raise, leaving dependencies at [`DEP_LEVEL`].
+///
+/// A bare `trace`/`debug` directive is global, and some dependencies are
+/// pathologically verbose at those levels: `rustls` dumps every handshake message
+/// field-by-field and `tokenizers` logs per-character alignment for every prompt it
+/// encodes. Because the parent re-emits each forwarded child line through its own
+/// subscriber, that output is written twice and a five-request run produces tens of
+/// millions of lines — enough that the run never reaches its terminal JSON line.
+/// Operators who do want dependency traces can still set `AIPERF_LOG`, which
+/// overrides this entirely.
+const VERBOSE_TARGETS: [&str; 4] = ["aiperf", "aiperf_cli", "aiperf_runtime", "aiperf_e2e_tests"];
+
+/// The level dependencies keep when a verbose flag raises AIPerf's own targets.
+const DEP_LEVEL: &str = "warn";
+
+/// A directive setting dependencies to [`DEP_LEVEL`] and AIPerf targets to `level`.
+fn scoped_directive(level: &str) -> String {
+    let mut directive = String::from(DEP_LEVEL);
+    for target in VERBOSE_TARGETS {
+        directive.push(',');
+        directive.push_str(target);
+        directive.push('=');
+        directive.push_str(level);
+    }
+    directive
+}
+
 fn level_directive_from_argv(argv: &[String]) -> String {
     if argv
         .iter()
         .any(|arg| arg == "--extra-verbose" || arg == "-vv" || arg == "--vv")
     {
-        return "trace".to_owned();
+        return scoped_directive("trace");
     }
     if argv.iter().any(|arg| arg == "--verbose" || arg == "-v") {
-        return "debug".to_owned();
+        return scoped_directive("debug");
     }
     if let Some(level) = option_value(argv, "--log-level") {
-        return map_log_level(&level).to_owned();
+        let level = map_log_level(&level);
+        // `--log-level trace|debug` is the same request as the verbose flags and
+        // carries the same dependency-flood risk; scope it identically.
+        return match level {
+            "trace" | "debug" => scoped_directive(level),
+            _ => level.to_owned(),
+        };
     }
     DEFAULT_LEVEL.to_owned()
 }
@@ -201,7 +234,7 @@ mod tests {
             "--log-level".to_owned(),
             "error".to_owned(),
         ];
-        assert_eq!(level_directive_from_argv(&argv), "trace");
+        assert_eq!(level_directive_from_argv(&argv), scoped_directive("trace"));
     }
 
     #[test]
@@ -212,7 +245,7 @@ mod tests {
             "error".to_owned(),
             "-v".to_owned(),
         ];
-        assert_eq!(level_directive_from_argv(&argv), "debug");
+        assert_eq!(level_directive_from_argv(&argv), scoped_directive("debug"));
     }
 
     #[test]
@@ -224,7 +257,27 @@ mod tests {
         ];
         assert_eq!(level_directive_from_argv(&spaced), "warn");
         let equals = vec!["profile".to_owned(), "--log-level=debug".to_owned()];
-        assert_eq!(level_directive_from_argv(&equals), "debug");
+        assert_eq!(level_directive_from_argv(&equals), scoped_directive("debug"));
+    }
+
+    /// The verbose flags must not raise dependency crates.
+    ///
+    /// `rustls` and `tokenizers` at TRACE emit millions of lines for a handful of
+    /// requests, and the parent duplicates every forwarded child line, which is enough
+    /// to stall a run past any timeout. Asserting the shape of the directive is the
+    /// cheap proxy for that behavior.
+    #[test]
+    fn verbose_flags_leave_dependencies_at_warn() {
+        let directive = scoped_directive("trace");
+        assert!(
+            directive.starts_with("warn,"),
+            "dependencies must stay at warn: {directive}"
+        );
+        assert!(directive.contains("aiperf_runtime=trace"), "{directive}");
+        assert!(
+            !directive.split(',').any(|part| part == "trace"),
+            "no bare global trace directive: {directive}"
+        );
     }
 
     #[test]
