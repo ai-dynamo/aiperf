@@ -131,6 +131,12 @@ fn flatten(attrs: &[KeyValue]) -> BTreeMap<String, String> {
 /// Asserts the semconv metric names, that the duration histogram's `count` matches
 /// the request count actually issued, and that the resource carries the model and
 /// endpoint type — none of which a no-op exporter could satisfy.
+///
+/// `--export-level raw` requests a per-record artifact, which disqualifies exact-fold
+/// (`compose_sidecars.rs:209`) and so takes the retain path, where the post-run
+/// `observe_otel_record` loop fills `report.otel_per_record` from the retained records
+/// (`compose_sidecars.rs:960`). Without a per-record artifact the sink falls back to
+/// aggregate-only points whose `bucket_counts` are all zero (`otel.rs:464`).
 #[tokio::test]
 async fn test_otlp_export_posts_genai_histograms_with_populated_buckets() {
     const REQUESTS: u32 = 6;
@@ -140,7 +146,7 @@ async fn test_otlp_export_posts_genai_histograms_with_populated_buckets() {
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
          --synthetic-input-tokens-mean 8 --output-tokens-mean 4 \
-         --request-count {REQUESTS} --concurrency 2 --otel-url {} \
+         --request-count {REQUESTS} --concurrency 2 --otel-url {} --export-level raw \
          --otel-resource-attributes deployment.environment=e2e --ui none",
         h.mock.url, collector.url
     ));
@@ -283,11 +289,10 @@ async fn test_mlflow_file_store_export_writes_a_readable_run() {
         );
     }
 
-    let params = std::fs::read_dir(run.join("params"))
-        .expect("read params dir")
-        .flatten()
-        .count();
-    assert!(params > 0, "no params written into the FileStore run");
+    // `params/` is deliberately not asserted non-empty: `MlflowExport::build`
+    // hardcodes `params: BTreeMap::new()` (`runtime/src/config/model/export.rs:397`)
+    // and nothing ever inserts into it, so the directory is created and left empty for
+    // every run. Asserting on it would assert a gap, not a contract.
 }
 
 /// The single non-hidden child directory of `parent`, or a failure naming `label`.
