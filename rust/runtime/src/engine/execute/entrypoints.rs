@@ -667,31 +667,44 @@ pub(crate) async fn execute_graph_native(
     //   `issued` is the accumulator's ingested count (which survives sketch's fold-and-clear
     //   — `record_count()` is 0 for a sketch store), `errored` the retained errored count,
     //   so `completed = issued - errored`.
+    //
+    // As on the scheduled path, the partition is SNAPSHOT here and SHIPPED once this
+    // cell's artifact files are written: the arriving partition is the controller's
+    // same-host barrier for this cell, and `accumulator` is mutated by
+    // `summarize_run_metrics` below, so its store must be cloned before that runs.
     #[cfg(feature = "cellular")]
-    if let Some(shipper) = crate::engine::cellular_cell::CellRecordsShipper::from_env() {
-        // No `capture`/wall clock is in scope on the graph path, so derive the run span
-        // from the records themselves: last observed end minus first observed start,
-        // matching the elapsed span the scheduled path passes.
-        let epoch_ns: i64 = run_end
-            .unwrap_or(0)
-            .saturating_sub(run_start.unwrap_or(0))
-            .max(0);
-        if graph_fold {
-            let issued = accumulator.ingested_count();
-            let counters = crate::cellular::HeartbeatCounters {
-                issued,
-                completed: issued.saturating_sub(errored_count),
-                errored: errored_count,
+    let cell_partition_ship = crate::engine::cellular_cell::CellRecordsShipper::from_env().map(
+        |shipper| -> (_, crate::engine::cellular_cell::CellPartitionPayload) {
+            use crate::engine::cellular_cell::CellPartitionPayload;
+            // No `capture`/wall clock is in scope on the graph path, so derive the run span
+            // from the records themselves: last observed end minus first observed start,
+            // matching the elapsed span the scheduled path passes.
+            let epoch_ns: i64 = run_end
+                .unwrap_or(0)
+                .saturating_sub(run_start.unwrap_or(0))
+                .max(0);
+            let payload = if graph_fold {
+                let issued = accumulator.ingested_count();
+                let counters = crate::cellular::HeartbeatCounters {
+                    issued,
+                    completed: issued.saturating_sub(errored_count),
+                    errored: errored_count,
+                };
+                CellPartitionPayload::Store {
+                    store: accumulator.column_store().clone(),
+                    counters,
+                    epoch_ns,
+                }
+            } else {
+                let records: Vec<RecordIngest> = captured
+                    .iter()
+                    .map(|record| record.ingest.clone())
+                    .collect();
+                CellPartitionPayload::Records { records, epoch_ns }
             };
-            shipper.ship_store(accumulator.column_store().clone(), counters, epoch_ns)?;
-        } else {
-            let records: Vec<RecordIngest> = captured
-                .iter()
-                .map(|record| record.ingest.clone())
-                .collect();
-            shipper.ship_records(records, epoch_ns)?;
-        }
-    }
+            (shipper, payload)
+        },
+    );
     let RunMetricsSummaries {
         profiling_metrics,
         profiling_server_summary,
@@ -784,6 +797,14 @@ pub(crate) async fn execute_graph_native(
         steady_state,
         ..RunOutcome::default()
     };
+    // Every local artifact file now exists, so release the partition snapshotted above.
+    // Ordering is load-bearing on the same-host path: the controller treats a cell's
+    // arriving partition as that cell's completion barrier and then reads `cell-{id}/…`
+    // from the shared scratch tree.
+    #[cfg(feature = "cellular")]
+    if let Some((shipper, payload)) = cell_partition_ship {
+        payload.ship(&shipper)?;
+    }
     // Cross-host cells ship local per-record artifacts to the controller with
     // streaming zstd. Same-host and single-process runs need no upload.
     #[cfg(feature = "cellular")]

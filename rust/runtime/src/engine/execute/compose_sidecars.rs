@@ -779,30 +779,48 @@ pub(crate) async fn execute_native_inner(
     //   record total. For exact-fold that is the store's `record_count()`, but a sketch
     //   store clears each row after harvesting (`record_count() == 0`), so the surviving
     //   `ingested_count()` is the true total. `completed = issued - errored`.
+    //
+    // The partition is SNAPSHOT here but SHIPPED after this cell's artifact files are
+    // written (see the deferred ship below). The partition arriving at the controller is
+    // the controller's only same-host barrier for this cell, so shipping it before the
+    // local writes lets the controller concatenate/merge `cell-{id}` while a file is
+    // still missing — observed as a cellular `inputs.json` short by one cell's slice.
+    // Snapshotting (rather than moving the whole block) keeps the shipped bytes and
+    // `epoch_ns` byte-identical to the pre-defer behavior: `epoch_ns` is stamped at this
+    // point in the finalize, and `accumulator` is mutated by `summarize_run_metrics`
+    // below, so its store must be cloned before that runs.
     #[cfg(feature = "cellular")]
-    if let Some(shipper) = crate::engine::cellular_cell::CellRecordsShipper::from_env() {
-        let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
-        if exact_fold || sketch_mode {
-            let issued = if sketch_mode {
-                accumulator.ingested_count()
+    let cell_partition_ship = crate::engine::cellular_cell::CellRecordsShipper::from_env().map(
+        |shipper| -> (_, crate::engine::cellular_cell::CellPartitionPayload) {
+            use crate::engine::cellular_cell::CellPartitionPayload;
+            let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
+            let payload = if exact_fold || sketch_mode {
+                let issued = if sketch_mode {
+                    accumulator.ingested_count()
+                } else {
+                    accumulator.record_count() as u64
+                };
+                let errored = captured.len() as u64;
+                let counters = crate::cellular::HeartbeatCounters {
+                    issued,
+                    completed: issued.saturating_sub(errored),
+                    errored,
+                };
+                CellPartitionPayload::Store {
+                    store: accumulator.column_store().clone(),
+                    counters,
+                    epoch_ns,
+                }
             } else {
-                accumulator.record_count() as u64
+                let records: Vec<RecordIngest> = captured
+                    .iter()
+                    .map(|record| record.ingest.clone())
+                    .collect();
+                CellPartitionPayload::Records { records, epoch_ns }
             };
-            let errored = captured.len() as u64;
-            let counters = crate::cellular::HeartbeatCounters {
-                issued,
-                completed: issued.saturating_sub(errored),
-                errored,
-            };
-            shipper.ship_store(accumulator.column_store().clone(), counters, epoch_ns)?;
-        } else {
-            let records: Vec<RecordIngest> = captured
-                .iter()
-                .map(|record| record.ingest.clone())
-                .collect();
-            shipper.ship_records(records, epoch_ns)?;
-        }
-    }
+            (shipper, payload)
+        },
+    );
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();
     let server_metrics = sidecars.server_metrics.as_ref();
@@ -878,6 +896,14 @@ pub(crate) async fn execute_native_inner(
     if let Some(inputs_path) = &request.artifacts.inputs_path {
         let inputs_path = artifact_path(&request.artifact_dir, inputs_path, "inputs_path")?;
         write_inputs_json(&inputs_path, &input_sessions)?;
+    }
+    // Every local artifact file now exists, so release the partition snapshotted above.
+    // Ordering is load-bearing on the same-host path: the controller treats a cell's
+    // arriving partition as that cell's completion barrier and then reads
+    // `cell-{id}/…` from the shared scratch tree.
+    #[cfg(feature = "cellular")]
+    if let Some((shipper, payload)) = cell_partition_ship {
+        payload.ship(&shipper)?;
     }
     // (cross-host k8s cell): all per-record artifacts (+ inputs.json) are now
     // on this cell's own filesystem; ship them to the controller's HTTP upload server

@@ -787,6 +787,43 @@ pub(crate) fn k8s_agg_ship_coordinate(template: &str, cell_id: u32, agg_count: u
     template.replace("{agg_id}", &agg_id.to_string())
 }
 
+/// A cell's terminal partition, captured at the point in the finalize where its
+/// contents are correct but shipped only once the cell's artifact files are on disk.
+///
+/// The two shapes mirror the two cell modes: RETAIN ships the record `Vec`,
+/// fold-and-drop (exact-fold or sketch) ships the folded store. Capturing is separated
+/// from shipping because the arriving partition is the controller's same-host
+/// completion barrier for that cell — ship it before the local writes finish and the
+/// controller can read a `cell-{id}` tree that is still missing a file. It also has to
+/// be captured before `summarize_run_metrics` mutates the accumulator.
+#[cfg(feature = "cellular")]
+pub enum CellPartitionPayload {
+    /// RETAIN: the cell's full captured records, each carrying its dispatch ordinal.
+    Records {
+        /// The records the controller merges in global order.
+        records: Vec<crate::metrics_core::RecordIngest>,
+        /// Run span stamped where the partition was captured.
+        epoch_ns: i64,
+    },
+    /// FOLD-AND-DROP (exact-fold or sketch): the folded store plus its exact counters.
+    Store {
+        /// The folded columnar (or t-digest) store the controller appends.
+        store: crate::metrics_core::store::ColumnStore,
+        /// Issued/completed/errored totals computed over the pre-drop record set.
+        counters: crate::cellular::HeartbeatCounters,
+        /// Run span stamped where the partition was captured.
+        epoch_ns: i64,
+    },
+}
+
+#[cfg(feature = "cellular")]
+impl CellPartitionPayload {
+    /// Ship this partition through `shipper`.
+    pub fn ship(self, shipper: &CellRecordsShipper) -> Result<()> {
+        shipper.ship_payload(self)
+    }
+}
+
 /// Ships a cell's final records-shard partition + heartbeat to the controller over
 /// velo, when this process is a cell (the controller coordinate is set).
 #[cfg(feature = "cellular")]
@@ -851,6 +888,22 @@ impl CellRecordsShipper {
     /// The cell's identifier.
     pub fn cell_id(&self) -> u32 {
         self.cell_id
+    }
+
+    /// Ship a partition captured earlier in the finalize by
+    /// [`CellPartitionPayload`], dispatching to [`Self::ship_records`] or
+    /// [`Self::ship_store`] by shape.
+    pub fn ship_payload(&self, payload: CellPartitionPayload) -> Result<()> {
+        match payload {
+            CellPartitionPayload::Records { records, epoch_ns } => {
+                self.ship_records(records, epoch_ns)
+            }
+            CellPartitionPayload::Store {
+                store,
+                counters,
+                epoch_ns,
+            } => self.ship_store(store, counters, epoch_ns),
+        }
     }
 
     /// Builds this cell's terminal heartbeat from its final records and ships the
