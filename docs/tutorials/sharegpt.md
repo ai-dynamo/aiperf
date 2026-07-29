@@ -59,8 +59,10 @@ aiperf profile \
 **Sample Output (Successful Run):**
 ```
 INFO     Starting AIPerf System
-INFO     Downloading ShareGPT dataset from HuggingFace
-INFO     Cached ShareGPT dataset loaded
+INFO     No local dataset cache found, downloading from https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/...
+INFO     Saving ShareGPT dataset to local cache .cache/aiperf/datasets/ShareGPT_V3_unfiltered_cleaned_split.json
+INFO     Validating ShareGPT dataset and constructing conversation dataset
+INFO     Data file finalized: 73499 conversations, 219.34 MB
 INFO     AIPerf System is PROFILING
 
 Profiling: 20/20 |████████████████████████| 100% [00:45<00:00]
