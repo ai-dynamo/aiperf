@@ -113,4 +113,8 @@ range (`pyproject.toml:31`).
 - `rust/Cargo.toml` (`[workspace].members`, `[profile.optimized]`).
 - `Dockerfile` (wheel-builder stage).
 - `.github/workflows/nightly.yml` (arch matrix, wheel build/extract, rename,
-  validate).
+  validate). Because the glibc minor in the platform tag comes from the built
+  binary, the workflow computes no wheel filename up front: `Validate wheels`
+  globs `dist/` and sweeps CPython 3.11, 3.12, and 3.13, `Upload wheels to S3`
+  globs `dist/`, and `Stage Wheel (S3 → Artifactory)` lists the S3 version
+  prefix and forwards the discovered names to the GitLab trigger.

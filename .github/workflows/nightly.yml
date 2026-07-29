@@ -82,8 +82,6 @@ jobs:
       nightly_tag:            ${{ steps.version.outputs.nightly_tag }}
       wheel_version:          ${{ steps.version.outputs.wheel_version }}
       container_tag:          ${{ steps.version.outputs.container_tag }}
-      wheel_filename:         ${{ steps.version.outputs.wheel_filename }}
-      nightly_wheel_filename: ${{ steps.version.outputs.nightly_wheel_filename }}
       base_version:           ${{ steps.version.outputs.base_version }}
       run_timestamp:          ${{ steps.version.outputs.run_timestamp }}
       resolved_sha:           ${{ steps.version.outputs.resolved_sha }}
@@ -201,18 +199,19 @@ jobs:
               CONTAINER_TAG="${TIMESTAMP}-${SHORT_SHA}"
             fi
 
-            WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
-            # PEP 491: the dist name "aiperf-nightly" escapes to "aiperf_nightly"
-            # in the wheel filename. Same version as the canonical wheel — only
-            # the dist name in METADATA + RECORD differ.
-            NIGHTLY_WHEEL_FILENAME="aiperf_nightly-${WHEEL_VERSION}-py3-none-any.whl"
+            # Wheel filenames are deliberately NOT computed here. The platform
+            # tag is `py3-none-<manylinux_2_NN_ARCH>`, derived by
+            # tools/wheel_repack.py from the glibc floor of the injected
+            # aiperf ELF, so it is unknowable until the per-arch binary exists.
+            # Consumers resolve the filenames by listing the artifact store.
+            # PEP 491 still applies to the dist name: "aiperf-nightly" escapes
+            # to "aiperf_nightly" in the wheel filename. Both wheels carry the
+            # same version — only the dist name in METADATA + RECORD differ.
           fi
 
           echo "nightly_tag=${NIGHTLY_TAG}"                       >> "$GITHUB_OUTPUT"
           echo "wheel_version=${WHEEL_VERSION}"                   >> "$GITHUB_OUTPUT"
           echo "container_tag=${CONTAINER_TAG}"                   >> "$GITHUB_OUTPUT"
-          echo "wheel_filename=${WHEEL_FILENAME}"                 >> "$GITHUB_OUTPUT"
-          echo "nightly_wheel_filename=${NIGHTLY_WHEEL_FILENAME}" >> "$GITHUB_OUTPUT"
           echo "base_version=${BASE_VERSION}"                     >> "$GITHUB_OUTPUT"
           echo "run_timestamp=${TIMESTAMP:-reused}"               >> "$GITHUB_OUTPUT"
           echo "resolved_sha=${FULL_SHA}"                         >> "$GITHUB_OUTPUT"
@@ -226,8 +225,6 @@ jobs:
             echo "NIGHTLY_TAG='${NIGHTLY_TAG}'"
             echo "WHEEL_VERSION='${WHEEL_VERSION}'"
             echo "CONTAINER_TAG='${CONTAINER_TAG}'"
-            echo "WHEEL_FILENAME='${WHEEL_FILENAME}'"
-            echo "NIGHTLY_WHEEL_FILENAME='${NIGHTLY_WHEEL_FILENAME}'"
             echo "BASE_VERSION='${BASE_VERSION}'"
             echo "TIMESTAMP='${TIMESTAMP:-reused}'"
             echo "FULL_SHA='${FULL_SHA}'"
@@ -491,11 +488,14 @@ jobs:
             | docker login --username AWS --password-stdin \
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
-      # The single interned aiperf wheel is platform-specific (it carries the
-      # native aiperf-runner as package data), so it is built inside the exact
-      # target-platform Docker stage — one aiperf wheel per architecture, no
-      # separate runner companion wheel. The wheel-builder layer is cached per
-      # architecture and reused by the runtime build below.
+      # The aiperf wheel is platform-specific: tools/wheel_repack.py injects the
+      # native `aiperf` binary into `.data/scripts/` and tags the wheel
+      # `py3-none-manylinux_2_NN_<arch>`, with the glibc minor read from that
+      # binary's ELF. It is therefore built inside the exact target-platform
+      # Docker stage — one aiperf wheel per architecture. The wheel contains no
+      # compiled Python extension, so a single wheel per architecture installs
+      # under every supported CPython minor (3.11-3.13). The wheel-builder layer
+      # is cached per architecture and reused by the runtime build below.
       #
       # Target `wheel-artifact` is a scratch-based export stage that contains
       # only the wheel file, so `--output type=local` writes a few MB instead
@@ -552,20 +552,26 @@ jobs:
         run: |
           set -euo pipefail
 
+          # $3 is the CPython minor to build the venv against. The wheel ships
+          # no compiled extension module, so its `py3` ABI tag claims every
+          # supported minor; asserting that claim across the whole
+          # requires-python range is the point of the sweep below.
           validate_wheel() {
             local wheel="$1"
             local venv_dir="$2"
+            local python_version="$3"
             uvx twine check "${wheel}"
-            uv venv "${venv_dir}"
+            rm -rf "${venv_dir}"
+            uv venv --python "${python_version}" "${venv_dir}"
             uv pip install --python "${venv_dir}/bin/python" "${wheel}"
             local got
             got=$("${venv_dir}/bin/python" -c "import aiperf; print(aiperf.__version__)")
             if [ "${got}" != "${EXPECTED_VERSION}" ]; then
-              echo "::error::Wheel ${wheel##*/} version mismatch: expected '${EXPECTED_VERSION}', got '${got}'"
+              echo "::error::Wheel ${wheel##*/} version mismatch on ${python_version}: expected '${EXPECTED_VERSION}', got '${got}'"
               exit 1
             fi
             "${venv_dir}/bin/aiperf" --help > /dev/null
-            echo "OK: ${wheel##*/} -> __version__=${got}"
+            echo "OK: ${wheel##*/} on CPython ${python_version} -> __version__=${got}"
           }
 
           ORIG=$(find dist/ -maxdepth 1 -name "aiperf-*.whl" -type f | head -1)
@@ -578,8 +584,13 @@ jobs:
             fi
           done
 
-          validate_wheel "${ORIG}"    .venv-check-orig
-          validate_wheel "${NIGHTLY}" .venv-check-nightly
+          # Sweep the whole requires-python range (>=3.11,<3.14) on the
+          # canonical wheel. The renamed nightly wheel is byte-identical apart
+          # from METADATA/RECORD, so one interpreter suffices for it.
+          for PY in 3.11 3.12 3.13; do
+            validate_wheel "${ORIG}" ".venv-check-orig-${PY}" "${PY}"
+          done
+          validate_wheel "${NIGHTLY}" .venv-check-nightly 3.12
 
       # Deeper validation than the smoke check above: install the renamed
       # nightly wheel into a fresh venv and run the unit test suite against
@@ -628,8 +639,9 @@ jobs:
 
       # Per-arch: each native leg uploads its own platform-specific aiperf wheel
       # (and its aiperf-nightly variant) to the shared prefix; pip resolves by
-      # platform tag. The aiperf wheel is no longer a universal py3-none-any built
-      # only on amd64.
+      # platform tag. stage-nightly-wheel discovers the resulting filenames by
+      # listing this prefix, since the manylinux glibc minor in each tag comes
+      # from the built binary rather than from a value known up front.
       - name: Upload wheels to S3
         env:
           S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
@@ -918,16 +930,21 @@ jobs:
     runs-on: prod-aiperf-builder-amd-v1
     environment: automated-release
     if: ${{ needs.prepare-nightly.outputs.release == 'true' }}
+    # Filenames are discovered from S3 here rather than precomputed in
+    # prepare-nightly, and forwarded to trigger-gitlab-nightly-pipeline. They
+    # contain no secret value, so cross-job output forwarding is safe.
+    outputs:
+      wheel_filename:         ${{ steps.stage.outputs.wheel_filename }}
+      nightly_wheel_filename: ${{ steps.stage.outputs.nightly_wheel_filename }}
     steps:
       - name: Upload wheels from S3 to Artifactory
+        id: stage
         env:
           S3_BUCKET:              ${{ secrets.S3_CI_WHEELS_BUCKET }}
           ARTIFACTORY_URL:        ${{ secrets.ARTIFACTORY_URL }}
           ARTIFACTORY_USER:       ${{ secrets.ARTIFACTORY_USER }}
           ARTIFACTORY_TOKEN:      ${{ secrets.ARTIFACTORY_TOKEN }}
           WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
-          WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
-          NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
           TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
           STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
           RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
@@ -950,11 +967,26 @@ jobs:
           RUN_URL_ENC=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${RUN_URL}")
           PROPS=";github.run.url=${RUN_URL_ENC};git.commit.sha=${RESOLVED_SHA}"
 
+          # Wheel filenames carry a `py3-none-manylinux_2_NN_<arch>` tag whose
+          # glibc minor is derived from the built binary, so they are not
+          # knowable ahead of the build. Discover them by listing the run's
+          # version prefix. `aws s3 ls` prints "<date> <time> <size> <key>";
+          # awk '{print $4}' takes the key, which is a bare filename because
+          # the prefix ends in '/'.
+          S3_PREFIX="s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/"
+          mapfile -t FILENAMES < <(aws s3 ls "${S3_PREFIX}" | awk '{print $4}' | grep -E '\.whl$' | sort)
+          if [ "${#FILENAMES[@]}" -eq 0 ]; then
+            echo "::error::No wheels found under ${S3_PREFIX}"
+            exit 1
+          fi
+          printf 'Discovered wheel: %s\n' "${FILENAMES[@]}"
+
           # Single-object copies (no --recursive) so we only need s3:GetObject.
-          # Stage both the canonical `aiperf` wheel and the renamed
-          # `aiperf-nightly` wheel; downstream `pip install aiperf-nightly`
-          # resolves to the latter via the nightly Artifactory index.
-          for FN in "${WHEEL_FILENAME}" "${NIGHTLY_WHEEL_FILENAME}"; do
+          # Stage every per-arch wheel: both the canonical `aiperf` wheels and
+          # the renamed `aiperf-nightly` wheels. Downstream
+          # `pip install aiperf-nightly` resolves to the latter via the nightly
+          # Artifactory index, picking the arch by platform tag.
+          for FN in "${FILENAMES[@]}"; do
             aws s3 cp \
               "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/${FN}" \
               "${TMPDIR}/${FN}"
@@ -980,6 +1012,30 @@ jobs:
             echo "Wheel staged to Artifactory: ${TARGET_URL}"
             echo "  properties: github.run.url=${RUN_URL}, git.commit.sha=${RESOLVED_SHA}"
           done
+
+          # The GitLab wheel scan takes one wheel per distribution name, so
+          # forward the x86_64 pair as the representative artifacts. Exactly
+          # one match each is required: zero means the arch leg never staged,
+          # more than one means the naming scheme changed and picking a
+          # first match would silently scan the wrong file.
+          select_one() {
+            local label="$1" pattern="$2"
+            local matches=()
+            local fn
+            for fn in "${FILENAMES[@]}"; do
+              case "${fn}" in ${pattern}) matches+=("${fn}") ;; esac
+            done
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly 1 ${label} wheel matching '${pattern}', found ${#matches[@]}" >&2
+              printf '  %s\n' "${FILENAMES[@]}" >&2
+              return 1
+            fi
+            printf '%s' "${matches[0]}"
+          }
+          WHEEL_FILENAME=$(select_one aiperf "aiperf-${WHEEL_VERSION}-py3-none-*x86_64.whl")
+          NIGHTLY_WHEEL_FILENAME=$(select_one aiperf_nightly "aiperf_nightly-${WHEEL_VERSION}-py3-none-*x86_64.whl")
+          echo "wheel_filename=${WHEEL_FILENAME}"                 >> "$GITHUB_OUTPUT"
+          echo "nightly_wheel_filename=${NIGHTLY_WHEEL_FILENAME}" >> "$GITHUB_OUTPUT"
 
           # Note: explicit POST /api/pypi/<repo>/reindex was tried here but
           # returns HTTP 403 with the current ARTIFACTORY_USER (which has
@@ -1009,8 +1065,10 @@ jobs:
           GITLAB_TRIGGER_URL:         ${{ secrets.GITLAB_PIPELINE_URL }}
           NIGHTLY_TAG:                ${{ needs.prepare-nightly.outputs.nightly_tag }}
           WHEEL_VERSION:              ${{ needs.prepare-nightly.outputs.wheel_version }}
-          WHEEL_FILENAME:             ${{ needs.prepare-nightly.outputs.wheel_filename }}
-          NIGHTLY_WHEEL_FILENAME:     ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
+          # Discovered from S3 by stage-nightly-wheel (the platform tag is
+          # only knowable after the build); representative x86_64 pair.
+          WHEEL_FILENAME:             ${{ needs.stage-nightly-wheel.outputs.wheel_filename }}
+          NIGHTLY_WHEEL_FILENAME:     ${{ needs.stage-nightly-wheel.outputs.nightly_wheel_filename }}
           CONTAINER_TAG:              ${{ needs.prepare-nightly.outputs.container_tag }}
           NGC_STAGING_IMAGE_BASE:     ${{ secrets.NGC_STAGING_IMAGE_BASE }}
           RESOLVED_SHA:               ${{ needs.prepare-nightly.outputs.resolved_sha }}
