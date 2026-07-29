@@ -369,7 +369,7 @@ class CreditPhaseConfig(AIPerfBaseModel):
         description="Duration of the accelerated cache-pressure substage for "
         "agentic replay warmup.",
     )
-    agentic_cache_warmup_requests_per_lane: int | None = Field(
+    warmup_requests_per_lane: int | None = Field(
         default=None,
         gt=0,
         description="Deterministic cache-pressure warmup wire-request budget "
@@ -638,7 +638,7 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
     concurrency = getattr(phase, "concurrency", None)
     grace_period = _agentic_warmup_grace_period(phase)
     cache_warmup_duration = getattr(phase, "agentic_cache_warmup_duration", None)
-    requests_per_lane = getattr(phase, "agentic_cache_warmup_requests_per_lane", None)
+    requests_per_lane = getattr(phase, "warmup_requests_per_lane", None)
     cache_warmup_request_cap = (
         concurrency * requests_per_lane
         if concurrency is not None and requests_per_lane is not None
@@ -677,7 +677,7 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         seamless=False,
         grace_period_sec=grace_period if grace_period is not None else float("inf"),
         agentic_cache_warmup_duration_sec=cache_warmup_duration,
-        agentic_cache_warmup_requests_per_lane=requests_per_lane,
+        warmup_requests_per_lane=requests_per_lane,
     )
 
 

@@ -321,7 +321,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
         config.phases = [p for p in config.phases if not p.exclude_from_results]
         for phase in config.get_profiling_phases():
             phase.agentic_cache_warmup_duration = None
-            phase.agentic_cache_warmup_requests_per_lane = None
+            phase.warmup_requests_per_lane = None
         return config
 
 

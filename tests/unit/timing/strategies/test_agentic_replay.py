@@ -89,7 +89,7 @@ def _make_strategy(
     cfg.phase = phase
     cfg.concurrency = len(trajectories)
     cfg.agentic_cache_warmup_duration_sec = cache_warmup_duration
-    cfg.agentic_cache_warmup_requests_per_lane = cache_warmup_requests_per_lane
+    cfg.warmup_requests_per_lane = cache_warmup_requests_per_lane
     issuer = issuer if issuer is not None else AsyncMock()
     issuer.replay_gate = MagicMock()
     issuer.replay_gate.completed_prefixes.return_value = ()

@@ -424,10 +424,10 @@ the wire, snapshots each live root, subagent, and unresolved join, and starts
 profiling from that exact state.
 
 For repeatable warmup depth, also set
-`--agentic-cache-warmup-requests-per-lane REQUESTS`. Each concurrency lane is
+`--warmup-requests-per-lane REQUESTS`. Each concurrency lane is
 then allowed exactly that many warmup wire requests, including its initial
 snapshot-priming requests. For example, `--concurrency 16` with
-`--agentic-cache-warmup-requests-per-lane 10` targets 160 warmup requests,
+`--warmup-requests-per-lane 10` targets 160 warmup requests,
 with a strict 10-request quota on every lane. The duration is still required as
 a safety deadline: issuance stops at the per-lane quotas or the duration,
 whichever comes first. If the duration wins, a slow run sends fewer than the

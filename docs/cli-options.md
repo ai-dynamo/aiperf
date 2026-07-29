@@ -1322,7 +1322,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
 <br/>_Constraints: > 0_
 
-#### `--agentic-cache-warmup-requests-per-lane` `<int>`
+#### `--warmup-requests-per-lane` `<int>`
 
 Deterministic agentic cache-pressure warmup request budget per concurrency lane. For example, 10 with concurrency 16 caps warmup at 160 wire requests, including initial snapshot priming. Requires --agentic-cache-warmup-duration, which remains the safety deadline.
 <br/>_Constraints: > 0_
@@ -2919,7 +2919,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
 <br/>_Constraints: > 0_
 
-#### `--agentic-cache-warmup-requests-per-lane` `<int>`
+#### `--warmup-requests-per-lane` `<int>`
 
 Deterministic agentic cache-pressure warmup request budget per concurrency lane. For example, 10 with concurrency 16 caps warmup at 160 wire requests, including initial snapshot priming. Requires --agentic-cache-warmup-duration, which remains the safety deadline.
 <br/>_Constraints: > 0_
@@ -4511,7 +4511,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
 <br/>_Constraints: > 0_
 
-#### `--agentic-cache-warmup-requests-per-lane` `<int>`
+#### `--warmup-requests-per-lane` `<int>`
 
 Deterministic agentic cache-pressure warmup request budget per concurrency lane. For example, 10 with concurrency 16 caps warmup at 160 wire requests, including initial snapshot priming. Requires --agentic-cache-warmup-duration, which remains the safety deadline.
 <br/>_Constraints: > 0_
@@ -6610,7 +6610,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
 <br/>_Constraints: > 0_
 
-#### `--agentic-cache-warmup-requests-per-lane` `<int>`
+#### `--warmup-requests-per-lane` `<int>`
 
 Deterministic agentic cache-pressure warmup request budget per concurrency lane. For example, 10 with concurrency 16 caps warmup at 160 wire requests, including initial snapshot priming. Requires --agentic-cache-warmup-duration, which remains the safety deadline.
 <br/>_Constraints: > 0_

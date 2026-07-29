@@ -364,7 +364,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
-    agentic_cache_warmup_requests_per_lane: Annotated[
+    warmup_requests_per_lane: Annotated[
         int | None,
         Field(
             default=None,

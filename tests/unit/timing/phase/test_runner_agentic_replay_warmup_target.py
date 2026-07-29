@@ -166,7 +166,7 @@ class TestAgenticReplayWarmupTarget:
         config = _warmup_config(concurrency=4).model_copy(
             update={
                 "agentic_cache_warmup_duration_sec": 600.0,
-                "agentic_cache_warmup_requests_per_lane": 10,
+                "warmup_requests_per_lane": 10,
                 "total_expected_requests": 40,
             }
         )

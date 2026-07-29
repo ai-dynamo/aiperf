@@ -151,9 +151,7 @@ class PhaseRunner(TaskManagerMixin):
             config.timing_mode == TimingMode.AGENTIC_REPLAY
             and config.phase == CreditPhase.WARMUP
         ):
-            requests_per_lane = getattr(
-                config, "agentic_cache_warmup_requests_per_lane", None
-            )
+            requests_per_lane = getattr(config, "warmup_requests_per_lane", None)
             if self._cache_warmup_enabled and requests_per_lane is not None:
                 lane_count = len(getattr(conversation_source, "trajectories", ()))
                 request_cap = requests_per_lane * lane_count

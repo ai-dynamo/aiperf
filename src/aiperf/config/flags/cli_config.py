@@ -2468,7 +2468,7 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
-    agentic_cache_warmup_requests_per_lane: Annotated[
+    warmup_requests_per_lane: Annotated[
         int | None,
         Field(
             gt=0,
@@ -2479,7 +2479,7 @@ class CLIConfig(BaseConfig):
             "the safety deadline.",
         ),
         CLIParameter(
-            name=("--agentic-cache-warmup-requests-per-lane",),
+            name=("--warmup-requests-per-lane",),
             group=Groups.WARMUP,
         ),
     ] = None

@@ -778,19 +778,19 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             for phase in profiling_phases
         )
         has_request_budget = any(
-            getattr(phase, "agentic_cache_warmup_requests_per_lane", None) is not None
+            getattr(phase, "warmup_requests_per_lane", None) is not None
             for phase in profiling_phases
         )
         if not has_duration and not has_request_budget:
             return self
 
         if any(
-            getattr(phase, "agentic_cache_warmup_requests_per_lane", None) is not None
+            getattr(phase, "warmup_requests_per_lane", None) is not None
             and getattr(phase, "agentic_cache_warmup_duration", None) is None
             for phase in profiling_phases
         ):
             raise ValueError(
-                "--agentic-cache-warmup-requests-per-lane requires "
+                "--warmup-requests-per-lane requires "
                 "--agentic-cache-warmup-duration as a safety deadline."
             )
 

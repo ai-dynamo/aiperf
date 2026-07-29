@@ -160,7 +160,7 @@ def test_cache_warmup_request_budget_scales_with_concurrency() -> None:
             "duration": 900,
             "timing_mode": TimingMode.AGENTIC_REPLAY,
             "agentic_cache_warmup_duration": 600.0,
-            "agentic_cache_warmup_requests_per_lane": 10,
+            "warmup_requests_per_lane": 10,
         }
     )
 
@@ -169,7 +169,7 @@ def test_cache_warmup_request_budget_scales_with_concurrency() -> None:
     assert warmup is not None
     assert warmup.total_expected_requests == 160
     assert warmup.agentic_cache_warmup_duration_sec == 600.0
-    assert warmup.agentic_cache_warmup_requests_per_lane == 10
+    assert warmup.warmup_requests_per_lane == 10
 
 
 def test_cache_warmup_grace_uses_short_duration_without_benchmark_grace() -> None:

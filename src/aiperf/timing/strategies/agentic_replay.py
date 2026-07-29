@@ -180,7 +180,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             else None
         )
         cache_warmup_requests_per_lane = getattr(
-            config, "agentic_cache_warmup_requests_per_lane", None
+            config, "warmup_requests_per_lane", None
         )
         self._cache_warmup_requests_per_lane: int | None = (
             int(cache_warmup_requests_per_lane)
@@ -664,7 +664,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     "Agentic cache warmup requests-per-lane budget is smaller "
                     "than the required snapshot-priming dispatch count for "
                     f"lane(s) {oversized}; increase "
-                    "--agentic-cache-warmup-requests-per-lane."
+                    "--warmup-requests-per-lane."
                 )
 
         # Nothing to warm: every lane's first request is at/after t* (no turn
