@@ -2837,6 +2837,65 @@ mod tests {
     }
 
     #[test]
+    fn unbound_warmup_inherits_a_bounded_deadline_from_the_run_budget() {
+        let warmup: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "warmup",
+            "exclude_from_results": true,
+            "concurrency": 2,
+        }))
+        .unwrap();
+        let profiling: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "concurrency": 2,
+            "duration": 120.0,
+        }))
+        .unwrap();
+        let phases = vec![warmup, profiling];
+        let mut configs = phases
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| phase_config(spec, phase_seamless_to_next(&phases, index)))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+
+        // Without a deadline the lifecycle reports no time left, so neither
+        // `stop_issuing` nor `cancel_inflight` can ever fire on the warmup.
+        assert_eq!(configs[0].stop.expected_duration_ns, None);
+        assert_eq!(configs[0].grace_period, GracePeriod::Infinite);
+
+        bound_unbound_warmup_phases(&phases, &mut configs).unwrap();
+
+        assert_eq!(
+            configs[0].stop.expected_duration_ns,
+            Some(seconds_to_ns(120.0).unwrap())
+        );
+        assert_eq!(configs[0].grace_period, GracePeriod::Finite(0));
+        // Profiling keeps its own authored budget and grace policy.
+        assert_eq!(
+            configs[1].stop.expected_duration_ns,
+            Some(seconds_to_ns(120.0).unwrap())
+        );
+    }
+
+    #[test]
+    fn cache_pressure_warmup_keeps_its_own_authored_bound() {
+        let phases = cache_pressure_warmup(false);
+        let mut configs = phases
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| phase_config(spec, phase_seamless_to_next(&phases, index)))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let before = configs[0].grace_period;
+        bound_unbound_warmup_phases(&phases, &mut configs).unwrap();
+        assert_eq!(configs[0].stop.expected_duration_ns, None);
+        assert_eq!(configs[0].grace_period, before);
+    }
+
+    #[test]
     fn cache_pressure_warmup_seamless_into_profiling_is_rejected() {
         let error = validate_graph_phases(&cache_pressure_warmup(true)).unwrap_err();
         let message = format!("{error:#}");
