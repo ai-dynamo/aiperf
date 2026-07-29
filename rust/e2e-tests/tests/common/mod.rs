@@ -466,6 +466,14 @@ pub fn exec_binary() -> String {
 fn resolve_exec_binary() -> String {
     if let Ok(explicit) = std::env::var("AIPERF_E2E_BIN") {
         if !explicit.is_empty() {
+            // An explicitly pinned binary is freshness-checked too: pinning says
+            // *which* binary, not that it is up to date. Deliberately testing an
+            // older build is what AIPERF_E2E_ALLOW_STALE_BIN is for.
+            let path = PathBuf::from(&explicit);
+            match path.metadata().and_then(|m| m.modified()) {
+                Ok(built_at) => assert_exec_binary_fresh(&path, built_at),
+                Err(e) => panic!("AIPERF_E2E_BIN={explicit} is not a readable file: {e}"),
+            }
             return explicit;
         }
     }
