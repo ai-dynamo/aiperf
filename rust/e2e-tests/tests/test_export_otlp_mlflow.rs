@@ -132,24 +132,35 @@ fn flatten(attrs: &[KeyValue]) -> BTreeMap<String, String> {
 /// the request count actually issued, and that the resource carries the model and
 /// endpoint type — none of which a no-op exporter could satisfy.
 ///
-/// `--export-level raw` requests a per-record artifact, which disqualifies exact-fold
-/// (`compose_sidecars.rs:209`) and so takes the retain path, where the post-run
-/// `observe_otel_record` loop fills `report.otel_per_record` from the retained records
-/// (`compose_sidecars.rs:960`). Without a per-record artifact the sink falls back to
-/// aggregate-only points whose `bucket_counts` are all zero (`otel.rs:464`).
+/// Populated `bucket_counts` require the retain path, forced here with
+/// `AIPERF_RUNTIME_EXACT_FOLD=0`. Per-record OTLP is only reachable that way on a
+/// multi-worker run, and `runtime.workers` defaults to the machine's parallelism
+/// (`protocol_v2.rs:222`), so the default is sharded: the sharded fold arm returns only
+/// *errored* records to the post-run `observe_otel_record` loop
+/// (`compose_sidecars.rs:708`) while `folded_otel` is assigned solely inside the
+/// `!shardable` branch (`compose_sidecars.rs:494`). Neither source fires, so
+/// `report.otel_per_record` stays `None` and the sink falls back to aggregate-only
+/// points whose `bucket_counts` are all zero (`otel.rs:464`). Verified directly: the
+/// same run at default settings reaches the composition point with 0 captured records;
+/// with exact-fold disabled it has all 6. `--export-level raw` alone does not force the
+/// retain path — per-record artifacts stream through the record lane and so do not
+/// disqualify exact-fold (`plan.rs:594`).
 #[tokio::test]
 async fn test_otlp_export_posts_genai_histograms_with_populated_buckets() {
     const REQUESTS: u32 = 6;
 
     let collector = OtlpCollector::start();
     let h = AIPerfHarness::new().await;
-    let r = h.run(&format!(
-        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
-         --synthetic-input-tokens-mean 8 --output-tokens-mean 4 \
-         --request-count {REQUESTS} --concurrency 2 --otel-url {} --export-level raw \
-         --otel-resource-attributes deployment.environment=e2e --ui none",
-        h.mock.url, collector.url
-    ));
+    let r = h.run_env(
+        &format!(
+            "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
+             --synthetic-input-tokens-mean 8 --output-tokens-mean 4 \
+             --request-count {REQUESTS} --concurrency 2 --otel-url {} --export-level raw \
+             --otel-resource-attributes deployment.environment=e2e --ui none",
+            h.mock.url, collector.url
+        ),
+        &[("AIPERF_RUNTIME_EXACT_FOLD", "0")],
+    );
     assert!(r.success(), "run failed: {}", r.stderr);
 
     let metrics = collector.metrics();
