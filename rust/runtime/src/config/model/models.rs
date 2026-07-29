@@ -5,10 +5,11 @@
 use serde::{Deserialize, Serialize};
 
 /// Model-selection strategy across multiple models.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelStrategy {
     /// Rotate through models in order.
+    #[default]
     RoundRobin,
     /// Pick uniformly at random.
     Random,
@@ -29,7 +30,11 @@ pub struct ModelItem {
 /// The typed `models` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Models {
-    /// Selection strategy.
+    /// Selection strategy. Omission must resolve to the same `round_robin` the
+    /// protocol-v2 `ModelsSpec` and `resolve.rs` already default to; the typed
+    /// model is re-serialized into the protocol-v2 request, so a missing default
+    /// here hard-rejects an otherwise-valid config.
+    #[serde(default)]
     pub strategy: ModelStrategy,
     /// Ordered model items.
     pub items: Vec<ModelItem>,
