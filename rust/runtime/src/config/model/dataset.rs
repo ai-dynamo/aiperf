@@ -93,6 +93,32 @@ fn default_turn_delay_ratio() -> f64 {
     1.0
 }
 
+/// The default synthetic ISL distribution, matching `load.rs::default_isl`.
+fn default_isl() -> Distribution {
+    Distribution {
+        mean: Some(550.0),
+        stddev: Some(0.0),
+        ..Default::default()
+    }
+}
+
+/// An entirely unauthored prompts block, matching `yaml.rs::extract_prompts`.
+fn default_prompts() -> Prompts {
+    Prompts {
+        batch_size: default_batch_size(),
+        isl: default_isl(),
+        osl: None,
+        num_prefix_prompts: None,
+        prefix_prompt_length: None,
+        block_size: None,
+        corpus: None,
+        sequence_distribution: None,
+        prefix_reuse_fraction: None,
+        prefix_reuse_ratio: None,
+        cache_bust: None,
+    }
+}
+
 /// Synthetic prompt-generation policy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Prompts {
@@ -102,7 +128,9 @@ pub struct Prompts {
     /// hard-rejecting the run.
     #[serde(default = "default_batch_size")]
     pub batch_size: u32,
-    /// Input sequence length distribution.
+    /// Input sequence length distribution. `yaml.rs` defaults this on its own
+    /// when a prompts block authors everything but the ISL.
+    #[serde(default = "default_isl")]
     pub isl: Distribution,
     /// Output sequence length distribution (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -260,7 +288,11 @@ pub struct Rankings {
 /// The typed synthetic dataset body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Synthetic {
-    /// Prompt-generation policy.
+    /// Prompt-generation policy. `load.rs` and `yaml.rs` both synthesize a
+    /// default block from `default_isl` when none is authored, so an authored
+    /// protocol-v2 request omitting it must resolve the same way rather than
+    /// hard-rejecting the run.
+    #[serde(default = "default_prompts")]
     pub prompts: Prompts,
     /// Shared-prefix / prefix-pool policy (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
