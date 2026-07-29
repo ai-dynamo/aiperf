@@ -3,7 +3,7 @@
 from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 # ============================================================================
 # Base Models (for request parsing only)
@@ -270,16 +270,30 @@ class ResponsesRequest(BaseModel):
     synthetic ChatCompletionRequest the latency simulator drives off of.
     """
 
-    model: str
-    input: str | list[Any] = ""
-    max_output_tokens: int | None = None
-    stream: bool = False
-    reasoning_effort: Literal["low", "medium", "high"] | None = None
+    model: str = Field(description="Model identifier.")
+    input: str | list[Any] = Field(
+        default="",
+        description="Prompt input — string, list of strings, or list of content-block dicts.",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        description="Maximum number of output tokens to generate (the Responses-API name for the OSL cap).",
+    )
+    stream: bool = Field(default=False, description="Whether to stream the response.")
+    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="Reasoning effort level for models that support extended thinking.",
+    )
 
     # Mirrors BaseCompletionRequest so recorder/simulator share field semantics
     # when the client supplies them via extras.
-    min_tokens: int | None = None
-    ignore_eos: bool = False
+    min_tokens: int | None = Field(
+        default=None, description="Minimum number of tokens to generate."
+    )
+    ignore_eos: bool = Field(
+        default=False,
+        description="Whether to ignore the EOS token and continue generating up to max_output_tokens.",
+    )
 
     @property
     def prompt_text(self) -> str:
