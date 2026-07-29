@@ -1108,6 +1108,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             turns: inputs.turns.clone(),
             turn_delay_ratio: inputs.turn_delay_ratio,
             entries: Some(inputs.entries),
+            random_seed: inputs.dataset_random_seed,
             num_conversations: None,
             turn_delay_ms: inputs.turn_delay_ms.clone(),
         })

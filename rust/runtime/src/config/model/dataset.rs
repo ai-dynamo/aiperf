@@ -273,6 +273,11 @@ pub struct Synthetic {
     /// Number of dataset entries (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entries: Option<u32>,
+    /// Deterministic generation seed (present when set). Without it the synthetic
+    /// loader falls back to the run seed, so an authored per-dataset seed that is
+    /// not projected here runs unseeded — random session ids and prompts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub random_seed: Option<u64>,
     /// Number of conversation sessions (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub num_conversations: Option<u32>,
@@ -408,6 +413,7 @@ mod tests {
             turns: None,
             turn_delay_ratio: 1.0,
             entries: Some(1),
+            random_seed: None,
             num_conversations: None,
             turn_delay_ms: None,
         });

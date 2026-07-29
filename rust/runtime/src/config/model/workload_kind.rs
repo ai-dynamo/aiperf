@@ -122,6 +122,7 @@ mod tests {
             turns: None,
             turn_delay_ratio: 1.0,
             entries: Some(1),
+            random_seed: None,
             num_conversations: None,
             turn_delay_ms: None,
         })
