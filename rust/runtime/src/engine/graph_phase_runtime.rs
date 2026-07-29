@@ -1716,12 +1716,13 @@ pub(crate) async fn run_graph_phases(
     clock: Rc<dyn Clock>,
     rng_root: RngRoot,
     allow_dataset_wrap: bool,
+    cache_bust_enabled: bool,
     t_star: TStarWindow,
     phase_sidecars: Vec<Vec<Rc<dyn ScheduledPhaseSidecar>>>,
     backends: &dyn GraphPhaseBackendFactory,
     on_failure: OnFailure,
 ) -> Result<GraphPhaseRunOutput> {
-    validate_dataset_wrap_policy(phases, input, allow_dataset_wrap)?;
+    validate_dataset_wrap_policy(phases, input, allow_dataset_wrap || cache_bust_enabled)?;
     ensure!(
         phase_sidecars.len() == phases.len(),
         "graph phase sidecars must be provided one list per phase"
@@ -1852,12 +1853,18 @@ fn trajectory_warmup_failed_error(failed_trace_ids: &[String]) -> anyhow::Error 
     }
 }
 
+/// Reject concurrency that over-subscribes a non-wrapping recorded corpus.
+///
+/// `allow_wrap` is the effective permission: either the authored
+/// `dataset.synthesis.allow_dataset_wrap`, or an enabled cache-bust target,
+/// which already differentiates recycled recorded content per trace instance
+/// and so removes the duplicate-cache-hit hazard the gate exists to prevent.
 fn validate_dataset_wrap_policy(
     phases: &[PhaseSpec],
     input: &GraphInputBundle,
-    allow_dataset_wrap: bool,
+    allow_wrap: bool,
 ) -> Result<()> {
-    if allow_dataset_wrap {
+    if allow_wrap {
         return Ok(());
     }
     let distinct = u64::try_from(input.plans.len()).context("graph root count exceeds u64")?;
@@ -1871,7 +1878,7 @@ fn validate_dataset_wrap_policy(
         let concurrency = phase.concurrency().unwrap_or(1);
         if u64::try_from(concurrency).context("graph concurrency exceeds u64")? > distinct {
             bail!(
-                "graph phase {:?} concurrency {} exceeds the {} distinct loaded traces while dataset wrapping is disabled; reduce concurrency to at most {}, bound sessions within the loaded corpus, or set dataset.synthesis.allow_dataset_wrap=true",
+                "graph phase {:?} concurrency {} exceeds the {} distinct loaded traces while dataset wrapping is disabled; reduce concurrency to at most {}, bound sessions within the loaded corpus, enable a cache-bust target, or set dataset.synthesis.allow_dataset_wrap=true",
                 common.name,
                 concurrency,
                 distinct,
@@ -2705,7 +2712,7 @@ mod tests {
 
     use crate::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
     use crate::dataset::SegmentPool;
-    use crate::engine::graph_input::GraphSamplingStrategy;
+    use crate::engine::graph_input::{CacheBustTarget, GraphSamplingStrategy};
     use crate::graph::errors::TraceError;
     use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
     use crate::graph::tstar::{sampler_random_seed, sampler_shuffle_seed};
@@ -2807,6 +2814,16 @@ mod tests {
         let error = validate_dataset_wrap_policy(&phases, &input, false).unwrap_err();
         assert!(format!("{error:#}").contains("dataset wrapping is disabled"));
         validate_dataset_wrap_policy(&phases, &input, true).unwrap();
+    }
+
+    #[test]
+    fn recorded_graph_wrap_policy_allows_wrapping_when_cache_bust_is_enabled() {
+        let input = wrap_policy_input(2);
+        let phases = [concurrency_phase(3, Some(3))];
+        // `run_graph_phases` passes `allow_dataset_wrap || cache_bust_enabled`.
+        let cache_bust_enabled = CacheBustTarget::FirstTurnPrefix.is_enabled();
+        validate_dataset_wrap_policy(&phases, &input, false || cache_bust_enabled).unwrap();
+        assert!(!CacheBustTarget::None.is_enabled());
     }
 
     #[test]

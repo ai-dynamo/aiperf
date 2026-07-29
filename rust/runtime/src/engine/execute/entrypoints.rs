@@ -368,6 +368,7 @@ pub(crate) async fn execute_graph_native(
     let graph_random_seed = graph.random_seed;
     let graph_default_output_tokens = graph.default_output_tokens;
     let allow_dataset_wrap = graph.allow_dataset_wrap;
+    let cache_bust_enabled = graph.cache_bust_target.is_enabled();
     let t_star_window = graph.t_star_window;
     let ignore_trace_delays = graph.ignore_trace_delays;
     let system_idle_gap_cap_seconds = graph.system_idle_gap_cap_seconds;
@@ -453,6 +454,7 @@ pub(crate) async fn execute_graph_native(
         clock.clone(),
         rng_root,
         allow_dataset_wrap,
+        cache_bust_enabled,
         t_star_window,
         phase_sidecars,
         &backends,

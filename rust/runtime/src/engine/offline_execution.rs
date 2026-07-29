@@ -1509,6 +1509,7 @@ pub(crate) fn prepare_dynosim_graph(
     let metrics = offline_metrics_config(&run.metrics)?;
     let default_max_tokens = prepared.default_output_tokens;
     let allow_dataset_wrap = prepared.allow_dataset_wrap;
+    let cache_bust_enabled = prepared.cache_bust_target.is_enabled();
     let random_seed = prepared.random_seed.or(run.identity.random_seed);
     Ok(Box::new(PreparedDynosimGraphOperation {
         backend,
@@ -1521,6 +1522,7 @@ pub(crate) fn prepare_dynosim_graph(
         artifact_target: run.artifact_target.clone(),
         default_max_tokens,
         allow_dataset_wrap,
+        cache_bust_enabled,
         t_star_window: prepared.t_star_window,
         worker_count: workload.worker_count,
         phase_count: workload.phases.len(),
@@ -1622,6 +1624,7 @@ struct PreparedDynosimGraphOperation {
     artifact_target: PathBuf,
     default_max_tokens: usize,
     allow_dataset_wrap: bool,
+    cache_bust_enabled: bool,
     t_star_window: crate::engine::graph_input::TStarWindow,
     worker_count: usize,
     phase_count: usize,
@@ -1652,6 +1655,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
             artifact_target,
             default_max_tokens,
             allow_dataset_wrap,
+            cache_bust_enabled,
             t_star_window,
             worker_count,
             phase_count,
@@ -1685,6 +1689,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                         clock,
                         rng_root,
                         allow_dataset_wrap,
+                        cache_bust_enabled,
                         t_star_window,
                         phase_sidecars,
                         &backends,
