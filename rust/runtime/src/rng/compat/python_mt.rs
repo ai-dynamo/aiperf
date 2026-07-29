@@ -30,7 +30,7 @@ const LOG4: f64 = 1.386_294_361_119_890_6;
 const SG_MAGICCONST: f64 = 2.504_077_396_776_274;
 /// `2.0 * math.pi`, CPython `random.TWOPI` — [`PythonMt19937::gauss`]'s
 /// Box-Muller angle scale.
-const TWOPI: f64 = 6.283_185_307_179_586;
+const TWOPI: f64 = std::f64::consts::TAU;
 
 /// Mersenne Twister state size (`N` in `_randommodule.c`).
 const N: usize = 624;
