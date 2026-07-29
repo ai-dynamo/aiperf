@@ -24,8 +24,8 @@ use std::io::{Read, Write};
 use std::net::{TcpListener as StdTcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 pub use aiperf_mock_server::config::MockServerConfig;
 use aiperf_mock_server::{AppState, build_router};
@@ -435,49 +435,145 @@ fn python_binary() -> String {
     "python3".to_string()
 }
 
+/// Profile directories under `target/` that can hold a built `aiperf`.
+///
+/// `optimized` is the profile `make native-cli` ships, so it must be searched or
+/// a packaged binary is invisible here.
+const EXEC_PROFILES: [&str; 3] = ["debug", "release", "optimized"];
+
 /// Resolve the `aiperf` execution binary.
 ///
 /// The harness spawns this binary directly as the entry point; it re-execs itself
-/// (`current_exe()`) in the internal `--execute` mode. Priority:
-/// 1. `target/release/aiperf` then `target/debug/aiperf` relative to the Cargo
-///    workspace root (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
-/// 2. `aiperf` on PATH as last resort
+/// (`current_exe()`) in the internal `--execute` mode. Resolution order:
+/// 1. `AIPERF_E2E_BIN`, so CI can pin the exact binary under test.
+/// 2. The most recently built `<target>/<profile>/aiperf`, where `<target>` is an
+///    ancestor of the running test executable.
+///
+/// There is no `$PATH` fallback: a pip-installed `aiperf` from an unrelated
+/// commit would otherwise be tested silently.
+///
+/// `cargo test` cannot rebuild `aiperf` — `[[bin]]` targets of a dependency are
+/// not built for a dependent, and `CARGO_BIN_EXE_aiperf` is only set for bins in
+/// this same package. So freshness is checked rather than guaranteed: see
+/// [`assert_exec_binary_fresh`].
 pub fn exec_binary() -> String {
-    // An explicit override wins, so CI can pin the exact binary under test.
+    // Resolution walks the CLI and runtime source trees to check freshness, so do
+    // it once per test binary rather than once per test.
+    static RESOLVED: OnceLock<String> = OnceLock::new();
+    RESOLVED.get_or_init(resolve_exec_binary).clone()
+}
+
+fn resolve_exec_binary() -> String {
     if let Ok(explicit) = std::env::var("AIPERF_E2E_BIN") {
         if !explicit.is_empty() {
             return explicit;
         }
     }
-    let suffix = std::env::consts::EXE_SUFFIX;
-    let name = format!("aiperf{suffix}");
-    // Locate the `aiperf` binary in the SAME target tree cargo built these tests
-    // into, derived from the test executable's own path rather than guessed from
-    // CARGO_MANIFEST_DIR (whose depth relative to the workspace, and thus to
-    // `target/`, is layout-dependent and was wrong here). The test binary lives
-    // at `<target>/<profile>/deps/<name>`, so `<target>` is an ancestor.
-    // `cargo test` does not rebuild `aiperf` (the e2e crate has no dependency
-    // edge to it), so among the candidates pick the most recently built one:
-    // whichever profile you last compiled is the binary under test, and a stale
-    // sibling profile never shadows it.
-    if let Ok(exe) = std::env::current_exe() {
-        let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
-        for dir in exe.ancestors() {
-            for profile in ["debug", "release"] {
-                let candidate = dir.join(profile).join(&name);
-                let Ok(mtime) = candidate.metadata().and_then(|m| m.modified()) else {
-                    continue;
-                };
-                if newest.as_ref().is_none_or(|(_, best)| mtime > *best) {
-                    newest = Some((candidate, mtime));
-                }
+    let name = format!("aiperf{}", std::env::consts::EXE_SUFFIX);
+    // Locate the binary in the SAME target tree cargo built these tests into,
+    // derived from the test executable's own path rather than guessed from
+    // CARGO_MANIFEST_DIR (whose depth relative to `target/` is layout-dependent
+    // and was wrong here). The test binary lives at `<target>/<profile>/deps/`,
+    // so `<target>` is an ancestor.
+    let exe = std::env::current_exe().unwrap_or_else(|e| {
+        panic!("cannot resolve the aiperf binary: current_exe() failed: {e}");
+    });
+    let mut newest: Option<(PathBuf, SystemTime)> = None;
+    for dir in exe.ancestors() {
+        for profile in EXEC_PROFILES {
+            let candidate = dir.join(profile).join(&name);
+            let Ok(mtime) = candidate.metadata().and_then(|m| m.modified()) else {
+                continue;
+            };
+            if newest.as_ref().is_none_or(|(_, best)| mtime > *best) {
+                newest = Some((candidate, mtime));
             }
         }
-        if let Some((candidate, _)) = newest {
-            return candidate.display().to_string();
-        }
     }
-    name
+    let Some((path, built_at)) = newest else {
+        panic!(
+            "no `{name}` binary found under any target/{{{}}} directory near {}.\n\
+             Build it first:  cargo build -p aiperf-cli\n\
+             Or pin one:      AIPERF_E2E_BIN=/path/to/aiperf cargo test -p aiperf-e2e-tests",
+            EXEC_PROFILES.join(","),
+            exe.display(),
+        );
+    };
+    assert_exec_binary_fresh(&path, built_at);
+    path.display().to_string()
+}
+
+/// Panic when the resolved `aiperf` binary predates the sources that produce it.
+///
+/// Without this the suite silently exercises a stale binary and reports passes
+/// for code that was never compiled — the failure mode is a wrong answer, not an
+/// error. Set `AIPERF_E2E_ALLOW_STALE_BIN=1` to downgrade to a warning when
+/// deliberately testing a pinned older build.
+fn assert_exec_binary_fresh(path: &Path, built_at: SystemTime) {
+    let Some(workspace) = workspace_root() else {
+        return;
+    };
+    // Only the crates that compile into `aiperf`: the CLI binary and the runtime
+    // it links. Test-only and sibling crates cannot change its behavior.
+    let mut newest_source: Option<(PathBuf, SystemTime)> = None;
+    for rel in ["cli/src", "runtime/src", "cli/Cargo.toml", "runtime/Cargo.toml"] {
+        collect_newest_mtime(&workspace.join(rel), &mut newest_source);
+    }
+    let Some((source, changed_at)) = newest_source else {
+        return;
+    };
+    if changed_at <= built_at {
+        return;
+    }
+    let stale_for = changed_at
+        .duration_since(built_at)
+        .map(|d| format!("{:.0}s", d.as_secs_f64()))
+        .unwrap_or_else(|_| "an unknown interval".to_string());
+    let message = format!(
+        "the `aiperf` binary under test is STALE by {stale_for}.\n\
+         \x20 binary: {}\n\
+         \x20 newer source: {}\n\
+         Rebuild before running the suite:  cargo build -p aiperf-cli\n\
+         Set AIPERF_E2E_ALLOW_STALE_BIN=1 to test this binary anyway.",
+        path.display(),
+        source.display(),
+    );
+    if std::env::var_os("AIPERF_E2E_ALLOW_STALE_BIN").is_some() {
+        eprintln!("warning: {message}");
+        return;
+    }
+    panic!("{message}");
+}
+
+/// The `rust/` workspace root, i.e. the directory holding `cli/` and `runtime/`.
+fn workspace_root() -> Option<PathBuf> {
+    // CARGO_MANIFEST_DIR is `<workspace>/e2e-tests` at compile time.
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .filter(|root| root.join("cli").is_dir() && root.join("runtime").is_dir())
+}
+
+/// Walk `path` (file or directory) tracking the newest modification time seen.
+fn collect_newest_mtime(path: &Path, newest: &mut Option<(PathBuf, SystemTime)>) {
+    let Ok(meta) = path.metadata() else {
+        return;
+    };
+    if meta.is_dir() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            collect_newest_mtime(&entry.path(), newest);
+        }
+        return;
+    }
+    let Ok(mtime) = meta.modified() else {
+        return;
+    };
+    if newest.as_ref().is_none_or(|(_, best)| mtime > *best) {
+        *newest = Some((path.to_path_buf(), mtime));
+    }
 }
 
 pub struct RunResult {

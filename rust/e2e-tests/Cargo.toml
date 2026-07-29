@@ -12,6 +12,12 @@ description = "Full-stack e2e tests: aiperf-mock-server + python -m aiperf profi
 [dev-dependencies]
 aiperf-runtime = { path = "../runtime" }
 aiperf-mock-server = { path = "../mock-server" }
+# Freshness insurance only: this builds aiperf-cli's *lib* target, so `cargo test`
+# recompiles the CLI's own code when it changes. It does NOT build the `aiperf`
+# `[[bin]]` — cargo does not build a dependency's binaries for a dependent, and
+# `CARGO_BIN_EXE_aiperf` is only defined for bins in this same package. The
+# harness therefore still resolves the binary by path and asserts it is not stale.
+aiperf-cli = { path = "../cli" }
 # Read back the per-record `profile_export.parquet` sidecar in the e2e that
 # enables `artifacts.records: [jsonl, parquet]`. Same workspace versions the
 # `aiperf` parquet sink links.
