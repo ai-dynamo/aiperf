@@ -751,8 +751,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     def validate_agentic_cache_warmup(self) -> Self:
         """Restrict accelerated cache warmup to the agentic_replay timing mode.
 
-        ``--agentic-cache-warmup-duration`` and its optional deterministic
-        request budget are consumed solely by
+        The mutually exclusive duration and deterministic request-budget modes
+        are consumed solely by
         ``aiperf.timing.config._build_agentic_warmup_config``, which only runs
         when the profiling phases resolve to AGENTIC_REPLAY. On any other run
         the value is silently dropped, so an unguarded flag is a no-op the user
@@ -786,12 +786,12 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
         if any(
             getattr(phase, "warmup_requests_per_lane", None) is not None
-            and getattr(phase, "agentic_cache_warmup_duration", None) is None
+            and getattr(phase, "agentic_cache_warmup_duration", None) is not None
             for phase in profiling_phases
         ):
             raise ValueError(
-                "--warmup-requests-per-lane requires "
-                "--agentic-cache-warmup-duration as a safety deadline."
+                "--warmup-requests-per-lane and "
+                "--agentic-cache-warmup-duration are mutually exclusive."
             )
 
         if self.scenario is not None:

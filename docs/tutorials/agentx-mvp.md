@@ -423,15 +423,16 @@ duration expires, it stops issuing new requests, drains requests already on
 the wire, snapshots each live root, subagent, and unresolved join, and starts
 profiling from that exact state.
 
-For repeatable warmup depth, also set
-`--warmup-requests-per-lane REQUESTS`. Each concurrency lane is
-then allowed exactly that many warmup wire requests, including its initial
-snapshot-priming requests. For example, `--concurrency 16` with
-`--warmup-requests-per-lane 10` targets 160 warmup requests,
-with a strict 10-request quota on every lane. The duration is still required as
-a safety deadline: issuance stops at the per-lane quotas or the duration,
-whichever comes first. If the duration wins, a slow run sends fewer than the
-configured request budget.
+For repeatable warmup depth, use
+`--warmup-requests-per-lane REQUESTS` instead. Each concurrency lane is allowed
+exactly that many warmup wire requests, including its initial snapshot-priming
+requests. For example, `--concurrency 16` with
+`--warmup-requests-per-lane 10` produces 160 warmup requests, with a strict
+10-request quota on every lane.
+
+`--agentic-cache-warmup-duration` and `--warmup-requests-per-lane` are mutually
+exclusive: choose a time-bounded warmup or a deterministic request-bounded
+warmup.
 
 These requests remain part of warmup, so they are excluded from exported
 request metrics.

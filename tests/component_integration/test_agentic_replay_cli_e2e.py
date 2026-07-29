@@ -189,13 +189,21 @@ def test_agentic_replay_cli_scenario_unsafe_override_runs_to_completion(
 
 
 @pytest.mark.component_integration
+@pytest.mark.parametrize(
+    "warmup_option",
+    [
+        "--agentic-cache-warmup-duration 2",
+        "--warmup-requests-per-lane 2",
+    ],
+)
 def test_agentic_replay_cli_cache_warmup_runs_to_completion(
     cli: AIPerfCLI,
     weka_small_dir: Path,
+    warmup_option: str,
 ) -> None:
-    """E2E smoke that ``--agentic-cache-warmup-duration`` runs the warmup substage, drain, and profiling handoff without deadlocking the replay barriers."""
+    """Both cache-pressure modes complete their warmup, drain, and handoff."""
     cmd = _build_command(weka_small_dir, scenario=True, unsafe_override=True)
-    cmd += " --agentic-cache-warmup-duration 2"
+    cmd += f" {warmup_option}"
     result = cli.run_sync(cmd, timeout=defaults.timeout)
 
     assert result.exit_code == 0, (

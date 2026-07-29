@@ -295,7 +295,6 @@ async def test_cache_warmup_request_budget_is_enforced_per_lane():
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP,
         trajectories=trajectories,
-        cache_warmup_duration=600.0,
         cache_warmup_requests_per_lane=2,
     )
     issuer.set_turn_admission = MagicMock()
@@ -325,6 +324,36 @@ async def test_cache_warmup_request_budget_is_enforced_per_lane():
     assert admission(lane_1) is True
     assert admission(lane_1) is False
     issuer.replay_gate.pause_releases.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_count_cache_warmup_starts_without_duration_timer():
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, scheduler, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_requests_per_lane=3,
+    )
+    issuer.set_turn_admission = MagicMock()
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+
+    pressure = issuer.issue_credit.await_args_list[1].args[0]
+    assert pressure.turn_index == 2
+    assert pressure.max_tokens_override == 1
+    issuer.set_max_tokens_override.assert_called_once_with(1)
+    scheduler.schedule_later.assert_not_called()
 
 
 @pytest.mark.asyncio

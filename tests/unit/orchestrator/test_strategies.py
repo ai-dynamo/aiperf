@@ -312,7 +312,6 @@ class TestFixedTrialsStrategy:
                     "concurrency": 1,
                     "timing_mode": TimingMode.AGENTIC_REPLAY,
                     "agentic_cache_warmup_duration": 30.0,
-                    "warmup_requests_per_lane": 10,
                 },
             ],
         )
@@ -322,7 +321,6 @@ class TestFixedTrialsStrategy:
         assert (
             first_config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
         )
-        assert first_config.get_profiling_phases()[0].warmup_requests_per_lane == 10
 
         results = [
             RunResult(
@@ -337,10 +335,41 @@ class TestFixedTrialsStrategy:
         second_config = strategy.get_next_config(config, results)
         for phase in second_config.get_profiling_phases():
             assert phase.agentic_cache_warmup_duration is None
-            assert phase.warmup_requests_per_lane is None
 
         # Original config untouched (deep copy).
         assert config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
+
+    def test_disable_warmup_clears_per_lane_request_budget(self):
+        from aiperf.plugin.enums import TimingMode
+
+        strategy = FixedTrialsStrategy(num_trials=3, disable_warmup_after_first=True)
+        config = _make_config(
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 1,
+                    "timing_mode": TimingMode.AGENTIC_REPLAY,
+                    "warmup_requests_per_lane": 10,
+                },
+            ],
+        )
+
+        first_config = strategy.get_next_config(config, [])
+        assert first_config.get_profiling_phases()[0].warmup_requests_per_lane == 10
+
+        results = [
+            RunResult(
+                label="run_0001",
+                success=True,
+                summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
+                artifacts_path=Path("/tmp/run_0001"),
+            )
+        ]
+        second_config = strategy.get_next_config(config, results)
+
+        assert second_config.get_profiling_phases()[0].warmup_requests_per_lane is None
         assert config.get_profiling_phases()[0].warmup_requests_per_lane == 10
 
     def test_get_run_path(self):

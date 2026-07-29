@@ -263,26 +263,25 @@ def test_agentic_cache_warmup_with_explicit_agentic_timing_mode_accepted() -> No
     assert cfg.benchmark.phases[0].agentic_cache_warmup_duration == 30.0
 
 
-def test_agentic_cache_warmup_request_budget_requires_duration() -> None:
-    with pytest.raises(ValueError, match="requires.*duration"):
-        _make(
-            phases=_agentic_phase(
-                warmup_requests_per_lane=10,
-                timing_mode="agentic_replay",
-            )
-        )
-
-
-def test_agentic_cache_warmup_request_budget_with_duration_accepted() -> None:
+def test_agentic_cache_warmup_request_budget_without_duration_accepted() -> None:
     cfg = _make(
         phases=_agentic_phase(
-            agentic_cache_warmup_duration=30.0,
             warmup_requests_per_lane=10,
             timing_mode="agentic_replay",
         )
     )
-    phase = cfg.benchmark.phases[0]
-    assert phase.warmup_requests_per_lane == 10
+    assert cfg.benchmark.phases[0].warmup_requests_per_lane == 10
+
+
+def test_agentic_cache_warmup_modes_are_mutually_exclusive() -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _make(
+            phases=_agentic_phase(
+                agentic_cache_warmup_duration=30.0,
+                warmup_requests_per_lane=10,
+                timing_mode="agentic_replay",
+            )
+        )
 
 
 def test_no_agentic_cache_warmup_duration_accepted() -> None:

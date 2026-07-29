@@ -287,6 +287,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
     @property
+    def _cache_warmup_enabled(self) -> bool:
+        """Whether either accelerated cache-pressure warmup mode is active."""
+        return (
+            self._cache_warmup_duration is not None
+            or self._cache_warmup_requests_per_lane is not None
+        )
+
+    @property
     def _has_tree_registry(self) -> bool:
         """True when per-tree session-slot accounting is engaged.
 
@@ -294,17 +302,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         engages it because it opens trees and spawns descendants during WARMUP.
         """
         return self._session_tree_registry is not None and (
-            self.config.phase == CreditPhase.PROFILING
-            or self._cache_warmup_duration is not None
+            self.config.phase == CreditPhase.PROFILING or self._cache_warmup_enabled
         )
 
     @property
     def wants_returns_after_sending_complete(self) -> bool:
         """Pressure warmup returns must be observed to build the handoff state."""
-        return (
-            self.config.phase == CreditPhase.WARMUP
-            and self._cache_warmup_duration is not None
-        )
+        return self.config.phase == CreditPhase.WARMUP and self._cache_warmup_enabled
 
     @property
     def allows_pending_branch_handoff_after_sending_complete(self) -> bool:
@@ -673,7 +677,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # with zero credits it would never fire and the warmup phase would hang
         # waiting on a barrier sized to concurrency. Finalize immediately.
         if not prepared:
-            if self._cache_warmup_duration is not None:
+            if self._cache_warmup_enabled:
                 # No baseline priming to wait for; jump straight to the
                 # accelerated cache-pressure substage.
                 await self._start_accelerated_warmup()
@@ -720,37 +724,41 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _finish_initial_warmup_dispatch(self) -> None:
         """Mark sending complete for burst warmup with no cache-pressure stage.
 
-        When a cache-pressure duration is set the accelerated substage is driven
-        by baseline credit returns (``_handle_warmup_return``), so there is
-        nothing to finalize here in that case.
+        When either cache-pressure mode is set, the accelerated substage is
+        driven by baseline credit returns (``_handle_warmup_return``), so there
+        is nothing to finalize here.
         """
-        if (
-            self._cache_warmup_duration is None
-            and not self.lifecycle.is_sending_complete
-        ):
+        if not self._cache_warmup_enabled and not self.lifecycle.is_sending_complete:
             self.lifecycle.mark_sending_complete()
 
     async def _start_accelerated_warmup(self) -> None:
         """Continue the sampled trajectories under compressed warmup traffic."""
         if self._accelerated_warmup_started:
             return
-        assert self._cache_warmup_duration is not None
+        assert self._cache_warmup_enabled
         self._accelerated_warmup_started = True
         self.credit_issuer.set_max_tokens_override(_WARMUP_MAX_TOKENS)
         for trajectory in self.conversation_source.trajectories:
             self._seed_trajectory_replay_prefix(trajectory)
         self.credit_issuer.replay_gate.activate()
+        if self._cache_warmup_duration is not None:
+            limit = f"for {self._cache_warmup_duration:.1f}s"
+        else:
+            limit = (
+                f"until each lane reaches "
+                f"{self._cache_warmup_requests_per_lane} requests"
+            )
         self.info(
-            "WARMUP cache pressure: replaying live trajectories for "
-            f"{self._cache_warmup_duration:.1f}s with zero idle delay and "
-            f"max_tokens={_WARMUP_MAX_TOKENS}"
+            "WARMUP cache pressure: replaying live trajectories "
+            f"{limit} with zero idle delay and max_tokens={_WARMUP_MAX_TOKENS}"
         )
         if self.branch_orchestrator is not None:
             self.branch_orchestrator.start_accelerated_warmup()
-        self.scheduler.schedule_later(
-            self._cache_warmup_duration,
-            self._finish_accelerated_warmup(),
-        )
+        if self._cache_warmup_duration is not None:
+            self.scheduler.schedule_later(
+                self._cache_warmup_duration,
+                self._finish_accelerated_warmup(),
+            )
         results = await asyncio.gather(
             *(
                 self._dispatch_accelerated_trajectory(trajectory, lane)
@@ -1435,7 +1443,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     async def _handle_warmup_return(self, credit: Credit) -> None:
         """Advance baseline warmup into the optional cache-pressure stage."""
-        if self._cache_warmup_duration is None:
+        if not self._cache_warmup_enabled:
             return
         if self._accelerated_warmup_started:
             await self._handle_accelerated_warmup_return(credit)

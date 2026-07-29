@@ -131,9 +131,12 @@ class PhaseRunner(TaskManagerMixin):
         self._branch_orchestrator = branch_orchestrator
         self._run = run
         self._session_tree_registry = session_tree_registry
-        self._cache_warmup_enabled = isinstance(
-            getattr(config, "agentic_cache_warmup_duration_sec", None),
-            int | float,
+        self._cache_warmup_enabled = (
+            isinstance(
+                getattr(config, "agentic_cache_warmup_duration_sec", None),
+                int | float,
+            )
+            or getattr(config, "warmup_requests_per_lane", None) is not None
         )
 
         # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.

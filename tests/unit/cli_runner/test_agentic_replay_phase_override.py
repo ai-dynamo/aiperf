@@ -72,14 +72,11 @@ def test_agentic_cache_warmup_request_budget_overrides_yaml_profiling_phase(
     tmp_path: pathlib.Path,
 ) -> None:
     cfg = resolve_config(
-        _cli(
-            agentic_cache_warmup_duration=30.0,
-            warmup_requests_per_lane=10,
-        ),
+        _cli(warmup_requests_per_lane=10),
         _agentic_yaml(tmp_path),
     )
     phase = _profiling_phase(cfg)
-    assert phase.agentic_cache_warmup_duration == 30.0
+    assert phase.agentic_cache_warmup_duration is None
     assert phase.warmup_requests_per_lane == 10
 
 

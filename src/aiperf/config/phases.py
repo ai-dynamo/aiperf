@@ -360,7 +360,8 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             "continues the live trajectories without recorded idle delays and with "
             "one-token outputs for this long, then drains and resumes profiling "
             "from the resulting trajectory state. Read off the profiling phase by "
-            "``timing.config._build_agentic_warmup_config``. None disables it.",
+            "``timing.config._build_agentic_warmup_config``. Mutually exclusive "
+            "with warmup_requests_per_lane. None disables it.",
         ),
     ]
 
@@ -373,8 +374,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             "warmup request budget per concurrency lane. The total warmup "
             "wire-request cap is this value multiplied by the number of live "
             "trajectory lanes, including the initial snapshot-priming "
-            "requests. Requires agentic_cache_warmup_duration, which remains "
-            "the safety deadline; warmup stops when either limit is reached.",
+            "requests. Mutually exclusive with agentic_cache_warmup_duration.",
         ),
     ]
 

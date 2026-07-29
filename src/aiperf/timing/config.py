@@ -373,7 +373,8 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default=None,
         gt=0,
         description="Deterministic cache-pressure warmup wire-request budget "
-        "per live agentic replay lane.",
+        "per live agentic replay lane. Mutually exclusive with "
+        "agentic_cache_warmup_duration_sec.",
     )
 
     artifact_dir: Path | None = Field(
@@ -662,10 +663,9 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         phase_name=AGENTIC_WARMUP_PHASE_NAME,
         phase_kind="warmup",
         timing_mode=TimingMode.AGENTIC_REPLAY,
-        # Without a deterministic budget, accelerated cache-pressure warmup is
-        # strategy-terminated when its duration elapses. With a budget, the
-        # generic request-count stop condition provides the exact wire cap and
-        # the duration remains a safety deadline.
+        # Duration mode is strategy-terminated by its timer. Count mode uses
+        # the generic request-count stop condition as a global backstop while
+        # the agentic strategy independently enforces each lane's quota.
         total_expected_requests=total_expected_requests,
         expected_duration_sec=None,
         expected_num_sessions=None,
