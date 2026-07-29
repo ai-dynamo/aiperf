@@ -1187,8 +1187,8 @@ pub fn run_cellular(
         // order accepted), before `_scratch` removes `temp_root`. `inputs.json` takes its
         // own merge (`merge_cell_inputs_json`): it holds per-session rows, and each cell
         // generated it over the slice of the resident dataset THAT cell owns, so the
-        // controller unions the slices and re-sorts by `session_id` rather than copying one
-        // cell's file. inputs.json is always-on (`rust_wire`), so without this the cellular
+        // controller unions the slices and re-interleaves them round-robin (the inverse of
+        // the partition) rather than copying one cell's file. inputs.json is always-on (`rust_wire`), so without this the cellular
         // run would silently drop it / break GenAI-Perf compat.
         //
         // The files are controller-local in two cases, both handled here:

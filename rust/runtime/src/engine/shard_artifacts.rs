@@ -126,7 +126,7 @@ pub(crate) fn concatenate_shard_artifacts(
 /// the whole `temp_root`), so this fn — unlike [`concatenate_shard_artifacts`] — never
 /// deletes its sources. `inputs.json` is NOT merged here: it is a session document rather
 /// than per-record rows, so the controller merges it separately (union of the per-cell
-/// slices, re-sorted by `session_id`) via [`merge_cell_inputs_json`].
+/// slices, re-interleaved round-robin) via [`merge_cell_inputs_json`].
 pub(crate) fn concatenate_cell_artifacts(
     cell_dirs: &[PathBuf],
     artifact_dir: &Path,
@@ -179,11 +179,16 @@ fn concatenate_artifacts(
 /// document — which is why this merges rather than copying one cell's file (copying cell
 /// 0's would emit `ceil(n/C)` of `n` sessions with a stride-`C` id gap).
 ///
-/// Rows are sorted by `session_id` to recover the single-process document's
-/// conversation-id order, so a cellular run emits the same `inputs.json` as the
-/// single-cell run (GenAI-Perf compat, always-on per `rust_wire`). A no-op when no cell
-/// wrote the file (e.g. inputs export disabled). Sources are owned by the controller's
-/// `ScratchTreeGuard`, so — like [`concatenate_cell_artifacts`] — this never deletes them.
+/// The slices are re-INTERLEAVED round-robin (cell 0 row 0, cell 1 row 0, …, cell 0 row 1,
+/// …) rather than sorted by `session_id`: interleaving is the exact inverse of the
+/// `position % cell_count == cell_id` partition, so it reproduces the single-process
+/// document's dataset order for ANY id scheme. Sorting only works when ids are ordinal
+/// (`session_000012`); real datasets carry random UUID session ids, for which the sort
+/// order is arbitrary and need not match the single-cell document (GenAI-Perf compat,
+/// always-on per `rust_wire`). `cell_dirs` is indexed by cell id at the call site, which is
+/// what makes the interleave well-defined. A no-op when no cell wrote the file (e.g. inputs
+/// export disabled). Sources are owned by the controller's `ScratchTreeGuard`, so — like
+/// [`concatenate_cell_artifacts`] — this never deletes them.
 pub(crate) fn merge_cell_inputs_json(
     cell_dirs: &[PathBuf],
     artifact_dir: &Path,
@@ -192,10 +197,14 @@ pub(crate) fn merge_cell_inputs_json(
     let Some(relative) = &artifacts.inputs_path else {
         return Ok(());
     };
-    let mut sessions: Vec<serde_json::Value> = Vec::new();
+    // Keep each cell's rows in their own list, indexed by cell id, so the interleave below
+    // can walk them in lockstep. A cell that wrote no file contributes an empty list, which
+    // the interleave skips without shifting the other cells' positions.
+    let mut per_cell: Vec<Vec<serde_json::Value>> = Vec::with_capacity(cell_dirs.len());
     let mut any_source = false;
     for source in cell_dirs.iter().map(|dir| dir.join(relative)) {
         if !source.exists() {
+            per_cell.push(Vec::new());
             continue;
         }
         any_source = true;
@@ -203,20 +212,28 @@ pub(crate) fn merge_cell_inputs_json(
             .with_context(|| format!("reading cell inputs.json {}", source.display()))?;
         let doc: serde_json::Value = serde_json::from_slice(&bytes)
             .with_context(|| format!("parsing cell inputs.json {}", source.display()))?;
-        if let Some(rows) = doc.get("data").and_then(serde_json::Value::as_array) {
-            sessions.extend(rows.iter().cloned());
-        }
+        per_cell.push(match doc.get("data").and_then(serde_json::Value::as_array) {
+            Some(rows) => rows.clone(),
+            None => Vec::new(),
+        });
     }
     if !any_source {
         // No cell produced an inputs.json (e.g. inputs export disabled); nothing to write.
         return Ok(());
     }
-    sessions.sort_by_cached_key(|row| {
-        row.get("session_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    });
+    // Undo the round-robin partition: dataset position `p` went to cell `p % cell_count` as
+    // that cell's row `p / cell_count`, so reading row `r` from every cell in cell-id order
+    // walks positions `r*count .. r*count+count-1` — the original dataset order.
+    let longest = per_cell.iter().map(Vec::len).max().unwrap_or(0);
+    let mut sessions: Vec<serde_json::Value> =
+        Vec::with_capacity(per_cell.iter().map(Vec::len).sum());
+    for row in 0..longest {
+        for cell in &per_cell {
+            if let Some(session) = cell.get(row) {
+                sessions.push(session.clone());
+            }
+        }
+    }
     let final_path = artifact_dir.join(relative);
     if let Some(parent) = final_path.parent() {
         std::fs::create_dir_all(parent)
