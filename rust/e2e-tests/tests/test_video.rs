@@ -253,13 +253,11 @@ async fn video_generation_parameters(
 }
 
 #[tokio::test]
-#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_generation_parameters_webm() {
     video_generation_parameters("webm", "libvpx-vp9", false).await;
 }
 
 #[tokio::test]
-#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_generation_parameters_mp4() {
     video_generation_parameters("mp4", "libx264", true).await;
 }
@@ -279,7 +277,7 @@ async fn video_with_audio_embeds_correct_stream(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --video-width {width} --video-height {height} --video-duration {duration} \
          --video-fps {fps} --video-format {video_format} --video-codec {video_codec} \
-         --video-audio-sample-rate 44.1 --video-audio-num-channels 1 \
+         --video-audio-sample-rate 44100 --video-audio-num-channels 1 \
          --prompt-input-tokens-mean 50 --num-dataset-entries 4 \
          --request-rate 2.0 --request-count 4 --workers-max {WORKERS_MAX}",
         h.mock.url
@@ -306,19 +304,16 @@ async fn video_with_audio_embeds_correct_stream(
 }
 
 #[tokio::test]
-#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_with_audio_embeds_correct_stream_webm() {
     video_with_audio_embeds_correct_stream("webm", "libvpx-vp9", "vorbis").await;
 }
 
 #[tokio::test]
-#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_with_audio_embeds_correct_stream_mp4() {
     video_with_audio_embeds_correct_stream("mp4", "libx264", "aac").await;
 }
 
 #[tokio::test]
-#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_without_audio_has_no_audio_stream() {
     if cfg!(target_os = "windows") || !ffprobe_available() {
         return;
