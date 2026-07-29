@@ -146,6 +146,16 @@ By default DAG conversations accumulate multi-turn history and thread live infer
 
 Under this mode each turn may also carry its **own** system prompt (the non-root system-placement rule is waived, since each turn is its own array), and typed multimodal blocks (`image_url`, `projection_embedding`) pass through verbatim. Note that a non-standard block like `projection_embedding` requires a server that understands it; a vanilla OpenAI-compatible server will reject it.
 
+#### Measurement & attribution
+
+The request-free spine (roots, joins) issues no HTTP and contributes **0** to `request_count`, token throughput, TTFT/ITL, and QPS — only the branch turns are real requests. To attribute a raw record (`--export-level raw`) to its place in the graph, key on:
+
+- **`root_correlation_id`** — the graph *instance* (distinct per `--num-conversations` firing),
+- **`conversation_id`** — the round's branch session (e.g. `t0-a`, `t1-a`), and
+- **`turn_index`** — the node within that branch (`a1`…`a4`).
+
+That triple is unique per request even when the same branch session ids repeat across instances, so per-round latency is fully reconstructable. **Think-time** is applied as a delay *before* a round's requests dispatch, so it is **excluded** from per-request latency/TTFT/ITL and **included** only in end-to-end graph-completion time.
+
 ### Per-turn shape
 
 Each turn is a flat object validated against a strict schema (`DagTurn` in `src/aiperf/dataset/loader/dag_jsonl_models.py`). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:
