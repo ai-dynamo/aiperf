@@ -35,6 +35,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use serde_json::value::RawValue;
 
 use crate::engine::protocol::ArtifactSpec;
 
@@ -186,9 +187,35 @@ fn concatenate_artifacts(
 /// (`session_000012`); real datasets carry random UUID session ids, for which the sort
 /// order is arbitrary and need not match the single-cell document (GenAI-Perf compat,
 /// always-on per `rust_wire`). `cell_dirs` is indexed by cell id at the call site, which is
-/// what makes the interleave well-defined. A no-op when no cell wrote the file (e.g. inputs
-/// export disabled). Sources are owned by the controller's `ScratchTreeGuard`, so — like
+/// what makes the interleave well-defined. Each payload body is carried through as an
+/// unparsed [`RawValue`] so the merged document re-emits its original compact bytes, the
+/// same as the single-process writer; parsing to `Value` would re-indent them and make the
+/// merged file differ from a single-cell run on formatting alone. A no-op when no cell
+/// wrote the file (e.g. inputs export disabled). Sources are owned by the controller's `ScratchTreeGuard`, so — like
 /// [`concatenate_cell_artifacts`] — this never deletes them.
+/// One cell's `inputs.json` as read for merging.
+#[derive(serde::Deserialize)]
+struct MergedInputsDocument {
+    data: Vec<MergedInputsRow>,
+}
+
+/// One session row. `payloads` are held as owned [`RawValue`]s rather than parsed
+/// `Value`s so re-serialization emits each body's ORIGINAL bytes verbatim — the
+/// single-process writer does the same (`records::write_inputs_json`), and parsing to
+/// `Value` would re-pretty-print the compact bodies and break the byte-identity the
+/// merged document must hold against a single-cell run.
+#[derive(serde::Deserialize, serde::Serialize)]
+struct MergedInputsRow {
+    session_id: String,
+    payloads: Vec<Box<RawValue>>,
+}
+
+/// The merged document, borrowing the per-cell rows.
+#[derive(serde::Serialize)]
+struct MergedInputsRef<'a> {
+    data: Vec<&'a MergedInputsRow>,
+}
+
 pub(crate) fn merge_cell_inputs_json(
     cell_dirs: &[PathBuf],
     artifact_dir: &Path,
@@ -200,7 +227,7 @@ pub(crate) fn merge_cell_inputs_json(
     // Keep each cell's rows in their own list, indexed by cell id, so the interleave below
     // can walk them in lockstep. A cell that wrote no file contributes an empty list, which
     // the interleave skips without shifting the other cells' positions.
-    let mut per_cell: Vec<Vec<serde_json::Value>> = Vec::with_capacity(cell_dirs.len());
+    let mut per_cell: Vec<Vec<MergedInputsRow>> = Vec::with_capacity(cell_dirs.len());
     let mut any_source = false;
     for source in cell_dirs.iter().map(|dir| dir.join(relative)) {
         if !source.exists() {
@@ -210,12 +237,9 @@ pub(crate) fn merge_cell_inputs_json(
         any_source = true;
         let bytes = std::fs::read(&source)
             .with_context(|| format!("reading cell inputs.json {}", source.display()))?;
-        let doc: serde_json::Value = serde_json::from_slice(&bytes)
+        let doc: MergedInputsDocument = serde_json::from_slice(&bytes)
             .with_context(|| format!("parsing cell inputs.json {}", source.display()))?;
-        per_cell.push(match doc.get("data").and_then(serde_json::Value::as_array) {
-            Some(rows) => rows.clone(),
-            None => Vec::new(),
-        });
+        per_cell.push(doc.data);
     }
     if !any_source {
         // No cell produced an inputs.json (e.g. inputs export disabled); nothing to write.
@@ -225,12 +249,12 @@ pub(crate) fn merge_cell_inputs_json(
     // that cell's row `p / cell_count`, so reading row `r` from every cell in cell-id order
     // walks positions `r*count .. r*count+count-1` — the original dataset order.
     let longest = per_cell.iter().map(Vec::len).max().unwrap_or(0);
-    let mut sessions: Vec<serde_json::Value> =
+    let mut sessions: Vec<&MergedInputsRow> =
         Vec::with_capacity(per_cell.iter().map(Vec::len).sum());
     for row in 0..longest {
         for cell in &per_cell {
             if let Some(session) = cell.get(row) {
-                sessions.push(session.clone());
+                sessions.push(session);
             }
         }
     }
@@ -239,7 +263,7 @@ pub(crate) fn merge_cell_inputs_json(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating inputs.json directory {}", parent.display()))?;
     }
-    let document = serde_json::json!({ "data": sessions });
+    let document = MergedInputsRef { data: sessions };
     let file = std::fs::File::create(&final_path)
         .with_context(|| format!("creating merged inputs.json {}", final_path.display()))?;
     let mut writer = std::io::BufWriter::new(file);
