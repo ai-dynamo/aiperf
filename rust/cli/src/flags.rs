@@ -1449,7 +1449,9 @@ mod tests {
     fn hop_routing_flag_parses_every_variant() {
         on_big_stack(|| {
             assert_eq!(
-                parse(&["--hop-routing", "round-robin"]).hop_routing().unwrap(),
+                parse(&["--hop-routing", "round-robin"])
+                    .hop_routing()
+                    .unwrap(),
                 Some(HopRouting::RoundRobin)
             );
             assert_eq!(

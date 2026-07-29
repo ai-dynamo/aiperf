@@ -32,13 +32,13 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use velo::{Context, EventHandle, Handler, PeerInfo, Velo};
 
+#[cfg(test)]
+use super::CellPhaseSignal;
 use super::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,
     CellTransportError, ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION,
     HANDLER_PHASE_SIGNAL, HANDLER_REGISTER, HANDLER_STORE_PARTITION,
 };
-#[cfg(test)]
-use super::CellPhaseSignal;
 
 /// Supplies each cell's serialized (`rmp`) `CellLaunchSpec` by `cell_id`, or
 /// `None` if the `cell_id` is out of range. The controller precomputes every

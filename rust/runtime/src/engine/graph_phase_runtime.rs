@@ -44,10 +44,9 @@ use crate::phase_runtime::{
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, GracePeriod, LocalPhaseFuture,
-    NoopPhaseObserver,
-    PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory,
-    PhaseObserver, PhaseReturn, PhaseSend, PhaseStats, RampDriver, SlotPool, drive_phases,
-    make_interval_generator,
+    NoopPhaseObserver, PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError,
+    PhaseExecutionFactory, PhaseObserver, PhaseReturn, PhaseSend, PhaseStats, RampDriver, SlotPool,
+    drive_phases, make_interval_generator,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use tokio::sync::{Notify, mpsc};
@@ -493,8 +492,7 @@ fn is_unbound_warmup(common: &PhaseCommonSpec) -> bool {
 /// Requires an active trajectory-start window (`[0,0]` disables `t*` and keeps
 /// the legacy full-corpus one-pass workload path).
 fn is_lane_prime_warmup(common: &PhaseCommonSpec, t_star: TStarWindow) -> bool {
-    is_unbound_warmup(common)
-        && (t_star.start_min_ratio != 0.0 || t_star.start_max_ratio != 0.0)
+    is_unbound_warmup(common) && (t_star.start_min_ratio != 0.0 || t_star.start_max_ratio != 0.0)
 }
 
 /// Strategy-aware corpus draw shared by pressure and profiling recycle.
@@ -4520,9 +4518,10 @@ mod tests {
         let default_window = TStarWindow::default();
 
         let phase = warmup_pressure_phase(4, Some(2.0));
-        let prepared = build_pressure_recycle(&plans, &plans, &phase, phase.common(), default_window)
-            .unwrap()
-            .expect("warmup with cache-pressure duration engages the recycle");
+        let prepared =
+            build_pressure_recycle(&plans, &plans, &phase, phase.common(), default_window)
+                .unwrap()
+                .expect("warmup with cache-pressure duration engages the recycle");
         assert_eq!(prepared.lane_target, 4);
         assert_eq!(prepared.templates.len(), 2);
         assert_eq!(prepared.duration_ns, 2_000_000_000);
@@ -4561,9 +4560,15 @@ mod tests {
             common.name = "profiling".into();
         }
         assert!(
-            build_pressure_recycle(&plans, &plans, &profiling, profiling.common(), default_window)
-                .unwrap()
-                .is_none()
+            build_pressure_recycle(
+                &plans,
+                &plans,
+                &profiling,
+                profiling.common(),
+                default_window
+            )
+            .unwrap()
+            .is_none()
         );
     }
 
@@ -4722,14 +4727,8 @@ mod tests {
             "duration": 1.0,
         }))
         .unwrap();
-        let (resumes, _) = build_profiling_resume_lane_plans(
-            &plans,
-            &profiling,
-            window,
-            &handoff,
-            None,
-            true,
-        );
+        let (resumes, _) =
+            build_profiling_resume_lane_plans(&plans, &profiling, window, &handoff, None, true);
         assert_eq!(resumes.len(), 2);
         assert_eq!(resumes[0].resume_instance_id.as_deref(), Some(id0.as_str()));
         assert_eq!(resumes[1].resume_instance_id.as_deref(), Some(id1.as_str()));

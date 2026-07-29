@@ -1081,7 +1081,11 @@ pub(crate) fn phase_config(spec: &PhaseSpec, seamless_to_next: bool) -> Result<P
         && common.is_warmup()
         && common.agentic_cache_warmup_duration.is_some();
     let stop = StopConfig {
-        total_expected_requests: if accelerated_warmup { None } else { common.requests },
+        total_expected_requests: if accelerated_warmup {
+            None
+        } else {
+            common.requests
+        },
         expected_num_sessions: common.sessions,
         expected_duration_ns: common.duration.map(seconds_to_ns).transpose()?,
     };

@@ -16,13 +16,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::agentx::chains::{
-    chain_init_tokens, detect_agent_chains, is_aux_chain, is_reduction_chain, split_off_preamble,
-    worker_group_assignment, ChainReq,
+    ChainReq, chain_init_tokens, detect_agent_chains, is_aux_chain, is_reduction_chain,
+    split_off_preamble, worker_group_assignment,
 };
-use crate::agentx::config::{WekaConfig, TITLE_GEN_MAX_OUTPUT_TOKENS};
+use crate::agentx::config::{TITLE_GEN_MAX_OUTPUT_TOKENS, WekaConfig};
 use crate::agentx::loader::NormalReq;
-use crate::agentx::prepass::{compute_shared_prefix_cache_metrics, MetricRecord, SortKey};
-use crate::agentx::subagent::{worker_suffix, ChildPlan};
+use crate::agentx::prepass::{MetricRecord, SortKey, compute_shared_prefix_cache_metrics};
+use crate::agentx::subagent::{ChildPlan, worker_suffix};
 
 /// A detected flat worker-chain conversation plan (Python `_FlatChainPlan`).
 #[derive(Debug, Clone, PartialEq)]
@@ -73,8 +73,10 @@ pub fn detect_and_split_flat_chains(
 ) -> (Vec<(i64, NormalReq)>, Vec<FlatChainPlan>) {
     let normals_by_outer: HashMap<i64, NormalReq> =
         normals.iter().map(|(oi, r)| (*oi, r.clone())).collect();
-    let detect_input: Vec<(i64, ChainReq)> =
-        normals.iter().map(|(oi, r)| (*oi, to_chain_req(r))).collect();
+    let detect_input: Vec<(i64, ChainReq)> = normals
+        .iter()
+        .map(|(oi, r)| (*oi, to_chain_req(r)))
+        .collect();
     let (preamble, detect_normals) = split_off_preamble(&detect_input, TITLE_GEN_MAX_OUTPUT_TOKENS);
     let detection = detect_agent_chains(
         detect_normals,
@@ -225,7 +227,10 @@ pub fn build_shared_metric_values(
         }
 
         // Flat worker chains: sort key (t, outer, 0, 0).
-        for fp in flats.iter().filter(|fp| fp.parent_trace_id == plan.trace_id) {
+        for fp in flats
+            .iter()
+            .filter(|fp| fp.parent_trace_id == plan.trace_id)
+        {
             for (k, (outer_idx, req)) in fp.requests.iter().enumerate() {
                 records.push(MetricRecord {
                     sort_key: SortKey {
@@ -243,10 +248,9 @@ pub fn build_shared_metric_values(
 
         let dropped = dropped_subagent_indices(plan);
         // Active child conversations: sort key (t, sa_outer, chain_index, k).
-        for cp in children
-            .iter()
-            .filter(|cp| cp.parent_trace_id == plan.trace_id && !dropped.contains(&cp.subagent_index))
-        {
+        for cp in children.iter().filter(|cp| {
+            cp.parent_trace_id == plan.trace_id && !dropped.contains(&cp.subagent_index)
+        }) {
             let sa_outer = plan.subagent_outer_indices[cp.subagent_index];
             for (k, creq) in cp.requests.iter().enumerate() {
                 records.push(MetricRecord {
@@ -263,7 +267,10 @@ pub fn build_shared_metric_values(
             }
         }
 
-        out.insert(plan.trace_id.clone(), compute_shared_prefix_cache_metrics(records));
+        out.insert(
+            plan.trace_id.clone(),
+            compute_shared_prefix_cache_metrics(records),
+        );
     }
     out
 }

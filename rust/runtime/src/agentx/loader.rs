@@ -17,9 +17,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::agentx::prepass::{compute_shared_prefix_cache_metrics, MetricRecord, SortKey};
+use crate::agentx::prepass::{MetricRecord, SortKey, compute_shared_prefix_cache_metrics};
 use crate::agentx::synth::{
-    compute_asst_block_caps, ChatMessage, ConversationReconstructor, PrefixTooTruncated, TokenSynth,
+    ChatMessage, ConversationReconstructor, PrefixTooTruncated, TokenSynth, compute_asst_block_caps,
 };
 
 /// What produced a turn's new input (Python `TurnInputKind`).
@@ -205,11 +205,7 @@ pub fn cap_output(output_length: i64, max_osl: Option<i64>) -> i64 {
             capped = m;
         }
     }
-    if capped >= 1 {
-        capped
-    } else {
-        1
-    }
+    if capped >= 1 { capped } else { 1 }
 }
 
 /// Options for [`reconstruct_main_conversation`].
@@ -316,7 +312,11 @@ pub fn reconstruct_conversation(
 
     for (k, (outer_idx, req)) in requests.iter().enumerate() {
         let seed = format!("{session_id}:turn_{k}:partial_tail");
-        let prev = if k > 0 { Some(&requests[k - 1].1) } else { None };
+        let prev = if k > 0 {
+            Some(&requests[k - 1].1)
+        } else {
+            None
+        };
         let input_kind = classify_turn_input(req, prev);
         let is_tool_result = input_kind == Some(TurnInputKind::ToolResult);
 
@@ -374,7 +374,10 @@ pub fn reconstruct_conversation(
             source_trace_id: source_trace_id.to_string(),
             source_outer_idx: *outer_idx,
             source_kind: source_kind.to_string(),
-            model: model_map.get(&req.model).cloned().unwrap_or(req.model.clone()),
+            model: model_map
+                .get(&req.model)
+                .cloned()
+                .unwrap_or(req.model.clone()),
             max_tokens: cap_output(req.output_length, opts.max_osl),
             raw_messages: delta.delta_messages,
             reset_context: delta.reset_context,
@@ -426,8 +429,8 @@ pub fn convert_trace_to_conversations(
     opts: &MainReconstructOptions,
 ) -> Result<Vec<ReconstructedConversation>, PrefixTooTruncated> {
     use crate::agentx::plan::{
-        build_shared_metric_values, detect_and_split_flat_chains, dropped_subagent_indices,
-        ParentPlan,
+        ParentPlan, build_shared_metric_values, detect_and_split_flat_chains,
+        dropped_subagent_indices,
     };
     use crate::agentx::subagent::expand_subagent_to_child_plans;
     use crate::agentx::trace::WekaRequest;
@@ -534,10 +537,7 @@ pub fn convert_trace_to_conversations(
     let dropped = dropped_subagent_indices(&parent);
     let metrics_by_trace =
         build_shared_metric_values(std::slice::from_ref(&parent), &children, &flat_plans);
-    let metric_values = metrics_by_trace
-        .get(trace_id)
-        .cloned()
-        .unwrap_or_default();
+    let metric_values = metrics_by_trace.get(trace_id).cloned().unwrap_or_default();
 
     let mut out: Vec<ReconstructedConversation> = Vec::new();
     // Root conversation.
@@ -856,8 +856,9 @@ pub fn load_hf_traces_from_rows(
     let mut traces: Vec<(String, crate::agentx::trace::WekaTrace)> = Vec::with_capacity(rows.len());
     for (i, row) in rows.into_iter().enumerate() {
         let bytes = serde_json::to_vec(&row).map_err(|e| e.to_string())?;
-        let trace = crate::agentx::trace::WekaTrace::from_json_bytes(&bytes)
-            .map_err(|e| format!("row {i} of {hf_dataset_name} failed WekaTrace validation: {e}"))?;
+        let trace = crate::agentx::trace::WekaTrace::from_json_bytes(&bytes).map_err(|e| {
+            format!("row {i} of {hf_dataset_name} failed WekaTrace validation: {e}")
+        })?;
         traces.push((trace.id.clone(), trace));
     }
     Ok(hf_select_traces(
@@ -915,12 +916,18 @@ mod tests {
             input_types: vec!["text".into()],
             stop: String::new(),
         };
-        assert_eq!(classify_turn_input(&user, None), Some(TurnInputKind::UserInput));
+        assert_eq!(
+            classify_turn_input(&user, None),
+            Some(TurnInputKind::UserInput)
+        );
         let tool = NormalReq {
             input_types: vec!["tool_result".into()],
             ..user.clone()
         };
-        assert_eq!(classify_turn_input(&tool, None), Some(TurnInputKind::ToolResult));
+        assert_eq!(
+            classify_turn_input(&tool, None),
+            Some(TurnInputKind::ToolResult)
+        );
         let prev_tooluse = NormalReq {
             stop: "tool_use".into(),
             ..user.clone()
@@ -950,7 +957,11 @@ mod tests {
             (0..n as u32).map(|i| 900_000 + i).collect()
         }
         fn decode_tokens_to_text(&self, tokens: &[u32]) -> String {
-            tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ")
+            tokens
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
         }
     }
 
@@ -982,8 +993,7 @@ mod tests {
 
         // Load Qwen from the HF cache (skip if absent).
         let home = std::env::var("HOME").unwrap_or_default();
-        let base =
-            format!("{home}/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots");
+        let base = format!("{home}/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots");
         let snap = std::fs::read_dir(&base).ok().and_then(|d| {
             d.filter_map(|e| e.ok())
                 .map(|e| e.path())
@@ -1001,8 +1011,10 @@ mod tests {
         let corpus = crate::dataset::coding::build_coding_corpus(&tok, 42).expect("corpus");
 
         // Derive the hash-id base seed exactly as Python's CodingContentGenerator.
-        let hash_base_seed =
-            PythonRandomGenerator::derive_child_seed(42, crate::rng::namespace::DATASET_CODING_CONTENT_CORPUS);
+        let hash_base_seed = PythonRandomGenerator::derive_child_seed(
+            42,
+            crate::rng::namespace::DATASET_CODING_CONTENT_CORPUS,
+        );
 
         // build_coding_corpus is deterministic given seed 42 -> reuse across fixtures.
         let cfg = WekaConfig {
@@ -1020,10 +1032,13 @@ mod tests {
             let fpath = repo.join(fixture["fixture"].as_str().unwrap());
             let trace = WekaTrace::from_json_bytes(&std::fs::read(&fpath).unwrap()).unwrap();
 
-            let mut synth =
-                CorpusTokenSynth::new(corpus.clone(), bs, hash_base_seed, trace_id, |t: &[u32]| {
-                    tok.decode(t).unwrap()
-                });
+            let mut synth = CorpusTokenSynth::new(
+                corpus.clone(),
+                bs,
+                hash_base_seed,
+                trace_id,
+                |t: &[u32]| tok.decode(t).unwrap(),
+            );
             let convs = convert_trace_to_conversations(
                 trace_id,
                 &trace,
@@ -1069,15 +1084,27 @@ mod tests {
                 let want_turns = wc["turns"].as_array().unwrap();
                 assert_eq!(conv.turns.len(), want_turns.len(), "{sid} turn count");
                 for (i, (t, w)) in conv.turns.iter().zip(want_turns).enumerate() {
-                    assert_eq!(t.timestamp_ms, w["timestamp_ms"].as_f64(), "{sid} t{i} timestamp");
+                    assert_eq!(
+                        t.timestamp_ms,
+                        w["timestamp_ms"].as_f64(),
+                        "{sid} t{i} timestamp"
+                    );
                     assert_eq!(t.delay_ms, w["delay_ms"].as_f64(), "{sid} t{i} delay");
-                    assert_eq!(t.source_kind, wc["source_kind"].as_str().unwrap(), "{sid} t{i} kind");
+                    assert_eq!(
+                        t.source_kind,
+                        wc["source_kind"].as_str().unwrap(),
+                        "{sid} t{i} kind"
+                    );
                     assert_eq!(
                         t.reset_context,
                         w["reset_context"].as_bool().unwrap(),
                         "{sid} t{i} reset"
                     );
-                    assert_eq!(t.max_tokens, w["max_tokens"].as_i64().unwrap(), "{sid} t{i} max_tokens");
+                    assert_eq!(
+                        t.max_tokens,
+                        w["max_tokens"].as_i64().unwrap(),
+                        "{sid} t{i} max_tokens"
+                    );
                     assert_eq!(
                         t.theoretical_prefix_cache_hit_blocks,
                         w["hit"].as_i64().unwrap(),
@@ -1108,10 +1135,18 @@ mod tests {
         };
         let rows = vec![row("a", 100, 4), row("b", 900, 50), row("c", 200, 4)];
         // max_context 500 drops b (peak 950); cap 2 keeps a, c.
-        let (kept, stats) =
-            load_hf_traces_from_rows(rows, "semianalysis_cc_traces_weka_062126", Some(2), Some(500), None)
-                .unwrap();
-        assert_eq!(kept.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), vec!["a", "c"]);
+        let (kept, stats) = load_hf_traces_from_rows(
+            rows,
+            "semianalysis_cc_traces_weka_062126",
+            Some(2),
+            Some(500),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            kept.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
         assert_eq!(stats.rejected_by_maxctx, 1);
         // Invalid row (unknown field) errors with dataset name context.
         let bad = vec![serde_json::json!({"id": "x", "bogus": 1})];
@@ -1159,7 +1194,10 @@ mod tests {
         let traces = vec![a, mk("b", &[(900, 50)]), mk("c", &[(200, 4)])];
         // max_context 500 drops b; cap 2 keeps a, c.
         let (kept, stats) = hf_select_traces(traces, Some(2), Some(500), None);
-        assert_eq!(kept.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), vec!["a", "c"]);
+        assert_eq!(
+            kept.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
         assert_eq!(stats.rejected_by_maxctx, 1);
         assert_eq!(stats.largest_observed, 950);
     }
@@ -1211,7 +1249,10 @@ mod tests {
         let opts = MainReconstructOptions::default();
         let serial = convert_traces_serial(&traces, &HashMap::new(), &cfg, &opts, make);
         let parallel = convert_traces_parallel(&traces, &HashMap::new(), &cfg, &opts, make);
-        assert_eq!(serial, parallel, "parallel must be byte-identical to serial");
+        assert_eq!(
+            serial, parallel,
+            "parallel must be byte-identical to serial"
+        );
         assert_eq!(serial.len(), 8);
     }
 
@@ -1255,8 +1296,8 @@ mod tests {
     fn convert_trace_emits_root_and_child_conversations() {
         use crate::agentx::config::WekaConfig;
         use crate::agentx::trace::{
-            WekaInnerRequest, WekaNormalRequest, WekaRequest, WekaSubagentEntry, WekaTrace,
-            HashIdScope,
+            HashIdScope, WekaInnerRequest, WekaNormalRequest, WekaRequest, WekaSubagentEntry,
+            WekaTrace,
         };
         let norm = |t: f64, hs: &[i64], in_len: i64| WekaNormalRequest {
             t,
@@ -1378,7 +1419,11 @@ mod tests {
         )
         .unwrap();
         let root = convs.iter().find(|c| c.session_id == "t").unwrap();
-        let spawn = root.turns.iter().find_map(|t| t.spawn_branch.as_ref()).unwrap();
+        let spawn = root
+            .turns
+            .iter()
+            .find_map(|t| t.spawn_branch.as_ref())
+            .unwrap();
         assert_eq!(spawn.child_session_ids, vec!["t::sa:a".to_string()]);
         assert!(!spawn.background);
         let join = root

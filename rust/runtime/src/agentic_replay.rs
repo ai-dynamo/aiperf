@@ -1424,10 +1424,22 @@ mod system_idle_gap_tests {
 
     #[test]
     fn system_idle_continuation_delay_caps_only_when_no_other_tasks_are_pending() {
-        assert_eq!(system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 1), 10_000.0);
-        assert_eq!(system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 2), 100_000.0);
-        assert_eq!(system_idle_continuation_delay_ms(5_000.0, Some(10_000.0), 1), 5_000.0);
-        assert_eq!(system_idle_continuation_delay_ms(100_000.0, None, 1), 100_000.0);
+        assert_eq!(
+            system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 1),
+            10_000.0
+        );
+        assert_eq!(
+            system_idle_continuation_delay_ms(100_000.0, Some(10_000.0), 2),
+            100_000.0
+        );
+        assert_eq!(
+            system_idle_continuation_delay_ms(5_000.0, Some(10_000.0), 1),
+            5_000.0
+        );
+        assert_eq!(
+            system_idle_continuation_delay_ms(100_000.0, None, 1),
+            100_000.0
+        );
     }
 }
 

@@ -20,8 +20,7 @@ use crate::dataset::request::{
 };
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::{
-    CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn,
-    TurnMessageLowerer,
+    CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn, TurnMessageLowerer,
 };
 use smallvec::SmallVec;
 

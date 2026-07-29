@@ -256,12 +256,11 @@ pub fn apply_scenario_locks(
 ) -> Result<ScenarioOutcome, ScenarioLockError> {
     let mut violations: Vec<ScenarioViolation> = Vec::new();
     let mut applied: Vec<String> = Vec::new();
-    let record = |r: LockResult, lock: &str, v: &mut Vec<ScenarioViolation>, a: &mut Vec<String>| {
-        match r {
+    let record =
+        |r: LockResult, lock: &str, v: &mut Vec<ScenarioViolation>, a: &mut Vec<String>| match r {
             LockResult::Satisfied | LockResult::Applied => a.push(lock.to_string()),
             LockResult::Violated(viol) => v.push(viol),
-        }
-    };
+        };
 
     if spec.require_streaming {
         let r = apply_require_true(
@@ -291,7 +290,12 @@ pub fn apply_scenario_locks(
             "--ignore-trace-delays",
             &format!("scenario {:?} forbids --ignore-trace-delays", spec.name),
         );
-        record(r, "forbid_ignore_trace_delays", &mut violations, &mut applied);
+        record(
+            r,
+            "forbid_ignore_trace_delays",
+            &mut violations,
+            &mut applied,
+        );
     }
     if !spec.require_loader.is_empty() {
         if loader_allowed(inputs.loader.as_deref(), &spec.require_loader) {
@@ -394,9 +398,10 @@ fn extract_openai_error_message(text: &str) -> Option<String> {
     let parsed: serde_json::Value = serde_json::from_str(text).ok()?;
     let obj = parsed.as_object()?;
     match obj.get("error") {
-        Some(serde_json::Value::Object(err)) => {
-            err.get("message").and_then(|m| m.as_str()).map(String::from)
-        }
+        Some(serde_json::Value::Object(err)) => err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .map(String::from),
         Some(serde_json::Value::String(s)) => Some(s.clone()),
         _ => None,
     }
@@ -448,15 +453,24 @@ mod tests {
         };
         let out = apply_scenario_locks(&spec, &overridden).unwrap();
         assert_eq!(out.submission_valid, Some(false));
-        assert_eq!(out.submission_invalid_reasons, vec!["unsafe_override".to_string()]);
+        assert_eq!(
+            out.submission_invalid_reasons,
+            vec!["unsafe_override".to_string()]
+        );
     }
 
     #[test]
     fn invariant_lock_decisions() {
         // require_streaming: already on -> satisfied.
-        assert_eq!(apply_require_true(true, false, "--streaming", "m"), LockResult::Satisfied);
+        assert_eq!(
+            apply_require_true(true, false, "--streaming", "m"),
+            LockResult::Satisfied
+        );
         // unset -> apply default.
-        assert_eq!(apply_require_true(false, false, "--streaming", "m"), LockResult::Applied);
+        assert_eq!(
+            apply_require_true(false, false, "--streaming", "m"),
+            LockResult::Applied
+        );
         // explicitly off -> violation.
         assert!(matches!(
             apply_require_true(false, true, "--streaming", "m"),
@@ -467,7 +481,10 @@ mod tests {
             apply_forbid_true(true, true, "--ignore-trace-delays", "m"),
             LockResult::Violated(_)
         ));
-        assert_eq!(apply_forbid_true(false, false, "x", "m"), LockResult::Satisfied);
+        assert_eq!(
+            apply_forbid_true(false, false, "x", "m"),
+            LockResult::Satisfied
+        );
         // loader allowlist.
         let allowed = vec!["weka_trace".to_string(), "weka_hf".to_string()];
         assert!(loader_allowed(Some("weka_trace"), &allowed));
@@ -496,7 +513,8 @@ mod tests {
 
     #[test]
     fn matches_openai_error_message() {
-        let body = r#"{"error": {"message": "This model's maximum context length is 8192 tokens"}}"#;
+        let body =
+            r#"{"error": {"message": "This model's maximum context length is 8192 tokens"}}"#;
         assert!(is_context_overflow_response(Some(body), &subs()));
     }
 
@@ -508,7 +526,10 @@ mod tests {
 
     #[test]
     fn no_match_and_empty_cases() {
-        assert!(!is_context_overflow_response(Some("rate limit exceeded"), &subs()));
+        assert!(!is_context_overflow_response(
+            Some("rate limit exceeded"),
+            &subs()
+        ));
         assert!(!is_context_overflow_response(None, &subs()));
         assert!(!is_context_overflow_response(Some(""), &subs()));
         assert!(!is_context_overflow_response(Some("context length"), &[]));

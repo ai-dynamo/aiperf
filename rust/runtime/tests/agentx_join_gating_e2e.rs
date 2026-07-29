@@ -20,10 +20,9 @@
 //! parent join is provably parked for the entire live child lifetime and only
 //! becomes dispatchable at-or-after the child's terminal instant.
 
-
 use std::cell::RefCell;
 
-use aiperf_runtime::agentic_replay::{build_tree_specs, take_ready, TreeGate};
+use aiperf_runtime::agentic_replay::{TreeGate, build_tree_specs, take_ready};
 use aiperf_runtime::agentx::loader::{
     JoinPrerequisite, ReconstructedConversation, ReconstructedTurn,
 };
@@ -97,7 +96,10 @@ fn parent_join_dispatch_follows_live_child_terminal() {
     };
     let specs = build_tree_specs(&[root, child]);
     assert_eq!(specs.len(), 1, "expected exactly one gated tree");
-    assert_eq!(specs[0].join_turns, vec![(join_turn, vec!["t::sa:a".to_string()])]);
+    assert_eq!(
+        specs[0].join_turns,
+        vec![(join_turn, vec!["t::sa:a".to_string()])]
+    );
 
     let gate = TreeGate::new(&specs);
     let queue: RefCell<Vec<Deferred>> = RefCell::new(Vec::new());
@@ -140,9 +142,16 @@ fn parent_join_dispatch_follows_live_child_terminal() {
     // 4) The gate now clears and `take_ready` yields the parent join. Its actual
     //    dispatch instant is the current clock (>= the child terminal), NOT its
     //    recorded arrival offset — the invariant the brief requires.
-    assert!(!gate.is_waiting("t", join_turn), "gate must clear on child terminal");
+    assert!(
+        !gate.is_waiting("t", join_turn),
+        "gate must clear on child terminal"
+    );
     let ready = take_ready(&queue, &gate, key);
-    assert_eq!(ready.len(), 1, "parent join must be released after child terminal");
+    assert_eq!(
+        ready.len(),
+        1,
+        "parent join must be released after child terminal"
+    );
     assert!(queue.borrow().is_empty(), "deferral queue must drain");
 
     let parent_dispatch_ns = child_end_ns; // released at-or-after child terminal
@@ -163,8 +172,14 @@ fn parent_join_dispatch_follows_live_child_terminal() {
 
     // 5) Tree recycles only after the WHOLE tree drains: the child terminal alone
     //    is not a drain event; the root's own terminal completes the tree.
-    assert!(!gate.on_lane_terminal("t::sa:a"), "child terminal alone must not drain the tree");
-    assert!(gate.on_lane_terminal("t"), "tree drains only after the root terminal");
+    assert!(
+        !gate.on_lane_terminal("t::sa:a"),
+        "child terminal alone must not drain the tree"
+    );
+    assert!(
+        gate.on_lane_terminal("t"),
+        "tree drains only after the root terminal"
+    );
 }
 
 /// A two-child join stays gated until the LAST live child terminates, and the
@@ -178,7 +193,10 @@ fn parent_join_waits_for_last_of_multiple_live_children() {
         parent_conversation_id: None,
         turns: vec![
             turn(None),
-            turn(Some(("br:a".into(), vec!["t::sa:a".into(), "t::sa:b".into()]))),
+            turn(Some((
+                "br:a".into(),
+                vec!["t::sa:a".into(), "t::sa:b".into()],
+            ))),
         ],
     };
     let child_a = ReconstructedConversation {
@@ -206,7 +224,10 @@ fn parent_join_waits_for_last_of_multiple_live_children() {
 
     // First (fast) child terminates: join still gated on the slow second child.
     gate.on_child_terminal("t::sa:a");
-    assert!(gate.is_waiting("t", join_turn), "join stays gated on the outstanding child");
+    assert!(
+        gate.is_waiting("t", join_turn),
+        "join stays gated on the outstanding child"
+    );
     assert!(take_ready(&queue, &gate, key).is_empty());
 
     // Second (slow) child terminates LIVE later: only now does the join release.

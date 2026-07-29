@@ -110,9 +110,10 @@ pub fn infer_cross_stream_predecessors(
         // Drop a frontier member fully completed-before another frontier member.
         let mut preds: Vec<ReplayTurnKey> = Vec::new();
         for (i, c) in frontier.iter().enumerate() {
-            let dominated = frontier.iter().enumerate().any(|(j, later)| {
-                j != i && c.1 < later.1 && c.2 <= later.1
-            });
+            let dominated = frontier
+                .iter()
+                .enumerate()
+                .any(|(j, later)| j != i && c.1 < later.1 && c.2 <= later.1);
             if !dominated {
                 preds.push(intervals[c.0].key.clone());
             }

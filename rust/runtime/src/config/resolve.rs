@@ -752,7 +752,10 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // and subagent children across cell processes, breaking join gating — reject
     // it with a clear error (use `--weka-semantics graph-ir` for cellular weka).
     if inputs.system_idle_gap_cap_seconds.is_some()
-        && !matches!(weka_semantics.as_deref(), Some("legacy") | Some("agentx") | Some("graph-ir") | Some("graphir") | Some("graph_ir"))
+        && !matches!(
+            weka_semantics.as_deref(),
+            Some("legacy") | Some("agentx") | Some("graph-ir") | Some("graphir") | Some("graph_ir")
+        )
     {
         anyhow::bail!(
             "--system-idle-gap-cap-seconds requires a Weka replay mode \
@@ -1374,12 +1377,10 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 // `raw` forces the base JSONL on even when the format list omits it.
                 records_path: (per_record && (has("jsonl") || inputs.export_raw))
                     .then(|| format!("{stem}.jsonl")),
-                records_csv_path: (per_record && has("csv"))
-                    .then(|| format!("{stem}_records.csv")),
+                records_csv_path: (per_record && has("csv")).then(|| format!("{stem}_records.csv")),
                 records_parquet_path: (per_record && has("parquet"))
                     .then(|| format!("{stem}.parquet")),
-                raw_path: (per_record && inputs.export_raw)
-                    .then(|| format!("{stem}_raw.jsonl")),
+                raw_path: (per_record && inputs.export_raw).then(|| format!("{stem}_raw.jsonl")),
                 outputs_path: (per_record && inputs.export_outputs_json)
                     .then(|| "outputs.json".to_string()),
                 // Dry-run dataset analysis: emit beside this run-relative base path.

@@ -1249,7 +1249,10 @@ mod tests {
 
             assert_eq!(inputs.trace_idle_gap_cap_seconds, Some(12.0));
             assert_eq!(inputs.system_idle_gap_cap_seconds, Some(7.0));
-            assert!(matches!(inputs.transport, crate::model::transport::Transport::DryRun(_)));
+            assert!(matches!(
+                inputs.transport,
+                crate::model::transport::Transport::DryRun(_)
+            ));
         });
     }
 
@@ -1451,10 +1454,7 @@ mod tests {
         ]);
         let error = super::resolve(&flags).unwrap_err();
         assert!(error.to_string().contains("baseten_trace loader"));
-        assert!(
-            error.to_string().contains("sharegpt"),
-            "got: {error}"
-        );
+        assert!(error.to_string().contains("sharegpt"), "got: {error}");
     }
 
     #[test]
@@ -1990,10 +1990,7 @@ mod tests {
                 "0.5",
             ]);
             let err = super::resolve(&flags).expect_err("baseten-only");
-            assert!(
-                err.to_string().contains("baseten_trace"),
-                "got: {err}"
-            );
+            assert!(err.to_string().contains("baseten_trace"), "got: {err}");
         });
     }
 

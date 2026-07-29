@@ -7,36 +7,40 @@
 //! returned [`RequestRecord`] (the export raw record) carries the byte-exact
 //! request content, the streamed response tokens, captured TTFT, and timing.
 
-
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::Duration;
 
 use aiperf_runtime::agentx::config::WekaConfig;
-use aiperf_runtime::agentx::loader::{convert_trace_to_conversations, MainReconstructOptions};
+use aiperf_runtime::agentx::loader::{MainReconstructOptions, convert_trace_to_conversations};
 use aiperf_runtime::agentx::replay::build_dispatch_plan;
 use aiperf_runtime::agentx::synth::TokenSynth;
 use aiperf_runtime::agentx::trace::{HashIdScope, WekaNormalRequest, WekaRequest, WekaTrace};
 use aiperf_runtime::agentx::wire::ChatRequestOptions;
+use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::client::http_client::HttpClient;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::RealClock;
 
 use axum::response::sse::{Event, Sse};
-use axum::{routing::post, Router};
+use axum::{Router, routing::post};
 use bytes::Bytes;
 
 struct StubSynth;
 impl TokenSynth for StubSynth {
     fn decode_block_tokens(&mut self, h: &[i64]) -> Vec<u32> {
-        h.iter().flat_map(|&x| (0..4).map(move |i| x as u32 * 1000 + i)).collect()
+        h.iter()
+            .flat_map(|&x| (0..4).map(move |i| x as u32 * 1000 + i))
+            .collect()
     }
     fn sample_partial_tail_tokens(&mut self, n: usize, _s: &str) -> Vec<u32> {
         (0..n as u32).map(|i| 900_000 + i).collect()
     }
     fn decode_tokens_to_text(&self, t: &[u32]) -> String {
-        t.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ")
+        t.iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -54,8 +58,8 @@ fn legacy_plan_fires_through_runtime_hyper_client_into_export_records() {
     run_local(async {
         const OUT_TOKENS: usize = 4;
         // In-process streaming SSE inference endpoint.
-        async fn handler() -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>
-        {
+        async fn handler()
+        -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>> {
             let stream = futures::stream::unfold(0usize, |i| async move {
                 if i > OUT_TOKENS {
                     return None;
@@ -83,25 +87,51 @@ fn legacy_plan_fires_through_runtime_hyper_client_into_export_records() {
         // Reconstruct + build the transport-ready dispatch plan.
         let norm = |t: f64, hs: &[i64]| {
             WekaRequest::Normal(WekaNormalRequest {
-                t, model: "m".into(), input_length: hs.len() as i64 * 4, output_length: 4,
-                hash_ids: hs.to_vec(), input_types: vec![], output_types: vec![],
-                stop: String::new(), api_time: Some(0.1), think_time: None,
+                t,
+                model: "m".into(),
+                input_length: hs.len() as i64 * 4,
+                output_length: 4,
+                hash_ids: hs.to_vec(),
+                input_types: vec![],
+                output_types: vec![],
+                stop: String::new(),
+                api_time: Some(0.1),
+                think_time: None,
             })
         };
         let trace = WekaTrace {
-            id: "t".into(), models: vec!["m".into()], block_size: 4,
-            hash_id_scope: HashIdScope::Local, tool_tokens: 0, system_tokens: 0,
-            requests: vec![norm(0.0, &[1, 2]), norm(1.0, &[1, 2, 3])], totals: None,
+            id: "t".into(),
+            models: vec!["m".into()],
+            block_size: 4,
+            hash_id_scope: HashIdScope::Local,
+            tool_tokens: 0,
+            system_tokens: 0,
+            requests: vec![norm(0.0, &[1, 2]), norm(1.0, &[1, 2, 3])],
+            totals: None,
         };
         let mut synth = StubSynth;
         let convs = convert_trace_to_conversations(
-            "t", &trace, &mut synth, &HashMap::new(),
-            &WekaConfig { split_flattened_agents: false, ..WekaConfig::default() },
+            "t",
+            &trace,
+            &mut synth,
+            &HashMap::new(),
+            &WekaConfig {
+                split_flattened_agents: false,
+                ..WekaConfig::default()
+            },
             &MainReconstructOptions::default(),
-        ).unwrap();
+        )
+        .unwrap();
         let mut plan = build_dispatch_plan(
-            &convs, 500.0, false, None,
-            &ChatRequestOptions { streaming: true, ignore_eos: true, cache_bust_marker: None },
+            &convs,
+            500.0,
+            false,
+            None,
+            &ChatRequestOptions {
+                streaming: true,
+                ignore_eos: true,
+                cache_bust_marker: None,
+            },
         );
         plan.sort_by_key(|i| i.dispatch_ns);
 
@@ -118,7 +148,9 @@ fn legacy_plan_fires_through_runtime_hyper_client_into_export_records() {
             let ttft = Rc::new(Cell::new(None::<i64>));
             let ttft_cb = ttft.clone();
             let rec = client
-                .request(&url, &headers, body.clone(), true, move |ns| ttft_cb.set(Some(ns)))
+                .request(&url, &headers, body.clone(), true, move |ns| {
+                    ttft_cb.set(Some(ns))
+                })
                 .await;
 
             // The dispatch plan's byte-exact request body (verified in the raw-HTTP
@@ -126,11 +158,24 @@ fn legacy_plan_fires_through_runtime_hyper_client_into_export_records() {
             // RequestRecord — the export raw record — with the streamed response
             // tokens, captured TTFT, and request timing.
             assert!(!rec.has_error(), "transport error: {:?}", rec.error);
-            assert_eq!(rec.status, Some(200), "production transport delivered the request");
-            assert!(!rec.responses.is_empty(), "streamed response tokens recorded");
+            assert_eq!(
+                rec.status,
+                Some(200),
+                "production transport delivered the request"
+            );
+            assert!(
+                !rec.responses.is_empty(),
+                "streamed response tokens recorded"
+            );
             assert!(ttft.get().is_some(), "TTFT captured by the transport");
-            assert!(rec.recv_start_ns.is_some(), "response-start (TTFT) timing recorded");
-            assert!(rec.end_ns.is_some() && rec.end_ns.unwrap() >= rec.start_ns, "request timing");
+            assert!(
+                rec.recv_start_ns.is_some(),
+                "response-start (TTFT) timing recorded"
+            );
+            assert!(
+                rec.end_ns.is_some() && rec.end_ns.unwrap() >= rec.start_ns,
+                "request timing"
+            );
         }
     });
 }

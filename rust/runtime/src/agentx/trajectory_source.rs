@@ -88,7 +88,11 @@ pub fn validate_dataset_wrap_policy(
 /// - `n == 2`: only `[0]` (turn 1 remains as the profile turn).
 /// - `n >= 3`: `[k_min ..= k_max]` where `k_min = min(int(min_ratio*n), n-2)`,
 ///   `k_max = min(int(max_ratio*n), n-2)`, capped so `k_i + 1 < n` always holds.
-pub fn legacy_start_turn_candidates(n: i64, start_min_ratio: f64, start_max_ratio: f64) -> Vec<i64> {
+pub fn legacy_start_turn_candidates(
+    n: i64,
+    start_min_ratio: f64,
+    start_max_ratio: f64,
+) -> Vec<i64> {
     if n <= 1 {
         return Vec::new();
     }
@@ -132,7 +136,10 @@ pub fn timestamped_t_star_ms(seed: u64, lo: f64, hi: f64) -> f64 {
 /// First turn index whose recorded timestamp is at/after `t_star_ms` (Python
 /// `_next_turn_index_at_or_after`) — the PROFILING resume index. `None` when no
 /// turn starts at/after t* (the whole stream is pre-t* history).
-pub fn next_turn_index_at_or_after(turn_timestamps_ms: &[Option<f64>], t_star_ms: f64) -> Option<i64> {
+pub fn next_turn_index_at_or_after(
+    turn_timestamps_ms: &[Option<f64>],
+    t_star_ms: f64,
+) -> Option<i64> {
     for (idx, ts) in turn_timestamps_ms.iter().enumerate() {
         if let Some(t) = ts {
             if t.is_finite() && *t >= t_star_ms {
@@ -183,10 +190,7 @@ pub fn capped_warmup_lead_ms(lead_ms: f64, cap_ms: Option<f64>) -> f64 {
 /// spread is `(max_lead - min_lead)`. Returns offsets in ms, index-aligned to
 /// `leads`.
 pub fn warmup_dispatch_offsets_ms(leads: &[Option<f64>]) -> Vec<f64> {
-    let max_lead = leads
-        .iter()
-        .filter_map(|l| *l)
-        .fold(0.0_f64, f64::max);
+    let max_lead = leads.iter().filter_map(|l| *l).fold(0.0_f64, f64::max);
     leads
         .iter()
         .map(|l| match l {
@@ -300,14 +304,26 @@ mod tests {
     fn profiling_phase_start_anchoring() {
         let offs = [500.0, 50.0, 650.0];
         // spread, no cap -> unchanged.
-        assert_eq!(profiling_dispatch_delays_ms(&offs, false, None), vec![500.0, 50.0, 650.0]);
+        assert_eq!(
+            profiling_dispatch_delays_ms(&offs, false, None),
+            vec![500.0, 50.0, 650.0]
+        );
         // burst, no cap -> anchor at min(50) -> [450, 0, 600].
-        assert_eq!(profiling_dispatch_delays_ms(&offs, true, None), vec![450.0, 0.0, 600.0]);
+        assert_eq!(
+            profiling_dispatch_delays_ms(&offs, true, None),
+            vec![450.0, 0.0, 600.0]
+        );
         // cap 30 -> shift = min(50)-30 = 20; spread -> [480, 30, 630].
         assert_eq!(leading_idle_shift_ms(&offs, Some(30.0)), 20.0);
-        assert_eq!(profiling_dispatch_delays_ms(&offs, false, Some(30.0)), vec![480.0, 30.0, 630.0]);
+        assert_eq!(
+            profiling_dispatch_delays_ms(&offs, false, Some(30.0)),
+            vec![480.0, 30.0, 630.0]
+        );
         // cap 30 + burst -> t0 = 30 -> [450, 0, 600].
-        assert_eq!(profiling_dispatch_delays_ms(&offs, true, Some(30.0)), vec![450.0, 0.0, 600.0]);
+        assert_eq!(
+            profiling_dispatch_delays_ms(&offs, true, Some(30.0)),
+            vec![450.0, 0.0, 600.0]
+        );
         // cap above the leading idle -> no shift.
         assert_eq!(leading_idle_shift_ms(&offs, Some(100.0)), 0.0);
     }
@@ -345,7 +361,12 @@ mod tests {
                     other => panic!("bad phase {other}"),
                 };
                 assert_eq!(got.phase, want_phase, "{name} k{} phase", got.k);
-                assert_eq!(got.offset_ms, w["offset_ms"].as_f64(), "{name} k{} offset", got.k);
+                assert_eq!(
+                    got.offset_ms,
+                    w["offset_ms"].as_f64(),
+                    "{name} k{} offset",
+                    got.k
+                );
             }
         }
     }
@@ -389,7 +410,10 @@ mod tests {
 
     #[test]
     fn legacy_candidates_window() {
-        assert_eq!(legacy_start_turn_candidates(10, 0.25, 0.75), vec![2, 3, 4, 5, 6, 7]);
+        assert_eq!(
+            legacy_start_turn_candidates(10, 0.25, 0.75),
+            vec![2, 3, 4, 5, 6, 7]
+        );
         assert_eq!(legacy_start_turn_candidates(2, 0.25, 0.75), vec![0]);
         assert!(legacy_start_turn_candidates(1, 0.25, 0.75).is_empty());
         // n=3: k_min=min(0,1)=0, k_max=min(2,1)=1 -> [0,1].

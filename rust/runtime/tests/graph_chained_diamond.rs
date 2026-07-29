@@ -73,18 +73,27 @@ impl RealMock {
         {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("SKIP: cannot launch {}: {e} (set AIPERF_MOCK_RS_BIN)", bin.display());
+                eprintln!(
+                    "SKIP: cannot launch {}: {e} (set AIPERF_MOCK_RS_BIN)",
+                    bin.display()
+                );
                 return None;
             }
         };
         for _ in 0..250 {
             if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(RealMock { child, base_url: format!("http://127.0.0.1:{port}") });
+                return Some(RealMock {
+                    child,
+                    base_url: format!("http://127.0.0.1:{port}"),
+                });
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         eprintln!("SKIP: mock did not become ready on port {port}");
-        let mut m = RealMock { child, base_url: String::new() };
+        let mut m = RealMock {
+            child,
+            base_url: String::new(),
+        };
         let _ = m.child.kill();
         None
     }
@@ -178,7 +187,10 @@ fn build_chained_diamond(levels: usize, think_us: &[f64], user: SegmentHandle) -
     for k in 0..levels {
         for side in ["a", "b"] {
             let id = format!("{side}{k}");
-            state.insert(id.clone(), json!({"type": "messages", "reducer": "add_messages"}));
+            state.insert(
+                id.clone(),
+                json!({"type": "messages", "reducer": "add_messages"}),
+            );
 
             let mut node = Map::new();
             node.insert("node_type".into(), json!("llm"));
@@ -224,12 +236,25 @@ fn chained_diamond_over_real_mock() {
 
     let tokenizer = TiktokenTokenizer::builtin();
     let mut pool = SegmentPool::new();
-    let user = intern_message(&mut pool, &Msg::new("user", "shopping query"), None, &tokenizer).unwrap();
+    let user = intern_message(
+        &mut pool,
+        &Msg::new("user", "shopping query"),
+        None,
+        &tokenizer,
+    )
+    .unwrap();
     let materializer = Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
 
     let obs = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
-    let sink = Rc::new(TransportChatSink::new(clock, &mock.base_url, "gpt2", obs.clone(), 16, false));
+    let sink = Rc::new(TransportChatSink::new(
+        clock,
+        &mock.base_url,
+        "gpt2",
+        obs.clone(),
+        16,
+        false,
+    ));
 
     let graph = build_chained_diamond(levels, &think_us, user);
     let trace: TraceRecord = serde_json::from_value(json!({"id": "t-1"})).unwrap();
@@ -246,7 +271,10 @@ fn chained_diamond_over_real_mock() {
         2 * levels,
         "every branch request completed against the real mock"
     );
-    assert!(obs.tokens.load(Ordering::Relaxed) > 0, "real output tokens observed");
+    assert!(
+        obs.tokens.load(Ordering::Relaxed) > 0,
+        "real output tokens observed"
+    );
 }
 
 /// Semantics: the AND-barrier ordering and per-root think-time, observed
@@ -262,17 +290,31 @@ fn chained_diamond_barrier_ordering_and_think_time() {
     let user = intern_message(&mut pool, &Msg::new("user", "req"), None, &tokenizer).unwrap();
     let materializer = Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
 
-    let sink = Rc::new(RecordingSink { start: Instant::now(), log: RefCell::new(Vec::new()) });
+    let sink = Rc::new(RecordingSink {
+        start: Instant::now(),
+        log: RefCell::new(Vec::new()),
+    });
     let graph = build_chained_diamond(levels, &think_us, user);
     let trace: TraceRecord = serde_json::from_value(json!({"id": "t-1"})).unwrap();
 
-    run_trace::<Msg>(Rc::new(graph), trace, materializer, sink.clone(), TimeBase::Wall).unwrap();
+    run_trace::<Msg>(
+        Rc::new(graph),
+        trace,
+        materializer,
+        sink.clone(),
+        TimeBase::Wall,
+    )
+    .unwrap();
 
     let log = sink.log.borrow();
 
     // Exactly two branch dispatches per level, and zero root dispatches (roots
     // are not nodes -> they never touch the sink).
-    assert_eq!(log.len(), 2 * levels, "two branch requests per level, zero for roots");
+    assert_eq!(
+        log.len(),
+        2 * levels,
+        "two branch requests per level, zero for roots"
+    );
     let order: Vec<String> = log.iter().map(|(n, _)| n.clone()).collect();
     assert!(
         !order.iter().any(|n| n.starts_with("root")),

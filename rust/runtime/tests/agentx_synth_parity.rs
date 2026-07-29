@@ -10,7 +10,6 @@
 //! an identical stub and asserts the emitted `TurnDelta`s and full segment state
 //! match the Python output field-for-field.
 
-
 use aiperf_runtime::agentx::synth::{ConversationReconstructor, TokenSynth};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -108,7 +107,11 @@ fn reconstructor_matches_python_golden() {
                 "{name} step {i}: msg count"
             );
             for (m, wm) in delta.delta_messages.iter().zip(want_msgs) {
-                assert_eq!(m.role, wm["role"].as_str().unwrap(), "{name} step {i}: role");
+                assert_eq!(
+                    m.role,
+                    wm["role"].as_str().unwrap(),
+                    "{name} step {i}: role"
+                );
                 assert_eq!(
                     m.content,
                     wm["content"].as_str().unwrap(),
@@ -121,7 +124,11 @@ fn reconstructor_matches_python_golden() {
             let got = r.segments();
             assert_eq!(got.len(), want_segs.len(), "{name} step {i}: seg count");
             for (seg, ws) in got.iter().zip(want_segs) {
-                assert_eq!(seg.role.as_str(), ws["role"].as_str().unwrap(), "{name} s{i} role");
+                assert_eq!(
+                    seg.role.as_str(),
+                    ws["role"].as_str().unwrap(),
+                    "{name} s{i} role"
+                );
                 assert_eq!(
                     seg.block_start,
                     ws["block_start"].as_i64().unwrap(),
@@ -141,7 +148,10 @@ fn reconstructor_matches_python_golden() {
                     "{name} s{i} content"
                 );
                 let want_trt = ws["tool_result_turn"].as_i64();
-                assert_eq!(seg.tool_result_turn, want_trt, "{name} s{i} tool_result_turn");
+                assert_eq!(
+                    seg.tool_result_turn, want_trt,
+                    "{name} s{i} tool_result_turn"
+                );
             }
         }
 

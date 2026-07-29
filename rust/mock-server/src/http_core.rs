@@ -89,7 +89,12 @@ pub fn http_response(status: &str, content_type: &str, body: &[u8], keep_alive: 
 
 fn bad_request(e: &serde_json::Error, keep_alive: bool) -> Vec<u8> {
     let msg = format!("{{\"error\":\"invalid request: {e}\"}}");
-    http_response("422 Unprocessable Entity", "application/json", msg.as_bytes(), keep_alive)
+    http_response(
+        "422 Unprocessable Entity",
+        "application/json",
+        msg.as_bytes(),
+        keep_alive,
+    )
 }
 
 /// Fast path: serve the throughput-critical endpoints (chat/text completions,
@@ -104,31 +109,37 @@ pub fn route_fast(state: &AppState, head: &Head, buf: &[u8]) -> Option<Vec<u8>> 
     let ka = head.keep_alive;
     let body = &buf[head.head_len..head.head_len + head.body_len];
     if CHAT_PATHS.iter().any(|p| path == p.as_bytes()) {
-        return Some(match serde_json::from_slice::<crate::models::ChatCompletionRequest>(body) {
-            Ok(req) => {
-                let (ct, out) = crate::handlers::render_chat_completion_fast(state, &req);
-                http_response("200 OK", ct, &out, ka)
-            }
-            Err(e) => bad_request(&e, ka),
-        });
+        return Some(
+            match serde_json::from_slice::<crate::models::ChatCompletionRequest>(body) {
+                Ok(req) => {
+                    let (ct, out) = crate::handlers::render_chat_completion_fast(state, &req);
+                    http_response("200 OK", ct, &out, ka)
+                }
+                Err(e) => bad_request(&e, ka),
+            },
+        );
     }
     if TEXT_PATHS.iter().any(|p| path == p.as_bytes()) {
-        return Some(match serde_json::from_slice::<crate::models::CompletionRequest>(body) {
-            Ok(req) => {
-                let (ct, out) = crate::handlers::render_text_completion_fast(state, &req);
-                http_response("200 OK", ct, &out, ka)
-            }
-            Err(e) => bad_request(&e, ka),
-        });
+        return Some(
+            match serde_json::from_slice::<crate::models::CompletionRequest>(body) {
+                Ok(req) => {
+                    let (ct, out) = crate::handlers::render_text_completion_fast(state, &req);
+                    http_response("200 OK", ct, &out, ka)
+                }
+                Err(e) => bad_request(&e, ka),
+            },
+        );
     }
     if EMBED_PATHS.iter().any(|p| path == p.as_bytes()) {
-        return Some(match serde_json::from_slice::<crate::models::EmbeddingRequest>(body) {
-            Ok(req) => {
-                let out = crate::handlers::render_embeddings_fast(state, &req);
-                http_response("200 OK", "application/json", &out, ka)
-            }
-            Err(e) => bad_request(&e, ka),
-        });
+        return Some(
+            match serde_json::from_slice::<crate::models::EmbeddingRequest>(body) {
+                Ok(req) => {
+                    let out = crate::handlers::render_embeddings_fast(state, &req);
+                    http_response("200 OK", "application/json", &out, ka)
+                }
+                Err(e) => bad_request(&e, ka),
+            },
+        );
     }
     None
 }
@@ -215,7 +226,10 @@ mod tests {
             "streaming chat must set the SSE content type: {text:?}"
         );
         assert!(text.contains("data: "), "missing SSE data frames");
-        assert!(text.contains("chat.completion.chunk"), "missing chunk object");
+        assert!(
+            text.contains("chat.completion.chunk"),
+            "missing chunk object"
+        );
         assert!(text.contains("[DONE]"), "missing terminal [DONE] frame");
         assert!(text.contains("\"usage\""), "missing usage frame");
     }
@@ -250,11 +264,13 @@ mod tests {
             text.contains("Content-Type: application/json"),
             "non-streaming chat must be JSON: {text:?}"
         );
-        assert!(text.contains("chat.completion"), "missing completion object");
+        assert!(
+            text.contains("chat.completion"),
+            "missing completion object"
+        );
         // Body must be well-formed JSON after the header/body split.
         let body = text.split("\r\n\r\n").nth(1).expect("has a body");
         let value: serde_json::Value = serde_json::from_str(body).expect("valid JSON body");
         assert_eq!(value["object"], "chat.completion");
     }
 }
-

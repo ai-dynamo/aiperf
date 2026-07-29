@@ -27,8 +27,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::engine::execute::distribution;
 use crate::engine::dataset_input::DatasetCacheBustSpec;
+use crate::engine::execute::distribution;
 use crate::engine::protocol::{
     DistributionSpec, FileDatasetSpec, PromptSelectionSpec, PublicDatasetSourceSpec,
     PublicDatasetSpec, TraceSynthesisSpec,
@@ -761,7 +761,11 @@ fn prepare_recorded_file(
         synthesis
             .as_ref()
             .and_then(|value| value.cache_bust_target.as_deref())
-            .or_else(|| cache_bust.as_ref().and_then(|value| value.target.as_deref())),
+            .or_else(|| {
+                cache_bust
+                    .as_ref()
+                    .and_then(|value| value.target.as_deref())
+            }),
     );
     Ok(PreparedRecordedInput {
         input: RecordedTraceInputConfig {
@@ -881,7 +885,11 @@ fn prepare_recorded_public(
         synthesis
             .as_ref()
             .and_then(|value| value.cache_bust_target.as_deref())
-            .or_else(|| cache_bust.as_ref().and_then(|value| value.target.as_deref())),
+            .or_else(|| {
+                cache_bust
+                    .as_ref()
+                    .and_then(|value| value.target.as_deref())
+            }),
     );
     Ok(PreparedRecordedInput {
         input: RecordedTraceInputConfig {

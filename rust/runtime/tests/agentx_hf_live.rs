@@ -7,7 +7,7 @@
 
 #![cfg(feature = "parquet")]
 
-use aiperf_runtime::agentx::hf_dataset::{fetch_hf_weka_rows, HfDatasetRef};
+use aiperf_runtime::agentx::hf_dataset::{HfDatasetRef, fetch_hf_weka_rows};
 
 #[tokio::test]
 #[ignore = "hits the Hugging Face hub"]

@@ -33,13 +33,11 @@ use crate::engine::cellular_kind::CellularRunKind;
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
 // assembly below are plain envelope/metric logic reused by the non-velo build.
 #[cfg(feature = "cellular")]
-use crate::cellular::transport::connect::{BindSpec, build_velo};
-#[cfg(feature = "cellular")]
 use crate::cellular::transport::CellPhaseSignal;
 #[cfg(feature = "cellular")]
-use crate::cellular::{
-    CellMessage, ControllerTransport, SpecFor, VeloControllerTransport,
-};
+use crate::cellular::transport::connect::{BindSpec, build_velo};
+#[cfg(feature = "cellular")]
+use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
 #[cfg(feature = "cellular")]
 use crate::engine::cell_launcher::{CellLaunchContext, select_launcher};
 #[cfg(feature = "cellular")]
@@ -50,7 +48,8 @@ use crate::engine::control_hooks::{
 };
 #[cfg(feature = "cellular")]
 use crate::engine::control_plane_http::{
-    ControlPlaneClientPolicy, ControlPlaneHttpProviderFactory, NativeControlPlaneHttpProviderFactory,
+    ControlPlaneClientPolicy, ControlPlaneHttpProviderFactory,
+    NativeControlPlaneHttpProviderFactory,
 };
 
 /// Env toggle for barrier-free start: the controller
@@ -192,8 +191,12 @@ fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, Metric
 
 #[cfg(feature = "cellular")]
 fn envelope_requests_control_hooks(envelope: &serde_json::Value) -> bool {
-    envelope.pointer("/run/cfg/endpoint/reset_kv_cache").is_some()
-        || envelope.pointer("/run/cfg/endpoint/server_profiler").is_some()
+    envelope
+        .pointer("/run/cfg/endpoint/reset_kv_cache")
+        .is_some()
+        || envelope
+            .pointer("/run/cfg/endpoint/server_profiler")
+            .is_some()
 }
 
 #[cfg(feature = "cellular")]
@@ -287,9 +290,9 @@ impl CellularProfilerCoordinator {
             CellPhaseSignal::Ready => {
                 self.ready_cells.insert(cell_id);
                 if !self.phase_released && self.ready_cells.len() == cell_count as usize {
-                    start_server_profiler(&self.hook)
-                        .await
-                        .with_context(|| format!("starting controller-owned server profiler for phase {phase:?}"))?;
+                    start_server_profiler(&self.hook).await.with_context(|| {
+                        format!("starting controller-owned server profiler for phase {phase:?}")
+                    })?;
                     phaser.advance(crate::cellular::phaser::PhaseTransition::PhaseAdvance(
                         phase.to_owned(),
                     ));

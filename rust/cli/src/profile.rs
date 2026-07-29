@@ -1223,10 +1223,12 @@ fn run_cells(
         // Every sweep/multi-run/recipe cell now carries authoring `Inputs`; the
         // runtime resolves them at `--execute`. The CLI never lowers.
         let inputs = cell.inputs.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("internal: sweep cell {} missing authoring inputs", cell.label)
+            anyhow::anyhow!(
+                "internal: sweep cell {} missing authoring inputs",
+                cell.label
+            )
         })?;
-        let terminal =
-            run_benchmark_child_authoring(inputs, Some(&cell.run), &runner, &child_pid)?;
+        let terminal = run_benchmark_child_authoring(inputs, Some(&cell.run), &runner, &child_pid)?;
         outcomes.push(sweep::aggregate::CellOutcome {
             label: cell.label.clone(),
             values: cell.run.variation.clone(),

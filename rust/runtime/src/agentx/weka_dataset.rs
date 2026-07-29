@@ -18,7 +18,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytes::Bytes;
 
-use crate::agentx::cache_bust::{resolve_tree_marker, CacheBustLedger, CacheBustTarget};
+use crate::agentx::cache_bust::{CacheBustLedger, CacheBustTarget, resolve_tree_marker};
 use crate::agentx::loader::{ReconstructedConversation, ReconstructedTurn};
 use crate::dataset::Dataset;
 use crate::dataset::model::{Conversation, ConversationContextMode, SessionId, Turn};
@@ -68,7 +68,10 @@ pub fn slice_trajectories_at_tstar(
     // join-gated behind the parent instead of firing free from an independent t*.
     let mut trees: BTreeMap<String, Vec<ReconstructedConversation>> = BTreeMap::new();
     for conv in convs {
-        trees.entry(conv.replay_scope_id.clone()).or_default().push(conv);
+        trees
+            .entry(conv.replay_scope_id.clone())
+            .or_default()
+            .push(conv);
     }
 
     let mut out = Vec::new();
@@ -230,7 +233,8 @@ pub fn compose_weka_agentic_dataset(
             // rides turn 0's first message and then persists as the permanent
             // accumulated prefix.
             let marker_for_turn = if i == 0 { marker.as_deref() } else { None };
-            let msgs_value = crate::agentx::wire::chat_messages_array(&t.raw_messages, marker_for_turn);
+            let msgs_value =
+                crate::agentx::wire::chat_messages_array(&t.raw_messages, marker_for_turn);
             let handle = pool.intern_raw(None, Bytes::from(serde_json::to_vec(&msgs_value)?))?;
             // Per-turn delta input-token count; the delta-accumulating materializer
             // sums these (plus captured reply tokens) for the ISL accounting.
@@ -321,12 +325,18 @@ mod tests {
         let out = slice_trajectories_at_tstar(vec![conv], 0, 0.5, 0.5, None);
         // One warmup conv (turn n-1) + one profiling conv (turns from t*).
         assert_eq!(out.len(), 2);
-        let warm = out.iter().find(|c| c.session_id.ends_with(WARMUP_SUFFIX)).unwrap();
+        let warm = out
+            .iter()
+            .find(|c| c.session_id.ends_with(WARMUP_SUFFIX))
+            .unwrap();
         assert_eq!(warm.turns.len(), 1);
         assert_eq!(warm.turns[0].max_tokens, 1); // _WARMUP_MAX_TOKENS
         assert_eq!(warm.turns[0].timestamp_ms, Some(100.0)); // lead = t* - warm_ts = 100
         assert_eq!(warm.parent_conversation_id.as_deref(), Some("t")); // shared tree marker
-        let prof = out.iter().find(|c| !c.session_id.ends_with(WARMUP_SUFFIX)).unwrap();
+        let prof = out
+            .iter()
+            .find(|c| !c.session_id.ends_with(WARMUP_SUFFIX))
+            .unwrap();
         // History (turn 0) excluded; profiling turns rebased to t*-relative offsets.
         assert_eq!(prof.turns.len(), 2);
         assert_eq!(prof.turns[0].timestamp_ms, Some(0.0)); // ts 100 - t* 100

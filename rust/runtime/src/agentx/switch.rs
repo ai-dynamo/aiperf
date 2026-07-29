@@ -15,7 +15,9 @@
 use std::collections::HashMap;
 
 use crate::agentx::config::WekaConfig;
-use crate::agentx::loader::{convert_traces_parallel, convert_traces_serial, MainReconstructOptions, TraceConversions};
+use crate::agentx::loader::{
+    MainReconstructOptions, TraceConversions, convert_traces_parallel, convert_traces_serial,
+};
 use crate::agentx::synth::TokenSynth;
 use crate::agentx::trace::WekaTrace;
 
@@ -131,16 +133,32 @@ mod tests {
             (0..n as u32).map(|i| 900_000 + i).collect()
         }
         fn decode_tokens_to_text(&self, tokens: &[u32]) -> String {
-            tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ")
+            tokens
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
         }
     }
 
     #[test]
     fn resolves_flags() {
-        assert_eq!(WekaSemantics::resolve(None).unwrap(), WekaSemantics::GraphIr);
-        assert_eq!(WekaSemantics::resolve(Some("graph-ir")).unwrap(), WekaSemantics::GraphIr);
-        assert_eq!(WekaSemantics::resolve(Some("Legacy")).unwrap(), WekaSemantics::Legacy);
-        assert_eq!(WekaSemantics::resolve(Some("agentx")).unwrap(), WekaSemantics::Legacy);
+        assert_eq!(
+            WekaSemantics::resolve(None).unwrap(),
+            WekaSemantics::GraphIr
+        );
+        assert_eq!(
+            WekaSemantics::resolve(Some("graph-ir")).unwrap(),
+            WekaSemantics::GraphIr
+        );
+        assert_eq!(
+            WekaSemantics::resolve(Some("Legacy")).unwrap(),
+            WekaSemantics::Legacy
+        );
+        assert_eq!(
+            WekaSemantics::resolve(Some("agentx")).unwrap(),
+            WekaSemantics::Legacy
+        );
         assert!(WekaSemantics::resolve(Some("nope")).is_err());
     }
 
@@ -227,7 +245,10 @@ mod tests {
             &trace,
             &mut synth,
             &HashMap::new(),
-            &WekaConfig { split_flattened_agents: false, ..WekaConfig::default() },
+            &WekaConfig {
+                split_flattened_agents: false,
+                ..WekaConfig::default()
+            },
             &MainReconstructOptions::default(),
             Some(500.0),
         )

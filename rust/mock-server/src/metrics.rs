@@ -112,8 +112,13 @@ impl MetricRecorder {
     /// endpoints respond, but no per-request updates occur.
     pub fn with_enabled(enabled: bool) -> Self {
         let metrics = AllMetrics::new();
-        let disabled_handle = (!enabled)
-            .then(|| Arc::new(Self::build_labeled(&metrics, "__disabled__", "__disabled__")));
+        let disabled_handle = (!enabled).then(|| {
+            Arc::new(Self::build_labeled(
+                &metrics,
+                "__disabled__",
+                "__disabled__",
+            ))
+        });
         Self {
             metrics,
             throughput: Arc::new(Throughput::new()),
@@ -802,7 +807,8 @@ impl MetricRecorder {
         // token_metrics
         l.prompt_tokens.inc_by(p);
         l.completion_tokens.inc_by(c);
-        l.tokens_per_request_prompt.observe(usage.prompt_tokens as f64);
+        l.tokens_per_request_prompt
+            .observe(usage.prompt_tokens as f64);
         l.tokens_per_request_completion
             .observe(usage.completion_tokens as f64);
         self.throughput.record_tokens(c);
@@ -970,7 +976,11 @@ impl MetricRecorder {
         if self.initialized_models.contains_key(model) {
             return;
         }
-        if self.initialized_models.insert(model.to_string(), ()).is_some() {
+        if self
+            .initialized_models
+            .insert(model.to_string(), ())
+            .is_some()
+        {
             return;
         }
         self.metrics

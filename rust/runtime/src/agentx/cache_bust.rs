@@ -44,7 +44,10 @@ const SUFFIX_SEP: &str = "::";
 /// Strip any descendant suffix (`::sa:`/`::fa:`/`:sN`) to the root trace id.
 /// Every member of a trajectory tree shares one base trace id.
 pub fn base_trace_id(conversation_id: &str) -> &str {
-    conversation_id.split(SUFFIX_SEP).next().unwrap_or(conversation_id)
+    conversation_id
+        .split(SUFFIX_SEP)
+        .next()
+        .unwrap_or(conversation_id)
 }
 
 /// Render the marker text for the given inputs and target position (Python
@@ -108,8 +111,7 @@ pub fn resolve_tree_marker(
     let base = base_trace_id(conversation_id).to_string();
     let new_pass = ledger.recycle_pass.get(&base).copied().unwrap_or(-1) + 1;
     ledger.recycle_pass.insert(base.clone(), new_pass);
-    let marker =
-        build_cache_bust_marker(benchmark_id, new_pass, trajectory_index, &base, target);
+    let marker = build_cache_bust_marker(benchmark_id, new_pass, trajectory_index, &base, target);
     ledger
         .session_marker
         .insert(root_correlation_id.to_string(), marker.clone());

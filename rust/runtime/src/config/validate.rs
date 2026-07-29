@@ -9,7 +9,7 @@
 //! default-fillers (tokenizer defaulting, seed defaulting, …) are intentionally
 //! not ported here — this pass only rejects, it never rewrites.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use super::model::config::BenchmarkConfig;
 use super::model::dataset::{CacheBustTarget, Dataset};

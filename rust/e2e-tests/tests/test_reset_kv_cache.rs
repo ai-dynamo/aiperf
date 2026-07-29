@@ -27,7 +27,11 @@ async fn reset_kv_cache_runs_once_per_sweep_cell() {
          --reset-kv-cache --ui simple",
         h.mock.url
     ));
-    assert!(r.success(), "sweep with reset_kv_cache failed: {}", r.stderr);
+    assert!(
+        r.success(),
+        "sweep with reset_kv_cache failed: {}",
+        r.stderr
+    );
     assert_eq!(
         h.mock.state.prefix_cache_generation(),
         2,

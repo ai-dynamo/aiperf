@@ -416,11 +416,7 @@ impl ConversationReconstructor {
 /// Ceiling division for non-negative `n` by positive `d` (matches Python
 /// `math.ceil(n / d)` on the integer domain used here).
 fn div_ceil(n: i64, d: i64) -> i64 {
-    if n <= 0 {
-        0
-    } else {
-        (n + d - 1) / d
-    }
+    if n <= 0 { 0 } else { (n + d - 1) / d }
 }
 
 /// Index of the first differing element of the two sequences (Python

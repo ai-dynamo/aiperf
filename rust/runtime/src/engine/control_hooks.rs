@@ -302,7 +302,9 @@ fn control_plane_profile(
     .map_err(|error| anyhow!("preparing endpoint-local control-plane profile: {error}"))
 }
 
-fn validated_profile_from_value(profile_value: &serde_json::Value) -> Result<ValidatedEndpointProfileV2> {
+fn validated_profile_from_value(
+    profile_value: &serde_json::Value,
+) -> Result<ValidatedEndpointProfileV2> {
     let value: ControlHookProfileValue = serde_json::from_value(profile_value.clone())
         .context("decoding endpoint-local control-hook profile")?;
     ensure!(

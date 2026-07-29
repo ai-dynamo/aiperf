@@ -389,7 +389,10 @@ impl BenchmarkRunWireV2 {
         if workload_kind == WorkloadKind::Graph {
             workload_config["weka_semantics"] = serde_json::json!(cfg.weka_semantics);
             workload_config["ignore_trace_delays"] = serde_json::json!(cfg.ignore_trace_delays);
-            if matches!(cfg.weka_semantics.as_deref(), Some("legacy") | Some("agentx")) {
+            if matches!(
+                cfg.weka_semantics.as_deref(),
+                Some("legacy") | Some("agentx")
+            ) {
                 if let Some(cap) = cfg.system_idle_gap_cap_seconds {
                     workload_config["system_idle_gap_cap_seconds"] = serde_json::json!(cap);
                 }
@@ -431,7 +434,8 @@ impl BenchmarkRunWireV2 {
         )
         .unwrap_or_default();
         let mut export_cfg: crate::export::ExportConfig = serde_json::from_value(
-            serde_json::to_value(&cfg.export).map_err(|error| anyhow!("run.cfg.export: {error}"))?,
+            serde_json::to_value(&cfg.export)
+                .map_err(|error| anyhow!("run.cfg.export: {error}"))?,
         )
         .unwrap_or_default();
         // Derive the summary stem from the per-record path so

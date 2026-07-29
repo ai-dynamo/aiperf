@@ -8,9 +8,7 @@ use anyhow::Result;
 
 use crate::cellular::ModuloCellPartition;
 use crate::cellular::transport::CellPhaseSignal;
-use crate::engine::cellular_cell::{
-    await_controller_phase_advance, send_controller_phase_signal,
-};
+use crate::engine::cellular_cell::{await_controller_phase_advance, send_controller_phase_signal};
 use crate::engine::control_hooks::{
     PreparedServerProfilerHook, start_server_profiler, stop_server_profiler,
 };

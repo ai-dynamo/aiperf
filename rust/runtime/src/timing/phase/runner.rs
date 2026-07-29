@@ -415,10 +415,7 @@ impl ClockPhaseRunner {
         let progress = PhaseProgress::new(config.stop);
         let stop_checker = Rc::new(StopChecker::new(&config.stop));
         let cancellation = Rc::new(CancellationSignal::new());
-        let failed_request_abort = match (
-            config.kind,
-            config.failed_request_threshold,
-        ) {
+        let failed_request_abort = match (config.kind, config.failed_request_threshold) {
             (super::PhaseKind::Profiling, Some(threshold))
                 if threshold.is_finite() && threshold >= 0.0 =>
             {

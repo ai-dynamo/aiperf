@@ -733,11 +733,13 @@ mod tests {
         record.end_ns = Some(2);
         record.status = Some(200);
         for i in 0..count {
-            record.responses.push(crate::transport::grpc::models::GrpcResponse {
-                perf_ns: i as i64,
-                json: serde_json::json!({ "index": i, "text": "hello" }),
-                wire_size: 8,
-            });
+            record
+                .responses
+                .push(crate::transport::grpc::models::GrpcResponse {
+                    perf_ns: i as i64,
+                    json: serde_json::json!({ "index": i, "text": "hello" }),
+                    wire_size: 8,
+                });
         }
         record
     }

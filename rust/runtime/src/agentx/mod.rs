@@ -27,26 +27,26 @@ pub mod handoff;
 pub mod hf_dataset;
 pub mod idle_gap;
 pub mod loader;
-/// Compose reconstructed WEKA trajectories into a linear scheduled `Dataset` for
-/// the agentic-replay timing mode.
-pub mod weka_dataset;
 pub mod metrics;
 pub mod plan;
 pub mod prepass;
 pub mod prompt;
+pub mod replay;
 pub mod replay_dependencies;
 /// Byte-exact port of the Python replay interval-barrier coordinator
 /// (`ReplayBarrierCoordinator`); single-central-driver, no async/I/O.
 pub mod replay_gate;
-pub mod replay;
 pub mod rng;
-pub mod switch;
-pub mod synth;
-pub mod tool_shape;
 pub mod scenario;
 pub mod selection;
 pub mod session_tree;
 pub mod subagent;
+pub mod switch;
+pub mod synth;
+pub mod tool_shape;
 pub mod trace;
-pub mod wire;
 pub mod trajectory_source;
+/// Compose reconstructed WEKA trajectories into a linear scheduled `Dataset` for
+/// the agentic-replay timing mode.
+pub mod weka_dataset;
+pub mod wire;

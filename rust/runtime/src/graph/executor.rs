@@ -302,9 +302,13 @@ impl<M: WireMessage> TraceExecutor<M> {
         // request (and, under a virtual clock, its remaining modeled latency).
         // Without this select the node would run to its full terminal and keep
         // scheduling successors long past the boundary.
-        let dispatch = self
-            .sink
-            .dispatch_with_options(node_id, messages, node.max_tokens, options, &on_first_token);
+        let dispatch = self.sink.dispatch_with_options(
+            node_id,
+            messages,
+            node.max_tokens,
+            options,
+            &on_first_token,
+        );
         tokio::pin!(dispatch);
         let reply = tokio::select! {
             biased;

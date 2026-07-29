@@ -18,9 +18,9 @@ use std::thread::JoinHandle;
 
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
+use crate::engine::protocol::HopRouting;
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use crate::engine::protocol::HopRouting;
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
 use crate::transport::core::{

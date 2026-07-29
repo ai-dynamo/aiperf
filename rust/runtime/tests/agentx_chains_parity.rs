@@ -8,12 +8,11 @@
 //! scenario and diffs the full partition (main index, worker indices, seams,
 //! per-chain request lists, fork metadata, spliced_into).
 
-
 use aiperf_runtime::agentx::chains::{
-    compute_chain_prefix_blocks, detect_agent_chains, worker_group_assignment, ChainReq,
+    ChainReq, compute_chain_prefix_blocks, detect_agent_chains, worker_group_assignment,
 };
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn golden_path() -> PathBuf {
@@ -105,7 +104,11 @@ fn detect_agent_chains_matches_python_golden() {
         assert_eq!(r.chains.len(), want_chains.len(), "{name}: chain count");
         for (i, (c, wc)) in r.chains.iter().zip(want_chains).enumerate() {
             let got_reqs: Vec<i64> = c.requests.iter().map(|(oi, _)| *oi).collect();
-            assert_eq!(got_reqs, ints(&wc["requests"]), "{name} chain {i}: requests");
+            assert_eq!(
+                got_reqs,
+                ints(&wc["requests"]),
+                "{name} chain {i}: requests"
+            );
             assert_eq!(
                 c.spliced_into,
                 opt_usize(&wc["spliced_into"]),
@@ -125,7 +128,11 @@ fn detect_agent_chains_matches_python_golden() {
                         opt_i64(&wf["fork_outer_idx"]),
                         "{name} chain {i}: fork.fork_outer_idx"
                     );
-                    assert_eq!(fk.depth, wf["depth"].as_i64().unwrap(), "{name} chain {i}: fork.depth");
+                    assert_eq!(
+                        fk.depth,
+                        wf["depth"].as_i64().unwrap(),
+                        "{name} chain {i}: fork.depth"
+                    );
                 }
                 _ => panic!("{name} chain {i}: fork presence mismatch"),
             }

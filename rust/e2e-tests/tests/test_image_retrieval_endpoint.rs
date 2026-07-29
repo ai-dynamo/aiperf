@@ -60,7 +60,10 @@ async fn test_image_samples_per_second_exact() {
     let num_images_avg = json["num_images"]["avg"]
         .as_f64()
         .expect("num_images avg present");
-    assert!(num_images_avg >= 1.0, "each request submits >=1 image sample");
+    assert!(
+        num_images_avg >= 1.0,
+        "each request submits >=1 image sample"
+    );
     let total_num_images = json["total_num_images"]["avg"]
         .as_f64()
         .expect("total_num_images present");

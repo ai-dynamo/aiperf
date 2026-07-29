@@ -4,7 +4,6 @@
 //! Byte-exact parity of Rust `expand_subagent_to_child_plans` against the real
 //! Python `weka_trace._expand_subagent_to_child_plans`.
 
-
 use aiperf_runtime::agentx::config::WekaConfig;
 use aiperf_runtime::agentx::subagent::expand_subagent_to_child_plans;
 use aiperf_runtime::agentx::trace::{WekaInnerRequest, WekaNormalRequest, WekaSubagentEntry};
@@ -18,7 +17,11 @@ fn golden_path() -> PathBuf {
 }
 
 fn ints(v: &Value) -> Vec<i64> {
-    v.as_array().unwrap().iter().map(|x| x.as_i64().unwrap()).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_i64().unwrap())
+        .collect()
 }
 
 #[test]
@@ -78,18 +81,47 @@ fn subagent_expansion_matches_python_golden() {
         let want = sc["plans"].as_array().unwrap();
         assert_eq!(plans.len(), want.len(), "{name}: plan count");
         for (i, (p, w)) in plans.iter().zip(want).enumerate() {
-            assert_eq!(p.session_id, w["session_id"].as_str().unwrap(), "{name} p{i} sid");
-            assert_eq!(p.chain_index, w["chain_index"].as_i64().unwrap() as usize, "{name} p{i} cidx");
-            let want_idx: Vec<usize> =
-                ints(&w["request_inner_indices"]).into_iter().map(|x| x as usize).collect();
-            assert_eq!(p.request_inner_indices, want_idx, "{name} p{i} inner_indices");
-            let want_ts: Vec<f64> =
-                w["request_ts"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+            assert_eq!(
+                p.session_id,
+                w["session_id"].as_str().unwrap(),
+                "{name} p{i} sid"
+            );
+            assert_eq!(
+                p.chain_index,
+                w["chain_index"].as_i64().unwrap() as usize,
+                "{name} p{i} cidx"
+            );
+            let want_idx: Vec<usize> = ints(&w["request_inner_indices"])
+                .into_iter()
+                .map(|x| x as usize)
+                .collect();
+            assert_eq!(
+                p.request_inner_indices, want_idx,
+                "{name} p{i} inner_indices"
+            );
+            let want_ts: Vec<f64> = w["request_ts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_f64().unwrap())
+                .collect();
             let got_ts: Vec<f64> = p.requests.iter().map(|r| r.t).collect();
             assert_eq!(got_ts, want_ts, "{name} p{i} request_ts");
-            assert_eq!(p.init_tool_tokens, w["init_tool_tokens"].as_i64().unwrap(), "{name} p{i} init_tool");
-            assert_eq!(p.init_system_tokens, w["init_system_tokens"].as_i64().unwrap(), "{name} p{i} init_sys");
-            assert_eq!(p.is_aux, w["is_aux"].as_bool().unwrap(), "{name} p{i} is_aux");
+            assert_eq!(
+                p.init_tool_tokens,
+                w["init_tool_tokens"].as_i64().unwrap(),
+                "{name} p{i} init_tool"
+            );
+            assert_eq!(
+                p.init_system_tokens,
+                w["init_system_tokens"].as_i64().unwrap(),
+                "{name} p{i} init_sys"
+            );
+            assert_eq!(
+                p.is_aux,
+                w["is_aux"].as_bool().unwrap(),
+                "{name} p{i} is_aux"
+            );
         }
     }
 }

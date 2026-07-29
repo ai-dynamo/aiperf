@@ -388,11 +388,7 @@ impl ReplayOptions {
                             "trace_session_sample_ratio must be in (0.0, 1.0]".into(),
                         ));
                     }
-                    if ratio >= 1.0 {
-                        None
-                    } else {
-                        Some(ratio)
-                    }
+                    if ratio >= 1.0 { None } else { Some(ratio) }
                 } else {
                     None
                 }

@@ -1403,7 +1403,10 @@ mod tests {
         assert_eq!(metrics.len(), 17);
         assert_eq!(metrics[0].tag, "effective_concurrency");
         assert_eq!(metrics[9].tag, "effective_image_samples_per_second");
-        assert_eq!(metrics[10].tag, "effective_image_samples_per_second_per_user");
+        assert_eq!(
+            metrics[10].tag,
+            "effective_image_samples_per_second_per_user"
+        );
         assert_eq!(metrics[15].tag, "active_total_throughput");
         assert_eq!(metrics[16].tag, "active_image_samples_per_second");
         // 4 images spread over [0, 110) ns, duration-weighted over the same window
@@ -1412,7 +1415,10 @@ mod tests {
         assert!((effective - 4.0 / 110.0 * NANOS_PER_SECOND).abs() < 1e-6);
         // The single request is in flight over the whole [0, 110) span, so the
         // active-masked rate equals the effective rate here.
-        let active = metrics[16].avg.as_f64().expect("active sample rate is finite");
+        let active = metrics[16]
+            .avg
+            .as_f64()
+            .expect("active sample rate is finite");
         assert!((active - 4.0 / 110.0 * NANOS_PER_SECOND).abs() < 1e-6);
         // Concurrency is exactly 1 the whole span, so the per-user rate (÷ overall
         // concurrency) equals the aggregate effective rate here.

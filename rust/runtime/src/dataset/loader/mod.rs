@@ -398,10 +398,7 @@ impl LoaderRegistry {
                 Arc::new(HfConversationDatasetLoader),
                 Arc::new(HfConversationComposer),
             ),
-            DatasetFormatRegistration::new(
-                Arc::new(HfAutoDatasetLoader),
-                Arc::new(HfAutoComposer),
-            ),
+            DatasetFormatRegistration::new(Arc::new(HfAutoDatasetLoader), Arc::new(HfAutoComposer)),
             DatasetFormatRegistration::new(
                 Arc::new(MtBenchDatasetLoader),
                 Arc::new(MtBenchComposer),

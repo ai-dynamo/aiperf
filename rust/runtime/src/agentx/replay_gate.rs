@@ -173,7 +173,11 @@ impl ReplayGate {
         if !self.active {
             return;
         }
-        self.roots.entry(root_id.to_string()).or_default().completed.insert(key);
+        self.roots
+            .entry(root_id.to_string())
+            .or_default()
+            .completed
+            .insert(key);
         if self.releases_paused {
             return;
         }
@@ -290,9 +294,7 @@ impl ReplayGate {
         self.roots
             .iter()
             .filter(|(_, state)| !state.pending.is_empty())
-            .map(|(root_id, state)| {
-                (root_id.clone(), state.pending.values().cloned().collect())
-            })
+            .map(|(root_id, state)| (root_id.clone(), state.pending.values().cloned().collect()))
             .collect()
     }
 

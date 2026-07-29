@@ -17,11 +17,11 @@ use std::rc::Rc;
 
 use serde_json::Value;
 
-use crate::agentx::cache_bust::{resolve_tree_marker, CacheBustLedger, CacheBustTarget};
+use crate::agentx::cache_bust::{CacheBustLedger, CacheBustTarget, resolve_tree_marker};
 use crate::agentx::export::raw_export_records;
 use crate::agentx::loader::ReconstructedConversation;
 use crate::agentx::trajectory_source::{
-    profiling_dispatch_delays_ms, replay_schedule, ReplayPhase,
+    ReplayPhase, profiling_dispatch_delays_ms, replay_schedule,
 };
 use crate::clock::clock::Clock;
 use crate::clock::sim_clock::SimClock;
@@ -99,7 +99,10 @@ pub fn computed_dispatch(
         }
     }
     dispatches.sort_by_key(|(ns, i, _)| (*ns, *i));
-    dispatches.into_iter().map(|(ns, _, rec)| (ns, rec)).collect()
+    dispatches
+        .into_iter()
+        .map(|(ns, _, rec)| (ns, rec))
+        .collect()
 }
 
 /// Execute one conversation's agentic replay ACTUALLY under the SimClock at
@@ -140,7 +143,12 @@ where
     )?;
     Ok(convs
         .iter()
-        .map(|c| (c.session_id.clone(), run_replay_sim(c, t_star_ms, burst, cap_ms)))
+        .map(|c| {
+            (
+                c.session_id.clone(),
+                run_replay_sim(c, t_star_ms, burst, cap_ms),
+            )
+        })
         .collect())
 }
 
@@ -246,8 +254,9 @@ pub fn build_dispatch_plan_with_cachebust(
         );
         // Synchronous schedule computation (no clock driver) so the plan can be
         // built inside an async transport context without a nested runtime.
-        for (idx, (dispatch_ns, rec)) in
-            computed_dispatch(conv, t_star_ms, burst, cap_ms).into_iter().enumerate()
+        for (idx, (dispatch_ns, rec)) in computed_dispatch(conv, t_star_ms, burst, cap_ms)
+            .into_iter()
+            .enumerate()
         {
             let messages: Vec<ChatMessage> = rec["raw_messages"]
                 .as_array()
@@ -407,7 +416,10 @@ mod tests {
         assert_eq!(fired[2].0, 250 * NS_PER_MS);
         assert_eq!(fired[3].0, 650 * NS_PER_MS);
         // Content survives the run.
-        assert_eq!(fired[1].1["raw_messages"][0]["content"], serde_json::json!("turn2"));
+        assert_eq!(
+            fired[1].1["raw_messages"][0]["content"],
+            serde_json::json!("turn2")
+        );
     }
 
     #[test]
@@ -419,13 +431,18 @@ mod tests {
         struct Stub;
         impl TokenSynth for Stub {
             fn decode_block_tokens(&mut self, h: &[i64]) -> Vec<u32> {
-                h.iter().flat_map(|&x| (0..4).map(move |i| x as u32 * 1000 + i)).collect()
+                h.iter()
+                    .flat_map(|&x| (0..4).map(move |i| x as u32 * 1000 + i))
+                    .collect()
             }
             fn sample_partial_tail_tokens(&mut self, n: usize, _s: &str) -> Vec<u32> {
                 (0..n as u32).map(|i| 900_000 + i).collect()
             }
             fn decode_tokens_to_text(&self, t: &[u32]) -> String {
-                t.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ")
+                t.iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
             }
         }
         let norm = |t: f64, hs: &[i64]| {
@@ -449,7 +466,11 @@ mod tests {
             hash_id_scope: HashIdScope::Local,
             tool_tokens: 0,
             system_tokens: 0,
-            requests: vec![norm(0.0, &[1, 2]), norm(1.0, &[1, 2, 3]), norm(2.0, &[1, 2, 3, 4])],
+            requests: vec![
+                norm(0.0, &[1, 2]),
+                norm(1.0, &[1, 2, 3]),
+                norm(2.0, &[1, 2, 3, 4]),
+            ],
             totals: None,
         };
         let mut synth = Stub;
@@ -460,7 +481,10 @@ mod tests {
             &trace,
             &mut synth,
             &std::collections::HashMap::new(),
-            &WekaConfig { split_flattened_agents: false, ..WekaConfig::default() },
+            &WekaConfig {
+                split_flattened_agents: false,
+                ..WekaConfig::default()
+            },
             &MainReconstructOptions::default(),
             500.0,
             false,
@@ -484,7 +508,7 @@ mod tests {
     #[test]
     fn cachebust_marker_rides_first_turn_only_byte_exact() {
         use crate::agentx::cache_bust::{
-            build_cache_bust_marker, CacheBustLedger, CacheBustTarget,
+            CacheBustLedger, CacheBustTarget, build_cache_bust_marker,
         };
         use crate::agentx::wire::ChatRequestOptions;
         let conv = ReconstructedConversation {
@@ -500,7 +524,11 @@ mod tests {
             500.0,
             false,
             None,
-            &ChatRequestOptions { streaming: true, ignore_eos: true, cache_bust_marker: None },
+            &ChatRequestOptions {
+                streaming: true,
+                ignore_eos: true,
+                cache_bust_marker: None,
+            },
             &mut ledger,
             "bench",
             CacheBustTarget::FirstTurnPrefix,
@@ -510,7 +538,9 @@ mod tests {
         // The byte-exact marker (recycle_pass 0, trajectory_index 0, base "t").
         let marker =
             build_cache_bust_marker("bench", 0, 0, "t", CacheBustTarget::FirstTurnPrefix).unwrap();
-        let first = plan[0].request_body["messages"][0]["content"].as_str().unwrap();
+        let first = plan[0].request_body["messages"][0]["content"]
+            .as_str()
+            .unwrap();
         assert_eq!(first, format!("{marker}turn0"));
         assert!(first.starts_with("[rid:"));
         // The second (profiling) turn carries NO marker.
@@ -540,7 +570,11 @@ mod tests {
             250.0,
             false,
             None,
-            &ChatRequestOptions { streaming: true, ignore_eos: true, cache_bust_marker: None },
+            &ChatRequestOptions {
+                streaming: true,
+                ignore_eos: true,
+                cache_bust_marker: None,
+            },
         );
         let streams = streams_from_plan(plan);
         assert_eq!(streams.len(), 1);
@@ -550,7 +584,11 @@ mod tests {
         assert!(s.warmup.is_some());
         assert_eq!(s.warmup.as_ref().unwrap().phase, ReplayPhase::Warmup);
         assert_eq!(s.profiling.len(), 2);
-        assert!(s.profiling.iter().all(|p| p.phase == ReplayPhase::Profiling));
+        assert!(
+            s.profiling
+                .iter()
+                .all(|p| p.phase == ReplayPhase::Profiling)
+        );
     }
 
     #[test]
@@ -568,7 +606,11 @@ mod tests {
             500.0,
             false,
             None,
-            &ChatRequestOptions { streaming: true, ignore_eos: true, cache_bust_marker: None },
+            &ChatRequestOptions {
+                streaming: true,
+                ignore_eos: true,
+                cache_bust_marker: None,
+            },
         );
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[0].dispatch_ns, 0);
@@ -576,7 +618,10 @@ mod tests {
         // Each carries the exact wire body the transport sends.
         assert_eq!(plan[0].request_body["stream"], serde_json::json!(true));
         assert_eq!(plan[0].request_body["ignore_eos"], serde_json::json!(true));
-        assert_eq!(plan[1].request_body["messages"][0]["content"], serde_json::json!("turn1"));
+        assert_eq!(
+            plan[1].request_body["messages"][0]["content"],
+            serde_json::json!("turn1")
+        );
         assert_eq!(plan[0].session_id, "t");
     }
 }

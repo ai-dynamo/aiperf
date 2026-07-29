@@ -2725,7 +2725,12 @@ mod tests {
             let image = pool
                 .intern_media(None, MediaKind::Image, Bytes::from_static(b"http://a"))
                 .unwrap();
-            check("image_retrieval", mode, pool, content_turn(text, Some(image)));
+            check(
+                "image_retrieval",
+                mode,
+                pool,
+                content_turn(text, Some(image)),
+            );
 
             let mut pool = SegmentPool::new();
             let turn = text_turn(&mut pool, b"chat me", false, false);

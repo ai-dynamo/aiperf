@@ -147,7 +147,12 @@ fn axum_fallback(router: &Router, raw: &[u8], head: &Head) -> Vec<u8> {
     let mut headers = [httparse::EMPTY_HEADER; 96];
     let mut parsed = httparse::Request::new(&mut headers);
     if parsed.parse(raw).is_err() {
-        return crate::http_core::http_response("400 Bad Request", "text/plain", b"", head.keep_alive);
+        return crate::http_core::http_response(
+            "400 Bad Request",
+            "text/plain",
+            b"",
+            head.keep_alive,
+        );
     }
     let method = parsed.method.unwrap_or("GET");
     let path = parsed.path.unwrap_or("/");
@@ -161,7 +166,12 @@ fn axum_fallback(router: &Router, raw: &[u8], head: &Head) -> Vec<u8> {
     let request = match builder.body(axum::body::Body::from(body)) {
         Ok(r) => r,
         Err(_) => {
-            return crate::http_core::http_response("400 Bad Request", "text/plain", b"", head.keep_alive)
+            return crate::http_core::http_response(
+                "400 Bad Request",
+                "text/plain",
+                b"",
+                head.keep_alive,
+            );
         }
     };
 
@@ -175,12 +185,14 @@ fn axum_fallback(router: &Router, raw: &[u8], head: &Head) -> Vec<u8> {
                         "text/plain",
                         b"",
                         head.keep_alive,
-                    )
+                    );
                 }
             };
             let status = response.status();
             let (parts, body) = response.into_parts();
-            let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
+            let bytes = axum::body::to_bytes(body, usize::MAX)
+                .await
+                .unwrap_or_default();
 
             let mut out = Vec::with_capacity(bytes.len() + 256);
             out.extend_from_slice(b"HTTP/1.1 ");
@@ -205,7 +217,11 @@ fn axum_fallback(router: &Router, raw: &[u8], head: &Head) -> Vec<u8> {
             out.extend_from_slice(b"Content-Length: ");
             out.extend_from_slice(bytes.len().to_string().as_bytes());
             out.extend_from_slice(b"\r\nConnection: ");
-            out.extend_from_slice(if head.keep_alive { b"keep-alive" } else { b"close" });
+            out.extend_from_slice(if head.keep_alive {
+                b"keep-alive"
+            } else {
+                b"close"
+            });
             out.extend_from_slice(b"\r\n\r\n");
             out.extend_from_slice(&bytes);
             out

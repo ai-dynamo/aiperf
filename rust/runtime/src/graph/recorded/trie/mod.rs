@@ -286,7 +286,10 @@ fn emit_one_node(
         // propagated too when the trace supplies it.
         let api_time_us = (node.request.duration_seconds * 1_000_000.0).round_ties_even();
         if api_time_us.is_finite() && (0.0..u64::MAX as f64).contains(&api_time_us) {
-            metadata.insert("recorded_api_time_us".into(), Value::from(api_time_us as u64));
+            metadata.insert(
+                "recorded_api_time_us".into(),
+                Value::from(api_time_us as u64),
+            );
         }
         if let Some(ttft_seconds) = node.request.ttft_seconds {
             let ttft_us = (ttft_seconds * 1_000_000.0).round_ties_even();

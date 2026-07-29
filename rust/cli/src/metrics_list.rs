@@ -33,7 +33,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         Some("list") => run_list(&args[1..]),
         Some("describe") => run_describe(&args[1..]),
         Some(other) => {
-            eprintln!("aiperf metrics: unknown subcommand {other:?}; expected `list` or `describe`");
+            eprintln!(
+                "aiperf metrics: unknown subcommand {other:?}; expected `list` or `describe`"
+            );
             Ok(2)
         }
         None => {
@@ -64,10 +66,7 @@ fn run_list(args: &[String]) -> anyhow::Result<i32> {
         for (id, def) in &rows {
             println!(
                 "| `{}` | {} | {} | {} |",
-                id,
-                def.header,
-                def.unit,
-                def.larger_is_better
+                id, def.header, def.unit, def.larger_is_better
             );
         }
         return Ok(0);

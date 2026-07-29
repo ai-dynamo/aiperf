@@ -83,7 +83,10 @@ fn hf_load_config(dataset: &HfDatasetRef) -> LoadConfig {
         dataset: dataset.name.clone(),
         // `datasets` names the default config "default"; the runtime loader keys
         // its `cardData.data_files` lookup off that literal.
-        config: dataset.subset.clone().unwrap_or_else(|| "default".to_string()),
+        config: dataset
+            .subset
+            .clone()
+            .unwrap_or_else(|| "default".to_string()),
         split: dataset.split.clone(),
         max_rows: dataset.max_rows,
         revision: dataset.revision.clone(),
@@ -96,9 +99,7 @@ fn hf_load_config(dataset: &HfDatasetRef) -> LoadConfig {
 /// aware, JSONL/JSON/CSV/Parquet) and projects each [`RawRow`](crate::dataset::RawRow)
 /// to its decoded value. The returned rows feed [`load_hf_traces_from_rows`]
 /// unchanged.
-pub async fn fetch_hf_weka_rows(
-    dataset: HfDatasetRef,
-) -> Result<Vec<serde_json::Value>, String> {
+pub async fn fetch_hf_weka_rows(dataset: HfDatasetRef) -> Result<Vec<serde_json::Value>, String> {
     validate_dataset_id(&dataset.name)?;
     let config = hf_load_config(&dataset);
     let rows = load_raw_rows(&config)
@@ -217,7 +218,10 @@ mod tests {
     #[test]
     fn adversarial_id_short_circuits_before_network() {
         let err = block_on(fetch_hf_weka_rows(HfDatasetRef::new("../etc/passwd"))).unwrap_err();
-        assert!(err.contains("invalid Hugging Face dataset id"), "msg: {err}");
+        assert!(
+            err.contains("invalid Hugging Face dataset id"),
+            "msg: {err}"
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! online engine would send at each turn's dispatch instant. Held separate from
 //! the transport so the wire shape is unit-testable without a live client.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::agentx::synth::ChatMessage;
 
@@ -61,7 +61,10 @@ fn message_json(m: &ChatMessage) -> Value {
 /// rule as [`chat_request_body`]. Used by the agentic composer to intern each
 /// per-turn delta as a message-array segment for the history-accumulating
 /// dispatch (so the runtime materializer concatenates deltas + live replies).
-pub(crate) fn chat_messages_array(messages: &[ChatMessage], cache_bust_marker: Option<&str>) -> Value {
+pub(crate) fn chat_messages_array(
+    messages: &[ChatMessage],
+    cache_bust_marker: Option<&str>,
+) -> Value {
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
     if let (Some(marker), Some(first)) = (cache_bust_marker, msgs.first_mut()) {
         if marker.starts_with('\n') {

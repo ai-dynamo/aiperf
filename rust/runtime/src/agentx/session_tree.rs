@@ -127,7 +127,11 @@ impl<R: SlotReleaser> SessionTreeRegistry<R> {
     pub fn on_descendant_done(&mut self, root_corr: &str) -> bool {
         if !self.trees.contains_key(root_corr) {
             // Tree not open yet: decrement the pending buffer, or count a late event.
-            let pending = self.pending_descendants.get(root_corr).copied().unwrap_or(0);
+            let pending = self
+                .pending_descendants
+                .get(root_corr)
+                .copied()
+                .unwrap_or(0);
             if pending > 1 {
                 self.pending_descendants
                     .insert(root_corr.to_string(), pending - 1);

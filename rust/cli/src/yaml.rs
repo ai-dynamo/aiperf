@@ -1722,10 +1722,7 @@ impl Benchmark {
             None => vec!["jsonl".to_string()],
         };
         let export_raw = self.artifacts.as_ref().is_some_and(|a| a.raw);
-        let show_trace_timing = self
-            .artifacts
-            .as_ref()
-            .is_some_and(|a| a.show_trace_timing);
+        let show_trace_timing = self.artifacts.as_ref().is_some_and(|a| a.show_trace_timing);
         let export_trace = self.artifacts.as_ref().is_some_and(|a| a.trace) || show_trace_timing;
         let export_outputs_json = self
             .artifacts

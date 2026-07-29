@@ -37,9 +37,14 @@ use aiperf_runtime::graph::sink::{GraphReply, GraphSink};
 use aiperf_runtime::graph::transport_sink::TransportChatSink;
 use aiperf_runtime::graph::wire::{OpenAiChatMessage as Msg, WireMessage};
 
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pinassist_2turn.yaml");
-const FIXTURE_SLOW: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pinassist_2turn_slow_safety.yaml");
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/pinassist_2turn.yaml"
+);
+const FIXTURE_SLOW: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/pinassist_2turn_slow_safety.yaml"
+);
 const TRACE_ID: &str = "t-2turn-shopping";
 
 /// Run the trace with an in-process recording sink; return
@@ -47,8 +52,18 @@ const TRACE_ID: &str = "t-2turn-shopping";
 fn user_vs_full_latency(fixture: &str) -> (u128, u128, Vec<String>) {
     let (graph, trace, segments, terminals) = compile_plan(fixture);
     let materializer = Rc::new(SegmentItemsMaterializer::new(segments));
-    let sink = Rc::new(RecordingSink { start: Instant::now(), log: RefCell::new(Vec::new()) });
-    run_trace::<Msg>(Rc::new(graph), trace, materializer, sink.clone(), TimeBase::Wall).unwrap();
+    let sink = Rc::new(RecordingSink {
+        start: Instant::now(),
+        log: RefCell::new(Vec::new()),
+    });
+    run_trace::<Msg>(
+        Rc::new(graph),
+        trace,
+        materializer,
+        sink.clone(),
+        TimeBase::Wall,
+    )
+    .unwrap();
     let log = sink.log.borrow();
     let t = |id: &str| log.iter().find(|(n, _)| n == id).unwrap().1;
     let user_facing = terminals.iter().map(|id| t(id)).max().unwrap();
@@ -70,7 +85,11 @@ fn compile_plan(fixture: &str) -> (GraphRecord, TraceRecord, Arc<dyn SegmentStor
         .unwrap();
     // Compiling here is the real validation of the multi-turn chaining.
     let bundle = rt
-        .block_on(compile_conditional_graph_input(config, &TiktokenTokenizer::builtin(), 0))
+        .block_on(compile_conditional_graph_input(
+            config,
+            &TiktokenTokenizer::builtin(),
+            0,
+        ))
         .expect("2-turn chained PinAssist must compile");
     drop(rt);
 
@@ -84,7 +103,12 @@ fn compile_plan(fixture: &str) -> (GraphRecord, TraceRecord, Arc<dyn SegmentStor
         .graph
         .nodes
         .iter()
-        .filter(|(_, n)| n.metadata.get("terminal_for_user").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter(|(_, n)| {
+            n.metadata
+                .get("terminal_for_user")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
         .map(|(id, _)| id.clone())
         .collect();
 
@@ -103,10 +127,13 @@ impl RealMock {
             l.local_addr().unwrap().port()
         };
         let child = match Command::new(mock_binary())
-            .arg("--host").arg("127.0.0.1")
-            .arg("--port").arg(port.to_string())
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(port.to_string())
             .arg("--no-tokenizer")
-            .stdout(Stdio::null()).stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
         {
             Ok(c) => c,
@@ -117,11 +144,17 @@ impl RealMock {
         };
         for _ in 0..250 {
             if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(RealMock { child, base_url: format!("http://127.0.0.1:{port}") });
+                return Some(RealMock {
+                    child,
+                    base_url: format!("http://127.0.0.1:{port}"),
+                });
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        let mut m = RealMock { child, base_url: String::new() };
+        let mut m = RealMock {
+            child,
+            base_url: String::new(),
+        };
         let _ = m.child.kill();
         None
     }
@@ -184,7 +217,9 @@ impl<M: WireMessage> GraphSink<M> for RecordingSink {
         on_first_token: &dyn Fn(),
     ) -> Result<GraphReply<M>> {
         on_first_token();
-        self.log.borrow_mut().push((node_id.to_string(), self.start.elapsed().as_micros()));
+        self.log
+            .borrow_mut()
+            .push((node_id.to_string(), self.start.elapsed().as_micros()));
         Ok(GraphReply::from_text(format!("[{node_id}] ok")))
     }
 }
@@ -206,18 +241,35 @@ fn pinassist_2turn_over_real_mock() {
     // LLM nodes dispatched (shopping/safe path, both turns): route,plan,brandmap,
     // summarize + safety, per turn = 5 * 2 = 10. Replay tool steps never dispatch.
     let llm_nodes = graph.nodes.len();
-    assert_eq!(llm_nodes, 10, "10 LLM nodes on the 2-turn shopping/safe path (replay folded out)");
+    assert_eq!(
+        llm_nodes, 10,
+        "10 LLM nodes on the 2-turn shopping/safe path (replay folded out)"
+    );
 
     let materializer = Rc::new(SegmentItemsMaterializer::new(segments));
     let obs = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
-    let sink = Rc::new(TransportChatSink::new(clock, &mock.base_url, "gpt2", obs.clone(), 16, false));
+    let sink = Rc::new(TransportChatSink::new(
+        clock,
+        &mock.base_url,
+        "gpt2",
+        obs.clone(),
+        16,
+        false,
+    ));
 
     run_trace(Rc::new(graph), trace, materializer, sink, TimeBase::Wall).unwrap();
 
-    assert_eq!(obs.admits.load(Ordering::Relaxed), 10, "10 real HTTP dispatches");
+    assert_eq!(
+        obs.admits.load(Ordering::Relaxed),
+        10,
+        "10 real HTTP dispatches"
+    );
     assert_eq!(obs.completed.load(Ordering::Relaxed), 10, "all completed");
-    assert!(obs.tokens.load(Ordering::Relaxed) > 0, "real tokens observed");
+    assert!(
+        obs.tokens.load(Ordering::Relaxed) > 0,
+        "real tokens observed"
+    );
 }
 
 /// Semantics: per-node dispatch order + user-facing (`terminal_for_user`) latency
@@ -226,25 +278,50 @@ fn pinassist_2turn_over_real_mock() {
 fn pinassist_2turn_user_vs_full_latency() {
     let (graph, trace, segments, terminals) = compile_plan(FIXTURE);
     let materializer = Rc::new(SegmentItemsMaterializer::new(segments));
-    let sink = Rc::new(RecordingSink { start: Instant::now(), log: RefCell::new(Vec::new()) });
+    let sink = Rc::new(RecordingSink {
+        start: Instant::now(),
+        log: RefCell::new(Vec::new()),
+    });
 
-    run_trace::<Msg>(Rc::new(graph), trace, materializer, sink.clone(), TimeBase::Wall).unwrap();
+    run_trace::<Msg>(
+        Rc::new(graph),
+        trace,
+        materializer,
+        sink.clone(),
+        TimeBase::Wall,
+    )
+    .unwrap();
 
     let log = sink.log.borrow();
     let dispatched: Vec<&str> = log.iter().map(|(n, _)| n.as_str()).collect();
 
     // Replay tool steps never hit the sink.
     assert!(
-        !dispatched.iter().any(|n| n.starts_with("tool_exec") || n.starts_with("preprocess")),
+        !dispatched
+            .iter()
+            .any(|n| n.starts_with("tool_exec") || n.starts_with("preprocess")),
         "replay nodes must not dispatch: {dispatched:?}"
     );
     // Both turns ran; safety ran parallel in each turn.
-    for id in ["route1", "summarize1", "safety1", "route2", "summarize2", "safety2"] {
-        assert!(dispatched.contains(&id), "expected {id} to dispatch; got {dispatched:?}");
+    for id in [
+        "route1",
+        "summarize1",
+        "safety1",
+        "route2",
+        "summarize2",
+        "safety2",
+    ] {
+        assert!(
+            dispatched.contains(&id),
+            "expected {id} to dispatch; got {dispatched:?}"
+        );
     }
     // Turn 2 only starts after turn 1's user answer.
     let t = |id: &str| log.iter().find(|(n, _)| n == id).unwrap().1;
-    assert!(t("route2") > t("summarize1"), "turn 2 begins after turn 1's user answer");
+    assert!(
+        t("route2") > t("summarize1"),
+        "turn 2 begins after turn 1's user answer"
+    );
 
     // The two latency numbers.
     let user_facing = terminals.iter().map(|id| t(id)).max().unwrap(); // last user-visible answer
@@ -253,7 +330,10 @@ fn pinassist_2turn_user_vs_full_latency() {
     eprintln!("terminal_for_user nodes: {terminals:?}");
     eprintln!("user-facing latency (to last terminal_for_user) = {user_facing} us");
     eprintln!("full-trace latency  (to last node, incl safety)  = {full_trace} us");
-    assert!(full_trace >= user_facing, "full trace cannot finish before the user answer");
+    assert!(
+        full_trace >= user_facing,
+        "full trace cannot finish before the user answer"
+    );
 }
 
 /// The two latencies COINCIDE with a fast safety guard but SPLIT when safety is

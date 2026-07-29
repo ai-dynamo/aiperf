@@ -11,10 +11,10 @@
 //! are normalized to root-trace coordinates first.
 
 use crate::agentx::chains::{
-    chain_init_tokens, detect_agent_chains, is_aux_chain, is_reduction_chain, split_off_preamble,
-    worker_group_assignment, ChainReq,
+    ChainReq, chain_init_tokens, detect_agent_chains, is_aux_chain, is_reduction_chain,
+    split_off_preamble, worker_group_assignment,
 };
-use crate::agentx::config::{WekaConfig, JOIN_EPSILON_SECONDS, TITLE_GEN_MAX_OUTPUT_TOKENS};
+use crate::agentx::config::{JOIN_EPSILON_SECONDS, TITLE_GEN_MAX_OUTPUT_TOKENS, WekaConfig};
 use crate::agentx::loader::NormalReq;
 use crate::agentx::trace::{WekaInnerRequest, WekaSubagentEntry};
 
@@ -209,8 +209,10 @@ pub fn expand_subagent_to_child_plans(
     }
 
     // Classification yardstick = the DETECTED main chain (preamble excluded).
-    let classify_main: Vec<NormalReq> =
-        classify_main_idx.iter().map(|&i| normalized[i].clone()).collect();
+    let classify_main: Vec<NormalReq> = classify_main_idx
+        .iter()
+        .map(|&i| normalized[i].clone())
+        .collect();
     let main_first_hash = first_hash(&classify_main);
     let main_peak_isl = classify_main
         .iter()

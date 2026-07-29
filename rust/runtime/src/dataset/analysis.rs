@@ -934,14 +934,8 @@ mod tests {
         assert!(definition("analyzer.osl").is_some());
         assert!(definition("analyzer.per_turn_isl").is_some());
         // The parameterized turn<N>_<suffix> rule maps to the per-turn base def.
-        assert_eq!(
-            resolve("turn0_isl").unwrap().id,
-            "analyzer.per_turn_isl"
-        );
-        assert_eq!(
-            resolve("turn12_osl").unwrap().id,
-            "analyzer.per_turn_osl"
-        );
+        assert_eq!(resolve("turn0_isl").unwrap().id, "analyzer.per_turn_isl");
+        assert_eq!(resolve("turn12_osl").unwrap().id, "analyzer.per_turn_osl");
     }
 
     #[test]

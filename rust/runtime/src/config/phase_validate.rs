@@ -349,8 +349,9 @@ mod tests {
     fn adaptive_request_rate_rejects_rate_series() {
         let mut phase = concurrency_phase("rr", Some(PhaseRole::Profiling));
         phase.common.adaptive_scale = Some(adaptive_scale("request_rate"));
-        phase.common.rate_series =
-            Some(crate::config::model::rate_series::RateSeries::from_json_str("[[0,1],[10,5]]").unwrap());
+        phase.common.rate_series = Some(
+            crate::config::model::rate_series::RateSeries::from_json_str("[[0,1],[10,5]]").unwrap(),
+        );
         phase.kind = PhaseKind::Constant {
             rate: 1.0,
             concurrency: None,

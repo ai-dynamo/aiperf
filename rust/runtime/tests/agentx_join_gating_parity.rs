@@ -29,11 +29,10 @@
 //! (The separate per-lane `slice_trajectories_at_tstar` rebasing is a dispatch
 //! concern, not part of the join-gating rule under test.)
 
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use aiperf_runtime::agentic_replay::{build_tree_specs, TreeGate};
+use aiperf_runtime::agentic_replay::{TreeGate, build_tree_specs};
 use aiperf_runtime::agentx::loader::{
     JoinPrerequisite, ReconstructedConversation, ReconstructedTurn,
 };
@@ -112,7 +111,10 @@ fn reconstruct_from_fixture(trace: &Value) -> Vec<ReconstructedConversation> {
 
     for child in trace["children"].as_array().unwrap() {
         let cid = child["conversation_id"].as_str().unwrap().to_string();
-        let parent = child["parent_conversation_id"].as_str().unwrap().to_string();
+        let parent = child["parent_conversation_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let turns: Vec<ReconstructedTurn> = child["turns_ms"]
             .as_array()
             .unwrap()
@@ -157,8 +159,7 @@ fn join_gating_decision_matches_python_golden() {
 
     // `gating_children`: the gate's join children for each waiting root equal the
     // Python-reported gating child set.
-    let gating: &serde_json::Map<String, Value> =
-        golden["gating_children"].as_object().unwrap();
+    let gating: &serde_json::Map<String, Value> = golden["gating_children"].as_object().unwrap();
     // Build root -> join_turn -> children from the spec for cross-checking.
     let mut spec_children_by_root: HashMap<&str, Vec<String>> = HashMap::new();
     for (_turn_idx, children) in &spec.join_turns {
@@ -174,7 +175,10 @@ fn join_gating_decision_matches_python_golden() {
             .iter()
             .map(|c| c.as_str().unwrap().to_string())
             .collect();
-        let mut got = spec_children_by_root.get(root.as_str()).cloned().unwrap_or_default();
+        let mut got = spec_children_by_root
+            .get(root.as_str())
+            .cloned()
+            .unwrap_or_default();
         got.sort();
         let mut want_sorted = want.clone();
         want_sorted.sort();

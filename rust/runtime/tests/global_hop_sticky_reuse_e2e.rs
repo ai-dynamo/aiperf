@@ -53,7 +53,7 @@ use aiperf_runtime::transport::core::{
 use aiperf_runtime::transport::http::TransportSinkConfig;
 
 use axum::response::sse::{Event, Sse};
-use axum::{routing::post, Router};
+use axum::{Router, routing::post};
 use uuid::Uuid;
 
 const WORKERS: usize = 2;
@@ -330,7 +330,10 @@ fn run_workload(base_url: &str, routing: HopRouting) -> Vec<ObservedTurn> {
 fn by_correlation(observed: Vec<ObservedTurn>) -> HashMap<String, Vec<ObservedTurn>> {
     let mut grouped: HashMap<String, Vec<ObservedTurn>> = HashMap::new();
     for turn in observed {
-        grouped.entry(turn.correlation_id.clone()).or_default().push(turn);
+        grouped
+            .entry(turn.correlation_id.clone())
+            .or_default()
+            .push(turn);
     }
     for turns in grouped.values_mut() {
         turns.sort_by_key(|turn| turn.turn_index);

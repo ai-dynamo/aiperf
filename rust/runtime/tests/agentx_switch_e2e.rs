@@ -11,12 +11,11 @@
 //! Both are actually *run* (not handed off) and produce output, proving the
 //! switch is fully wired to two live, parallel semantics.
 
-
 use std::collections::HashMap;
 
 use aiperf_runtime::agentx::config::WekaConfig;
-use aiperf_runtime::agentx::loader::{convert_trace_to_conversations, MainReconstructOptions};
-use aiperf_runtime::agentx::switch::{run_graph_ir, WekaSemantics};
+use aiperf_runtime::agentx::loader::{MainReconstructOptions, convert_trace_to_conversations};
+use aiperf_runtime::agentx::switch::{WekaSemantics, run_graph_ir};
 use aiperf_runtime::agentx::synth::TokenSynth;
 use aiperf_runtime::agentx::trace::WekaTrace;
 use aiperf_runtime::dataset::{DatasetSource, LoadConfig, TiktokenTokenizer};
@@ -26,21 +25,32 @@ use serde_json::json;
 struct StubSynth;
 impl TokenSynth for StubSynth {
     fn decode_block_tokens(&mut self, h: &[i64]) -> Vec<u32> {
-        h.iter().flat_map(|&x| (0..16).map(move |i| x as u32 * 1000 + i)).collect()
+        h.iter()
+            .flat_map(|&x| (0..16).map(move |i| x as u32 * 1000 + i))
+            .collect()
     }
     fn sample_partial_tail_tokens(&mut self, n: usize, _s: &str) -> Vec<u32> {
         (0..n as u32).map(|i| 900_000 + i).collect()
     }
     fn decode_tokens_to_text(&self, t: &[u32]) -> String {
-        t.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ")
+        t.iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
 #[tokio::test]
 async fn both_switch_arms_execute_end_to_end() {
     // Resolve confirms the two semantics.
-    assert_eq!(WekaSemantics::resolve(Some("legacy")).unwrap(), WekaSemantics::Legacy);
-    assert_eq!(WekaSemantics::resolve(Some("graph-ir")).unwrap(), WekaSemantics::GraphIr);
+    assert_eq!(
+        WekaSemantics::resolve(Some("legacy")).unwrap(),
+        WekaSemantics::Legacy
+    );
+    assert_eq!(
+        WekaSemantics::resolve(Some("graph-ir")).unwrap(),
+        WekaSemantics::GraphIr
+    );
 
     // ---- graph-ir arm: actually run the recorded-graph weka compiler. ----
     let gir_config = RecordedTraceInputConfig {
@@ -97,7 +107,10 @@ async fn both_switch_arms_execute_end_to_end() {
         &trace,
         &mut synth,
         &HashMap::new(),
-        &WekaConfig { split_flattened_agents: false, ..WekaConfig::default() },
+        &WekaConfig {
+            split_flattened_agents: false,
+            ..WekaConfig::default()
+        },
         &MainReconstructOptions::default(),
     )
     .expect("legacy arm reconstructs the trace");

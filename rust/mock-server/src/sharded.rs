@@ -21,8 +21,8 @@
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use prometheus::HistogramOpts;
 use prometheus::Histogram;
+use prometheus::HistogramOpts;
 use prometheus::core::{Collector, Desc};
 use prometheus::proto::{Bucket, Histogram as ProtoHistogram, MetricFamily};
 
@@ -107,10 +107,15 @@ impl Collector for ShardedHistogram {
             let hist = families[0].get_metric()[0].get_histogram();
             (
                 hist.get_bucket().iter().map(Bucket::upper_bound).collect(),
-                hist.get_bucket().iter().map(Bucket::cumulative_count).collect(),
+                hist.get_bucket()
+                    .iter()
+                    .map(Bucket::cumulative_count)
+                    .collect(),
             )
         };
-        let mut sample_count = families[0].get_metric()[0].get_histogram().get_sample_count();
+        let mut sample_count = families[0].get_metric()[0]
+            .get_histogram()
+            .get_sample_count();
         let mut sample_sum = families[0].get_metric()[0].get_histogram().get_sample_sum();
 
         for shard in &self.shards[1..] {
@@ -148,13 +153,16 @@ mod tests {
 
     #[test]
     fn merged_exposition_matches_single_histogram() {
-        let bounds = vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
+        let bounds = vec![
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+        ];
         let sh = ShardedHistogram::new(
             HistogramOpts::new("test_seconds", "help").buckets(bounds.clone()),
         );
         // Reference single histogram fed the identical sequence.
-        let single = Histogram::with_opts(HistogramOpts::new("test_seconds", "help").buckets(bounds))
-            .unwrap();
+        let single =
+            Histogram::with_opts(HistogramOpts::new("test_seconds", "help").buckets(bounds))
+                .unwrap();
         let samples = [0.001, 0.02, 0.2, 0.7, 3.0, 12.0, 0.006, 0.5];
         for &v in &samples {
             sh.observe(v);

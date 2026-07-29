@@ -18,7 +18,6 @@
 //! predecessor graph and the same op sequence, both implementations produce the
 //! same observable release/prefix/pending outputs.
 
-
 use std::path::PathBuf;
 
 use aiperf_runtime::agentx::replay_dependencies::{ReplayResumeBoundary, ReplayTurnKey};
@@ -61,12 +60,7 @@ fn pairs(value: &Value) -> Vec<(String, i64)> {
         .as_array()
         .unwrap()
         .iter()
-        .map(|e| {
-            (
-                e[0].as_str().unwrap().to_string(),
-                e[1].as_i64().unwrap(),
-            )
-        })
+        .map(|e| (e[0].as_str().unwrap().to_string(), e[1].as_i64().unwrap()))
         .collect()
 }
 

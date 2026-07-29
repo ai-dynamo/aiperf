@@ -372,8 +372,10 @@ fn resolve_seams(
 
     let mut seams = 0i64;
     // Min-heap of tail keys via a sorted, de-duplicated worklist.
-    let mut keys: std::collections::BinaryHeap<std::cmp::Reverse<i64>> =
-        forks_by_tail.keys().map(|&k| std::cmp::Reverse(k)).collect();
+    let mut keys: std::collections::BinaryHeap<std::cmp::Reverse<i64>> = forks_by_tail
+        .keys()
+        .map(|&k| std::cmp::Reverse(k))
+        .collect();
     let mut processed: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
     while let Some(std::cmp::Reverse(fork_outer_idx)) = keys.pop() {
@@ -574,9 +576,7 @@ struct HeapEnd(f64, usize);
 impl Eq for HeapEnd {}
 impl Ord for HeapEnd {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0
-            .total_cmp(&other.0)
-            .then(self.1.cmp(&other.1))
+        self.0.total_cmp(&other.0).then(self.1.cmp(&other.1))
     }
 }
 impl PartialOrd for HeapEnd {
@@ -660,7 +660,9 @@ pub fn worker_group_assignment(
             Some(f) => f,
             None => continue,
         };
-        if fork.depth <= 0 || fork.parent_chain.is_none() || fork.fork_outer_idx.is_none()
+        if fork.depth <= 0
+            || fork.parent_chain.is_none()
+            || fork.fork_outer_idx.is_none()
             || chain.requests.is_empty()
         {
             continue;
@@ -842,11 +844,16 @@ pub fn chain_init_tokens(
     chain_first_hash: &[i64],
 ) -> (i64, i64) {
     let sum = tool_tokens + system_tokens;
-    let declared_blocks = if sum <= 0 { 0 } else { (sum + block_size - 1) / block_size };
+    let declared_blocks = if sum <= 0 {
+        0
+    } else {
+        (sum + block_size - 1) / block_size
+    };
     let declared_covered = declared_blocks > 0
         && chain_first_hash.len() as i64 >= declared_blocks
         && base_first_hash.len() as i64 >= declared_blocks
-        && chain_first_hash[..declared_blocks as usize] == base_first_hash[..declared_blocks as usize];
+        && chain_first_hash[..declared_blocks as usize]
+            == base_first_hash[..declared_blocks as usize];
     if declared_covered {
         (tool_tokens, system_tokens)
     } else {

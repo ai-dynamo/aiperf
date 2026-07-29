@@ -8,9 +8,8 @@
 //! + real loop helpers + stub token generator). This replays with an identical
 //! stub and diffs the full reconstructed conversation.
 
-
 use aiperf_runtime::agentx::loader::{
-    reconstruct_main_conversation, MainReconstructOptions, NormalReq, TurnInputKind,
+    MainReconstructOptions, NormalReq, TurnInputKind, reconstruct_main_conversation,
 };
 use aiperf_runtime::agentx::synth::TokenSynth;
 use serde_json::Value;
@@ -31,7 +30,11 @@ impl TokenSynth for StubSynth {
         (0..n as u32).map(|i| 900_000 + i).collect()
     }
     fn decode_tokens_to_text(&self, tokens: &[u32]) -> String {
-        tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ")
+        tokens
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -42,13 +45,25 @@ fn golden_path() -> PathBuf {
 }
 
 fn ints(v: &Value) -> Vec<i64> {
-    v.as_array().unwrap().iter().map(|x| x.as_i64().unwrap()).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_i64().unwrap())
+        .collect()
 }
 fn strs(v: &Value) -> Vec<String> {
-    v.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap().to_string())
+        .collect()
 }
 fn opt_f64(v: &Value) -> Option<f64> {
-    if v.is_null() { None } else { Some(v.as_f64().unwrap()) }
+    if v.is_null() {
+        None
+    } else {
+        Some(v.as_f64().unwrap())
+    }
 }
 
 #[test]
@@ -102,14 +117,38 @@ fn main_conversation_matches_python_golden() {
         let want_turns = sc["turns"].as_array().unwrap();
         assert_eq!(conv.turns.len(), want_turns.len(), "{name}: turn count");
         for (i, (t, w)) in conv.turns.iter().zip(want_turns).enumerate() {
-            assert_eq!(t.timestamp_ms, opt_f64(&w["timestamp_ms"]), "{name} t{i} timestamp");
+            assert_eq!(
+                t.timestamp_ms,
+                opt_f64(&w["timestamp_ms"]),
+                "{name} t{i} timestamp"
+            );
             assert_eq!(t.delay_ms, opt_f64(&w["delay_ms"]), "{name} t{i} delay");
-            assert_eq!(t.api_time_ms, opt_f64(&w["api_time_ms"]), "{name} t{i} api_time");
-            assert_eq!(t.source_outer_idx, w["source_outer_idx"].as_i64().unwrap(), "{name} t{i} outer");
-            assert_eq!(t.source_kind, w["source_kind"].as_str().unwrap(), "{name} t{i} kind");
+            assert_eq!(
+                t.api_time_ms,
+                opt_f64(&w["api_time_ms"]),
+                "{name} t{i} api_time"
+            );
+            assert_eq!(
+                t.source_outer_idx,
+                w["source_outer_idx"].as_i64().unwrap(),
+                "{name} t{i} outer"
+            );
+            assert_eq!(
+                t.source_kind,
+                w["source_kind"].as_str().unwrap(),
+                "{name} t{i} kind"
+            );
             assert_eq!(t.model, w["model"].as_str().unwrap(), "{name} t{i} model");
-            assert_eq!(t.max_tokens, w["max_tokens"].as_i64().unwrap(), "{name} t{i} max_tokens");
-            assert_eq!(t.reset_context, w["reset_context"].as_bool().unwrap(), "{name} t{i} reset");
+            assert_eq!(
+                t.max_tokens,
+                w["max_tokens"].as_i64().unwrap(),
+                "{name} t{i} max_tokens"
+            );
+            assert_eq!(
+                t.reset_context,
+                w["reset_context"].as_bool().unwrap(),
+                "{name} t{i} reset"
+            );
             assert_eq!(
                 t.theoretical_prefix_cache_hit_blocks,
                 w["theoretical_prefix_cache_hit_blocks"].as_i64().unwrap(),
@@ -129,10 +168,18 @@ fn main_conversation_matches_python_golden() {
             assert_eq!(t.input_kind, want_ik, "{name} t{i} input_kind");
             // raw_messages role/content.
             let want_msgs = w["raw_messages"].as_array().unwrap();
-            assert_eq!(t.raw_messages.len(), want_msgs.len(), "{name} t{i} msg count");
+            assert_eq!(
+                t.raw_messages.len(),
+                want_msgs.len(),
+                "{name} t{i} msg count"
+            );
             for (m, wm) in t.raw_messages.iter().zip(want_msgs) {
                 assert_eq!(m.role, wm["role"].as_str().unwrap(), "{name} t{i} role");
-                assert_eq!(m.content, wm["content"].as_str().unwrap(), "{name} t{i} content");
+                assert_eq!(
+                    m.content,
+                    wm["content"].as_str().unwrap(),
+                    "{name} t{i} content"
+                );
             }
         }
     }

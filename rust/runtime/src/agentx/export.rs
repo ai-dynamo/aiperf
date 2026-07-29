@@ -11,11 +11,11 @@
 //! the exact wire timing and content. This is the export-level artifact whose
 //! byte-exactness the real-corpus + schedule e2es establish field-by-field.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::agentx::loader::ReconstructedConversation;
 use crate::agentx::synth::ChatMessage;
-use crate::agentx::trajectory_source::{replay_schedule, ReplayPhase};
+use crate::agentx::trajectory_source::{ReplayPhase, replay_schedule};
 
 fn messages_json(messages: &[ChatMessage]) -> Vec<Value> {
     messages
@@ -130,7 +130,10 @@ pub fn dispatch_ordered_records(conv: &ReconstructedConversation, t_star_ms: f64
             .then(a.1.partial_cmp(&b.1).unwrap())
             .then(a.2.cmp(&b.2))
     });
-    order.into_iter().map(|(_, _, i)| records[i].clone()).collect()
+    order
+        .into_iter()
+        .map(|(_, _, i)| records[i].clone())
+        .collect()
 }
 
 #[cfg(test)]

@@ -1440,16 +1440,17 @@ fn lower_legacy_agentic(
         think_time_only,
         ..MainReconstructOptions::default()
     };
-    let results = convert_traces_parallel(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
-        let tok = tokenizer_impl.clone();
-        CorpusTokenSynth::new(
-            (*corpus).clone(),
-            bs,
-            hash_base_seed,
-            tid,
-            move |t: &[u32]| tok.decode(t).unwrap_or_default(),
-        )
-    });
+    let results =
+        convert_traces_parallel(&traces, &HashMap::new(), &cfg, &opts, |tid: &str, bs| {
+            let tok = tokenizer_impl.clone();
+            CorpusTokenSynth::new(
+                (*corpus).clone(),
+                bs,
+                hash_base_seed,
+                tid,
+                move |t: &[u32]| tok.decode(t).unwrap_or_default(),
+            )
+        });
     let convs: Vec<_> = results
         .into_iter()
         .filter_map(Result::ok)
@@ -1852,37 +1853,34 @@ mod tests {
 
     #[test]
     fn resolve_agentic_warmup_grace_prefers_explicit_then_cache_default() {
-        let explicit: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(
-            serde_json::json!({
+        let explicit: crate::engine::protocol::PhaseCommonSpec =
+            serde_json::from_value(serde_json::json!({
                 "name": "profiling",
                 "exclude_from_results": false,
                 "agentic_warmup_grace_period": 7.5,
                 "agentic_cache_warmup_duration": 60.0,
                 "grace_period": 1.0
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
         assert_eq!(resolve_agentic_warmup_grace(&explicit), Some(7.5));
 
-        let cache_only: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(
-            serde_json::json!({
+        let cache_only: crate::engine::protocol::PhaseCommonSpec =
+            serde_json::from_value(serde_json::json!({
                 "name": "profiling",
                 "exclude_from_results": false,
                 "agentic_cache_warmup_duration": 60.0,
                 "grace_period": 10.0
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
         // max(benchmark grace 10, min(cache 60, 300)) = 60
         assert_eq!(resolve_agentic_warmup_grace(&cache_only), Some(60.0));
 
-        let plain: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(
-            serde_json::json!({
+        let plain: crate::engine::protocol::PhaseCommonSpec =
+            serde_json::from_value(serde_json::json!({
                 "name": "profiling",
                 "exclude_from_results": false
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
         assert_eq!(resolve_agentic_warmup_grace(&plain), None);
     }
 
