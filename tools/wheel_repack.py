@@ -23,7 +23,9 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import platform
 import stat
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -35,6 +37,105 @@ _SCRIPT_NAME = "aiperf"
 # S_IFREG type bits MUST be part of the shifted mode (not OR'd into the low word) or
 # pip installs the file non-executable and `aiperf` fails with Permission denied.
 _EXEC_EXTERNAL_ATTR = (stat.S_IFREG | 0o755) << 16
+
+# ELF constants. Only the fields this scan reads are named.
+_ELF_MAGIC = b"\x7fELF"
+_ELFCLASS64 = 2
+_ELFDATA2LSB = 1
+_SHT_GNU_verneed = 0x6FFFFFFE
+
+
+def glibc_versions(binary: Path) -> set[tuple[int, int]]:
+    """Every ``GLIBC_x.y`` version need declared by a 64-bit LE ELF.
+
+    Reads ``.gnu.version_r`` (``SHT_GNU_verneed``) directly — the same table
+    ``objdump -T`` prints and auditwheel's ``versioned_symbols`` check consults.
+    Implemented in-tree so the packaging path needs no auditwheel install.
+    """
+    data = binary.read_bytes()
+    if data[:4] != _ELF_MAGIC:
+        raise ValueError(f"{binary} is not an ELF file")
+    if data[4] != _ELFCLASS64 or data[5] != _ELFDATA2LSB:
+        raise ValueError(f"{binary} is not a 64-bit little-endian ELF")
+
+    # Elf64_Ehdr: e_shoff at 0x28, e_shentsize at 0x3A, e_shnum at 0x3C.
+    (e_shoff,) = struct.unpack_from("<Q", data, 0x28)
+    e_shentsize, e_shnum = struct.unpack_from("<HH", data, 0x3A)
+
+    versions: set[tuple[int, int]] = set()
+    for i in range(e_shnum):
+        off = e_shoff + i * e_shentsize
+        # Elf64_Shdr: sh_type at +0x04, sh_offset at +0x18, sh_link at +0x28.
+        (sh_type,) = struct.unpack_from("<I", data, off + 0x04)
+        if sh_type != _SHT_GNU_verneed:
+            continue
+        (sh_offset,) = struct.unpack_from("<Q", data, off + 0x18)
+        (sh_link,) = struct.unpack_from("<I", data, off + 0x28)
+        # sh_link names the associated string table (.dynstr).
+        (strtab_off,) = struct.unpack_from(
+            "<Q", data, e_shoff + sh_link * e_shentsize + 0x18
+        )
+        versions |= _read_verneed(data, sh_offset, strtab_off)
+    return versions
+
+
+def _read_verneed(
+    data: bytes, verneed_off: int, strtab_off: int
+) -> set[tuple[int, int]]:
+    """Walk the Elf64_Verneed / Elf64_Vernaux chains, collecting GLIBC_x.y names."""
+    versions: set[tuple[int, int]] = set()
+    need_off = verneed_off
+    while True:
+        # Elf64_Verneed: vn_cnt at +0x02, vn_aux at +0x08, vn_next at +0x0C.
+        (vn_cnt,) = struct.unpack_from("<H", data, need_off + 0x02)
+        vn_aux, vn_next = struct.unpack_from("<II", data, need_off + 0x08)
+        aux_off = need_off + vn_aux
+        for _ in range(vn_cnt):
+            # Elf64_Vernaux: vna_name at +0x08, vna_next at +0x0C.
+            vna_name, vna_next = struct.unpack_from("<II", data, aux_off + 0x08)
+            name = _cstr(data, strtab_off + vna_name)
+            if name.startswith("GLIBC_"):
+                parsed = _parse_glibc_version(name)
+                if parsed is not None:
+                    versions.add(parsed)
+            if vna_next == 0:
+                break
+            aux_off += vna_next
+        if vn_next == 0:
+            break
+        need_off += vn_next
+    return versions
+
+
+def _cstr(data: bytes, offset: int) -> str:
+    end = data.index(b"\0", offset)
+    return data[offset:end].decode("utf-8", "replace")
+
+
+def _parse_glibc_version(name: str) -> tuple[int, int] | None:
+    """``"GLIBC_2.39"`` -> ``(2, 39)``. Returns None for private/odd names."""
+    parts = name.removeprefix("GLIBC_").split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        # e.g. GLIBC_PRIVATE — not a public version floor.
+        return None
+
+
+def manylinux_tag(floor: tuple[int, int], machine: str) -> str:
+    """PEP 600 tag for a glibc floor: ``((2, 39), "x86_64")`` -> ``manylinux_2_39_x86_64``."""
+    major, minor = floor
+    return f"manylinux_{major}_{minor}_{machine}"
+
+
+def platform_tag_for(binary: Path) -> str:
+    """The PEP 600 platform tag the injected ``binary`` actually requires."""
+    versions = glibc_versions(binary)
+    if not versions:
+        raise ValueError(f"{binary} declares no GLIBC_ version needs")
+    return manylinux_tag(max(versions), platform.machine())
 
 
 def _record_hash(data: bytes) -> str:
