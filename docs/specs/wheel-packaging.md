@@ -27,16 +27,26 @@ entries. Compressed composition:
 | `aiperf/dataset/generator/assets/shakespeare.txt` | 5,020,475 | 1,924,295 | 6.3% |
 | 4 × `aiperf/dataset/generator/assets/source_images/*.jpg` | 574,212 | 543,836 | 1.8% |
 | `aiperf/config/schema/aiperf-config.schema.json` | 996,885 | 91,366 | 0.3% |
-| remaining 1,082 entries | — | ~3,259,259 | 10.6% |
+| remaining 1,082 entries (all rows above are 7 entries) | — | ~3,259,259 | 10.7% |
 
-Of the 1,089 entries, 961 are `.py`. The rest is package data that hatchling's
-`packages = ["src/aiperf"]` sweeps in implicitly: 67 `.js`, 31 `.yaml`, 6
-`.html`, 6 `.json`, 4 `.md`, 4 `.jpg`, 2 `.jsonl`, 2 `.txt`, 1 `.css`, and 5
-extensionless files, spread over `config/templates/`, `operator/ui/`,
-`dataset/generator/assets/`, `dataset/agentic_code_gen/`, `plugin/`,
-`config/schema/`, `analysis/`, `plot/`, and `reporting/templates/`. hatchling
-includes every file under the declared package directory, not an enumerated
-`package-data` pattern list, which is what keeps those 128 non-`.py` files in.
+Separately, 1,082 of the 1,089 entries are the `aiperf/` package payload; the other 7 are
+metadata the build emits, not package data — 6 `dist-info/` entries (`METADATA`,
+`WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`,
+`licenses/ATTRIBUTIONS.md`) plus the injected `.data/scripts/aiperf`.
+
+Of the 1,082 package entries, 961 are `.py` and **121** are package data that
+hatchling's `packages = ["src/aiperf"]` sweeps in implicitly: 67 `.js`, 31
+`.yaml`, 6 `.html`, 6 `.json`, 4 `.jpg`, 3 `.md`, 2 `.jsonl`, 1 `.txt`, and 1
+`.css`, spread over 17 leaf directories under six top-level packages —
+`operator/` (68), `config/` (33), `dataset/` (12), `plugin/` (4), `analysis/`
+(3), and `plot/` (1). hatchling includes every file under the declared package
+directory, not an enumerated `package-data` pattern list, which is what keeps
+those 121 files in.
+
+On disk `src/aiperf` holds 122 non-`.py` files (excluding `__pycache__`). The
+one file that does not reach the wheel is `src/aiperf/plugin/enums.pyi`, a
+generated stub ignored at `.gitignore:40`; hatchling honors VCS ignore rules, so
+122 on disk yields 121 in the payload.
 
 The native binary dominates. It is built by the `optimized` profile
 (`rust/Cargo.toml` `[profile.optimized]`: `inherits = "release"`, `lto = "fat"`,

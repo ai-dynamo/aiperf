@@ -64,7 +64,7 @@ explainer "Rust Architecture Atlas" {
     eyebrow: "2 · Processes"
     title: "Crate graph and process roles"
     lede: "Compile-time capability flows `aiperf-cli` → `aiperf-runtime`, which owns the dispatch seam as an in-crate module. The entry process and its `--execute` child share one binary; `aiperf-mock-server` links runtime independently; `e2e` stays off the hot path."
-    narration: "Capability flows from aiperf-cli into aiperf-runtime, which owns the dispatch module directly. Mock server and packaging crates stay outside that execute dependency edge."
+    narration: "Capability flows from aiperf-cli into aiperf-runtime, which owns the dispatch module directly. Mock server and the e2e harness stay outside that execute dependency edge."
     term: {
       word: "aiperf-runtime"
       meaning: "Library crate that owns clocks, transports, datasets, engine, cellular, dispatch, and metrics composition."

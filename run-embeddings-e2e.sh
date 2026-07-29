@@ -12,7 +12,7 @@
 #
 # Runner:
 #   (default) run `aiperf profile` from the container image ($IMAGE).
-#   --local   run the host-installed `aiperf` (pip/maturin) instead of Docker.
+#   --local   run the host-installed `aiperf` (pip) instead of Docker.
 #
 # Usage:
 #   ./run-embeddings-e2e.sh                          # mock + image

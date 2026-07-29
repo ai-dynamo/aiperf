@@ -105,8 +105,8 @@ aiperf-python = "aiperf.entrypoint:main"
 aiperf = "aiperf.plugin:plugins.yaml"
 
 # hatchling includes EVERY file under the declared package directory, not just
-# `.py`. That matters: `src/aiperf` carries 130 non-`.py` files across ten
-# directories (operator UI `.js`/`.css`/`.html`, config templates, generator
+# `.py`. That matters: `src/aiperf` carries 121 packaged non-`.py` files across 17
+# leaf directories (operator UI `.js`/`.css`/`.html`, config templates, generator
 # assets, plugin manifests, the JSON schema), and an enumerated `package-data`
 # pattern list would silently drop them.
 [tool.hatch.build.targets.wheel]
