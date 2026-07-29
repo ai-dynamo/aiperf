@@ -52,6 +52,9 @@ pub struct PublicDatasetSpec {
     /// public datasets (then the path defaults to full replay).
     #[serde(default)]
     pub synthesis: Option<TraceSynthesisSpec>,
+    /// Dataset-level cache-bust policy; `synthesis.cache_bust_target` wins.
+    #[serde(default)]
+    pub cache_bust: Option<DatasetCacheBustSpec>,
     /// Fetch remote `http(s)://` image URLs at dataset generation and inline
     /// them as `data:` URLs, for servers that cannot resolve URLs themselves.
     #[serde(default)]
@@ -124,6 +127,9 @@ pub struct FileDatasetSpec {
     /// Optional native trace transformation and caps.
     #[serde(default)]
     pub synthesis: Option<TraceSynthesisSpec>,
+    /// Dataset-level cache-bust policy; `synthesis.cache_bust_target` wins.
+    #[serde(default)]
+    pub cache_bust: Option<DatasetCacheBustSpec>,
     /// Fetch remote `http(s)://` image URLs at dataset generation and inline
     /// them as `data:` URLs, for servers that cannot resolve URLs themselves.
     /// Default keeps authored URLs unchanged (dispatch sends them as-is).
@@ -132,6 +138,18 @@ pub struct FileDatasetSpec {
     /// Loader/composer-specific options after Config-v2 validation.
     #[serde(default)]
     pub options: Map<String, Value>,
+}
+
+/// Dataset-level cache-bust policy projected from Config v2 `dataset.cache_bust`.
+///
+/// The recorded-graph path reads `synthesis.cache_bust_target` first; this block
+/// is the equivalent authored spelling when no synthesis block carries it.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetCacheBustSpec {
+    /// Marker target name; absent or `"none"` disables marker injection.
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 /// Trace synthesis configuration.

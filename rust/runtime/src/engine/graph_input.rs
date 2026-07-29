@@ -28,6 +28,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::engine::execute::distribution;
+use crate::engine::dataset_input::DatasetCacheBustSpec;
 use crate::engine::protocol::{
     DistributionSpec, FileDatasetSpec, PromptSelectionSpec, PublicDatasetSourceSpec,
     PublicDatasetSpec, TraceSynthesisSpec,
@@ -599,6 +600,8 @@ struct RecordedFileInput {
     #[serde(default)]
     synthesis: Option<TraceSynthesisSpec>,
     #[serde(default)]
+    cache_bust: Option<DatasetCacheBustSpec>,
+    #[serde(default)]
     entries: Option<usize>,
     #[serde(default)]
     random_seed: Option<u64>,
@@ -619,6 +622,7 @@ impl From<FileDatasetSpec> for RecordedFileInput {
             format: spec.format,
             sampling: spec.sampling,
             synthesis: spec.synthesis,
+            cache_bust: spec.cache_bust,
             entries: spec.entries,
             random_seed: spec.random_seed,
             osl: spec.osl,
@@ -705,6 +709,7 @@ fn prepare_recorded_file(
     let mut load = LoadConfig::new(source);
     load.options = input.options;
     let synthesis = input.synthesis;
+    let cache_bust = input.cache_bust;
     let prompts = input.prompts;
     let allow_dataset_wrap = synthesis
         .as_ref()
@@ -750,10 +755,13 @@ fn prepare_recorded_file(
     let content_root_seed = context.run_random_seed.unwrap_or_else(|| {
         RngRoot::new(None).derive_seed_or_entropy("dataset.recorded_graph.content")
     });
+    // `synthesis.cache_bust_target` is the recorded-graph spelling; the
+    // dataset-level `cache_bust` block is the equivalent authored form.
     let cache_bust_target = CacheBustTarget::parse(
         synthesis
             .as_ref()
-            .and_then(|value| value.cache_bust_target.as_deref()),
+            .and_then(|value| value.cache_bust_target.as_deref())
+            .or_else(|| cache_bust.as_ref().and_then(|value| value.target.as_deref())),
     );
     Ok(PreparedRecordedInput {
         input: RecordedTraceInputConfig {
@@ -834,6 +842,7 @@ fn prepare_recorded_public(
     // same snapshot the file path does (else the scenario's t* warmup/profiling
     // clip and cache-bust silently vanish for the live HF corpora).
     let synthesis = input.synthesis;
+    let cache_bust = input.cache_bust;
     let allow_dataset_wrap = synthesis
         .as_ref()
         .and_then(|value| value.allow_dataset_wrap)
@@ -866,10 +875,13 @@ fn prepare_recorded_public(
                 value.dataset_sampling_strategy.as_deref(),
             ),
         });
+    // `synthesis.cache_bust_target` is the recorded-graph spelling; the
+    // dataset-level `cache_bust` block is the equivalent authored form.
     let cache_bust_target = CacheBustTarget::parse(
         synthesis
             .as_ref()
-            .and_then(|value| value.cache_bust_target.as_deref()),
+            .and_then(|value| value.cache_bust_target.as_deref())
+            .or_else(|| cache_bust.as_ref().and_then(|value| value.target.as_deref())),
     );
     Ok(PreparedRecordedInput {
         input: RecordedTraceInputConfig {
