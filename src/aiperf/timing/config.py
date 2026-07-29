@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import PhaseKind
 from aiperf.config.dataset.defaults import InputDefaults
@@ -139,6 +139,12 @@ class TimingConfig(AIPerfBaseModel):
         "across concurrency lanes when concurrency exceeds the loaded pool. "
         "Defaults to False so over-subscription requires explicit opt-in.",
     )
+    cache_bust_enabled: bool = Field(
+        default=False,
+        description="Whether the active dataset has a non-NONE cache-bust "
+        "target. An active cache-bust marker keeps repeated-trace traffic "
+        "distinct, so it satisfies the dataset-wrap opt-in on its own.",
+    )
 
     @classmethod
     def from_run(cls, run: BenchmarkRun) -> TimingConfig:
@@ -198,6 +204,7 @@ class TimingConfig(AIPerfBaseModel):
         allow_dataset_wrap = bool(
             getattr(synthesis, "allow_dataset_wrap", False) if synthesis else False
         )
+        cache_bust_enabled = cfg.get_cache_bust_target() != CacheBustTarget.NONE
 
         return cls(
             phase_configs=configs,
@@ -209,6 +216,7 @@ class TimingConfig(AIPerfBaseModel):
             trajectory_start_min_ratio=trajectory_min,
             trajectory_start_max_ratio=trajectory_max,
             allow_dataset_wrap=allow_dataset_wrap,
+            cache_bust_enabled=cache_bust_enabled,
         )
 
 

@@ -23,7 +23,9 @@ Launch a vLLM server with a video-capable vision language model:
 <!-- setup-vllm-video-openai-endpoint-server -->
 ```bash
 docker pull vllm/vllm-openai:latest
-docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+docker run --gpus all -p 8000:8000 -e HF_TOKEN \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  vllm/vllm-openai:latest \
   --model Qwen/Qwen2-VL-2B-Instruct \
   --enforce-eager \
   --media-io-kwargs '{"video": {"num_frames": 16}}' \
