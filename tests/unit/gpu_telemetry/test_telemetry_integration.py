@@ -192,12 +192,12 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 await processor.process_telemetry_record(record)
             metric_results = await processor.summarize()
 
-            assert len(processor._hierarchy.dcgm_endpoints) == 2
+            assert len(processor._hierarchy.telemetry_source_endpoints) == 2
 
-            node1_data = processor._hierarchy.dcgm_endpoints.get(
+            node1_data = processor._hierarchy.telemetry_source_endpoints.get(
                 "http://node1:9401/metrics", {}
             )
-            node2_data = processor._hierarchy.dcgm_endpoints.get(
+            node2_data = processor._hierarchy.telemetry_source_endpoints.get(
                 "http://node2:9401/metrics", {}
             )
 
