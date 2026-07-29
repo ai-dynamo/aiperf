@@ -28,7 +28,7 @@
               16.0
             ]
           },
-          "entries": 100,
+          "entries": 5,
           "images": {
             "batch_size": 2,
             "format": "jpeg",

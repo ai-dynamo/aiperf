@@ -17,7 +17,7 @@
       },
       "datasets": [
         {
-          "entries": 100,
+          "entries": 2,
           "prompts": {
             "batch_size": 1,
             "isl": {
