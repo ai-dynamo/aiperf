@@ -181,18 +181,33 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
         Selects the HuggingFace config by passing
         ``Environment.ACCURACY.LCB_RELEASE_TAG`` as the positional
         ``name`` arg (e.g. ``"v4_v5"``, ``"v6"``), matching lighteval's
-        ``hf_subset=`` usage. The release tag is overridable via
-        ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` without source edits.
-        ``livecodebench/code_generation_lite`` is in Parquet format on
-        HuggingFace Hub, so no ``trust_remote_code`` opt-in is needed
-        (and ``datasets`` v4 removed that parameter entirely). This
+        ``hf_subset=`` usage. ``trust_remote_code=True`` is required
+        because ``livecodebench/code_generation_lite`` still ships a
+        repository loading script; ``datasets<4`` runs the script
+        normally. ``datasets>=4`` dropped loading-script support entirely
+        and raises ``RuntimeError: Dataset scripts are no longer
+        supported`` — the loader catches that specific error and surfaces
+        ``uv pip install 'datasets<4'`` as the recovery step. This
         intentionally diverges from lighteval's ``trust_dataset=True``
-        opt-in, which was only needed when LCB shipped a loading script.
+        opt-in (which is only needed for the task-config layer, not the
+        raw ``load_dataset`` call). The release tag is overridable via
+        ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` without source edits.
         """
         release_tag = Environment.ACCURACY.LCB_RELEASE_TAG
         try:
-            return load_dataset(DATASET_NAME, release_tag, split="test")
+            return load_dataset(
+                DATASET_NAME, release_tag, split="test", trust_remote_code=True
+            )
         except Exception as e:
+            if "Dataset scripts are no longer supported" in str(e):
+                raise RuntimeError(
+                    f"{TASK_NAME}: cannot load {DATASET_NAME!r} on "
+                    f"``datasets>=4`` — LCB still ships a repository loading "
+                    f"script that ``datasets>=4`` no longer executes. "
+                    f"Pin to an earlier release: "
+                    f"``uv pip install 'datasets<4'``. "
+                    f"Original error: {type(e).__name__}: {e}"
+                ) from e
             raise RuntimeError(
                 f"{TASK_NAME}: failed to load {DATASET_NAME!r} subset "
                 f"{release_tag!r}. "
