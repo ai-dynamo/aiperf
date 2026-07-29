@@ -35,11 +35,21 @@ type Captured = Arc<Mutex<Vec<ExportMetricsServiceRequest>>>;
 /// A stub OTLP/HTTP collector that decodes and retains every posted body.
 ///
 /// Owns its runtime so the collector outlives the `aiperf` subprocess without
-/// depending on the calling test's runtime shape.
+/// depending on the calling test's runtime shape. The runtime is retired through
+/// `shutdown_background` in `Drop`: a plain `Runtime` drop blocks on worker joins,
+/// which panics when it happens inside `#[tokio::test]`'s async context.
 struct OtlpCollector {
     url: String,
     captured: Captured,
-    _runtime: tokio::runtime::Runtime,
+    runtime: Option<tokio::runtime::Runtime>,
+}
+
+impl Drop for OtlpCollector {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
 }
 
 impl OtlpCollector {
@@ -69,7 +79,7 @@ impl OtlpCollector {
         Self {
             url: format!("http://127.0.0.1:{port}"),
             captured,
-            _runtime: runtime,
+            runtime: Some(runtime),
         }
     }
 
