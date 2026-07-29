@@ -188,6 +188,22 @@ struct AuthoringWireV2 {
 /// We branch on the presence of that key so a malformed authoring payload reports an
 /// authoring error rather than being misread as a bare run.
 pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
+    let bytes = resolved_run_bytes(input)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| anyhow!("resolved run failed the wire contract: {error}"))
+}
+
+/// Resolve an execute-mode stdin payload to the **resolved-run JSON bytes**.
+///
+/// This is the single authoritative `Inputs -> BenchmarkRun` resolution described on
+/// [`decode_execute_wire`], exposed separately because callers that dispatch on
+/// resolved facts (cellular promotion reads `cfg.runtime.cells`) must resolve before
+/// they can read them — the authoring envelope carries no `cfg` at all.
+///
+/// Bytes, not a `Value`: the resolved run holds factory-owned
+/// [`serde_json::value::RawValue`] config that survives a byte round-trip but cannot
+/// be reconstructed through `serde_json::from_value`.
+pub fn resolved_run_bytes(input: &[u8]) -> Result<Vec<u8>> {
     // Probe the top-level JSON for the `authoring` tag; a bare resolved run has no
     // such key (and `BenchmarkRunWireV2` rejects it via `deny_unknown_fields`).
     let has_authoring = serde_json::from_slice::<Value>(input)
@@ -196,8 +212,10 @@ pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
         .is_some();
     if !has_authoring {
         // Pre-collapse contract: an already-resolved run projected onto the wire.
-        return serde_json::from_slice(input)
-            .map_err(|error| anyhow!("invalid resolved run: {error}"));
+        // Decode to validate the shape, then hand back the caller's bytes unchanged.
+        serde_json::from_slice::<BenchmarkRunWireV2>(input)
+            .map_err(|error| anyhow!("invalid resolved run: {error}"))?;
+        return Ok(input.to_vec());
     }
     let envelope: AuthoringWireV2 = serde_json::from_slice(input)
         .map_err(|error| anyhow!("invalid authoring inputs: {error}"))?;
@@ -210,10 +228,7 @@ pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
     if envelope.variation.is_some() {
         run.variation = envelope.variation;
     }
-    let bytes = serde_json::to_vec(&run)
-        .map_err(|error| anyhow!("re-serializing the resolved run: {error}"))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| anyhow!("resolved run failed the wire contract: {error}"))
+    serde_json::to_vec(&run).map_err(|error| anyhow!("re-serializing the resolved run: {error}"))
 }
 
 /// Default thread-per-core worker count when `runtime.workers` is unset: the

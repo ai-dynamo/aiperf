@@ -289,6 +289,27 @@ pub fn cell_count_from_envelope(envelope: &serde_json::Value) -> u32 {
         .unwrap_or(1)
 }
 
+/// Resolve raw `--execute` stdin bytes into the wrapped `{"run": …}` envelope the
+/// cellular helpers require, alongside the cell count read from it.
+///
+/// The profile parent ships an **authoring** payload (`{"authoring": <Inputs>}`) and
+/// leaves resolution to the child, so `cfg.runtime.cells` does not exist on the wire
+/// the child receives. Mode dispatch must therefore run the same authoritative
+/// resolution the runner runs before it can tell a multi-cell run from a single one;
+/// reading the pointer off the unresolved payload always yields the `1` default and
+/// silently degrades `--cells N` to a single process.
+///
+/// Returns `None` when the payload does not resolve — mode dispatch then falls
+/// through to the ordinary runner path, which reports the resolution error through
+/// its own terminal envelope rather than duplicating diagnostics here.
+pub fn resolved_envelope_from_input(input: &[u8]) -> Option<(serde_json::Value, u32)> {
+    let bytes = crate::engine::protocol_v2::resolved_run_bytes(input).ok()?;
+    let run: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let envelope = serde_json::json!({ "run": run });
+    let cells = cell_count_from_envelope(&envelope);
+    Some((envelope, cells))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
