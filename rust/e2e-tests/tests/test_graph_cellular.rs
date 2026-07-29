@@ -149,7 +149,9 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
             h_cell.mock.url
         ),
         &[
-            ("AIPERF_LOG", "warn,aiperf_cellular_artifact=info"),
+            // `aiperf=info` is required: the serve event fires in the `--execute` child and the
+            // parent re-emits forwarded child lines under target `aiperf` into `logs/aiperf.log`.
+            ("AIPERF_LOG", "warn,aiperf=info,aiperf_cellular_artifact=info"),
             ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
         ],
     );
@@ -1082,7 +1084,9 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
             h_cell.mock.url
         ),
         &[
-            ("AIPERF_LOG", "warn,aiperf_cellular_artifact=info"),
+            // `aiperf=info` is required: the serve event fires in the `--execute` child and the
+            // parent re-emits forwarded child lines under target `aiperf` into `logs/aiperf.log`.
+            ("AIPERF_LOG", "warn,aiperf=info,aiperf_cellular_artifact=info"),
             ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
         ],
     );
