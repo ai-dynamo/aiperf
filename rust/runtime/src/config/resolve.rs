@@ -1429,7 +1429,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         &endpoint_type,
         true,
         &benchmark_id,
-        input_config,
+        input_config.clone(),
         serde_json::json!({}),
     );
     // The per-record OTLP sink is unavailable under sketch retention.
@@ -1454,13 +1454,15 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         .as_ref()
         .map(|s| s.formats.clone())
         .unwrap_or_default();
-    let sm_input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    // `server_metrics_export.json` echoes the same config object, so it must reuse the
+    // already-redacted projection; re-serializing `cfg` here would republish the
+    // runtime credentials that the copy above exists to strip.
     export.server_metrics = crate::config::model::export::ServerMetricsExport::build(
         &sm_formats,
         server_enabled,
         crate::config::model::export::AIPERF_V1_VERSION,
         &benchmark_id,
-        sm_input_config,
+        input_config,
     );
     export.parquet =
         crate::config::model::export::ParquetExport::build(&sm_formats, server_enabled);
