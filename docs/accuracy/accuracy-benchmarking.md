@@ -96,13 +96,23 @@ export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or any published subset
 
 The env var is read at every `load_problems` call (no module-reload needed)
 and is passed as the positional `name` arg to
-`load_dataset("livecodebench/code_generation_lite", name, split="test")` —
+`load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)` —
 the standard HF config-name selector, matching lighteval's `hf_subset=`
-usage. `livecodebench/code_generation_lite` is in Parquet format on
-HuggingFace Hub, so no `trust_remote_code` opt-in is needed (`datasets` v4
-removed that parameter entirely). Nothing is bundled with the aiperf wheel —
-all subsets are fetched on-demand and cached under
-`~/.cache/huggingface/datasets/`.
+usage. `trust_remote_code=True` is required because LCB still ships a
+repository loading script; `datasets<4` runs it normally. Nothing is
+bundled with the aiperf wheel — all subsets are fetched on-demand and
+cached under `~/.cache/huggingface/datasets/`.
+
+**Compatibility:** `livecodebench/code_generation_lite` requires
+`datasets<4`. `datasets>=4` dropped support for repository loading scripts
+entirely, and the loader surfaces a clear error when it detects this:
+
+```
+lcb_codegeneration: cannot load 'livecodebench/code_generation_lite'
+on `datasets>=4` — LCB still ships a repository loading script that
+`datasets>=4` no longer executes. Pin to an earlier release:
+`uv pip install 'datasets<4'`.
+```
 
 If a future LCB release renames or removes the pinned subset, the loader
 raises `RuntimeError` prefixed `lcb_codegeneration: failed to load …`;
