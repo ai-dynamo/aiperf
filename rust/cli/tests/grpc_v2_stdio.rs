@@ -102,6 +102,7 @@ fn request(operation: &str, artifact_dir: &std::path::Path, url: &str) -> Value 
                     "type": "synthetic",
                     "entries": 2,
                     "sampling": "sequential",
+                    "turn_delay_ratio": 1.0,
                     "prompts": {
                         "batch_size": 1,
                         "isl": {"value": 4.0},
@@ -445,6 +446,7 @@ fn embedding_request(operation: &str, artifact_dir: &std::path::Path, url: &str)
                     "type": "synthetic",
                     "entries": 2,
                     "sampling": "sequential",
+                    "turn_delay_ratio": 1.0,
                     "prompts": {"batch_size": 1, "isl": {"value": 8.0}, "osl": {"value": 1.0}}
                 }],
                 "tokenizer": {
