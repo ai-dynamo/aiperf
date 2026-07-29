@@ -596,6 +596,7 @@ mod tests {
     #[test]
     fn resolved_endpoint_defaults_legacy_max_tokens_when_omitted() {
         let value = serde_json::json!({
+            "type": "chat",
             "urls": ["http://127.0.0.1:8000"],
             "streaming": false,
             "timeout_seconds": 60.0,
