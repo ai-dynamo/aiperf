@@ -216,9 +216,10 @@ def _maybe_compute_detailed(
         return None
 
     from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
+    from aiperf.orchestrator.jsonl_loader import DEFAULT_JSONL_FILENAME
 
     detailed_aggregation = DetailedAggregation(
-        jsonl_filename=plan.export_jsonl_file or "",
+        jsonl_filename=plan.export_jsonl_file or DEFAULT_JSONL_FILENAME,
     )
     detailed_result = detailed_aggregation.aggregate(results)
     detailed_result.metadata["cooldown_seconds"] = plan.cooldown_seconds
