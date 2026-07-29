@@ -40,12 +40,21 @@ fn default_true() -> bool {
     true
 }
 
+/// Must equal `resolve::DEFAULT_CONNECTION_LIMIT` and the protocol-v2 endpoint
+/// DTO's `default_connection_limit`, which in turn track
+/// `ClientConfig::default().max_connections_per_origin`. The typed model is
+/// re-serialized into the protocol-v2 endpoint profile, so a divergent default
+/// here silently rewrites an omitted field into non-default client policy — and
+/// gRPC rejects any profile whose client policy differs from the HTTP default.
 fn default_connection_limit() -> u32 {
-    1000
+    2_500
 }
 
+/// Must equal `resolve::DEFAULT_KEEPALIVE_TIMEOUT` and the protocol-v2 endpoint
+/// DTO's `default_keepalive_timeout` (300 s =
+/// `ClientConfig::default().keepalive_ns`). See [`default_connection_limit`].
 fn default_keepalive_timeout() -> f64 {
-    5.0
+    300.0
 }
 
 fn default_wait_interval() -> f64 {
