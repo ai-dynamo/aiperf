@@ -83,10 +83,24 @@ pub struct Peak {
     pub weight: f64,
 }
 
+/// One prompt per request, matching `load.rs`/`yaml.rs`/`workload_kind.rs`.
+fn default_batch_size() -> u32 {
+    1
+}
+
+/// Full think-time delay, matching `load.rs`/`yaml.rs`/`workload_kind.rs`.
+fn default_turn_delay_ratio() -> f64 {
+    1.0
+}
+
 /// Synthetic prompt-generation policy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Prompts {
-    /// Prompts per request.
+    /// Prompts per request. Every producer (`load.rs`, `yaml.rs`,
+    /// `workload_kind.rs`) already defaults this to one, so omission in an
+    /// authored protocol-v2 request must resolve the same way rather than
+    /// hard-rejecting the run.
+    #[serde(default = "default_batch_size")]
     pub batch_size: u32,
     /// Input sequence length distribution.
     pub isl: Distribution,
@@ -268,7 +282,9 @@ pub struct Synthetic {
     /// Turns-per-session distribution (multi-turn; present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<Distribution>,
-    /// Per-turn delay as a ratio of think time.
+    /// Per-turn delay as a ratio of think time. See [`Prompts::batch_size`] for
+    /// why omission defaults rather than rejects.
+    #[serde(default = "default_turn_delay_ratio")]
     pub turn_delay_ratio: f64,
     /// Number of dataset entries (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
