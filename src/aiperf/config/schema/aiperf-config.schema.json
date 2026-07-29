@@ -17899,7 +17899,8 @@
       "description": "Corpus used for synthetic prompt text generation.",
       "enum": [
         "sonnet",
-        "coding"
+        "coding",
+        "random"
       ],
       "title": "PromptCorpus",
       "type": "string"
