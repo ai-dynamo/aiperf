@@ -152,6 +152,7 @@ class SampledSession:
             # the resumed root acquires a session slot + counts even at k_i > 0.
             is_session_start=True,
             has_forks=meta.has_forks if meta is not None else False,
+            no_request=meta.no_request if meta is not None else False,
             branch_mode=self.branch_mode,
         )
 

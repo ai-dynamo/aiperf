@@ -205,6 +205,7 @@ def validate_system_message_placement(
     """
     for sid, conv in conversations.items():
         if conv.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
+            _validate_isolated_system_placement(sid, conv)
             continue
         is_fork_child = sid in parent_of
         for idx, turn in enumerate(conv.turns):
@@ -219,6 +220,22 @@ def validate_system_message_placement(
                         "prompt at the root turn only; popular chat templates "
                         "(e.g. Qwen3-VL) ignore system messages after index 0."
                     )
+
+
+def _validate_isolated_system_placement(sid: str, conv: Any) -> None:
+    """A ``MESSAGE_ARRAY_WITH_RESPONSES`` turn may carry its own system prompt,
+    but it must be the FIRST message of that turn's array -- a system entry at a
+    later position is still mid-payload in the sent body and is dropped by the
+    same chat templates the non-isolated rule guards against.
+    """
+    for idx, turn in enumerate(conv.turns):
+        for m_idx, m in enumerate(turn.raw_messages or []):
+            if isinstance(m, dict) and m.get("role") == "system" and m_idx != 0:
+                raise DagLoadError(
+                    f"session '{sid}' turn {idx}: a 'system' message must be the "
+                    "first message of an isolated turn's array; later positions "
+                    "are dropped by chat templates (e.g. Qwen3-VL)."
+                )
 
 
 def validate_pre_session_spawns_disjoint_from_forks(

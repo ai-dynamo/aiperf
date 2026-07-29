@@ -700,6 +700,31 @@ def test_isolation_mode_allows_per_turn_system_prompt(tmp_path):
     assert next(m["content"] for m in t1 if m["role"] == "system") == "sys1"
 
 
+def test_isolation_mode_rejects_system_not_first_in_turn(tmp_path):
+    """Even under isolation, a system message must be FIRST in its turn's array:
+    a later position is still mid-payload and dropped by chat templates, so it
+    is rejected rather than silently ignored."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": [{"spawns": ["a"]}],
+            },
+            {
+                "session_id": "a",
+                "context_mode": "message_array_with_responses",
+                "turns": [
+                    {"messages": [_msg("u0"), {"role": "system", "content": "sys"}]},
+                ],
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError, match="must be the first message"):
+        DagJsonlLoader(path).load()
+
+
 def test_accumulating_mode_still_rejects_non_root_system_prompt(tmp_path):
     """The placement rule still applies to accumulating (deltas) conversations,
     where a later-turn system message lands mid-array after the append-merge and
