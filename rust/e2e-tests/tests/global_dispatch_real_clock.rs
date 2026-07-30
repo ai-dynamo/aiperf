@@ -119,9 +119,18 @@ async fn global_dispatch_real_clock_concurrency_matches_expected_records() {
             .model("gpt-4")
             // 4 worker threads keeping 3 requests in flight globally (vs. a
             // lone concurrency-2 run in `tuned_scheduled_single_turn_raw_timing`)
-            // adds real scheduler/OS contention to first-token queue wait;
-            // ITL (steady-state per-token pacing) stays knife-edge.
-            .tol_ms(15.0, 2.0),
+            // adds real scheduler/OS contention to first-token queue wait.
+            //
+            // ITL is NOT knife-edge here. The mock's per-token pacing is a 5 ms
+            // sleep, and a 5 ms timer only resolves to host scheduler wakeup
+            // granularity: every token gap rounds UP, never down, so the error
+            // is one-sided and accumulates into the mean. Measured over repeated
+            // runs of this binary at `--test-threads=4`, the mean ITL lands
+            // between 5.0 ms and 7.93 ms — an overshoot of up to +2.93 ms, which
+            // a 2 ms band rejects roughly one run in three. 4 ms covers the
+            // observed spread while still catching a genuine pacing regression
+            // (a doubled or dropped inter-token sleep moves the mean by >= 5 ms).
+            .tol_ms(15.0, 4.0),
     );
 
     let peak = peak_wall_clock_concurrency(&records);
