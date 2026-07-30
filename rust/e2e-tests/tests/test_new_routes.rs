@@ -123,7 +123,15 @@ async fn openai_v1_chat_alias_raw_timing_and_data() {
     }
     assert_raw_records_timing_and_data(
         &records,
-        &TunedExpectations::new(TTFT_MS, ITL_MS, OSL).model("gpt-4"),
+        // TTFT error is one-sided: the mock's first-token delay is a 100ms sleep,
+        // and a sleep only resolves to host scheduler wakeup granularity, so every
+        // measured TTFT rounds UP, never down. Under full-suite load (many test
+        // binaries in parallel) the overshoot reaches +14ms, which the 6ms default
+        // rejects. 20ms covers the observed spread while still catching a genuine
+        // regression (a dropped or doubled first-token delay moves TTFT by >=100ms).
+        &TunedExpectations::new(TTFT_MS, ITL_MS, OSL)
+            .model("gpt-4")
+            .tol_ms(20.0, 4.0),
     );
 }
 
@@ -265,9 +273,12 @@ async fn responses_streaming_raw_records_carry_deltas_and_usage() {
             .and_then(Value::as_i64)
             .expect("start_perf_ns");
         let ttft_ms = (deltas[0].0 - start) as f64 / 1e6;
+        // One-sided: the mock's first-token sleep only resolves to host scheduler
+        // wakeup granularity, so TTFT always overshoots. Observed up to +9ms under
+        // full-suite load; 20ms still catches a dropped/doubled 100ms delay.
         assert!(
-            (ttft_ms - TTFT_MS).abs() <= 8.0,
-            "record {i}: TTFT {ttft_ms:.2}ms not within 8ms of tuned {TTFT_MS}ms"
+            (ttft_ms - TTFT_MS).abs() <= 20.0,
+            "record {i}: TTFT {ttft_ms:.2}ms not within 20ms of tuned {TTFT_MS}ms"
         );
 
         let perfs: Vec<i64> = deltas.iter().map(|(p, _)| *p).collect();
@@ -277,8 +288,8 @@ async fn responses_streaming_raw_records_carry_deltas_and_usage() {
             .collect();
         let mean_itl = gaps.iter().sum::<f64>() / gaps.len() as f64;
         assert!(
-            (mean_itl - ITL_MS).abs() <= 2.0,
-            "record {i}: mean ITL {mean_itl:.3}ms not within 2ms of tuned {ITL_MS}ms"
+            (mean_itl - ITL_MS).abs() <= 4.0,
+            "record {i}: mean ITL {mean_itl:.3}ms not within 4ms of tuned {ITL_MS}ms"
         );
     }
 }
