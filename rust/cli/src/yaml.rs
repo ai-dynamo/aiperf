@@ -666,6 +666,8 @@ struct EndpointSection {
     timeout: Option<f64>,
     #[serde(default, alias = "connectionReuse")]
     connection_reuse: Option<String>,
+    #[serde(default, alias = "sslVerify")]
+    ssl_verify: Option<bool>,
     #[serde(
         default,
         rename = "use_legacy_max_tokens",
@@ -1754,6 +1756,7 @@ impl Benchmark {
                 .as_deref()
                 .map(load::parse_connection_reuse)
                 .transpose()?,
+            ssl_verify: self.endpoint.ssl_verify,
             request_content_type: self
                 .endpoint
                 .request_content_type

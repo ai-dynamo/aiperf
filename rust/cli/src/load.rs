@@ -313,6 +313,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .as_deref()
             .map(parse_connection_reuse)
             .transpose()?,
+        ssl_verify: flags.ssl_verify,
         request_content_type: flags
             .request_content_type
             .as_deref()

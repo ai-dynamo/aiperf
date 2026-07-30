@@ -140,7 +140,7 @@ pub struct Endpoint {
     #[serde(default = "default_connection_reuse")]
     pub connection_reuse: ConnectionReuse,
     /// Verify TLS certificates.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "sslVerify")]
     pub ssl_verify: bool,
     /// Maximum concurrent connections.
     #[serde(default = "default_connection_limit")]

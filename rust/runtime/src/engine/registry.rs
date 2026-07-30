@@ -979,7 +979,7 @@ struct EndpointProfileConfigV2 {
     session_header: Option<String>,
     #[serde(default)]
     http2: bool,
-    #[serde(default = "default_ssl_verify")]
+    #[serde(default = "default_ssl_verify", alias = "sslVerify")]
     ssl_verify: bool,
     /// Optional Unix-domain socket path. When set, the HTTP transport connects
     /// over this socket (HTTP/1.1) instead of TCP; the endpoint `urls` still

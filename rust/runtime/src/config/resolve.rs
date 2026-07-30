@@ -227,6 +227,8 @@ pub struct Inputs {
     /// Custom server-metrics scrape URLs.
     pub server_metrics_urls: Vec<String>,
     pub connection_reuse: Option<ConnectionReuse>,
+    /// Verify TLS peer certificates. Absent leaves the `Endpoint` default (on).
+    pub ssl_verify: Option<bool>,
     pub request_content_type: Option<RequestContentType>,
     pub wait_for_model_timeout: Option<f64>,
     pub wait_for_model_mode: Option<WaitForModelMode>,
@@ -844,7 +846,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         use_server_token_count: inputs.use_server_token_count,
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
         connection_reuse: resolved_connection_reuse,
-        ssl_verify: true,
+        ssl_verify: inputs.ssl_verify.unwrap_or(true),
         connection_limit: DEFAULT_CONNECTION_LIMIT,
         keepalive_timeout: DEFAULT_KEEPALIVE_TIMEOUT,
         download_video_content: inputs.download_video_content,

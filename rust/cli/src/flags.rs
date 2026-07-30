@@ -743,6 +743,11 @@ pub struct ProfileFlags {
     #[arg(long = "connection-reuse-strategy")]
     pub connection_reuse_strategy: Option<String>,
 
+    /// Verify TLS peer certificates (`--ssl-verify false` accepts self-signed
+    /// certs). Default on.
+    #[arg(long = "ssl-verify", num_args = 0..=1, default_missing_value = "true")]
+    pub ssl_verify: Option<bool>,
+
     /// Request body content type (`--request-content-type`):
     /// `application/json` or `multipart/form-data`.
     #[arg(long = "request-content-type")]
