@@ -2474,9 +2474,9 @@ class CLIConfig(BaseConfig):
         Field(
             gt=0,
             description="Deterministic agentic cache-pressure warmup request "
-            "budget per concurrency lane. For example, 10 with concurrency 16 "
-            "caps warmup at 160 wire requests, including initial snapshot "
-            "priming. Mutually exclusive with "
+            "budget per concurrency lane, additional to mandatory snapshot "
+            "primers. For example, 10 with concurrency 16 sends 160 additional "
+            "cache-pressure requests after the primers. Mutually exclusive with "
             "--agentic-cache-warmup-duration.",
         ),
         CLIParameter(
