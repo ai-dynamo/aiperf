@@ -182,6 +182,32 @@ class TestScheduleLater:
 
         assert observed == [(0, 0)]
 
+    async def test_drain_observer_does_not_fire_for_bulk_cancelled_tasks(
+        self, scheduler: LoopScheduler
+    ):
+        observed: list[tuple[int, int]] = []
+        started = asyncio.Event()
+        started_count = 0
+        scheduler.set_drain_observer(
+            lambda: observed.append((scheduler.pending_count, scheduler.running_count))
+        )
+
+        async def wait_forever():
+            nonlocal started_count
+            started_count += 1
+            if started_count == 2:
+                started.set()
+            await asyncio.Event().wait()
+
+        scheduler.execute_async(wait_forever())
+        scheduler.execute_async(wait_forever())
+        await started.wait()
+
+        tasks = scheduler.cancel_all_running()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        assert observed == []
+
 
 class TestExecuteAsync:
     """Tests for execute_async (immediate task execution)."""
