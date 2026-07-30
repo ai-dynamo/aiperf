@@ -480,6 +480,14 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
             continue
         target[key] = value
 
+    if (
+        "benchmark_duration" in loadgen_set
+        and "benchmark_grace_period" not in loadgen_set
+        and cli.benchmark_duration is not None
+        and "grace_period" not in target
+    ):
+        target["grace_period"] = cli.benchmark_grace_period
+
     _apply_agentic_replay_fields(target, cli)
 
 
