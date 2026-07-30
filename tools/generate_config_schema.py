@@ -33,8 +33,9 @@ Output:
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
+
+import orjson
 
 from tools._core import (
     GeneratedFile,
@@ -278,10 +279,7 @@ class ConfigSchemaGenerator(Generator):
             )
 
         # Serialize with proper formatting
-        content = (
-            json.dumps(enhanced_schema, separators=(",", ":"), ensure_ascii=False)
-            + "\n"
-        )
+        content = orjson.dumps(enhanced_schema).decode("utf-8") + "\n"
 
         if self.verbose:
             print_step(f"Schema size: {len(content):,} bytes")
