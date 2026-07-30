@@ -403,7 +403,6 @@ impl TransportFactory for DryRunTransportFactoryV2 {
 #[derive(Debug)]
 pub struct DryRunNativeExecution {
     params: DryRunParams,
-    virtual_workers: DryRunVirtualWorkersConfigV2,
 }
 
 impl NativeTransportExecution for DryRunNativeExecution {
