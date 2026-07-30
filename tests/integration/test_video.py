@@ -32,7 +32,7 @@ class TestVideo:
         "video_format,video_codec,check_fragmentation",
         [
             ("webm", "libvpx-vp9", False),
-            ("mp4", "libx264", True),
+            ("mp4", "libvpx-vp9", True),
         ],
     )
     async def test_video_generation_parameters(
@@ -83,12 +83,13 @@ class TestVideo:
                 )
 
     @pytest.mark.parametrize(
-        "video_format,video_codec,expected_audio_codec",
+        "video_format,video_codec,expected_audio_codec,expected_sample_rate",
         [
-            ("webm", "libvpx-vp9", "vorbis"),
-            ("mp4", "libx264", "aac"),
+            param("webm", "libvpx-vp9", "vorbis", 44100, id="webm-vorbis"),
+            # libopus only accepts 48/24/16/12/8 kHz, so 44.1 kHz is resampled.
+            param("mp4", "libvpx-vp9", "opus", 48000, id="mp4-opus"),
         ],
-    )
+    )  # fmt: skip
     async def test_video_with_audio_embeds_correct_stream(
         self,
         cli: AIPerfCLI,
@@ -96,6 +97,7 @@ class TestVideo:
         video_format: str,
         video_codec: str,
         expected_audio_codec: str,
+        expected_sample_rate: int,
     ):
         """Verify video+audio muxing produces correct audio stream per format."""
         width, height, fps, duration = 320, 240, 4, 2.0
@@ -133,7 +135,7 @@ class TestVideo:
             assert details.has_audio, f"Expected audio stream in {video_format} video"
             assert details.audio_codec == expected_audio_codec
             assert details.audio_channels == 1
-            assert details.audio_sample_rate == 44100
+            assert details.audio_sample_rate == expected_sample_rate
 
     async def test_video_without_audio_has_no_audio_stream(
         self,
@@ -198,7 +200,7 @@ class TestVideoContainerMetadata:
         "video_format,video_codec",
         [
             param(VideoFormat.WEBM, "libvpx-vp9", id="webm-vp9"),
-            param(VideoFormat.MP4, "libx264", id="mp4-h264"),
+            param(VideoFormat.MP4, "libvpx-vp9", id="mp4-vp9"),
         ],
     )  # fmt: skip
     def test_synthetic_video_records_container_duration(

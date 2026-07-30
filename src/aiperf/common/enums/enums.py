@@ -660,14 +660,12 @@ class VideoJobStatus(CaseInsensitiveStrEnum):
 class VideoAudioCodec(CaseInsensitiveStrEnum):
     """Audio codecs for embedding audio in synthetic video files."""
 
-    AAC = "aac"
-    """AAC codec. Default for MP4 containers."""
-
     LIBVORBIS = "libvorbis"
     """Vorbis codec. Default for WebM containers."""
 
     LIBOPUS = "libopus"
-    """Opus codec. Alternative for WebM containers."""
+    """Opus codec. Default for MP4 containers, alternative for WebM. Always
+    encodes at 48 kHz regardless of the requested sample rate."""
 
 
 class VideoSynthType(CaseInsensitiveStrEnum):

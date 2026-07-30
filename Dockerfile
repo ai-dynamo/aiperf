@@ -97,6 +97,7 @@ RUN mkdir -p /opt/licenses/dpkg \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
         libogg-dev \
+        libopus-dev \
         libvorbis-dev \
         libvpx-dev \
         nasm \
@@ -106,7 +107,12 @@ RUN mkdir -p /opt/licenses/dpkg \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and build ffmpeg with libvpx (VP9 codec)
+# Download and build ffmpeg with libvpx (VP9), libvorbis and libopus.
+# The component allowlist is deliberate: a default build ships hundreds of
+# codecs. AIPerf only ever encodes VP8/VP9 video with Vorbis or Opus audio, so
+# --disable-everything plus an explicit allowlist keeps the shipped codec set
+# minimal. --disable-autodetect stops configure from linking whatever dev
+# packages the base image happens to carry.
 ARG FFMPEG_VERSION=8.1.2
 RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
@@ -117,8 +123,26 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
         --disable-nonfree \
         --enable-shared \
         --disable-static \
+        --disable-autodetect \
+        --enable-zlib \
         --enable-libvorbis \
         --enable-libvpx \
+        --enable-libopus \
+        --disable-everything \
+        --disable-v4l2-m2m \
+        --disable-devices \
+        --disable-network \
+        --disable-programs \
+        --enable-ffmpeg \
+        --enable-ffprobe \
+        --enable-encoder=libvpx_vp8,libvpx_vp9,libvorbis,libopus \
+        --enable-decoder=rawvideo,png,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8 \
+        --enable-demuxer=rawvideo,image2,wav,matroska,mov \
+        --enable-muxer=webm,matroska,mp4 \
+        --enable-parser=png,vp9,opus,vorbis \
+        --enable-protocol=file,pipe \
+        --enable-filter=scale,format,aformat,aresample,anull,null,copy \
+        --enable-bsf=vp9_superframe \
         --disable-doc \
         --disable-htmlpages \
         --disable-manpages \
@@ -136,19 +160,22 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cp -P /usr/lib/*/libvorbis.so* /usr/lib/*/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvorbis.so* /usr/lib/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvorbis.so not found"; exit 1; } \
     && cp -P /usr/lib/*/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || \
-       cp -P /usr/lib/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libogg.so not found"; exit 1; }
+       cp -P /usr/lib/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libogg.so not found"; exit 1; } \
+    && cp -P /usr/lib/*/libopus.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libopus.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libopus.so not found"; exit 1; }
 
 # Collect copyright files for packages whose files we explicitly copy into the runtime.
 # `dpkg -S` resolves paths against the dpkg database, which only tracks files at
-# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so*, libvorbis.so*, libogg.so*
-# were copied from /usr/lib/, so querying /opt/ffmpeg/lib/ returns nothing for
-# them — we must query the /usr/lib/ source paths instead. /bin/bash is still
-# at its dpkg-tracked location.
+# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so*, libvorbis.so*, libogg.so*,
+# libopus.so* were copied from /usr/lib/, so querying /opt/ffmpeg/lib/ returns
+# nothing for them — we must query the /usr/lib/ source paths instead. /bin/bash
+# is still at its dpkg-tracked location.
 RUN { dpkg -S /bin/bash 2>/dev/null; \
       for f in /usr/lib/*/libvpx.so* /usr/lib/libvpx.so* \
                /usr/lib/*/libvorbis.so* /usr/lib/libvorbis.so* \
                /usr/lib/*/libvorbisenc.so* /usr/lib/libvorbisenc.so* \
-               /usr/lib/*/libogg.so* /usr/lib/libogg.so*; do \
+               /usr/lib/*/libogg.so* /usr/lib/libogg.so* \
+               /usr/lib/*/libopus.so* /usr/lib/libopus.so*; do \
         [ -e "$f" ] && dpkg -S "$f" 2>/dev/null; \
       done; \
     } | awk -F: '{print $1}' \
@@ -271,7 +298,7 @@ COPY --from=python-licenses /opt/licenses/python/ATTRIBUTIONS-Python.md /license
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
-# Copy ffmpeg binaries and libraries (includes libvpx)
+# Copy ffmpeg binaries and libraries (includes libvpx, libvorbis, libogg, libopus)
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
 ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}"
 ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"

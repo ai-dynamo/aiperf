@@ -887,7 +887,7 @@ Algorithm for generating synthetic video content. Different types produce differ
 
 #### `--video-format` `<str>`
 
-Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
+Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (widely compatible container, VP9 by default). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
 
 **Choices:**
 
@@ -898,7 +898,7 @@ Container format for generated video files. Supports `webm` (VP9, recommended, B
 
 #### `--video-codec` `<str>`
 
-The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
+The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default), libvpx (CPU, BSD-licensed, VP8). Any codec the local FFmpeg supports can be used, but the AIPerf container ships a minimal FFmpeg build limited to VP8/VP9 video with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc require a system FFmpeg built with them.
 <br/>_Default: `libvpx-vp9`_
 
 #### `--video-audio-sample-rate` `<float>`
@@ -915,15 +915,14 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: aac for MP4, libvorbis for WebM. Options: aac, libvorbis, libopus.
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus. libopus always encodes at 48 kHz, so a different --video-audio-sample-rate is resampled during muxing.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
-| `aac` |  | AAC codec. Default for MP4 containers. |
 | `libvorbis` |  | Vorbis codec. Default for WebM containers. |
-| `libopus` |  | Opus codec. Alternative for WebM containers. |
+| `libopus` |  | Opus codec. Default for MP4 containers, alternative for WebM. Always encodes at 48 kHz regardless of the requested sample rate. |
 
 #### `--video-audio-depth` `<str>`
 
@@ -2417,7 +2416,7 @@ Algorithm for generating synthetic video content. Different types produce differ
 
 #### `--video-format` `<str>`
 
-Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
+Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (widely compatible container, VP9 by default). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
 
 **Choices:**
 
@@ -2428,7 +2427,7 @@ Container format for generated video files. Supports `webm` (VP9, recommended, B
 
 #### `--video-codec` `<str>`
 
-The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
+The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default), libvpx (CPU, BSD-licensed, VP8). Any codec the local FFmpeg supports can be used, but the AIPerf container ships a minimal FFmpeg build limited to VP8/VP9 video with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc require a system FFmpeg built with them.
 <br/>_Default: `libvpx-vp9`_
 
 #### `--video-audio-sample-rate` `<float>`
@@ -2445,15 +2444,14 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: aac for MP4, libvorbis for WebM. Options: aac, libvorbis, libopus.
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus. libopus always encodes at 48 kHz, so a different --video-audio-sample-rate is resampled during muxing.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
-| `aac` |  | AAC codec. Default for MP4 containers. |
 | `libvorbis` |  | Vorbis codec. Default for WebM containers. |
-| `libopus` |  | Opus codec. Alternative for WebM containers. |
+| `libopus` |  | Opus codec. Default for MP4 containers, alternative for WebM. Always encodes at 48 kHz regardless of the requested sample rate. |
 
 #### `--video-audio-depth` `<str>`
 

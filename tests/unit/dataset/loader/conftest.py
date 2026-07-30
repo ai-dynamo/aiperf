@@ -393,7 +393,7 @@ def create_test_video(tmp_path):
             # Use ffmpeg to create video
             (
                 ffmpeg.input(f"{temp_frame_dir}/frame_%03d.png", framerate=1)
-                .output(str(dest_path), vcodec="libx264", pix_fmt="yuv420p", t=1)
+                .output(str(dest_path), vcodec="libvpx-vp9", pix_fmt="yuv420p", t=1)
                 .overwrite_output()
                 .run(quiet=True)
             )

@@ -5,7 +5,7 @@
 import shutil
 
 import pytest
-from pytest import approx
+from pytest import approx, param
 
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
@@ -99,18 +99,20 @@ class TestVideoAudio:
 
     @pytest.mark.slow
     @pytest.mark.parametrize(
-        "video_format,video_codec,expected_audio_codec",
+        "video_format,video_codec,expected_audio_codec,expected_sample_rate",
         [
-            ("webm", "libvpx-vp9", "vorbis"),
-            ("mp4", "libx264", "aac"),
+            param("webm", "libvpx-vp9", "vorbis", 44100, id="webm-vorbis"),
+            # libopus only accepts 48/24/16/12/8 kHz, so 44.1 kHz is resampled.
+            param("mp4", "libvpx-vp9", "opus", 48000, id="mp4-opus"),
         ],
-    )
+    )  # fmt: skip
     def test_video_audio_auto_codec(
         self,
         cli: AIPerfCLI,
         video_format: str,
         video_codec: str,
         expected_audio_codec: str,
+        expected_sample_rate: int,
     ):
         """Verify auto-selected audio codec matches video format."""
         result = cli.run_sync(
@@ -143,7 +145,7 @@ class TestVideoAudio:
         assert details.has_audio, f"Expected audio in {video_format} video"
         assert details.audio_codec == expected_audio_codec
         assert details.audio_channels == 1
-        assert details.audio_sample_rate == 44100
+        assert details.audio_sample_rate == expected_sample_rate
 
     @pytest.mark.slow
     def test_video_audio_stereo(self, cli: AIPerfCLI):

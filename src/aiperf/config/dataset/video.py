@@ -27,7 +27,7 @@ from aiperf.config.base import BaseConfig
 
 VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, VideoAudioCodec] = {
     VideoFormat.WEBM: VideoAudioCodec.LIBVORBIS,
-    VideoFormat.MP4: VideoAudioCodec.AAC,
+    VideoFormat.MP4: VideoAudioCodec.LIBOPUS,
 }
 
 
@@ -91,8 +91,10 @@ class VideoAudioConfig(BaseConfig):
             default=None,
             description="Audio codec for the embedded audio track. "
             "If not specified, auto-selects based on video format: "
-            "aac for MP4, libvorbis for WebM. "
-            "Options: aac, libvorbis, libopus.",
+            "libopus for MP4, libvorbis for WebM. "
+            "Options: libvorbis, libopus. "
+            "libopus always encodes at 48 kHz, so a different "
+            "--video-audio-sample-rate is resampled during muxing.",
         ),
     ]
 
@@ -185,7 +187,7 @@ class VideoConfig(BaseConfig):
             default=VideoFormat.WEBM,
             description="Container format for generated video files. "
             "webm: VP9 codec, BSD-licensed, recommended for open-source workflows. "
-            "mp4: H.264/H.265, widely compatible. "
+            "mp4: widely compatible container, VP9 by default. "
             "Format affects compatibility, file size, and encoding options.",
         ),
     ]
@@ -195,10 +197,12 @@ class VideoConfig(BaseConfig):
         Field(
             default="libvpx-vp9",
             description="Video codec for encoding. "
-            "Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), "
-            "libx264 (CPU, GPL, widely compatible), libx265 (CPU, GPL, smaller files), "
-            "h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). "
-            "Any FFmpeg-supported codec can be used.",
+            "Common options: libvpx-vp9 (CPU, BSD-licensed, default), "
+            "libvpx (CPU, BSD-licensed, VP8). "
+            "Any codec the local FFmpeg supports can be used, but the AIPerf "
+            "container ships a minimal FFmpeg build limited to VP8/VP9 video "
+            "with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc "
+            "require a system FFmpeg built with them.",
         ),
     ]
 
