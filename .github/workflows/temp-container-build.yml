@@ -172,8 +172,8 @@ jobs:
           BASE_IMAGE=$(grep -E '^FROM .* AS runtime$' Dockerfile | awk '{print $2}')
           echo "runtime base image: ${BASE_IMAGE}"
           mkdir -p /tmp/sbom-out
-          docker run --rm -i -e BASE_IMAGE="${BASE_IMAGE}" aiperf-temp:licenses \
-            'set -e; cd /tmp; V=$(ffmpeg -version | head -1 | cut -d" " -f3); echo "ffmpeg version: $V" >&2; python3 - /opt/licenses/python/sbom.cdx.json /opt/licenses/dpkg/runtime-pkgs.txt /tmp/sbom.cdx.json --ffmpeg-version "$V" --base-image "$BASE_IMAGE" >&2; cat /tmp/sbom.cdx.json' \
+          docker run --rm -i --entrypoint bash -e BASE_IMAGE="${BASE_IMAGE}" aiperf-temp:licenses \
+            -c 'set -e; cd /tmp; V=$(ffmpeg -version | head -1 | cut -d" " -f3); echo "ffmpeg version: $V" >&2; python3 - /opt/licenses/python/sbom.cdx.json /opt/licenses/dpkg/runtime-pkgs.txt /tmp/sbom.cdx.json --ffmpeg-version "$V" --base-image "$BASE_IMAGE" >&2; cat /tmp/sbom.cdx.json' \
             < tools/generate_container_sbom.py > /tmp/sbom-out/sbom.cdx.json
 
       - name: Verify the SBOM
@@ -211,8 +211,10 @@ jobs:
       - name: Run ffmpeg-marked tests against the built image
         run: |
           set -euo pipefail
+          # The test stage installs aiperf[test] but not the mock server, which
+          # is a separate package under tests/ that the integration fixtures need.
           cid=$(docker create -w /workspace aiperf-temp:test \
-            "pytest tests/ -m ffmpeg -v --no-header -p no:cacheprovider")
+            "uv pip install -e tests/aiperf_mock_server && pytest tests/ -m ffmpeg -v --no-header -p no:cacheprovider")
           docker cp tests "${cid}:/workspace/tests"
           docker cp pyproject.toml "${cid}:/workspace/pyproject.toml"
           rc=0
