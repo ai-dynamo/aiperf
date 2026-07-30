@@ -167,11 +167,13 @@ def _fan_in_metadata() -> list[ConversationMetadata]:
 
 
 @pytest.mark.asyncio
-async def test_race_children_complete_before_parent_arrives_pops_silently():
+async def test_race_children_complete_before_parent_arrives_honors_think_time():
     """All children complete first; parent then arrives at the gated turn.
-    Future gate is satisfied -> popped silently -> intercept returns False.
-    No dispatch_join_turn fires (parent will dispatch the gated turn via the
-    strategy's normal path)."""
+    The future gate is satisfied but kept in place, so when the parent arrives
+    the orchestrator dispatches the gated turn itself (via dispatch_join_turn)
+    after the between-round think-time -- rather than letting the strategy
+    breeze through with no wait. Intercept returns True (strategy suppressed).
+    The gate still fires exactly once."""
     cs = _mk_source(_fan_in_metadata())
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -184,18 +186,16 @@ async def test_race_children_complete_before_parent_arrives_pops_silently():
     for cid in ("a1", "a2", "b1", "b2", "b3"):
         await orch.on_child_leaf_reached(f"corr-{cid}")
 
-    # Future gate at T=5 should be popped (satisfied before parent arrived).
-    # Parent arrives at T=4 return -> next is T=5 -> already satisfied -> False.
+    # Future gate at T=5 is satisfied but retained (not popped early) so the
+    # arriving parent can apply the between-round think-time.
     pending_5 = orch._future_joins.get("corr-root", {}).get(5)
-    # Either popped already by _satisfy_prerequisite, or still present and
-    # is_satisfied (popped on next intercept). Both are valid.
-    if pending_5 is not None:
-        assert pending_5.is_satisfied
+    assert pending_5 is not None
+    assert pending_5.is_satisfied
 
-    # Parent reaches T=4 return.
+    # Parent reaches T=4 return -> next is T=5, satisfied -> dispatch once.
     suspended = await orch.intercept(_mk_credit("root", "corr-root", 4))
-    assert suspended is False
-    issuer.dispatch_join_turn.assert_not_called()
+    assert suspended is True
+    issuer.dispatch_join_turn.assert_called_once()
     assert "corr-root" not in orch._active_joins
     assert orch._future_joins.get("corr-root", {}).get(5) is None
 
@@ -949,14 +949,20 @@ async def test_multi_consumer_single_branch_three_gates_all_advance():
 
     # Single child completion -> all 3 gates' counters advance.
     await orch.on_child_leaf_reached("corr-c1")
-    # T=1 fires; T=2 and T=3 are popped from future_joins (satisfied early).
+    # T=1 fires immediately (parent was blocked on it). T=2 and T=3 are
+    # satisfied but retained in future_joins so the parent applies each
+    # round's think-time when it reaches them.
     assert issuer.dispatch_join_turn.await_count == 1
     assert "corr-root" not in orch._active_joins
-    assert orch._future_joins.get("corr-root", {}) == {}
+    assert set(orch._future_joins.get("corr-root", {}).keys()) == {2, 3}
 
-    # Walk parent forward; T=2 and T=3 must NOT re-suspend (already satisfied).
-    assert await orch.intercept(_mk_credit("root", "corr-root", 1)) is False
-    assert await orch.intercept(_mk_credit("root", "corr-root", 2)) is False
+    # Walk parent forward; each satisfied gate is dispatched once by the
+    # orchestrator (with think-time) instead of breezing through the strategy.
+    assert await orch.intercept(_mk_credit("root", "corr-root", 1)) is True
+    assert issuer.dispatch_join_turn.await_count == 2
+    assert await orch.intercept(_mk_credit("root", "corr-root", 2)) is True
+    assert issuer.dispatch_join_turn.await_count == 3
+    assert orch._future_joins.get("corr-root", {}) == {}
 
 
 # ---------------------------------------------------------------------------

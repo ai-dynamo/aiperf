@@ -293,6 +293,9 @@ class BranchOrchestrator:
         self._overlap_dispatched_branches: set[tuple[str, str]] = set()
         self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
+        # Set by cleanup() so an in-flight think-time sleep returns early instead
+        # of making shutdown wait out a full (possibly large, sampled) interval.
+        self._cleanup_event: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
         # spawn dispatch via delayed background tasks (see
         # _start_delayed_first_turn). cleanup() cancels pending sleepers.
@@ -843,6 +846,16 @@ class BranchOrchestrator:
                 # are resolved, so drop its sampling ordinal to bound the map.
                 self.stats.graphs_completed_to_end += 1
                 self._cs.forget_ordinal(credit.x_correlation_id)
+
+            # Breeze-through: the parent's next turn is a gate whose children
+            # already drained before the parent arrived. Rather than let the
+            # strategy dispatch the gated turn immediately (dropping the
+            # between-round think-time), apply the same wait + dispatch as the
+            # blocked path and suppress the strategy's default dispatch.
+            breezed = self._take_satisfied_future(credit)
+            if breezed is not None:
+                await self._release_blocked_join(breezed)
+                return True
             return self._maybe_suspend_parent(credit)
 
     async def _spawn_children_and_register_gates(
@@ -1384,6 +1397,24 @@ class BranchOrchestrator:
                 out.append((parent_corr, pending))
         return out
 
+    def _take_satisfied_future(self, credit) -> PendingBranchJoin | None:
+        """Pop and return the parent's next-turn gate iff children already
+        satisfied it before the parent arrived (the breeze-through case).
+
+        Returning the pending join lets ``intercept`` route it through
+        ``_release_blocked_join`` so the between-round think-time is honored
+        even when the parent never had to block. Returns None when the next
+        turn is not a gate, or a gate that is still outstanding (handled by
+        ``_maybe_suspend_parent``).
+        """
+        parent_corr = credit.x_correlation_id
+        next_idx = credit.turn_index + 1
+        future = self._future_joins.get(parent_corr, {}).get(next_idx)
+        if future is None or not future.is_satisfied:
+            return None
+        self._pop_future_join(parent_corr, next_idx)
+        return future
+
     def _maybe_suspend_parent(self, credit) -> bool:
         """Suspend the parent iff its NEXT turn is a gated turn.
 
@@ -1460,9 +1491,10 @@ class BranchOrchestrator:
             return None
         if pending.is_blocked:
             return self._active_joins.pop(parent_corr, None)
-        # Satisfied before the parent arrived — pop the future entry and
-        # let the parent breeze through when it reaches the turn.
-        self._pop_future_join(parent_corr, gated_idx)
+        # Satisfied before the parent arrived: leave the future entry in place
+        # (now marked satisfied) so when the parent reaches the turn,
+        # ``_take_satisfied_future`` picks it up and applies the between-round
+        # think-time before dispatching the gated turn (see ``intercept``).
         return None
 
     def _resolve_think_ms(self, pending: PendingBranchJoin) -> float:
@@ -1549,7 +1581,16 @@ class BranchOrchestrator:
             credit.conversation_id, credit.x_correlation_id, 0, median_ms
         )
         if think_ms > 0.0 and math.isfinite(think_ms):
-            await asyncio.sleep(think_ms / 1000.0)
+            await self._sleep_think_ms(think_ms / 1000.0)
+
+    async def _sleep_think_ms(self, seconds: float) -> None:
+        """Sleep for ``seconds``, but return early if ``cleanup()`` fires -- so a
+        shutdown / duration cancel interrupts a pending think-time instead of
+        waiting out the full (possibly large sampled) interval."""
+        try:
+            await asyncio.wait_for(self._cleanup_event.wait(), timeout=seconds)
+        except (TimeoutError, asyncio.TimeoutError):
+            pass  # full think-time elapsed (the normal path)
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""
@@ -1560,7 +1601,7 @@ class BranchOrchestrator:
         # and before the gated turn fires (which releases the next round).
         think_ms = self._resolve_think_ms(pending)
         if think_ms > 0.0 and math.isfinite(think_ms):
-            await asyncio.sleep(think_ms / 1000.0)
+            await self._sleep_think_ms(think_ms / 1000.0)
         issued = await self._issuer.dispatch_join_turn(pending)
         if issued:
             self.stats.parents_resumed += 1
@@ -1769,6 +1810,7 @@ class BranchOrchestrator:
         if self._cleaning_up:
             return
         self._cleaning_up = True
+        self._cleanup_event.set()  # interrupt any in-flight think-time sleep
         self._drain_observer = None
         for task in self._delayed_dispatch_tasks:
             task.cancel()

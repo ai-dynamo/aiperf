@@ -526,7 +526,8 @@ async def test_non_fail_fast_error_on_sole_child_fires_all_gates_once(
     await orch.on_child_errored("corr-c1")
 
     assert orch.stats.children_errored == 1
-    # Active gate fired once; the future gates were popped (satisfied early).
+    # Active gate fired once; the future gates are satisfied but retained so the
+    # parent applies each round's think-time when it reaches them.
     assert issuer.dispatch_join_turn.await_count == 1
     assert "corr-root" not in orch._active_joins
-    assert orch._future_joins.get("corr-root", {}) == {}
+    assert set(orch._future_joins.get("corr-root", {}).keys()) == {2, 3}

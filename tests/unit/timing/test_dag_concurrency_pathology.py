@@ -388,11 +388,12 @@ async def test_race_parent_return_and_last_child_completion_gate_fires_once():
     await orch2.intercept(_mk_credit("root", "corr-root2", 0))  # spawns
     # Child completes BEFORE parent's T=1 return.
     await orch2.on_child_leaf_reached("corr-c1")
-    # Parent reaches T=1; next_idx=2 is gated, but already satisfied -> pops.
+    # Parent reaches T=1; next_idx=2 is gated and already satisfied. The
+    # orchestrator dispatches the gated turn itself (with think-time) rather
+    # than breezing through the strategy -> suspend + exactly one dispatch.
     suspended = await orch2.intercept(_mk_credit("root", "corr-root2", 1))
-    assert suspended is False
-    # No join_turn dispatch — parent breezes through via strategy path.
-    issuer2.dispatch_join_turn.assert_not_called()
+    assert suspended is True
+    issuer2.dispatch_join_turn.assert_awaited_once()
 
 
 @pytest.mark.asyncio

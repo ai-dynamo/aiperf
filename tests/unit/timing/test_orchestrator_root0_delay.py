@@ -42,20 +42,21 @@ def _credit(**kw) -> MagicMock:
     return MagicMock(**base)
 
 
-def _capture_sleep(monkeypatch) -> list[float]:
+def _capture_think(orch: BranchOrchestrator) -> list[float]:
+    """Capture the seconds passed to the (interruptible) think-time sleep."""
     slept: list[float] = []
 
-    async def _fake_sleep(seconds: float) -> None:
+    async def _fake(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    orch._sleep_think_ms = _fake
     return slept
 
 
 @pytest.mark.asyncio
-async def test_root0_delay_applied_on_turn0_orchestrator_credit(monkeypatch):
+async def test_root0_delay_applied_on_turn0_orchestrator_credit():
     orch = _orch(250.0)
-    slept = _capture_sleep(monkeypatch)
+    slept = _capture_think(orch)
     await orch._maybe_apply_root0_think_ms(_credit())
     assert slept == [0.25]  # 250 ms authored -> 0.25 s
 
@@ -84,11 +85,31 @@ def test_sample_think_ms_rejects_nonfinite_draw(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_root0_delay_skipped_for_later_turns_and_real_roots(monkeypatch):
+async def test_root0_delay_skipped_for_later_turns_and_real_roots():
     orch = _orch(250.0)
-    slept = _capture_sleep(monkeypatch)
+    slept = _capture_think(orch)
     # A gated (join) turn: its wait is handled by _release_blocked_join, not here.
     await orch._maybe_apply_root0_think_ms(_credit(turn_index=1))
     # A normal (request-producing) root: paced by the strategy, not the spine.
     await orch._maybe_apply_root0_think_ms(_credit(no_request=False))
     assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_sleep_think_ms_interrupted_by_cleanup():
+    """A pending think-time sleep must return early once cleanup fires, so
+    shutdown doesn't wait out a full (possibly large) interval."""
+    orch = BranchOrchestrator.__new__(BranchOrchestrator)
+    orch._cleanup_event = asyncio.Event()
+    orch._cleanup_event.set()  # cleanup already triggered
+    # A 1000s think-time must return promptly; wrap in wait_for so a hang fails.
+    await asyncio.wait_for(orch._sleep_think_ms(1000.0), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_sleep_think_ms_elapses_when_not_cleaned_up():
+    """Without cleanup, the sleep runs its full (here tiny) interval normally."""
+    orch = BranchOrchestrator.__new__(BranchOrchestrator)
+    orch._cleanup_event = asyncio.Event()
+    await orch._sleep_think_ms(0.001)  # timeout elapses -> returns
+    assert not orch._cleanup_event.is_set()
