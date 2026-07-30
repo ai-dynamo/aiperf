@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.enums import CacheBustTarget, CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -62,6 +62,7 @@ def create_request_info(
     conversation_id: str = "test-conversation",
     system_message: str | None = None,
     user_context_message: str | None = None,
+    cache_bust_target: CacheBustTarget | None = None,
     **turn_kwargs,
 ) -> RequestInfo:
     """Helper to create RequestInfo with all required fields.
@@ -93,6 +94,7 @@ def create_request_info(
         conversation_id=conversation_id,
         system_message=system_message,
         user_context_message=user_context_message,
+        cache_bust_target=cache_bust_target,
     )
 
 
