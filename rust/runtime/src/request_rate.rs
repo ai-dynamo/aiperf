@@ -355,7 +355,38 @@ impl RequestRateWorkload {
     async fn wait_for_closed_loop_progress(&self) {
         self.state.progress.notified().await;
     }
+
+    /// Consume one saturated tick without starving a virtual clock.
+    ///
+    /// Under a real clock a bare yield is correct: wall time advances on its own,
+    /// so retrying costs a task reschedule and an in-flight response eventually
+    /// frees a slot. Under [`SimClock`](crate::clock::SimClock) nothing advances
+    /// virtual time unless a task is parked on a clock timer, and a self-waking
+    /// yield makes the virtual driver re-poll the same instant forever. Park on
+    /// the clock instead, racing this thread's own progress notification, so the
+    /// driver advances to the earliest pending event and the slot is released.
+    async fn wait_for_capacity(&self, runtime: &ScheduledRuntime) {
+        let clock = runtime.clock();
+        if !clock.is_virtual() {
+            tokio::task::yield_now().await;
+            return;
+        }
+        let progress = self.state.progress.notified();
+        let idle = clock.sleep(VIRTUAL_IDLE_HORIZON_NS);
+        tokio::select! {
+            biased;
+            () = progress => {}
+            () = idle => {}
+        }
+    }
 }
+
+/// Virtual-time horizon for a saturated retry when no event is pending.
+///
+/// Any in-flight request's own clock event is earlier than this, so the horizon
+/// only bounds a fully idle wait; it never delays a release that is already
+/// scheduled.
+const VIRTUAL_IDLE_HORIZON_NS: i64 = 1_000_000_000;
 
 enum NewSessionOutcome {
     Issued,
@@ -425,7 +456,9 @@ impl Workload for RequestRateWorkload {
                 }
             } else {
                 // Zero/rounded-zero intervals must yield so dispatch returns can
-                // enqueue continuations and release slots.
+                // enqueue continuations and release slots. This tick has not yet
+                // attempted admission, so it stays a bare yield: parking on the
+                // clock here would delay an arrival that capacity can accept.
                 tokio::task::yield_now().await;
             }
             if self.rate_gate.is_none() {
@@ -472,7 +505,7 @@ impl Workload for RequestRateWorkload {
                         } else {
                             // Paced modes preserve the nonblocking skipped-tick
                             // behavior and retry at the next authored arrival.
-                            tokio::task::yield_now().await;
+                            self.wait_for_capacity(&runtime).await;
                         }
                     }
                     Ok(NewSessionOutcome::Stopped) => {
@@ -489,7 +522,7 @@ impl Workload for RequestRateWorkload {
             } else {
                 // The session quota/cap is full, but returned requests may still
                 // produce continuations. Consume this tick without busy-spinning.
-                tokio::task::yield_now().await;
+                self.wait_for_capacity(&runtime).await;
             }
         }
 
