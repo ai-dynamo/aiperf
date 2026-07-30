@@ -759,9 +759,9 @@ Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulatio
 
 Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. The window is computed from `--random-range-ratio-mode` (defaults to `vllm`): vllm mode → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); sglang mode → `[max(1, int(mean*r)), mean]` (lower-bounded). Accepts a single float (applied to both ISL and OSL) or a JSON object `{"input": 0.3, "output": 0.5}` for independent values. Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. Mutually exclusive with `--seq-dist`. When a tokenizer is configured, the ISL mean is automatically reduced by `tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total server-side input tokens, matching `vllm bench serve` semantics.
 
-#### `--random-range-ratio-mode` `<str>`
+#### `--random-corpus-style` `<str>`
 
-Sampling formula for `--random-range-ratio`. `vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, ratio in `[0, 1)`. `sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]`. Only applies when `--random-range-ratio` is set.
+Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool. `sglang` mirrors `sglang.bench_serving`: lower-bounded range window, non-special token pool. Only applies when `--prompt-corpus random` is set.
 
 **Choices:**
 
@@ -2337,9 +2337,9 @@ Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulatio
 
 Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. The window is computed from `--random-range-ratio-mode` (defaults to `vllm`): vllm mode → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); sglang mode → `[max(1, int(mean*r)), mean]` (lower-bounded). Accepts a single float (applied to both ISL and OSL) or a JSON object `{"input": 0.3, "output": 0.5}` for independent values. Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. Mutually exclusive with `--seq-dist`. When a tokenizer is configured, the ISL mean is automatically reduced by `tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total server-side input tokens, matching `vllm bench serve` semantics.
 
-#### `--random-range-ratio-mode` `<str>`
+#### `--random-corpus-style` `<str>`
 
-Sampling formula for `--random-range-ratio`. `vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, ratio in `[0, 1)`. `sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]`. Only applies when `--random-range-ratio` is set.
+Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool. `sglang` mirrors `sglang.bench_serving`: lower-bounded range window, non-special token pool. Only applies when `--prompt-corpus random` is set.
 
 **Choices:**
 

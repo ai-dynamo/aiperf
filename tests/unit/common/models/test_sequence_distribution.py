@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import RangeRatioMode
+from aiperf.common.enums import RandomCorpusStyle
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     RangeRatioDistribution,
@@ -841,7 +841,7 @@ class TestRangeRatioDistribution:
             osl_mean=1,
             input_ratio=0.9,
             output_ratio=0.9,
-            mode=RangeRatioMode.SGLANG,
+            mode=RandomCorpusStyle.SGLANG,
         )
         assert dist.input_bounds[0] >= 1
         for _ in range(20):
@@ -931,7 +931,7 @@ class TestRangeRatioDistribution:
             input_ratio=0.0,
             output_ratio=0.0,
             num_special_tokens=5,
-            mode=RangeRatioMode.SGLANG,
+            mode=RandomCorpusStyle.SGLANG,
         )
         # adjusted_mean = max(1, 1-5) = 1; input_floor=1 for sglang
         assert dist.input_bounds == (1, 1)
@@ -972,7 +972,7 @@ class TestRangeRatioDistributionSglangMode:
             osl_mean=128,
             input_ratio=0.0,
             output_ratio=0.0,
-            mode=RangeRatioMode.SGLANG,
+            mode=RandomCorpusStyle.SGLANG,
         )
         assert dist.input_bounds == (1, 1024)
         assert dist.output_bounds == (1, 128)
@@ -983,7 +983,7 @@ class TestRangeRatioDistributionSglangMode:
             osl_mean=128,
             input_ratio=1.0,
             output_ratio=1.0,
-            mode=RangeRatioMode.SGLANG,
+            mode=RandomCorpusStyle.SGLANG,
         )
         assert dist.input_bounds == (1024, 1024)
         assert dist.output_bounds == (128, 128)
@@ -996,7 +996,7 @@ class TestRangeRatioDistributionSglangMode:
             osl_mean=128,
             input_ratio=0.5,
             output_ratio=0.5,
-            mode=RangeRatioMode.SGLANG,
+            mode=RandomCorpusStyle.SGLANG,
         )
         assert dist.input_bounds == (512, 1024)
         assert dist.output_bounds == (64, 128)
@@ -1007,7 +1007,7 @@ class TestRangeRatioDistributionSglangMode:
             osl_mean=50,
             input_ratio=0.3,
             output_ratio=0.2,
-            mode=RangeRatioMode.SGLANG,
+            mode=RandomCorpusStyle.SGLANG,
         )
         for _ in range(2000):
             isl, osl = dist.sample()
@@ -1021,7 +1021,7 @@ class TestRangeRatioDistributionSglangMode:
                 osl_mean=50,
                 input_ratio=-0.1,
                 output_ratio=0.1,
-                mode=RangeRatioMode.SGLANG,
+                mode=RandomCorpusStyle.SGLANG,
             )
 
     def test_rejects_ratio_above_one(self):
@@ -1031,7 +1031,7 @@ class TestRangeRatioDistributionSglangMode:
                 osl_mean=50,
                 input_ratio=0.1,
                 output_ratio=1.5,
-                mode=RangeRatioMode.SGLANG,
+                mode=RandomCorpusStyle.SGLANG,
             )
 
 

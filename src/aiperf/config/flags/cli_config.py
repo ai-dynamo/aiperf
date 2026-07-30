@@ -49,7 +49,7 @@ from aiperf.common.enums import (
     ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     PromptCorpus,
-    RangeRatioMode,
+    RandomCorpusStyle,
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
@@ -1377,21 +1377,24 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
-    prompt_random_range_ratio_mode: Annotated[
-        RangeRatioMode,
+    prompt_random_corpus_style: Annotated[
+        RandomCorpusStyle,
         Field(
-            default=RangeRatioMode.VLLM,
-            description="Sampling formula for `--random-range-ratio`. "
-            "`vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, "
-            "ratio in `[0, 1)`. "
-            "`sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]`. "
-            "Only applies when `--random-range-ratio` is set.",
+            default=RandomCorpusStyle.VLLM,
+            description="Benchmark style for RANDOM corpus generation. "
+            "Controls range ratio formula, token pool composition, and other "
+            "per-tool behaviors. "
+            "`vllm` (default) mirrors `vllm bench serve`: symmetric range window, "
+            "non-special token pool. "
+            "`sglang` mirrors `sglang.bench_serving`: lower-bounded range window, "
+            "non-special token pool. "
+            "Only applies when `--prompt-corpus random` is set.",
         ),
         CLIParameter(
-            name=("--random-range-ratio-mode",),
+            name=("--random-corpus-style",),
             group=Groups.ISL,
         ),
-    ] = RangeRatioMode.VLLM
+    ] = RandomCorpusStyle.VLLM
 
     ##############################################################################
     # Output Sequence Length (OSL)

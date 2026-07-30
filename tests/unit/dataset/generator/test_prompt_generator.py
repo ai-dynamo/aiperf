@@ -12,6 +12,7 @@ from unittest.mock import mock_open, patch
 
 import pytest
 
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import (
     ConfigurationError,
     InvalidStateError,
@@ -161,13 +162,14 @@ class TestPromptGeneratorComprehensive:
         assert result.startswith("token_")
 
     def testgenerate_prompt_zero_tokens(self, basic_config):
-        """Test generate_prompt with zero tokens."""
+        """generate_prompt raises on num_tokens <= 0 rather than silently returning empty."""
         tokenizer, prompts, prefix_prompts = basic_config
         generator = _make_generator(
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        generator.generate_prompt(0)
+        with pytest.raises(ValueError, match="num_tokens must be > 0"):
+            generator.generate_prompt(0)
 
     def testgenerate_prompt_large_number(self, basic_config):
         """Test generate_prompt with large number of tokens."""
@@ -837,3 +839,130 @@ class TestPromptGeneratorComprehensive:
         # This should raise same error as _generate_cached_prompt
         with pytest.raises(ConfigurationError):
             generator._build_token_sequence(10, [1, 2, 3], 5)  # final_block_size = 0
+
+
+class TestPromptGeneratorRandomCorpus:
+    """Tests for PromptCorpus.RANDOM generate_prompt top-up behavior."""
+
+    @pytest.fixture
+    def random_tokenizer(self, mock_tokenizer_cls):
+        tok = mock_tokenizer_cls.from_pretrained("gpt2")
+        tok._tokenizer.vocab_size = 100
+        return tok
+
+    @pytest.fixture
+    def random_generator(self, random_tokenizer):
+        return PromptGenerator(
+            prompts=None,
+            prefix_prompts=None,
+            tokenizer=random_tokenizer,
+            corpus=PromptCorpus.RANDOM,
+        )
+
+    def test_generate_prompt_random_retries_when_encode_is_short(
+        self, random_tokenizer, random_generator
+    ):
+        """RANDOM generate_prompt re-enters the loop when BPE re-encode yields fewer tokens."""
+        real_encode = random_tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def shrink_first(text, **kwargs):
+            call_count["n"] += 1
+            ids = real_encode(text, **kwargs)
+            if call_count["n"] == 1:
+                return ids[:-1]
+            return ids
+
+        random_tokenizer.encode = shrink_first
+
+        result = random_generator.generate_prompt(3)
+
+        assert isinstance(result, str)
+        assert call_count["n"] >= 2
+
+    def test_generate_prompt_random_converges_when_exact_on_first_try(
+        self, random_tokenizer, random_generator
+    ):
+        """RANDOM generate_prompt exits after the first iteration when re-encode is exact."""
+        real_encode = random_tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def counting_encode(text, **kwargs):
+            call_count["n"] += 1
+            return real_encode(text, **kwargs)
+
+        random_tokenizer.encode = counting_encode
+
+        random_generator.generate_prompt(3)
+
+        assert call_count["n"] == 1
+
+    def test_generate_prompt_random_trims_when_encode_is_long(
+        self, random_tokenizer, random_generator
+    ):
+        """RANDOM generate_prompt trims and retries when BPE re-encode yields extra tokens."""
+        real_encode = random_tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def grow_first(text, **kwargs):
+            call_count["n"] += 1
+            ids = real_encode(text, **kwargs)
+            if call_count["n"] == 1:
+                return ids + [998]
+            return ids
+
+        random_tokenizer.encode = grow_first
+
+        result = random_generator.generate_prompt(3)
+
+        assert isinstance(result, str)
+        assert call_count["n"] >= 2
+
+    def test_random_corpus_prefix_pool_does_not_raise(self, random_tokenizer):
+        """RANDOM corpus can generate a prefix prompt pool without a text corpus."""
+        from aiperf.config.dataset.content import PrefixPromptConfig
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=PrefixPromptConfig(pool_size=3, length=5),
+            tokenizer=random_tokenizer,
+            corpus=PromptCorpus.RANDOM,
+        )
+        assert len(generator._prefix_prompts) == 3
+        assert all(isinstance(p, str) for p in generator._prefix_prompts)
+
+    def test_random_corpus_shared_system_prompt_does_not_raise(self, random_tokenizer):
+        """RANDOM corpus can generate a shared system prompt without a text corpus."""
+        from aiperf.config.dataset.content import PrefixPromptConfig
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=PrefixPromptConfig(shared_system_length=10),
+            tokenizer=random_tokenizer,
+            corpus=PromptCorpus.RANDOM,
+        )
+        assert generator._shared_system_prompt is not None
+        assert isinstance(generator._shared_system_prompt, str)
+
+    def test_random_corpus_excludes_special_tokens_from_sampling_pool(
+        self, mock_tokenizer_cls
+    ):
+        """_allowed_tokens must not contain any special token IDs."""
+        from aiperf.common.enums import RandomCorpusStyle
+
+        tok = mock_tokenizer_cls.from_pretrained("gpt2")
+        tok._tokenizer.vocab_size = 100
+        tok._tokenizer.all_special_ids = [1, 2]
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=None,
+            tokenizer=tok,
+            corpus=PromptCorpus.RANDOM,
+            corpus_style=RandomCorpusStyle.VLLM,
+        )
+
+        allowed = set(generator._allowed_tokens)
+        assert 1 not in allowed
+        assert 2 not in allowed
+        assert len(generator._allowed_tokens) == 98

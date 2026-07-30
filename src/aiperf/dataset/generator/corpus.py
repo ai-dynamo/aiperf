@@ -32,11 +32,19 @@ def resolve_prompt_generator(
             prefix_prompts=prefix_prompts,
         )
     if resolved == PromptCorpus.RANDOM or resolved == "random":
+        from aiperf.common.enums import RandomCorpusStyle
+
+        style = (
+            prompts.random_corpus_style
+            if prompts is not None
+            else RandomCorpusStyle.VLLM
+        )
         return PromptGenerator(
             prompts=prompts,
             prefix_prompts=prefix_prompts,
             tokenizer=tokenizer,
             corpus=PromptCorpus.RANDOM,
+            corpus_style=style,
         )
     return PromptGenerator(
         prompts=prompts,

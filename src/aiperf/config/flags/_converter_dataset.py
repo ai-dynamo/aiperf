@@ -428,11 +428,11 @@ def _apply_random_range_ratio(d: dict[str, Any], cli: CLIConfig) -> None:
     from aiperf.common.models.sequence_distribution import RangeRatioDistribution
 
     RangeRatioDistribution.parse_cli_value(
-        cli.prompt_random_range_ratio, cli.prompt_random_range_ratio_mode
+        cli.prompt_random_range_ratio, cli.prompt_random_corpus_style
     )
     d.setdefault("prompts", {})["random_range_ratio"] = cli.prompt_random_range_ratio
-    if "prompt_random_range_ratio_mode" in cli.model_fields_set:
-        d["prompts"]["random_range_ratio_mode"] = cli.prompt_random_range_ratio_mode
+    if "prompt_random_corpus_style" in cli.model_fields_set:
+        d["prompts"]["random_corpus_style"] = cli.prompt_random_corpus_style
 
 
 def _apply_turns(d: dict[str, Any], cli: CLIConfig) -> None:

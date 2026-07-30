@@ -43,7 +43,7 @@ import orjson
 
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import RangeRatioMode
+from aiperf.common.enums import RandomCorpusStyle
 from aiperf.common.utils import load_json_str
 
 if TYPE_CHECKING:
@@ -552,8 +552,8 @@ class _ModeConfig:
             )
 
 
-_MODE_CONFIG: dict[RangeRatioMode, _ModeConfig] = {
-    RangeRatioMode.VLLM: _ModeConfig(
+_MODE_CONFIG: dict[RandomCorpusStyle, _ModeConfig] = {
+    RandomCorpusStyle.VLLM: _ModeConfig(
         ratio_min=0.0,
         ratio_max=1.0,
         ratio_max_exclusive=True,
@@ -562,7 +562,7 @@ _MODE_CONFIG: dict[RangeRatioMode, _ModeConfig] = {
         compute_low=lambda mean, r: math.floor(mean * (1 - r)),
         compute_high=lambda mean, r: math.ceil(mean * (1 + r)),
     ),
-    RangeRatioMode.SGLANG: _ModeConfig(
+    RandomCorpusStyle.SGLANG: _ModeConfig(
         ratio_min=0.0,
         ratio_max=1.0,
         ratio_max_exclusive=False,
@@ -577,7 +577,7 @@ _MODE_CONFIG: dict[RangeRatioMode, _ModeConfig] = {
 class RangeRatioDistribution:
     """Uniform ISL/OSL sampling in a ratio-defined integer window around configured means.
 
-    Supports two modes (see :class:`RangeRatioMode`):
+    Supports two modes (see :class:`RandomCorpusStyle`):
 
     - ``VLLM`` (default): symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``.
       ``r`` must satisfy ``0.0 <= r < 1.0``. Matches ``vllm bench serve``.
@@ -598,7 +598,7 @@ class RangeRatioDistribution:
         input_ratio: float,
         output_ratio: float,
         *,
-        mode: RangeRatioMode = RangeRatioMode.VLLM,
+        mode: RandomCorpusStyle = RandomCorpusStyle.VLLM,
         num_special_tokens: int = 0,
     ) -> None:
         if isl_mean < 1:
@@ -657,7 +657,7 @@ class RangeRatioDistribution:
         return self._output_low, self._output_high
 
     @property
-    def mode(self) -> RangeRatioMode:
+    def mode(self) -> RandomCorpusStyle:
         return self._mode
 
     def __repr__(self) -> str:
@@ -671,7 +671,7 @@ class RangeRatioDistribution:
     def parse_cli_value(
         cls,
         value: str,
-        mode: RangeRatioMode = RangeRatioMode.VLLM,
+        mode: RandomCorpusStyle = RandomCorpusStyle.VLLM,
     ) -> tuple[float, float]:
         """Parse a ``--random-range-ratio`` CLI value into (input_ratio, output_ratio).
 

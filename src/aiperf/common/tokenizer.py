@@ -840,9 +840,8 @@ class Tokenizer:
     def all_token_ids(self) -> list[int]:
         """Sorted list of all decodable token IDs, including special tokens.
 
-        Matches vLLM bench's RandomDataset which samples from the full
-        range(vocab_size) without filtering specials. For tiktoken encodings
-        gap IDs are still excluded because they cannot be decoded.
+        For tiktoken encodings gap IDs are excluded because they cannot be
+        decoded. Use valid_token_ids to additionally exclude special tokens.
         """
         self._require_init()
         if isinstance(self._tokenizer, _TiktokenAdapter):

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import PromptCorpus
+from aiperf.common.enums import PromptCorpus, RandomCorpusStyle
 from aiperf.common.exceptions import (
     ConfigurationError,
     InvalidStateError,
@@ -82,12 +82,14 @@ class PromptGenerator(BaseGenerator):
         prefix_prompts: PrefixPromptConfig | None,
         tokenizer: Tokenizer,
         corpus: PromptCorpus = PromptCorpus.SONNET,
+        corpus_style: RandomCorpusStyle = RandomCorpusStyle.VLLM,
         **kwargs,
     ):
         self.prompts = prompts
         self.prefix_prompts = prefix_prompts
         self.tokenizer = tokenizer
         self._corpus = corpus
+        self._corpus_style = corpus_style
         self._tokenized_corpus = None
         self._corpus_size = 0
         self._allowed_tokens: list[int] = []
@@ -153,11 +155,14 @@ class PromptGenerator(BaseGenerator):
     def _build_allowed_tokens(self) -> None:
         """Build the list of token IDs for random vocab sampling.
 
-        Uses tokenizer.all_token_ids (includes special tokens, excludes
-        tiktoken gap IDs) to match vLLM bench's RandomDataset which samples
-        from the full range(vocab_size) without filtering specials.
+        Token pool composition is controlled by corpus_style:
+        - VLLM / SGLANG: exclude special tokens, matching both tools' behavior
+        - Future styles may opt into all_token_ids when required.
         """
-        self._allowed_tokens = self.tokenizer.all_token_ids
+        if self._corpus_style in (RandomCorpusStyle.VLLM, RandomCorpusStyle.SGLANG):
+            self._allowed_tokens = self.tokenizer.valid_token_ids
+        else:
+            self._allowed_tokens = self.tokenizer.all_token_ids
         self.debug(
             lambda: (
                 f"Built random vocab corpus with {len(self._allowed_tokens)} allowed tokens"
@@ -285,7 +290,7 @@ class PromptGenerator(BaseGenerator):
 
     def _create_prefix_prompt_pool(self) -> None:
         """Generate a pool of prefix prompts to sample from."""
-        if self._tokenized_corpus is None:
+        if self._tokenized_corpus is None and self._corpus != PromptCorpus.RANDOM:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         if self.prefix_prompts is None:
@@ -293,6 +298,9 @@ class PromptGenerator(BaseGenerator):
 
         length = self.prefix_prompts.length or 0
         pool_size = self.prefix_prompts.pool_size or 0
+        if length <= 0:
+            self._prefix_prompts = [""] * pool_size
+            return
         self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
         self.debug(
             lambda: (
@@ -358,11 +366,9 @@ class PromptGenerator(BaseGenerator):
         Returns:
             A synthetic prompt as a string.
         """
+        if num_tokens <= 0:
+            raise ValueError(f"num_tokens must be > 0, got {num_tokens}")
         tokens = self._sample_tokens(num_tokens)
-        if self._corpus == PromptCorpus.RANDOM:
-            text = self.tokenizer.decode(tokens)
-            re_encoded = self.tokenizer.encode(text)[:num_tokens]
-            return self.tokenizer.decode(re_encoded)
         for _ in range(_max_retries):
             text = self.tokenizer.decode(tokens)
             actual = len(self.tokenizer.encode(text))
@@ -576,7 +582,7 @@ class PromptGenerator(BaseGenerator):
         This prompt is generated once and is identical across all sessions.
         It appears as a system message in turn 0 of every conversation.
         """
-        if self._tokenized_corpus is None:
+        if self._tokenized_corpus is None and self._corpus != PromptCorpus.RANDOM:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         length = (
@@ -622,7 +628,7 @@ class PromptGenerator(BaseGenerator):
             NotInitializedError: If tokenized corpus is not initialized.
             InvalidStateError: If user context prompt length is not configured.
         """
-        if self._tokenized_corpus is None:
+        if self._tokenized_corpus is None and self._corpus != PromptCorpus.RANDOM:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         length = (

@@ -778,11 +778,11 @@ class ExportFormat(CaseInsensitiveStrEnum):
     CSV = "csv"
 
 
-class RangeRatioMode(CaseInsensitiveStrEnum):
-    """Sampling mode for `--random-range-ratio`.
+class RandomCorpusStyle(CaseInsensitiveStrEnum):
+    """Benchmark style for RANDOM corpus generation.
 
-    Controls how ISL and OSL are drawn from a ratio-defined integer window
-    around the configured means.
+    Controls the full set of behaviors that vary between tools: range ratio
+    formula, token pool composition, and any future per-tool differences.
     """
 
     VLLM = "vllm"

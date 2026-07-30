@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Self
 
+import orjson
 from pydantic import (
     BeforeValidator,
     ConfigDict,
@@ -29,7 +30,7 @@ from aiperf.common.enums import (
     ImageSource,
     ImageSourceSamplingStrategy,
     PromptCorpus,
-    RangeRatioMode,
+    RandomCorpusStyle,
 )
 from aiperf.config.base import BaseConfig
 
@@ -112,6 +113,21 @@ class CacheBustConfig(BaseConfig):
         """
         self._target_explicitly_set = "target" in self.model_fields_set
         return self
+
+
+def _coerce_range_ratio(v: object) -> object:
+    """Normalize native float/dict inputs to the string form parse_cli_value expects.
+
+    YAML parses ``random_range_ratio: 0.3`` as float and ``{input: 0.3, output: 0.5}``
+    as dict. Both are valid user intent but parse_cli_value requires a string.
+    """
+    if isinstance(v, bool):
+        return v  # let Pydantic reject booleans via type validation
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, dict):
+        return orjson.dumps(v).decode()
+    return v
 
 
 class PromptConfig(BaseConfig):
@@ -207,6 +223,7 @@ class PromptConfig(BaseConfig):
 
     random_range_ratio: Annotated[
         str | None,
+        BeforeValidator(_coerce_range_ratio),
         Field(
             default=None,
             description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
@@ -218,10 +235,10 @@ class PromptConfig(BaseConfig):
         ),
     ]
 
-    random_range_ratio_mode: Annotated[
-        RangeRatioMode,
+    random_corpus_style: Annotated[
+        RandomCorpusStyle,
         Field(
-            default=RangeRatioMode.VLLM,
+            default=RandomCorpusStyle.VLLM,
             description="Sampling formula for random_range_ratio. "
             "vllm (default): symmetric window [floor(mean*(1-r)), ceil(mean*(1+r))], ratio in [0, 1). "
             "sglang: lower-bounded window [max(1, int(mean*r)), mean], ratio in [0, 1].",
@@ -245,7 +262,7 @@ class PromptConfig(BaseConfig):
 
         try:
             RangeRatioDistribution.parse_cli_value(
-                self.random_range_ratio, self.random_range_ratio_mode
+                self.random_range_ratio, self.random_corpus_style
             )
         except Exception as e:
             raise ValueError(f"Invalid random_range_ratio value: {e}") from e
@@ -289,7 +306,7 @@ class PromptConfig(BaseConfig):
             )
 
             input_ratio, output_ratio = RangeRatioDistribution.parse_cli_value(
-                self.random_range_ratio, self.random_range_ratio_mode
+                self.random_range_ratio, self.random_corpus_style
             )
             isl_mean = int(self.isl.expected_value) if self.isl is not None else 512
             osl_mean = int(self.osl.expected_value) if self.osl is not None else 128
@@ -298,7 +315,7 @@ class PromptConfig(BaseConfig):
                 osl_mean=osl_mean,
                 input_ratio=input_ratio,
                 output_ratio=output_ratio,
-                mode=self.random_range_ratio_mode,
+                mode=self.random_corpus_style,
                 num_special_tokens=num_special_tokens,
             )
 
