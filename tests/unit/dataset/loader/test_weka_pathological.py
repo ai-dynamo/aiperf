@@ -14,7 +14,6 @@ from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.weka_trace import (
     WekaTraceLoader,
     _expand_subagent_to_child_plans,
-    _IdleGapTimeWarp,
     _sa_end_seconds,
 )
 from aiperf.dataset.loader.weka_trace_models import (
@@ -158,74 +157,6 @@ def _inner_request(**overrides) -> WekaNormalRequest:
 # Regression: idle-gap-mapped subagent spawn time (fixed)
 
 
-def test_idle_gap_branch_start_timestamp_uses_mapped_time_not_raw(tmp_path):
-    """SPAWN ``start_timestamp_ms`` must live on the same mapped timeline as every other turn, never exceeding the maximum mapped turn timestamp."""
-    trace = _base_trace(
-        [
-            _normal(0.0, [1]),
-            _normal(1000.0, [1, 2]),  # 1000s start-gap -> compressed
-            _subagent(1005.0, "a", inner_hash_ids=[8]),
-            _normal(1006.0, [1, 2, 3]),
-        ],
-        trace_id="idle_branch",
-    )
-    path = tmp_path / "t.json"
-    path.write_text(json.dumps(trace))
-    uc = _mk_user_config(trace_idle_gap_cap_seconds=60.0)
-    loader = _make_loader(path, uc)
-
-    convs = loader.convert_to_conversations(loader.load_dataset())
-    root = next(c for c in convs if c.session_id == "idle_branch")
-    child = next(c for c in convs if c.session_id == "idle_branch::sa:a")
-
-    max_mapped_ms = max(t.timestamp for t in root.turns)
-    branch = root.branches[0]
-    # The branch entered the timeline when the subagent spawned; on the mapped
-    # timeline that is the child's first-request timestamp, never ~940s later.
-    assert branch.start_timestamp_ms <= max_mapped_ms
-    assert branch.start_timestamp_ms == child.turns[0].timestamp
-
-
-def test_parallel_subagent_payload_carries_mapped_spawn_time(tmp_path):
-    """The parallel marker payload must carry the mapped spawn time via ``effective_t``, not revert to raw seconds when an idle-gap warp shifts the timeline."""
-    trace = _base_trace(
-        [
-            _normal(0.0, [1]),
-            _normal(1000.0, [1, 2]),
-            _subagent(1005.0, "a", inner_hash_ids=[8]),
-            _normal(1006.0, [1, 2, 3]),
-        ],
-        trace_id="idle_parallel",
-    )
-    path = tmp_path / "t.json"
-    path.write_text(json.dumps(trace))
-    uc = _mk_user_config(trace_idle_gap_cap_seconds=60.0)
-    loader = _make_loader(path, uc)
-
-    data = loader.load_dataset()
-    plans = loader._build_reconstruction_plans(data)
-    parent_plans, child_plans = plans.parent_plans, plans.child_plans
-    timing = loader._build_trace_idle_timing_by_trace(parent_plans, child_plans)
-    metric_values = loader._build_shared_metric_values(
-        parent_plans, child_plans, plans.flat_plans
-    )
-    tasks = loader._build_parallel_reconstruction_tasks(
-        parent_plans=parent_plans,
-        child_plans=child_plans,
-        data=data,
-        ignore_delays=False,
-        think_time_only=False,
-        cap_seconds=None,
-        model_map_per_trace={"idle_parallel": {}},
-        trace_idle_timing_by_trace=timing,
-        metric_values_by_trace=metric_values,
-    )
-    _, marker = tasks[0].parent["subagents"][0]
-    # The mapped end time is plumbed through; the mapped spawn time must be too.
-    assert "effective_t" in marker
-    assert marker["effective_t"] != marker["t"]
-
-
 def test_sa_end_seconds_negative_duration_not_before_spawn():
     """A subagent's recorded end time can never precede its own spawn, even with a corrupt negative ``duration_ms``."""
     entry = _make_subagent_entry(t=10.0, duration_ms=-5000)
@@ -262,24 +193,6 @@ def test_think_time_only_negative_think_time_not_negative_delay(tmp_path):
 
 
 # PASSING CHARACTERIZATIONS (surprising but intended / not invariant-breaking)
-
-
-def test_idle_gap_exactly_equal_to_cap_is_not_compressed():
-    """A request-start gap exactly equal to the cap is left untouched (``_IdleGapTimeWarp`` compresses only strict ``gap_seconds > cap_seconds``)."""
-    warp = _IdleGapTimeWarp([0.0, 60.0], cap_seconds=60.0)
-    assert warp.map(60.0) == 60.0
-    # One microsecond over the cap does get compressed back to the boundary.
-    warp_over = _IdleGapTimeWarp([0.0, 60.001], cap_seconds=60.0)
-    assert warp_over.map(60.001) == pytest.approx(60.0)
-
-
-def test_idle_gap_collapsed_tail_event_maps_to_cap_boundary():
-    """A non-request event inside a collapsed gap tail is pinned to ``raw_start + cap`` so a join cannot wait past the next shifted request."""
-    warp = _IdleGapTimeWarp([0.0, 20.0, 220.0], cap_seconds=60.0)
-    assert warp.map(80.0) == pytest.approx(80.0)  # at the boundary
-    assert warp.map(150.0) == pytest.approx(80.0)  # deep in the collapsed tail
-    assert warp.map(220.0) == pytest.approx(80.0)  # the gap end
-    assert warp.map(300.0) == pytest.approx(160.0)  # after: shifted left by excess
 
 
 def test_nested_chain_nan_api_time_treated_as_zero_duration():

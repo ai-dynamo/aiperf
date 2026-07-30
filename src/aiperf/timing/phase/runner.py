@@ -198,7 +198,11 @@ class PhaseRunner(TaskManagerMixin):
             counter=self._progress.counter,
         )
         self._replay_barrier = (
-            ReplayBarrierCoordinator(self._conversation_source.dataset_metadata)
+            ReplayBarrierCoordinator(
+                self._conversation_source.dataset_metadata,
+                scheduler=self._scheduler,
+                root_idle_gap_cap_seconds=self._root_idle_gap_cap_seconds(),
+            )
             if (
                 self._config.timing_mode == TimingMode.AGENTIC_REPLAY
                 and self._conversation_source.dataset_metadata is not None
@@ -216,6 +220,23 @@ class PhaseRunner(TaskManagerMixin):
         self._rampers: list[RateControllerProtocol] = []
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
+
+    def _root_idle_gap_cap_seconds(self) -> float | None:
+        """Per-trace runtime idle cap for AgentX profiling.
+
+        The cap measures actual whole-tree idle time after the final in-flight
+        request completes. Dataset timestamps remain untouched; only pending
+        runtime timers for that root and its descendants may be advanced.
+        """
+        if (
+            self._config.phase != CreditPhase.PROFILING
+            or self._config.timing_mode != TimingMode.AGENTIC_REPLAY
+            or self._run is None
+        ):
+            return None
+        dataset = self._run.cfg.get_default_dataset()
+        cap = getattr(dataset, "trace_idle_gap_cap_seconds", None)
+        return float(cap) if isinstance(cap, int | float) else None
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None

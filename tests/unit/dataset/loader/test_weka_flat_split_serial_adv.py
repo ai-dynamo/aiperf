@@ -297,87 +297,24 @@ def test_disjoint_batch_splits_into_independent_chains(caplog):
     ), "the nonce-poison guard was removed; no such warning should be logged"
 
 
-# Idle-gap warp interaction (spec §5.6): flat-chain warped timestamps/delays
-# and the warp gap structure must match the unsplit trace shifted equivalently.
+# Runtime trace-idle caps must not rewrite the authored dataset timeline.
 
 
-def test_idle_gap_warp_flat_chain_gap_structure_matches_unsplit_run():
-    """With an idle-gap cap active, the main chain's warped timestamps match the legacy single-stream run over the same request starts (spec §5.6)."""
-    # Main founder at t=0, worker founder at t=20 (disjoint ns), main t2 at
-    # t=220. The 20->220 request-start gap (200s) caps to 60s -> 140s shift.
+def test_trace_idle_gap_cap_does_not_rewrite_dataset_timestamps():
+    """The trace cap is enforced only from observed runtime completions."""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=1.0),  # main, t=0
-        _normal(20.0, [900, 901], api_time=1.0, model=_HAIKU),  # worker, t=20
-        _normal(220.0, [1, 2, 3, 4], api_time=1.0),  # main t2 -> warps to t=80
+        _normal(0.0, [1, 2, 3], api_time=1.0),
+        _normal(20.0, [900, 901], api_time=1.0, model=_HAIKU),
+        _normal(220.0, [1, 2, 3, 4], api_time=1.0),
     ]
-    uc = _mk_user_config(trace_idle_gap_cap_seconds=60.0)
-    loader_split = _build_loader(uc)
-    convs_split = _convert(loader_split, _trace("flt_warp", requests))
+    loader = _build_loader(_mk_user_config(trace_idle_gap_cap_seconds=60.0))
+    convs = _convert(loader, _trace("runtime_cap_only", requests))
 
-    uc2 = _mk_user_config(trace_idle_gap_cap_seconds=60.0)
-    loader_legacy = _build_loader(uc2)
-    import unittest.mock as _m
-
-    with _m.patch.object(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", False):
-        convs_legacy = _convert(loader_legacy, _trace("flt_warp", requests))
-
-    root_split = convs_split["flt_warp"]
-    legacy = convs_legacy["flt_warp"]
-    # Main founder unwarped (gap is after it).
-    assert root_split.turns[0].timestamp == 0.0
-    # Worker request start (t=20) is also <= cap boundary so it is unwarped;
-    # the legacy single stream sees it at t=20 too. The 200s gap 20->220
-    # collapses to 60s, shifting t=220 -> t=80 in BOTH runs.
-    assert root_split.turns[1].timestamp == pytest.approx(80_000.0)
-    # Legacy keeps all 3 as one conversation; its turn at t=220 also warps to
-    # 80s. The main chain's warped end timestamp must agree across runs.
-    legacy_220 = next(t for t in legacy.turns if t.timestamp == pytest.approx(80_000.0))
-    assert legacy_220.timestamp == pytest.approx(root_split.turns[1].timestamp)
-    # Worker conversation's single turn warps to t=20 (20_000 ms).
-    worker = convs_split["flt_warp::fa:000"]
-    assert worker.turns[0].timestamp == pytest.approx(20_000.0)
-
-
-def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
-    """A flat group whose workers begin after a compressed idle gap anchors its SPAWN branch on the warped first-request time, preserving the inter-worker dispatch stagger."""
-    # Main founder at t=0; a 1000s idle gap; two disjoint-namespace workers at
-    # t=1000 and t=1002 (2s apart); main t1 at t=1003. Sorted request starts
-    # [0, 1000, 1002, 1003]: the 0->1000 gap (1000s) caps to 60s (940s excess),
-    # shifting everything at/after the gap left by 940s:
-    #   worker A 1000 -> 60s, worker B 1002 -> 62s, main t1 1003 -> 63s.
-    requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder, outer 0
-        _normal(1000.0, [900, 901], api_time=0.5, model=_HAIKU),  # worker A
-        _normal(1002.0, [910, 911], api_time=0.5, model=_HAIKU),  # worker B
-        _normal(1003.0, [1, 2, 3, 4], api_time=0.5),  # main t1
-    ]
-    uc = _mk_user_config(trace_idle_gap_cap_seconds=60.0)
-    loader = _build_loader(uc)
-    convs = _convert(loader, _trace("flt_warp_start", requests))
-    root = convs["flt_warp_start"]
-
-    flatspawn = [b for b in root.branches if "flatspawn" in b.branch_id]
-    assert len(flatspawn) == 1, "both workers share (preceding, join) -> one branch"
-    branch = flatspawn[0]
-    assert len(branch.child_conversation_ids) == 2
-
-    # Branch start is the WARPED min worker start (60s), NOT the raw 1000s.
-    assert branch.start_timestamp_ms == pytest.approx(60_000.0)
-
-    # Worker turn-0 timestamps are warped (60s, 62s); the per-worker dispatch
-    # offset from the branch start stays non-negative AND preserves the recorded
-    # 2s stagger instead of collapsing both to 0.
-    child_ts = sorted(
-        convs[sid].turns[0].timestamp for sid in branch.child_conversation_ids
-    )
-    assert child_ts == [pytest.approx(60_000.0), pytest.approx(62_000.0)]
-    offsets = sorted(ts - branch.start_timestamp_ms for ts in child_ts)
-    assert offsets[0] == pytest.approx(0.0)
-    assert offsets[1] == pytest.approx(2_000.0)
-
-
-# Timing: per-chain delays, think_time_only and ignore_delays on flat-chain
-# turns (spec §5.6). Delays never negative.
+    root = convs["runtime_cap_only"]
+    worker = convs["runtime_cap_only::fa:000"]
+    assert [turn.timestamp for turn in root.turns] == [0.0, 220_000.0]
+    assert root.turns[1].delay == 219_000.0
+    assert worker.turns[0].timestamp == 20_000.0
 
 
 def test_flat_chain_delays_are_within_chain_and_nonnegative():

@@ -147,9 +147,9 @@ what you must set, what you may tune, and what you shouldn't touch:
 can omit all of them (AIPerf fills in exactly these values under
 `--scenario`), but writing them out makes the command document what runs. If
 you pass one of them with a *conflicting* value, AIPerf errors up front
-rather than silently producing an invalid result. The scenario also forbids
-`--trace-idle-gap-cap-seconds` and `--inter-turn-delay-cap-seconds`, preserving
-the recorded timing within every trace.
+rather than silently producing an invalid result. The scenario forbids
+`--inter-turn-delay-cap-seconds`; `--trace-idle-gap-cap-seconds` remains an
+optional CLI control and is unset by default.
 
 **Flags the scenario only defaults** — auto-filled when omitted, but an
 explicit value is honored *silently*, with no error and no change to the
@@ -267,7 +267,8 @@ flag.
 | `--streaming` is on | Responses stream token-by-token (auto-enabled when unset; explicit `--no-streaming` errors) | The per-token latency metrics (TTFT, ITL) are core to this benchmark and need streaming responses. |
 | Replay delays are end-to-start (always on, no flag) | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta. This is unconditional for weka trace replay — there is no toggle. | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved | The replay retains the captured agent pacing and KV-cache reuse intervals. |
-| Per-trace and per-turn caps are forbidden | `--trace-idle-gap-cap-seconds` and `--inter-turn-delay-cap-seconds` must remain unset | Independently compressing each trace changes think-time and cache-TTL behavior even while other trajectories keep the server busy. |
+| Per-trace idle-gap cap is optional | `--trace-idle-gap-cap-seconds` is unset by default and accepts an explicit CLI value | Setting it bounds observed runtime idle across the root and every descendant stream without rewriting dataset timestamps or bypassing spawn/join dependencies. |
+| Per-turn cap is forbidden | `--inter-turn-delay-cap-seconds` must remain unset | Independently clamping parent and subagent delays can distort their relative timing. |
 | `--system-idle-gap-cap-seconds = 10` | When no request is active or ready, all pending replay timers shift uniformly so the next request arrives within 10 seconds | The benchmark avoids measuring long periods with no server work while preserving request order and relative spacing across every pending trajectory. |
 | `--cache-bust first_turn_prefix` | A unique per-conversation marker is injected at the start of the first user turn for every play (each dispatch of a trace, initial or recycled) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
 | Loader is a pinned Weka with-subagents corpus | The dataset must be a with-subagents `--public-dataset` alias or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`). A local `weka_trace` directory is format-compatible but unpinned — the run refuses unless you pass `--unsafe-override` (which stamps `submission_valid: false`). The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | Submission validity requires a known public corpus identity; arbitrary local dirs are not hash-verifiable. |
@@ -439,15 +440,21 @@ request metrics.
 After warmup, the profiling phase opens. Now you're measuring. Each trajectory
 keeps replaying its conversation from turn `k_i + 1` onward, honoring the
 original recorded inter-turn gaps as end-to-start delays counted from the
-moment the previous turn completes. If every request completes while future
-requests remain scheduled more than 10 seconds away, AIPerf shifts all pending
-request timers earlier by the same amount. This bounds true system-idle time
-without changing request order or the relative spacing among pending
-trajectories. A scheduled turn may become retained by a cross-stream replay
-barrier instead of reaching the wire; AIPerf re-evaluates the guard after that
-scheduler task drains so a nearby blocked turn cannot hide a much later
-dispatchable timer. The phase-end log reports how many global jumps occurred
-and how many seconds they skipped.
+moment the previous turn completes. With
+`--trace-idle-gap-cap-seconds S`, a per-trajectory watchdog covers initial
+future work and restarts when the last in-flight request across the root and
+all descendant streams completes.
+If that tree remains idle for `S` seconds, AIPerf uniformly advances only its
+pending timers; dataset timestamps, relative timer spacing, request order, and
+spawn/join gates remain unchanged. If every request completes while future
+requests remain scheduled more than 10 seconds away, AIPerf
+shifts all pending request timers earlier by the same amount. This bounds true
+system-idle time without changing request order or the relative spacing among
+pending trajectories. A scheduled turn may become retained by a cross-stream
+replay barrier instead of reaching the wire; AIPerf re-evaluates the guard
+after that scheduler task drains so a nearby blocked turn cannot hide a much
+later dispatchable timer. The phase-end log reports how many global jumps
+occurred and how many seconds they skipped.
 
 Concurrency here is **per session tree**: each lane holds one slot for a
 whole tree — the root conversation plus every subagent worker stream it

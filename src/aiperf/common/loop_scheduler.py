@@ -65,6 +65,10 @@ class LoopScheduler:
         self._handles: dict[
             HandleId, tuple[asyncio.TimerHandle | asyncio.Handle, Coroutine]
         ] = {}
+        # Optional logical replay-tree ownership for pending timers. Kept in a
+        # parallel map so the long-standing ``_handles`` tuple contract remains
+        # stable for tests and diagnostics.
+        self._handle_groups: dict[HandleId, str] = {}
         self._exception_handler: Callable[[asyncio.Task], None] | None = (
             exception_handler
         )
@@ -115,13 +119,19 @@ class LoopScheduler:
         mutable list, then populate it after call_later() returns.
         """
         if handle_container[0] is not None:
-            self._handles.pop(id(handle_container[0]), None)
+            handle_id = id(handle_container[0])
+            self._handles.pop(handle_id, None)
+            self._handle_groups.pop(handle_id, None)
         task = self._loop.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._done_callback)
 
     def _track_handle_and_return_id(
-        self, handle: asyncio.TimerHandle | asyncio.Handle, coro: Coroutine
+        self,
+        handle: asyncio.TimerHandle | asyncio.Handle,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId:
         """Track a handle and coroutine and return the handle ID.
 
@@ -132,6 +142,8 @@ class LoopScheduler:
         """
         handle_id = id(handle)
         self._handles[handle_id] = (handle, coro)
+        if group_id is not None:
+            self._handle_groups[handle_id] = group_id
         return handle_id
 
     def execute_async(self, coro: Coroutine) -> asyncio.Task:
@@ -147,7 +159,11 @@ class LoopScheduler:
         return task
 
     def schedule_later(
-        self, delay_sec: float, coro: Coroutine
+        self,
+        delay_sec: float,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine after a relative delay (seconds).
@@ -169,9 +185,15 @@ class LoopScheduler:
             delay_sec, self._safe_callback, handle_container, coro
         )
         handle_container[0] = handle
-        return self._track_handle_and_return_id(handle, coro)
+        return self._track_handle_and_return_id(handle, coro, group_id=group_id)
 
-    def schedule_at(self, loop_time: float, coro: Coroutine) -> HandleId | asyncio.Task:
+    def schedule_at(
+        self,
+        loop_time: float,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
+    ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute loop.time() timestamp.
 
@@ -189,10 +211,14 @@ class LoopScheduler:
             loop_time, self._safe_callback, handle_container, coro
         )
         handle_container[0] = handle
-        return self._track_handle_and_return_id(handle, coro)
+        return self._track_handle_and_return_id(handle, coro, group_id=group_id)
 
     def schedule_at_perf_sec(
-        self, perf_sec: float, coro: Coroutine
+        self,
+        perf_sec: float,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute perf_counter seconds timestamp.
@@ -218,10 +244,14 @@ class LoopScheduler:
 
         if offset_sec <= 0:
             return self.execute_async(coro)
-        return self.schedule_at(cur_loop_time + offset_sec, coro)
+        return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def schedule_at_perf_ns(
-        self, perf_time_ns: int, coro: Coroutine
+        self,
+        perf_time_ns: int,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute perf_counter_ns timestamp.
@@ -247,7 +277,7 @@ class LoopScheduler:
 
         if offset_sec <= 0:
             return self.execute_async(coro)
-        return self.schedule_at(cur_loop_time + offset_sec, coro)
+        return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def cancel_handle_id(self, handle_id: HandleId) -> bool:
         """Cancel a scheduled coroutine by its handle ID.
@@ -261,6 +291,7 @@ class LoopScheduler:
         handle_data = self._handles.pop(handle_id, None)
         if handle_data is None:
             return False
+        self._handle_groups.pop(handle_id, None)
         handle, coro = handle_data
         handle.cancel()
         coro.close()
@@ -275,6 +306,7 @@ class LoopScheduler:
         """
         items = list(self._handles.values())
         self._handles.clear()
+        self._handle_groups.clear()
 
         # Cancel handles first, then close coroutines
         for handle, coro in items:
@@ -337,9 +369,13 @@ class LoopScheduler:
         if shift_sec <= 0:
             return 0.0
 
-        items = list(self._handles.values())
+        items = [
+            (handle, coro, self._handle_groups.get(handle_id))
+            for handle_id, (handle, coro) in self._handles.items()
+        ]
         self._handles.clear()
-        for handle, coro in items:
+        self._handle_groups.clear()
+        for handle, coro, group_id in items:
             target = max(now, handle.when() - shift_sec)
             handle.cancel()
             handle_container = [None]
@@ -356,7 +392,51 @@ class LoopScheduler:
                     target, self._safe_callback, handle_container, coro
                 )
             handle_container[0] = replacement
-            self._track_handle_and_return_id(replacement, coro)
+            self._track_handle_and_return_id(replacement, coro, group_id=group_id)
+        return shift_sec
+
+    def cap_pending_delay_for_group(self, group_id: str, max_delay_sec: float) -> float:
+        """Uniformly advance one logical group's pending replay timers.
+
+        Other groups are untouched. Relative ordering and spacing among the
+        selected group's timers are preserved exactly.
+        """
+        if max_delay_sec < 0:
+            raise ValueError("max_delay_sec must be non-negative")
+        selected = [
+            (handle_id, handle, coro)
+            for handle_id, (handle, coro) in self._handles.items()
+            if self._handle_groups.get(handle_id) == group_id
+        ]
+        if not selected:
+            return 0.0
+
+        now = self._loop.time()
+        if any(
+            not callable(getattr(handle, "when", None)) for _, handle, _ in selected
+        ):
+            return 0.0
+        earliest = min(handle.when() for _, handle, _ in selected)
+        shift_sec = earliest - now - max_delay_sec
+        if shift_sec <= 0:
+            return 0.0
+
+        for handle_id, handle, coro in selected:
+            self._handles.pop(handle_id, None)
+            self._handle_groups.pop(handle_id, None)
+            target = max(now, handle.when() - shift_sec)
+            handle.cancel()
+            handle_container = [None]
+            if target <= now:
+                replacement = self._loop.call_soon(
+                    self._safe_callback, handle_container, coro
+                )
+            else:
+                replacement = self._loop.call_at(
+                    target, self._safe_callback, handle_container, coro
+                )
+            handle_container[0] = replacement
+            self._track_handle_and_return_id(replacement, coro, group_id=group_id)
         return shift_sec
 
     @property

@@ -716,7 +716,7 @@ def test_cache_warmup_handoff_preserves_residual_next_turn_delay() -> None:
     assert state.next_dispatch_offset_ms == pytest.approx(5_500.0)
 
 
-def test_cache_warmup_handoff_uses_timestamp_fallback_and_idle_cap() -> None:
+def test_cache_warmup_handoff_uses_timestamp_fallback_without_per_stream_cap() -> None:
     dataset = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -736,7 +736,6 @@ def test_cache_warmup_handoff_uses_timestamp_fallback_and_idle_cap() -> None:
         dataset=dataset,
         cache_warmup_duration=10.0,
     )
-    strategy._phase_offset_cap_ms = 3_000.0
     credit = _make_credit(
         conversation_id="trace_0",
         x_correlation_id="root",
@@ -751,8 +750,71 @@ def test_cache_warmup_handoff_uses_timestamp_fallback_and_idle_cap() -> None:
     states_by_lane = strategy._build_handoff_states(finalized_at_ns=1_250_000_000)
 
     # Timestamp fallback gives 6000 - (1000 + 500) = 4500ms, less the 250ms
-    # handoff drain wait = 4250ms, then capped to the scenario idle cap.
-    assert states_by_lane[0][0].next_dispatch_offset_ms == pytest.approx(3_000.0)
+    # handoff drain wait = 4250ms. The raw stream offset stays intact.
+    assert states_by_lane[0][0].next_dispatch_offset_ms == pytest.approx(4_250.0)
+
+
+def test_cache_warmup_handoff_preserves_raw_stream_offsets() -> None:
+    """The runtime watchdog does not rewrite handoff offsets."""
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[TurnMetadata(delay_ms=0.0), TurnMetadata(delay_ms=820_009.0)],
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::fa:000",
+                turns=[
+                    TurnMetadata(delay_ms=0.0),
+                    TurnMetadata(delay_ms=9_356_213.0),
+                ],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
+        dataset=dataset,
+        cache_warmup_requests_per_lane=1,
+    )
+    root = _make_credit(
+        conversation_id="trace_0",
+        x_correlation_id="root",
+        turn_index=0,
+        num_turns=2,
+        phase=CreditPhase.WARMUP,
+    )
+    child = _make_credit(
+        conversation_id="trace_0::fa:000",
+        x_correlation_id="child",
+        turn_index=0,
+        num_turns=2,
+        phase=CreditPhase.WARMUP,
+        agent_depth=1,
+        parent_correlation_id="root",
+        root_correlation_id="root",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    strategy._handoff_credits = {"root": root, "child": child}
+    strategy._handoff_returned_at_ns = {
+        "root": 1_000_000_000,
+        "child": 1_000_000_000,
+    }
+    strategy._root_to_lane["root"] = 0
+
+    states = strategy._build_handoff_states(finalized_at_ns=144_259_000_000)[0]
+    offsets = {
+        state.x_correlation_id: state.next_dispatch_offset_ms for state in states
+    }
+
+    assert offsets == {
+        "root": pytest.approx(676_750.0),
+        "child": pytest.approx(9_212_954.0),
+    }
 
 
 def test_cache_warmup_handoff_elapsed_wait_can_exhaust_delay() -> None:
@@ -988,8 +1050,8 @@ async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
     issuer.issue_credit.side_effect = capture
     scheduled: list[tuple[float, object]] = []
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
-        (delay, coro)
+    scheduler.schedule_later.side_effect = (
+        lambda delay, coro, **_kwargs: scheduled.append((delay, coro))
     )
     lifecycle = MagicMock()
     lifecycle.is_sending_complete = False
@@ -1076,7 +1138,7 @@ async def test_warmup_lead_clamped_to_idle_gap_cap():
     issuer.issue_credit.side_effect = capture
     scheduled: list[float] = []
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = lambda d, c: scheduled.append(d)
+    scheduler.schedule_later.side_effect = lambda d, c, **_kwargs: scheduled.append(d)
     lifecycle = MagicMock()
     lifecycle.is_sending_complete = False
 
@@ -1091,9 +1153,7 @@ async def test_warmup_lead_clamped_to_idle_gap_cap():
         credit_issuer=issuer,
         lifecycle=lifecycle,
     )
-    # The AgentX scenario sets the global system-idle cap, not the per-trace
-    # timestamp-warp cap. Warmup priming must honor that real configuration.
-    strategy._phase_offset_cap_ms = None
+    # Warmup priming honors the separate global system-idle guard.
     strategy._system_idle_gap_cap_seconds = 60.0
 
     await strategy.setup_phase()
@@ -1329,8 +1389,8 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = lambda _delay, coro: asyncio.create_task(
-        coro
+    scheduler.schedule_later.side_effect = (
+        lambda _delay, coro, **_kwargs: asyncio.create_task(coro)
     )
     branch_orchestrator = MagicMock()
 
@@ -1462,7 +1522,7 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
     issuer.issue_credit.side_effect = capture
     scheduled: list[tuple[float, object]] = []
 
-    def fake_schedule_later(delay, coro):
+    def fake_schedule_later(delay, coro, **_kwargs):
         scheduled.append((delay, coro))
 
     scheduler = MagicMock()
@@ -1580,8 +1640,8 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
     issuer.issue_credit.side_effect = capture
     scheduled: list[tuple[float, object]] = []
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
-        (delay, coro)
+    scheduler.schedule_later.side_effect = (
+        lambda delay, coro, **_kwargs: scheduled.append((delay, coro))
     )
 
     cfg = MagicMock()
@@ -1596,19 +1656,15 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
         lifecycle=MagicMock(),
         branch_orchestrator=MagicMock(),
     )
-    strategy._phase_offset_cap_ms = 60_000.0  # agentx idle-gap cap of 60s
-
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    # Leading idle (t* -> earliest child, 100s) capped to 60s via a 40s uniform
-    # shift; subagents keep their recorded 30s and 90s spacing -- NOT collapsed
-    # to a single 60s/60s/60s instant.
+    # The runtime-only trace cap does not alter phase-start offsets.
     assert issued == []
     assert [delay for delay, _ in scheduled] == [
-        pytest.approx(60.0),
-        pytest.approx(90.0),
-        pytest.approx(180.0),
+        pytest.approx(100.0),
+        pytest.approx(130.0),
+        pytest.approx(220.0),
     ]
     for _, coro in scheduled:
         await coro
@@ -1647,14 +1703,11 @@ def test_profiling_spread_reports_first_request_per_trajectory_not_all_streams()
     strategy = AgenticReplayStrategy.__new__(AgenticReplayStrategy)
     strategy.conversation_source = src
     strategy._burst_phase_starts = False
-    strategy._phase_offset_cap_ms = 60_000.0
-
     assert strategy._profiling_spread_seconds() == pytest.approx(10.0)
 
-    # An idle-at-t* trajectory's first request is capped to the idle-gap cap,
-    # so the spread stays bounded by the cap rather than the raw leading idle.
+    # Runtime idle enforcement does not rewrite phase-start scheduling.
     src.trajectories.append(_traj("t2", [200_000.0, 9_000_000.0]))
-    assert strategy._profiling_spread_seconds() == pytest.approx(60.0)
+    assert strategy._profiling_spread_seconds() == pytest.approx(200.0)
 
 
 @pytest.mark.asyncio
@@ -1703,8 +1756,8 @@ async def test_profiling_preserve_start_gap_delays_first_request_by_default():
     issuer.issue_credit.side_effect = capture
     scheduled: list[tuple[float, object]] = []
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
-        (delay, coro)
+    scheduler.schedule_later.side_effect = (
+        lambda delay, coro, **_kwargs: scheduled.append((delay, coro))
     )
 
     cfg = MagicMock()

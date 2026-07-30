@@ -284,7 +284,6 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
         model_map_per_trace={
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
-        trace_idle_timing_by_trace={},
         metric_values_by_trace=serial_loader._build_shared_metric_values(
             parent_plans, child_plans
         ),
@@ -393,7 +392,6 @@ def test_parallel_byte_equivalence_with_subagent(tmp_path):
         model_map_per_trace={
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
-        trace_idle_timing_by_trace={},
         metric_values_by_trace=serial_loader._build_shared_metric_values(
             parent_plans, child_plans
         ),
@@ -535,7 +533,6 @@ def test_directory_with_multiple_traces_parallel_path_byte_exact(tmp_path):
         model_map_per_trace={
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
-        trace_idle_timing_by_trace={},
         metric_values_by_trace=serial_loader._build_shared_metric_values(
             parent_plans, child_plans
         ),

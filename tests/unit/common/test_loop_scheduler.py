@@ -160,6 +160,74 @@ class TestScheduleLater:
         assert scheduler.cap_pending_delay(2.0) == 0.0
         scheduler.cancel_all_pending()
 
+    async def test_cap_pending_delay_for_group_isolated_and_uniform(
+        self, scheduler: LoopScheduler
+    ):
+        """A trace-local cap cannot move another trace's replay schedule."""
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.schedule_later(8.0, noop(), group_id="root-a")
+        scheduler.schedule_later(6.0, noop(), group_id="root-b")
+        before_a = sorted(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+        before_b = [
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-b"
+        ]
+
+        shifted = scheduler.cap_pending_delay_for_group("root-a", 1.0)
+
+        after_a = sorted(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+        after_b = [
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-b"
+        ]
+        assert shifted == pytest.approx(4.0, abs=0.02)
+        assert after_a[1] - after_a[0] == pytest.approx(before_a[1] - before_a[0])
+        assert after_b == before_b
+        scheduler.cancel_all_pending()
+
+    async def test_global_cap_preserves_group_ownership(self, scheduler: LoopScheduler):
+        """A global idle jump cannot erase later per-trace cap ownership."""
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.schedule_later(8.0, noop(), group_id="root-b")
+        assert scheduler.cap_pending_delay(1.0) == pytest.approx(4.0, abs=0.02)
+
+        groups = set(scheduler._handle_groups.values())
+        assert groups == {"root-a", "root-b"}
+        root_a_before = next(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+
+        assert scheduler.cap_pending_delay_for_group("root-b", 0.0) == pytest.approx(
+            4.0, abs=0.02
+        )
+        root_a_after = next(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+        assert root_a_after == root_a_before
+        scheduler.cancel_all_pending()
+
     async def test_cap_pending_delay_zero_queues_timer_as_ready_work(
         self, scheduler: LoopScheduler
     ):

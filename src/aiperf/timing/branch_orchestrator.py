@@ -188,6 +188,7 @@ class PendingBranchJoin:
     parent_num_turns: int
     parent_agent_depth: int = 0
     parent_parent_correlation_id: str | None = None
+    parent_root_correlation_id: str | None = None
     gated_turn_index: int | None = None
     outstanding: dict[str, PrereqState] = field(default_factory=dict)
     parent_branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
@@ -801,6 +802,9 @@ class BranchOrchestrator:
             parent_num_turns=len(parent_meta.turns),
             parent_agent_depth=parent_state.agent_depth,
             parent_parent_correlation_id=parent_state.parent_correlation_id,
+            parent_root_correlation_id=(
+                parent_state.root_correlation_id or parent_state.x_correlation_id
+            ),
             gated_turn_index=gated_idx,
             parent_branch_mode=parent_state.branch_mode,
             parent_has_forks_on_gated_turn=has_forks,
@@ -1328,6 +1332,7 @@ class BranchOrchestrator:
             self._scheduler.schedule_later(
                 offset_ms / 1000.0,
                 self._dispatch_first_turn_after_offset(child, 0.0, parent_corr),
+                group_id=child.effective_root_correlation_id,
             )
             self.stats.children_delayed += 1
             return
@@ -1390,6 +1395,7 @@ class BranchOrchestrator:
                 parent_num_turns=len(parent_meta.turns),
                 parent_agent_depth=credit.agent_depth,
                 parent_parent_correlation_id=credit.parent_correlation_id,
+                parent_root_correlation_id=credit.effective_root_correlation_id,
                 gated_turn_index=gated_idx,
                 parent_branch_mode=getattr(
                     credit, "branch_mode", ConversationBranchMode.FORK
@@ -1557,6 +1563,9 @@ class BranchOrchestrator:
             self._on_join_replay_deadline(
                 pending.parent_x_correlation_id,
                 pending.gated_turn_index,
+            ),
+            group_id=(
+                pending.parent_root_correlation_id or pending.parent_x_correlation_id
             ),
         )
 
