@@ -551,16 +551,17 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         DAG, and agentic replay all share the same credit/worker path.
         """
         from aiperf.common.enums import CacheBustTarget
-        from aiperf.plugin.enums import EndpointType
+        from aiperf.plugin import plugins
 
         if self.get_cache_bust_target() == CacheBustTarget.NONE:
             return self
 
-        if self.endpoint.type not in {EndpointType.CHAT, EndpointType.RESPONSES}:
+        endpoint_metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        if not endpoint_metadata.supports_cache_bust:
             raise ValueError(
-                "cache-bust requires --endpoint-type chat or responses; "
-                f"got {self.endpoint.type}. Other endpoint formatters do not "
-                "consume the structured message fields that host the marker."
+                "cache-bust is not supported by endpoint "
+                f"{self.endpoint.type}; select an endpoint whose plugin metadata "
+                "sets supports_cache_bust=true"
             )
 
         return self
