@@ -308,8 +308,18 @@ class PromptConfig(BaseConfig):
             input_ratio, output_ratio = RangeRatioDistribution.parse_cli_value(
                 self.random_range_ratio, self.random_corpus_style
             )
-            isl_mean = int(self.isl.expected_value) if self.isl is not None else 512
-            osl_mean = int(self.osl.expected_value) if self.osl is not None else 128
+            if self.isl is None:
+                raise ValueError(
+                    "--random-range-ratio requires --isl to be set explicitly. "
+                    "There is no safe default when a ratio window is requested."
+                )
+            if self.osl is None:
+                raise ValueError(
+                    "--random-range-ratio requires --osl to be set explicitly. "
+                    "There is no safe default when a ratio window is requested."
+                )
+            isl_mean = int(self.isl.expected_value)
+            osl_mean = int(self.osl.expected_value)
             return RangeRatioDistribution(
                 isl_mean=isl_mean,
                 osl_mean=osl_mean,

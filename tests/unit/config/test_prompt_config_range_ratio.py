@@ -54,17 +54,24 @@ def test_prompt_config_random_range_ratio_json_dict_builds_distribution():
     assert dist.output_bounds == (50, 150)
 
 
-def test_prompt_config_random_range_ratio_defaults_osl_to_128():
-    """When osl is not set, OSL mean defaults to 128."""
-    from aiperf.common.models.sequence_distribution import RangeRatioDistribution
-
+def test_prompt_config_random_range_ratio_requires_osl():
+    """--random-range-ratio without --osl raises instead of silently defaulting."""
     config = PromptConfig(
         random_range_ratio="0.0",
         isl=FixedDistribution(value=1024),
     )
-    dist = config.get_sequence_distribution()
-    assert isinstance(dist, RangeRatioDistribution)
-    assert dist.output_bounds == (128, 128)
+    with pytest.raises(ValueError, match="--osl"):
+        config.get_sequence_distribution()
+
+
+def test_prompt_config_random_range_ratio_requires_isl():
+    """--random-range-ratio without --isl raises instead of silently defaulting."""
+    config = PromptConfig(
+        random_range_ratio="0.0",
+        osl=FixedDistribution(value=128),
+    )
+    with pytest.raises(ValueError, match="--isl"):
+        config.get_sequence_distribution()
 
 
 def test_prompt_config_random_range_ratio_invalid_value_rejected():
