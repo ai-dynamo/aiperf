@@ -137,6 +137,17 @@ impl SimClock {
     pub fn has_sleepers(&self) -> bool {
         !self.heap.borrow().is_empty()
     }
+
+    /// Total sleepers registered since construction.
+    ///
+    /// Monotonic and never reset, so the driver pump can use it as a progress
+    /// signal: a body that parks on the clock bumps this even when the deadline
+    /// is already due and virtual time does not move. A body that only
+    /// self-wakes (`yield_now`, or a non-positive [`Clock::sleep`]) leaves both
+    /// this and [`now_ns`](Self::now_ns) unchanged.
+    pub fn scheduled_count(&self) -> u64 {
+        self.seq.get()
+    }
 }
 
 impl Clock for SimClock {

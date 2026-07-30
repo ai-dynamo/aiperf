@@ -160,6 +160,13 @@ pub enum SimDriveError {
         /// Virtual time at which the source stalled.
         at_ns: i64,
     },
+    /// The body kept waking itself at one instant without ever parking on the
+    /// clock, so virtual time could not advance. A `yield_now` retry loop
+    /// waiting on work that only a clock event can deliver spins like this.
+    ClockStarved {
+        /// Virtual time the body never advanced past.
+        at_ns: i64,
+    },
 }
 
 impl Display for SimDriveError {
@@ -181,6 +188,11 @@ impl Display for SimDriveError {
             Self::Stalled { at_ns } => {
                 write!(f, "external event source stalled at {at_ns}ns")
             }
+            Self::ClockStarved { at_ns } => write!(
+                f,
+                "virtual clock starved at {at_ns}ns: the run kept self-waking at one instant \
+                 without parking on the clock, so no timer could mature"
+            ),
         }
     }
 }
@@ -198,8 +210,17 @@ pub fn drive_sim<F>(clock: Rc<SimClock>, make_body: impl FnOnce(Handle) -> F) ->
 where
     F: Future<Output = ()>,
 {
-    drive_sim_inner(clock, None, make_body)
-        .expect("the clock-only virtual driver has no fallible event source")
+    match drive_sim_inner(clock, None, make_body) {
+        Ok(outcome) => outcome,
+        // A clock-starved run is a livelock in the body, not a driver fault, and
+        // it is unreachable through the source-specific variants. Panicking is
+        // the only channel here: `Clock::drive` returns a bare `RunOutcome`, and
+        // reporting it as `deadlocked` would name the wrong failure.
+        Err(error @ SimDriveError::ClockStarved { .. }) => panic!("{error}"),
+        Err(error) => {
+            unreachable!("the clock-only virtual driver has no fallible event source: {error}")
+        }
+    }
 }
 
 /// Run `body` against a [`SimClock`] and one passive external event source.
@@ -242,6 +263,13 @@ where
     let waker = Waker::from(Arc::new(FlagWaker(flag.clone())));
     let mut cx = Context::from_waker(&waker);
     let mut no_progress_steps = 0_u32;
+    // Watchdog for the two arms below that re-poll at the current instant. A
+    // round is progress if virtual time moved or the body parked a new sleeper;
+    // pure self-waking (`yield_now`, non-positive `Clock::sleep`) is neither, so
+    // an unbounded retry loop waiting on a timer it never lets mature trips this
+    // instead of spinning silently forever.
+    let mut same_instant_polls = 0_u32;
+    let mut progress_mark = (clock.now_ns(), clock.scheduled_count());
 
     loop {
         flag.store(false, Ordering::SeqCst);
@@ -253,6 +281,16 @@ where
                 return Ok(RunOutcome { deadlocked: false });
             }
             Poll::Pending => {
+                let mark = (clock.now_ns(), clock.scheduled_count());
+                if mark == progress_mark {
+                    same_instant_polls += 1;
+                    if same_instant_polls >= MAX_NO_PROGRESS_STEPS {
+                        return Err(SimDriveError::ClockStarved { at_ns: mark.0 });
+                    }
+                } else {
+                    progress_mark = mark;
+                    same_instant_polls = 0;
+                }
                 // A wake during this poll (yield_now, sibling wake, or the
                 // drain-complete Notify) means more same-instant work is ready:
                 // re-poll without advancing virtual time.
@@ -542,6 +580,45 @@ mod tests {
         fn is_idle(&self) -> bool {
             self.next_ns.get().is_none()
         }
+    }
+
+    #[test]
+    fn a_self_waking_retry_loop_trips_the_clock_starvation_watchdog() {
+        // A body that yields forever while an unmatured sleeper is parked is the
+        // shape that previously hung silently: the yield self-wakes, so the pump
+        // re-polls the same instant and never advances to the parked deadline.
+        let clock = Rc::new(SimClock::new());
+        let error = drive_sim_inner(
+            clock.clone(),
+            None,
+            move |handle: Handle| async move {
+                handle.spawn(async move {
+                    clock.clone().sleep(1_000_000).await;
+                });
+                loop {
+                    tokio::task::yield_now().await;
+                }
+            },
+        )
+        .expect_err("a self-waking retry loop must be reported, not hang");
+        assert_eq!(error, SimDriveError::ClockStarved { at_ns: 0 });
+    }
+
+    #[test]
+    fn a_parking_retry_loop_lets_virtual_time_advance() {
+        // The same loop is fine when the retry parks on the clock: each round
+        // registers a sleeper, so the pump advances and the guard never trips.
+        let clock = Rc::new(SimClock::new());
+        let ticks = Rc::new(Cell::new(0_u32));
+        let (clock2, ticks2) = (clock.clone(), ticks.clone());
+        let outcome = drive_sim(clock, move |_handle| async move {
+            while ticks2.get() < 3 {
+                clock2.clone().sleep(1_000).await;
+                ticks2.set(ticks2.get() + 1);
+            }
+        });
+        assert!(!outcome.deadlocked);
+        assert_eq!(ticks.get(), 3);
     }
 
     #[test]
