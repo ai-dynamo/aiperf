@@ -123,7 +123,11 @@ async fn test_streaming_usage_passthrough() {
         h.mock.url
     ));
 
-    assert_eq!(r.exit_code, 0);
+    assert_eq!(
+        r.exit_code, 0,
+        "streaming usage run failed:\nstdout:\n{}\nstderr:\n{}",
+        r.stdout, r.stderr
+    );
     assert!(has_streaming_metrics(&r));
 
     let jsonl = r.artifacts.jsonl();
