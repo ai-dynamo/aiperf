@@ -171,19 +171,47 @@ class TestAnthropicMessagesFormatPayload:
         with pytest.raises(ValueError, match="requires at least one turn"):
             endpoint.format_payload(request_info)
 
-    def test_user_context_message_prepended(self, endpoint, model_endpoint):
-        turn = Turn(texts=[Text(contents=["Hello"])], model="claude-sonnet-4-20250514")
+    def test_cache_bust_system_prefix_is_top_level_system(
+        self, endpoint, model_endpoint
+    ):
+        turn = Turn(texts=[Text(contents=["Hello"])])
         request_info = create_request_info(
             model_endpoint=model_endpoint,
             turns=[turn],
-            user_context_message="Context info",
+            system_message="[rid:abc123]\n\nYou are helpful.",
         )
 
         payload = endpoint.format_payload(request_info)
 
-        assert len(payload["messages"]) == 2
-        assert payload["messages"][0]["content"] == "Context info"
-        assert payload["messages"][0]["role"] == "user"
+        assert payload["system"] == "[rid:abc123]\n\nYou are helpful."
+        assert payload["messages"] == [{"role": "user", "content": "Hello"}]
+
+    def test_cache_bust_first_user_prefix_renders_anthropic_text_block(
+        self, endpoint, model_endpoint
+    ):
+        turn = Turn(
+            texts=[
+                Text(contents=["[rid:abc123]", "\n\nHello"]),
+            ]
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["content"] == [
+            {"type": "text", "text": "[rid:abc123]"},
+            {"type": "text", "text": "\n\nHello"},
+        ]
+
+    def test_cache_bust_first_user_suffix_preserves_text(
+        self, endpoint, model_endpoint
+    ):
+        turn = Turn(texts=[Text(contents=["Hello\n\n[rid:abc123]"])])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["content"] == "Hello\n\n[rid:abc123]"
 
 
 class TestAnthropicMessagesHeaders:
