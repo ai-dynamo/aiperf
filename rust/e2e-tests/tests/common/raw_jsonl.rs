@@ -96,8 +96,16 @@ impl TunedExpectations {
             osl,
             model: None,
             status: 200,
-            // Loopback and connection setup add small transport jitter.
-            ttft_tol_ms: 6.0,
+            // TTFT error is one-sided, not jitter: the window spans connection
+            // setup plus the mock's first-token sleep, and a sleep only resolves
+            // to host scheduler wakeup granularity, so it always overshoots and
+            // has no load-independent bound (observed +13.8ms at 87 concurrent
+            // test binaries). Sizing this from the last observed sample invites a
+            // re-widen after every load change, so it is fixed by what it must
+            // DETECT: a dropped first-token delay (TTFT -> ~0ms) or a doubled one
+            // (-> ~2x tuned), each a full tuned-TTFT away. 40ms clears both by a
+            // wide margin at the 100ms TTFT these tests tune to.
+            ttft_tol_ms: 40.0,
             itl_tol_ms: 2.0,
         }
     }
