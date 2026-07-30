@@ -208,7 +208,8 @@ pub(crate) fn slice_phase_for_thread(
     sliced
 }
 
-/// Slice a phase's shared `requests` budget and `prefill_concurrency` cap in place.
+/// Slice a phase's shared `requests`/`sessions` budgets and `prefill_concurrency`
+/// cap in place.
 fn slice_common(
     common: &mut crate::engine::protocol::PhaseCommonSpec,
     owned_budget: &impl Fn(u64) -> u64,
@@ -216,6 +217,14 @@ fn slice_common(
 ) {
     if let Some(requests) = common.requests {
         common.requests = Some(owned_budget(requests));
+    }
+    // `sessions` is a total work budget exactly like `requests`, and
+    // `GlobalAdmission` gates concurrency/rate only — it carries no shared
+    // started-session counter. Leaving it unsliced makes every thread run the
+    // FULL conversation budget out of its own dataset partition, i.e. `workers`x
+    // over-dispatch on a multi-turn session-bounded run.
+    if let Some(sessions) = common.sessions {
+        common.sessions = Some(owned_budget(sessions));
     }
     if let Some(prefill) = common.prefill_concurrency {
         common.prefill_concurrency = Some(owned_cap(prefill));
@@ -471,6 +480,40 @@ mod tests {
             })
             .sum();
         assert_eq!(total, 100);
+    }
+
+    /// A `sessions`-bounded multi-turn phase must partition its conversation
+    /// budget across threads in EVERY dispatch mode. Leaving it unsliced ran the
+    /// full budget per thread (`workers`x over-dispatch).
+    #[test]
+    fn sessions_budget_slices_across_threads_in_every_dispatch_mode() {
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "sessions": 12,
+            "concurrency": 6,
+        }))
+        .unwrap();
+        for mode in [
+            DispatchMode::Sharded,
+            DispatchMode::Global,
+            DispatchMode::GlobalHop,
+        ] {
+            let total: u64 = (0..4)
+                .map(|t| {
+                    slice_phase_for_thread(&phase, t, 4, mode)
+                        .common()
+                        .sessions
+                        .unwrap()
+                })
+                .sum();
+            assert_eq!(total, 12, "sessions must sum to the authored budget");
+            assert_eq!(
+                slice_phase_for_thread(&phase, 0, 4, mode).common().sessions,
+                Some(3)
+            );
+        }
     }
 
     #[test]
