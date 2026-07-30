@@ -312,20 +312,65 @@ def _encode_request_prompt_ids(
 def _encode_chat_prompt_ids(
     tokenizer: Any, request: ChatCompletionRequest
 ) -> tuple[list[int], str]:
-    """Tokenize message content without applying the chat template.
-
-    Applying the chat template adds structural tokens (role markers, turn
-    separators) whose count varies by model and is invisible to the benchmark
-    tool. Measuring content-only ISL keeps the recorded value consistent with
-    the ISL target the user configured.
-    """
+    """Mirror trtllm-serve chat prompt tokenization when a chat template exists."""
     messages = [_message_to_dict(msg) for msg in request.messages]
-    ids: list[int] = []
-    for msg in messages:
-        content = _content_to_text(msg.get("content", ""))
-        if content:
-            ids.extend(_encode_without_special_tokens(tokenizer, content))
-    return ids, "chat_content"
+    add_generation_prompt = bool(getattr(request, "add_generation_prompt", True))
+    inner = _unwrap_tokenizer(tokenizer)
+    apply_chat_template = getattr(inner, "apply_chat_template", None)
+    if callable(apply_chat_template):
+        result = _call_chat_template(
+            apply_chat_template, messages, add_generation_prompt
+        )
+        if result is not None:
+            if isinstance(result, str):
+                return (
+                    _encode_without_special_tokens(tokenizer, result),
+                    "chat_template_string",
+                )
+            return _flatten_token_ids(result), "chat_template"
+
+    rendered = _render_chat_template_fallback(messages, add_generation_prompt)
+    return (
+        _encode_without_special_tokens(tokenizer, rendered),
+        "chat_template_fallback",
+    )
+
+
+def _call_chat_template(
+    apply_chat_template: Callable[..., Any],
+    messages: list[dict[str, Any]],
+    add_generation_prompt: bool,
+) -> Any | None:
+    """Invoke a tokenizer's ``apply_chat_template``, retrying with the
+    ``conversation=`` kwarg on TypeError (older HF where the parameter was
+    keyword-only). Returns ``None`` when the tokenizer reports no chat
+    template defined; other ``ValueError`` types propagate so callers see
+    real failures.
+
+    Pulled out of `_encode_chat_prompt_ids` so the result is handled outside
+    the try/except: with ``else:``, an exception handler that rebinds
+    ``result`` would not trigger ``else``, and the rebound value would be
+    silently dropped.
+    """
+    kwargs: dict[str, Any] = {
+        "add_generation_prompt": add_generation_prompt,
+        "tokenize": True,
+        "return_dict": False,
+    }
+    try:
+        return apply_chat_template(messages, **kwargs)
+    except TypeError:
+        pass
+    except ValueError as exc:
+        if "chat template" not in str(exc).lower():
+            raise
+        return None
+    try:
+        return apply_chat_template(conversation=messages, **kwargs)
+    except ValueError as exc:
+        if "chat template" not in str(exc).lower():
+            raise
+        return None
 
 
 def _encode_completion_prompt_ids(tokenizer: Any, prompt: Any) -> tuple[list[int], str]:
@@ -434,6 +479,19 @@ def _message_to_dict(message: Any) -> dict[str, Any]:
         "role": getattr(message, "role", "user"),
         "content": getattr(message, "content", ""),
     }
+
+
+def _render_chat_template_fallback(
+    messages: list[dict[str, Any]], add_generation_prompt: bool
+) -> str:
+    rendered: list[str] = []
+    for message in messages:
+        role = str(message.get("role", "user"))
+        content = _content_to_text(message.get("content", ""))
+        rendered.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+    if add_generation_prompt:
+        rendered.append("<|im_start|>assistant\n")
+    return "\n".join(rendered)
 
 
 def _content_to_text(content: Any) -> str:
