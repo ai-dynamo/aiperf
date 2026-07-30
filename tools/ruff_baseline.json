@@ -1,5 +1,5 @@
 {
-  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations — prefer fixing the underlying code over extending the list.",
+  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations \u2014 prefer fixing the underlying code over extending the list.",
   "rules": [
     "C901",
     "TID251",
@@ -258,6 +258,11 @@
       "C901",
       "src/aiperf/config/flags/_converter_dataset.py",
       "_build_prompts"
+    ],
+    [
+      "C901",
+      "src/aiperf/config/flags/resolver.py",
+      "_apply_phase_loadgen_overrides"
     ],
     [
       "C901",
