@@ -543,12 +543,11 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
     @model_validator(mode="after")
     def validate_cache_bust_compatibility(self) -> Self:
-        """Refuse cache-bust on endpoint types without structured text input.
+        """Refuse cache-bust when endpoint metadata does not support it.
 
         Cache-bust markers are minted by every timing strategy and injected by
-        the worker into structured chat/responses turns. Timing mode is not a
-        compatibility restriction: request-rate, user-centric, fixed-schedule,
-        DAG, and agentic replay all share the same credit/worker path.
+        the worker into structured endpoint turns. Endpoint plugins opt in via
+        ``supports_cache_bust`` metadata; timing mode is not a restriction.
         """
         from aiperf.common.enums import CacheBustTarget
         from aiperf.plugin import plugins
