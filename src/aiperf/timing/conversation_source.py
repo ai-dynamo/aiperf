@@ -240,6 +240,10 @@ class ConversationSource:
             cache_bust_target=self._cache_bust_target,
         )
 
+    def marker_for_correlation_id(self, correlation_id: str) -> str | None:
+        """Return the marker minted for a live ordinary session, if any."""
+        return self._cache_bust_markers.get(correlation_id)
+
     def start_branch_child(
         self,
         parent_correlation_id: str,
