@@ -50,11 +50,12 @@ def _estimate_chat_template_overheads(
         wire_tokens =  per_request_fixed
                      + Σ_{m in messages} (per_msg_wrap + content_tokens(m))
 
-    where ``per_request_fixed`` ≈ BOS + generation-prompt suffix and
-    ``per_msg_wrap`` ≈ role header + end-of-turn marker (averaged over
-    user/assistant). Measuring the two separately lets callers apply the
-    fixed cost only to the first user turn and the per-message wrap to
-    every turn.
+    where ``per_request_fixed`` ≈ generation-prompt suffix (BOS is excluded
+    because ``RangeRatioDistribution`` already subtracts it via
+    ``num_special_tokens``) and ``per_msg_wrap`` ≈ role header + end-of-turn
+    marker (averaged over user/assistant). Measuring the two separately lets
+    callers apply the fixed cost only to the first user turn and the
+    per-message wrap to every turn.
 
     Returns ``(0, 0)`` when the tokenizer is ``None``/has no underlying HF
     tokenizer, has no ``apply_chat_template`` (e.g. tiktoken), the model has
@@ -68,6 +69,7 @@ def _estimate_chat_template_overheads(
     if apply is None:
         return 0, 0
 
+    bos_tokens = tokenizer.num_prompt_special_tokens()
     fixed_costs: list[float] = []
     wrap_costs: list[float] = []
     for sample in _CHAT_TEMPLATE_PROBE_SAMPLES:
@@ -90,7 +92,7 @@ def _estimate_chat_template_overheads(
             return 0, 0
         bare_len = len(tokenizer.encode(sample))
         avg_wrap = (len(triple) - len(single) - 2 * bare_len) / 2
-        per_request_fixed = len(single) - bare_len - avg_wrap
+        per_request_fixed = len(single) - bare_len - avg_wrap - bos_tokens
         if avg_wrap < 0 or per_request_fixed < 0:
             return 0, 0
         wrap_costs.append(avg_wrap)

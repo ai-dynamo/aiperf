@@ -250,19 +250,26 @@ class TestChatTemplateOverheadProbe:
         assert _estimate_chat_template_overheads(tokenizer) == (0, 0)
 
     def test_decomposes_fixed_and_wrap(self):
-        """Synthetic Llama-3-like template: BOS=1, gen_prompt=3, wrap=5/msg."""
+        """Synthetic Llama-3-like template: BOS=1, gen_prompt=3, wrap=5/msg.
+
+        BOS is excluded from per_request_fixed because RangeRatioDistribution
+        already accounts for it via num_special_tokens. The function returns
+        only the template-structural overhead (gen_prompt suffix, not BOS).
+        """
         from aiperf.dataset.composer.base import (
             _CHAT_TEMPLATE_PROBE_SAMPLES,
             _estimate_chat_template_overheads,
         )
 
         per_msg_wrap = 5
-        per_request_fixed = 4  # BOS(1) + gen_prompt(3)
+        bos = 1
+        gen_prompt = 3
+        template_total_fixed = bos + gen_prompt  # what apply_chat_template adds
 
         def fake_apply(messages, **_kwargs):
             content_tokens = sum(len(m["content"].split()) for m in messages)
             wrapping = per_msg_wrap * len(messages)
-            return list(range(per_request_fixed + wrapping + content_tokens))
+            return list(range(template_total_fixed + wrapping + content_tokens))
 
         inner = MagicMock()
         inner.apply_chat_template = MagicMock(side_effect=fake_apply)
@@ -271,9 +278,10 @@ class TestChatTemplateOverheadProbe:
         tokenizer.encode = MagicMock(
             side_effect=lambda text: list(range(len(text.split())))
         )
+        tokenizer.num_prompt_special_tokens = MagicMock(return_value=bos)
 
         fixed, wrap = _estimate_chat_template_overheads(tokenizer)
-        assert fixed == per_request_fixed
+        assert fixed == gen_prompt  # BOS excluded — handled by RangeRatioDistribution
         assert wrap == per_msg_wrap
         # 2 templates per sample -> 2 * len(samples) apply calls.
         assert inner.apply_chat_template.call_count == 2 * len(
