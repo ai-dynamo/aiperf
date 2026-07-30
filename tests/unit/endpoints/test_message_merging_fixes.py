@@ -402,15 +402,71 @@ class TestChatDeDupsLeadingSystem:
 
 
 # ---------------------------------------------------------------------------
-# P3 #12: raw_messages truthiness (empty list falls back to synthesis)
+# raw_messages=[] is an explicit zero-message delta, not a synthesis request
 # ---------------------------------------------------------------------------
 
 
-class TestRawMessagesEmptyListFallsBack:
-    def test_empty_raw_messages_renders_synthetic_turn(self, chat_endpoint):
+class TestRawMessagesEmptyListIsNoOp:
+    """``raw_messages=[]`` contributes nothing to the wire message array.
+
+    Delta-encoded trace sources emit it for a turn that adds no new context
+    (weka's block-aligned pull-back). Synthesising a message instead put
+    ``content: []`` on the wire, which servers reject with HTTP 400.
+    """
+
+    def test_empty_raw_messages_contributes_nothing(self, chat_endpoint):
+        turn = Turn(role="user", raw_messages=[])
+        assert chat_endpoint.build_messages([turn]) == []
+
+    def test_empty_raw_messages_does_not_synthesise_from_texts(self, chat_endpoint):
         turn = Turn(role="user", texts=[Text(contents=["hello"])], raw_messages=[])
+        assert chat_endpoint.build_messages([turn]) == []
+
+    def test_empty_delta_between_populated_turns_is_skipped(self, chat_endpoint):
+        turns = [
+            Turn(role="user", raw_messages=[{"role": "user", "content": "a"}]),
+            Turn(role="user", raw_messages=[]),
+            Turn(role="user", raw_messages=[{"role": "user", "content": "b"}]),
+        ]
+        assert chat_endpoint.build_messages(turns) == [
+            {"role": "user", "content": "a"},
+            {"role": "user", "content": "b"},
+        ]
+
+    def test_empty_delta_via_responses_endpoint_is_skipped(self, responses_endpoint):
+        turns = [
+            Turn(role="user", raw_messages=[{"role": "user", "content": "a"}]),
+            Turn(role="user", raw_messages=[]),
+        ]
+        out = responses_endpoint.build_messages(turns)
+        assert len(out) == 1
+        assert out[0]["role"] == "user"
+
+    def test_reset_context_with_empty_delta_clears_accumulator(self, chat_endpoint):
+        turns = [
+            Turn(role="user", raw_messages=[{"role": "user", "content": "a"}]),
+            Turn(role="user", raw_messages=[], reset_context=True),
+        ]
+        assert chat_endpoint.build_messages(turns) == []
+
+    def test_none_raw_messages_still_synthesises(self, chat_endpoint):
+        turn = Turn(role="user", texts=[Text(contents=["hello"])])
+        assert chat_endpoint.build_messages([turn]) == [
+            {"role": "user", "content": "hello"}
+        ]
+
+    def test_no_renderable_media_degrades_to_empty_string(self, chat_endpoint):
+        """Defence in depth: never emit ``content: []`` for a synthetic turn."""
+        turn = Turn(role="user", texts=[Text(contents=["", ""])])
+        assert chat_endpoint.build_messages([turn]) == [{"role": "user", "content": ""}]
+
+    def test_populated_parts_still_render_as_list(self, chat_endpoint):
+        turn = Turn(role="user", texts=[Text(contents=["a", "b"])])
         out = chat_endpoint.build_messages([turn])
-        assert out == [{"role": "user", "content": "hello"}]
+        assert out[0]["content"] == [
+            {"type": "text", "text": "a"},
+            {"type": "text", "text": "b"},
+        ]
 
 
 # ---------------------------------------------------------------------------
