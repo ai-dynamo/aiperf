@@ -66,11 +66,18 @@ def test_messages_not_list_raises(tmp_path):
 
 
 def test_empty_messages_raises(tmp_path):
+    """An authored empty ``messages`` is rejected at parse time.
+
+    This is what makes ``BaseEndpoint._flatten_turns`` safe to gate on
+    ``raw_messages is not None``: no authored empty list can reach the
+    endpoint, so an empty ``raw_messages`` there is unambiguously a
+    delta-encoded no-op rather than a dropped authored turn.
+    """
     path = write_lines(
         tmp_path,
         [{"session_id": "root", "turns": [{"messages": []}]}],
     )
-    with pytest.raises(DagLoadError, match=r"messages"):
+    with pytest.raises(DagLoadError, match=r"'messages' must be a non-empty list"):
         DagJsonlLoader(path).load()
 
 
