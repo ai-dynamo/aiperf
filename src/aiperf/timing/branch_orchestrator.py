@@ -1589,7 +1589,7 @@ class BranchOrchestrator:
         waiting out the full (possibly large sampled) interval."""
         try:
             await asyncio.wait_for(self._cleanup_event.wait(), timeout=seconds)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             pass  # full think-time elapsed (the normal path)
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
