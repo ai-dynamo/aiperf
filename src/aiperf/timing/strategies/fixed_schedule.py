@@ -51,7 +51,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         lifecycle: PhaseLifecycle,
         stop_checker: StopConditionChecker,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize fixed schedule timing strategy with all dependencies."""
         super().__init__(logger_name="FixedScheduleTiming")
         self._config = config
@@ -91,13 +91,25 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                     f"First turn of {conv.conversation_id} missing timestamp_ms"
                 )
 
-            sampled = self._conversation_source.session_for_conversation(
-                conv.conversation_id
+            sampled = None
+            source_factory = getattr(
+                self._conversation_source, "session_for_conversation", None
             )
+            if callable(source_factory):
+                sampled = source_factory(conv.conversation_id)
+            if sampled is not None:
+                turn = sampled.build_first_turn()
+            else:
+                turn = TurnToSend(
+                    conversation_id=conv.conversation_id,
+                    x_correlation_id=f"fixed-schedule-{conv.conversation_id}",
+                    turn_index=0,
+                    num_turns=len(conv.turns),
+                )
             self._absolute_schedule.append(
                 ScheduleEntry(
                     timestamp_ms=conv.turns[0].timestamp_ms,
-                    turn=sampled.build_first_turn(),
+                    turn=turn,
                 )
             )
 
