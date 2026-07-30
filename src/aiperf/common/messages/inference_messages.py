@@ -9,6 +9,7 @@ from aiperf.common.enums import MessageType, MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, RecordData, RequestRecord
 from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
+from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.types import MessageTypeT, MetricTagT
 
@@ -43,6 +44,13 @@ class MetricRecordsData(RecordData):
         description="Comprehensive trace data captured via a trace config. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
+    )
+    spec_decode_acceptance: SpecDecodeAcceptanceRecord | None = Field(
+        default=None,
+        description="Engine-neutral per-request speculative-decoding acceptance "
+        "record, carried across the ZMQ boundary so the records manager can pool "
+        "its histogram and the records-trace exporter can emit it per request. "
+        "None when spec decode is off or the request had no verify steps.",
     )
     error: ErrorDetails | None = Field(
         default=None, description="The error details if the request failed."
