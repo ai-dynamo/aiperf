@@ -570,14 +570,31 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
     Ok(headers)
 }
 
-/// Parse repeatable `--extra-inputs key:value` into a typed JSON map.
+/// Parse repeatable `--extra-inputs` entries into a typed JSON map.
+///
+/// Each entry is either a `key:value` pair or a whole JSON object. The JSON
+/// form is the only way to express a nested value (`{"stream_options":
+/// {"include_usage": true}}`): `key:value` splits on the first colon, so a
+/// nested object would otherwise be shredded into a garbage key and an
+/// unparseable request body.
 fn parse_extra_inputs(
     raw: &[String],
 ) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
     let mut extra = serde_json::Map::new();
     for entry in raw {
-        let (key, value) = entry.split_once(':').ok_or_else(|| {
-            anyhow::anyhow!("invalid --extra-inputs {entry:?}; expected key:value")
+        let trimmed = entry.trim();
+        if trimmed.starts_with('{') {
+            let parsed: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
+                anyhow::anyhow!("invalid --extra-inputs JSON object {entry:?}: {e}")
+            })?;
+            let serde_json::Value::Object(map) = parsed else {
+                anyhow::bail!("invalid --extra-inputs {entry:?}; JSON must be an object");
+            };
+            extra.extend(map);
+            continue;
+        }
+        let (key, value) = trimmed.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!("invalid --extra-inputs {entry:?}; expected key:value or a JSON object")
         })?;
         let v = if let Ok(i) = value.parse::<i64>() {
             serde_json::json!(i)
