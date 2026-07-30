@@ -23,6 +23,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ProfileCancelReason,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -688,17 +689,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
-    async def _maybe_trigger_failed_request_abort(self, phase: CreditPhase) -> None:
+    async def _maybe_trigger_failed_request_abort(
+        self, phase: CreditPhase, *, phase_index: int | None = None
+    ) -> None:
         """Abort the run when the PROFILING failure rate exceeds the threshold.
 
         No-op when ``--failed-request-threshold`` is unset, when this method
         already fired once for this run, or when the total record count has
         not yet crossed the grace floor (``max(concurrency, 10)``). Otherwise
-        broadcasts ProfileCancelCommand on the message bus -- the existing
-        cancel-path handlers in timing_manager, server_metrics manager, and
-        gpu_telemetry manager stop their work; this manager's own
-        _on_profile_cancel_command marks the phase cancelled and finalizes
-        results with cancelled=True.
+        checks the concrete profiling phase identified by ``phase_index`` and
+        broadcasts ProfileCancelCommand on the message bus so the other
+        services stop their work, then locally finalizes the records manager.
+        A PUB socket does not receive its own message, so relying on the
+        broadcast for local finalization would leave the run hanging.
         """
         if self._failed_request_threshold is None:
             return
@@ -707,11 +710,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if phase != CreditPhase.PROFILING:
             return
 
-        total = self._records_tracker.total_records_for_phase(phase)
+        total = self._records_tracker.total_records_for_phase(phase, phase_index)
         if total < self._failed_request_grace_floor:
             return
 
-        error_records = self._records_tracker.error_records_for_phase(phase)
+        error_records = self._records_tracker.error_records_for_phase(
+            phase, phase_index
+        )
         rate = error_records / total if total > 0 else 0.0
         if rate <= self._failed_request_threshold:
             return
@@ -725,12 +730,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             "Broadcasting ProfileCancelCommand to terminate the run."
         )
         try:
-            await self.publish(ProfileCancelCommand(service_id=self.service_id))
+            command = ProfileCancelCommand(
+                service_id=self.service_id,
+                reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+            )
+            await self.publish(command)
         except Exception as exc:
             self.warning(
                 f"Failed to publish ProfileCancelCommand for threshold abort: {exc!r}"
             )
             self._failed_request_abort_triggered = False
+            return
+        await self._on_profile_cancel_command(command)
 
     def _maybe_hint_missing_cache_reporting(
         self, record_data: MetricRecordsData
@@ -793,7 +804,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_index=message.metadata.phase_index,
             )
 
-        await self._maybe_trigger_failed_request_abort(phase)
+        await self._maybe_trigger_failed_request_abort(
+            phase, phase_index=message.metadata.phase_index
+        )
 
         if (
             phase in self._complete_credit_phases

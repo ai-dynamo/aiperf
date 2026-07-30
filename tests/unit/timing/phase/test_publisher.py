@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.enums import ProfileCancelReason
 from aiperf.common.messages import ProfileCancelCommand
 from aiperf.common.models import CreditPhaseStats
 from aiperf.credit.messages import (
@@ -82,3 +83,4 @@ class TestPhasePublisher:
         msg = mock_pub_client.publish.call_args[0][0]
         assert isinstance(msg, ProfileCancelCommand)
         assert msg.service_id == "tm-001"
+        assert msg.reason == ProfileCancelReason.WARMUP_FAILURE

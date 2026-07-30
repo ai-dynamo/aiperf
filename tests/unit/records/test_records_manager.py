@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.accumulator_protocols import ExportContext
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, ProfileCancelReason
 from aiperf.common.environment import Environment
-from aiperf.common.messages import BaseServiceErrorMessage
+from aiperf.common.messages import BaseServiceErrorMessage, ProfileCancelCommand
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
     RecordsMessage,
@@ -93,6 +93,115 @@ def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
     assert aggregate.baseline_start_ns == 90
     assert aggregate.baseline_end_ns == 310
     assert tracker.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+
+
+def test_live_phase_counters_use_indexed_tracker_without_creating_orphan() -> None:
+    tracker = RecordsTracker()
+    tracker.update_phase_info(
+        CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="profiling",
+            phase_kind="profiling",
+            start_ns=100,
+        )
+    )
+    metadata = MetricRecordMetadata(
+        session_num=1,
+        request_start_ns=101,
+        request_end_ns=110,
+        worker_id="worker",
+        record_processor_id="processor",
+        benchmark_phase=CreditPhase.PROFILING,
+        phase_index=0,
+    )
+    tracker.update_from_request(metadata, None)
+    tracker.update_from_request(
+        metadata, ErrorDetails(type="ClientConnectorError", message="refused")
+    )
+
+    assert tracker.total_records_for_phase(CreditPhase.PROFILING, 0) == 2
+    assert tracker.error_records_for_phase(CreditPhase.PROFILING, 0) == 1
+    assert tracker.total_records_for_phase(CreditPhase.PROFILING) == 2
+    assert tracker.error_records_for_phase(CreditPhase.PROFILING) == 1
+    assert (CreditPhase.PROFILING, None) not in tracker._phase_trackers
+
+
+@pytest.mark.asyncio
+async def test_failed_request_threshold_checks_current_phase_index() -> None:
+    manager = RecordsManager.__new__(RecordsManager)
+    manager._failed_request_threshold = 0.10
+    manager._failed_request_grace_floor = 10
+    manager._failed_request_abort_triggered = False
+    manager._records_tracker = RecordsTracker()
+    manager.warning = MagicMock()
+    manager.publish = AsyncMock()
+    manager._on_profile_cancel_command = AsyncMock()
+    manager.service_id = "records-manager"
+
+    error = ErrorDetails(type="ClientConnectorError", message="refused")
+    for phase_index in (0, 1):
+        manager._records_tracker.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+                profiling_index=phase_index,
+                phase_name=f"profiling-{phase_index}",
+                phase_kind="profiling",
+                start_ns=100 + phase_index,
+            )
+        )
+        metadata = MetricRecordMetadata(
+            session_num=phase_index,
+            request_start_ns=101,
+            request_end_ns=110,
+            worker_id="worker",
+            record_processor_id="processor",
+            benchmark_phase=CreditPhase.PROFILING,
+            phase_index=phase_index,
+        )
+        for request_index in range(10):
+            request_error = error if phase_index == 0 and request_index > 0 else None
+            manager._records_tracker.update_from_request(metadata, request_error)
+
+    await manager._maybe_trigger_failed_request_abort(
+        CreditPhase.PROFILING, phase_index=1
+    )
+    manager.publish.assert_not_awaited()
+
+    await manager._maybe_trigger_failed_request_abort(
+        CreditPhase.PROFILING, phase_index=0
+    )
+
+    manager.publish.assert_awaited_once()
+    command = manager.publish.await_args.args[0]
+    assert isinstance(command, ProfileCancelCommand)
+    assert command.reason == ProfileCancelReason.FAILED_REQUEST_THRESHOLD
+    manager._on_profile_cancel_command.assert_awaited_once_with(command)
+    assert manager._failed_request_abort_triggered
+
+
+@pytest.mark.asyncio
+async def test_failed_request_threshold_publish_failure_retries_later() -> None:
+    manager = RecordsManager.__new__(RecordsManager)
+    manager._failed_request_threshold = 0.10
+    manager._failed_request_grace_floor = 10
+    manager._failed_request_abort_triggered = False
+    manager._records_tracker = MagicMock()
+    manager._records_tracker.total_records_for_phase.return_value = 10
+    manager._records_tracker.error_records_for_phase.return_value = 10
+    manager.warning = MagicMock()
+    manager.publish = AsyncMock(side_effect=RuntimeError("message bus unavailable"))
+    manager._on_profile_cancel_command = AsyncMock()
+    manager.service_id = "records-manager"
+
+    await manager._maybe_trigger_failed_request_abort(
+        CreditPhase.PROFILING, phase_index=0
+    )
+
+    assert not manager._failed_request_abort_triggered
+    manager._on_profile_cancel_command.assert_not_awaited()
 
 
 def create_metric_record_data(

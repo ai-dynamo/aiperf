@@ -21,6 +21,7 @@ from aiperf.common.enums import (
     CommandType,
     LifecycleState,
     MessageType,
+    ProfileCancelReason,
     ServiceRegistrationStatus,
     parse_result_producer_capability,
 )
@@ -107,6 +108,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             warn_accuracy_temperature()
 
         self._was_cancelled = False
+        self._abort_recorded = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
         self.required_services: dict[ServiceTypeT, int] = {
@@ -444,6 +446,35 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         service_id = message.service_id
         self.info(f"Received credits complete from '{service_id}'")
+
+    @on_command(CommandType.PROFILE_CANCEL)
+    async def _record_abort_on_profile_cancel(
+        self, message: ProfileCancelCommand
+    ) -> None:
+        """Record benchmark-triggered cancellation as a process failure."""
+        if not message.reason.is_abort or self._abort_recorded:
+            return
+        self._abort_recorded = True
+        if message.reason == ProfileCancelReason.FAILED_REQUEST_THRESHOLD:
+            error_message = (
+                "Inference server request failures exceeded "
+                "--failed-request-threshold; benchmark aborted."
+            )
+        else:
+            error_message = f"Benchmark aborted: {message.reason}."
+        self.warning(
+            f"Run aborted ({message.reason}): {error_message} Will exit non-zero."
+        )
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    type="ProfileAborted",
+                    message=error_message,
+                ),
+                operation="Profiling",
+                service_id=message.service_id,
+            )
+        )
 
     @on_message(MessageType.SERVICE_ERROR)
     async def _process_service_error_message(
@@ -934,6 +965,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             responses = await self.send_command_and_wait_for_all_responses(
                 ProfileCancelCommand(
                     service_id=self.service_id,
+                    reason=ProfileCancelReason.USER,
                 ),
                 records_manager_ids,
                 timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,

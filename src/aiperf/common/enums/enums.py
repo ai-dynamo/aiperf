@@ -102,6 +102,19 @@ class CommandType(CaseInsensitiveStrEnum):
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
 
 
+class ProfileCancelReason(CaseInsensitiveStrEnum):
+    """Why a ProfileCancelCommand was issued; controls run exit semantics."""
+
+    USER = "user"
+    WARMUP_FAILURE = "warmup_failure"
+    FAILED_REQUEST_THRESHOLD = "failed_request_threshold"
+
+    @property
+    def is_abort(self) -> bool:
+        """Return whether the cancellation represents a benchmark failure."""
+        return self is not ProfileCancelReason.USER
+
+
 class CommandResponseStatus(CaseInsensitiveStrEnum):
     ACKNOWLEDGED = "acknowledged"
     FAILURE = "failure"
