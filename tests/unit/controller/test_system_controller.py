@@ -320,15 +320,20 @@ class TestSignalHandling:
             ProfileCancelCommand(
                 service_id="records",
                 reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                reason_detail=(
+                    "12/100 profiling requests failed (12.0%), exceeding the "
+                    "--failed-request-threshold limit of 10.0%. "
+                    "Check inference server logs."
+                ),
             )
         )
 
         assert system_controller._abort_recorded
         assert len(system_controller._exit_errors) == 1
         assert system_controller._exit_errors[0].error_details.type == "ProfileAborted"
-        assert (
-            "Inference server request failures exceeded"
-            in system_controller._exit_errors[0].error_details.message
+        assert system_controller._exit_errors[0].error_details.message == (
+            "12/100 profiling requests failed (12.0%), exceeding the "
+            "--failed-request-threshold limit of 10.0%. Check inference server logs."
         )
 
     @pytest.mark.asyncio

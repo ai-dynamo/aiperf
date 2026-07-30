@@ -178,6 +178,10 @@ async def test_failed_request_threshold_checks_current_phase_index() -> None:
     command = manager.publish.await_args.args[0]
     assert isinstance(command, ProfileCancelCommand)
     assert command.reason == ProfileCancelReason.FAILED_REQUEST_THRESHOLD
+    assert command.reason_detail == (
+        "9/10 profiling requests failed (90.0%), exceeding the "
+        "--failed-request-threshold limit of 10.0%. Check inference server logs."
+    )
     manager._on_profile_cancel_command.assert_awaited_once_with(command)
     assert manager._failed_request_abort_triggered
 

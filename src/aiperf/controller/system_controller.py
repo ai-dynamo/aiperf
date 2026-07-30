@@ -455,7 +455,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         if not message.reason.is_abort or self._abort_recorded:
             return
         self._abort_recorded = True
-        if message.reason == ProfileCancelReason.FAILED_REQUEST_THRESHOLD:
+        if message.reason_detail is not None:
+            error_message = message.reason_detail
+        elif message.reason == ProfileCancelReason.FAILED_REQUEST_THRESHOLD:
             error_message = (
                 "Inference server request failures exceeded "
                 "--failed-request-threshold; benchmark aborted."

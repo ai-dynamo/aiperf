@@ -84,3 +84,7 @@ class TestPhasePublisher:
         assert isinstance(msg, ProfileCancelCommand)
         assert msg.service_id == "tm-001"
         assert msg.reason == ProfileCancelReason.WARMUP_FAILURE
+        assert msg.reason_detail == (
+            "A root AgentX warmup request failed, so profiling was not started. "
+            "Check the preceding request error and inference server logs."
+        )

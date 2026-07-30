@@ -278,6 +278,10 @@ class ProfileCancelCommand(CommandMessage):
         description="Why profiling was cancelled; benchmark abort reasons cause a "
         "non-zero process exit.",
     )
+    reason_detail: str | None = Field(
+        default=None,
+        description="Operator-facing detail describing why the cancellation occurred.",
+    )
 
 
 class ShutdownCommand(CommandMessage):

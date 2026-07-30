@@ -733,6 +733,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             command = ProfileCancelCommand(
                 service_id=self.service_id,
                 reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                reason_detail=(
+                    f"{error_records}/{total} profiling requests failed "
+                    f"({rate:.1%}), exceeding the "
+                    f"--failed-request-threshold limit of "
+                    f"{self._failed_request_threshold:.1%}. "
+                    "Check inference server logs."
+                ),
             )
             await self.publish(command)
         except Exception as exc:

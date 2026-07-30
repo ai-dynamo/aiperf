@@ -38,3 +38,7 @@ async def test_failed_request_threshold_aborts_nonzero(
     log = result.log or ""
     assert "--failed-request-threshold exceeded: 10/10" in log
     assert "Run aborted (failed_request_threshold)" in log
+    assert (
+        "10/10 profiling requests failed (100.0%), exceeding the "
+        "--failed-request-threshold limit of 10.0%. Check inference server logs." in log
+    )

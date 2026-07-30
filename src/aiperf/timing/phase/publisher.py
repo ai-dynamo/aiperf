@@ -133,5 +133,9 @@ class PhasePublisher:
         msg = ProfileCancelCommand(
             service_id=self._service_id,
             reason=ProfileCancelReason.WARMUP_FAILURE,
+            reason_detail=(
+                "A root AgentX warmup request failed, so profiling was not started. "
+                "Check the preceding request error and inference server logs."
+            ),
         )
         await self._pub_client.publish(msg)
