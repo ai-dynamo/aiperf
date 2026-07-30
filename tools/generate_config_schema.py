@@ -278,7 +278,10 @@ class ConfigSchemaGenerator(Generator):
             )
 
         # Serialize with proper formatting
-        content = json.dumps(enhanced_schema, indent=2, ensure_ascii=False) + "\n"
+        content = (
+            json.dumps(enhanced_schema, separators=(",", ":"), ensure_ascii=False)
+            + "\n"
+        )
 
         if self.verbose:
             print_step(f"Schema size: {len(content):,} bytes")

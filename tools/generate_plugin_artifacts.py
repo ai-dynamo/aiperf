@@ -251,7 +251,7 @@ def generate_schemas(check: bool = False) -> int:
                     "$id": filename,
                     **schema,
                 },
-                indent=2,
+                separators=(",", ":"),
             )
             + "\n"
         )
