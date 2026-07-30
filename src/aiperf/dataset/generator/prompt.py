@@ -273,11 +273,10 @@ class PromptGenerator(BaseGenerator):
         Build a token sequence without decoding. Used for batch parallel decode.
 
         Each effective hash index corresponds to a block of `block_size`
-        tokens. The final hashed block may be partial. A trace may differ from
-        the exact ``ceil(num_tokens / block_size)`` count by one block; this
-        accommodates Mooncake exporters that exclude a short tokenizer-added
-        remainder from ``hash_ids`` or hash a short suffix not included in
-        ``num_tokens``. A single trailing hash outside ``num_tokens`` is ignored.
+        tokens. The final hashed block may be partial. A trace may omit up to
+        three trailing hash blocks; this accommodates Mooncake exporters whose
+        tokenizer-accounted input includes a short suffix that is not represented
+        in ``hash_ids``. A single trailing hash outside ``num_tokens`` is ignored.
 
         Cached hash blocks are always materialized at full size and sliced when
         a row uses only part of the final block. This preserves prefix identity
@@ -303,20 +302,22 @@ class PromptGenerator(BaseGenerator):
 
         expected_hash_count = (num_tokens + block_size - 1) // block_size
         hash_count_delta = len(hash_ids) - expected_hash_count
-        if hash_count_delta < -1 or hash_count_delta > 1:
+        max_missing_hash_blocks = 3
+        if hash_count_delta < -max_missing_hash_blocks or hash_count_delta > 1:
             raise ConfigurationError(
                 f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
-                "are not compatible. The hash count may differ from "
-                f"ceil(input_length / block_size)={expected_hash_count} by at most one."
+                "are not compatible. The hash count may be at most "
+                f"{max_missing_hash_blocks} below or one above "
+                f"ceil(input_length / block_size)={expected_hash_count}."
             )
 
         # One extra hash represents a tokenizer-added suffix outside the
         # recorded input length. It has no prompt tokens to reconstruct.
         effective_hash_ids = hash_ids[:-1] if hash_count_delta == 1 else hash_ids
 
-        # Sanity-check the represented final block or one-block unhashed remainder.
+        # Sanity-check the represented final block and any unhashed suffix.
         final_block_size = num_tokens - ((len(effective_hash_ids) - 1) * block_size)
-        max_supported_size = 2 * block_size
+        max_supported_size = (max_missing_hash_blocks + 1) * block_size
         if final_block_size <= 0 or final_block_size > max_supported_size:
             raise ConfigurationError(
                 f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "

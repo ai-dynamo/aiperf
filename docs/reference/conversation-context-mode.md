@@ -110,11 +110,12 @@ only the current row's synthesized prompt and does not merge the live response
 into the next request. Every row in a session must declare the same mode.
 
 Hash blocks are reconstructed at the configured Mooncake block size. AIPerf
-also accepts a hash count that differs by exactly one block from
+also accepts a hash-count delta from three blocks below through one block above
 `ceil(input_length / block_size)`, as produced by exporters that count
-tokenizer-added affixes differently between `input_length` and `hash_ids`. A
-missing short remainder is synthesized without a reusable hash; a trailing hash
-outside `input_length` is ignored. Larger mismatches remain validation errors.
+tokenizer-added affixes differently between `input_length` and `hash_ids`.
+Missing suffix tokens are synthesized without reusable hashes; one trailing
+hash outside `input_length` is ignored. Larger mismatches remain validation
+errors.
 
 ### `message_array_without_responses`
 

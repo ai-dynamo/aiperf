@@ -242,7 +242,7 @@ class TestPromptGeneratorComprehensive:
         [
             # Failing cases
             (5, [1, 2, 3], 5, True),  # Two extra hash blocks (should fail)
-            (20, [1, 2], 5, True),  # More than one unhashed block (should fail)
+            (30, [1, 2], 5, True),  # More than three unhashed blocks (should fail)
             (0, [1], 5, True),  # final_block_size = 0 (should fail)
             (10, [1, 2, 3], 0, True),  # block_size = 0 (should fail)
             (10, [1, 2, 3], -1, True),  # negative block_size (should fail)
@@ -255,6 +255,8 @@ class TestPromptGeneratorComprehensive:
             (12, [1, 2, 3], 5, False),  # final_block_size < block_size
             (11, [1, 2], 5, False),  # One-token unhashed remainder
             (15, [1, 2], 5, False),  # One full unhashed remainder block
+            (20, [1, 2], 5, False),  # Two full unhashed remainder blocks
+            (25, [1, 2], 5, False),  # Three full unhashed remainder blocks
             (10, [1, 2, 3], 5, False),  # One trailing hash outside input_length
         ],
     )
@@ -847,23 +849,23 @@ class TestPromptGeneratorComprehensive:
         assert extended[:7] == partial
         assert len(generator._cache[2]) == 5
 
-    def test_build_token_sequence_supports_one_unhashed_remainder_block(
+    def test_build_token_sequence_supports_three_unhashed_remainder_blocks(
         self, basic_config
     ):
-        """One-block-short Mooncake hash lists retain their exact input length."""
+        """Three-block-short Mooncake hash lists retain their exact input length."""
         tokenizer, prompts, prefix_prompts = basic_config
         generator = _make_generator(
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        first = generator._build_token_sequence(11, [1, 2], 5)
-        second = generator._build_token_sequence(11, [1, 2], 5)
+        first = generator._build_token_sequence(25, [1, 2], 5)
+        second = generator._build_token_sequence(25, [1, 2], 5)
 
-        assert len(first) == 11
+        assert len(first) == 25
         assert second == first
         assert len(generator._cache[1]) == 5
         assert len(generator._cache[2]) == 5
-        assert len(generator._unhashed_remainder_cache[((1, 2), 11, 5)]) == 1
+        assert len(generator._unhashed_remainder_cache[((1, 2), 25, 5)]) == 15
 
     def test_build_token_sequence_ignores_one_trailing_hash_outside_input_length(
         self, basic_config

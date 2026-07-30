@@ -134,9 +134,12 @@ the selected concurrency drive throughput. Rows with the same `session_id`
 remain causally ordered, so session-level throughput and completion metrics
 still describe complete trajectories.
 
-Mooncake exporters can disagree with `input_length` by one hash block when
-tokenizer-added affixes are counted on only one side. AIPerf accepts this
-one-block difference while reconstructing the exact recorded input length;
+Mooncake exporters can disagree with `input_length` when tokenizer-added
+affixes are counted on only one side. AIPerf accepts a hash-count delta from
+three blocks below through one block above
+`ceil(input_length / block_size)`. Missing suffix tokens are synthesized
+without reusable hashes, and one trailing hash outside `input_length` is
+ignored. The reconstructed prompt retains the exact recorded input length;
 larger disagreements fail validation.
 
 ## Using Pre-formatted Messages
