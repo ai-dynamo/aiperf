@@ -3,7 +3,13 @@
 
 import pytest
 
-from aiperf.common.models import RankingsResponseData, TextResponse, Turn
+from aiperf.common.models import (
+    BaseResponseData,
+    EmbeddingResponseData,
+    RankingsResponseData,
+    TextResponse,
+    Turn,
+)
 from aiperf.endpoints.raw_endpoint import RawEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -14,7 +20,7 @@ from tests.unit.endpoints.conftest import (
 
 
 @pytest.fixture
-def raw_endpoint():
+def raw_endpoint() -> RawEndpoint:
     ep_info = create_model_endpoint(EndpointType.RAW)
     return create_endpoint_with_mock_transport(RawEndpoint, ep_info)
 
@@ -47,11 +53,34 @@ class TestRawEndpointFormatPayload:
 
 
 class TestRawEndpointParseResponse:
-    def test_top_level_json_array_is_parsed_as_rankings(self, raw_endpoint):
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            pytest.param(
+                '[{"index": 0, "score": 0.98}]',
+                RankingsResponseData(rankings=[{"index": 0, "score": 0.98}]),
+                id="list_of_dict_rankings",
+            ),
+            pytest.param(
+                "[0.1, 0.2, 0.3]",
+                EmbeddingResponseData(embeddings=[[0.1, 0.2, 0.3]]),
+                id="list_of_float_embedding",
+            ),
+            pytest.param(
+                "[[0.1, 0.2], [0.3, 0.4]]",
+                EmbeddingResponseData(embeddings=[[0.1, 0.2], [0.3, 0.4]]),
+                id="list_of_list_float_batch_embeddings",
+            ),
+        ],
+    )
+    def test_top_level_json_array_is_parsed(
+        self,
+        raw_endpoint: RawEndpoint,
+        text: str,
+        expected: BaseResponseData,
+    ) -> None:
         """A top-level JSON array (e.g. a reranker response) must not crash."""
-        response = TextResponse(perf_ns=1, text='[{"index": 0, "score": 0.98}]')
+        response = TextResponse(perf_ns=1, text=text)
         parsed = raw_endpoint.parse_response(response)
         assert parsed is not None
-        assert parsed.data == RankingsResponseData(
-            rankings=[{"index": 0, "score": 0.98}]
-        )
+        assert parsed.data == expected
