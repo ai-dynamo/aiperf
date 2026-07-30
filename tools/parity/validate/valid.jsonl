@@ -1,0 +1,5 @@
+{"timestamp": 0, "input_length": 128, "output_length": 32}
+{"timestamp": 1000, "input_length": 256, "output_length": 64, "hash_ids": [1, 2, 3]}
+{"timestamp": 2000, "text_input": "what is the capital of France?", "output_length": 16}
+{"timestamp": 3000, "messages": [{"role": "user", "content": "hello"}], "output_length": 8, "session_id": "s-1"}
+{"delay": 500, "payload": {"model": "m", "prompt": "p"}, "output_length": 4}

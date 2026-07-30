@@ -1,0 +1,5 @@
+{"timestamp": 0, "input_length": 128, "output_length": 32}
+{"timestamp": 1000, "input_length": 256, "text_input": "both modes set"}
+{"timestamp": 2000, "output_length": 16}
+{"timestamp": 3000, "text_input": "hash_ids without input_length", "hash_ids": [1]}
+{"timestamp": 4000, "messages": [{"content": "no role key"}]}
