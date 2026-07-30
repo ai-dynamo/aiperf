@@ -272,10 +272,13 @@ class TestChatTemplateOverheadProbe:
         gen_prompt = 3
         template_total_fixed = bos + gen_prompt  # what apply_chat_template adds
 
-        def fake_apply(messages, **_kwargs):
+        def fake_apply(messages, tokenize=True, add_generation_prompt=True, **_kwargs):
+            # tokenizer.encode counts by whitespace-delimited words, so return a
+            # string with exactly the right number of space-separated words.
             content_tokens = sum(len(m["content"].split()) for m in messages)
             wrapping = per_msg_wrap * len(messages)
-            return list(range(template_total_fixed + wrapping + content_tokens))
+            total = template_total_fixed + wrapping + content_tokens
+            return " ".join(["x"] * total)
 
         inner = MagicMock()
         inner.apply_chat_template = MagicMock(side_effect=fake_apply)

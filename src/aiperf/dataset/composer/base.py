@@ -74,25 +74,29 @@ def _estimate_chat_template_overheads(
     wrap_costs: list[float] = []
     for sample in _CHAT_TEMPLATE_PROBE_SAMPLES:
         try:
-            single = apply(
+            single_text = apply(
                 [{"role": "user", "content": sample}],
-                tokenize=True,
+                tokenize=False,
                 add_generation_prompt=True,
             )
-            triple = apply(
+            triple_text = apply(
                 [
                     {"role": "user", "content": sample},
                     {"role": "assistant", "content": sample},
                     {"role": "user", "content": sample},
                 ],
-                tokenize=True,
+                tokenize=False,
                 add_generation_prompt=True,
             )
         except Exception:
             return 0, 0
+        if not isinstance(single_text, str) or not isinstance(triple_text, str):
+            return 0, 0
+        single_len = len(tokenizer.encode(single_text))
+        triple_len = len(tokenizer.encode(triple_text))
         bare_len = len(tokenizer.encode(sample))
-        avg_wrap = (len(triple) - len(single) - 2 * bare_len) / 2
-        per_request_fixed = len(single) - bare_len - avg_wrap - bos_tokens
+        avg_wrap = (triple_len - single_len - 2 * bare_len) / 2
+        per_request_fixed = single_len - bare_len - avg_wrap - bos_tokens
         if avg_wrap < 0 or per_request_fixed < 0:
             return 0, 0
         wrap_costs.append(avg_wrap)
