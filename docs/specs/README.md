@@ -60,6 +60,9 @@ read the record for the subsystem you are touching.
 | [websocket-transport.md](websocket-transport.md) | Built reusable content, SSE, bidirectional framing, measurement, placement, and registration prerequisites plus the future Clock-injected WebSocket transport contract. |
 | [sagemaker-runtime-endpoint.md](sagemaker-runtime-endpoint.md) | AWS SageMaker Runtime dialect: `InvokeEndpoint`/`InvokeEndpointWithResponseStream` mock-server routes, the AWS `application/vnd.amazon.eventstream` binary frame codec, and the single-factory client endpoint dialect (selected via `--streaming`) it composes over, verified e2e and against a genuine `boto3` client. |
 | [offline-cosimulation.md](offline-cosimulation.md) | Socket-free Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine boundary and the observer contract feeding AIPerf's own measurement. |
+| [dry-run-virtual-workers.md](dry-run-virtual-workers.md) | Planned opt-in virtual worker placement for the analytic `dry_run` transport: deterministic multi-worker timing, session affinity, and routing assertions over one `SimClock`, without recreating Dynosim. |
+| [dry-run-virtual-workers-sharded.md](dry-run-virtual-workers-sharded.md) | Planned virtual-clock `sharded` scheduled runner: production-equivalent workload/admission partitioning across logical workers on one `LocalSet` and `SimClock`. |
+| [dry-run-virtual-workers-graph.md](dry-run-virtual-workers-graph.md) | Planned virtual-worker graph placement: deterministic per-node assignment, graph-causality preservation, cancellation cleanup, and per-node record attribution. |
 
 ### Inputs, endpoints, and graph
 

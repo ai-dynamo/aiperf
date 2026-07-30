@@ -501,6 +501,18 @@ Transports:
 - [`docs/specs/offline-cosimulation.md`](docs/specs/offline-cosimulation.md) — socket-free
   Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine
   boundary and the observer contract.
+- [`docs/specs/dry-run-virtual-workers.md`](docs/specs/dry-run-virtual-workers.md) —
+  planned opt-in virtual worker placement for `dry_run`: deterministic
+  multi-worker timing, session affinity, and routing assertions over one
+  `SimClock`, without recreating Dynosim.
+- [`docs/specs/dry-run-virtual-workers-sharded.md`](docs/specs/dry-run-virtual-workers-sharded.md) —
+  planned virtual-clock `sharded` scheduled runner: production-equivalent
+  workload/admission partitioning across logical workers on one `LocalSet` and
+  `SimClock`.
+- [`docs/specs/dry-run-virtual-workers-graph.md`](docs/specs/dry-run-virtual-workers-graph.md) —
+  planned virtual-worker graph placement: deterministic per-node assignment,
+  graph-causality preservation, cancellation cleanup, and per-node record
+  attribution.
 
 Inputs, endpoints, and graph:
 
