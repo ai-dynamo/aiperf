@@ -83,11 +83,13 @@ class BranchStats(AIPerfBaseModel):
     )
     graphs_admitted: int = Field(
         default=0,
+        ge=0,
         description="Number of request-free orchestrator graph instances admitted "
         "(turn 0 fired). One per sampled orchestrator firing.",
     )
     graphs_completed_to_end: int = Field(
         default=0,
+        ge=0,
         description="Number of orchestrator graph instances that reached END (the "
         "terminal request-free gate completed after all rounds). "
         "``graphs_admitted - graphs_completed_to_end`` is the count of graphs that "
