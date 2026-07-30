@@ -143,8 +143,7 @@ jobs:
 
           print("video generation verified")
           PY
-          docker run --rm -v /tmp/verify_video.py:/verify.py:ro \
-            aiperf-temp:runtime "python /verify.py"
+          docker run --rm -i aiperf-temp:runtime "python3 -" < /tmp/verify_video.py
 
       # Built from the existing python-licenses stage, which already holds the
       # cyclonedx-py venv scan and the dpkg package list. The runtime build above
@@ -162,28 +161,20 @@ jobs:
       # inventory has to be assembled from the build stage that still has the
       # metadata. The base image and ffmpeg version are read back from the
       # Dockerfile and the built binary rather than hardcoded here.
+      # The generator is piped in on stdin and its output catted back out: the
+      # runner is a Kubernetes pod whose filesystem is not the Docker daemon's,
+      # so `-v` bind mounts resolve to empty directories. It runs from /tmp,
+      # where the image already carries generate_dpkg_attributions.py, so the
+      # shared license helpers import cleanly.
       - name: Generate the image SBOM
         run: |
           set -euo pipefail
           BASE_IMAGE=$(grep -E '^FROM .* AS runtime$' Dockerfile | awk '{print $2}')
           echo "runtime base image: ${BASE_IMAGE}"
           mkdir -p /tmp/sbom-out
-          cat > /tmp/sbom-run.sh <<EOF
-          set -e
-          FFMPEG_VERSION=\$(ffmpeg -version | head -1 | awk '{print \$3}')
-          echo "ffmpeg version: \${FFMPEG_VERSION}"
-          python3 /sbom-tools/generate_container_sbom.py \\
-            /opt/licenses/python/sbom.cdx.json \\
-            /opt/licenses/dpkg/runtime-pkgs.txt \\
-            /sbom-out/sbom.cdx.json \\
-            --ffmpeg-version "\${FFMPEG_VERSION}" \\
-            --base-image "${BASE_IMAGE}"
-          EOF
-          docker run --rm \
-            -v "${PWD}/tools:/sbom-tools:ro" \
-            -v /tmp/sbom-out:/sbom-out \
-            -v /tmp/sbom-run.sh:/run.sh:ro \
-            aiperf-temp:licenses "bash /run.sh"
+          docker run --rm -i -e BASE_IMAGE="${BASE_IMAGE}" aiperf-temp:licenses \
+            'set -e; cd /tmp; V=$(ffmpeg -version | head -1 | cut -d" " -f3); echo "ffmpeg version: $V" >&2; python3 - /opt/licenses/python/sbom.cdx.json /opt/licenses/dpkg/runtime-pkgs.txt /tmp/sbom.cdx.json --ffmpeg-version "$V" --base-image "$BASE_IMAGE" >&2; cat /tmp/sbom.cdx.json' \
+            < tools/generate_container_sbom.py > /tmp/sbom-out/sbom.cdx.json
 
       - name: Verify the SBOM
         run: |
@@ -214,7 +205,17 @@ jobs:
           name: container-sbom
           path: /tmp/sbom-out/sbom.cdx.json
 
+      # docker cp rather than -v for the same reason as above: it streams over
+      # the Docker API, so it does not care that the runner pod and the daemon
+      # have different filesystems.
       - name: Run ffmpeg-marked tests against the built image
         run: |
-          docker run --rm -v "${PWD}:/workspace" -w /workspace aiperf-temp:test \
-            "pytest tests/ -m ffmpeg -v --no-header -p no:cacheprovider"
+          set -euo pipefail
+          cid=$(docker create -w /workspace aiperf-temp:test \
+            "pytest tests/ -m ffmpeg -v --no-header -p no:cacheprovider")
+          docker cp tests "${cid}:/workspace/tests"
+          docker cp pyproject.toml "${cid}:/workspace/pyproject.toml"
+          rc=0
+          docker start -a "${cid}" || rc=$?
+          docker rm -f "${cid}" > /dev/null
+          exit "${rc}"
