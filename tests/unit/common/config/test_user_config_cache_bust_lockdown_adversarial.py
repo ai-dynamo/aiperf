@@ -64,27 +64,25 @@ _NON_NONE_CACHE_BUST_TARGETS: list[CacheBustTarget] = [
     t for t in CacheBustTarget if t != CacheBustTarget.NONE
 ]
 
-_NON_AGENTIC_TIMING_MODES: list[TimingMode] = [
-    m for m in TimingMode if m != TimingMode.AGENTIC_REPLAY
-]
+_TIMING_MODES: list[TimingMode] = list(TimingMode)
 
 _INCOMPATIBLE_ENDPOINT_TYPES: list[EndpointType] = [
     e for e in EndpointType if e not in {EndpointType.CHAT, EndpointType.RESPONSES}
 ]
 
 
-@pytest.mark.parametrize("timing_mode", _NON_AGENTIC_TIMING_MODES)
+@pytest.mark.parametrize("timing_mode", _TIMING_MODES)
 @pytest.mark.parametrize("target", _NON_NONE_CACHE_BUST_TARGETS)
-def test_cache_bust_rejected_with_every_non_agentic_timing_mode(
+def test_cache_bust_accepted_with_every_timing_mode(
     timing_mode: TimingMode, target: CacheBustTarget
 ) -> None:
-    """Every non-agentic TimingMode paired with a non-NONE cache_bust target raises."""
-    with pytest.raises(ValueError, match="agentic_replay"):
-        _build(
-            target=target,
-            endpoint_type=EndpointType.CHAT,
-            timing_mode=timing_mode,
-        )
+    """Every timing mode accepts cache-bust with a structured chat endpoint."""
+    cfg = _build(
+        target=target,
+        endpoint_type=EndpointType.CHAT,
+        timing_mode=timing_mode,
+    )
+    assert cfg.get_cache_bust_target() == target
 
 
 @pytest.mark.parametrize("endpoint_type", _INCOMPATIBLE_ENDPOINT_TYPES)
@@ -128,8 +126,8 @@ def test_unsafe_override_does_not_bypass_cache_bust_validation() -> None:
             }
         ],
     }
-    with pytest.raises(ValueError, match="agentic_replay"):
-        BenchmarkConfig.model_validate(body)
+    cfg = BenchmarkConfig.model_validate(body)
+    assert cfg.get_cache_bust_target() == CacheBustTarget.SYSTEM_PREFIX
 
 
 def test_unsafe_override_does_not_bypass_cache_bust_endpoint_validation() -> None:
