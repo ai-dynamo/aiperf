@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import PromptCorpus, RandomCorpusStyle
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
+from aiperf.common.models.sequence_distribution import RangeRatioDistribution
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import SyntheticDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset.generator.prompt import PromptGenerator
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -97,6 +102,21 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "Please enable at least one of prompt, image, audio, or video by "
                 "setting the mean to a positive value."
             )
+
+        # vLLM RNG compatibility: pre-generate ISLs, then OSLs, then offsets
+        # from a single numpy Generator so the draw order matches vLLM's
+        # get_sampling_params (all ISLs first, all OSLs second, all offsets
+        # third). Active whenever corpus=RANDOM and style=VLLM.
+        if (
+            isinstance(self.prompt_generator, PromptGenerator)
+            and self.prompt_generator._corpus == PromptCorpus.RANDOM
+            and self._synthetic_prompts is not None
+            and self._synthetic_prompts.random_corpus_style == RandomCorpusStyle.VLLM
+            and isinstance(self._seq_distribution, RangeRatioDistribution)
+        ):
+            g = np.random.default_rng(run.random_seed)
+            self._seq_distribution.preseed(self._num_entries, g)
+            self.prompt_generator.preseed(self._num_entries, g)
 
     def create_dataset(self) -> list[Conversation]:
         """Create a synthetic conversation dataset from the given configuration.

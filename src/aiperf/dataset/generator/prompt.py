@@ -169,6 +169,36 @@ class PromptGenerator(BaseGenerator):
             )
         )
 
+    def _sample_topup_tokens(self, num_tokens: int) -> list[int]:
+        """Sample tokens for BPE top-up without consuming the preseed offset cache.
+
+        Top-up draws happen inside the retry loop of generate_prompt when
+        re-encoding produces fewer tokens than the target. They are separate
+        from the per-request initial draw and must not advance the preseed
+        cache index so that each request consumes exactly one cache entry.
+        """
+        if self._corpus == PromptCorpus.RANDOM:
+            n = len(self._allowed_tokens)
+            offset = int(self._corpus_rng.integers(0, n))
+            idx = self._random_request_index
+            self._random_request_index += 1
+            return [
+                self._allowed_tokens[(offset + idx + j) % n] for j in range(num_tokens)
+            ]
+        return self._sample_tokens(num_tokens)
+
+    def preseed(self, n: int, generator: object) -> None:
+        """Pre-generate all offsets for the RANDOM corpus using vLLM's draw order.
+
+        Must be called after :meth:`_build_allowed_tokens`. ``generator`` should
+        be the same numpy Generator passed to
+        :meth:`RangeRatioDistribution.preseed`, advanced past its ISL/OSL draws,
+        so that offsets are drawn from the correct position in the shared stream.
+        """
+        pool = len(self._allowed_tokens)
+        self._offset_cache: list[int] = generator.integers(0, pool, size=n).tolist()  # type: ignore[union-attr]
+        self._offset_idx: int = 0
+
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse.
 
@@ -377,7 +407,7 @@ class PromptGenerator(BaseGenerator):
             if actual > num_tokens:
                 tokens = tokens[: -(actual - num_tokens)]
             else:
-                tokens = tokens + self._sample_tokens(num_tokens - actual)
+                tokens = tokens + self._sample_topup_tokens(num_tokens - actual)
         return self.tokenizer.decode(tokens)
 
     def _generate_cached_prompt(
@@ -534,7 +564,12 @@ class PromptGenerator(BaseGenerator):
             if not self._allowed_tokens:
                 raise NotInitializedError("Random vocab corpus is not initialized.")
             n = len(self._allowed_tokens)
-            offset = int(self._corpus_rng.integers(0, n))
+            offset_cache = getattr(self, "_offset_cache", None)
+            if offset_cache is not None:
+                offset = offset_cache[self._offset_idx]
+                self._offset_idx += 1
+            else:
+                offset = int(self._corpus_rng.integers(0, n))
             idx = self._random_request_index
             self._random_request_index += 1
             return [

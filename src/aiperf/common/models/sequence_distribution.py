@@ -639,8 +639,32 @@ class RangeRatioDistribution:
             floor, cfg.compute_high(mean, ratio)
         )
 
+    def preseed(self, n: int, generator: np.random.Generator) -> None:
+        """Pre-generate all ISL then all OSL values using vLLM's draw order.
+
+        Calling this makes subsequent :meth:`sample` calls read from the
+        pre-generated cache instead of drawing from the internal RNG, matching
+        the vectorised upfront draw that vLLM's ``get_sampling_params`` uses:
+        all ISLs first, then all OSLs, both from the same generator stream.
+
+        ``generator`` is advanced in-place so the caller can pass it to
+        :meth:`PromptGenerator.preseed` immediately after for offset draws.
+        """
+        self._isl_cache = generator.integers(
+            self._input_low, self._input_high + 1, size=n
+        ).tolist()
+        self._osl_cache = generator.integers(
+            self._output_low, self._output_high + 1, size=n
+        ).tolist()
+        self._cache_idx = 0
+
     def sample(self) -> tuple[int, int]:
         """Sample a single (ISL, OSL) pair with independent uniform integers."""
+        cache = getattr(self, "_isl_cache", None)
+        if cache is not None:
+            idx = self._cache_idx
+            self._cache_idx = idx + 1
+            return self._isl_cache[idx], self._osl_cache[idx]
         isl = int(self._rng.integers(self._input_low, self._input_high + 1))
         osl = int(self._rng.integers(self._output_low, self._output_high + 1))
         return isl, osl

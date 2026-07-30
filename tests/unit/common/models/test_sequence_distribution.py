@@ -891,6 +891,41 @@ class TestRangeRatioDistribution:
 
         assert first_run == second_run
 
+    def test_preseed_draws_all_isls_then_osls(self):
+        """preseed consumes ISLs then OSLs from one generator; sample reads cache."""
+        dist = RangeRatioDistribution(
+            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
+        )
+        n = 5
+        g = np.random.default_rng(0)
+        expected_isls = g.integers(
+            dist.input_bounds[0], dist.input_bounds[1] + 1, size=n
+        ).tolist()
+        expected_osls = g.integers(
+            dist.output_bounds[0], dist.output_bounds[1] + 1, size=n
+        ).tolist()
+
+        g2 = np.random.default_rng(0)
+        dist.preseed(n, g2)
+
+        for i in range(n):
+            isl, osl = dist.sample()
+            assert isl == expected_isls[i]
+            assert osl == expected_osls[i]
+
+    def test_preseed_advances_generator_for_caller(self):
+        """preseed advances generator past ISL+OSL draws so caller can continue."""
+        dist = RangeRatioDistribution(
+            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
+        )
+        g = np.random.default_rng(42)
+        dist.preseed(3, g)
+        # g is now past 6 draws (3 ISL + 3 OSL); next draw should match
+        g_ref = np.random.default_rng(42)
+        g_ref.integers(dist.input_bounds[0], dist.input_bounds[1] + 1, size=3)
+        g_ref.integers(dist.output_bounds[0], dist.output_bounds[1] + 1, size=3)
+        assert int(g.integers(0, 1000)) == int(g_ref.integers(0, 1000))
+
     def test_num_special_tokens_adjusts_isl_mean_only(self):
         """Style's adjust_mean subtracts special tokens from isl_mean; osl is unchanged."""
         dist_plain = RangeRatioDistribution(
