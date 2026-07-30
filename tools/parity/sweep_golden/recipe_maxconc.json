@@ -5,7 +5,7 @@
       "random_seed": 42,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "9fcf9e7799a2",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_1",
           "cfg": {
             "models": {
@@ -50,7 +50,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -256,7 +257,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "9fcf9e7799a2",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -300,7 +301,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -394,6 +396,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -989,7 +992,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "9fcf9e7799a2",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -1033,7 +1036,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -1127,6 +1131,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -1191,6 +1196,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
@@ -1234,7 +1240,7 @@
       "random_seed": 43,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "b758e2d92f1e",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_2",
           "cfg": {
             "models": {
@@ -1279,7 +1285,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -1485,7 +1492,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "b758e2d92f1e",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -1529,7 +1536,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -1562,7 +1570,7 @@
                         "seamless": false,
                         "requests": 10,
                         "type": "concurrency",
-                        "concurrency": 1
+                        "concurrency": 2
                       }
                     ],
                     "gpu_telemetry": {
@@ -1623,6 +1631,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -2218,7 +2227,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "b758e2d92f1e",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -2262,7 +2271,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -2295,7 +2305,7 @@
                       "seamless": false,
                       "requests": 10,
                       "type": "concurrency",
-                      "concurrency": 1
+                      "concurrency": 2
                     }
                   ],
                   "gpu_telemetry": {
@@ -2356,6 +2366,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -2420,6 +2431,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
@@ -2463,7 +2475,7 @@
       "random_seed": 44,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "d9c5fac1c6ab",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_3",
           "cfg": {
             "models": {
@@ -2508,7 +2520,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -2714,7 +2727,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "d9c5fac1c6ab",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -2758,7 +2771,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -2791,7 +2805,7 @@
                         "seamless": false,
                         "requests": 10,
                         "type": "concurrency",
-                        "concurrency": 1
+                        "concurrency": 3
                       }
                     ],
                     "gpu_telemetry": {
@@ -2852,6 +2866,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -3447,7 +3462,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "d9c5fac1c6ab",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -3491,7 +3506,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -3524,7 +3540,7 @@
                       "seamless": false,
                       "requests": 10,
                       "type": "concurrency",
-                      "concurrency": 1
+                      "concurrency": 3
                     }
                   ],
                   "gpu_telemetry": {
@@ -3585,6 +3601,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -3649,6 +3666,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
@@ -3692,7 +3710,7 @@
       "random_seed": 45,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "d2ec5cc54132",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_6",
           "cfg": {
             "models": {
@@ -3737,7 +3755,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -3943,7 +3962,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "d2ec5cc54132",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -3987,7 +4006,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -4020,7 +4040,7 @@
                         "seamless": false,
                         "requests": 10,
                         "type": "concurrency",
-                        "concurrency": 1
+                        "concurrency": 6
                       }
                     ],
                     "gpu_telemetry": {
@@ -4081,6 +4101,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -4676,7 +4697,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "d2ec5cc54132",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -4720,7 +4741,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -4753,7 +4775,7 @@
                       "seamless": false,
                       "requests": 10,
                       "type": "concurrency",
-                      "concurrency": 1
+                      "concurrency": 6
                     }
                   ],
                   "gpu_telemetry": {
@@ -4814,6 +4836,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -4878,6 +4901,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
@@ -4921,7 +4945,7 @@
       "random_seed": 46,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "2f0a97f6eb58",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_11",
           "cfg": {
             "models": {
@@ -4966,7 +4990,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -5172,7 +5197,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "2f0a97f6eb58",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -5216,7 +5241,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -5249,7 +5275,7 @@
                         "seamless": false,
                         "requests": 10,
                         "type": "concurrency",
-                        "concurrency": 1
+                        "concurrency": 11
                       }
                     ],
                     "gpu_telemetry": {
@@ -5310,6 +5336,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -5905,7 +5932,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "2f0a97f6eb58",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -5949,7 +5976,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -5982,7 +6010,7 @@
                       "seamless": false,
                       "requests": 10,
                       "type": "concurrency",
-                      "concurrency": 1
+                      "concurrency": 11
                     }
                   ],
                   "gpu_telemetry": {
@@ -6043,6 +6071,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -6107,6 +6136,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
@@ -6150,7 +6180,7 @@
       "random_seed": 47,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "21e990cbe72f",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_20",
           "cfg": {
             "models": {
@@ -6195,7 +6225,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -6401,7 +6432,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "21e990cbe72f",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -6445,7 +6476,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -6478,7 +6510,7 @@
                         "seamless": false,
                         "requests": 10,
                         "type": "concurrency",
-                        "concurrency": 1
+                        "concurrency": 20
                       }
                     ],
                     "gpu_telemetry": {
@@ -6539,6 +6571,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -7134,7 +7167,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "21e990cbe72f",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -7178,7 +7211,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -7211,7 +7245,7 @@
                       "seamless": false,
                       "requests": 10,
                       "type": "concurrency",
-                      "concurrency": 1
+                      "concurrency": 20
                     }
                   ],
                   "gpu_telemetry": {
@@ -7272,6 +7306,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -7336,6 +7371,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
@@ -7379,7 +7415,7 @@
       "random_seed": 48,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "45c7a0ffdd93",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_35",
           "cfg": {
             "models": {
@@ -7424,7 +7460,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -7630,7 +7667,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "45c7a0ffdd93",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -7674,7 +7711,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -7707,7 +7745,7 @@
                         "seamless": false,
                         "requests": 10,
                         "type": "concurrency",
-                        "concurrency": 1
+                        "concurrency": 35
                       }
                     ],
                     "gpu_telemetry": {
@@ -7768,6 +7806,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -8363,7 +8402,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "45c7a0ffdd93",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -8407,7 +8446,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -8440,7 +8480,7 @@
                       "seamless": false,
                       "requests": 10,
                       "type": "concurrency",
-                      "concurrency": 1
+                      "concurrency": 35
                     }
                   ],
                   "gpu_telemetry": {
@@ -8501,6 +8541,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -8565,6 +8606,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
@@ -8608,7 +8650,7 @@
       "random_seed": 49,
       "request": {
         "run": {
-          "benchmark_id": "e3306623ddb8",
+          "benchmark_id": "1c4d5080759f",
           "artifact_dir": "/tmp/aiperf-parity/maxconc/concurrency_64",
           "cfg": {
             "models": {
@@ -8653,7 +8695,8 @@
             "runtime": {
               "workers": null,
               "workers_min": null,
-              "cells": 1
+              "cells": 1,
+              "hop_routing": "round-robin"
             },
             "metrics": {
               "slos": {}
@@ -8859,7 +8902,7 @@
                 ],
                 "envelope": {
                   "aiperf_version": "0.11.0",
-                  "benchmark_id": "e3306623ddb8",
+                  "benchmark_id": "1c4d5080759f",
                   "input_config": {
                     "models": {
                       "strategy": "round_robin",
@@ -8903,7 +8946,8 @@
                     "runtime": {
                       "workers": null,
                       "workers_min": null,
-                      "cells": 1
+                      "cells": 1,
+                      "hop_routing": "round-robin"
                     },
                     "metrics": {
                       "slos": {}
@@ -8936,7 +8980,7 @@
                         "seamless": false,
                         "requests": 10,
                         "type": "concurrency",
-                        "concurrency": 1
+                        "concurrency": 64
                       }
                     ],
                     "gpu_telemetry": {
@@ -8997,6 +9041,7 @@
                     "failure_policy": null,
                     "scenario": null,
                     "weka_semantics": null,
+                    "ignore_trace_delays": false,
                     "trajectory_start_max_ratio": 0.0,
                     "trajectory_start_min_ratio": 0.0,
                     "unsafe_override": false
@@ -9592,7 +9637,7 @@
                 "json": true,
                 "csv": true,
                 "aiperf_version": "0.11.0",
-                "benchmark_id": "e3306623ddb8",
+                "benchmark_id": "1c4d5080759f",
                 "input_config": {
                   "models": {
                     "strategy": "round_robin",
@@ -9636,7 +9681,8 @@
                   "runtime": {
                     "workers": null,
                     "workers_min": null,
-                    "cells": 1
+                    "cells": 1,
+                    "hop_routing": "round-robin"
                   },
                   "metrics": {
                     "slos": {}
@@ -9669,7 +9715,7 @@
                       "seamless": false,
                       "requests": 10,
                       "type": "concurrency",
-                      "concurrency": 1
+                      "concurrency": 64
                     }
                   ],
                   "gpu_telemetry": {
@@ -9730,6 +9776,7 @@
                   "failure_policy": null,
                   "scenario": null,
                   "weka_semantics": null,
+                  "ignore_trace_delays": false,
                   "trajectory_start_max_ratio": 0.0,
                   "trajectory_start_min_ratio": 0.0,
                   "unsafe_override": false
@@ -9794,6 +9841,7 @@
             "failure_policy": null,
             "scenario": null,
             "weka_semantics": null,
+            "ignore_trace_delays": false,
             "trajectory_start_max_ratio": 0.0,
             "trajectory_start_min_ratio": 0.0,
             "unsafe_override": false
