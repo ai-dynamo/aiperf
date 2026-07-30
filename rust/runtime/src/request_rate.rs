@@ -497,15 +497,22 @@ impl Workload for RequestRateWorkload {
                             .session_slots
                             .as_ref()
                             .is_some_and(|pool| pool.is_global());
-                        if next_target_ns <= runtime.now_ns() && !session_pool_is_global {
+                        let is_saturated_now = next_target_ns <= runtime.now_ns();
+                        if is_saturated_now && !session_pool_is_global {
                             // A session slot stays held until its continuation
                             // completes, so waiting on that slot here can hide
                             // the queued continuation that must release it.
                             self.wait_for_closed_loop_progress().await;
+                        } else if is_saturated_now {
+                            // Global pool, no authored arrival left to pace
+                            // against: a bare yield would spin, and under a
+                            // virtual clock it would freeze time outright.
+                            self.wait_for_capacity(&runtime).await;
                         } else {
                             // Paced modes preserve the nonblocking skipped-tick
-                            // behavior and retry at the next authored arrival.
-                            self.wait_for_capacity(&runtime).await;
+                            // behavior and retry at the next authored arrival,
+                            // which is itself the clock event that advances time.
+                            tokio::task::yield_now().await;
                         }
                     }
                     Ok(NewSessionOutcome::Stopped) => {
@@ -522,7 +529,11 @@ impl Workload for RequestRateWorkload {
             } else {
                 // The session quota/cap is full, but returned requests may still
                 // produce continuations. Consume this tick without busy-spinning.
-                self.wait_for_capacity(&runtime).await;
+                if next_target_ns <= runtime.now_ns() {
+                    self.wait_for_capacity(&runtime).await;
+                } else {
+                    tokio::task::yield_now().await;
+                }
             }
         }
 
