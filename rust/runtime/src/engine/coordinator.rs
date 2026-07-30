@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::extensions::{AIPerfRegistry, AIPerfRegistryFactory};
-use crate::metrics_core::ReportRunMetadata;
+use crate::metrics_core::{ReportRunMetadata, ReportStats, ReportValue};
 use crate::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -303,6 +303,11 @@ impl Coordinator {
         };
         match operation.execute() {
             Ok(outcome) => {
+                // A run whose every request failed is not a successful run. The
+                // report is still persisted first so the per-request errors are
+                // available for diagnosis, but the terminal envelope reports the
+                // failure so the process exits non-zero.
+                let all_requests_failed = all_requests_failed(&outcome);
                 let mut run_metadata = match persist_prepared_report(
                     outcome,
                     report_run_metadata,
@@ -325,6 +330,30 @@ impl Coordinator {
                 };
                 run_metadata.insert("transport".into(), transport_id);
                 run_metadata.insert("workload".into(), workload_id);
+                if let Some(errors) = all_requests_failed {
+                    return ProcessResultV2 {
+                        response: ResponseV2::Terminal(RunTerminalV2 {
+                            protocol_version: PROTOCOL_V2,
+                            event: "run_terminal",
+                            benchmark_id,
+                            success: false,
+                            report_path: Some(report_path),
+                            stage: Some(FailureStageV2::Execution),
+                            errors: vec![diagnostic(
+                                "all_requests_failed",
+                                format!(
+                                    "All {errors} inference request(s) failed. No successful \
+                                     responses were collected — check the server URL, endpoint \
+                                     path, and response format. See the persisted report for \
+                                     per-request error details."
+                                ),
+                            )],
+                            diagnostic_artifacts: Vec::new(),
+                            run_metadata,
+                        }),
+                        exit_code: 1,
+                    };
+                }
                 ProcessResultV2 {
                     response: ResponseV2::Terminal(RunTerminalV2 {
                         protocol_version: PROTOCOL_V2,
@@ -369,6 +398,37 @@ impl Coordinator {
     pub fn product_registry(&self) -> &AIPerfRegistry {
         self.product_registry.as_ref()
     }
+}
+
+/// The failed-request count when a run produced errors and zero successes.
+///
+/// The native metrics plane omits `request_count` entirely when nothing
+/// succeeded, so an absent success counter plus a positive error counter is the
+/// exact "everything failed" signature. A run that recorded no requests at all
+/// (`--dry-run`, an empty schedule) has neither counter and is not a failure
+/// here. Mirrors the python engine's `system_controller` guard.
+fn all_requests_failed(outcome: &PreparedRunOutcome) -> Option<u64> {
+    let counter_total = |name: &str| -> Option<f64> {
+        let entry = outcome.native_report.metrics.get(name)?;
+        let mut total = 0.0;
+        for series in &entry.series {
+            match &series.stats {
+                ReportStats::Counter(counter) => match counter.total {
+                    ReportValue::Finite(value) => total += value,
+                    ReportValue::NonFinite => return None,
+                },
+                ReportStats::Scalar(scalar) => match scalar.value {
+                    ReportValue::Finite(value) => total += value,
+                    ReportValue::NonFinite => return None,
+                },
+                _ => return None,
+            }
+        }
+        Some(total)
+    };
+    let errors = counter_total("error_request_count").unwrap_or(0.0);
+    let successes = counter_total("request_count").unwrap_or(0.0);
+    (errors >= 1.0 && successes < 1.0).then(|| errors as u64)
 }
 
 #[derive(Debug)]
