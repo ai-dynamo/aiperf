@@ -2784,4 +2784,90 @@ benchmark:
             .join()
             .expect("worker panicked");
     }
+
+    /// Every authorable `endpoint:` key must survive YAML -> `Inputs` ->
+    /// `Endpoint` -> the protocol-v2 `cfg.endpoint` object.
+    ///
+    /// `EndpointSection` is NOT `deny_unknown_fields` (an unrecognized
+    /// `endpoint:` key is silently ignored), and each field needs three
+    /// independent touches — the YAML struct, the `Inputs` projection, and
+    /// `resolve::resolve`'s `Endpoint` construction. A field wired into only
+    /// the first two reaches the runtime as its default while the config
+    /// validates clean; `ssl_verify` and `uds_path` both shipped that way. This
+    /// authors every key at a non-default value and asserts the projected
+    /// value, so a missing touch fails here rather than at runtime.
+    #[test]
+    fn every_authored_endpoint_field_reaches_protocol_v2() {
+        let cfg = "schemaVersion: \"2.0\"\n\
+             benchmark:\n\
+            \x20 model: m\n\
+            \x20 endpoint:\n\
+            \x20   type: chat\n\
+            \x20   url: 127.0.0.1:8000\n\
+            \x20   streaming: true\n\
+            \x20   api_key: sk-authored\n\
+            \x20   timeout: 12.5\n\
+            \x20   connection_reuse: sticky-user-sessions\n\
+            \x20   ssl_verify: false\n\
+            \x20   uds_path: /tmp/authored.sock\n\
+            \x20   use_legacy_max_tokens: true\n\
+            \x20   use_server_token_count: true\n\
+            \x20   download_video_content: true\n\
+            \x20   headers: {X-Authored: yes}\n\
+            \x20   extra: {temperature: 0.25}\n\
+            \x20   request_content_type: multipart/form-data\n\
+            \x20   session_header: X-Session-Authored\n\
+            \x20   proxy: http://proxy.invalid:3128\n\
+            \x20   path: /authored/chat\n\
+            \x20   wait_for_model_timeout: 7.5\n\
+            \x20   wait_for_model_interval: 2.5\n\
+            \x20   wait_for_model_mode: both\n\
+            \x20   reset_kv_cache: {timeout_seconds: 3.5, path: /reset}\n\
+            \x20   server_profiler: {timeout_seconds: 4.5, start_path: /start, stop_path: /stop}\n\
+            \x20 dataset: {prompts: {isl: 8, osl: 4}}\n\
+            \x20 phases: {type: concurrency, requests: 1, concurrency: 1}\n";
+        let run = resolve_str(cfg, Some("/tmp/x".into())).expect("fully-authored endpoint resolves");
+        let ep = &serde_json::to_value(&run).unwrap()["cfg"]["endpoint"];
+
+        for (key, want) in [
+            ("urls", serde_json::json!(["http://127.0.0.1:8000"])),
+            ("type", serde_json::json!("chat")),
+            ("streaming", serde_json::json!(true)),
+            ("api_key", serde_json::json!("sk-authored")),
+            ("timeout_seconds", serde_json::json!(12.5)),
+            ("connection_reuse", serde_json::json!("sticky-user-sessions")),
+            ("ssl_verify", serde_json::json!(false)),
+            ("uds_path", serde_json::json!("/tmp/authored.sock")),
+            ("use_legacy_max_tokens", serde_json::json!(true)),
+            ("use_server_token_count", serde_json::json!(true)),
+            ("download_video_content", serde_json::json!(true)),
+            ("headers", serde_json::json!({"X-Authored": "yes"})),
+            ("extra", serde_json::json!({"temperature": 0.25})),
+            (
+                "request_content_type",
+                serde_json::json!("multipart_form_data"),
+            ),
+            ("session_header", serde_json::json!("X-Session-Authored")),
+            ("proxy", serde_json::json!("http://proxy.invalid:3128")),
+            ("path", serde_json::json!("/authored/chat")),
+            ("wait_for_model_timeout", serde_json::json!(7.5)),
+            ("wait_for_model_interval", serde_json::json!(2.5)),
+            ("wait_for_model_mode", serde_json::json!("both")),
+            (
+                "reset_kv_cache",
+                serde_json::json!({"timeout_seconds": 3.5, "path": "/reset"}),
+            ),
+            (
+                "server_profiler",
+                serde_json::json!({"timeout_seconds": 4.5, "start_path": "/start", "stop_path": "/stop"}),
+            ),
+        ] {
+            assert_eq!(
+                ep.get(key),
+                Some(&want),
+                "endpoint.{key} did not survive YAML -> protocol-v2 projection; \
+                 full projected endpoint: {ep:#}"
+            );
+        }
+    }
 }
