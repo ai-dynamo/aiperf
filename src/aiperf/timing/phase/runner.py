@@ -157,7 +157,14 @@ class PhaseRunner(TaskManagerMixin):
             requests_per_lane = getattr(config, "warmup_requests_per_lane", None)
             if self._cache_warmup_enabled and requests_per_lane is not None:
                 lane_count = len(getattr(conversation_source, "trajectories", ()))
-                request_cap = requests_per_lane * lane_count
+                baseline_counts = getattr(
+                    conversation_source, "warmup_credit_counts_by_lane", ()
+                )
+                request_cap = (
+                    sum(baseline_counts) + requests_per_lane * lane_count
+                    if len(baseline_counts) == lane_count
+                    else requests_per_lane * lane_count
+                )
                 self._config = config.model_copy(
                     update={"total_expected_requests": request_cap}
                 )

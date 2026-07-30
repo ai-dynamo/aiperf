@@ -316,6 +316,9 @@ async def test_cache_warmup_request_budget_is_enforced_per_lane():
     )
     strategy._correlation_to_lane[lane_0.x_correlation_id] = 0
     strategy._correlation_to_lane[lane_1.x_correlation_id] = 1
+    strategy._baseline_warmup_admitted = (
+        strategy.conversation_source.warmup_credit_count
+    )
 
     assert admission(lane_0) is True
     assert admission(lane_0) is True
@@ -324,6 +327,148 @@ async def test_cache_warmup_request_budget_is_enforced_per_lane():
     assert admission(lane_1) is True
     assert admission(lane_1) is False
     issuer.replay_gate.pause_releases.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="lane-0-root",
+                        next_turn_index=1,
+                    ),
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="lane-0-child",
+                        next_turn_index=1,
+                        agent_depth=1,
+                        root_correlation_id="lane-0-root",
+                    ),
+                ),
+            ),
+        ),
+        Trajectory(conversation_id="trace_1", start_turn_index=0),
+    ]
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_requests_per_lane=1,
+    )
+    issuer.set_turn_admission = MagicMock()
+
+    await strategy.setup_phase()
+
+    admission = issuer.set_turn_admission.call_args.args[0]
+    lane_0_first = TurnToSend(
+        conversation_id="trace_0",
+        x_correlation_id="lane-0-root",
+        turn_index=0,
+        num_turns=4,
+    )
+    lane_0_second = TurnToSend(
+        conversation_id="trace_0",
+        x_correlation_id="lane-0-child",
+        root_correlation_id="lane-0-root",
+        turn_index=0,
+        num_turns=4,
+        agent_depth=1,
+    )
+    lane_1 = TurnToSend(
+        conversation_id="trace_1",
+        x_correlation_id=trajectories[1].x_correlation_id,
+        turn_index=0,
+        num_turns=4,
+    )
+    strategy._correlation_to_lane[lane_0_first.x_correlation_id] = 0
+    strategy._correlation_to_lane[lane_0_second.x_correlation_id] = 0
+    strategy._correlation_to_lane[lane_1.x_correlation_id] = 1
+    strategy._root_to_lane[lane_0_first.effective_root_correlation_id] = 0
+    strategy._root_to_lane[lane_1.effective_root_correlation_id] = 1
+    strategy._baseline_correlations.update(
+        {
+            lane_0_first.x_correlation_id,
+            lane_0_second.x_correlation_id,
+            lane_1.x_correlation_id,
+        }
+    )
+    strategy._baseline_warmup_turns.update(
+        {
+            (lane_0_first.x_correlation_id, lane_0_first.turn_index),
+            (lane_0_second.x_correlation_id, lane_0_second.turn_index),
+            (lane_1.x_correlation_id, lane_1.turn_index),
+        }
+    )
+
+    assert admission(lane_0_first) is True
+    assert admission(lane_0_second) is True
+    issuer.replay_gate.pause_releases.assert_not_called()
+    assert admission(lane_1) is True
+    issuer.replay_gate.pause_releases.assert_not_called()
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_0",
+                x_correlation_id=lane_0_first.x_correlation_id,
+                turn_index=1,
+                num_turns=4,
+            )
+        )
+        is True
+    )
+    issuer.replay_gate.pause_releases.assert_not_called()
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_1",
+                x_correlation_id=lane_1.x_correlation_id,
+                turn_index=1,
+                num_turns=4,
+            )
+        )
+        is True
+    )
+    issuer.replay_gate.pause_releases.assert_called_once_with()
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_0",
+                x_correlation_id=lane_0_first.x_correlation_id,
+                turn_index=2,
+                num_turns=4,
+            )
+        )
+        is False
+    )
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_0",
+                x_correlation_id=lane_0_second.x_correlation_id,
+                root_correlation_id="lane-0-root",
+                turn_index=1,
+                num_turns=4,
+                agent_depth=1,
+            )
+        )
+        is False
+    )
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_1",
+                x_correlation_id=lane_1.x_correlation_id,
+                turn_index=1,
+                num_turns=4,
+            )
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio

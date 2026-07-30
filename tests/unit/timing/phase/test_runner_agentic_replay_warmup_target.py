@@ -163,6 +163,7 @@ class TestAgenticReplayWarmupTarget:
         src = MagicMock()
         src.dataset_metadata = None
         src.trajectories = [MagicMock(), MagicMock(), MagicMock()]
+        src.warmup_credit_counts_by_lane = (1, 1, 1)
         config = _warmup_config(concurrency=4).model_copy(
             update={
                 "warmup_requests_per_lane": 10,
@@ -172,7 +173,56 @@ class TestAgenticReplayWarmupTarget:
 
         runner = _make_runner(config, src)
 
-        assert runner._config.total_expected_requests == 30
+        assert runner._config.total_expected_requests == 33
+
+    async def test_cache_warmup_target_adds_quota_after_mandatory_primers(self) -> None:
+        """The per-lane quota is additional to every mandatory snapshot primer."""
+        src = MagicMock()
+        src.dataset_metadata = None
+        src.trajectories = [MagicMock(), MagicMock(), MagicMock()]
+        src.warmup_credit_counts_by_lane = (2, 1, 0)
+        config = _warmup_config(concurrency=3).model_copy(
+            update={
+                "warmup_requests_per_lane": 1,
+                "total_expected_requests": 3,
+            }
+        )
+
+        runner = _make_runner(config, src)
+
+        assert runner._config.total_expected_requests == 6
+
+    @pytest.mark.parametrize(
+        ("requests_per_lane", "baseline_counts", "expected_target"),
+        [
+            (1, (0, 0), 2),
+            (1, (1, 1), 4),
+            (1, (2, 1, 0), 6),
+            (1, (3, 2, 1), 9),
+            (2, (0, 1, 2, 3), 14),
+            (10, (2, 0), 22),
+        ],
+    )
+    async def test_cache_warmup_target_adds_per_lane_quota_to_primers(
+        self,
+        requests_per_lane: int,
+        baseline_counts: tuple[int, ...],
+        expected_target: int,
+    ) -> None:
+        src = MagicMock()
+        src.dataset_metadata = None
+        src.trajectories = [MagicMock() for _ in baseline_counts]
+        src.warmup_credit_counts_by_lane = baseline_counts
+        config = _warmup_config(concurrency=len(baseline_counts)).model_copy(
+            update={
+                "warmup_requests_per_lane": requests_per_lane,
+                "total_expected_requests": requests_per_lane * len(baseline_counts),
+            }
+        )
+
+        runner = _make_runner(config, src)
+
+        assert runner._config.total_expected_requests == expected_target
 
     async def test_profiling_not_reanchored_to_warmup_count(self) -> None:
         """PROFILING must NOT be re-anchored to warmup_credit_count."""

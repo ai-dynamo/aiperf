@@ -189,9 +189,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         )
         self._cache_warmup_requests_by_lane: Counter[int] = Counter()
         self._cache_warmup_request_budget_reached = False
+        self._baseline_warmup_admitted = 0
         self._quota_handoff_starts: dict[str, TurnToSend] = {}
         self._baseline_warmup_returns: dict[str, Credit] = {}
         self._baseline_correlations: set[str] = set()
+        self._baseline_warmup_turns: set[tuple[str, int]] = set()
         self._accelerated_warmup_started = False
         self._handoff_credits: dict[str, Credit] = {}
         self._handoff_returned_at_ns: dict[str, int] = {}
@@ -458,9 +460,23 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         return lane
 
     def _admit_cache_warmup_turn(self, turn: TurnToSend) -> bool:
-        """Atomically reserve one request from a lane's deterministic quota."""
+        """Admit mandatory primers, then enforce the additional per-lane quota.
+
+        Snapshot reconstruction can require multiple primers on one lane when
+        a root and one or more subagents are all live at ``t*``. Those primers
+        are the first warmup stage and do not consume the configured
+        cache-pressure quota. The quota applies only to traffic replayed after
+        all mandatory primers return.
+        """
         assert self._cache_warmup_requests_per_lane is not None
         lane = self._cache_warmup_lane(turn)
+        is_baseline = (
+            turn.x_correlation_id,
+            turn.turn_index,
+        ) in self._baseline_warmup_turns
+        if is_baseline:
+            self._baseline_warmup_admitted += 1
+            return True
         if (
             self._cache_warmup_requests_by_lane[lane]
             >= self._cache_warmup_requests_per_lane
@@ -480,7 +496,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self.credit_issuer.replay_gate.pause_releases()
             self.info(
                 "WARMUP cache pressure request budget reached: "
-                f"{self._cache_warmup_requests_per_lane} requests on each of "
+                f"{self._cache_warmup_requests_per_lane} additional requests "
+                "on each of "
                 f"{len(self.conversation_source.trajectories)} lanes; "
                 "draining requests"
             )
@@ -639,6 +656,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 )
                 prepared.append((turn, None))
                 self._baseline_correlations.add(turn.x_correlation_id)
+                self._baseline_warmup_turns.add(
+                    (turn.x_correlation_id, turn.turn_index)
+                )
                 self._root_to_lane[turn.effective_root_correlation_id] = lane
                 continue
 
@@ -663,24 +683,17 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                         lead_ms = self._capped_warmup_lead_ms(t_star_ms - warm_ts)
                 prepared.append((turn, lead_ms))
                 self._baseline_correlations.add(turn.x_correlation_id)
+                self._baseline_warmup_turns.add(
+                    (turn.x_correlation_id, turn.turn_index)
+                )
                 self._root_to_lane[turn.effective_root_correlation_id] = lane
 
         if self._cache_warmup_requests_per_lane is not None:
-            baseline_counts = Counter(
-                self._cache_warmup_lane(turn) for turn, _ in prepared
+            self.info(
+                "WARMUP count budget: "
+                f"{self._cache_warmup_requests_per_lane} additional requests "
+                f"per lane after {len(prepared)} mandatory snapshot primers"
             )
-            oversized = {
-                lane: count
-                for lane, count in baseline_counts.items()
-                if count > self._cache_warmup_requests_per_lane
-            }
-            if oversized:
-                raise ValueError(
-                    "Agentic cache warmup requests-per-lane budget is smaller "
-                    "than the required snapshot-priming dispatch count for "
-                    f"lane(s) {oversized}; increase "
-                    "--warmup-requests-per-lane."
-                )
 
         # Nothing to warm: every lane's first request is at/after t* (no turn
         # precedes t*), so no warmup credit will dispatch. The count path that
@@ -757,7 +770,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         else:
             limit = (
                 f"until each lane reaches "
-                f"{self._cache_warmup_requests_per_lane} requests"
+                f"{self._cache_warmup_requests_per_lane} additional requests"
             )
         self.info(
             "WARMUP cache pressure: replaying live trajectories "

@@ -193,6 +193,7 @@ def test_agentic_replay_cli_scenario_unsafe_override_runs_to_completion(
     "warmup_option",
     [
         "--agentic-cache-warmup-duration 2",
+        "--warmup-requests-per-lane 1",
         "--warmup-requests-per-lane 2",
     ],
 )
