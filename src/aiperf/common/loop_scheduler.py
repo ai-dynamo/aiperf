@@ -68,13 +68,19 @@ class LoopScheduler:
         self._exception_handler: Callable[[asyncio.Task], None] | None = (
             exception_handler
         )
+        self._drain_observer: Callable[[], None] | None = None
 
     def set_exception_handler(self, handler: Callable[[asyncio.Task], None]) -> None:
         """Set callback for unhandled task exceptions."""
         self._exception_handler = handler
 
+    def set_drain_observer(self, observer: Callable[[], None] | None) -> None:
+        """Observe transitions from running work to no running work."""
+        self._drain_observer = observer
+
     def _done_callback(self, task: asyncio.Task) -> None:
         """Remove completed task from tracking; invoke exception handler if failed."""
+        was_tracked = task in self._tasks
         self._tasks.discard(task)  # discard() is safe if already removed by cancel_all
         # Must check cancelled() first - calling exception() on a cancelled task raises CancelledError
         if (
@@ -83,6 +89,17 @@ class LoopScheduler:
             and self._exception_handler is not None
         ):
             self._exception_handler(task)
+        if was_tracked and not self._tasks and self._drain_observer is not None:
+            try:
+                self._drain_observer()
+            except Exception as exc:  # noqa: BLE001
+                self._loop.call_exception_handler(
+                    {
+                        "message": "LoopScheduler drain observer failed",
+                        "exception": exc,
+                        "task": task,
+                    }
+                )
 
     def _safe_callback(
         self,

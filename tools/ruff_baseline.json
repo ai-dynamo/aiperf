@@ -261,6 +261,11 @@
     ],
     [
       "C901",
+      "src/aiperf/config/flags/resolver.py",
+      "_apply_phase_loadgen_overrides"
+    ],
+    [
+      "C901",
       "src/aiperf/config/flags/variant_parser.py",
       "parse_variant"
     ],
