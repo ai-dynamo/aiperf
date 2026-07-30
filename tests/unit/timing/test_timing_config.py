@@ -341,6 +341,21 @@ class TestTimingConfigFromCLIConfig:
         cfg = _make_timing_config(**kwargs)
         warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
         assert warmup.grace_period_sec == expected
+    @pytest.mark.parametrize(
+        "benchmark_grace_period,expected",
+        [(None, 30.0), (15.0, 15.0), (0.0, 0.0)],
+    )  # fmt: skip
+    def test_duration_profile_grace_period(
+        self, benchmark_grace_period: float | None, expected: float
+    ) -> None:
+        kwargs: dict[str, Any] = {"benchmark_duration": 5.0}
+        if benchmark_grace_period is not None:
+            kwargs["benchmark_grace_period"] = benchmark_grace_period
+        cfg = _make_timing_config(**kwargs)
+        profiling = next(
+            pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING
+        )
+        assert profiling.grace_period_sec == expected
 
 
 class TestPhaseRequestRate:
