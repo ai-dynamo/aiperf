@@ -147,7 +147,13 @@ async fn injected_status_code_menu_is_walked() {
          --random-seed 7 --export-level raw --ui simple",
         h.mock.url,
     ));
-    let _ = r.success();
+    // Every request errored, so the run legitimately exits non-zero. The raw
+    // records must still be written, which is what this test is about.
+    assert_ne!(
+        r.exit_code, 0,
+        "a 100% error-rate run must exit non-zero; stderr: {}",
+        r.stderr
+    );
 
     let records = r.artifacts.raw_records();
     assert!(
