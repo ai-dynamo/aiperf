@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from aiperf.config.config import BenchmarkConfig
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.search_recipes._base import SearchRecipeContext
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
@@ -48,6 +49,7 @@ def make_ctx(
     *,
     streaming: bool = True,
     sla_targets: dict[str, float] | None = None,
+    sla_filters: list[SLAFilter] | None = None,
     benchmark_overrides: dict[str, Any] | None = None,
     **sweep_overrides: Any,
 ) -> SearchRecipeContext:
@@ -57,6 +59,7 @@ def make_ctx(
         streaming: Sets ``endpoint.streaming`` on the BenchmarkConfig.
         sla_targets: Recipe-specific SLA target dict (e.g.
             ``{"ttft_sla_ms": 200}``); becomes ``ctx.sla_targets``.
+        sla_filters: Generic filters parsed from repeatable ``--search-sla`` flags.
         benchmark_overrides: Optional deep-merge into the minimal config
             kwargs (e.g. ``{"endpoint": {"type": "embeddings"}}``) for
             recipes that branch on endpoint type.
@@ -79,6 +82,7 @@ def make_ctx(
     return SearchRecipeContext(
         benchmark_config=bc,
         sla_targets=sla_targets or {},
+        sla_filters=sla_filters or [],
         sweep_overrides=sweep_overrides,
     )
 

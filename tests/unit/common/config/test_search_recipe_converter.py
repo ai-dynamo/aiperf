@@ -54,6 +54,41 @@ def test_v1_converter_expands_adaptive_search_recipes(
     assert config.multi_run is not None
 
 
+def test_max_concurrency_recipe_accepts_only_repeatable_search_sla_filters() -> None:
+    search_sla = [
+        "request_latency:p50:le:80",
+        "request_latency:p99:le:100",
+        "time_to_first_token:p50:le:3",
+        "time_to_first_token:p99:le:5",
+    ]
+
+    config = _convert_recipe(
+        "max-concurrency-under-sla",
+        streaming=True,
+        search_style="monotonic",
+        search_sla=search_sla,
+    )
+
+    assert isinstance(config.sweep, AdaptiveSearchSweep)
+    assert config.sweep.planner == SearchPlannerType.MONOTONIC_SLA
+    assert [
+        f"{sla.metric_tag}:{sla.stat}:{sla.op}:{sla.threshold:g}"
+        for sla in config.sweep.sla_filters
+    ] == search_sla
+
+
+def test_max_concurrency_recipe_defaults_to_monotonic_sla_planner() -> None:
+    """The user-facing default style ``monotonic`` selects ``monotonic_sla``."""
+    config = _convert_recipe(
+        "max-concurrency-under-sla",
+        streaming=False,
+        e2e_sla_ms=2000.0,
+    )
+
+    assert isinstance(config.sweep, AdaptiveSearchSweep)
+    assert config.sweep.planner == SearchPlannerType.MONOTONIC_SLA
+
+
 @pytest.mark.parametrize(
     ("recipe_name", "streaming", "loadgen_overrides"),
     [
@@ -285,6 +320,18 @@ def test_v1_converter_search_random_seed_overrides_recipe_default() -> None:
     )
     assert isinstance(config.sweep, AdaptiveSearchSweep)
     assert config.sweep.random_seed == 42
+
+
+def test_v1_converter_search_sla_warmup_zero_overrides_recipe_default() -> None:
+    """``--search-sla-warmup-seconds 0`` disables planner-injected warmup."""
+    config = _convert_recipe(
+        "max-concurrency-under-sla",
+        streaming=True,
+        ttft_sla_ms=200.0,
+        search_sla_warmup_seconds=0,
+    )
+    assert isinstance(config.sweep, AdaptiveSearchSweep)
+    assert config.sweep.sla_warmup_seconds == 0
 
 
 def test_v1_converter_search_initial_points_overrides_recipe_default() -> None:

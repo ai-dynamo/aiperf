@@ -3311,6 +3311,24 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    search_sla_warmup_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description=(
+                "Per-probe warmup duration for SLA search planners. Set to 0 "
+                "to disable planner-injected warmup. When omitted, the planner "
+                "uses its automatic default. Ignored by planners that do not "
+                "support SLA warmup."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-sla-warmup-seconds",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
     search_planner: Annotated[
         SearchPlannerType | None,
         Field(
@@ -3667,10 +3685,11 @@ class CLIConfig(BaseConfig):
             default=None,
             description=(
                 "Search strategy for the max-concurrency-under-sla recipe. "
-                "'smooth_isotonic' (default) runs PAVA + PCHIP smooth-isotonic "
-                "regression-based 1D SLA-saturation search. 'monotonic' runs a "
-                "1D binary-search via the MonotonicSLASearchPlanner "
-                "(~10-20 iterations). 'bo' runs penalty Bayesian Optimization "
+                "'monotonic' (default) runs a 1D exponential probe + bisection "
+                "via the internal monotonic_sla planner (~10-20 iterations). "
+                "'smooth_isotonic' runs PAVA + PCHIP smooth-isotonic "
+                "regression-based 1D SLA-saturation search. 'bo' runs penalty "
+                "Bayesian Optimization "
                 "(~30 iterations). 'optuna' runs the same penalty-BO formulation "
                 "via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch "
                 "requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + "

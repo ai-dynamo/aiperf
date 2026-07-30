@@ -5,7 +5,7 @@
 
 Five search styles dispatch off ``ctx.sweep_overrides["search_style"]``:
 
-- ``smooth_isotonic`` (default): planner=SMOOTH_ISOTONIC, BO branch, max_iterations=30.
+- ``monotonic`` (default): planner=MONOTONIC_SLA, BO branch, max_iterations=20.
 - ``monotonic``: planner=MONOTONIC_SLA, BO branch, max_iterations=20.
 - ``bo``: planner=BAYESIAN, BO branch, max_iterations=30.
 - ``optuna``: planner=OPTUNA, BO branch, max_iterations=30.
@@ -18,6 +18,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import OptimizationDirection
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, SearchPlannerType
 from aiperf.search_recipes.builtins import MaxConcurrencyUnderSLA
@@ -59,10 +60,10 @@ def test_max_concurrency_under_sla_expand_adaptive_styles_have_expected_planner(
     assert out.sla_filters[0].metric_tag == "time_to_first_token"
 
 
-def test_max_concurrency_under_sla_default_style_is_smooth_isotonic() -> None:
+def test_max_concurrency_under_sla_default_style_is_monotonic() -> None:
     out = MaxConcurrencyUnderSLA().expand(make_ctx(sla_targets={"ttft_sla_ms": 200.0}))
     assert out.adaptive_search is not None
-    assert out.adaptive_search.planner == SearchPlannerType.SMOOTH_ISOTONIC
+    assert out.adaptive_search.planner == SearchPlannerType.MONOTONIC_SLA
 
 
 def test_max_concurrency_under_sla_bo_uses_throughput_objective_maximize() -> None:
@@ -115,6 +116,20 @@ def test_max_concurrency_under_sla_no_sla_target_raises_listing_all_flags() -> N
     msg = str(exc.value)
     for flag in ("--ttft-sla-ms", "--tpot-sla-ms", "--e2e-sla-ms", "--error-rate-sla"):
         assert flag in msg
+
+
+def test_max_concurrency_under_sla_accepts_generic_sla_filters_only() -> None:
+    filters = [
+        SLAFilter(metric_tag="request_latency", stat="p50", op="le", threshold=80.0),
+        SLAFilter(metric_tag="time_to_first_token", stat="p99", op="le", threshold=5.0),
+    ]
+
+    out = MaxConcurrencyUnderSLA().expand(
+        make_ctx(sla_filters=filters, search_style="monotonic")
+    )
+
+    assert out.adaptive_search is not None
+    assert out.adaptive_search.sla_filters == filters
 
 
 def test_max_concurrency_under_sla_multi_filter_composition() -> None:

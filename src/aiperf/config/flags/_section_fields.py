@@ -235,6 +235,7 @@ SWEEPING_FIELDS: frozenset[str] = frozenset(
         "search_random_seed",
         "search_recipe",
         "search_sla",
+        "search_sla_warmup_seconds",
         "search_sla_tier",
         "search_space",
         "search_stat",

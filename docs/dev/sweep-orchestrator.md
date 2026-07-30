@@ -987,7 +987,7 @@ sweep-knob overrides (`--concurrency-min`, `--isl-osl-pairs`, etc.).
 | :--------------------------- | :---------------------------------------------------- | :------------------------------------------------------------ |
 | `max-throughput-ttft-sla`    | `adaptive_search`                                     | BO over concurrency, objective = throughput, SLA = TTFT       |
 | `max-throughput-itl-sla`     | `adaptive_search`                                     | BO over concurrency, objective = throughput, SLA = ITL        |
-| `max-concurrency-under-sla`  | `adaptive_search` (`smooth_isotonic` default) or grid | 1D feasibility — max concurrency where every SLA filter passes |
+| `max-concurrency-under-sla`  | `adaptive_search` (`monotonic` recipe style / `monotonic_sla` planner default) or grid | 1D feasibility — max concurrency where every SLA filter passes |
 | `max-goodput-under-slo`      | `adaptive_search`                                     | BO maximizing goodput at >= attainment-fraction SLO compliance |
 | `concurrency-ramp`           | `sweep_parameters` + `degradation_knee_detect`         | log-spaced concurrency grid, finds p99 degradation knee       |
 | `prefill-ttft-curve`         | `sweep_parameters` + `ttft_curve_fit`                  | ISL grid at concurrency=1, linear / quadratic fit             |
@@ -2030,7 +2030,7 @@ Planner modules below are relative to `aiperf.orchestrator.search_planner.` (e.g
 |---|---|---|---|
 | `bayesian` | `BayesianSearchPlanner` | `bayesian.py` | Curated Optuna preset (subclass of `OptunaSearchPlanner`); uses BoTorch qLogNEI/qLogNEHVI when available and falls back to TPE with a warning when the optional BoTorch stack is unavailable |
 | `monotonic_sla` | `MonotonicSLASearchPlanner` | `monotonic.py` | 1D exponential probe + bisection mirroring perf_analyzer's `--binary-search`. Margin-magnitude-blind. |
-| `smooth_isotonic` | `SmoothIsotonicSLAPlanner` | `smooth_isotonic.py` (+ helpers `_smooth_isotonic_fit.py`, `_replicate_budget.py`, `_cliff_detect.py`, `_margin_normalize.py`) | 1D PAVA + PCHIP smooth-isotonic fit; opt-in replicates and bootstrap CI; cliff-curve guard. Default for `max-concurrency-under-sla`. |
+| `smooth_isotonic` | `SmoothIsotonicSLAPlanner` | `smooth_isotonic.py` (+ helpers `_smooth_isotonic_fit.py`, `_replicate_budget.py`, `_cliff_detect.py`, `_margin_normalize.py`) | 1D PAVA + PCHIP smooth-isotonic fit; opt-in replicates and bootstrap CI; cliff-curve guard. Opt-in via `--search-style smooth_isotonic`. |
 | `optuna` | `OptunaSearchPlanner` | `optuna_planner.py` | Expert-mode Optuna BO (TPE / GP / BoTorch samplers exposed via `--optuna-sampler`); Optuna ships by default, BoTorch requires the optional `botorch` extra. |
 
 All four are registered in `src/aiperf/plugin/plugins.yaml` under the `search_planner:` category and resolved via `plugins.get_class(PluginType.SEARCH_PLANNER, name)`.

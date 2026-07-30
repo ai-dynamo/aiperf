@@ -230,7 +230,7 @@ That whole pipeline — Protocol dispatch, mutual-exclusion checking, model_dump
 |---|---|---|---|---|
 | `max-throughput-ttft-sla` | BO | "Highest tokens/s where p95 TTFT < X ms" | `--ttft-sla-ms` | `best_trials` in `search_history.json`, feasibility-first |
 | `max-throughput-itl-sla` | BO | "Highest tokens/s where p95 ITL < X ms" | `--itl-sla-ms` (alias `--tpot-sla-ms`) | `best_trials` in `search_history.json`, feasibility-first |
-| `max-concurrency-under-sla` | Smooth-isotonic / Monotonic / BO / Optuna / Grid | "Highest concurrency where every SLA filter passes" | One or more SLA flags; `--search-style {smooth_isotonic\|monotonic\|bo\|optuna\|grid}` (default smooth_isotonic) | `boundary_summary` in `search_history.json`; `sla_breach.json` for grid |
+| `max-concurrency-under-sla` | Monotonic / Smooth-isotonic / BO / Optuna / Grid | "Highest concurrency where every SLA filter passes" | One or more SLA flags; `--search-style {smooth_isotonic\|monotonic\|bo\|optuna\|grid}` (default `monotonic`) | `boundary_summary` in `search_history.json`; `sla_breach.json` for grid |
 | `max-goodput-under-slo` | BO (objective = goodput) | "Concurrency that maximizes goodput at >=X% per-request SLO attainment" | `--ttft-sla-ms`, `--tpot-sla-ms`, `--e2e-sla-ms`, `--slo-attainment-fraction` | `best_trials` in `search_history.json` plus standard aggregate summaries |
 | `concurrency-ramp` | Grid + post-process | "Where does p99 latency degrade by >N%?" | `--degradation-threshold` | `sweep_aggregate/degradation_knee.json` |
 | `prefill-ttft-curve` | Grid + post-process | "TTFT(ISL) curve" | `--isl-min`, `--isl-max` | `sweep_aggregate/prefill_curve.json` |
@@ -262,10 +262,10 @@ aiperf profile --model my-model --url http://infer.example.com --streaming \
 
 ### `max-concurrency-under-sla`
 
-Find the largest concurrency at which every configured SLA filter passes. Composes any combination of `--ttft-sla-ms` / `--tpot-sla-ms` / `--e2e-sla-ms` / `--error-rate-sla` / `--search-sla`. Five search styles (`--search-style {smooth_isotonic|monotonic|bo|optuna|grid}`, default `smooth_isotonic`):
+Find the largest concurrency at which every configured SLA filter passes. Composes any combination of `--ttft-sla-ms` / `--tpot-sla-ms` / `--e2e-sla-ms` / `--error-rate-sla` / `--search-sla`. Five search styles (`--search-style {smooth_isotonic|monotonic|bo|optuna|grid}`, default `monotonic`):
 
+- `monotonic` — exponential probe + bisection; ~10 iterations on `[1, 1000]` at 5% precision; the direct equivalent of perf_analyzer's `--binary-search`. The recipe style `monotonic` expands to the internal planner plugin `monotonic_sla`.
 - `smooth_isotonic` — PAVA-denoised isotonic regression + PCHIP root-find on per-SLO margin curves; opt-in Phase-3 replicates with bootstrap CI; cliff-curve guard. Strictly more accurate than `monotonic` under noise. ~13–25 iterations on `[1, 1000]` at 5% precision (more with replicates).
-- `monotonic` — exponential probe + bisection; ~10 iterations on `[1, 1000]` at 5% precision; the direct equivalent of perf_analyzer's `--binary-search`. Margin-magnitude-blind.
 - `bo` — penalty-BO maximizing `output_token_throughput` within the feasibility region.
 - `optuna` — same penalty-BO formulation as `bo`, routed through the `OptunaSearchPlanner` (TPE / GP / BoTorch samplers, selected via `--optuna-sampler`). Optuna ships by default; BoTorch requires the optional `botorch` extra.
 - `grid` — 8 log-spaced points + `sla_breach_knee` post-process emitting `sweep_aggregate/sla_breach.json`.

@@ -159,6 +159,13 @@ class SearchRecipeContext(BaseConfig):
             "(``aiperf.config.flags.recipes._invoke_recipe``)."
         ),
     )
+    sla_filters: list[SLAFilter] = Field(
+        default_factory=list,
+        description=(
+            "Generic SLA filters parsed from repeatable --search-sla flags. Recipes "
+            "that define SLA feasibility compose these after any named SLA targets."
+        ),
+    )
     sweep_overrides: dict[str, Any] = Field(
         default_factory=dict,
         description=(

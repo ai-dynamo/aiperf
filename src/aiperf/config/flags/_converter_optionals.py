@@ -304,16 +304,40 @@ def build_sweep(
         sweep: dict[str, Any] = {"type": "grid"}
         recipe_sla_dumps = list(recipe_output.get("sla_filters") or [])
         if recipe_sla_dumps or extra_sla_dumps:
-            sweep["sla_filters"] = recipe_sla_dumps + extra_sla_dumps
+            sweep["sla_filters"] = _merge_sla_filter_dumps(
+                recipe_sla_dumps, extra_sla_dumps
+            )
         if recipe_output.get("post_process") is not None:
             sweep["post_process"] = recipe_output["post_process"]
         return sweep
     if extra_sla_dumps:
         existing = list(adaptive_search.get("sla_filters") or [])
-        adaptive_search["sla_filters"] = existing + extra_sla_dumps
+        adaptive_search["sla_filters"] = _merge_sla_filter_dumps(
+            existing, extra_sla_dumps
+        )
     if sla_tier_dumps:
         adaptive_search["sla_tiers"] = sla_tier_dumps
     return adaptive_search
+
+
+def _merge_sla_filter_dumps(
+    existing: list[dict[str, Any]], additional: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge serialized SLA filters while preserving their first occurrence."""
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for sla_filter in [*existing, *additional]:
+        identity = (
+            sla_filter.get("metric_tag"),
+            sla_filter.get("stat"),
+            sla_filter.get("op"),
+            sla_filter.get("threshold"),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(sla_filter)
+    return merged
 
 
 def _parse_search_sla_flags(sw: Any) -> list[dict[str, Any]]:
@@ -392,6 +416,7 @@ def _reject_search_plus_convergence(sw: Any) -> None:
 _SWEEP_OPTIONAL_FIELDS: tuple[tuple[str, str], ...] = (
     ("search_initial_points", "n_initial_points"),
     ("search_random_seed", "random_seed"),
+    ("search_sla_warmup_seconds", "sla_warmup_seconds"),
     ("search_planner", "planner"),
     ("optuna_sampler", "optuna_sampler"),
     ("optuna_acquisition", "optuna_acquisition"),
