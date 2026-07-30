@@ -154,7 +154,7 @@ def test_prompt_config_random_range_ratio_vllm_mode_rejects_ratio_one():
 
 
 def test_prompt_config_get_sequence_distribution_passes_num_special_tokens():
-    """num_special_tokens shifts the ISL bounds in the returned distribution."""
+    """num_special_tokens is forwarded to RangeRatioDistribution via the style's adjust_mean."""
     from aiperf.common.models.sequence_distribution import RangeRatioDistribution
 
     config = PromptConfig(
@@ -164,7 +164,6 @@ def test_prompt_config_get_sequence_distribution_passes_num_special_tokens():
     )
     dist = config.get_sequence_distribution(num_special_tokens=1)
     assert isinstance(dist, RangeRatioDistribution)
-    # adjusted_mean = max(0, 512 - 1) = 511 (vllm mode)
     assert dist.input_bounds == (math.floor(511 * 0.7), math.ceil(511 * 1.3))
 
 

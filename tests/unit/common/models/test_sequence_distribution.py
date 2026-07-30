@@ -892,7 +892,7 @@ class TestRangeRatioDistribution:
         assert first_run == second_run
 
     def test_num_special_tokens_adjusts_isl_mean_only(self):
-        """num_special_tokens subtracts from isl_mean before computing bounds; osl is unchanged."""
+        """Style's adjust_mean subtracts special tokens from isl_mean; osl is unchanged."""
         dist_plain = RangeRatioDistribution(
             isl_mean=512, osl_mean=128, input_ratio=0.3, output_ratio=0.3
         )
@@ -903,16 +903,14 @@ class TestRangeRatioDistribution:
             output_ratio=0.3,
             num_special_tokens=1,
         )
-        # ISL bounds shift down by 1 (adjusted_mean = 511)
         assert dist_adjusted.input_bounds == (
             math.floor(511 * 0.7),
             math.ceil(511 * 1.3),
         )
-        # OSL bounds unchanged (max_tokens is passed directly to server)
         assert dist_adjusted.output_bounds == dist_plain.output_bounds
 
     def test_num_special_tokens_vllm_allows_zero_adjusted_mean(self):
-        """vllm: adjusted_mean = max(0, isl_mean - num_special_tokens), matching upstream."""
+        """vllm adjust_mean: max(0, isl_mean - n) — allows zero."""
         dist = RangeRatioDistribution(
             isl_mean=1,
             osl_mean=128,
@@ -920,24 +918,10 @@ class TestRangeRatioDistribution:
             output_ratio=0.0,
             num_special_tokens=5,
         )
-        # adjusted_mean = max(0, 1-5) = 0; input_floor=0 for vllm
         assert dist.input_bounds == (0, 0)
 
-    def test_num_special_tokens_sglang_clamps_adjusted_mean_to_one(self):
-        """sglang: adjusted_mean = max(1, isl_mean - num_special_tokens), matching upstream."""
-        dist = RangeRatioDistribution(
-            isl_mean=1,
-            osl_mean=128,
-            input_ratio=0.0,
-            output_ratio=0.0,
-            num_special_tokens=5,
-            mode=RandomCorpusStyle.SGLANG,
-        )
-        # adjusted_mean = max(1, 1-5) = 1; input_floor=1 for sglang
-        assert dist.input_bounds == (1, 1)
-
     def test_num_special_tokens_zero_is_identity(self):
-        """num_special_tokens=0 (default) produces identical bounds to omitting the param."""
+        """num_special_tokens=0 (default) leaves bounds unchanged."""
         dist_default = RangeRatioDistribution(
             isl_mean=512, osl_mean=128, input_ratio=0.3, output_ratio=0.3
         )
@@ -1033,6 +1017,18 @@ class TestRangeRatioDistributionSglangMode:
                 output_ratio=1.5,
                 mode=RandomCorpusStyle.SGLANG,
             )
+
+    def test_num_special_tokens_sglang_clamps_adjusted_mean_to_one(self):
+        """sglang adjust_mean: max(1, isl_mean - n) — floors at 1."""
+        dist = RangeRatioDistribution(
+            isl_mean=1,
+            osl_mean=128,
+            input_ratio=0.0,
+            output_ratio=0.0,
+            num_special_tokens=5,
+            mode=RandomCorpusStyle.SGLANG,
+        )
+        assert dist.input_bounds == (1, 1)
 
 
 class TestParseRandomRangeRatio:

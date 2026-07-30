@@ -584,11 +584,10 @@ class RangeRatioDistribution:
     - ``SGLANG``: lower-bounded window ``[max(1, int(mean*r)), mean]``. ``r`` must
       satisfy ``0.0 <= r <= 1.0``. Matches ``sglang.bench_serving``.
 
-    When ``num_special_tokens > 0``, the ISL mean is reduced before bounds are
-    computed. The adjustment is mode-specific: vllm uses ``max(0, mean - n)``
-    (allowing a zero-length range); sglang uses ``max(1, mean - n)`` (matching
-    its per-sample ``max(1, len - num_special)`` clamp). OSL is not adjusted
-    because ``max_tokens`` is passed directly to the server.
+    Special-token accounting (BOS etc.) is style-specific: each
+    :class:`RandomCorpusStyle` encodes its own ``adjust_mean`` rule, so callers
+    need only supply the raw count via ``num_special_tokens`` and the style
+    determines whether and how to subtract it.
     """
 
     def __init__(
