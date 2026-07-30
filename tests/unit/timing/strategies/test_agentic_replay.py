@@ -19,6 +19,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
+from aiperf.config import BenchmarkRun
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -2266,7 +2267,9 @@ async def test_warmup_skips_mark_sending_complete_when_already_complete():
 _RID_RE = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
 
-def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-fixed"):
+def _make_run(
+    *, target: CacheBustTarget, benchmark_id: str = "bench-fixed"
+) -> BenchmarkRun:
     """Build a v2 ``BenchmarkRun`` exposing the cache-bust target (on the synthetic dataset's ``prompts.cache_bust.target``) and ``benchmark_id`` the strategy reads."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 

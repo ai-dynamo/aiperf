@@ -12,6 +12,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.config import BenchmarkRun
 from aiperf.credit.structs import Credit
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -73,7 +74,9 @@ def _make_credit(
     )
 
 
-def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-fixed"):
+def _make_run(
+    *, target: CacheBustTarget, benchmark_id: str = "bench-fixed"
+) -> BenchmarkRun:
     """Build a v2 ``BenchmarkRun`` exposing the cache-bust target (on the synthetic dataset's ``prompts.cache_bust.target``) and ``benchmark_id`` the strategy reads."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
