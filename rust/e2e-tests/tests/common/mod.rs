@@ -11,12 +11,23 @@
 #![allow(dead_code)]
 
 mod raw_jsonl;
+#[path = "../../../test-support/timing_helpers.rs"]
+mod timing_helpers;
 // `mod common` is compiled separately for each test binary.
 #[allow(unused_imports)]
 pub use raw_jsonl::{
     RawRecordTiming, TunedExpectations, assert_raw_records_timing_and_data,
     assert_raw_records_timing_self_consistent, assert_raw_records_timing_self_consistent_model,
     extract_timing, timing_fast_forwarded, tuned_mock_config,
+};
+#[allow(unused_imports)]
+pub use timing_helpers::{
+    DEFAULT_RANDOM_SEED, ProfileExport, RealisticLatencyConfig, TimingCommandOptions,
+    TimingTestConfig, assert_concurrency_limit_hit, assert_concurrency_limit_respected,
+    assert_credits_balanced, assert_fair_load_distribution, assert_request_count,
+    assert_session_credits_match, assert_test_will_hit_concurrency_limit,
+    assert_test_will_hit_prefill_limit, assert_turn_indices_sequential, build_burst_command,
+    build_timing_command, verify_no_interleaving_within_session, verify_sessions_can_interleave,
 };
 
 use std::collections::HashMap;
@@ -524,7 +535,12 @@ fn assert_exec_binary_fresh(path: &Path, built_at: SystemTime) {
     // Only the crates that compile into `aiperf`: the CLI binary and the runtime
     // it links. Test-only and sibling crates cannot change its behavior.
     let mut newest_source: Option<(PathBuf, SystemTime)> = None;
-    for rel in ["cli/src", "runtime/src", "cli/Cargo.toml", "runtime/Cargo.toml"] {
+    for rel in [
+        "cli/src",
+        "runtime/src",
+        "cli/Cargo.toml",
+        "runtime/Cargo.toml",
+    ] {
         collect_newest_mtime(&workspace.join(rel), &mut newest_source);
     }
     let Some((source, changed_at)) = newest_source else {
@@ -597,6 +613,12 @@ pub struct RunResult {
 impl RunResult {
     pub fn success(&self) -> bool {
         self.exit_code == 0
+    }
+}
+
+impl ProfileExport for RunResult {
+    fn profile_export_records(&self) -> Vec<serde_json::Value> {
+        self.artifacts.jsonl()
     }
 }
 

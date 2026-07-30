@@ -60,7 +60,7 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, Requ
 use crate::multiturn::TurnToSend;
 use crate::rng::{ConfiguredRandomGenerator, RandomGenerator};
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
-use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome};
+use crate::transport::core::{DispatchResult, ErrorDetails, MeasuredContext, MeasuredOutcome};
 use crate::transport::core::{PreparedTurn, RequestExecutor};
 use crate::transport::core::{RequestRecord, Response, TextResponse};
 
@@ -556,6 +556,7 @@ impl FakeFabricator {
         isl: u64,
         osl: usize,
         start_abs: i64,
+        cancel_after_ns: Option<i64>,
         request_payload: Bytes,
         recorded: RecordedLatency,
         on_first_token: &dyn Fn(i64),
@@ -589,8 +590,18 @@ impl FakeFabricator {
         } else {
             recv_start_abs
         };
+        // The cancellation policy is armed after request send completion. A dry
+        // run has no wire-send phase, so dispatch start is that boundary. Keep
+        // an exactly-tied terminal response successful, as `race_cancel` does
+        // for the real transport's response branch.
+        let cancellation_abs = cancel_after_ns
+            .map(|delay| start_abs.saturating_add(delay.max(0)))
+            .filter(|deadline| *deadline < end_abs);
         let virtual_time = self.clock.is_virtual();
         for index in 0..osl {
+            if cancellation_abs.is_some_and(|deadline| token_abs(index) > deadline) {
+                break;
+            }
             if virtual_time {
                 // Advance virtual time to this token's fabricated arrival.
                 let wait = token_abs(index) - self.clock.now_ns();
@@ -603,6 +614,49 @@ impl FakeFabricator {
                 on_first_token(ttft_ns);
             }
             observer.on_token(uuid, at_ms);
+        }
+        if let Some(cancellation_abs) = cancellation_abs {
+            if virtual_time {
+                let wait = cancellation_abs - self.clock.now_ns();
+                if wait > 0 {
+                    self.clock.clone().sleep(wait).await;
+                }
+            }
+            self.inflight.set(self.inflight.get() - 1);
+            let cancel_after_ns = cancel_after_ns.unwrap_or_default().max(0);
+            let error = ErrorDetails::cancelled(format!(
+                "RequestCancellationError: request cancelled {cancel_after_ns}ns after being sent"
+            ));
+            observer.on_usage(uuid, ObservedUsage::default());
+            observer.on_terminal(uuid, ReplayTerminalStatus::Canceled);
+            let record = RequestRecord {
+                start_ns: start_abs,
+                request_body: request_payload.clone(),
+                end_ns: Some(cancellation_abs),
+                error: Some(error),
+                cancellation_ns: Some(cancellation_abs),
+                ..RequestRecord::started(start_abs)
+            };
+            return DispatchResult {
+                outcome: TurnDispatchOutcome {
+                    start_ns: start_abs,
+                    end_ns: cancellation_abs,
+                    terminal: ReplayTerminalStatus::Canceled,
+                    response_text: String::new(),
+                    model_response: ModelResponseMetadata {
+                        error_kind: Some("RequestCancellationError".to_string()),
+                        error_message: Some(format!(
+                            "RequestCancellationError: request cancelled {cancel_after_ns}ns after being sent"
+                        )),
+                        ..ModelResponseMetadata::default()
+                    },
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    http: RequestTrace::default(),
+                },
+                request_payload,
+                record,
+            };
         }
         if virtual_time {
             // An empty (osl == 0) or already-past request still consumes its
@@ -742,6 +796,7 @@ impl RequestExecutor for FakeRequestExecutor {
                 isl,
                 osl,
                 start_abs,
+                turn.request.cancel_after_ns,
                 request_payload,
                 recorded,
                 on_first_token,
@@ -827,6 +882,7 @@ impl crate::transport::core::Dispatcher for FakeDispatcher {
                 isl,
                 osl,
                 start_abs,
+                turn.request.cancel_after_ns,
                 request_payload,
                 recorded,
                 on_first_token,

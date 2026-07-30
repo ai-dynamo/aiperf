@@ -12,6 +12,7 @@ members = [
     "cli",
     "mock-server",
     "e2e-tests",
+    "dry-run-tests",
     # Standalone benchmark-comparison utilities (logproxy, sagemaker-logproxy, ...)
     # with no dependency on aiperf-runtime or aiperf-mock-server, so they build
     # instantly regardless of aiperf's own build state.

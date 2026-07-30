@@ -67,8 +67,9 @@ The Cargo workspace uses edition 2024 and resolver 3.
 - `aiperf-cli`: library plus the `aiperf` binary. It owns command routing, Config v2 loading and expansion, profile projection, self-execution, cellular roles, native searches and sweeps, result rendering, and process signals.
 - `aiperf-mock-server`: standalone HTTP/gRPC inference target with deterministic response generation, latency models, error injection, usage accounting, telemetry, TLS, UDS, balancing, accuracy fixtures, and request recording.
 - `aiperf-e2e-tests` (`rust/e2e-tests`): product integration harness and tests.
+- `aiperf-dry-run-tests` (`rust/dry-run-tests`): standalone socket-free end-to-end suite for the native `--dry-run` transport.
 
-Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `aiperf-e2e-tests` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. The CLI and mock server are independent executables.
+Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `aiperf-e2e-tests` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `aiperf-dry-run-tests` launches the `aiperf` binary and has no server dependency. The CLI and mock server are independent executables.
 
 ## Runtime modules
 
