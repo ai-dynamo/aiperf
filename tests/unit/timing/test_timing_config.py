@@ -341,6 +341,7 @@ class TestTimingConfigFromCLIConfig:
         cfg = _make_timing_config(**kwargs)
         warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
         assert warmup.grace_period_sec == expected
+
     @pytest.mark.parametrize(
         "benchmark_grace_period,expected",
         [(None, 30.0), (15.0, 15.0), (0.0, 0.0)],
