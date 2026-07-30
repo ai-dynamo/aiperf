@@ -160,12 +160,19 @@ async fn tuned_https_single_turn_raw_timing() {
     if timing_fast_forwarded(&records, TTFT_MS) {
         return;
     }
-    // TLS setup affects TTFT but not steady-state token pacing.
+    // TTFT error here is one-sided and larger than on the cleartext paths: the
+    // measured window spans the TLS handshake plus the mock's 100ms first-token
+    // sleep, and a sleep only resolves to host scheduler wakeup granularity, so
+    // it always overshoots (observed at +41ms under load) and has no
+    // load-independent bound. The band is sized against the regression it must
+    // detect -- a dropped or doubled first-token delay moves TTFT by 100ms --
+    // rather than against the last observed sample. Steady-state token pacing is
+    // unaffected by handshake cost, so ITL keeps its tight band.
     assert_raw_records_timing_and_data(
         &records,
         &TunedExpectations::new(TTFT_MS, ITL_MS, OSL)
             .model("gpt-4")
-            .tol_ms(40.0, 2.0),
+            .tol_ms(50.0, 2.0),
     );
 }
 
