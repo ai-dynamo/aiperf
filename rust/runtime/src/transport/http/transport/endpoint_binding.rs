@@ -560,7 +560,6 @@ fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64, HttpEndpointBindingEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clock::SimClock;
     use crate::transport::core::SseMessage;
 
     /// Prepare a builtin endpoint by its open ID for the prepared HTTP binding.
@@ -664,11 +663,6 @@ mod tests {
 
     #[tokio::test]
     async fn metadata_binding_preserves_json_and_lowers_multipart_at_http_boundary() {
-        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let transport = HttpTransport::new(
-            clock,
-            crate::transport::http::config::ClientConfig::default(),
-        );
         let base_urls = vec!["http://host/v1".to_string()];
         let chat = prepared("chat");
         let binding =
