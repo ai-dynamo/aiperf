@@ -976,6 +976,12 @@
               "title": "Produces Tokens",
               "type": "boolean"
             },
+            "supports_cache_bust": {
+              "default": false,
+              "description": "Whether the endpoint formatter can apply a cache-bust marker to the structured request payload.",
+              "title": "Supports Cache Bust",
+              "type": "boolean"
+            },
             "supports_audio": {
               "default": false,
               "description": "Whether endpoint accepts audio input.",

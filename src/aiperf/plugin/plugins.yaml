@@ -196,6 +196,7 @@ endpoint:
       supports_images: true
       supports_videos: true
       consumes_system_message: true
+      supports_cache_bust: true
       metrics_title: LLM Metrics
 
   cohere_rankings:
@@ -236,6 +237,7 @@ endpoint:
       supports_images: true
       supports_audio: true
       consumes_system_message: true
+      supports_cache_bust: true
       metrics_title: LLM Metrics
 
   messages:
