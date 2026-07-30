@@ -166,6 +166,22 @@ class TestScheduleLater:
         with pytest.raises(ValueError, match="non-negative"):
             scheduler.cap_pending_delay(-1.0)
 
+    async def test_drain_observer_fires_after_last_running_task(
+        self, scheduler: LoopScheduler
+    ):
+        observed: list[tuple[int, int]] = []
+        scheduler.set_drain_observer(
+            lambda: observed.append((scheduler.pending_count, scheduler.running_count))
+        )
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(0.01, noop())
+        await asyncio.sleep(0.02)
+
+        assert observed == [(0, 0)]
+
 
 class TestExecuteAsync:
     """Tests for execute_async (immediate task execution)."""
