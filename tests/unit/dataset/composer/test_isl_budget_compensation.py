@@ -22,6 +22,8 @@ def _make_config(
     *,
     cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     shared_system_prompt_length: int | None = None,
+    prefix_pool_size: int | None = None,
+    prefix_length: int | None = None,
     isl_mean: int = 100,
     apply_chat_template: bool = True,
 ):
@@ -36,6 +38,10 @@ def _make_config(
     }
     if shared_system_prompt_length is not None:
         overrides["prompt_prefix_shared_system_length"] = shared_system_prompt_length
+    if prefix_pool_size is not None:
+        overrides["prompt_prefix_pool_size"] = prefix_pool_size
+    if prefix_length is not None:
+        overrides["prompt_prefix_length"] = prefix_length
     return make_run_from_cli(CLIConfig(**overrides))
 
 
@@ -308,16 +314,20 @@ class TestChatTemplateOverheadProbe:
 class TestAdjustmentProperties:
     """The two public properties must compose the components correctly."""
 
-    def test_first_turn_adjustment_composes_all_three(self):
-        config = _make_config(cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
+    def test_first_turn_adjustment_composes_all_four(self):
+        config = _make_config(
+            cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
+            prefix_pool_size=3,
+            prefix_length=20,
+        )
         composer = _build_composer(config, marker_cost=10, chat_fixed=4, chat_wrap=5)
-        # 4 (fixed) + 5 (wrap) + 10 (marker) = 19
-        assert composer.first_turn_isl_adjustment == 19
+        # 4 (fixed) + 5 (wrap) + 10 (marker) + 20 (prefix) = 39
+        assert composer.first_turn_isl_adjustment == 39
 
     def test_subsequent_turn_adjustment_only_per_msg_wrap(self):
         config = _make_config(cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
         composer = _build_composer(config, marker_cost=10, chat_fixed=4, chat_wrap=5)
-        # Only 5 (wrap), no fixed and no marker.
+        # Only 5 (wrap): fixed, marker, and prefix all apply only to the first turn.
         assert composer.subsequent_turn_isl_adjustment == 5
 
     def test_no_adjustment_when_everything_zero(self):
@@ -325,6 +335,19 @@ class TestAdjustmentProperties:
         composer = _build_composer(config)
         assert composer.first_turn_isl_adjustment == 0
         assert composer.subsequent_turn_isl_adjustment == 0
+
+    def test_prefix_length_included_in_first_turn_adjustment(self):
+        """Prefix tokens are subtracted from the first-turn ISL so body + prefix = target."""
+        config = _make_config(prefix_pool_size=3, prefix_length=30)
+        composer = _build_composer(config)
+        assert composer.first_turn_isl_adjustment == 30
+        assert composer.subsequent_turn_isl_adjustment == 0
+
+    def test_no_prefix_length_when_pool_size_absent(self):
+        """prefix_length without pool_size has no effect on adjustment."""
+        config = _make_config(prefix_length=30)
+        composer = _build_composer(config)
+        assert composer.first_turn_isl_adjustment == 0
 
 
 class TestSyntheticPromptBudgetSubtraction:
