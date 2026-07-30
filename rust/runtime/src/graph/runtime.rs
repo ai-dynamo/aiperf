@@ -588,18 +588,14 @@ mod tests {
         // shape that previously hung silently: the yield self-wakes, so the pump
         // re-polls the same instant and never advances to the parked deadline.
         let clock = Rc::new(SimClock::new());
-        let error = drive_sim_inner(
-            clock.clone(),
-            None,
-            move |handle: Handle| async move {
-                handle.spawn(async move {
-                    clock.clone().sleep(1_000_000).await;
-                });
-                loop {
-                    tokio::task::yield_now().await;
-                }
-            },
-        )
+        let error = drive_sim_inner(clock.clone(), None, move |handle: Handle| async move {
+            handle.spawn(async move {
+                clock.clone().sleep(1_000_000).await;
+            });
+            loop {
+                tokio::task::yield_now().await;
+            }
+        })
         .expect_err("a self-waking retry loop must be reported, not hang");
         assert_eq!(error, SimDriveError::ClockStarved { at_ns: 0 });
     }
