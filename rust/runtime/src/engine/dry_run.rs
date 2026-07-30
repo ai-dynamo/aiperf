@@ -33,7 +33,7 @@
 //! lognormal jitter. Zero scaling and jitter yield deterministic fixed latency.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -48,12 +48,13 @@ use crate::dispatch::sink::{ObservedUsage, RequestObserver};
 use uuid::Uuid;
 
 use crate::clock::Clock;
+use crate::engine::protocol::HopRouting;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{
     ClockKind, NativeTransportExecution, RunContext, TransportDescriptor, TransportFactory,
     ValidatedTransportConfig, WorkloadRequirements, strict_decode,
 };
-use crate::engine::turn_execution::{ExecutionBackendConfig, RequestExecutorFactory};
+use crate::engine::turn_execution::{ExecutionBackendConfig, RequestExecutorFactory, pick_worker};
 use crate::extensions::AIPerfRegistry;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
@@ -107,6 +108,53 @@ pub enum DryRunLatencyModel {
     /// schedule reproduces the recorded warped timeline exactly. Falls back to the
     /// linear analytic model for any request lacking a recorded api_time.
     Recorded,
+}
+
+/// In-flight count used by analytic contention terms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VirtualContentionScope {
+    /// Count all requests executing on every virtual worker.
+    #[default]
+    Global,
+    /// Count only requests assigned to the selected virtual worker.
+    WorkerLocal,
+}
+
+/// Optional latency profile for one logical worker.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DryRunVirtualWorkerProfileV2 {
+    /// Zero-based worker index.
+    pub worker: usize,
+    /// Multiplier applied to analytic TTFT.
+    #[serde(default = "one")]
+    pub ttft_multiplier: f64,
+    /// Multiplier applied to analytic ITL.
+    #[serde(default = "one")]
+    pub itl_multiplier: f64,
+}
+
+/// Strict single-reactor virtual worker configuration.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DryRunVirtualWorkersConfigV2 {
+    /// Enable logical worker placement.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Logical width; defaults to authored `runtime.workers`.
+    #[serde(default)]
+    pub width: Option<usize>,
+    /// Scope of the contention input supplied to the analytic model.
+    #[serde(default)]
+    pub contention_scope: VirtualContentionScope,
+    /// Optional per-worker latency multipliers.
+    #[serde(default)]
+    pub profiles: Vec<DryRunVirtualWorkerProfileV2>,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 /// Built-in `dry_run` transport descriptor. The catalog clock is `Sim` (the
@@ -173,6 +221,9 @@ pub struct DryRunTransportConfigV2 {
     /// virtual-time execution via `drive_sim`).
     #[serde(default)]
     pub clock: DryRunClock,
+    /// Optional deterministic logical-worker placement.
+    #[serde(default)]
+    pub virtual_workers: DryRunVirtualWorkersConfigV2,
 }
 
 impl DryRunTransportConfigV2 {
@@ -376,6 +427,39 @@ impl TransportFactory for DryRunTransportFactoryV2 {
                 "dry_run {name} must be a finite non-negative value, got {value}"
             );
         }
+        if let Some(width) = config.virtual_workers.width {
+            ensure!(width > 0, "dry_run virtual_workers.width must be positive");
+        }
+        let mut profiled = std::collections::BTreeSet::new();
+        for profile in &config.virtual_workers.profiles {
+            ensure!(
+                profile.ttft_multiplier.is_finite() && profile.ttft_multiplier > 0.0,
+                "dry_run virtual worker {} ttft_multiplier must be finite and positive",
+                profile.worker
+            );
+            ensure!(
+                profile.itl_multiplier.is_finite() && profile.itl_multiplier > 0.0,
+                "dry_run virtual worker {} itl_multiplier must be finite and positive",
+                profile.worker
+            );
+            ensure!(
+                profiled.insert(profile.worker),
+                "dry_run virtual worker profile {} is duplicated",
+                profile.worker
+            );
+            if let Some(width) = config.virtual_workers.width {
+                ensure!(
+                    profile.worker < width,
+                    "dry_run virtual worker profile {} is outside width {width}",
+                    profile.worker
+                );
+            }
+        }
+        ensure!(
+            config.virtual_workers.enabled
+                || config.virtual_workers.contention_scope == VirtualContentionScope::Global,
+            "dry_run virtual_workers.contention_scope requires enabled: true"
+        );
         Ok(Box::new(config))
     }
 
@@ -389,6 +473,7 @@ impl TransportFactory for DryRunTransportFactoryV2 {
             .ok_or_else(|| anyhow::anyhow!("dry_run transport received a non-dry_run config"))?;
         Ok(Some(Arc::new(DryRunNativeExecution {
             params: config.params(),
+            virtual_workers: config.virtual_workers.clone(),
         })))
     }
 }
@@ -403,11 +488,15 @@ impl TransportFactory for DryRunTransportFactoryV2 {
 #[derive(Debug)]
 pub struct DryRunNativeExecution {
     params: DryRunParams,
+    virtual_workers: DryRunVirtualWorkersConfigV2,
 }
 
 impl NativeTransportExecution for DryRunNativeExecution {
     fn executor_factory(&self) -> Arc<dyn RequestExecutorFactory> {
-        Arc::new(FakeRequestExecutorFactory::new(self.params))
+        Arc::new(FakeRequestExecutorFactory::with_virtual_workers(
+            self.params,
+            self.virtual_workers.clone(),
+        ))
     }
 
     fn readiness_enabled(&self) -> bool {
@@ -441,7 +530,32 @@ impl NativeTransportExecution for DryRunNativeExecution {
         "dry_run"
     }
 
-    fn validate_run(&self, _run: &AuthoredRunSpecV2, _context: &RunContext) -> Result<()> {
+    fn virtual_worker_width(&self, authored_workers: usize) -> Option<usize> {
+        self.virtual_workers
+            .enabled
+            .then(|| self.virtual_workers.width.unwrap_or(authored_workers))
+    }
+
+    fn validate_run(&self, run: &AuthoredRunSpecV2, _context: &RunContext) -> Result<()> {
+        if self.virtual_workers.enabled {
+            ensure!(
+                self.params.clock == DryRunClock::Sim,
+                "dry_run virtual_workers require clock: sim"
+            );
+            ensure!(
+                run.dispatch != crate::engine::protocol::DispatchMode::Sharded,
+                "dry_run virtual_workers do not yet support runtime.dispatch: sharded"
+            );
+            ensure!(
+                run.workload.id.as_str() != "graph",
+                "dry_run virtual_workers do not yet support graph workloads"
+            );
+        } else {
+            ensure!(
+                self.virtual_workers.contention_scope == VirtualContentionScope::Global,
+                "dry_run virtual_workers.contention_scope requires enabled: true"
+            );
+        }
         // A dry run touches no server, so URL-scheme and readiness validation are
         // skipped; the fake leaf fabricates every outcome from the analytic model.
         Ok(())
@@ -473,15 +587,29 @@ pub fn register_dry_run_transport(registry: &mut AIPerfRegistry) -> Result<()> {
 /// Built inside `prepare_native_operation` from the run's [`DryRunParams`]; it
 /// carries no process-global state, so a `dry_run` run needs no change to
 /// [`crate::engine::execution_factories::ExecutionFactories`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FakeRequestExecutorFactory {
     params: DryRunParams,
+    virtual_workers: DryRunVirtualWorkersConfigV2,
 }
 
 impl FakeRequestExecutorFactory {
     /// Build a factory that fabricates outcomes from `params`.
     pub fn new(params: DryRunParams) -> Self {
-        Self { params }
+        Self {
+            params,
+            virtual_workers: DryRunVirtualWorkersConfigV2::default(),
+        }
+    }
+
+    fn with_virtual_workers(
+        params: DryRunParams,
+        virtual_workers: DryRunVirtualWorkersConfigV2,
+    ) -> Self {
+        Self {
+            params,
+            virtual_workers,
+        }
     }
 }
 
@@ -491,13 +619,98 @@ impl RequestExecutorFactory for FakeRequestExecutorFactory {
             config.workers > 0,
             "dry_run execution workers must be positive"
         );
-        // Fabrication is CPU-only and single-observer: worker count is ignored,
-        // everything accumulates into one coordinator-reactor observer, so a dry
-        // run has no thread-per-core setup cost.
+        let placement = config
+            .virtual_worker_width
+            .map(|width| {
+                ensure!(width > 0, "dry_run virtual worker width must be positive");
+                for profile in &self.virtual_workers.profiles {
+                    ensure!(
+                        profile.worker < width,
+                        "dry_run virtual worker profile {} is outside width {width}",
+                        profile.worker
+                    );
+                }
+                Ok(VirtualPlacement::new(
+                    width,
+                    config.hop_routing,
+                    self.virtual_workers.contention_scope,
+                    &self.virtual_workers.profiles,
+                ))
+            })
+            .transpose()?;
         Ok(Rc::new(FakeRequestExecutor {
             core: FakeFabricator::new(config.coordinator_clock, config.model, self.params, 0),
             observer: RefCell::new(None),
+            placement,
         }))
+    }
+}
+
+struct VirtualPlacement {
+    width: usize,
+    routing: HopRouting,
+    contention_scope: VirtualContentionScope,
+    next_worker: Cell<usize>,
+    assignment_index: Cell<u64>,
+    inflight: Vec<Cell<usize>>,
+    sticky: RefCell<HashMap<String, usize>>,
+    profiles: Vec<(f64, f64)>,
+}
+
+impl VirtualPlacement {
+    fn new(
+        width: usize,
+        routing: HopRouting,
+        contention_scope: VirtualContentionScope,
+        profiles: &[DryRunVirtualWorkerProfileV2],
+    ) -> Self {
+        let mut multipliers = vec![(1.0, 1.0); width];
+        for profile in profiles {
+            multipliers[profile.worker] = (profile.ttft_multiplier, profile.itl_multiplier);
+        }
+        Self {
+            width,
+            routing,
+            contention_scope,
+            next_worker: Cell::new(0),
+            assignment_index: Cell::new(0),
+            inflight: (0..width).map(|_| Cell::new(0)).collect(),
+            sticky: RefCell::new(HashMap::new()),
+            profiles: multipliers,
+        }
+    }
+
+    fn assign(&self, correlation_id: Option<&str>) -> (usize, u64) {
+        let mut cursor = self.next_worker.get();
+        let worker = pick_worker(
+            self.routing,
+            self.width,
+            correlation_id,
+            &self.inflight,
+            &mut self.sticky.borrow_mut(),
+            &mut cursor,
+        );
+        self.next_worker.set(cursor);
+        let index = self.assignment_index.get();
+        self.assignment_index.set(index.wrapping_add(1));
+        (worker, index)
+    }
+}
+
+struct VirtualInflightGuard<'a> {
+    slot: &'a Cell<usize>,
+}
+
+impl<'a> VirtualInflightGuard<'a> {
+    fn new(slot: &'a Cell<usize>) -> Self {
+        slot.set(slot.get().saturating_add(1));
+        Self { slot }
+    }
+}
+
+impl Drop for VirtualInflightGuard<'_> {
+    fn drop(&mut self) {
+        self.slot.set(self.slot.get().saturating_sub(1));
     }
 }
 
@@ -559,12 +772,14 @@ impl FakeFabricator {
         cancel_after_ns: Option<i64>,
         request_payload: Bytes,
         recorded: RecordedLatency,
+        contention_override: Option<usize>,
+        latency_multipliers: (f64, f64),
         on_first_token: &dyn Fn(i64),
     ) -> DispatchResult {
         // The live in-flight count feeds the analytic concurrency terms; the
         // ordinal seeds the reproducible jitter draw.
-        let active_inflight = self.inflight.get() + 1;
-        self.inflight.set(active_inflight);
+        let _global_inflight_guard = VirtualInflightGuard::new(&self.inflight);
+        let active_inflight = self.inflight.get();
         let ordinal = self.ordinal.get();
         self.ordinal.set(ordinal + 1);
         // Under the `recorded` model with a known api_time, reproduce that total
@@ -575,10 +790,15 @@ impl FakeFabricator {
             .flatten();
         let (ttft_ns, itl_ns) = match recorded_total {
             Some(total) => recorded_latencies_ns(total, recorded.ttft_ns, osl),
-            None => self
-                .params
-                .effective_latencies_ns(isl as usize, osl, active_inflight, ordinal),
+            None => self.params.effective_latencies_ns(
+                isl as usize,
+                osl,
+                contention_override.unwrap_or(active_inflight),
+                ordinal,
+            ),
         };
+        let ttft_ns = (ttft_ns as f64 * latency_multipliers.0).round() as i64;
+        let itl_ns = (itl_ns as f64 * latency_multipliers.1).round() as i64;
         let recv_start_abs = start_abs + ttft_ns;
         let token_abs = |index: usize| start_abs + ttft_ns + (index as i64) * itl_ns;
         // In recorded mode the total end is pinned to the recorded api_time so the
@@ -622,7 +842,6 @@ impl FakeFabricator {
                     self.clock.clone().sleep(wait).await;
                 }
             }
-            self.inflight.set(self.inflight.get() - 1);
             let cancel_after_ns = cancel_after_ns.unwrap_or_default().max(0);
             let error = ErrorDetails::cancelled(format!(
                 "RequestCancellationError: request cancelled {cancel_after_ns}ns after being sent"
@@ -666,7 +885,6 @@ impl FakeFabricator {
                 self.clock.clone().sleep(wait).await;
             }
         }
-        self.inflight.set(self.inflight.get() - 1);
         observer.on_usage(
             uuid,
             ObservedUsage {
@@ -723,6 +941,7 @@ impl FakeFabricator {
 struct FakeRequestExecutor {
     core: FakeFabricator,
     observer: RefCell<Option<Rc<NativeMetricsObserver>>>,
+    placement: Option<VirtualPlacement>,
 }
 
 impl FakeRequestExecutor {
@@ -782,7 +1001,21 @@ impl RequestExecutor for FakeRequestExecutor {
             .unwrap_or_else(Bytes::new);
         // The scheduled seam owns arrival/metadata/record_response around the
         // shared fabrication.
-        observer.register_metadata(uuid, context.metadata.clone());
+        let mut metadata = context.metadata.clone();
+        let (_worker_guard, contention_override, multipliers) = if let Some(placement) =
+            &self.placement
+        {
+            let (worker, assignment_index) = placement.assign(metadata.correlation_id.as_deref());
+            metadata.worker_id = Some(format!("dry-run-{worker}"));
+            metadata.worker_assignment_index = Some(assignment_index);
+            let guard = VirtualInflightGuard::new(&placement.inflight[worker]);
+            let contention = (placement.contention_scope == VirtualContentionScope::WorkerLocal)
+                .then(|| placement.inflight[worker].get());
+            (Some(guard), contention, placement.profiles[worker])
+        } else {
+            (None, None, (1.0, 1.0))
+        };
+        observer.register_metadata(uuid, metadata);
         observer.on_arrival(uuid, context.arrival_ms, isl as usize, osl);
         let recorded = RecordedLatency {
             api_time_ns: turn.request.recorded_api_time_ns,
@@ -799,6 +1032,8 @@ impl RequestExecutor for FakeRequestExecutor {
                 turn.request.cancel_after_ns,
                 request_payload,
                 recorded,
+                contention_override,
+                multipliers,
                 on_first_token,
             )
             .await;
@@ -885,6 +1120,8 @@ impl crate::transport::core::Dispatcher for FakeDispatcher {
                 turn.request.cancel_after_ns,
                 request_payload,
                 recorded,
+                None,
+                (1.0, 1.0),
                 on_first_token,
             )
             .await)
@@ -959,6 +1196,7 @@ mod tests {
                 raw_enabled: false,
                 prepared_endpoints: None,
                 hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
+                virtual_worker_width: None,
             })
             .expect("build fake executor");
         let origin_ns = clock.now_ns();

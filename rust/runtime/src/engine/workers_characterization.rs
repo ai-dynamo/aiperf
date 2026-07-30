@@ -392,6 +392,7 @@ mod tests {
             transport: None,
             dispatch_mode,
             hop_routing: None,
+            virtual_worker_width: None,
         }
     }
 
@@ -1783,6 +1784,7 @@ mod tests {
             transport: None,
             dispatch_mode: crate::engine::protocol::DispatchMode::Sharded,
             hop_routing: None,
+            virtual_worker_width: None,
         }
     }
 

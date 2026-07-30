@@ -84,6 +84,45 @@ pub struct DryRunConfig {
     /// Clock driver: `real` (default) or `sim` (deterministic virtual time).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock: Option<String>,
+    /// Optional single-reactor model of logical AIPerf worker placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub virtual_workers: Option<DryRunVirtualWorkersConfig>,
+}
+
+/// Logical worker placement configuration for socket-free dry runs.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DryRunVirtualWorkersConfig {
+    /// Enable virtual worker placement.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Logical worker count; defaults to the authored runtime worker count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<usize>,
+    /// Contention input: `global` (default) or `worker_local`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contention_scope: Option<String>,
+    /// Optional per-worker analytic latency multipliers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<DryRunVirtualWorkerProfile>,
+}
+
+/// Analytic latency multipliers for one virtual worker.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DryRunVirtualWorkerProfile {
+    /// Zero-based virtual worker index.
+    pub worker: usize,
+    /// TTFT multiplier applied after analytic latency calculation.
+    #[serde(default = "one")]
+    pub ttft_multiplier: f64,
+    /// ITL multiplier applied after analytic latency calculation.
+    #[serde(default = "one")]
+    pub itl_multiplier: f64,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 /// DynoSim transport configuration.

@@ -206,6 +206,7 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
             raw_enabled: false,
             prepared_endpoints: Some(table_factory),
             hop_routing: routing,
+            virtual_worker_width: None,
         })
         .unwrap();
     let origin_ns = clock.now_ns();

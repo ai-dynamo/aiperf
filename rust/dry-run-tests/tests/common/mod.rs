@@ -161,6 +161,29 @@ pub fn run(extra: &[&str]) -> Run {
     )
 }
 
+/// Run a complete Config-v2 YAML document after substituting its artifact path.
+pub fn run_config(yaml: &str) -> Run {
+    let temporary_directory = tempfile::tempdir().expect("create artifact directory");
+    let artifact_directory = temporary_directory
+        .path()
+        .to_str()
+        .expect("artifact path is UTF-8");
+    let config_path = temporary_directory.path().join("benchmark.yaml");
+    std::fs::write(
+        &config_path,
+        yaml.replace("$ARTIFACT_DIR", artifact_directory),
+    )
+    .expect("write dry-run config");
+    execute(
+        vec![
+            "profile".to_string(),
+            "--config".to_string(),
+            config_path.display().to_string(),
+        ],
+        temporary_directory,
+    )
+}
+
 /// Run a timing command built by the shared timing helper under the deterministic
 /// dry-run transport. The builder supplies benchmark options; this harness adds
 /// the tokenizer, synthetic input shape, dry-run model, and artifact directory.

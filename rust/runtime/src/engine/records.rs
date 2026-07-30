@@ -115,7 +115,9 @@ struct RecordMetadata {
     request_start_ns: i64,
     request_ack_ns: Option<i64>,
     request_end_ns: i64,
-    worker_id: &'static str,
+    worker_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worker_assignment_index: Option<u64>,
     record_processor_id: &'static str,
     benchmark_phase: Phase,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -269,7 +271,9 @@ struct RawRecordMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     request_ack_ns: Option<i64>,
     request_end_ns: i64,
-    worker_id: &'static str,
+    worker_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worker_assignment_index: Option<u64>,
     record_processor_id: &'static str,
     benchmark_phase: Phase,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -909,7 +913,11 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             request_start_ns: record.start_ns,
             request_ack_ns: record.first_token_ns,
             request_end_ns: record.end_ns,
-            worker_id: "rust-0",
+            worker_id: record
+                .worker_id
+                .clone()
+                .unwrap_or_else(|| "rust-0".to_string()),
+            worker_assignment_index: record.worker_assignment_index,
             record_processor_id: "aiperf runner",
             benchmark_phase: record.phase,
             phase_index: record.phase_index,
@@ -953,7 +961,11 @@ fn raw_record_row<'a>(
             request_start_ns: ingest.start_ns,
             request_ack_ns: ingest.first_token_ns,
             request_end_ns: ingest.end_ns,
-            worker_id: "rust-0",
+            worker_id: ingest
+                .worker_id
+                .clone()
+                .unwrap_or_else(|| "rust-0".to_string()),
+            worker_assignment_index: ingest.worker_assignment_index,
             record_processor_id: "aiperf runner",
             benchmark_phase: ingest.phase,
             phase_index: ingest.phase_index,

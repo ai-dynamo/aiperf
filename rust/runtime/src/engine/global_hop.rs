@@ -118,6 +118,7 @@ pub(crate) async fn run_global_hop(
         raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
         hop_routing: shared.hop_routing,
+        virtual_worker_width: None,
     })?;
 
     // Sidecars span the whole coordinator window, matching `run_sharded_scheduled`.

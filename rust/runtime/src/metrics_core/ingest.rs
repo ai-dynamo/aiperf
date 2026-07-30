@@ -124,6 +124,9 @@ pub struct RecordIngest {
     pub turn_index: u32,
     /// Optional worker identity for per-worker analysis.
     pub worker_id: Option<String>,
+    /// Global logical-worker placement sequence, when modeled.
+    #[serde(default)]
+    pub worker_assignment_index: Option<u64>,
     /// Optional conversation identity for multi-turn analysis.
     pub conversation_id: Option<String>,
     /// Model and selected endpoint used by this request.
@@ -187,6 +190,7 @@ impl RecordIngest {
             session_num: 0,
             turn_index: 0,
             worker_id: None,
+            worker_assignment_index: None,
             conversation_id: None,
             dimensions: InferenceDimensions::default(),
             phase,

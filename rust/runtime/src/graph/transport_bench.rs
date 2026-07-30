@@ -262,6 +262,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
                 .and_then(|value| value.parse::<u32>().ok())
                 .unwrap_or(0),
             worker_id: Some(self.worker_id.clone()),
+            worker_assignment_index: None,
             conversation_id: None,
             dimensions: InferenceDimensions {
                 endpoint_url: Some(self.url.to_string()),

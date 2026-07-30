@@ -292,6 +292,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
                 latency_model: flags.dry_run_latency_model.clone(),
                 kv_utilization: flags.dry_run_kv_utilization,
                 clock: flags.dry_run_clock.clone(),
+                virtual_workers: None,
             })
         } else {
             Transport::Http

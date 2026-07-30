@@ -278,6 +278,11 @@ pub trait NativeTransportExecution: Send + Sync {
         "unknown"
     }
 
+    /// Resolve an optional logical worker width from the authored physical width.
+    fn virtual_worker_width(&self, _authored_workers: usize) -> Option<usize> {
+        None
+    }
+
     /// Transport-specific run-level validation (endpoint URL schemes, server
     /// reachability policy, …), performed after component configs decode.
     fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()>;

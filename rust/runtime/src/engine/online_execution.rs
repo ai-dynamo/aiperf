@@ -506,6 +506,7 @@ fn prepare_native_operation(
     binding: Arc<dyn NativeTransportExecution>,
 ) -> Result<Box<dyn PreparedRunnerOperation>> {
     // The driver selects its clock from the resolved transport binding.
+    plan.virtual_worker_width = binding.virtual_worker_width(plan.workers);
     plan.transport = Some(binding.clone());
     let report_facts = native_plan_report_facts(&plan)?;
     let request_executor = binding.executor_factory();
@@ -1684,6 +1685,7 @@ fn build_common_plan(
         transport,
         dispatch_mode: run.dispatch,
         hop_routing: run.hop_routing,
+        virtual_worker_width: None,
     })
 }
 

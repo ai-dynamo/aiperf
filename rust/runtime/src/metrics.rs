@@ -37,6 +37,8 @@ pub struct RequestMetricMetadata {
     pub turn_index: u32,
     /// Worker identity for per-worker series.
     pub worker_id: Option<String>,
+    /// Global logical-worker placement sequence for virtual dry runs.
+    pub worker_assignment_index: Option<u64>,
     /// Conversation identity for multi-turn series.
     pub conversation_id: Option<String>,
     /// Model and fully resolved endpoint selected for this request.
@@ -58,6 +60,7 @@ impl Default for RequestMetricMetadata {
             session_num: None,
             turn_index: 0,
             worker_id: None,
+            worker_assignment_index: None,
             conversation_id: None,
             dimensions: InferenceDimensions::default(),
             correlation_id: None,
@@ -276,6 +279,7 @@ impl NativeMetricsObserver {
     pub fn register_metadata(&self, uuid: Uuid, mut metadata: RequestMetricMetadata) {
         if !self.retain_record_dimensions {
             metadata.worker_id = None;
+            metadata.worker_assignment_index = None;
             metadata.conversation_id = None;
             metadata.correlation_id = Some(String::new());
         }
@@ -495,6 +499,7 @@ impl PendingRequest {
             session_num: self.metadata.session_num.unwrap_or(ordinal),
             turn_index: self.metadata.turn_index,
             worker_id: self.metadata.worker_id,
+            worker_assignment_index: self.metadata.worker_assignment_index,
             conversation_id: self.metadata.conversation_id,
             dimensions: self.metadata.dimensions,
             phase: self.metadata.phase,

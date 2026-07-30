@@ -251,8 +251,14 @@ pub(crate) async fn execute_native_inner(
             transport: transport_config,
             raw_enabled: request.artifacts.raw_path.is_some(),
             prepared_endpoints,
-            // `workers == 1` co-located sink: no hop, so routing is inert.
-            hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
+            hop_routing: if request.dispatch_mode
+                == crate::engine::protocol::DispatchMode::GlobalHop
+            {
+                request.hop_routing.unwrap_or_default()
+            } else {
+                crate::engine::protocol::HopRouting::RoundRobin
+            },
+            virtual_worker_width: request.virtual_worker_width,
         })?;
         let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
         // Env-gated single-process cellular heartbeat lane; the controller merges

@@ -177,6 +177,8 @@ pub(crate) struct NativeRunSpec {
     /// [`crate::engine::protocol::HopRouting::default`] (`RoundRobin`) placement.
     /// Inert under any other dispatch mode or `workers == 1`.
     pub(crate) hop_routing: Option<crate::engine::protocol::HopRouting>,
+    /// Logical placement width captured before physical worker adjustments.
+    pub(crate) virtual_worker_width: Option<usize>,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.

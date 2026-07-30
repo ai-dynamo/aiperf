@@ -64,6 +64,8 @@ pub struct ExecutionBackendConfig {
     /// Worker-assignment policy applied by the `workers > 1` hop executor. Inert
     /// for `workers == 1` (co-located sink, no hop).
     pub hop_routing: HopRouting,
+    /// Logical dry-run placement width captured before physical worker caps.
+    pub virtual_worker_width: Option<usize>,
 }
 
 /// Constructs worker-local prepared endpoint tables.
@@ -426,7 +428,7 @@ impl Drop for InflightGuard<'_> {
 /// round-robin cursor (advanced only when a round-robin pick is made), `inflight`
 /// is the per-worker in-flight snapshot, and `sticky` holds
 /// `correlation_id`→worker bindings for [`HopRouting::LeastLoaded`].
-fn pick_worker(
+pub(crate) fn pick_worker(
     routing: HopRouting,
     workers: usize,
     correlation: Option<&str>,
@@ -1251,6 +1253,7 @@ mod tests {
                 raw_enabled: false,
                 prepared_endpoints: Some(table_factory),
                 hop_routing: HopRouting::RoundRobin,
+                virtual_worker_width: None,
             })
             .unwrap();
         let origin_ns = clock.now_ns();
