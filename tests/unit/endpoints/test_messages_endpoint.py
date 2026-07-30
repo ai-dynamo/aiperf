@@ -7,6 +7,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.models import ExtractedPayload, Text, Turn
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     SSEField,
@@ -172,7 +173,7 @@ class TestAnthropicMessagesFormatPayload:
             endpoint.format_payload(request_info)
 
     def test_cache_bust_system_prefix_is_top_level_system(
-        self, endpoint, model_endpoint
+        self, endpoint: MessagesEndpoint, model_endpoint: ModelEndpointInfo
     ):
         turn = Turn(texts=[Text(contents=["Hello"])])
         request_info = create_request_info(
@@ -187,7 +188,7 @@ class TestAnthropicMessagesFormatPayload:
         assert payload["messages"] == [{"role": "user", "content": "Hello"}]
 
     def test_cache_bust_first_user_prefix_renders_anthropic_text_block(
-        self, endpoint, model_endpoint
+        self, endpoint: MessagesEndpoint, model_endpoint: ModelEndpointInfo
     ):
         turn = Turn(
             texts=[
@@ -204,7 +205,7 @@ class TestAnthropicMessagesFormatPayload:
         ]
 
     def test_cache_bust_first_user_suffix_preserves_text(
-        self, endpoint, model_endpoint
+        self, endpoint: MessagesEndpoint, model_endpoint: ModelEndpointInfo
     ):
         turn = Turn(texts=[Text(contents=["Hello\n\n[rid:abc123]"])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])

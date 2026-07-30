@@ -172,7 +172,7 @@ class ConversationSource:
         *,
         benchmark_id: str = "unknown",
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
-    ):
+    ) -> None:
         """Initialize conversation source."""
         self._dataset_metadata = dataset_metadata
         self._dataset_sampler = dataset_sampler

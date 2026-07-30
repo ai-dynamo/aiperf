@@ -81,8 +81,8 @@ def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-fixed"):
         {
             "models": ["test-model"],
             "endpoint": {
-                "type": "completions",
-                "urls": ["http://localhost:8000/v1"],
+                "type": "chat",
+                "urls": ["http://localhost:8000/v1/chat/completions"],
                 "streaming": False,
             },
             "datasets": [
