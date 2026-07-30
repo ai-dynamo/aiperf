@@ -41,7 +41,7 @@ aiperf profile \
   --concurrency 256 \
   --benchmark-duration 1800 \
   --streaming \
-  --trace-idle-gap-cap-seconds 10.0 \
+  --system-idle-gap-cap-seconds 10.0 \
   --trajectory-start-min-ratio 0.0 \
   --trajectory-start-max-ratio 1.0 \
   --cache-bust first_turn_prefix \
@@ -56,7 +56,7 @@ flag and get the same behavior (the scenario auto-fills them); they are written 
 transparency.
 
 - **Scenario-locked** (a conflicting value is rejected): `--streaming`,
-  `--trace-idle-gap-cap-seconds 10.0`, `--cache-bust first_turn_prefix`, and a pinned `--public-dataset`.
+  `--system-idle-gap-cap-seconds 10.0`, `--cache-bust first_turn_prefix`, and a pinned `--public-dataset`.
   `--streaming` auto-enables if you omit it.
 - **Always on, no flag:** replay delays are always end-to-start (see below); there is no toggle.
 - **Scenario defaults** (auto-filled if omitted; you may override): `--benchmark-duration 1800` (floor
@@ -66,7 +66,8 @@ transparency.
   is rejected), and a fresh `--random-seed` is filled in — pin one yourself for reproducible run-to-run
   comparisons ([§7](#7-reading-the-results-metrics-validity-and-submission-requirements)). Timing mode is
   locked to agentic-replay.
-- **Forbidden — do not pass:** `--ignore-trace-delays`, `--synthesis-max-isl` (input truncation), and the
+- **Forbidden — do not pass:** `--ignore-trace-delays`, `--trace-idle-gap-cap-seconds`,
+  `--inter-turn-delay-cap-seconds`, `--synthesis-max-isl` (input truncation), and the
   rate/schedule flags `--request-rate` / `--arrival-pattern` / `--user-centric-rate` / `--fixed-schedule`
   / `--adaptive-scale`.
 - **Your parameters** (not locked): `--url`, `--model`, `--endpoint-type chat`, `--concurrency`,
@@ -76,7 +77,9 @@ transparency.
   wouldn't fit (then keep the first N eligible when `--num-dataset-entries` is set); a ~256k-window
   server should instead pick a `_256k` corpus
   ([§3](#3-how-realistic-are-the-prompts-and-token-counts)). When concurrency exceeds the loaded
-  pool, pass `--allow-dataset-wrap` or lower concurrency (wrapping defaults off).
+  pool, wrapping happens automatically because the scenario locks
+  `--cache-bust first_turn_prefix` on (an active cache-bust marker keeps repeated traces distinct);
+  without cache-bust you would need `--allow-dataset-wrap` or a lower concurrency.
 
 The [AgentX MVP tutorial](../tutorials/agentx-mvp.md#quick-start)'s Quick Start is the same run,
 written slightly differently: it uses the rolling `semianalysis_cc_traces_weka_with_subagents` alias
@@ -279,9 +282,10 @@ the benchmark waits the recorded "think time"/gap before sending the next turn. 
 request-start to request-start. This is always the case for weka trace replay; there is no flag to
 change it. Replay dispatches each turn only after the previous one completes,
 so start-to-start deltas would double-count the server's own response time and make every session
-drift later turn by turn. Long idle gaps are capped (the AgentX scenario caps the idle gap at 10
-seconds) so a session that sat idle for an hour in the original capture doesn't stall a lane for an
-hour here.
+drift later turn by turn. Individual trace gaps are not capped. If the entire replay has no active
+or ready request, AIPerf uniformly shifts every pending request timer so the next request arrives
+within 10 seconds. This avoids benchmarking dead air without changing the recorded spacing inside
+one trace while other sessions keep the system busy.
 
 ### Q: What does a single session look like on the wire?
 A sequence of chat-completions requests that grow turn over turn (the prompt prefix accumulates),
@@ -787,7 +791,7 @@ the context-overflow bound is evaluated during the run.
 | SemiAnalysis corpus | A pinned `*_weka_*` `--public-dataset` alias, or `weka_hf` pinned to `semianalysisai/cc-traces-weka-062126` | A non-pinned dataset, local `weka_trace`, or another `--hf-weka-dataset` under the scenario; omitting a dataset entirely (CLI synthetic default) | Explicit wrong / unpinned loader: refuses to start (or `submission_valid: false` via `--unsafe-override`). Missing/synthetic: always refuses — `--unsafe-override` cannot bypass |
 | `ignore_eos` | Injected `ignore_eos=true` | Explicit `ignore_eos=false` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Streaming | `--streaming` auto-enabled | Explicit `--no-streaming` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
-| Honored trace delays | Recorded think-time gaps waited; idle gaps capped at 10s | `--ignore-trace-delays` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
+| Honored trace delays | Recorded think-time gaps are preserved; only globally idle replay time is capped at 10s | `--ignore-trace-delays`, `--trace-idle-gap-cap-seconds`, or `--inter-turn-delay-cap-seconds` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | No input truncation | Prompts built to the full recorded token counts | Truncating/capping input below the recorded length | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Minimum duration | `--benchmark-duration` ≥ 900s (default 1800s) | A duration below 900s | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | First-turn-prefix cache-busting | Uniqueness marker placed as a first-turn prefix | Disabling cache-busting or relocating the marker | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
@@ -1002,8 +1006,9 @@ Not as a *valid* run: any `--benchmark-duration` below 900s refuses to start (th
   shrinks roughly proportionally. Caveat: it keys a *different* dataset-cache
   entry, so a shrunk smoke run does not warm the cache for the full-corpus
   run. If `--concurrency` exceeds N (and you have a duration/session budget
-  that needs wrapping), pass `--allow-dataset-wrap` or lower concurrency.
-  Wrapping defaults to off; cache-bust alone does not enable it.
+  that needs wrapping), an active `--cache-bust` target enables wrapping on its
+  own; otherwise pass `--allow-dataset-wrap` or lower concurrency. The scenario
+  locks cache-bust on, so agentx runs wrap without extra flags.
 - **Lowering `--concurrency`** lightens the load but shortens nothing — the 900s floor is
   wall-clock. A small concurrency at 900s is the cheapest *valid* run.
 - **A true minutes-long shakeout** (connectivity, endpoint, artifacts) is `--unsafe-override` plus a
@@ -1142,7 +1147,8 @@ The ones a serving engineer is most likely to use:
 | `--synthesis-max-osl` | Caps top-level output length (subagent outputs stay uncapped). |
 | `--max-context-length` | Drops whole traces whose peak prompt+output exceeds your server's window, so you don't get guaranteed mid-run overflows. Blunter than a `_256k` corpus (removes entire traces, not just over-limit turns). If it would drop everything, the run errors instead of silently emptying the dataset. |
 | `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` | The window within each session where t\* is sampled — i.e. how deep into sessions the measured traffic sits. Defaults to the **full session (0.0–1.0)** under the `inferencex-agentx-mvp` scenario; 0.25–0.75 is the generic CLI default when not scenario-locked. |
-| `--trace-idle-gap-cap-seconds` | Caps long idle gaps between turns (scenario default 10s) so dead time doesn't stall lanes. |
+| `--system-idle-gap-cap-seconds` | Caps only globally idle replay time (scenario default 10s); all pending timers shift uniformly, preserving order and relative spacing. |
+| `--trace-idle-gap-cap-seconds` / `--inter-turn-delay-cap-seconds` | Per-trace/per-turn timing compression; forbidden by the scenario so recorded think times and cache-TTL intervals remain faithful. |
 | `--cache-bust` | Where the per-session uniqueness marker goes; the scenario locks `first_turn_prefix`. |
 
 ### Validity thresholds (environment variables)
@@ -1219,4 +1225,3 @@ ones triggers a fresh dataset reconstruction (and cache entry).
   warmup turn stops the run rather than letting it report steady-state numbers against a cold/degraded
   pool — so a clean profiling run means every root trajectory really was warm. (Subagent-stream warmup
   failures do not trigger the abort; only failures on root (depth-0) sessions' warmup requests do.)
-

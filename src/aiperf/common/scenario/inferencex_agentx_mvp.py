@@ -33,6 +33,8 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
     default_benchmark_duration_seconds=1800,
     default_trajectory_start_min_ratio=0.0,
     default_trajectory_start_max_ratio=1.0,
-    trace_idle_gap_cap_seconds=10.0,
+    system_idle_gap_cap_seconds=10.0,
+    forbid_trace_idle_gap_cap=True,
+    forbid_inter_turn_delay_cap=True,
     require_cache_bust=CacheBustTarget.FIRST_TURN_PREFIX,
 )

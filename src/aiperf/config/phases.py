@@ -335,6 +335,21 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
+    system_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="AGENTIC_REPLAY only: maximum time in seconds the "
+            "replay may remain globally idle while future requests are "
+            "scheduled. When no requests are in flight or ready, all pending "
+            "request timers shift earlier by the same amount so the next "
+            "request arrives within this limit. Per-trace timing, timer order, "
+            "and relative spacing are otherwise preserved. None disables the "
+            "global idle cap.",
+        ),
+    ]
+
     agentic_cache_warmup_duration: Annotated[
         float | None,
         Field(
@@ -369,6 +384,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     _trajectory_start_min_ratio_explicitly_set: bool = False
     _trajectory_start_max_ratio_explicitly_set: bool = False
     _burst_phase_starts_explicitly_set: bool = False
+    _system_idle_gap_cap_seconds_explicitly_set: bool = False
 
     # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
     # stop condition is inferred from the dataset). Otherwise CLI users
@@ -464,6 +480,9 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         )
         self._burst_phase_starts_explicitly_set = (
             "burst_phase_starts" in self.model_fields_set
+        )
+        self._system_idle_gap_cap_seconds_explicitly_set = (
+            "system_idle_gap_cap_seconds" in self.model_fields_set
         )
         return self
 

@@ -671,7 +671,8 @@ class CLIConfig(BaseConfig):
             description="Allow weka/agentic replay to wrap (reuse distinct eligible "
             "traces across concurrency lanes) when concurrency exceeds the loaded "
             "pool. Defaults to False: over-subscription fails unless wrapping is "
-            "explicitly enabled.",
+            "explicitly enabled or an active --cache-bust target already keeps "
+            "repeated-trace traffic distinct.",
         ),
         CLIParameter(
             name=("--allow-dataset-wrap",),
@@ -2191,6 +2192,24 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--trace-idle-gap-cap-seconds",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    system_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="AGENTIC_REPLAY only: maximum time in seconds the "
+            "replay may remain globally idle while future requests are "
+            "scheduled. When no requests are in flight or ready, all pending "
+            "request timers shift earlier uniformly so the next request "
+            "arrives within this limit. Per-trace timing is otherwise "
+            "preserved. None disables the cap.",
+        ),
+        CLIParameter(
+            name=("--system-idle-gap-cap-seconds",),
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None

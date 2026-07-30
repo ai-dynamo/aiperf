@@ -42,6 +42,20 @@ def _warmup_requests(cfg) -> int | None:  # noqa: ANN001
     return None
 
 
+def _profiling_duration(cfg) -> float | None:  # noqa: ANN001
+    for phase in cfg.benchmark.phases:
+        if phase.name == "profiling":
+            return getattr(phase, "duration", None)
+    return None
+
+
+def _profiling_grace_period(cfg) -> float | None:  # noqa: ANN001
+    for phase in cfg.benchmark.phases:
+        if phase.name == "profiling":
+            return getattr(phase, "grace_period", None)
+    return None
+
+
 def test_request_count_overrides_template_phases_requests() -> None:
     """``--request-count 10`` with ``minimal.yaml`` overrides the YAML's 100."""
     user = CLIConfig(**CLIConfig(request_count=10).model_dump(exclude_unset=True))
@@ -67,10 +81,20 @@ def test_no_loadgen_override_leaves_yaml_intact() -> None:
     assert _profiling_requests(cfg) == 100
 
 
-def test_concurrency_override_targets_profiling_phase() -> None:
-    """The same overlay rule applies to ``--concurrency``."""
-    user = CLIConfig(**CLIConfig(concurrency=99).model_dump(exclude_unset=True))
+def test_benchmark_duration_gets_default_grace_period_with_config_file() -> None:
+    """``--benchmark-duration`` also gets the default grace period with YAML."""
+    user = CLIConfig(**CLIConfig(benchmark_duration=5.0).model_dump(exclude_unset=True))
     cfg = resolve_config(user, TEMPLATES_DIR / "minimal.yaml")
-    for phase in cfg.benchmark.phases:
-        if phase.name == "profiling":
-            assert getattr(phase, "concurrency", None) == 99
+    assert _profiling_duration(cfg) == 5.0
+    assert _profiling_grace_period(cfg) == 30.0
+
+
+def test_explicit_benchmark_grace_period_with_config_file_is_preserved() -> None:
+    """An explicit ``--benchmark-grace-period`` overrides the default."""
+    user = CLIConfig(
+        **CLIConfig(benchmark_duration=5.0, benchmark_grace_period=15.0).model_dump(
+            exclude_unset=True
+        )
+    )
+    cfg = resolve_config(user, TEMPLATES_DIR / "minimal.yaml")
+    assert _profiling_grace_period(cfg) == 15.0

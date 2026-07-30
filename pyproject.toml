@@ -107,6 +107,7 @@ test = [
   "pytest-asyncio",
   "pytest-cov",
   "pytest-rerunfailures>=15.0",
+  "pytest-timeout>=2.0.0",
   "pytest-xdist>=3.8.0",
   # trustme pulls cryptography, which has no Windows-on-ARM wheel and
   # source-builds against openssl-sys (fails on win-arm). Only the TLS

@@ -81,6 +81,24 @@ Comprehensive reference for server metrics collected during AIPerf benchmark run
 | `dynamo_frontend_output_sequence_tokens` | `stats.p99_estimate` | Longest responses (p99) |
 | `nv_inference_count` / `nv_inference_exec_count` | `stats.total` | Triton average batch size (`inference_count / exec_count`) |
 
+### "Is speculative decoding working?"
+
+| Metric | Field | Description |
+|--------|-------|-------------|
+| `sglang:spec_accept_rate` | `stats.avg/min/max/p50/p90` | Speculative decoding acceptance rate |
+| `sglang:spec_accept_length` | `stats.avg/min/max/p50/p90` | Accepted speculative decoding length |
+
+AIPerf also prints a final `Server Metrics: Speculative Decoding` console table
+when matching metrics are available, with mean, min, max, p50, and p90 for each
+matching server metric series whose `model_name` label matches a configured
+model name case-insensitively. For SGLang, only the `pp_rank="0"` /
+`tp_rank="0"` leader series is shown to avoid duplicated scheduler-level gauges.
+The console scales `sglang:spec_accept_rate` from a 0-1 ratio to percent; server
+metrics exports keep the raw ratio.
+The table is suppressed when matching `sglang:spec_accept_length` series are all
+zero, which indicates SGLang registered the gauges but speculative decoding did
+not run.
+
 ### "Where is time being spent?"
 
 **vLLM latency breakdown:**

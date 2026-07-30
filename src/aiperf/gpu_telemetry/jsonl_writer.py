@@ -26,7 +26,7 @@ class GPUTelemetryJSONLWriter(
 
     Each line contains:
         - timestamp_ns: Collection timestamp in nanoseconds
-        - dcgm_url: DCGM endpoint URL for filtering by endpoint
+        - telemetry_source_url: source identifier URL for filtering by endpoint
         - gpu_uuid: Unique GPU identifier
         - gpu_index: GPU index on the host
         - hostname: Host machine name

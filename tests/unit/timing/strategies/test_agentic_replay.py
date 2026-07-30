@@ -7,21 +7,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
+    ReplayTurnReference,
     TurnMetadata,
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from aiperf.timing.replay_dependencies import ReplayResumeBoundary
+from aiperf.timing.replay_dependencies import (
+    ReplayBarrierCoordinator,
+    ReplayResumeBoundary,
+)
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
     ConversationState,
@@ -66,11 +72,14 @@ def _make_strategy(
     num_traces: int = 5,
     turns_per_trace: int = 4,
     issuer: AsyncMock | None = None,
-    scheduler: MagicMock | None = None,
+    scheduler: LoopScheduler | MagicMock | None = None,
     run: object | None = None,
     dataset: DatasetMetadata | None = None,
     cache_warmup_duration: float | None = None,
-) -> tuple[AgenticReplayStrategy, AsyncMock, MagicMock, TrajectorySource]:
+    progress: MagicMock | None = None,
+) -> tuple[
+    AgenticReplayStrategy, AsyncMock, LoopScheduler | MagicMock, TrajectorySource
+]:
     src = _build_real_trajectory_source(
         num_traces, turns_per_trace, trajectories, dataset=dataset
     )
@@ -92,6 +101,7 @@ def _make_strategy(
         credit_issuer=issuer,
         lifecycle=MagicMock(),
         run=run,
+        progress=progress,
     )
     return strategy, issuer, scheduler, src
 
@@ -105,6 +115,7 @@ def _make_credit(
     phase: CreditPhase = CreditPhase.PROFILING,
     agent_depth: int = 0,
     parent_correlation_id: str | None = None,
+    root_correlation_id: str | None = None,
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
 ) -> Credit:
     return Credit(
@@ -117,6 +128,7 @@ def _make_credit(
         issued_at_ns=0,
         agent_depth=agent_depth,
         parent_correlation_id=parent_correlation_id,
+        root_correlation_id=root_correlation_id,
         branch_mode=branch_mode,
     )
 
@@ -156,6 +168,46 @@ def test_constructor_rejects_non_trajectory_source():
             credit_issuer=AsyncMock(),
             lifecycle=MagicMock(),
         )
+
+
+def test_system_idle_cap_shifts_pending_schedule_only_when_globally_idle():
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    scheduler = MagicMock()
+    scheduler.running_count = 0
+    scheduler.cap_pending_delay.return_value = 90.0
+    progress = MagicMock()
+    progress.in_flight = 0
+    run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    run.cfg.get_profiling_phases()[0].system_idle_gap_cap_seconds = 10.0
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        scheduler=scheduler,
+        run=run,
+        progress=progress,
+    )
+
+    strategy.enforce_system_idle_cap()
+
+    scheduler.cap_pending_delay.assert_called_once_with(10.0)
+    assert strategy._system_idle_jump_count == 1
+    assert strategy._system_idle_seconds_skipped == 90.0
+
+    scheduler.reset_mock()
+    progress.in_flight = 1
+    strategy.enforce_system_idle_cap()
+    scheduler.cap_pending_delay.assert_not_called()
+
+    progress.in_flight = 0
+    scheduler.running_count = 1
+    strategy.enforce_system_idle_cap()
+    scheduler.cap_pending_delay.assert_not_called()
+
+    scheduler.running_count = 0
+    strategy._accelerated_warmup_started = True
+    strategy.enforce_system_idle_cap()
+    scheduler.cap_pending_delay.assert_not_called()
 
 
 def test_constructor_accepts_warmup_and_profiling():
@@ -1908,6 +1960,193 @@ async def test_handle_credit_return_honors_delay_ms_via_scheduler():
     assert scheduler.schedule_later.call_count == 1
     delay_arg = scheduler.schedule_later.call_args.args[0]
     assert delay_arg == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_global_idle_cap_shifts_real_delayed_continuation_to_ten_seconds():
+    """Exercise the production scheduler and strategy together."""
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0, delay_ms=None),
+                    TurnMetadata(timestamp_ms=100_000, delay_ms=100_000),
+                ],
+            )
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    issuer = AsyncMock()
+    scheduler = LoopScheduler()
+    run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    run.cfg.get_profiling_phases()[0].system_idle_gap_cap_seconds = 10.0
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=1,
+        turns_per_trace=2,
+        issuer=issuer,
+        scheduler=scheduler,
+        run=run,
+        dataset=dataset,
+    )
+    await strategy.setup_phase()
+    issuer.issue_credit.reset_mock()
+
+    await strategy.handle_credit_return(
+        _make_credit(conversation_id="trace_0", turn_index=0, num_turns=2)
+    )
+    assert scheduler.pending_count == 1
+
+    strategy.enforce_system_idle_cap(in_flight_requests=0)
+    assert strategy._system_idle_jump_count == 1
+    assert strategy._system_idle_seconds_skipped == pytest.approx(90.0)
+
+    handle, _ = next(iter(scheduler._handles.values()))
+    assert handle.when() - asyncio.get_running_loop().time() == pytest.approx(
+        10.0, abs=0.01
+    )
+    issuer.issue_credit.assert_not_awaited()
+    scheduler.cancel_all_pending()
+
+
+@pytest.mark.asyncio
+async def test_global_idle_cap_rechecks_after_barrier_defers_near_timer(
+    time_traveler_no_patch_sleep,
+):
+    """Reproduce the exact cross-stream dependency that idled C1 for 29 minutes."""
+    trace_id = "02bc0afb13f7a2d9efa86c28511261d85c0e"
+    fa3 = f"{trace_id}::fa:003"
+    fa4 = f"{trace_id}::fa:004"
+    trajectories = [Trajectory(conversation_id=trace_id, start_turn_index=0)]
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=fa3,
+                turns=[
+                    TurnMetadata(timestamp_ms=0),
+                    TurnMetadata(timestamp_ms=0),
+                    TurnMetadata(
+                        timestamp_ms=11_235_836,
+                        delay_ms=2_171_528,
+                        replay_predecessors=[
+                            ReplayTurnReference(
+                                conversation_id=fa4,
+                                turn_index=42,
+                            )
+                        ],
+                    ),
+                ],
+                agent_depth=1,
+                is_root=False,
+            ),
+            ConversationMetadata(
+                conversation_id=fa4,
+                turns=[TurnMetadata(timestamp_ms=0) for _ in range(43)]
+                + [
+                    TurnMetadata(
+                        timestamp_ms=11_238_880,
+                        delay_ms=5_602,
+                        replay_predecessors=[
+                            ReplayTurnReference(
+                                conversation_id=fa3,
+                                turn_index=2,
+                            )
+                        ],
+                    )
+                ],
+                agent_depth=1,
+                is_root=False,
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    scheduler = LoopScheduler()
+    progress = MagicMock()
+    progress.in_flight = 0
+    run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    run.cfg.get_profiling_phases()[0].system_idle_gap_cap_seconds = 0.05
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        issuer=AsyncMock(),
+        scheduler=scheduler,
+        run=run,
+        progress=progress,
+        dataset=dataset,
+    )
+    barrier = ReplayBarrierCoordinator(dataset)
+    barrier.activate()
+    root_id = "f59e6655-5dc3-47ce-a8c7-8d6ee31ff1b0"
+    issued: list[tuple[str, int]] = []
+    issued_at: dict[tuple[str, int], float] = {}
+
+    def turn(conversation_id: str, turn_index: int) -> TurnToSend:
+        return TurnToSend(
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+            num_turns=44 if conversation_id == fa4 else 3,
+            x_correlation_id=f"{conversation_id}:runtime",
+            root_correlation_id=root_id,
+            agent_depth=1,
+        )
+
+    async def issue(conversation_id: str, turn_index: int) -> bool:
+        key = (conversation_id, turn_index)
+        issued.append(key)
+        issued_at[key] = time.monotonic()
+        return True
+
+    async def submit_fa4_turn43() -> None:
+        await barrier.submit(
+            turn(fa4, 43),
+            lambda: issue(fa4, 43),
+        )
+
+    async def submit_fa3_turn2() -> None:
+        await barrier.submit(
+            turn(fa3, 2),
+            lambda: issue(fa3, 2),
+        )
+
+    barrier.complete(
+        _make_credit(
+            conversation_id=fa4,
+            turn_index=42,
+            num_turns=44,
+            x_correlation_id=f"{fa4}:runtime",
+            root_correlation_id=root_id,
+            agent_depth=1,
+        )
+    )
+    scheduler.schedule_later(0.02, submit_fa4_turn43())
+    scheduler.schedule_later(2_171.528, submit_fa3_turn2())
+
+    idle_started_at = time.monotonic()
+    strategy.enforce_system_idle_cap(in_flight_requests=0)
+    assert strategy._system_idle_jump_count == 0
+
+    await asyncio.sleep(0.09)
+
+    assert issued == [(fa3, 2)]
+    assert issued_at[(fa3, 2)] - idle_started_at == pytest.approx(0.05, abs=0.005)
+    assert strategy._system_idle_jump_count == 1
+    assert strategy._system_idle_seconds_skipped == pytest.approx(2_171.478, abs=0.03)
+    barrier.complete(
+        _make_credit(
+            conversation_id=fa3,
+            turn_index=2,
+            num_turns=3,
+            x_correlation_id=f"{fa3}:runtime",
+            root_correlation_id=root_id,
+            agent_depth=1,
+        )
+    )
+    await asyncio.sleep(0)
+    assert issued == [(fa3, 2), (fa4, 43)]
+    await barrier.cancel_pending(notify_refused=False)
 
 
 @pytest.mark.asyncio

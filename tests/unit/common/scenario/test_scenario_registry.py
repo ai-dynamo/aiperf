@@ -34,7 +34,10 @@ def test_inferencex_agentx_mvp_registered():
     )
     assert spec.min_benchmark_duration_seconds == 900
     assert spec.inter_turn_delay_cap_seconds is None
-    assert spec.trace_idle_gap_cap_seconds == 10.0
+    assert spec.trace_idle_gap_cap_seconds is None
+    assert spec.system_idle_gap_cap_seconds == 10.0
+    assert spec.forbid_trace_idle_gap_cap is True
+    assert spec.forbid_inter_turn_delay_cap is True
 
 
 def test_get_scenario_returns_spec():
