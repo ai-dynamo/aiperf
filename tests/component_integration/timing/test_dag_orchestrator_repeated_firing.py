@@ -70,6 +70,24 @@ def _build_command(input_file: Path, request_count: int, concurrency: int = 1) -
     """
 
 
+def _build_num_conv_command(
+    input_file: Path, num_conversations: int, concurrency: int = 1
+) -> str:
+    return f"""
+        aiperf profile \
+            --model {defaults.model} \
+            --streaming \
+            --custom-dataset-type dag_jsonl \
+            --input-file {input_file} \
+            --concurrency {concurrency} \
+            --num-conversations {num_conversations} \
+            --record-processor-service-count 1 \
+            --workers-max 2 \
+            --extra-inputs ignore_eos:true \
+            --ui {defaults.ui}
+    """
+
+
 def _credits_by_conversation(
     analyzer: CreditFlowAnalyzer,
 ) -> dict[str, list[Credit]]:
@@ -150,6 +168,38 @@ class TestOrchestratorRepeatedFiring:
         )
 
         # No leaks, clean completion (the run already returned before timeout).
+        assert analyzer.credits_balanced(), (
+            f"credit leak: {analyzer.total_credits} issued, "
+            f"{analyzer.total_returns} returned"
+        )
+
+    def test_num_conversations_one_still_spawns_children(self, cli: AIPerfCLI) -> None:
+        """Regression (dynamo review): with ``--num-conversations 1`` the phase
+        completes on the single session's drain, not a request-count cap. The
+        orchestrator root's virtual return both completes the session AND spawns
+        the children -- so the session must stay in-flight until the spawned
+        children are registered and drained, otherwise the phase completes with
+        zero child wire requests. Both fan-out children must fire exactly once."""
+        result = cli.run_sync(
+            _build_num_conv_command(FIXTURE, num_conversations=1),
+            timeout=60.0,
+            assert_success=True,
+        )
+        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
+        analyzer = CreditFlowAnalyzer(runner)
+
+        real_credits = [c for c in analyzer.credits if not c.no_request]
+        fired = {c.conversation_id for c in real_credits}
+        assert fired == CHILD_IDS, (
+            "num-conversations 1 must still spawn and drain both fan-out "
+            f"children before completing; got {sorted(fired)}"
+        )
+        per_child = {cid: 0 for cid in CHILD_IDS}
+        for c in real_credits:
+            per_child[c.conversation_id] += 1
+        assert per_child == {"fan-out-a": 1, "fan-out-b": 1}, (
+            f"one conversation => exactly one child pair; got {per_child}"
+        )
         assert analyzer.credits_balanced(), (
             f"credit leak: {analyzer.total_credits} issued, "
             f"{analyzer.total_returns} returned"
