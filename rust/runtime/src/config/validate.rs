@@ -313,12 +313,15 @@ fn profiling_is_agentic_replay(cfg: &BenchmarkConfig) -> bool {
     }
 }
 
-/// Restrict accelerated cache warmup to the agentic_replay timing mode.
+/// Restrict accelerated cache warmup to a weka reconstruction run.
 ///
-/// Ported from Python `validate_agentic_cache_warmup`.
-/// `agentic_cache_warmup_duration` is consumed solely by the agentic-replay
-/// warmup builder, so an unguarded flag on any other run is a silent no-op — we
-/// raise instead.
+/// Ported from Python `validate_agentic_cache_warmup`, and kept keyed the same
+/// way as the `resolve.rs` twin: BOTH weka arms consume the accelerated
+/// cache-warmup substage — the legacy arm through `lower_legacy_agentic`, the
+/// graph-ir arm through `build_pressure_recycle` in `graph_phase_runtime` — so
+/// any resolved `weka_semantics` accepts. Outside weka the value reaches no
+/// consumer and is silently dropped, so an unguarded flag there is an invisible
+/// no-op; reject it instead.
 ///
 /// NOTE (ported-partial): Python resolves a named scenario's declared
 /// `timing_mode` through the scenario registry (`get_scenario(...).timing_mode`)
@@ -338,11 +341,14 @@ fn validate_agentic_cache_warmup(cfg: &BenchmarkConfig) -> Result<()> {
     if cfg.scenario.is_some() {
         return Ok(());
     }
-    if !profiling_is_agentic_replay(cfg) {
+    // An explicit `weka_semantics` selects a weka arm outright. Absent that, an
+    // explicit agentic_replay phase override still reaches the legacy lowering.
+    if cfg.weka_semantics.is_none() && !profiling_is_agentic_replay(cfg) {
         bail!(
-            "--agentic-cache-warmup-duration requires the agentic_replay timing \
-             mode (set today by --scenario inferencex-agentx-mvp); the profiling \
-             phase(s) are not agentic_replay."
+            "--agentic-cache-warmup-duration requires a weka reconstruction run \
+             (--weka-semantics, or a scenario that locks one); neither weka arm \
+             lowers this run, so the accelerated cache-warmup substage reaches no \
+             consumer."
         );
     }
     Ok(())
@@ -648,11 +654,23 @@ mod tests {
     // ---- validate_agentic_cache_warmup -------------------------------------
 
     #[test]
-    fn agentic_warmup_without_agentic_timing_mode_rejected() {
+    fn agentic_warmup_without_weka_rejected() {
         let mut v = valid_value();
         v["phases"][0]["agentic_cache_warmup_duration"] = json!(30.0);
         let err = validate(&cfg(v)).unwrap_err().to_string();
-        assert!(err.contains("agentic_replay"), "{err}");
+        assert!(err.contains("requires a weka reconstruction run"), "{err}");
+    }
+
+    /// Both weka arms consume the substage, so either spelling accepts. This
+    /// regressed once in the `resolve.rs` twin, which accepted only `legacy`.
+    #[test]
+    fn agentic_warmup_accepted_under_any_weka_semantics() {
+        for mode in ["legacy", "graph-ir"] {
+            let mut v = valid_value();
+            v["weka_semantics"] = json!(mode);
+            v["phases"][0]["agentic_cache_warmup_duration"] = json!(30.0);
+            assert!(validate(&cfg(v)).is_ok(), "rejected under {mode}");
+        }
     }
 
     #[test]
