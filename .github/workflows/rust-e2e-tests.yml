@@ -82,6 +82,14 @@ jobs:
                   print(f"SKIP {name}: {exc}")
           PY
 
+      - name: Run Rust in-crate unit suites
+        # Before this step existed, no CI job compiled any `--lib` target: the e2e
+        # suite builds only integration binaries, so a `#[cfg(test)]`-only struct
+        # literal that a field addition left incomplete made every aiperf-cli lib
+        # test un-runnable without failing anything. Runs before the e2e suite
+        # because it is seconds-fast and catches compile breakage first.
+        run: make test-rust-lib
+
       - name: Run Rust e2e suite
         run: make test-e2e-rust
 

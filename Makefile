@@ -333,6 +333,18 @@ test-e2e-rust: native-cli #? run the Rust product e2e suite against a freshly bu
 	$(activate_venv) && AIPERF_E2E_BIN=$(abspath $(RUST_TARGET)/release/aiperf) \
 		$(CARGO_TEST) -p aiperf-e2e-tests -- --test-threads=$(E2E_TEST_THREADS)
 
+test-rust-lib: #? run the in-crate Rust unit suites (aiperf-runtime + aiperf-cli).
+	@printf "$(bold)$(blue)Running Rust in-crate unit suites...$(reset)\n"
+	@# `test-e2e-rust` compiles only the e2e integration targets, so nothing in CI
+	@# ever built these `--lib` targets: a `#[cfg(test)]`-only struct literal left
+	@# incomplete by a field addition made all 124 aiperf-cli lib tests silently
+	@# un-runnable, and no job reported it. `aiperf-runtime`'s engine module is
+	@# behind a non-default feature, so the bare invocation runs ~zero of it —
+	@# both invocations are required.
+	$(activate_venv) && $(CARGO_TEST) -p aiperf-cli --lib
+	$(activate_venv) && $(CARGO_TEST) -p aiperf-runtime --lib
+	$(activate_venv) && $(CARGO_TEST) -p aiperf-runtime --features engine --lib
+
 test-all: #? run all tests (unit, component integration, and integration).
 	make test --no-print-directory
 	make test-component-integration --no-print-directory
