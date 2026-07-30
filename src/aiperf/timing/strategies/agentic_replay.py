@@ -70,6 +70,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
+from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.replay_dependencies import ReplayResumeBoundary
@@ -190,7 +191,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._cache_warmup_requests_by_lane: Counter[int] = Counter()
         self._cache_warmup_request_budget_reached = False
         self._baseline_warmup_admitted = 0
-        self._quota_handoff_starts: dict[str, TurnToSend] = {}
+        self._quota_handoff_turns: dict[tuple[str, str, int], TurnToSend] = {}
         self._baseline_warmup_returns: dict[str, Credit] = {}
         self._baseline_correlations: set[str] = set()
         self._baseline_warmup_turns: set[tuple[str, int]] = set()
@@ -459,7 +460,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
         return lane
 
-    def _admit_cache_warmup_turn(self, turn: TurnToSend) -> bool:
+    def _admit_cache_warmup_turn(self, turn: TurnToSend) -> TurnAdmission:
         """Admit mandatory primers, then enforce the additional per-lane quota.
 
         Snapshot reconstruction can require multiple primers on one lane when
@@ -476,16 +477,18 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         ) in self._baseline_warmup_turns
         if is_baseline:
             self._baseline_warmup_admitted += 1
-            return True
+            return TurnAdmission.ADMIT
         if (
             self._cache_warmup_requests_by_lane[lane]
             >= self._cache_warmup_requests_per_lane
         ):
-            if turn.agent_depth == 0 and (
-                turn.turn_index == 0 or turn.is_session_start
-            ):
-                self._quota_handoff_starts[turn.effective_root_correlation_id] = turn
-            return False
+            state_key = (
+                turn.conversation_id,
+                turn.x_correlation_id,
+                turn.turn_index,
+            )
+            self._quota_handoff_turns[state_key] = turn
+            return TurnAdmission.DEFER
         self._cache_warmup_requests_by_lane[lane] += 1
         if not self._cache_warmup_request_budget_reached and all(
             self._cache_warmup_requests_by_lane[lane_index]
@@ -501,7 +504,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 f"{len(self.conversation_source.trajectories)} lanes; "
                 "draining requests"
             )
-        return True
+        return TurnAdmission.ADMIT
 
     async def execute_phase(self) -> None:
         """Dispatch initial credits for the phase."""
@@ -760,6 +763,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         if self._accelerated_warmup_started:
             return
         assert self._cache_warmup_enabled
+        # Baseline primers return before accelerated replay is active. A parent
+        # already blocked on a child join may never return again in WARMUP, so
+        # seed its last nonterminal credit into the profiling handoff now.
+        for credit in self._baseline_warmup_returns.values():
+            if credit.is_final_turn:
+                continue
+            self._handoff_credits[credit.x_correlation_id] = credit
         self._accelerated_warmup_started = True
         self.credit_issuer.set_max_tokens_override(_WARMUP_MAX_TOKENS)
         for trajectory in self.conversation_source.trajectories:
@@ -904,16 +914,18 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _issue_child_continuation_or_drain(self, turn: TurnToSend) -> None:
         """Dispatch a DAG child continuation, draining terminal refusals.
 
-        ``dispatch_child_turn`` returns True iff the turn reached the wire; on
-        a terminal refusal notify the orchestrator so the parent's join drains
-        deterministically instead of deadlocking on a child whose remaining
-        turns will never be issued. Accelerated warmup refusals are different:
-        the remaining child and its active join are persisted for profiling, so
-        marking the child stopped here would release the parent prematurely.
+        On a terminal refusal, notify the orchestrator so the parent's join
+        drains deterministically instead of deadlocking on a child whose
+        remaining turns will never be issued. A deferred accelerated-warmup
+        turn is different: the remaining child and its active join are
+        persisted for profiling, so marking the child stopped here would
+        release the parent prematurely.
         """
-        on_wire = await self.credit_issuer.dispatch_child_turn(turn)
+        result = ChildDispatchResult.normalize(
+            await self.credit_issuer.dispatch_child_turn(turn)
+        )
         if (
-            not on_wire
+            result is ChildDispatchResult.REJECTED
             and self.branch_orchestrator is not None
             and not self.allows_pending_branch_handoff_after_sending_complete
         ):
@@ -1074,7 +1086,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             pending_by_root = dict(pending_by_root_getter())
         else:
             pending_by_root = {}
-        for root_correlation_id, turn in self._quota_handoff_starts.items():
+        for turn in self._quota_handoff_turns.values():
+            root_correlation_id = turn.effective_root_correlation_id
             pending_by_root.setdefault(root_correlation_id, ())
             pending_by_root[root_correlation_id] += (turn,)
         pending_turns_getter = getattr(
@@ -1479,6 +1492,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             await self._handle_accelerated_warmup_return(credit)
             return
         self._baseline_warmup_returns[credit.x_correlation_id] = credit
+        if not credit.is_final_turn:
+            self._handoff_returned_at_ns[credit.x_correlation_id] = (
+                time.perf_counter_ns()
+            )
         if (
             len(self._baseline_warmup_returns)
             >= self.conversation_source.warmup_credit_count

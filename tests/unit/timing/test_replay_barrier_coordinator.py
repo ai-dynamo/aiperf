@@ -12,6 +12,7 @@ from aiperf.common.models import (
     ReplayTurnReference,
     TurnMetadata,
 )
+from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.replay_dependencies import (
@@ -172,6 +173,21 @@ async def test_pending_turns_exposes_deferred_dispatch_for_phase_handoff() -> No
     assert issued == ["d"]
     assert coordinator.pending_turns("root") == ()
     assert coordinator.pending_turns_by_root() == {}
+
+
+@pytest.mark.asyncio
+async def test_retained_child_dispatch_reports_deferred_not_rejected() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+
+    result = await coordinator.submit(
+        _turn("d"),
+        lambda: _record_issue([], "d"),
+        retained_result=ChildDispatchResult.DEFERRED,
+    )
+
+    assert result is ChildDispatchResult.DEFERRED
+    assert coordinator.pending_turns("root") == (_turn("d"),)
 
 
 @pytest.mark.asyncio

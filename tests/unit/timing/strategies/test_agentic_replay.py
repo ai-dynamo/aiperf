@@ -22,6 +22,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.config import BenchmarkRun
+from aiperf.credit.dispatch import TurnAdmission
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -288,6 +289,52 @@ async def test_cache_warmup_starts_after_baseline_and_removes_idle_delay():
 
 
 @pytest.mark.asyncio
+async def test_accelerated_warmup_handoff_keeps_nonterminal_baseline_return():
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_requests_per_lane=1,
+    )
+    baseline = _make_credit(
+        conversation_id="trace_0",
+        x_correlation_id=trajectory.x_correlation_id,
+        turn_index=1,
+        num_turns=4,
+        phase=CreditPhase.WARMUP,
+    )
+    strategy._baseline_warmup_returns[baseline.x_correlation_id] = baseline
+    strategy._dispatch_accelerated_trajectory = AsyncMock()
+
+    await strategy._start_accelerated_warmup()
+
+    assert strategy._handoff_credits == {baseline.x_correlation_id: baseline}
+
+
+@pytest.mark.asyncio
+async def test_accelerated_warmup_handoff_drops_terminal_baseline_return():
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=3)
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_requests_per_lane=1,
+    )
+    baseline = _make_credit(
+        conversation_id="trace_0",
+        x_correlation_id=trajectory.x_correlation_id,
+        turn_index=3,
+        num_turns=4,
+        phase=CreditPhase.WARMUP,
+    )
+    strategy._baseline_warmup_returns[baseline.x_correlation_id] = baseline
+    strategy._dispatch_accelerated_trajectory = AsyncMock()
+
+    await strategy._start_accelerated_warmup()
+
+    assert strategy._handoff_credits == {}
+
+
+@pytest.mark.asyncio
 async def test_cache_warmup_request_budget_is_enforced_per_lane():
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(2)
@@ -320,13 +367,93 @@ async def test_cache_warmup_request_budget_is_enforced_per_lane():
         strategy.conversation_source.warmup_credit_count
     )
 
-    assert admission(lane_0) is True
-    assert admission(lane_0) is True
-    assert admission(lane_0) is False
-    assert admission(lane_1) is True
-    assert admission(lane_1) is True
-    assert admission(lane_1) is False
+    assert admission(lane_0) is TurnAdmission.ADMIT
+    assert admission(lane_0) is TurnAdmission.ADMIT
+    assert admission(lane_0) is TurnAdmission.DEFER
+    assert admission(lane_1) is TurnAdmission.ADMIT
+    assert admission(lane_1) is TurnAdmission.ADMIT
+    assert admission(lane_1) is TurnAdmission.DEFER
     issuer.replay_gate.pause_releases.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_depth", "turn_index"),
+    [
+        pytest.param(0, 0, id="root-start"),
+        pytest.param(0, 2, id="root-continuation"),
+        pytest.param(1, 0, id="child-start"),
+        pytest.param(1, 2, id="child-continuation"),
+    ],
+)
+async def test_cache_warmup_handoff_preserves_every_quota_refused_turn_once(
+    agent_depth: int,
+    turn_index: int,
+):
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(2)
+    ]
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_requests_per_lane=1,
+    )
+    issuer.set_turn_admission = MagicMock()
+
+    await strategy.setup_phase()
+
+    admission = issuer.set_turn_admission.call_args.args[0]
+    quota_consumer = TurnToSend(
+        conversation_id="quota-consumer",
+        x_correlation_id="quota-consumer-root",
+        turn_index=1,
+        num_turns=4,
+    )
+    is_child = agent_depth > 0
+    refused_turn = TurnToSend(
+        conversation_id="trace_0::child" if is_child else "trace_0",
+        x_correlation_id="lane-0-child" if is_child else "lane-0-root",
+        turn_index=turn_index,
+        num_turns=4,
+        agent_depth=agent_depth,
+        parent_correlation_id="lane-0-root" if is_child else None,
+        root_correlation_id="lane-0-root" if is_child else None,
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    strategy._correlation_to_lane[quota_consumer.x_correlation_id] = 0
+    strategy._correlation_to_lane[refused_turn.x_correlation_id] = 0
+    strategy._root_to_lane[quota_consumer.effective_root_correlation_id] = 0
+    strategy._root_to_lane[refused_turn.effective_root_correlation_id] = 0
+
+    if turn_index > 0:
+        strategy._handoff_credits[refused_turn.x_correlation_id] = _make_credit(
+            conversation_id=refused_turn.conversation_id,
+            x_correlation_id=refused_turn.x_correlation_id,
+            turn_index=turn_index - 1,
+            num_turns=refused_turn.num_turns,
+            phase=CreditPhase.WARMUP,
+            agent_depth=refused_turn.agent_depth,
+            parent_correlation_id=refused_turn.parent_correlation_id,
+            root_correlation_id=refused_turn.root_correlation_id,
+            branch_mode=refused_turn.branch_mode,
+        )
+
+    assert admission(quota_consumer) is TurnAdmission.ADMIT
+    assert admission(refused_turn) is TurnAdmission.DEFER
+    assert admission(refused_turn) is TurnAdmission.DEFER
+    issuer.replay_gate.pause_releases.assert_not_called()
+
+    states = strategy._build_handoff_states(finalized_at_ns=0)
+
+    assert len(states[0]) == 1
+    state = states[0][0]
+    assert state.conversation_id == refused_turn.conversation_id
+    assert state.x_correlation_id == refused_turn.x_correlation_id
+    assert state.next_turn_index == refused_turn.turn_index
+    assert state.agent_depth == refused_turn.agent_depth
+    assert state.parent_correlation_id == refused_turn.parent_correlation_id
+    assert state.root_correlation_id == refused_turn.root_correlation_id
+    assert state.branch_mode == refused_turn.branch_mode
 
 
 @pytest.mark.asyncio
@@ -405,10 +532,10 @@ async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
         }
     )
 
-    assert admission(lane_0_first) is True
-    assert admission(lane_0_second) is True
+    assert admission(lane_0_first) is TurnAdmission.ADMIT
+    assert admission(lane_0_second) is TurnAdmission.ADMIT
     issuer.replay_gate.pause_releases.assert_not_called()
-    assert admission(lane_1) is True
+    assert admission(lane_1) is TurnAdmission.ADMIT
     issuer.replay_gate.pause_releases.assert_not_called()
     assert (
         admission(
@@ -419,7 +546,7 @@ async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
                 num_turns=4,
             )
         )
-        is True
+        is TurnAdmission.ADMIT
     )
     issuer.replay_gate.pause_releases.assert_not_called()
     assert (
@@ -431,7 +558,7 @@ async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
                 num_turns=4,
             )
         )
-        is True
+        is TurnAdmission.ADMIT
     )
     issuer.replay_gate.pause_releases.assert_called_once_with()
     assert (
@@ -443,7 +570,7 @@ async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
                 num_turns=4,
             )
         )
-        is False
+        is TurnAdmission.DEFER
     )
     assert (
         admission(
@@ -456,7 +583,7 @@ async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
                 agent_depth=1,
             )
         )
-        is False
+        is TurnAdmission.DEFER
     )
     assert (
         admission(
@@ -467,7 +594,7 @@ async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
                 num_turns=4,
             )
         )
-        is False
+        is TurnAdmission.DEFER
     )
 
 
