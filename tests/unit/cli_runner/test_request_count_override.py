@@ -81,13 +81,9 @@ def test_no_loadgen_override_leaves_yaml_intact() -> None:
     assert _profiling_requests(cfg) == 100
 
 
-
-
 def test_benchmark_duration_gets_default_grace_period_with_config_file() -> None:
     """``--benchmark-duration`` also gets the default grace period with YAML."""
-    user = CLIConfig(
-        **CLIConfig(benchmark_duration=5.0).model_dump(exclude_unset=True)
-    )
+    user = CLIConfig(**CLIConfig(benchmark_duration=5.0).model_dump(exclude_unset=True))
     cfg = resolve_config(user, TEMPLATES_DIR / "minimal.yaml")
     assert _profiling_duration(cfg) == 5.0
     assert _profiling_grace_period(cfg) == 30.0
@@ -96,9 +92,9 @@ def test_benchmark_duration_gets_default_grace_period_with_config_file() -> None
 def test_explicit_benchmark_grace_period_with_config_file_is_preserved() -> None:
     """An explicit ``--benchmark-grace-period`` overrides the default."""
     user = CLIConfig(
-        **CLIConfig(
-            benchmark_duration=5.0, benchmark_grace_period=15.0
-        ).model_dump(exclude_unset=True)
+        **CLIConfig(benchmark_duration=5.0, benchmark_grace_period=15.0).model_dump(
+            exclude_unset=True
+        )
     )
     cfg = resolve_config(user, TEMPLATES_DIR / "minimal.yaml")
     assert _profiling_grace_period(cfg) == 15.0
