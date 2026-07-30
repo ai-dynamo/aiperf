@@ -406,7 +406,8 @@ impl Coordinator {
 /// succeeded, so an absent success counter plus a positive error counter is the
 /// exact "everything failed" signature. A run that recorded no requests at all
 /// (`--dry-run`, an empty schedule) has neither counter and is not a failure
-/// here. Mirrors the python engine's `system_controller` guard.
+/// here, and neither is a run whose every request was cancelled by policy.
+/// Mirrors the python engine's `system_controller` guard.
 fn all_requests_failed(outcome: &PreparedRunOutcome) -> Option<u64> {
     let counter_total = |name: &str| -> Option<f64> {
         let entry = outcome.native_report.metrics.get(name)?;
@@ -426,9 +427,22 @@ fn all_requests_failed(outcome: &PreparedRunOutcome) -> Option<u64> {
         }
         Some(total)
     };
-    let errors = counter_total("error_request_count").unwrap_or(0.0);
     let successes = counter_total("request_count").unwrap_or(0.0);
-    (errors >= 1.0 && successes < 1.0).then(|| errors as u64)
+    if successes >= 1.0 {
+        return None;
+    }
+    // `error_request_count` also counts policy cancellations, which are an
+    // intended outcome of a `cancellation:`-configured run rather than a
+    // failure, so subtract them before deciding the run failed.
+    let cancelled: usize = outcome
+        .native_report
+        .errors
+        .iter()
+        .filter(|error| error.error_type == "RequestCancellationError")
+        .map(|error| error.count)
+        .sum();
+    let errors = counter_total("error_request_count").unwrap_or(0.0) - cancelled as f64;
+    (errors >= 1.0).then(|| errors as u64)
 }
 
 #[derive(Debug)]
