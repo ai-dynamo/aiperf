@@ -82,7 +82,6 @@ def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
         extra = dict(cli.extra_inputs)
         _endpoint_template_from_extra(endpoint, extra)
         endpoint["extra"] = extra
-    _endpoint_template_fallback(endpoint)
     return endpoint
 
 
