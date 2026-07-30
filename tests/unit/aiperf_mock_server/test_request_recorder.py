@@ -497,8 +497,17 @@ class TestRecorderTokenIdTracking:
         ]
         r._file.close()
 
-    def test_record_request_chat_uses_chat_template(self, tmp_path) -> None:
+    def test_record_request_chat_tokenizes_content_without_template(
+        self, tmp_path
+    ) -> None:
+        """ISL is the sum of content tokens from all messages; the chat
+        template is NOT applied, so structural markup tokens are excluded."""
         tok = _ChatTemplateTokenizer()
+        tok._encodings = {
+            "policy": [10, 11],
+            "hello": [20],
+            "prior answer": [30, 31, 32],
+        }
         r = _make_recorder(tmp_path, tok)
         req = ChatCompletionRequest(
             model="m",
@@ -521,71 +530,13 @@ class TestRecorderTokenIdTracking:
         )
         r._file.flush()
 
-        assert tok.template_calls
-        call = tok.template_calls[0]
-        assert [m["role"] for m in call["messages"]] == [
-            "system",
-            "user",
-            "assistant",
-        ]
-        assert call["add_generation_prompt"] is True
-        assert call["tokenize"] is True
+        assert tok.template_calls == []
         assert r._vocab_counts["/v1/chat/completions"] == Counter(
-            {101: 1, 3: 1, 201: 1}
+            {10: 1, 11: 1, 20: 1, 30: 1, 31: 1, 32: 1}
         )
         row = _read_jsonl(r.path)[0]
-        assert row["isl"] == 3
-        assert row["tokenization_mode"] == "chat_template"
-        r._file.close()
-
-    def test_record_request_chat_typerror_retry_uses_conversation_kwarg(
-        self, tmp_path
-    ) -> None:
-        """When `apply_chat_template` rejects positional `messages` with a
-        TypeError, the recorder must retry with `conversation=` AND use the
-        retry's token IDs — not silently fall through to the ChatML fallback
-        (regression test for the try/except/else bug)."""
-        tok = _KeywordOnlyChatTemplateTokenizer()
-        r = _make_recorder(tmp_path, tok)
-        req = ChatCompletionRequest(
-            model="m",
-            messages=[
-                Message(role="system", content="policy"),
-                Message(role="user", content="hello"),
-            ],
-        )
-
-        r.record_request(
-            ts=0.0,
-            endpoint="/v1/chat/completions",
-            request_id="x",
-            model="m",
-            request=req,
-            stream=False,
-            osl_fingerprint={"max_tokens": 8},
-        )
-        r._file.flush()
-
-        # Positional call must have been attempted (and rejected), then retry
-        # must have been invoked via the conversation= kwarg.
-        assert tok.positional_call_count == 1
-        assert len(tok.kwarg_calls) == 1
-        assert [m["role"] for m in tok.kwarg_calls[0]["conversation"]] == [
-            "system",
-            "user",
-        ]
-        assert tok.kwarg_calls[0]["add_generation_prompt"] is True
-        assert tok.kwarg_calls[0]["tokenize"] is True
-
-        # Critical: the recorded row must reflect the RETRY's tokens
-        # ([501, 2, 502]), not the ChatML fallback's tokenization of the
-        # rendered string. This is what the bug got wrong.
-        assert r._vocab_counts["/v1/chat/completions"] == Counter(
-            {501: 1, 2: 1, 502: 1}
-        )
-        row = _read_jsonl(r.path)[0]
-        assert row["isl"] == 3
-        assert row["tokenization_mode"] == "chat_template"
+        assert row["isl"] == 6
+        assert row["tokenization_mode"] == "chat_content"
         r._file.close()
 
     def test_record_request_chat_prompt_token_ids_skip_template(self, tmp_path) -> None:
@@ -707,7 +658,11 @@ class TestRecorderTokenIdTracking:
         assert row["tokenization_mode"] == "prompt_token_ids"
         r._file.close()
 
-    def test_record_request_chat_fallback_preserves_roles(self, tmp_path) -> None:
+    def test_record_request_chat_no_template_tokenizes_content_only(
+        self, tmp_path
+    ) -> None:
+        """When the tokenizer has no apply_chat_template, content is still
+        tokenized directly — no ChatML structural markup is injected."""
         tok = _CountingTokenizer()
         r = _make_recorder(tmp_path, tok)
         req = ChatCompletionRequest(
@@ -729,13 +684,11 @@ class TestRecorderTokenIdTracking:
         )
         r._file.flush()
 
-        assert tok.encoded_texts
-        rendered = tok.encoded_texts[0]
-        assert "<|im_start|>system\npolicy<|im_end|>" in rendered
-        assert "<|im_start|>user\nhello<|im_end|>" in rendered
-        assert rendered.endswith("<|im_start|>assistant\n")
+        assert all("<|im_start|>" not in t for t in tok.encoded_texts)
+        assert "policy" in tok.encoded_texts
+        assert "hello" in tok.encoded_texts
         row = _read_jsonl(r.path)[0]
-        assert row["tokenization_mode"] == "chat_template_fallback"
+        assert row["tokenization_mode"] == "chat_content"
         r._file.close()
 
     def test_open_sets_vocab_size_from_tokenizer(self, tmp_path) -> None:
