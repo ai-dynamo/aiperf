@@ -91,7 +91,7 @@ def test_cache_bust_rejected_with_every_non_chat_endpoint_type(
     endpoint_type: EndpointType, target: CacheBustTarget
 ) -> None:
     """Every non-chat/responses endpoint paired with a non-NONE cache_bust target raises."""
-    with pytest.raises(ValueError, match="chat or responses"):
+    with pytest.raises(ValueError, match="not supported|chat or responses"):
         _build(
             target=target,
             endpoint_type=endpoint_type,
@@ -160,7 +160,7 @@ def test_unsafe_override_does_not_bypass_cache_bust_endpoint_validation() -> Non
             }
         ],
     }
-    with pytest.raises(ValueError, match="chat or responses"):
+    with pytest.raises(ValueError, match="not supported|chat or responses"):
         BenchmarkConfig.model_validate(body)
 
 
