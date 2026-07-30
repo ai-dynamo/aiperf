@@ -30,6 +30,7 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
+    TransportType,
     URLSelectionStrategy,
 )
 
