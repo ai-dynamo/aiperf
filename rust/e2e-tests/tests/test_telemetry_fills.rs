@@ -116,10 +116,14 @@ async fn test_dcgm_and_vllm_telemetry_fills() {
         !names.is_empty(),
         "GPU telemetry summary should carry per-GPU metrics"
     );
+    // Canonical emitted names are `nvidia_`-prefixed. The unprefixed forms in
+    // `LEGACY_NVIDIA_METRIC_ALIASES` (`gpu_telemetry/fields.rs:13`) are accepted
+    // only when *reading* telemetry and are deliberately never re-emitted, so
+    // asserting on them would pass only against an ingest-side regression.
     for expected in [
-        "encoder_utilization",
-        "decoder_utilization",
-        "sm_utilization",
+        "nvidia_encoder_utilization",
+        "nvidia_decoder_utilization",
+        "nvidia_sm_utilization",
     ] {
         assert!(
             names.contains(expected),
@@ -128,12 +132,13 @@ async fn test_dcgm_and_vllm_telemetry_fills() {
     }
 
     // DCGM reports SM activity as a ratio; the runtime exports percent.
-    let sm = first_gpu_metric_avg(&json, "sm_utilization").expect("sm_utilization avg present");
+    let sm = first_gpu_metric_avg(&json, "nvidia_sm_utilization")
+        .expect("nvidia_sm_utilization avg present");
     assert!(
         (0.0..=100.0).contains(&sm),
-        "sm_utilization out of [0,100]: {sm}"
+        "nvidia_sm_utilization out of [0,100]: {sm}"
     );
-    for metric in ["encoder_utilization", "decoder_utilization"] {
+    for metric in ["nvidia_encoder_utilization", "nvidia_decoder_utilization"] {
         let v =
             first_gpu_metric_avg(&json, metric).unwrap_or_else(|| panic!("{metric} avg present"));
         assert!((0.0..=100.0).contains(&v), "{metric} out of [0,100]: {v}");
