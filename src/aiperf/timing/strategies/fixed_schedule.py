@@ -9,7 +9,6 @@ dispatched using delay_ms or timestamp_ms from metadata.
 
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING, NamedTuple
 
 from aiperf.common.constants import MILLIS_PER_SECOND
@@ -92,15 +91,13 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                     f"First turn of {conv.conversation_id} missing timestamp_ms"
                 )
 
+            sampled = self._conversation_source.session_for_conversation(
+                conv.conversation_id
+            )
             self._absolute_schedule.append(
                 ScheduleEntry(
                     timestamp_ms=conv.turns[0].timestamp_ms,
-                    turn=TurnToSend(
-                        conversation_id=conv.conversation_id,
-                        x_correlation_id=str(uuid.uuid4()),
-                        turn_index=0,
-                        num_turns=len(conv.turns),
-                    ),
+                    turn=sampled.build_first_turn(),
                 )
             )
 

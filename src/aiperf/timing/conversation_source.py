@@ -221,6 +221,20 @@ class ConversationSource:
             raise KeyError(f"No metadata for conversation {conversation_id}")
         return self._metadata_lookup[conversation_id]
 
+    def session_for_conversation(
+        self, conversation_id: str, *, x_correlation_id: str | None = None
+    ) -> SampledSession:
+        """Build a session for a known conversation, preserving marker policy."""
+        metadata = self.get_metadata(conversation_id)
+        correlation_id = x_correlation_id or str(uuid.uuid4())
+        return SampledSession(
+            conversation_id=conversation_id,
+            metadata=metadata,
+            x_correlation_id=correlation_id,
+            cache_bust_marker=self._marker_for_session(conversation_id, correlation_id),
+            cache_bust_target=self._cache_bust_target,
+        )
+
     def start_branch_child(
         self,
         parent_correlation_id: str,
