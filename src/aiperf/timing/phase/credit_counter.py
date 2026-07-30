@@ -254,8 +254,15 @@ class CreditCounter:
         # count toward the cap (mirrors the ``counts_as_request`` gate below
         # that keeps ``_requests_sent`` unbumped for it); without this gate a
         # spine's virtual credit could spuriously flip is_final_credit at-cap.
+        # A ``no_request`` virtual orchestrator credit issues no wire request, so
+        # it must not advance ``_requests_sent`` or the ``--request-count`` cap --
+        # its virtual return likewise skips ``_requests_completed`` (see
+        # ``increment_returned``), so bumping sent here would leave sent != completed
+        # forever and hang the phase. This gate MUST precede the child branch: a
+        # nested orchestrator's turns are BOTH ``no_request`` and ``agent_depth > 0``.
+        counts_as_request = not turn_to_send.no_request
         hit_request_cap = (
-            not turn_to_send.no_request
+            counts_as_request
             and self._config.total_expected_requests is not None
             and new_sent_count >= self._config.total_expected_requests
         )
@@ -265,8 +272,10 @@ class CreditCounter:
             # inherited, sampler-plan counters stay root-only). Flip
             # is_final_credit when the request-count cap is crossed
             # on this child increment so the strategy loop and phase
-            # runner unblock the same way they would for a root.
-            self._requests_sent = new_sent_count
+            # runner unblock the same way they would for a root. A nested
+            # orchestrator's request-free turns must NOT bump the counter.
+            if counts_as_request:
+                self._requests_sent = new_sent_count
             return credit_index, hit_request_cap
 
         new_sent_sessions_count = self._sent_sessions
@@ -291,8 +300,7 @@ class CreditCounter:
         # it must NOT advance the wire-request counter or the
         # ``--request-count`` cap. ``_root_requests_sent`` stays balanced with
         # ``_total_session_turns`` (both bumped) so the session-completion
-        # predicate remains satisfiable.
-        counts_as_request = not turn_to_send.no_request
+        # predicate remains satisfiable. (``counts_as_request`` computed above.)
         if counts_as_request:
             self._requests_sent = new_sent_count
         else:

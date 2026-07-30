@@ -27,6 +27,7 @@ from aiperf.dataset.loader._dag_jsonl_helpers import (
     normalize_fork_entry,
     validate_branch_targets_and_collect_parents,
     validate_explicit_join_at,
+    validate_fork_targets_not_payload_isolated,
     validate_non_terminal_branches,
     validate_pre_session_spawns_disjoint_from_forks,
     validate_system_message_placement,
@@ -563,6 +564,7 @@ class DagJsonlLoader(BaseFileLoader):
             self._inline_pre_session_spawns, parent_of
         )
         validate_system_message_placement(self._conversations, parent_of)
+        validate_fork_targets_not_payload_isolated(self._conversations)
         self._stamp_topology(parent_of)
 
     def _stamp_topology(self, parent_of: dict[str, tuple[str, int]]) -> None:

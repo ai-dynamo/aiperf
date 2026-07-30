@@ -118,3 +118,44 @@ class TestDagConversationOrchestrator:
     def test_dag_round_requires_non_empty_spawns(self):
         with pytest.raises(ValueError):
             DagConversation(session_id="s", orchestrator=True, rounds=[{"spawns": []}])
+
+
+class TestDagSchedulingValidation:
+    def test_rounds_bool_rejected(self):
+        # bool subclasses int -> `"rounds": true` would silently become a 1-round spine.
+        with pytest.raises(ValueError, match="boolean"):
+            DagConversation(session_id="s", orchestrator=True, rounds=True)
+
+    def test_think_time_bool_rejected(self):
+        with pytest.raises(ValueError, match="boolean"):
+            DagConversation(
+                session_id="s",
+                orchestrator=True,
+                rounds=1,
+                spawns=["a"],
+                think_time_ms=True,
+            )
+
+    def test_per_round_think_time_bool_rejected(self):
+        with pytest.raises(ValueError, match="boolean"):
+            DagConversation(
+                session_id="s",
+                orchestrator=True,
+                rounds=[{"spawns": ["a"], "think_time_ms": True}],
+            )
+
+    def test_spawns_on_non_orchestrator_rejected(self):
+        with pytest.raises(ValueError, match="only valid on an orchestrator"):
+            DagConversation(
+                session_id="s",
+                turns=[{"messages": [{"role": "user", "content": "x"}]}],
+                spawns=["a"],
+            )
+
+    def test_duplicate_child_across_list_form_rounds_rejected(self):
+        with pytest.raises(ValueError, match="more than\\s+one round"):
+            DagConversation(
+                session_id="s",
+                orchestrator=True,
+                rounds=[{"spawns": ["a"]}, {"spawns": ["a", "b"]}],
+            )

@@ -211,6 +211,17 @@ class DagRound(AIPerfBaseModel):
         "when 'think_time_sigma' is set it is the lognormal median for this round.",
     )
 
+    @field_validator("think_time_ms", mode="before")
+    @classmethod
+    def _reject_bool_think_time(cls, v: Any) -> Any:
+        # bool subclasses int, so Pydantic would coerce `true`/`false` into
+        # 1.0/0.0 ms and silently alter pacing. Reject up front.
+        if isinstance(v, bool):
+            raise ValueError(
+                f"think_time_ms must be numeric, not a boolean (got {v!r})"
+            )
+        return v
+
 
 class DagConversation(AIPerfBaseModel):
     """One line of a DAG JSONL file: a session with ordered turns."""
@@ -301,6 +312,26 @@ class DagConversation(AIPerfBaseModel):
         "with ``parent_correlation_id=None``.",
     )
 
+    @field_validator(
+        "rounds",
+        "think_time_ms",
+        "think_time_sigma",
+        "think_time_min_ms",
+        "think_time_max_ms",
+        mode="before",
+    )
+    @classmethod
+    def _reject_bool_scheduling_fields(cls, v: Any) -> Any:
+        # bool subclasses int, so Pydantic would coerce `true`/`false` for these
+        # numeric (and int|list ``rounds``) fields into 1/0 -- silently altering
+        # topology (a one-round spine) or pacing (1.0 ms). Reject up front.
+        if isinstance(v, bool):
+            raise ValueError(
+                "rounds / think_time_* must be numeric (or a list for 'rounds'), "
+                f"not a boolean (got {v!r}); check for a typo in your DAG JSONL file"
+            )
+        return v
+
     @model_validator(mode="after")
     def _validate_orchestrator(self) -> "DagConversation":
         if not self.orchestrator:
@@ -308,6 +339,12 @@ class DagConversation(AIPerfBaseModel):
                 raise ValueError(
                     "'rounds' is only valid on an orchestrator conversation "
                     "(set 'orchestrator': true)"
+                )
+            if self.spawns:
+                raise ValueError(
+                    "conversation-level 'spawns' is only valid on an orchestrator "
+                    "conversation; a normal conversation uses per-turn "
+                    "'DagTurn.spawns' (top-level 'spawns' would be silently ignored)"
                 )
             if not self.turns:
                 raise ValueError(
@@ -343,6 +380,20 @@ class DagConversation(AIPerfBaseModel):
                     "with a per-round 'rounds' list, omit conversation-level "
                     "'spawns' (each round declares its own 'spawns')"
                 )
+            # Each list-form round must own DISTINCT branch sessions: a child id
+            # reused across rounds would emit raw records with the same
+            # (root, conversation_id, turn_index) key, making per-round latency
+            # attribution ambiguous.
+            seen: set[str] = set()
+            for r in self.rounds:
+                for child in r.spawns:
+                    if child in seen:
+                        raise ValueError(
+                            f"child session id '{child}' is spawned by more than "
+                            "one round; each list-form round must own distinct "
+                            "branch sessions for unambiguous raw attribution"
+                        )
+                    seen.add(child)
             return
         if isinstance(self.rounds, int) and self.rounds < 1:
             raise ValueError("'rounds' count must be >= 1")

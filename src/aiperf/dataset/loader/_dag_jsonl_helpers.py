@@ -186,6 +186,36 @@ def detect_cycles(conversations: dict[str, Conversation]) -> None:
         dfs(sid)
 
 
+def validate_fork_targets_not_payload_isolated(
+    conversations: dict[str, Any],
+) -> None:
+    """Reject payload isolation on a FORK target.
+
+    A FORK child inherits the parent's accumulated context (the worker seeds its
+    turn list from the parent session). ``MESSAGE_ARRAY_WITH_RESPONSES`` then
+    replaces that seeded list with the isolated authored array on the child's
+    first turn -- silently dropping the parent prompt/response the FORK was meant
+    to carry. Payload isolation is only meaningful on fresh-context SPAWN.
+    """
+    for conv in conversations.values():
+        for branch in conv.branches:
+            if branch.mode != ConversationBranchMode.FORK:
+                continue
+            for child_id in branch.child_conversation_ids:
+                child = conversations.get(child_id)
+                if (
+                    child is not None
+                    and child.context_mode
+                    == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+                ):
+                    raise DagLoadError(
+                        f"session '{child_id}' is a FORK target with context_mode "
+                        "'message_array_with_responses'; payload isolation drops "
+                        "the inherited parent context and is only valid on "
+                        "fresh-context SPAWN branches"
+                    )
+
+
 def validate_system_message_placement(
     conversations: dict[str, Any],
     parent_of: dict[str, tuple[str, int]],

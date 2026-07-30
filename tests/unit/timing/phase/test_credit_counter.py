@@ -365,3 +365,37 @@ def test_progress_record_fatal_error_stores_and_unblocks():
     # Only the first error is kept.
     progress.record_fatal_error(RuntimeError("second"))
     assert progress.fatal_error is err
+
+
+def test_no_request_child_credit_does_not_bump_sent_counter():
+    """Nested-orchestrator hang regression: an orchestrator spawning another
+    orchestrator makes the inner spine's turns BOTH no_request AND agent_depth>0.
+    Such a request-free child must NOT bump the wire-request counter -- its
+    virtual return skips _requests_completed, so bumping sent would leave
+    sent != completed forever and hang the phase with no error."""
+    c = CreditCounter(cfg())
+    child = TurnToSend(
+        conversation_id="c",
+        turn_index=0,
+        num_turns=1,
+        x_correlation_id="x",
+        no_request=True,
+        agent_depth=1,
+    )
+    c.increment_sent(child)
+    assert c.requests_sent == 0  # request-free child: not counted as sent
+    # Its virtual return likewise skips completed -> counters stay balanced.
+    c.increment_returned(True, False, is_child=True, no_request=True)
+    assert c.requests_completed == 0
+
+    # A real child still bumps both sides.
+    real = TurnToSend(
+        conversation_id="c",
+        turn_index=0,
+        num_turns=1,
+        x_correlation_id="y",
+        no_request=False,
+        agent_depth=1,
+    )
+    c.increment_sent(real)
+    assert c.requests_sent == 1

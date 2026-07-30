@@ -980,3 +980,42 @@ def test_think_time_sigma_infinite_rejected(tmp_path):
     path = write_lines(tmp_path, [_orch(think_time_sigma=1e300), _child()])
     with pytest.raises(DagLoadError):
         DagJsonlLoader(path).load()
+
+
+def test_fork_target_with_payload_isolation_rejected(tmp_path):
+    """A FORK child inherits parent context; payload isolation would replace it
+    with the isolated authored array, silently dropping the parent prompt. Reject
+    message_array_with_responses on FORK targets (SPAWN targets are fine)."""
+    path = write_lines(
+        tmp_path,
+        [
+            {"session_id": "root", "turns": [_turn("p", forks=["child"])]},
+            {
+                "session_id": "child",
+                "context_mode": "message_array_with_responses",
+                "turns": [_turn("c")],
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError, match="FORK target with context_mode"):
+        DagJsonlLoader(path).load()
+
+
+def test_spawn_target_with_payload_isolation_allowed(tmp_path):
+    """SPAWN starts fresh, so payload isolation on a SPAWN target is valid."""
+    path = write_lines(
+        tmp_path,
+        [
+            {"session_id": "root", "turns": [_turn("p", spawns=["child"])]},
+            {
+                "session_id": "child",
+                "context_mode": "message_array_with_responses",
+                "turns": [_turn("c")],
+            },
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    assert (
+        by_id["child"].context_mode
+        == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+    )
