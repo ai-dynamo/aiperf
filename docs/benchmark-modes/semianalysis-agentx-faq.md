@@ -77,7 +77,9 @@ transparency.
   wouldn't fit (then keep the first N eligible when `--num-dataset-entries` is set); a ~256k-window
   server should instead pick a `_256k` corpus
   ([§3](#3-how-realistic-are-the-prompts-and-token-counts)). When concurrency exceeds the loaded
-  pool, pass `--allow-dataset-wrap` or lower concurrency (wrapping defaults off).
+  pool, wrapping happens automatically because the scenario locks
+  `--cache-bust first_turn_prefix` on (an active cache-bust marker keeps repeated traces distinct);
+  without cache-bust you would need `--allow-dataset-wrap` or a lower concurrency.
 
 The [AgentX MVP tutorial](../tutorials/agentx-mvp.md#quick-start)'s Quick Start is the same run,
 written slightly differently: it uses the rolling `semianalysis_cc_traces_weka_with_subagents` alias
@@ -1004,8 +1006,9 @@ Not as a *valid* run: any `--benchmark-duration` below 900s refuses to start (th
   shrinks roughly proportionally. Caveat: it keys a *different* dataset-cache
   entry, so a shrunk smoke run does not warm the cache for the full-corpus
   run. If `--concurrency` exceeds N (and you have a duration/session budget
-  that needs wrapping), pass `--allow-dataset-wrap` or lower concurrency.
-  Wrapping defaults to off; cache-bust alone does not enable it.
+  that needs wrapping), an active `--cache-bust` target enables wrapping on its
+  own; otherwise pass `--allow-dataset-wrap` or lower concurrency. The scenario
+  locks cache-bust on, so agentx runs wrap without extra flags.
 - **Lowering `--concurrency`** lightens the load but shortens nothing — the 900s floor is
   wall-clock. A small concurrency at 900s is the cheapest *valid* run.
 - **A true minutes-long shakeout** (connectivity, endpoint, artifacts) is `--unsafe-override` plus a

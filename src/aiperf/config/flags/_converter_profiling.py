@@ -460,6 +460,11 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
     for output_key, attr_name in _PROF_FIELD_ROUTES:
         if attr_name in fields_set:
             prof[output_key] = getattr(cli, attr_name)
+    if (
+        cli.benchmark_duration is not None
+        and "benchmark_grace_period" not in fields_set
+    ):
+        prof["grace_period"] = cli.benchmark_grace_period
 
     _apply_profiling_ramps(prof, cli)
     _apply_agentic_replay_fields(prof, cli)
