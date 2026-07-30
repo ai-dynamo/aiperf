@@ -461,7 +461,7 @@ def _effective_prefix_turns(session: UserSession) -> list[Turn]:
     """
     turns = session.turn_list
     for i in range(len(turns) - 1, -1, -1):
-        if turns[i].reset_context and turns[i].raw_messages:
+        if turns[i].reset_context and turns[i].raw_messages is not None:
             return turns[i:]
     return turns
 
