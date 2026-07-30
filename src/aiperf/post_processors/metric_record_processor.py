@@ -81,5 +81,6 @@ class MetricRecordProcessor(BaseMetricsProcessor):
             metadata=metadata,
             metrics=record_metrics,
             trace_data=record.request.trace_data,
+            spec_decode_acceptance=record.spec_decode_acceptance,
             error=record.request.error,
         )
