@@ -74,6 +74,30 @@ def test_prompt_config_random_range_ratio_requires_isl():
         config.get_sequence_distribution()
 
 
+def test_prompt_config_random_range_ratio_rejects_isl_stddev():
+    """--isl-stddev with --random-range-ratio is rejected at validation time."""
+    from aiperf.config.distributions import NormalDistribution
+
+    with pytest.raises(ValueError, match="--isl-stddev"):
+        PromptConfig(
+            random_range_ratio="0.3",
+            isl=NormalDistribution(mean=128, stddev=20),
+            osl=FixedDistribution(value=128),
+        )
+
+
+def test_prompt_config_random_range_ratio_rejects_osl_stddev():
+    """--osl-stddev with --random-range-ratio is rejected at validation time."""
+    from aiperf.config.distributions import NormalDistribution
+
+    with pytest.raises(ValueError, match="--osl-stddev"):
+        PromptConfig(
+            random_range_ratio="0.3",
+            isl=FixedDistribution(value=128),
+            osl=NormalDistribution(mean=128, stddev=20),
+        )
+
+
 def test_prompt_config_random_range_ratio_invalid_value_rejected():
     """Bad ratio value is rejected at validation time, not on first use."""
     with pytest.raises(ValueError, match="Invalid random_range_ratio value"):

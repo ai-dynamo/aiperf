@@ -272,6 +272,20 @@ class PromptConfig(BaseConfig):
                 "random_range_ratio cannot be combined with sequence_distribution; "
                 "use one or the other."
             )
+
+        isl_stddev = getattr(self.isl, "stddev", 0) or 0
+        osl_stddev = getattr(self.osl, "stddev", 0) or 0
+        if isl_stddev > 0:
+            raise ValueError(
+                "--isl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls ISL variance."
+            )
+        if osl_stddev > 0:
+            raise ValueError(
+                "--osl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls OSL variance."
+            )
+
         return self
 
     def get_sequence_distribution(
