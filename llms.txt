@@ -486,7 +486,9 @@ Transports:
 
 - [`docs/specs/http-transport.md`](docs/specs/http-transport.md) — the Clock-injected hyper
   HTTP stack: protocols, SSE streaming, endpoint binding, forward-proxy `CONNECT`
-  tunnelling (`--proxy`/`--proxy-from-env`), and post-send cancellation.
+  tunnelling (`--proxy`/`--proxy-from-env`), TLS peer verification
+  (`--ssl-verify`/`endpoint.ssl_verify`) and Unix-domain-socket targeting
+  (`--uds-path`/`endpoint.uds_path`), and post-send cancellation.
 - [`docs/specs/grpc-transport.md`](docs/specs/grpc-transport.md) — the Clock-injected Tonic
   gRPC stack: the binding registry, KServe OIP v2 and Riva families, the
   protoc-free codec, and the worker-local sink.
