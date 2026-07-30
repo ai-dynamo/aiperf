@@ -217,6 +217,65 @@ class TestPhaseRunnerLifecycle:
         with pytest.raises(RuntimeError, match="blew up"):
             runner._raise_if_control_node_failed()
 
+    async def test_seamless_return_wait_fatal_error_forwards_not_completes(
+        self, runner: PhaseRunner
+    ) -> None:
+        """Seamless mode: ``run()`` never awaits the detached return-wait task,
+        so its done-callback must FORWARD a recorded fatal control-node failure
+        (via the error callback) instead of only logging and reporting a clean
+        completion -- otherwise the run reports success on a fatal failure."""
+        errors: list[BaseException] = []
+        completed: list[bool] = []
+        runner.set_phase_error_callback(errors.append)
+        runner.set_phase_complete_callback(lambda: completed.append(True))
+
+        err = RuntimeError("virtual return callback blew up")
+        runner._progress.record_fatal_error(err)
+
+        task = MagicMock()
+        task.cancelled.return_value = False
+        task.exception.return_value = None
+        runner._on_return_wait_complete(task)
+
+        assert errors == [err]  # forwarded so the orchestrator can fail the run
+        assert completed == [True]  # cleanup still runs
+
+    async def test_seamless_return_wait_task_exception_is_retrieved(
+        self, runner: PhaseRunner
+    ) -> None:
+        """If the detached wait task itself raised (not routed through the fatal
+        sink), the done-callback must retrieve ``task.exception()`` -- both so it
+        is not left as an unretrieved-task-exception and so it fails the run."""
+        errors: list[BaseException] = []
+        runner.set_phase_error_callback(errors.append)
+
+        boom = RuntimeError("background wait crashed")
+        task = MagicMock()
+        task.cancelled.return_value = False
+        task.exception.return_value = boom
+        runner._on_return_wait_complete(task)
+
+        task.exception.assert_called_once()  # retrieved, not swallowed
+        assert errors == [boom]
+
+    async def test_seamless_return_wait_clean_completion_does_not_forward(
+        self, runner: PhaseRunner
+    ) -> None:
+        """No fatal error and no task exception: the seamless done-callback must
+        report a clean completion and NOT invoke the error callback."""
+        errors: list[BaseException] = []
+        completed: list[bool] = []
+        runner.set_phase_error_callback(errors.append)
+        runner.set_phase_complete_callback(lambda: completed.append(True))
+
+        task = MagicMock()
+        task.cancelled.return_value = False
+        task.exception.return_value = None
+        runner._on_return_wait_complete(task)
+
+        assert errors == []
+        assert completed == [True]
+
     async def test_baseline_boundary_capture_is_fire_and_forget(
         self, runner: PhaseRunner, pub: MagicMock
     ) -> None:
