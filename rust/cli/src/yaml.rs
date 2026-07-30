@@ -668,6 +668,8 @@ struct EndpointSection {
     connection_reuse: Option<String>,
     #[serde(default, alias = "sslVerify")]
     ssl_verify: Option<bool>,
+    #[serde(default, alias = "udsPath")]
+    uds_path: Option<String>,
     #[serde(
         default,
         rename = "use_legacy_max_tokens",
@@ -1757,6 +1759,7 @@ impl Benchmark {
                 .map(load::parse_connection_reuse)
                 .transpose()?,
             ssl_verify: self.endpoint.ssl_verify,
+            uds_path: self.endpoint.uds_path.clone(),
             request_content_type: self
                 .endpoint
                 .request_content_type

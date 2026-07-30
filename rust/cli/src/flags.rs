@@ -748,6 +748,11 @@ pub struct ProfileFlags {
     #[arg(long = "ssl-verify", num_args = 0..=1, default_missing_value = "true")]
     pub ssl_verify: Option<bool>,
 
+    /// Dial this Unix-domain socket instead of the URL host. The URL still
+    /// supplies the request path and `Host` header.
+    #[arg(long = "uds-path", value_name = "PATH")]
+    pub uds_path: Option<String>,
+
     /// Request body content type (`--request-content-type`):
     /// `application/json` or `multipart/form-data`.
     #[arg(long = "request-content-type")]

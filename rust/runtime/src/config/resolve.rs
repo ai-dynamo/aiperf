@@ -229,6 +229,8 @@ pub struct Inputs {
     pub connection_reuse: Option<ConnectionReuse>,
     /// Verify TLS peer certificates. Absent leaves the `Endpoint` default (on).
     pub ssl_verify: Option<bool>,
+    /// Unix-domain socket to dial instead of the URL host.
+    pub uds_path: Option<String>,
     pub request_content_type: Option<RequestContentType>,
     pub wait_for_model_timeout: Option<f64>,
     pub wait_for_model_mode: Option<WaitForModelMode>,
@@ -847,6 +849,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
         connection_reuse: resolved_connection_reuse,
         ssl_verify: inputs.ssl_verify.unwrap_or(true),
+        uds_path: inputs.uds_path.clone(),
         connection_limit: DEFAULT_CONNECTION_LIMIT,
         keepalive_timeout: DEFAULT_KEEPALIVE_TIMEOUT,
         download_video_content: inputs.download_video_content,

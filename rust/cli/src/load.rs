@@ -314,6 +314,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .map(parse_connection_reuse)
             .transpose()?,
         ssl_verify: flags.ssl_verify,
+        uds_path: flags.uds_path.clone(),
         request_content_type: flags
             .request_content_type
             .as_deref()
