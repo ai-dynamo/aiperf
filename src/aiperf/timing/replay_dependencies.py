@@ -15,6 +15,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.credit.dispatch import ChildDispatchResult
 
 if TYPE_CHECKING:
+    from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.common.models import DatasetMetadata
     from aiperf.credit.structs import Credit, TurnToSend
 
@@ -152,12 +153,22 @@ class _RootBarrierState:
     """Keys of requests on this tree that have recorded completion."""
     pending: dict[ReplayTurnKey, _PendingDispatch]
     """Dispatches keyed by request, waiting on their predecessors to complete."""
+    in_flight: int = 0
+    """Requests from this runtime tree currently on the wire."""
+    idle_watchdog: asyncio.TimerHandle | None = None
+    """Per-tree idle-cap callback, armed only while no request is in flight."""
 
 
 class ReplayBarrierCoordinator:
     """Release requests only after their recorded frontier has completed."""
 
-    def __init__(self, dataset_metadata: DatasetMetadata) -> None:
+    def __init__(
+        self,
+        dataset_metadata: DatasetMetadata,
+        *,
+        scheduler: LoopScheduler | None = None,
+        root_idle_gap_cap_seconds: float | None = None,
+    ) -> None:
         self._predecessors: dict[ReplayTurnKey, tuple[ReplayTurnKey, ...]] = {}
         for conversation in dataset_metadata.conversations:
             for turn_index, turn in enumerate(conversation.turns):
@@ -170,6 +181,39 @@ class ReplayBarrierCoordinator:
         self._dispatch_tasks: set[asyncio.Task] = set()
         self._active = False
         self._releases_paused = False
+        self._scheduler = scheduler
+        self._root_idle_gap_cap_seconds = root_idle_gap_cap_seconds
+        self._root_idle_jumps = 0
+        self._root_idle_seconds_skipped = 0.0
+
+    def _root_state(self, root_id: str) -> _RootBarrierState:
+        return self._roots.setdefault(
+            root_id, _RootBarrierState(completed=set(), pending={})
+        )
+
+    def observe_issued(self, credit: Credit) -> None:
+        """Track one request reaching the wire and cancel its idle watchdog."""
+        if not self._active:
+            return
+        state = self._root_state(credit.effective_root_correlation_id)
+        state.in_flight += 1
+        if state.idle_watchdog is not None:
+            state.idle_watchdog.cancel()
+            state.idle_watchdog = None
+
+    def observe_idle_root(self, root_id: str) -> None:
+        """Start monitoring a known-idle tree with pending runtime work.
+
+        Profiling snapshots may begin with every stream scheduled in the
+        future, before any request from that runtime root has reached the wire.
+        Registering the root after those timers are installed lets the same
+        completion-driven watchdog cover that initial idle interval.
+        """
+        if not self._active:
+            return
+        state = self._root_state(root_id)
+        if state.in_flight == 0:
+            self._arm_root_idle_watchdog(root_id, state)
 
     def activate(self) -> None:
         """Enable barriers after baseline cache priming completes."""
@@ -205,9 +249,7 @@ class ReplayBarrierCoordinator:
         if not self._active:
             return await issue()
         root_id = turn.effective_root_correlation_id
-        state = self._roots.setdefault(
-            root_id, _RootBarrierState(completed=set(), pending={})
-        )
+        state = self._root_state(root_id)
         key = ReplayTurnKey(turn.conversation_id, turn.turn_index)
         if self._ready(state, key) and not self._releases_paused:
             return await issue()
@@ -225,9 +267,8 @@ class ReplayBarrierCoordinator:
         if not self._active:
             return
         root_id = credit.effective_root_correlation_id
-        state = self._roots.setdefault(
-            root_id, _RootBarrierState(completed=set(), pending={})
-        )
+        state = self._root_state(root_id)
+        state.in_flight = max(0, state.in_flight - 1)
         state.completed.add(ReplayTurnKey(credit.conversation_id, credit.turn_index))
         if self._releases_paused:
             return
@@ -237,10 +278,45 @@ class ReplayBarrierCoordinator:
             task = asyncio.create_task(self._dispatch_pending(pending))
             self._dispatch_tasks.add(task)
             task.add_done_callback(self._dispatch_tasks.discard)
+        if state.in_flight == 0:
+            self._arm_root_idle_watchdog(root_id, state)
+
+    def _arm_root_idle_watchdog(self, root_id: str, state: _RootBarrierState) -> None:
+        """Advance only this tree's timers after a fully idle capped gap."""
+        cap = self._root_idle_gap_cap_seconds
+        if (
+            cap is None
+            or cap < 0
+            or self._scheduler is None
+            or state.idle_watchdog is not None
+        ):
+            return
+        loop = asyncio.get_running_loop()
+        state.idle_watchdog = loop.call_later(cap, self._enforce_root_idle_cap, root_id)
+
+    def _enforce_root_idle_cap(self, root_id: str) -> None:
+        state = self._roots.get(root_id)
+        if state is None:
+            return
+        state.idle_watchdog = None
+        if state.in_flight != 0 or self._scheduler is None:
+            return
+        shifted = self._scheduler.cap_pending_delay_for_group(root_id, 0.0)
+        if shifted <= 0:
+            return
+        self._root_idle_jumps += 1
+        self._root_idle_seconds_skipped += shifted
+        _logger.info(
+            "Per-trace idle cap advanced replay root %s by %.3fs",
+            root_id,
+            shifted,
+        )
 
     def close_root(self, root_id: str) -> None:
         """Discard completed runtime state when a recycled tree drains."""
-        self._roots.pop(root_id, None)
+        state = self._roots.pop(root_id, None)
+        if state is not None and state.idle_watchdog is not None:
+            state.idle_watchdog.cancel()
 
     def seed_completed_prefixes(
         self,
@@ -248,9 +324,7 @@ class ReplayBarrierCoordinator:
         boundaries: tuple[ReplayResumeBoundary, ...],
     ) -> None:
         """Seed exact pre-resume history before any turn can be submitted."""
-        state = self._roots.setdefault(
-            root_id, _RootBarrierState(completed=set(), pending={})
-        )
+        state = self._root_state(root_id)
         if state.pending:
             raise RuntimeError(
                 f"Cannot seed replay history after dispatch for root={root_id!r}"
@@ -313,6 +387,9 @@ class ReplayBarrierCoordinator:
         """Cancel retained dispatches during phase teardown."""
         callbacks = []
         for state in self._roots.values():
+            if state.idle_watchdog is not None:
+                state.idle_watchdog.cancel()
+                state.idle_watchdog = None
             if notify_refused:
                 callbacks.extend(
                     pending.on_refused
@@ -405,6 +482,10 @@ class ReplayIssueGate:
         if self._coordinator is not None:
             self._coordinator.complete(credit)
 
+    def observe_idle_root(self, root_correlation_id: str) -> None:
+        if self._coordinator is not None:
+            self._coordinator.observe_idle_root(root_correlation_id)
+
     def close_root(self, root_correlation_id: str) -> None:
         if self._coordinator is not None:
             self._coordinator.close_root(root_correlation_id)
@@ -439,5 +520,7 @@ class ReplayIssueGate:
             await self._coordinator.cancel_pending(notify_refused=notify_refused)
 
     async def observe_issued(self, credit: Credit) -> None:
+        if self._coordinator is not None:
+            self._coordinator.observe_issued(credit)
         if self._credit_issued is not None:
             await self._credit_issued(credit)

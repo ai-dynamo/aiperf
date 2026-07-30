@@ -490,7 +490,7 @@ def test_system_idle_gap_cap_explicit_other_value_raises() -> None:
     assert "system-idle-gap-cap-seconds" in str(exc.value)
 
 
-def test_trace_idle_gap_cap_explicit_other_value_raises() -> None:
+def test_trace_idle_gap_cap_explicit_value_is_honored() -> None:
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -501,9 +501,10 @@ def test_trace_idle_gap_cap_explicit_other_value_raises() -> None:
             "trace_idle_gap_cap_seconds": 30.0,
         },
     )
-    with pytest.raises(ScenarioLockError) as exc:
-        apply_scenario(run)
-    assert "trace-idle-gap-cap-seconds" in str(exc.value)
+    outcome = apply_scenario(run)
+    assert outcome.violations == []
+    assert outcome.submission_valid is True
+    assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds == 30.0
 
 
 def test_inter_turn_delay_cap_shipped_scenario_forbids_value() -> None:

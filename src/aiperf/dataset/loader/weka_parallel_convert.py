@@ -138,10 +138,6 @@ class _WekaNormalRequestPayload(TypedDict):
     source_kind: NotRequired[str | None]
     # Only present in parent normals (not in child requests):
     capped_output_length: NotRequired[int]
-    # Present when --trace-idle-gap-cap-seconds has rewritten the per-trace
-    # timeline before workers compute turns.
-    effective_t: NotRequired[float]
-    effective_delay_ms: NotRequired[float | None]
     # Theoretical prefix-cache values precomputed parent-side from the
     # per-trace shared seen-set (one hash namespace per trace file).
     theoretical_hit_blocks: int
@@ -165,9 +161,7 @@ class _WekaSubagentMarkerPayload(TypedDict):
     system_tokens: int
     child_session_ids: list[str]
     sa_end_seconds: float
-    effective_sa_end_seconds: NotRequired[float]
     t: float
-    effective_t: NotRequired[float]
 
 
 class _WekaFlatChainMarkerPayload(TypedDict):
@@ -177,9 +171,7 @@ class _WekaFlatChainMarkerPayload(TypedDict):
     chain_index: int
     first_outer_idx: int
     end_seconds: float
-    effective_end_seconds: NotRequired[float]
     t: float
-    effective_t: NotRequired[float]
 
 
 class _WekaParentPayload(TypedDict):
@@ -433,20 +425,16 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 max_asst_blocks=parent_asst_block_caps[k],
             )
 
-        if "effective_t" in req:
-            t_ms = req["effective_t"] * 1000.0
-            delay_ms = req.get("effective_delay_ms")
+        t_ms = req["t"] * 1000.0
+        if k == 0:
+            delay_ms = None
+        elif task.think_time_only and req.get("think_time") is not None:
+            delay_ms = req["think_time"] * 1000.0
         else:
-            t_ms = req["t"] * 1000.0
-            if k == 0:
-                delay_ms = None
-            elif task.think_time_only and req.get("think_time") is not None:
-                delay_ms = req["think_time"] * 1000.0
-            else:
-                prev_req = normals[k - 1][1]
-                delay_ms = _end_to_start_delay_ms(
-                    t_ms - prev_req["t"] * 1000.0, prev_req.get("api_time")
-                )
+            prev_req = normals[k - 1][1]
+            delay_ms = _end_to_start_delay_ms(
+                t_ms - prev_req["t"] * 1000.0, prev_req.get("api_time")
+            )
         if delay_ms is not None:
             delay_ms = delay_tracker.clamp(delay_ms)
             # Floor at 0, mirroring the serial parent loop in
@@ -535,9 +523,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         defaultdict(list)
     )
     group_order: list[tuple[int, int | None]] = []
-    outer_to_t: dict[int, float] = {
-        oi: req.get("effective_t", req["t"]) for oi, req in normals
-    }
+    outer_to_t: dict[int, float] = {oi: req["t"] for oi, req in normals}
     dropped_agent_ids: set[str] = set()
     dropped_subagent_indices: set[int] = set()
     for subagent_index, (sa_outer_idx, sa_entry) in enumerate(parent["subagents"]):
@@ -554,9 +540,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         for oi, pos in sorted(outer_to_turn_pos.items()):
             if oi <= sa_outer_idx:
                 continue
-            sa_end_seconds = sa_entry.get(
-                "effective_sa_end_seconds", sa_entry["sa_end_seconds"]
-            )
+            sa_end_seconds = sa_entry["sa_end_seconds"]
             if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= sa_end_seconds:
                 join_turn = pos
                 break
@@ -580,8 +564,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 "is_background": is_background,
                 "preceding_turn": preceding,
                 "following_turn": join_turn,
-                "start_timestamp": min(e.get("effective_t", e["t"]) for e in entries)
-                * 1000.0,
+                "start_timestamp": min(e["t"] for e in entries) * 1000.0,
             }
         )
 
@@ -599,7 +582,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             (pos for oi, pos in outer_to_turn_pos.items() if oi < first_outer),
             default=0,
         )
-        fp_end = marker.get("effective_end_seconds", marker["end_seconds"])
+        fp_end = marker["end_seconds"]
         join_turn = None
         for oi, pos in sorted(outer_to_turn_pos.items()):
             if oi <= first_outer:
@@ -621,12 +604,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 "is_background": join_turn is None,
                 "preceding_turn": preceding,
                 "following_turn": join_turn,
-                # Mapped spawn time under an idle-gap warp (effective_t), raw t
-                # otherwise. Mirrors the subagent branch above and the serial
-                # flat branch; raw t under a warp collapses the child dispatch
-                # offset to 0.
-                "start_timestamp": min(m.get("effective_t", m["t"]) for m in markers)
-                * 1000.0,
+                "start_timestamp": min(m["t"] for m in markers) * 1000.0,
             }
         )
 
@@ -680,20 +658,16 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     is_tool_result=is_tool_result,
                     max_asst_blocks=child_asst_block_caps[k],
                 )
-            if "effective_t" in creq:
-                t_ms = creq["effective_t"] * 1000.0
-                child_delay_ms = creq.get("effective_delay_ms")
+            t_ms = creq["t"] * 1000.0
+            if k == 0:
+                child_delay_ms = None
+            elif task.think_time_only and creq.get("think_time") is not None:
+                child_delay_ms = creq["think_time"] * 1000.0
             else:
-                t_ms = creq["t"] * 1000.0
-                if k == 0:
-                    child_delay_ms = None
-                elif task.think_time_only and creq.get("think_time") is not None:
-                    child_delay_ms = creq["think_time"] * 1000.0
-                else:
-                    prev_creq = creqs[k - 1]
-                    child_delay_ms = _end_to_start_delay_ms(
-                        t_ms - prev_creq["t"] * 1000.0, prev_creq.get("api_time")
-                    )
+                prev_creq = creqs[k - 1]
+                child_delay_ms = _end_to_start_delay_ms(
+                    t_ms - prev_creq["t"] * 1000.0, prev_creq.get("api_time")
+                )
             if child_delay_ms is not None:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
 

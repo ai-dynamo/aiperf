@@ -187,6 +187,31 @@ def _write_issue_1231_trace(target_dir: Path) -> Path:
     return target_dir
 
 
+def _write_independent_stream_drift_trace(target_dir: Path) -> Path:
+    """A scaled multi-stream trace whose runtime clock drift can exceed its cap.
+
+    Every authored request start is at most 300ms after the preceding request
+    in the whole tree. One worker's first response is deliberately much slower
+    than its recorded ``api_time``, however, so its independent continuation
+    timer would otherwise leave the entire tree idle for over 300ms.
+    """
+    _write_trace(
+        target_dir,
+        "trace_stream_drift",
+        [
+            _req(0.00, [1, 2, 3], api_time=0.005, out=1),
+            _req(0.05, [1, 2, 10], api_time=0.005, out=1),
+            _req(0.10, [1, 2, 20], api_time=0.005, out=100),
+            _req(0.35, [1, 2, 10, 11], api_time=0.005, out=1),
+            _req(0.65, [1, 2, 10, 11, 12], api_time=0.005, out=1),
+            _req(0.95, [1, 2, 10, 11, 12, 13], api_time=0.005, out=1),
+            _req(1.20, [1, 2, 20, 21], api_time=0.005, out=1),
+            _req(1.50, [1, 2, 3, 4], api_time=0.005, out=1),
+        ],
+    )
+    return target_dir
+
+
 def _write_background_trace(target_dir: Path) -> Path:
     """One trace whose worker chain ends after the last main turn, so the loader emits an ``is_background=True`` branch (no SPAWN_JOIN) the runtime must still send and drain cleanly."""
     _write_trace(
@@ -659,6 +684,71 @@ async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
         "no complete gated play executed within the benchmark duration; "
         "cannot verify SPAWN_JOIN ordering"
     )
+    branch_stats = result.json.branch_stats
+    assert branch_stats is not None
+    assert branch_stats.parents_suspended >= 1, (
+        f"the parent never suspended on the gate (join was a no-op): {branch_stats}"
+    )
+    assert branch_stats.parents_resumed >= 1, branch_stats
+    assert branch_stats.children_errored == 0, branch_stats
+
+
+async def test_runtime_idle_cap_handles_independent_stream_clock_drift(
+    tmp_path: Path, mock_server_factory: MockServerFactory
+) -> None:
+    """A slow child cannot recreate a tree-idle gap beyond the dataset cap."""
+    corpus = _write_independent_stream_drift_trace(tmp_path / "traces")
+    cap_seconds = 0.3
+    async with mock_server_factory(ttft=10.0, itl=5.0, workers=4) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=4.0,
+            concurrency=1,
+            extra_args=[
+                "--scenario",
+                "inferencex-agentx-mvp",
+                "--unsafe-override",
+                "--trace-idle-gap-cap-seconds",
+                str(cap_seconds),
+                "--warmup-requests-per-lane",
+                "1",
+            ],
+            timeout=240.0,
+        )
+    _assert_success(result, "independent-stream runtime idle cap")
+
+    complete_plays = [
+        play
+        for play in _collect_plays(result)
+        if play.trace_id == "trace_stream_drift"
+        and [md.turn_index for md in play.root] == [0, 1]
+        and sorted(len(records) for records in play.children.values()) == [2, 4]
+    ]
+    assert complete_plays, "the profiling phase never completed the synthetic tree"
+
+    for play in complete_plays:
+        records = sorted(
+            [*play.root, *(md for child in play.children.values() for md in child)],
+            key=lambda md: md.request_start_ns,
+        )
+        latest_end_ns = records[0].request_end_ns
+        for current in records[1:]:
+            if current.request_start_ns > latest_end_ns:
+                gap_seconds = (current.request_start_ns - latest_end_ns) / 1e9
+                assert gap_seconds <= cap_seconds + 0.15, (
+                    f"runtime tree was completely idle for {gap_seconds:.3f}s "
+                    f"despite a {cap_seconds:.3f}s trace cap"
+                )
+            latest_end_ns = max(latest_end_ns, current.request_end_ns)
+
+        for session in (play.root, *play.children.values()):
+            assert [md.turn_index for md in session] == list(range(len(session)))
+        child_last_end = max(
+            child[-1].request_end_ns for child in play.children.values()
+        )
+        assert play.root[-1].request_start_ns >= child_last_end
 
     branch_stats = result.json.branch_stats
     assert branch_stats is not None

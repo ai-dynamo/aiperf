@@ -59,7 +59,6 @@ import asyncio
 import time
 import uuid
 from collections import Counter, deque
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -257,24 +256,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._system_idle_watchdog: asyncio.TimerHandle | None = None
         if self._system_idle_gap_cap_seconds is not None:
             self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
-        # Idle-gap cap (ms) for the t* boundary the load-time warp can't see (t*
-        # is the sampling instant, not a request). Consumed two ways:
-        #   - WARMUP: this cap and the global system-idle cap both clamp each
-        #     warmup lead so priming doesn't start hours early
-        #     (``_capped_warmup_lead_ms``); priming spacing is meaningless.
-        #   - PROFILING: a single uniform shift caps the leading idle (t* ->
-        #     earliest stream) while preserving recorded inter-stream spacing
-        #     (``_leading_idle_shift_ms``); a per-stream clamp would collapse
-        #     every idle subagent onto t=cap.
-        # None when no cap is set (raw faithful timing -- the user's choice).
-        # v2: trace_idle_gap_cap_seconds lives on the (file) dataset config.
-        default_dataset = run.cfg.get_default_dataset() if run is not None else None
-        idle_cap_s = getattr(default_dataset, "trace_idle_gap_cap_seconds", None)
-        self._phase_offset_cap_ms: float | None = (
-            idle_cap_s * MILLIS_PER_SECOND
-            if isinstance(idle_cap_s, int | float)
-            else None
-        )
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
         # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
@@ -615,55 +596,20 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._system_idle_watchdog = None
 
     def _capped_warmup_lead_ms(self, lead_ms: float) -> float:
-        """Clamp a WARMUP lead (t* - the warmed turn) to the idle-gap cap.
+        """Clamp a WARMUP lead to the global system-idle guard.
 
         Warmup is a cache-priming pass, not faithful replay: warming a stream
         that last fired hours before t* that far ahead would make the warmup
-        phase itself take hours. Clamping each lead bounds the priming window
-        to the cap; the relative timing among warmup requests carries no replay
-        meaning (each primes its own session, all converge at t*), so an
-        independent per-lead clamp is fine here. No-op when no cap is set.
-
-        PROFILING dispatch offsets are NOT clamped this way -- see
-        :meth:`_leading_idle_shift_ms`.
+        phase itself take hours. The per-trajectory trace cap is deliberately
+        absent here: it is a profiling runtime watchdog, not a phase-start
+        schedule transform.
         """
-        caps_ms = [
-            cap
-            for cap in (
-                self._phase_offset_cap_ms,
-                (
-                    self._system_idle_gap_cap_seconds * MILLIS_PER_SECOND
-                    if self._system_idle_gap_cap_seconds is not None
-                    else None
-                ),
-            )
-            if cap is not None
-        ]
-        return min(lead_ms, *caps_ms) if caps_ms else lead_ms
-
-    def _leading_idle_shift_ms(self, offsets: Iterable[float]) -> float:
-        """Excess to subtract UNIFORMLY from every PROFILING dispatch offset so
-        a trajectory's leading idle (t* -> its earliest post-t* request) is
-        capped to the idle-gap cap.
-
-        The idle-gap warp (applied at load time across ALL of a trace's request
-        timestamps) already bounds every inter-request gap to the cap, so the
-        dispatch offsets carry faithful relative spacing. The ONE gap the warp
-        cannot see is t* -> first request: t* is the trajectory sampling
-        instant, not a request. A single uniform shift caps that leading gap
-        while keeping every stream's recorded offset relative to the others
-        intact -- unlike a per-stream ``min(offset, cap)`` clamp, which collapses
-        every offset above the cap onto it, firing every idle subagent at the
-        same instant.
-
-        Returns 0 when no cap is set or the leading idle is already within it.
-        """
-        if self._phase_offset_cap_ms is None:
-            return 0.0
-        present = [o for o in offsets if o is not None]
-        if not present:
-            return 0.0
-        return max(0.0, min(present) - self._phase_offset_cap_ms)
+        if self._system_idle_gap_cap_seconds is None:
+            return lead_ms
+        return min(
+            lead_ms,
+            self._system_idle_gap_cap_seconds * MILLIS_PER_SECOND,
+        )
 
     async def _execute_warmup(self) -> None:
         """Warm turn n-1 of every session active (mid-flight) at t*.
@@ -1227,8 +1173,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         if returned_at_ns is not None:
             elapsed_ms = max(0.0, (finalized_at_ns - returned_at_ns) / 1_000_000.0)
             delay_ms = max(0.0, delay_ms - elapsed_ms)
-        if self._phase_offset_cap_ms is not None:
-            delay_ms = min(delay_ms, self._phase_offset_cap_ms)
         return delay_ms
 
     def _handoff_base_delay_ms(self, credit: Credit) -> float:
@@ -1392,8 +1336,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """Window over which each trajectory's FIRST request fires, in seconds.
 
         Per trajectory the first request is its earliest dispatchable stream
-        (``min`` of the lane offsets after the leading-idle shift; t0=0 spread,
-        or t0=lane-min burst). This returns max-minus-min of those per-trajectory
+        (t0=0 spread, or t0=lane-min burst). This returns max-minus-min of those per-trajectory
         first-request offsets -- the ramp-in window. Later streams in a
         trajectory (subagents that spawn further out at their own faithful
         offsets) are excluded: including them would report the full per-
@@ -1409,12 +1352,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             ]
             if not dispatchable:
                 continue
-            leading_shift_ms = self._leading_idle_shift_ms(
-                s.next_dispatch_offset_ms for s in dispatchable
-            )
-            lane_offsets = [
-                s.next_dispatch_offset_ms - leading_shift_ms for s in dispatchable
-            ]
+            lane_offsets = [s.next_dispatch_offset_ms for s in dispatchable]
             lane_t0 = min(lane_offsets) if self._burst_phase_starts else 0.0
             first_offsets.append(min(lane_offsets) - lane_t0)
         if not first_offsets:
@@ -1582,7 +1520,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             else self.credit_issuer.issue_credit(turn)
         )
         if next_meta.delay_ms is not None and next_meta.delay_ms > 0:
-            self.scheduler.schedule_later(next_meta.delay_ms / MILLIS_PER_SECOND, coro)
+            self.scheduler.schedule_later(
+                next_meta.delay_ms / MILLIS_PER_SECOND,
+                coro,
+                group_id=credit.effective_root_correlation_id,
+            )
         else:
             await coro
 
@@ -1708,16 +1650,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
         dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
-        # Compute one normalized replay timeline for dispatchable streams and
-        # gated parents alike. A parent's join deadline must use the same
-        # leading-idle shift / optional burst anchor as every other request in
-        # its trajectory; only its child gate is additional.
-        leading_shift_ms = self._leading_idle_shift_ms(
-            s.next_dispatch_offset_ms for s in dispatchable
-        )
+        # Compute one replay timeline for dispatchable streams and gated
+        # parents alike. A parent's join deadline uses the same optional burst
+        # anchor as every other request in its trajectory; only its child gate
+        # is additional.
         offset_by_corr = {
-            s.x_correlation_id: s.next_dispatch_offset_ms - leading_shift_ms
-            for s in snapshot.states
+            s.x_correlation_id: s.next_dispatch_offset_ms for s in snapshot.states
         }
         if self._burst_phase_starts and dispatchable:
             t0_offset_ms = min(
@@ -1801,16 +1739,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
             if not self._has_tree_registry and not has_root_state:
                 self._rootless_lane_outstanding[lane] = len(dispatchable)
-        # Cap the leading idle (t* -> the trajectory's earliest post-t* request)
-        # by shifting EVERY stream left by the same excess, so an idle-at-t*
-        # trajectory ramps in within the cap instead of going dead for the whole
-        # run -- while preserving the recorded spacing among streams. A per-stream
-        # min(offset, cap) clamp would instead collapse every idle subagent onto
-        # t=cap. The idle-gap warp already bounded inter-request gaps at load
-        # time; this fixes the one gap it cannot see (t* is not a request).
-        # Spread (default): t0 = 0, each lane fires at its (shifted) offset from
-        # t*. Burst (--burst-phase-starts): t0 = the lane's min offset, anchoring
-        # the earliest post-t* request at profiling-0.
+        # Spread (default): t0 = 0, each lane fires at its recorded offset from
+        # t*. Burst (--burst-phase-starts): t0 = the lane's minimum offset,
+        # anchoring the earliest post-t* request at profiling-0.
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)
@@ -1823,9 +1754,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 self.scheduler.schedule_later(
                     delay_s,
                     self.credit_issuer.issue_credit(turn),
+                    group_id=turn.effective_root_correlation_id,
                 )
             else:
                 await self.credit_issuer.issue_credit(turn)
+
+        root_correlation_id = self._lane_root_corr(snapshot)
+        if root_correlation_id is not None:
+            self.credit_issuer.replay_gate.observe_idle_root(root_correlation_id)
 
     def _get_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
         """Return the persistent sampled snapshot for a trajectory lane.
