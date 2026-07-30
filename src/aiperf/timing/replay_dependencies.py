@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.credit.dispatch import ChildDispatchResult
 
 if TYPE_CHECKING:
     from aiperf.common.models import DatasetMetadata
@@ -137,8 +138,8 @@ class _PendingDispatch:
 
     turn: TurnToSend
     """The turn queued for dispatch once its barrier clears."""
-    issue: Callable[[], Awaitable[bool]]
-    """Coroutine factory that issues the credit; returns True on acceptance."""
+    issue: Callable[[], Awaitable[bool | ChildDispatchResult]]
+    """Coroutine factory that resolves the credit's dispatch disposition."""
     on_refused: Callable[[], Awaitable[None]] | None
     """Optional callback run when the dispatch is refused or cancelled."""
 
@@ -195,10 +196,11 @@ class ReplayBarrierCoordinator:
     async def submit(
         self,
         turn: TurnToSend,
-        issue: Callable[[], Awaitable[bool]],
+        issue: Callable[[], Awaitable[bool | ChildDispatchResult]],
         *,
         on_refused: Callable[[], Awaitable[None]] | None = None,
-    ) -> bool:
+        retained_result: bool | ChildDispatchResult = True,
+    ) -> bool | ChildDispatchResult:
         """Issue now when ready, otherwise retain one deferred dispatch."""
         if not self._active:
             return await issue()
@@ -216,7 +218,7 @@ class ReplayBarrierCoordinator:
         state.pending[key] = _PendingDispatch(
             turn=turn, issue=issue, on_refused=on_refused
         )
-        return True
+        return retained_result
 
     def complete(self, credit: Credit) -> None:
         """Record any terminal request outcome and release newly ready work."""
@@ -344,7 +346,8 @@ class ReplayBarrierCoordinator:
                 "Barrier-released replay dispatch failed for %r", pending.turn
             )
             issued = False
-        if not issued and pending.on_refused is not None:
+        rejected = issued is False or issued is ChildDispatchResult.REJECTED
+        if rejected and pending.on_refused is not None:
             await pending.on_refused()
 
 
@@ -374,10 +377,11 @@ class ReplayIssueGate:
     async def submit(
         self,
         turn: TurnToSend,
-        issue: Callable[[], Awaitable[bool]],
+        issue: Callable[[], Awaitable[bool | ChildDispatchResult]],
         *,
         child_refusal_cleanup: bool = False,
-    ) -> bool:
+        retained_result: bool | ChildDispatchResult = True,
+    ) -> bool | ChildDispatchResult:
         if self._coordinator is None:
             return await issue()
         on_refused = None
@@ -386,7 +390,12 @@ class ReplayIssueGate:
             async def on_refused() -> None:
                 await self._child_refused(turn.x_correlation_id)
 
-        return await self._coordinator.submit(turn, issue, on_refused=on_refused)
+        return await self._coordinator.submit(
+            turn,
+            issue,
+            on_refused=on_refused,
+            retained_result=retained_result,
+        )
 
     def activate(self) -> None:
         if self._coordinator is not None:

@@ -106,6 +106,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.models.branch_stats import BranchStats
+from aiperf.credit.dispatch import ChildDispatchResult
 
 __all__ = [
     "BranchOrchestrator",
@@ -563,15 +564,14 @@ class BranchOrchestrator:
                         )
                         self.stats.children_errored += 1
                         continue
-                    issued = await self._issuer.dispatch_first_turn(child_session)
-                    if issued:
+                    result = ChildDispatchResult.normalize(
+                        await self._issuer.dispatch_first_turn(child_session)
+                    )
+                    if result.preserves_tracking:
                         self.stats.children_spawned += 1
                     else:
-                        # ``dispatch_first_turn`` -> ``dispatch_child_turn``
-                        # only returns False when a stop condition refuses
-                        # the child before or during prefill-slot acquisition.
-                        # Exceptions are caught above. Tally as truncated,
-                        # not errored.
+                        # Terminal refusal before the child reaches the wire.
+                        # Exceptions are caught above; tally this as truncated.
                         self.stats.children_truncated += 1
                 self._pre_dispatched_branches.add(
                     (conv.conversation_id, branch.branch_id)
@@ -1041,8 +1041,8 @@ class BranchOrchestrator:
         # Dispatch children. A SPAWN child whose recorded first request
         # starts after the branch spawn dispatches via a delayed background
         # task at that offset; everything else dispatches immediately.
-        # try_issue_credit returning False/None rolls back per-child
-        # bookkeeping (shared between both paths).
+        # Terminal refusals roll back per-child bookkeeping. Deferred children
+        # retain it so their joins survive phase handoff.
         immediate_children: list = []
         for child in all_children:
             offset_ms = dispatch_offset_by_corr.get(child.x_correlation_id, 0.0)
@@ -1058,7 +1058,9 @@ class BranchOrchestrator:
             return_exceptions=True,
         )
         for child, result in zip(immediate_children, results, strict=True):
-            if result is not True:
+            if isinstance(result, BaseException) or (
+                ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED
+            ):
                 self._rollback_failed_first_turn(child, result, parent_corr)
         # The parent's NEXT turn (about to be re-evaluated by
         # _maybe_suspend_parent on return) is the only gate that may need
@@ -1071,9 +1073,7 @@ class BranchOrchestrator:
     def _rollback_failed_first_turn(self, child, result, parent_corr: str) -> None:
         """Undo per-child bookkeeping for a turn-0 dispatch that didn't land.
 
-        Shared by the immediate gather path and the delayed-dispatch tasks so
-        both classify results identically (BaseException -> errored, False ->
-        truncated, None -> silent no-op).
+        Shared by the immediate gather path and the delayed-dispatch tasks.
         """
         child_corr = child.x_correlation_id
         child_mode = self._child_modes.pop(child_corr, None)
@@ -1107,13 +1107,12 @@ class BranchOrchestrator:
         # over len(all_children)); a turn-0 dispatch that never landed must
         # decrement it too, or the tree's slot would never drain.
         self._tree_descendant_done(child_corr)
-        # Three-way classification of non-True dispatch results:
+        # Classification of terminal dispatch results:
         #   * BaseException -> genuine error (mirror commit 05d02720b
         #     which fixed the analogous bug in
         #     ``dispatch_pre_session_branches``).
-        #   * False -> ``dispatch_child_turn`` stop-condition refusal;
-        #     not an error.
-        #   * None -> issuer suppressed silently; observable no-op.
+        #   * REJECTED (including legacy False/None) -> stop-condition
+        #     refusal; not an error.
         if isinstance(result, BaseException):
             logger.error(
                 "dispatch_first_turn failed for child %s",
@@ -1121,10 +1120,8 @@ class BranchOrchestrator:
                 exc_info=result,
             )
             self.stats.children_errored += 1
-        elif result is False:
+        elif ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED:
             self.stats.children_truncated += 1
-        elif result is None:
-            pass
         else:
             logger.warning(
                 "dispatch_first_turn returned unexpected value %r for child %s",
@@ -1306,9 +1303,9 @@ class BranchOrchestrator:
     ) -> None:
         """Delayed-dispatch task body: sleep, then dispatch + settle.
 
-        A post-sleep stop-condition refusal (issuer returns False) rolls back
-        exactly like an immediate refusal. Dispatch and settlement run under
-        the parent lock, matching the intercept path's locking.
+        A post-sleep terminal refusal rolls back exactly like an immediate
+        refusal. Dispatch and settlement run under the parent lock, matching
+        the intercept path's locking.
         """
         await self._sleep_offset_ms(offset_ms)
         if self._cleaning_up:
@@ -1318,7 +1315,9 @@ class BranchOrchestrator:
                 result = await self._dispatch_first_turn(child)
             except Exception as exc:
                 result = exc
-            if result is not True:
+            if isinstance(result, BaseException) or (
+                ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED
+            ):
                 self._rollback_failed_first_turn(child, result, parent_corr)
                 await self._finalize_failed_dispatches(parent_corr)
 
@@ -1624,15 +1623,14 @@ class BranchOrchestrator:
         else:
             self.stats.joins_suppressed += 1
 
-    async def _dispatch_first_turn(self, child_sampled_session) -> bool:
+    async def _dispatch_first_turn(self, child_sampled_session) -> ChildDispatchResult:
         """Dispatch a child's turn-0 via the credit issuer.
 
-        Returns True on successful dispatch, False when the issuer declined
-        because a stop condition fired. Callers use this to roll back
-        orchestrator bookkeeping when dispatch doesn't actually land a credit.
+        Legacy Boolean issuer results are normalized at this boundary so the
+        orchestrator handles every child through one explicit lifecycle type.
         """
         result = await self._issuer.dispatch_first_turn(child_sampled_session)
-        return bool(result)
+        return ChildDispatchResult.normalize(result)
 
     async def on_child_leaf_reached(self, child_x_correlation_id: str) -> None:
         """Called when a child session reaches its final turn (or terminates early)."""
