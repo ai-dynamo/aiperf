@@ -179,6 +179,7 @@ class ConversationSource:
         self._benchmark_id = benchmark_id
         self._cache_bust_target = cache_bust_target
         self._cache_bust_pass = 0
+        self._cache_bust_markers: dict[str, str | None] = {}
         self._metadata_lookup: dict[str, ConversationMetadata] = {
             conv.conversation_id: conv for conv in dataset_metadata.conversations
         }
@@ -192,6 +193,9 @@ class ConversationSource:
         self, conversation_id: str, x_correlation_id: str
     ) -> str | None:
         """Mint one deterministic marker for an ordinary session instance."""
+        existing = self._cache_bust_markers.get(x_correlation_id)
+        if x_correlation_id in self._cache_bust_markers:
+            return existing
         marker = build_cache_bust_marker(
             self._benchmark_id,
             self._cache_bust_pass,
@@ -200,6 +204,7 @@ class ConversationSource:
             target=self._cache_bust_target,
         )
         self._cache_bust_pass += 1
+        self._cache_bust_markers[x_correlation_id] = marker
         return marker
 
     def next(self, x_correlation_id: str | None = None) -> SampledSession:
