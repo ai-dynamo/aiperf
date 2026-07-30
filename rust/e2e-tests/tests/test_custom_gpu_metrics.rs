@@ -168,11 +168,14 @@ async fn test_custom_metrics_csv_loading_basic() {
                 "memory_temp unit is {}, expected {TEMP_CELSIUS}",
                 unit("memory_temp")
             );
+            // `DCGM_FI_DEV_MEM_COPY_UTIL` is a built-in, so the CSV entry dedupes
+            // into the canonical built-in name. `mem_utilization` is a legacy
+            // alias the runtime never emits (see `LEGACY_NVIDIA_METRIC_ALIASES`).
             assert_eq!(
-                unit("mem_utilization"),
+                unit("nvidia_memory_utilization"),
                 GENERIC_PERCENT,
-                "mem_utilization unit is {}, expected {GENERIC_PERCENT}",
-                unit("mem_utilization")
+                "nvidia_memory_utilization unit is {}, expected {GENERIC_PERCENT}",
+                unit("nvidia_memory_utilization")
             );
         }
     }
