@@ -700,7 +700,7 @@ def test_isolation_mode_allows_per_turn_system_prompt(tmp_path):
     assert next(m["content"] for m in t1 if m["role"] == "system") == "sys1"
 
 
-def test_isolation_mode_rejects_system_not_first_in_turn(tmp_path):
+def test_isolation_mode_rejects_system_not_first_in_turn(tmp_path) -> None:
     """Even under isolation, a system message must be FIRST in its turn's array:
     a later position is still mid-payload and dropped by chat templates, so it
     is rejected rather than silently ignored."""
