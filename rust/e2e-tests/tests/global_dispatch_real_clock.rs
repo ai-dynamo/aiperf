@@ -119,7 +119,15 @@ async fn global_dispatch_real_clock_concurrency_matches_expected_records() {
             .model("gpt-4")
             // 4 worker threads keeping 3 requests in flight globally (vs. a
             // lone concurrency-2 run in `tuned_scheduled_single_turn_raw_timing`)
-            // adds real scheduler/OS contention to first-token queue wait.
+            // adds real scheduler/OS contention to first-token queue wait. That
+            // error is one-sided for the same reason ITL's is (below): the TTFT
+            // window contains the mock's first-token sleep, which only resolves
+            // to scheduler wakeup granularity and so always overshoots, observed
+            // to +15.7 ms under a full-suite run. The band is therefore sized by
+            // what it must DETECT rather than by the last sample: a dropped
+            // first-token delay (TTFT -> ~0 ms) or a doubled one (-> ~80 ms) each
+            // sit a full 40 ms from tuned, so 25 ms rejects both with margin while
+            // absorbing contention.
             //
             // ITL is NOT knife-edge here. The mock's per-token pacing is a 5 ms
             // sleep, and a 5 ms timer only resolves to host scheduler wakeup
@@ -130,7 +138,7 @@ async fn global_dispatch_real_clock_concurrency_matches_expected_records() {
             // a 2 ms band rejects roughly one run in three. 4 ms covers the
             // observed spread while still catching a genuine pacing regression
             // (a doubled or dropped inter-token sleep moves the mean by >= 5 ms).
-            .tol_ms(15.0, 4.0),
+            .tol_ms(25.0, 4.0),
     );
 
     let peak = peak_wall_clock_concurrency(&records);
