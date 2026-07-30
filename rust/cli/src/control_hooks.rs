@@ -123,6 +123,7 @@ mod tests {
             timeout_seconds: 30.0,
             connection_reuse: ConnectionReuse::Pooled,
             ssl_verify: true,
+            uds_path: None,
             connection_limit: 4,
             keepalive_timeout: 15.0,
             download_video_content: false,
