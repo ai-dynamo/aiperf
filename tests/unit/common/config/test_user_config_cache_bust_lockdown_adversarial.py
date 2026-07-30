@@ -67,7 +67,9 @@ _NON_NONE_CACHE_BUST_TARGETS: list[CacheBustTarget] = [
 _TIMING_MODES: list[TimingMode] = list(TimingMode)
 
 _INCOMPATIBLE_ENDPOINT_TYPES: list[EndpointType] = [
-    e for e in EndpointType if e not in {EndpointType.CHAT, EndpointType.RESPONSES}
+    e
+    for e in EndpointType
+    if e not in {EndpointType.CHAT, EndpointType.RESPONSES, EndpointType.MESSAGES}
 ]
 
 
