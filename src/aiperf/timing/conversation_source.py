@@ -193,6 +193,8 @@ class ConversationSource:
         self, conversation_id: str, x_correlation_id: str
     ) -> str | None:
         """Mint one deterministic marker for an ordinary session instance."""
+        if self._cache_bust_target == CacheBustTarget.NONE:
+            return None
         existing = self._cache_bust_markers.get(x_correlation_id)
         if x_correlation_id in self._cache_bust_markers:
             return existing

@@ -877,16 +877,25 @@ class BranchOrchestrator:
 
             for child_conv_id in branch.child_conversation_ids:
                 try:
+                    credit_marker = getattr(credit, "cache_bust_marker", None)
+                    marker = (
+                        credit_marker
+                        if isinstance(credit_marker, str)
+                        else self._marker_for_root(credit.effective_root_correlation_id)
+                    )
+                    credit_target = getattr(credit, "cache_bust_target", None)
                     child = self._cs.start_branch_child(
                         parent_correlation_id=parent_corr,
                         child_conversation_id=child_conv_id,
                         agent_depth=parent_depth + 1,
                         root_correlation_id=credit.effective_root_correlation_id,
                         branch_mode=branch.mode,
-                        cache_bust_marker=self._marker_for_root(
-                            credit.effective_root_correlation_id
+                        cache_bust_marker=marker,
+                        cache_bust_target=(
+                            credit_target
+                            if isinstance(credit_target, CacheBustTarget)
+                            else self._cache_bust_target
                         ),
-                        cache_bust_target=self._cache_bust_target,
                     )
                 except Exception:
                     logger.exception("start_branch_child failed for %s", child_conv_id)

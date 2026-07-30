@@ -117,6 +117,15 @@ class TestConversationSource:
         second = src.session_for_conversation("c2", x_correlation_id="session-1")
         assert first.cache_bust_marker == second.cache_bust_marker
 
+    def test_cache_bust_disabled_does_not_retain_session_markers(
+        self, ds: DatasetMetadata
+    ) -> None:
+        src = _mk_source(ds)
+
+        src.next(x_correlation_id="session-1")
+
+        assert src._cache_bust_markers == {}
+
 
 class TestMultiTurn:
     @pytest.fixture
