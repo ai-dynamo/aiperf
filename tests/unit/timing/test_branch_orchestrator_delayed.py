@@ -173,10 +173,11 @@ async def test_breeze_through_applies_between_round_think_time():
 
 @pytest.mark.asyncio
 async def test_delayed_join_children_finish_before_parent_arrives():
-    """Children complete before the parent returns from turn 4. When the
-    parent reaches turn 4's return (about to dispatch turn 5), the future
-    gate is already satisfied -> the orchestrator dispatches the gated turn
-    itself (with think-time) rather than breezing through the strategy."""
+    """Children complete before the parent returns from turn 4. This is a
+    NORMAL DAG gate (no request-free think-time), so a gate satisfied before
+    the parent arrives is popped and the parent breezes through the strategy
+    path -> intercept returns False and no dispatch_join_turn fires. (Spine
+    gates, which carry think-time, take the retain-and-dispatch path instead.)"""
     cs = _mk_source(_k5_metadata())
 
     def _start(
@@ -201,14 +202,14 @@ async def test_delayed_join_children_finish_before_parent_arrives():
     await orch.on_child_leaf_reached("corr-c0")
     await orch.on_child_leaf_reached("corr-c1")
 
-    # Parent now returns from turn 4 -> gate already satisfied -> the gated
-    # turn is dispatched once (with think-time), suppressing the strategy.
-    assert await orch.intercept(_mk_credit("root", "corr-root", 4)) is True
+    # Parent now returns from turn 4 -> gate already satisfied -> no suspension.
+    assert await orch.intercept(_mk_credit("root", "corr-root", 4)) is False
     assert "corr-root" not in orch._active_joins
-    assert orch._future_joins.get("corr-root", {}) == {}
+    assert "corr-root" not in orch._future_joins
     assert orch.stats.parents_suspended == 0
-    # The join fires exactly once, via the orchestrator's dispatch path.
-    issuer.dispatch_join_turn.assert_awaited_once()
+    # Join never dispatched (children finished on their own path, parent
+    # breezes through naturally into turn 5).
+    issuer.dispatch_join_turn.assert_not_called()
 
 
 @pytest.mark.asyncio

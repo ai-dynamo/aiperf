@@ -1399,19 +1399,22 @@ class BranchOrchestrator:
         return out
 
     def _take_satisfied_future(self, credit) -> PendingBranchJoin | None:
-        """Pop and return the parent's next-turn gate iff children already
-        satisfied it before the parent arrived (the breeze-through case).
+        """Pop and return the parent's next-turn gate iff it is a request-free
+        SPINE gate that children already satisfied before the parent arrived.
 
-        Returning the pending join lets ``intercept`` route it through
-        ``_release_blocked_join`` so the between-round think-time is honored
-        even when the parent never had to block. Returns None when the next
-        turn is not a gate, or a gate that is still outstanding (handled by
-        ``_maybe_suspend_parent``).
+        Only spine gates carry between-round think-time, so only they need this
+        path: routing the pending through ``_release_blocked_join`` honors the
+        think-time even when the parent never had to block. A normal DAG gate has
+        no think-time -- it is left for ``_maybe_suspend_parent`` to breeze
+        through the strategy path unchanged (preserving normal-DAG dispatch
+        timing). Returns None when the next turn is not a satisfied spine gate.
         """
         parent_corr = credit.x_correlation_id
         next_idx = credit.turn_index + 1
         future = self._future_joins.get(parent_corr, {}).get(next_idx)
         if future is None or not future.is_satisfied:
+            return None
+        if not future.parent_no_request_on_gated_turn:
             return None
         self._pop_future_join(parent_corr, next_idx)
         return future
@@ -1492,10 +1495,13 @@ class BranchOrchestrator:
             return None
         if pending.is_blocked:
             return self._active_joins.pop(parent_corr, None)
-        # Satisfied before the parent arrived: leave the future entry in place
-        # (now marked satisfied) so when the parent reaches the turn,
-        # ``_take_satisfied_future`` picks it up and applies the between-round
-        # think-time before dispatching the gated turn (see ``intercept``).
+        # Satisfied before the parent arrived. A request-free SPINE gate carries
+        # between-round think-time, so leave it in place (marked satisfied) for
+        # ``_take_satisfied_future`` to pick up and apply the wait before
+        # dispatching. A normal DAG gate has no think-time, so pop it now and let
+        # the parent breeze through the strategy path unchanged.
+        if not pending.parent_no_request_on_gated_turn:
+            self._pop_future_join(parent_corr, gated_idx)
         return None
 
     def _resolve_think_ms(self, pending: PendingBranchJoin) -> float:
