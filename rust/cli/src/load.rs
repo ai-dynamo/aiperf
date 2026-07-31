@@ -372,6 +372,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             entity: flags.wandb_entity.clone(),
             run_name: flags.wandb_run_name.clone(),
             tags: flags.wandb_tag.clone(),
+            sync_url: flags.wandb_sync_url.clone(),
         },
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
@@ -402,6 +403,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         reset_kv_cache: reset_kv_cache_from_flags(flags),
         server_profiler: server_profiler_from_flags(flags),
         records_formats,
+        // No flag narrows the summary artifacts; the flag path ships both formats.
+        summary_formats: Vec::new(),
         export_raw,
         export_trace,
         export_outputs_json: flags.export_outputs_json.unwrap_or(false),
