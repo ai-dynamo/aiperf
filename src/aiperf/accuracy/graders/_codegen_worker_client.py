@@ -105,6 +105,7 @@ class CodegenGradingWorker:
         self._pending[req_id] = fut
         assert self._proc is not None and self._proc.stdin
         self._proc.stdin.write(orjson.dumps(req) + b"\n")
+        await self._proc.stdin.drain()
         try:
             return await asyncio.wait_for(fut, timeout)
         except TimeoutError as exc:
@@ -182,6 +183,34 @@ class CodegenGradingWorker:
             async for line in reader:
                 self._stderr_tail.append(line.decode("utf-8", "replace").rstrip("\n"))
 
+    def _dispatch_response(self, resp: dict[str, Any]) -> bool:
+        """Resolve the pending future for resp['id'].
+
+        Returns True on success (including stale/timed-out ids, which are
+        silently skipped). Returns False when the worker has desynced and the
+        caller should fault: unhashable id, or ok=True with no metrics dict.
+        """
+        req_id = resp.get("id")
+        try:
+            fut = self._pending.pop(req_id, None)
+        except TypeError:
+            # req_id is unhashable (e.g., a list); the worker desynced
+            return False
+        if fut is None or fut.done():
+            return True  # stale id (caller already timed out or cancelled)
+        if not resp.get("ok"):
+            fut.set_exception(
+                CodegenWorkerError(resp.get("error", "unknown grading error"))
+            )
+            self._mark_proven()
+            return True
+        metrics = resp.get("metrics")
+        if not isinstance(metrics, dict):
+            return False
+        fut.set_result(metrics)
+        self._mark_proven()
+        return True
+
     async def _run_reader(self) -> None:
         """Read worker responses and resolve the corresponding pending futures by id."""
         assert self._proc is not None and self._proc.stdout
@@ -204,25 +233,9 @@ class CodegenGradingWorker:
                 except orjson.JSONDecodeError:
                     await self._handle_fault()
                     return
-                if not isinstance(resp, dict):
+                if not isinstance(resp, dict) or not self._dispatch_response(resp):
                     await self._handle_fault()
                     return
-                req_id = resp.get("id")
-                fut = self._pending.pop(req_id, None)
-                if fut is None or fut.done():
-                    continue  # stale id (caller already timed out) or cancelled
-                if not resp.get("ok"):
-                    fut.set_exception(
-                        CodegenWorkerError(resp.get("error", "unknown grading error"))
-                    )
-                    self._mark_proven()
-                else:
-                    metrics = resp.get("metrics")
-                    if not isinstance(metrics, dict):
-                        await self._handle_fault()
-                        return
-                    fut.set_result(metrics)
-                    self._mark_proven()
         except asyncio.CancelledError:
             pass
 
@@ -282,6 +295,6 @@ class CodegenGradingWorker:
     async def aclose(self) -> None:
         for fut in list(self._pending.values()):
             if not fut.done():
-                fut.cancel()
+                fut.set_exception(CodegenWorkerError("grading worker closed"))
         self._pending.clear()
         await self._kill()

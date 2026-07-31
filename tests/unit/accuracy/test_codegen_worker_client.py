@@ -36,20 +36,6 @@ _ECHO_OK = """
         sys.stdout.buffer.flush()
 """
 
-# Echoes responses with pass@1 == id * 0.1 so each caller can verify it got
-# back its OWN response (not another caller's).
-_ECHO_ID_IN_METRICS = """
-    import sys, orjson
-    for line in sys.stdin.buffer:
-        line = line.strip()
-        if not line:
-            continue
-        req = orjson.loads(line)
-        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": req["id"] * 0.1}}
-        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
-        sys.stdout.buffer.flush()
-"""
-
 # Buffers the first 4 requests and responds in REVERSE id order to exercise
 # the demux table (correct demux requires id matching, not position matching).
 _REVERSE_BATCH_OF_4 = """

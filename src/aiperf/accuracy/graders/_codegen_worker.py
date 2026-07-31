@@ -18,7 +18,6 @@ import contextlib
 import math
 import multiprocessing as mp
 import os
-import select
 import signal
 import sys
 import threading
@@ -152,37 +151,34 @@ def handle_batch(
     return [r for r in responses if r is not None]
 
 
-def _drain_fd(stdin: BinaryIO, stdin_fd: int, batch_raw: list[bytes]) -> None:
-    """Non-blocking drain of already-queued lines from a real file descriptor."""
-    while True:
-        ready, _, _ = select.select([stdin_fd], [], [], 0)
-        if not ready:
-            break
-        line = stdin.readline()
-        if not line:
-            break
-        line = line.strip()
-        if line:
-            batch_raw.append(line)
+def _drain_buffered(stdin: BinaryIO) -> list[bytes]:
+    """Drain all lines already buffered in stdin without blocking.
 
+    For BufferedReader (sys.stdin.buffer in production), uses peek() to check
+    the userspace buffer; an empty peek means the next readline() would block,
+    so we stop. This is the correct non-blocking check because readline() pulls
+    kernel data into userspace first, making select() on the raw fd unreliable.
 
-def _drain_seekable(stdin: BinaryIO, batch_raw: list[bytes]) -> None:
-    """Greedy drain for non-fd streams such as BytesIO (used in tests)."""
-    remaining = stdin.read()
-    for raw_line in remaining.split(b"\n"):
-        raw_line = raw_line.strip()
-        if raw_line:
-            batch_raw.append(raw_line)
-
-
-def _parse_batch(batch_raw: list[bytes]) -> list[Any]:
-    reqs: list[Any] = []
-    for raw in batch_raw:
-        try:
-            reqs.append(orjson.loads(raw))
-        except orjson.JSONDecodeError as exc:
-            reqs.append({"_parse_error": str(exc)})
-    return reqs
+    For seekable streams without peek() (e.g. BytesIO used in tests), reads all
+    remaining data at once — safe because BytesIO is already fully in memory.
+    """
+    lines: list[bytes] = []
+    if hasattr(stdin, "peek"):
+        while True:
+            if not stdin.peek(0):
+                break
+            line = stdin.readline()
+            if not line:
+                break
+            line = line.strip()
+            if line:
+                lines.append(line)
+    else:
+        for raw_line in stdin.read().split(b"\n"):
+            raw_line = raw_line.strip()
+            if raw_line:
+                lines.append(raw_line)
+    return lines
 
 
 def run_worker_loop(
@@ -197,11 +193,6 @@ def run_worker_loop(
     already-queued requests to form a batch. Calls codegen_fn once per batch so
     lighteval's ProcessPoolExecutor can process multiple problems in parallel.
     """
-    try:
-        stdin_fd: int | None = stdin.fileno()
-    except (AttributeError, OSError):
-        stdin_fd = None
-
     while True:
         first = stdin.readline()
         if not first:
@@ -210,13 +201,14 @@ def run_worker_loop(
         if not first:
             continue
         batch_raw: list[bytes] = [first]
-        if stdin_fd is not None:
-            _drain_fd(stdin, stdin_fd, batch_raw)
-        else:
-            _drain_seekable(stdin, batch_raw)
-        for resp in handle_batch(
-            _parse_batch(batch_raw), codegen_fn, compute_metrics_fn
-        ):
+        batch_raw.extend(_drain_buffered(stdin))
+        reqs: list[Any] = []
+        for raw in batch_raw:
+            try:
+                reqs.append(orjson.loads(raw))
+            except orjson.JSONDecodeError as exc:
+                reqs.append({"_parse_error": str(exc)})
+        for resp in handle_batch(reqs, codegen_fn, compute_metrics_fn):
             out.write(orjson.dumps(resp) + b"\n")
         out.flush()
 

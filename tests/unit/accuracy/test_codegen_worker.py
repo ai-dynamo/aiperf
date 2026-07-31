@@ -120,6 +120,18 @@ class TestHandleBatch:
         assert "unexpected token" in resps[0]["error"]
         assert resps[1]["ok"]
 
+    def test_list_shaped_pass_at_1_is_preserved(self) -> None:
+        # lighteval returns pass@1 as a list on some pins; _coerce_metrics must
+        # preserve it rather than drop it (silent 0.000 bug if dropped).
+        def list_metrics(_results: dict, **_kw: Any) -> dict[str, Any]:
+            return {"pass@1": [1.0]}
+
+        resps = worker.handle_batch(
+            [self._req(1)], _fake_codegen_batch_ok, list_metrics
+        )
+        assert resps[0]["ok"] is True
+        assert resps[0]["metrics"]["pass@1"] == [1.0]
+
     def test_non_finite_metric_values_are_dropped(self) -> None:
         # NaN/Inf must not cross the JSONL boundary (repo NaN/Inf discipline).
         def _nan_inf(
