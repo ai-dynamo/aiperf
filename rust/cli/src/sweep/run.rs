@@ -138,7 +138,7 @@ fn axis_value_json(rendered: &str) -> serde_json::Value {
 
 /// Remove the warmup phase from a run's `cfg.phases` (used for trials past the
 /// first when `disable_warmup_after_first` is set).
-fn drop_warmup(run: &mut BenchmarkRun) {
+pub(crate) fn drop_warmup(run: &mut BenchmarkRun) {
     if let Some(phases) = run.cfg.phases.as_mut() {
         phases.retain(|p| p.common.name != "warmup");
     }

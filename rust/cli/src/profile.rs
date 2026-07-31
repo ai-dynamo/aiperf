@@ -215,12 +215,25 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     if !expansion.is_sweep && trials <= 1 {
         return run_single(load::resolve_inputs(&flags)?);
     }
-    let order = match flags.parameter_sweep_mode.as_str() {
-        "independent" => IterationOrder::Independent,
-        "repeated" => IterationOrder::Repeated,
+    run_sweep(&flags, &expansion, trials, iteration_order(&flags)?)
+}
+
+/// Trial iteration order from `--parameter-sweep-mode`. Shared by the flag-driven
+/// sweep and the YAML `sweep:` path so both lay out multi-trial cells alike.
+fn iteration_order(flags: &ProfileFlags) -> anyhow::Result<IterationOrder> {
+    match flags.parameter_sweep_mode.as_str() {
+        "independent" => Ok(IterationOrder::Independent),
+        "repeated" => Ok(IterationOrder::Repeated),
         other => anyhow::bail!("unknown --parameter-sweep-mode {other:?} (repeated/independent)"),
-    };
-    run_sweep(&flags, &expansion, trials, order)
+    }
+}
+
+/// Whether trials past the first skip warmup. On by default; the `--no-` form wins.
+fn warmup_disabled_after_first(flags: &ProfileFlags) -> bool {
+    !flags
+        .no_profile_run_disable_warmup_after_first
+        .unwrap_or(false)
+        && flags.profile_run_disable_warmup_after_first.unwrap_or(true)
 }
 
 /// Flags the native binary parses for Python-CLI compatibility but does not act
@@ -377,10 +390,7 @@ fn run_config_trials(
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let seed = seed_policy(flags);
-    let disable_warmup = !flags
-        .no_profile_run_disable_warmup_after_first
-        .unwrap_or(false)
-        && flags.profile_run_disable_warmup_after_first.unwrap_or(true);
+    let disable_warmup = warmup_disabled_after_first(flags);
     let base_run = load::build(inputs.clone())?;
     let base_dir = base_run.artifact_dir.clone();
 
@@ -432,7 +442,9 @@ fn run_yaml_sweep(
         &sweep_id,
         Some(flags),
     )?;
-    run_cells(flags, &cells, true, IterationOrder::Repeated)
+    // Same order `plan_yaml_cells` laid the cells out with, so the sweep table and
+    // aggregate artifacts land where the per-cell dirs actually are.
+    run_cells(flags, &cells, true, iteration_order(flags)?)
 }
 
 /// Execute a grid search recipe as stamped sweep cells.
@@ -1188,8 +1200,13 @@ pub fn plan_recipe_cells(
 
 /// Expand a YAML `sweep:` block into stamped per-cell runs (single trial each).
 /// Each variation is Jinja-rendered, resolved to a run, and stamped with the
-/// sweep envelope (`sweep_id`, `variation`, `random_seed = base_seed + index`)
-/// and its per-cell artifact dir. Testable independently of execution.
+/// sweep envelope (`sweep_id`, `variation`, `random_seed`) and its per-cell
+/// artifact dir. Testable independently of execution.
+///
+/// Trials come from `multiRun.numRuns` (folded onto `--profile-runs`) and the
+/// iteration order from `--parameter-sweep-mode`, both read off `overrides`: an
+/// authored `sweep:` block plus `multiRun.numRuns: N` yields `N` trials of every
+/// variation, matching the non-sweep path's `run_config_trials`.
 pub fn plan_yaml_cells(
     artifact_dir: Option<std::path::PathBuf>,
     base: &serde_json::Value,
@@ -1199,6 +1216,9 @@ pub fn plan_yaml_cells(
 ) -> anyhow::Result<Vec<sweep_run::Cell>> {
     let variations = sweep.expand(base)?;
     // Base seed: the config's `randomSeed` (or the shared default), then `+index`.
+    // `same_seed`/`vary_per_trial` come from the flags; the base stays config-authored
+    // because `seed_policy` derives it from `--random-seed`, which a YAML run need not set.
+    let flag_seed = overrides.map(seed_policy);
     let seed = sweep_run::SeedPolicy {
         base: Some(
             base.get("randomSeed")
@@ -1206,51 +1226,67 @@ pub fn plan_yaml_cells(
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(sweep_run::DEFAULT_SWEEP_SEED),
         ),
-        same_seed: false,
-        vary_per_trial: false,
+        same_seed: flag_seed.is_some_and(|s| s.same_seed),
+        vary_per_trial: flag_seed.is_some_and(|s| s.vary_per_trial),
     };
+    let trials = overrides
+        .and_then(|f| f.num_profile_runs)
+        .unwrap_or(1)
+        .max(1);
+    let order = match overrides {
+        Some(flags) => iteration_order(flags)?,
+        None => IterationOrder::Repeated,
+    };
+    let disable_warmup_after_first = overrides.is_some_and(warmup_disabled_after_first);
 
-    let mut cells = Vec::with_capacity(variations.len());
-    for v in &variations {
-        let expanded = crate::expand::render_with_context(v.config.clone())?;
-        // Build the authoring `Inputs` this cell ships on the wire (the runtime
-        // resolves at `--execute`), and resolve a CLI-side run purely for per-cell
-        // planning metadata (artifact dir base, sweep envelope, and the parity oracle).
-        let mut inputs = yaml::resolve_expanded_inputs(expanded, artifact_dir.clone(), overrides)?;
-        let mut run = load::build(inputs.clone())?;
-        let dir = crate::sweep::artifact_dir::resolve(
-            &run.artifact_dir,
-            true,
-            1,
-            &v.dir_name,
-            0,
-            IterationOrder::Repeated,
-        );
-        run.sweep_id = Some(sweep_id.to_string());
-        let values: serde_json::Map<String, serde_json::Value> = v
-            .values
-            .iter()
-            .map(|(k, val)| (k.clone(), val.clone()))
-            .collect();
-        run.variation = Some(serde_json::json!({
-            "index": v.index,
-            "label": v.label,
-            "values": values,
-        }));
-        run.random_seed = seed.seed(v.index, 0);
-        run.trial = 0;
-        run.artifact_dir = dir.clone();
-        // Mirror the per-cell artifact dir + run seed onto the authoring inputs so the
-        // runtime's resolution reproduces the CLI-side run byte-for-byte.
-        inputs.artifact_dir = dir;
-        inputs.random_seed = seed.seed(v.index, 0);
-        cells.push(sweep_run::Cell {
-            index: v.index,
-            trial: 0,
-            label: v.label.clone(),
-            run,
-            inputs: Some(inputs),
-        });
+    let mut cells = Vec::with_capacity(variations.len() * trials as usize);
+    for trial in 0..trials {
+        for v in &variations {
+            let expanded = crate::expand::render_with_context(v.config.clone())?;
+            // Build the authoring `Inputs` this cell ships on the wire (the runtime
+            // resolves at `--execute`), and resolve a CLI-side run purely for per-cell
+            // planning metadata (artifact dir base, sweep envelope, and the parity oracle).
+            let mut inputs =
+                yaml::resolve_expanded_inputs(expanded, artifact_dir.clone(), overrides)?;
+            let mut run = load::build(inputs.clone())?;
+            let dir = crate::sweep::artifact_dir::resolve(
+                &run.artifact_dir,
+                true,
+                trials,
+                &v.dir_name,
+                trial,
+                order,
+            );
+            run.sweep_id = Some(sweep_id.to_string());
+            let values: serde_json::Map<String, serde_json::Value> = v
+                .values
+                .iter()
+                .map(|(k, val)| (k.clone(), val.clone()))
+                .collect();
+            run.variation = Some(serde_json::json!({
+                "index": v.index,
+                "label": v.label,
+                "values": values,
+            }));
+            run.random_seed = seed.seed(v.index, trial);
+            run.trial = trial;
+            run.artifact_dir = dir.clone();
+            // Mirror the per-cell artifact dir + run seed onto the authoring inputs so the
+            // runtime's resolution reproduces the CLI-side run byte-for-byte.
+            inputs.artifact_dir = dir;
+            inputs.random_seed = seed.seed(v.index, trial);
+            if trial > 0 && disable_warmup_after_first {
+                crate::sweep::run::drop_warmup(&mut run);
+                inputs.warmup = None;
+            }
+            cells.push(sweep_run::Cell {
+                index: v.index,
+                trial,
+                label: v.label.clone(),
+                run,
+                inputs: Some(inputs),
+            });
+        }
     }
     Ok(cells)
 }
@@ -1264,10 +1300,7 @@ fn run_sweep(
     order: IterationOrder,
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
-    let disable_warmup = !flags
-        .no_profile_run_disable_warmup_after_first
-        .unwrap_or(false)
-        && flags.profile_run_disable_warmup_after_first.unwrap_or(true);
+    let disable_warmup = warmup_disabled_after_first(flags);
     let cells = sweep_run::plan_cells(
         flags,
         expansion,
