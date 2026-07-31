@@ -18,12 +18,12 @@ Dispatch offsets (SPAWN mode)
 -----------------------------
 A SPAWN child whose recorded first request starts after the branch spawn
 (child turn-0 ``timestamp_ms`` past the branch ``start_timestamp_ms``)
-dispatches via a delayed background task at that offset instead of firing
-immediately, reproducing the recorded in-subagent timing (e.g. a weka
-overflow stream whose first request landed minutes after the subagent
-spawned). Join gates and descendant counts are registered before the sleep,
-so gated parents wait for sleeping children; ``cleanup()`` cancels pending
-sleepers. Datasets without timing (``--ignore-trace-delays``) carry None
+dispatches through the shared replay scheduler at that offset instead of
+firing immediately, reproducing the recorded in-subagent timing (e.g. a
+weka overflow stream whose first request landed minutes after the subagent
+spawned). Join gates and descendant counts are registered before scheduling,
+so gated parents wait for delayed children; ``cleanup()`` cancels pending
+dispatches. Datasets without timing (``--ignore-trace-delays``) carry None
 timestamps and keep the immediate-dispatch behavior.
 
 Sticky-routing locality (FORK mode)
@@ -317,8 +317,10 @@ class BranchOrchestrator:
         # of making shutdown wait out a full (possibly large, sampled) interval.
         self._cleanup_event: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
-        # spawn dispatch via delayed background tasks (see
-        # _start_delayed_first_turn). cleanup() cancels pending sleepers.
+        # spawn dispatch through the shared replay scheduler (see
+        # _start_delayed_first_turn), so the system-idle cap can advance those
+        # timers uniformly with every other replay timer. The task set is a
+        # compatibility fallback for isolated callers that provide no scheduler.
         self._delayed_dispatch_tasks: set[asyncio.Task] = set()
         # Drain observer: sync callback fired after state mutations that may
         # drain has_pending_branch_work() to False. Wired by
@@ -1080,8 +1082,8 @@ class BranchOrchestrator:
             state.registered = True
 
         # Dispatch children. A SPAWN child whose recorded first request
-        # starts after the branch spawn dispatches via a delayed background
-        # task at that offset; everything else dispatches immediately.
+        # starts after the branch spawn dispatches through the shared replay
+        # scheduler at that offset; everything else dispatches immediately.
         # Terminal refusals roll back per-child bookkeeping. Deferred children
         # retain it so their joins survive phase handoff.
         immediate_children: list = []
@@ -1316,12 +1318,19 @@ class BranchOrchestrator:
         """Schedule a SPAWN child's turn-0 dispatch at its recorded offset.
 
         Join gates, descendant counts, and ``_child_to_join`` were registered
-        at spawn time, so a gated parent keeps waiting while the child sleeps
-        and ``has_pending_branch_work()`` stays True (the phase drain's
-        existing timeout backstop bounds the wait if the run ends mid-sleep).
-        ``cleanup()`` cancels pending sleepers and clears all bookkeeping
-        itself, so a cancelled task performs no rollback of its own.
+        at spawn time, so a gated parent keeps waiting while the timer is
+        pending and ``has_pending_branch_work()`` stays True. Production uses
+        the shared replay scheduler, making this authored offset subject to the
+        same uniform system-idle advancement as turn and join timers. Isolated
+        callers without a scheduler retain the legacy task/sleep fallback.
         """
+        if self._scheduler is not None:
+            self._scheduler.schedule_later(
+                offset_ms / 1000.0,
+                self._dispatch_first_turn_after_offset(child, 0.0, parent_corr),
+            )
+            self.stats.children_delayed += 1
+            return
         task = asyncio.create_task(
             self._dispatch_first_turn_after_offset(child, offset_ms, parent_corr)
         )

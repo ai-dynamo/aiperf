@@ -83,6 +83,7 @@ from aiperf.timing.trajectory_source import (
 )
 
 _WARMUP_MAX_TOKENS = 1
+_IDLE_WATCHDOG_EPSILON_SECONDS = 1e-6
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
@@ -253,6 +254,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._system_idle_jump_count = 0
         self._system_idle_seconds_skipped = 0.0
         self._system_idle_started_at: float | None = None
+        self._system_idle_watchdog: asyncio.TimerHandle | None = None
         if self._system_idle_gap_cap_seconds is not None:
             self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
         # Idle-gap cap (ms) for the t* boundary the load-time warp can't see (t*
@@ -525,24 +527,35 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
         # Credit returns start a new idle interval. Scheduler-drain callbacks
         # recheck the same interval after a scheduled turn is barrier-retained.
-        follows_request_return = in_flight_requests is not None
+        in_flight_requests, follows_request_return = (
+            self._resolve_in_flight_request_count(in_flight_requests)
+        )
         if in_flight_requests is None:
-            if self._progress is None:
-                return
-            in_flight_requests = self._progress.in_flight
+            return
         if in_flight_requests > 0:
             self._system_idle_started_at = None
+            self._cancel_system_idle_watchdog()
             return
         now = time.monotonic()
         if follows_request_return or self._system_idle_started_at is None:
             self._system_idle_started_at = now
-        if self.scheduler.running_count > 0:
-            return
 
         idle_elapsed = max(0.0, now - self._system_idle_started_at)
         remaining_idle_budget = max(
             0.0, self._system_idle_gap_cap_seconds - idle_elapsed
         )
+        if remaining_idle_budget <= _IDLE_WATCHDOG_EPSILON_SECONDS:
+            remaining_idle_budget = 0.0
+        if remaining_idle_budget > 0:
+            self._arm_system_idle_watchdog(remaining_idle_budget)
+
+        # A just-fired replay callback may still be transitioning into a real
+        # request. Give it the remainder of the idle budget to do so, but do
+        # not let a control-plane coroutine extend true request-idle time past
+        # the configured cap. The watchdog re-enters here at the deadline and
+        # progress.in_flight remains the authoritative wire-activity signal.
+        if self.scheduler.running_count > 0 and remaining_idle_budget > 0:
+            return
 
         shifted = self.scheduler.cap_pending_delay(remaining_idle_budget)
         if shifted <= 0:
@@ -555,6 +568,51 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 f"{shifted:.3f}s"
             )
         )
+
+    def _resolve_in_flight_request_count(
+        self, supplied_count: int | None
+    ) -> tuple[int | None, bool]:
+        """Resolve wire activity and whether the observation is a return."""
+        if supplied_count is not None:
+            return supplied_count, True
+        if self._progress is None:
+            return None, False
+        return self._progress.in_flight, False
+
+    def _arm_system_idle_watchdog(self, delay_seconds: float) -> None:
+        """Guarantee an idle-cap recheck even when no scheduler task drains.
+
+        Request-return and scheduler-drain callbacks remain the fast path. The
+        independent control timer closes the gap where one of those callbacks
+        observes a transient running scheduler coroutine and no later state
+        transition re-enters the cap logic. It deliberately lives outside the
+        replay scheduler so ``cap_pending_delay`` cannot advance its own guard.
+        """
+        if self._system_idle_watchdog is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Some direct unit/API callers exercise the synchronous fast path
+            # without an event loop. They still get the immediate schedule
+            # shift below; only the independent future recheck is unavailable.
+            return
+        self._system_idle_watchdog = loop.call_later(
+            max(0.0, delay_seconds),
+            self._run_system_idle_watchdog,
+        )
+
+    def _run_system_idle_watchdog(self) -> None:
+        """Clear the one-shot handle and re-evaluate actual request idleness."""
+        self._system_idle_watchdog = None
+        self.enforce_system_idle_cap()
+
+    def _cancel_system_idle_watchdog(self) -> None:
+        """Cancel the independent idle guard when wire activity resumes."""
+        if self._system_idle_watchdog is None:
+            return
+        self._system_idle_watchdog.cancel()
+        self._system_idle_watchdog = None
 
     def _capped_warmup_lead_ms(self, lead_ms: float) -> float:
         """Clamp a WARMUP lead (t* - the warmed turn) to the idle-gap cap.
@@ -934,6 +992,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def finalize_phase(self) -> None:
         """Persist the drained accelerated-warmup DAG for profiling."""
         if self._system_idle_gap_cap_seconds is not None:
+            self._cancel_system_idle_watchdog()
             self.scheduler.set_drain_observer(None)
             self.info(
                 "Global system-idle cap summary: "

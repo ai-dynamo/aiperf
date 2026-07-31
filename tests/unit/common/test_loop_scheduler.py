@@ -160,6 +160,27 @@ class TestScheduleLater:
         assert scheduler.cap_pending_delay(2.0) == 0.0
         scheduler.cancel_all_pending()
 
+    async def test_cap_pending_delay_zero_queues_timer_as_ready_work(
+        self, scheduler: LoopScheduler
+    ):
+        """A zero idle budget fires instead of stranding a timer at loop.time()."""
+        fired = asyncio.Event()
+
+        async def mark_fired():
+            fired.set()
+
+        scheduler.schedule_later(60.0, mark_fired())
+        assert scheduler.cap_pending_delay(0.0) == pytest.approx(60.0, abs=0.02)
+        # Re-entrant idle observations before the ready callback runs are a
+        # no-op, not an AttributeError from treating Handle as TimerHandle.
+        assert scheduler.cap_pending_delay(0.0) == 0.0
+
+        await asyncio.wait_for(fired.wait(), timeout=0.1)
+        await yield_to_scheduler()
+
+        assert scheduler.pending_count == 0
+        assert scheduler.running_count == 0
+
     async def test_cap_pending_delay_rejects_negative_cap(
         self, scheduler: LoopScheduler
     ):
