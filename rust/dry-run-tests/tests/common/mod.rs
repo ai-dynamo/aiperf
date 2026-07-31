@@ -239,25 +239,32 @@ fn execute(args: Vec<String>, temporary_directory: tempfile::TempDir) -> Run {
     }
 }
 
+/// Path to the `aiperf` binary under test, from `AIPERF_DRY_RUN_BIN`.
+///
+/// `cargo test` cannot build it: this package declares no `[[bin]]`, so
+/// `CARGO_BIN_EXE_aiperf` is unset, and `[[bin]]` targets of another package are
+/// not built for a dependent. The binary must therefore be named explicitly.
+/// Searching for one instead would silently pick some other build — a different
+/// profile, or a stale artifact left in `target/` — and report passes for code
+/// that was never compiled. That failure mode is a wrong answer, not an error, so
+/// an unset variable is a hard panic.
 fn binary() -> &'static str {
     static BINARY: OnceLock<String> = OnceLock::new();
     BINARY.get_or_init(|| {
-        if let Ok(path) = std::env::var("AIPERF_DRY_RUN_BIN") {
-            return path;
+        let path = match std::env::var("AIPERF_DRY_RUN_BIN") {
+            Ok(path) if !path.is_empty() => path,
+            _ => panic!(
+                "AIPERF_DRY_RUN_BIN is not set.\n\
+                 This suite drives a real `aiperf` binary and cannot build one itself.\n\
+                 \x20 Use:    make test-dry-run-rust\n\
+                 \x20 Or pin: cargo build --release -p aiperf-cli\n\
+                 \x20         AIPERF_DRY_RUN_BIN=$PWD/rust/target/release/aiperf cargo test -p aiperf-dry-run-tests"
+            ),
+        };
+        if !Path::new(&path).is_file() {
+            panic!("AIPERF_DRY_RUN_BIN={path} is not a readable file");
         }
-        let current = std::env::current_exe().expect("resolve test executable");
-        current
-            .ancestors()
-            .map(|ancestor| ancestor.join("aiperf"))
-            .find(|path| path.is_file())
-            .unwrap_or_else(|| {
-                panic!(
-                    "aiperf binary not found near {}; build it with `cargo build -p aiperf-cli` or set AIPERF_DRY_RUN_BIN",
-                    current.display()
-                )
-            })
-            .display()
-            .to_string()
+        path
     })
 }
 

@@ -103,14 +103,7 @@ async fn test_online_graph_terminal_reports_run_metadata() {
             }
         }
     });
-    let debug_binary =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/aiperf");
-    let binary = if debug_binary.exists() {
-        debug_binary.display().to_string()
-    } else {
-        exec_binary()
-    };
-    let mut child = Command::new(binary)
+    let mut child = Command::new(exec_binary())
         .arg("--execute")
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")

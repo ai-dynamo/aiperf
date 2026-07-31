@@ -324,14 +324,23 @@ test-e2e-rust: native-cli #? run the Rust product e2e suite against a freshly bu
 	@printf "$(bold)$(blue)Running Rust e2e suite (aiperf-e2e-tests)...$(reset)\n"
 	@# The harness drives the real `aiperf` binary as a subprocess. It cannot use
 	@# CARGO_BIN_EXE_aiperf (that is only defined for bins in the *same* package, and
-	@# aiperf-e2e-tests declares none), so it resolves the binary by path and panics if
-	@# it is older than the newest Rust source. `native-cli` above builds it; pinning
-	@# AIPERF_E2E_BIN makes the resolution explicit instead of relying on the
-	@# current_exe() ancestor walk finding the right profile.
+	@# aiperf-e2e-tests declares none), so the binary is named explicitly: AIPERF_E2E_BIN
+	@# is required, and the suite panics if it is unset rather than searching `target/`
+	@# and silently testing whichever build it happens to find. `native-cli` above
+	@# builds the binary this pins, at the profile whose timings the suite asserts.
 	@# --test-threads is capped: every e2e test stands up a mock server and forks an
 	@# `aiperf` process, so the default (one thread per core) oversubscribes CI runners.
 	$(activate_venv) && AIPERF_E2E_BIN=$(abspath $(RUST_TARGET)/release/aiperf) \
 		$(CARGO_TEST) -p aiperf-e2e-tests -- --test-threads=$(E2E_TEST_THREADS)
+
+test-dry-run-rust: native-cli #? run the socket-free Rust dry-run suite against a freshly built native `aiperf`.
+	@printf "$(bold)$(blue)Running Rust dry-run suite (aiperf-dry-run-tests)...$(reset)\n"
+	@# Same contract as test-e2e-rust: the suite spawns `aiperf` and declares no bin of
+	@# its own, so AIPERF_DRY_RUN_BIN is required. This package does not depend on
+	@# aiperf-cli, so `cargo test -p aiperf-dry-run-tests` rebuilds nothing of the
+	@# product — `native-cli` is what makes the binary current.
+	$(activate_venv) && AIPERF_DRY_RUN_BIN=$(abspath $(RUST_TARGET)/release/aiperf) \
+		$(CARGO_TEST) -p aiperf-dry-run-tests -- --test-threads=$(E2E_TEST_THREADS)
 
 test-rust-lib: #? run the in-crate Rust unit suites (aiperf-runtime + aiperf-cli).
 	@printf "$(bold)$(blue)Running Rust in-crate unit suites...$(reset)\n"
