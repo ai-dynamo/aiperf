@@ -77,7 +77,20 @@ pub(crate) fn resolve_expanded_inputs(
 /// This is the config-surface twin of `profile::UNIMPLEMENTED_FLAGS`: entries
 /// leave the table by gaining a consumer, not by being deleted, since deleting
 /// one returns the key to silently-ignored — the failure this guards.
-const UNIMPLEMENTED_KEYS: &[(&str, fn(&ConfigFile) -> bool)] = &[("plot", |c| c.plot.is_some())];
+const UNIMPLEMENTED_KEYS: &[(&str, fn(&ConfigFile) -> bool)] = &[
+    ("plot", |c| c.plot.is_some()),
+    ("runtime.ui", |c| {
+        c.benchmark
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.ui.as_ref())
+            .is_some()
+            || c.runtime
+                .as_ref()
+                .and_then(|runtime| runtime.ui.as_ref())
+                .is_some()
+    }),
+];
 
 /// Warn once for every authored config key the native loader does not act on.
 fn warn_unimplemented_keys(file: &ConfigFile) {
@@ -714,6 +727,8 @@ struct WandbSection {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeSection {
+    // Compatibility-only UI selection. The native runtime has no UI renderer.
+    ui: Option<String>,
     workers: Option<u32>,
     #[serde(default, alias = "workersMin")]
     workers_min: Option<u32>,
@@ -2959,6 +2974,27 @@ mod tests {
                 .any(|(name, is_set)| *name == "plot" && is_set(&file)),
             "plot must be reported as accepted-but-unacted-on"
         );
+    }
+
+    /// `runtime.ui` remains part of the Config v2 compatibility surface, but the
+    /// native runtime has no renderer. It must load and be reported as unacted-on,
+    /// matching the accepted-but-unimplemented `--ui` flag alias.
+    #[test]
+    fn runtime_ui_loads_and_is_reported_as_unimplemented() {
+        let text = cfg(
+            "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n  runtime: {ui: none}\n",
+        );
+        let expanded: serde_json::Value =
+            serde_yaml::from_str(&text).expect("fixture is valid YAML");
+        let file: ConfigFile =
+            serde_json::from_value(expanded).expect("an authored runtime UI setting loads");
+        assert!(
+            UNIMPLEMENTED_KEYS
+                .iter()
+                .any(|(name, is_set)| *name == "runtime.ui" && is_set(&file)),
+            "runtime.ui must be reported as accepted-but-unacted-on"
+        );
+        resolve_str(&text, Some("/tmp/x".into())).expect("runtime.ui config resolves");
     }
 
     #[test]
