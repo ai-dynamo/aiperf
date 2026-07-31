@@ -173,18 +173,15 @@ class PromptGenerator(BaseGenerator):
         """Sample tokens for BPE top-up without consuming the preseed offset cache.
 
         Top-up draws happen inside the retry loop of generate_prompt when
-        re-encoding produces fewer tokens than the target. They are separate
-        from the per-request initial draw and must not advance the preseed
-        cache index so that each request consumes exactly one cache entry.
+        re-encoding produces fewer tokens than the target. They must not
+        advance _random_request_index (which would shift the arithmetic-sequence
+        index for all subsequent requests) and must not consume preseed cache
+        entries (one cache entry per request, not per retry).
         """
         if self._corpus == PromptCorpus.RANDOM:
             n = len(self._allowed_tokens)
             offset = int(self._corpus_rng.integers(0, n))
-            idx = self._random_request_index
-            self._random_request_index += 1
-            return [
-                self._allowed_tokens[(offset + idx + j) % n] for j in range(num_tokens)
-            ]
+            return [self._allowed_tokens[(offset + j) % n] for j in range(num_tokens)]
         return self._sample_tokens(num_tokens)
 
     def preseed(self, n: int, generator: object) -> None:
