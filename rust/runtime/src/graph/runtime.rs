@@ -14,6 +14,14 @@
 //! same-instant work), then fast-forwards the clock to the next scheduled event
 //! (waking heap-ordered sleepers), and repeats — the offline-DES driver loop,
 //! with tokio owning task scheduling.
+//!
+//! This puts one obligation on every body run under virtual time: a task that
+//! cannot proceed must park on the [`Clock`], never spin on `yield_now`. A yield
+//! self-wakes, so the pump sees ready work and re-polls the same instant instead
+//! of advancing — and a retry loop waiting on a timer it never lets mature
+//! wedges virtual time outright. The driver bounds that with
+//! [`SimDriveError::ClockStarved`] rather than hanging, but the fix belongs in
+//! the body: park on the clock (racing whatever notification you expect).
 
 use crate::clock::clock::Clock;
 use crate::clock::sim_clock::SimClock;
@@ -28,10 +36,15 @@ use std::task::{Context, Poll, Wake, Waker};
 use tokio::sync::Notify;
 use tokio::task::LocalSet;
 
-/// Consecutive same-instant pump steps with no progress before the DES driver
-/// declares a stall. Bounds a pathological firing-gate cycle (a node that keeps
-/// rescheduling itself at the current instant) so `drive_sim` cannot spin
-/// forever; real graphs settle in a handful of same-instant steps.
+/// Consecutive same-instant rounds with no progress before the DES driver
+/// declares a failure. Bounds a pathological firing-gate cycle (a node that
+/// keeps rescheduling itself at the current instant) so neither driver can spin
+/// forever; real graphs settle in a handful of same-instant rounds.
+///
+/// It bounds two distinct guards, which report separately because the causes
+/// differ: an external source that keeps stepping without progress
+/// ([`SimDriveError::Stalled`]), and a body that keeps self-waking without ever
+/// parking on the clock ([`SimDriveError::ClockStarved`]).
 const MAX_NO_PROGRESS_STEPS: u32 = 100_000;
 
 /// Shared handle threaded into task futures: spawn, clock access, sleeping.
