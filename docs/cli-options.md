@@ -526,7 +526,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
@@ -1093,6 +1093,11 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 #### `--trace-idle-gap-cap-seconds` `<float>`
 
 Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
+<br/>_Constraints: ≥ 0.0_
+
+#### `--system-idle-gap-cap-seconds` `<float>`
+
+AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
 <br/>_Constraints: ≥ 0.0_
 
 ### Scenario
@@ -2051,7 +2056,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
@@ -2618,6 +2623,11 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 #### `--trace-idle-gap-cap-seconds` `<float>`
 
 Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
+<br/>_Constraints: ≥ 0.0_
+
+#### `--system-idle-gap-cap-seconds` `<float>`
+
+AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
 <br/>_Constraints: ≥ 0.0_
 
 ### Scenario
