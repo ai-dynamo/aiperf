@@ -205,8 +205,66 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     run_sweep(&flags, &expansion, trials, order)
 }
 
+/// Flags the native binary parses for Python-CLI compatibility but does not act
+/// on. Each is accepted so an existing command line keeps working, and each is
+/// warned about so a run never silently ignores an authored intent.
+///
+/// Entries leave this table by gaining a consumer, not by being deleted: dropping
+/// one returns the flag to silently-ignored, which is the failure this guards.
+const UNIMPLEMENTED_FLAGS: &[(&str, fn(&ProfileFlags) -> bool)] = &[
+    ("--adaptive-scale-control", |f| {
+        f.adaptive_scale_control.is_some()
+    }),
+    ("--api-host", |f| f.api_host.is_some()),
+    ("--api-port", |f| f.api_port.is_some()),
+    ("--bo-constraint-mode", |f| f.bo_constraint_mode.is_some()),
+    ("--convergence-mode", |f| f.convergence_mode.is_some()),
+    ("--convergence-stat", |f| f.convergence_stat.is_some()),
+    ("--convergence-threshold", |f| {
+        f.convergence_threshold.is_some()
+    }),
+    ("--extra-verbose", |f| f.extra_verbose.is_some()),
+    ("--optuna-acquisition", |f| f.optuna_acquisition.is_some()),
+    ("--optuna-terminator", |f| f.optuna_terminator.is_some()),
+    ("--plot-required", |f| f.plot_required.is_some()),
+    ("--record-processor-service-count", |f| {
+        f.record_processor_service_count.is_some()
+    }),
+    ("--search-direction", |f| f.search_direction.is_some()),
+    ("--search-metric", |f| f.search_metric.is_some()),
+    ("--search-percentile-pooling", |f| {
+        f.search_percentile_pooling.is_some()
+    }),
+    ("--search-sla", |f| f.search_sla.is_some()),
+    ("--search-sla-tier", |f| f.search_sla_tier.is_some()),
+    ("--search-stat", |f| f.search_stat.is_some()),
+    ("--stats-interval", |f| f.stats_interval.is_some()),
+    ("--ui-type", |f| f.ui_type.is_some()),
+    ("--workers-max", |f| f.workers_max.is_some()),
+    ("--zmq-dual-bind", |f| f.zmq_dual_bind.is_some()),
+    ("--zmq-host", |f| f.zmq_host.is_some()),
+    ("--zmq-ipc-path", |f| f.zmq_ipc_path.is_some()),
+];
+
+/// Warn once per authored flag the native binary accepts but does not act on.
+fn warn_unimplemented_flags(flags: &ProfileFlags) {
+    let authored: Vec<&str> = UNIMPLEMENTED_FLAGS
+        .iter()
+        .filter(|(_, is_set)| is_set(flags))
+        .map(|(name, _)| *name)
+        .collect();
+    if !authored.is_empty() {
+        tracing::warn!(
+            flags = authored.join(", "),
+            "ignored by the native runtime; these flags are accepted for \
+             compatibility with the Python CLI and have no effect on this run"
+        );
+    }
+}
+
 /// Validate multi-run and convergence bounds before execution.
 fn validate_multi_run(flags: &ProfileFlags) -> anyhow::Result<()> {
+    warn_unimplemented_flags(flags);
     if let Some(n) = flags.num_profile_runs
         && !(1..=10).contains(&n)
     {
@@ -1454,5 +1512,63 @@ mod authoring_wire_tests {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod unimplemented_flag_tests {
+    use super::{UNIMPLEMENTED_FLAGS, warn_unimplemented_flags};
+    use crate::flags::ProfileFlags;
+
+    fn parse(extra: &[&str]) -> ProfileFlags {
+        let mut args: Vec<String> = ["-m", "mock-model", "--url", "http://127.0.0.1:8000"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        args.extend(extra.iter().map(|s| s.to_string()));
+        ProfileFlags::parse_from_args(&args).expect("flags parse")
+    }
+
+    /// Every table entry must name a flag clap actually accepts, and setting it
+    /// must flip that entry's predicate. A renamed flag or a predicate pointing at
+    /// the wrong field would otherwise leave the flag silently ignored again.
+    #[test]
+    fn every_table_entry_detects_its_own_flag() {
+        for (name, is_set) in UNIMPLEMENTED_FLAGS {
+            let baseline = parse(&[]);
+            assert!(!is_set(&baseline), "{name} reads as set with no args");
+
+            // Bool-valued flags accept `=true`; the rest need a value. Try the
+            // valued form first and fall back to the bare switch.
+            let flags = ProfileFlags::parse_from_args(
+                &["-m", "mock-model", "--url", "http://127.0.0.1:8000", name, "1"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .or_else(|_| {
+                ProfileFlags::parse_from_args(
+                    &["-m", "mock-model", "--url", "http://127.0.0.1:8000", name]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .unwrap_or_else(|e| panic!("{name} is not an accepted flag: {e}"));
+
+            assert!(is_set(&flags), "{name} did not flip its own predicate");
+        }
+    }
+
+    /// The warn path must stay silent on a clean command line, so a default run
+    /// never emits a spurious compatibility warning.
+    #[test]
+    fn a_clean_command_line_warns_about_nothing() {
+        let flags = parse(&[]);
+        assert!(
+            !UNIMPLEMENTED_FLAGS.iter().any(|(_, is_set)| is_set(&flags)),
+            "a minimal command line must trip no entry"
+        );
+        warn_unimplemented_flags(&flags);
     }
 }
