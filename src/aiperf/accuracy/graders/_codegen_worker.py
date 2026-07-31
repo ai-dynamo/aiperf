@@ -24,6 +24,13 @@ import threading
 from collections.abc import Callable
 from typing import Any, BinaryIO
 
+try:
+    import fcntl as _fcntl
+
+    _HAS_FCNTL = True
+except ImportError:  # Windows (worker unsupported there, but import must not crash)
+    _HAS_FCNTL = False
+
 import orjson
 
 _LCB_PASS_AT_K = (1,)
@@ -154,25 +161,41 @@ def handle_batch(
 def _drain_buffered(stdin: BinaryIO) -> list[bytes]:
     """Drain all lines already buffered in stdin without blocking.
 
-    For BufferedReader (sys.stdin.buffer in production), uses peek() to check
-    the userspace buffer; an empty peek means the next readline() would block,
-    so we stop. This is the correct non-blocking check because readline() pulls
-    kernel data into userspace first, making select() on the raw fd unreliable.
+    For BufferedReader (sys.stdin.buffer in production), peek(0) issues a raw
+    read when the userspace buffer is empty, which blocks on a pipe until the
+    next request arrives. To avoid this, we temporarily set the underlying fd to
+    O_NONBLOCK so that peek() raises BlockingIOError (instead of blocking) when
+    the kernel pipe buffer is empty. readline() then operates on the BufferedReader
+    normally, consuming data already in its userspace buffer without extra raw reads.
+    Blocking mode is restored after the drain so the outer readline() in
+    run_worker_loop can block on the next cycle.
 
-    For seekable streams without peek() (e.g. BytesIO used in tests), reads all
-    remaining data at once — safe because BytesIO is already fully in memory.
+    For streams without a raw fd (e.g. BytesIO in tests), reads all remaining
+    data at once — safe because the whole stream is already in memory.
     """
     lines: list[bytes] = []
-    if hasattr(stdin, "peek"):
-        while True:
-            if not stdin.peek(0):
-                break
-            line = stdin.readline()
-            if not line:
-                break
-            line = line.strip()
-            if line:
-                lines.append(line)
+    raw = getattr(stdin, "raw", None)
+    fd = raw.fileno() if raw is not None else -1
+
+    if _HAS_FCNTL and fd >= 0:
+        flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+        _fcntl.fcntl(fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        try:
+            while True:
+                try:
+                    available = stdin.peek(0)  # type: ignore[union-attr]
+                except BlockingIOError:
+                    break  # Kernel pipe buffer empty; stop without blocking
+                if not available:
+                    break  # EOF
+                line = stdin.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if line:
+                    lines.append(line)
+        finally:
+            _fcntl.fcntl(fd, _fcntl.F_SETFL, flags)  # Restore blocking for next cycle
     else:
         for raw_line in stdin.read().split(b"\n"):
             raw_line = raw_line.strip()
