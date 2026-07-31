@@ -118,7 +118,7 @@ fn run_search_probe(
 
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
-    let flags = match ProfileFlags::parse_from_args(args) {
+    let mut flags = match ProfileFlags::parse_from_args(args) {
         Ok(flags) => flags,
         Err(err) => {
             err.print().ok();
@@ -126,10 +126,22 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         }
     };
 
+    // A config's `multiRun:` block selects the same trial policy as the
+    // `--num-profile-runs` family, so it is folded onto the flags before
+    // validation and before either config path branches.
+    let config_base = match &flags.config_file {
+        Some(path) => {
+            let base = yaml::read_env_substituted(path)?;
+            yaml::apply_multi_run(&base, &mut flags)?;
+            Some(base)
+        }
+        None => None,
+    };
+    let flags = flags;
+
     validate_multi_run(&flags)?;
 
-    if let Some(path) = &flags.config_file {
-        let mut base = yaml::read_env_substituted(path)?;
+    if let Some(mut base) = config_base {
         if let Some(sweep) = crate::sweep::yaml_sweep::parse(&base)? {
             // Normalize dataset/model/warmup shorthands to their list forms so
             // dotted sweep paths (e.g. `datasets.default.prompts.isl`) resolve.
@@ -139,6 +151,12 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         let expanded = crate::expand::render_with_context(base)?;
         let inputs =
             yaml::resolve_expanded_inputs(expanded, flags.artifact_dir.clone(), Some(&flags))?;
+        // `multiRun.numRuns > 1` without a `sweep:` block is still a repeated
+        // run: dropping to `run_single` would silently execute one trial.
+        let trials = flags.num_profile_runs.unwrap_or(1);
+        if trials > 1 {
+            return run_config_trials(&flags, inputs, trials);
+        }
         return run_single(inputs);
     }
 
@@ -349,6 +367,58 @@ fn run_single(inputs: load::Inputs) -> anyhow::Result<i32> {
 
 /// Execute a YAML `sweep:` block: expand its variations, resolve+stamp each into
 /// a run, then run every cell and write the aggregate (single trial per cell).
+/// Execute a non-sweep config `multiRun.numRuns > 1` as repeated trials of one
+/// variation, reusing the shared cell runner so cooldown, seeding, warmup
+/// suppression, and the aggregate match the `--num-profile-runs` flag path.
+fn run_config_trials(
+    flags: &ProfileFlags,
+    inputs: crate::config_inputs::Inputs,
+    trials: u32,
+) -> anyhow::Result<i32> {
+    let sweep_id = uuid::Uuid::new_v4().simple().to_string();
+    let seed = seed_policy(flags);
+    let disable_warmup = !flags
+        .no_profile_run_disable_warmup_after_first
+        .unwrap_or(false)
+        && flags.profile_run_disable_warmup_after_first.unwrap_or(true);
+    let base_run = load::build(inputs.clone())?;
+    let base_dir = base_run.artifact_dir.clone();
+
+    let mut cells = Vec::with_capacity(trials as usize);
+    for trial in 0..trials {
+        let mut inputs = inputs.clone();
+        let mut run = base_run.clone();
+        let dir = crate::sweep::artifact_dir::resolve(
+            &base_dir,
+            false,
+            trials,
+            "",
+            trial,
+            IterationOrder::Repeated,
+        );
+        run.sweep_id = Some(sweep_id.clone());
+        run.trial = trial;
+        run.random_seed = seed.seed(0, trial);
+        run.artifact_dir = dir.clone();
+        inputs.artifact_dir = dir;
+        inputs.random_seed = seed.seed(0, trial);
+        if trial > 0 && disable_warmup {
+            if let Some(phases) = run.cfg.phases.as_mut() {
+                phases.retain(|p| p.common.name != "warmup");
+            }
+            inputs.warmup = None;
+        }
+        cells.push(sweep_run::Cell {
+            index: 0,
+            trial,
+            label: String::new(),
+            run,
+            inputs: Some(inputs),
+        });
+    }
+    run_cells(flags, &cells, false, IterationOrder::Repeated)
+}
+
 fn run_yaml_sweep(
     flags: &ProfileFlags,
     base: serde_json::Value,

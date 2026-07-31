@@ -291,6 +291,67 @@ pub fn read_env_substituted(path: &std::path::Path) -> anyhow::Result<serde_json
     crate::expand::substitute_env(raw)
 }
 
+/// The envelope `multiRun:` block. Each field is the config spelling of an
+/// existing `--num-profile-runs` / `--profile-run-cooldown-seconds` /
+/// `--confidence-level` / seed / warmup flag; the block only selects trial
+/// repetition policy, so it is projected onto the flags rather than onto
+/// `Inputs`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MultiRunSection {
+    /// Trials per variation (`--num-profile-runs`).
+    #[serde(default, alias = "numRuns")]
+    num_runs: Option<u32>,
+    /// Inter-trial cooldown (`--profile-run-cooldown-seconds`).
+    #[serde(default, alias = "cooldownSeconds")]
+    cooldown_seconds: Option<f64>,
+    /// Confidence level for the aggregate (`--confidence-level`).
+    #[serde(default, alias = "confidenceLevel")]
+    confidence_level: Option<f64>,
+    /// Reuse one seed across trials (`--set-consistent-seed`).
+    #[serde(default, alias = "setConsistentSeed")]
+    set_consistent_seed: Option<bool>,
+    /// Skip warmup on trials past the first
+    /// (`--profile-run-disable-warmup-after-first`).
+    #[serde(default, alias = "disableWarmupAfterFirst")]
+    disable_warmup_after_first: Option<bool>,
+}
+
+/// Project an authored envelope `multiRun:` block onto `flags`, letting an
+/// explicit command-line flag win over the config. Applied before multi-run
+/// validation so an out-of-range `numRuns` fails with the same message the flag
+/// produces.
+pub fn apply_multi_run(
+    base: &serde_json::Value,
+    flags: &mut crate::flags::ProfileFlags,
+) -> anyhow::Result<()> {
+    let Some(raw) = base.get("multiRun").or_else(|| base.get("multi_run")) else {
+        return Ok(());
+    };
+    let section: MultiRunSection = serde_json::from_value(raw.clone())
+        .map_err(|e| anyhow::anyhow!("multiRun: {e}"))?;
+    // A flag authored on the command line is the more specific intent and wins;
+    // otherwise the config value takes effect.
+    if flags.num_profile_runs.is_none() {
+        flags.num_profile_runs = section.num_runs;
+    }
+    if flags.profile_run_cooldown_seconds.is_none() {
+        flags.profile_run_cooldown_seconds = section.cooldown_seconds;
+    }
+    if flags.confidence_level.is_none() {
+        flags.confidence_level = section.confidence_level;
+    }
+    if flags.set_consistent_seed.is_none() && flags.no_set_consistent_seed.is_none() {
+        flags.set_consistent_seed = section.set_consistent_seed;
+    }
+    if flags.profile_run_disable_warmup_after_first.is_none()
+        && flags.no_profile_run_disable_warmup_after_first.is_none()
+    {
+        flags.profile_run_disable_warmup_after_first = section.disable_warmup_after_first;
+    }
+    Ok(())
+}
+
 /// A string or a list of strings (Config shorthand for single-vs-many).
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -377,6 +438,11 @@ struct ConfigFile {
     #[serde(default)]
     #[allow(dead_code)]
     variables: Option<serde_json::Value>,
+    /// `multiRun:` block, read by [`multi_run_overrides`] before this struct is
+    /// deserialized. Declared so the key is legal rather than rejected as unknown.
+    #[serde(default, alias = "multiRun")]
+    #[allow(dead_code)]
+    multi_run: Option<serde_json::Value>,
     benchmark: Benchmark,
     /// Top-level deterministic run seed (`randomSeed`).
     #[serde(default, alias = "randomSeed")]
