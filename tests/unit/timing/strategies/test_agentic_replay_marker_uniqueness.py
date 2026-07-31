@@ -8,6 +8,7 @@ import re
 from unittest.mock import AsyncMock, MagicMock
 
 from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.config import BenchmarkRun
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import Trajectory, TrajectorySource
 from tests.unit.timing.strategies._shared_helpers import _make_dataset
@@ -34,7 +35,9 @@ def _build_real_trajectory_source(
     return src
 
 
-def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-uniqueness"):
+def _make_run(
+    *, target: CacheBustTarget, benchmark_id: str = "bench-uniqueness"
+) -> BenchmarkRun:
     """Build a v2 ``BenchmarkRun`` exposing the values the strategy reads."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
@@ -42,8 +45,8 @@ def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-uniqueness"
         {
             "models": ["test-model"],
             "endpoint": {
-                "type": "completions",
-                "urls": ["http://localhost:8000/v1"],
+                "type": "chat",
+                "urls": ["http://localhost:8000/v1/chat/completions"],
                 "streaming": False,
             },
             "datasets": [

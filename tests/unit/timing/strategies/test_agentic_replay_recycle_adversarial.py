@@ -15,6 +15,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.config import BenchmarkRun
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
@@ -67,7 +68,9 @@ def _make_strategy(
     return strategy, issuer, stop_checker
 
 
-def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench_test"):
+def _make_run(
+    *, target: CacheBustTarget, benchmark_id: str = "bench_test"
+) -> BenchmarkRun:
     """Build a v2 ``BenchmarkRun`` exposing the values the strategy reads."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
@@ -75,8 +78,8 @@ def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench_test"):
         {
             "models": ["test-model"],
             "endpoint": {
-                "type": "completions",
-                "urls": ["http://localhost:8000/v1"],
+                "type": "chat",
+                "urls": ["http://localhost:8000/v1/chat/completions"],
                 "streaming": False,
             },
             "datasets": [

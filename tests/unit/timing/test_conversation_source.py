@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
+from aiperf.common.enums import CacheBustTarget
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
@@ -9,12 +10,21 @@ from aiperf.timing.conversation_source import ConversationSource, SampledSession
 from tests.unit.timing.conftest import make_credit
 
 
-def _mk_source(ds: DatasetMetadata) -> ConversationSource:
+def _mk_source(
+    ds: DatasetMetadata,
+    *,
+    cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
+) -> ConversationSource:
     SamplerClass = plugins.get_class(PluginType.DATASET_SAMPLER, ds.sampling_strategy)
     sampler = SamplerClass(
         conversation_ids=[c.conversation_id for c in ds.conversations],
     )
-    return ConversationSource(ds, sampler)
+    return ConversationSource(
+        ds,
+        sampler,
+        benchmark_id="test-benchmark",
+        cache_bust_target=cache_bust_target,
+    )
 
 
 @pytest.fixture
@@ -69,6 +79,52 @@ class TestConversationSource:
     def test_get_metadata_raises_for_invalid(self, src):
         with pytest.raises(KeyError, match="No metadata for conversation bad"):
             src.get_metadata("bad")
+
+    def test_cache_bust_marker_is_unique_for_consecutive_sessions(
+        self, ds: DatasetMetadata
+    ) -> None:
+        src = _mk_source(ds, cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
+        first = src.next(x_correlation_id="session-1")
+        second = src.next(x_correlation_id="session-2")
+
+        assert first.cache_bust_marker is not None
+        assert first.cache_bust_marker != second.cache_bust_marker
+
+    def test_cache_bust_marker_propagates_through_build_first_turn(
+        self, ds: DatasetMetadata
+    ) -> None:
+        src = _mk_source(ds, cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
+        session = src.next(x_correlation_id="session-1")
+
+        assert session.build_first_turn().cache_bust_marker == session.cache_bust_marker
+
+    def test_cache_bust_target_propagates_through_build_turn_at_index(
+        self, ds: DatasetMetadata
+    ) -> None:
+        src = _mk_source(ds, cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
+        session = src.next(x_correlation_id="session-1")
+
+        assert (
+            session.build_turn_at_index(0).cache_bust_target
+            == CacheBustTarget.FIRST_TURN_PREFIX
+        )
+
+    def test_cache_bust_marker_is_stable_for_explicit_session_id(
+        self, ds: DatasetMetadata
+    ) -> None:
+        src = _mk_source(ds, cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
+        first = src.session_for_conversation("c1", x_correlation_id="session-1")
+        second = src.session_for_conversation("c2", x_correlation_id="session-1")
+        assert first.cache_bust_marker == second.cache_bust_marker
+
+    def test_cache_bust_disabled_does_not_retain_session_markers(
+        self, ds: DatasetMetadata
+    ) -> None:
+        src = _mk_source(ds)
+
+        src.next(x_correlation_id="session-1")
+
+        assert src._cache_bust_markers == {}
 
 
 class TestMultiTurn:
