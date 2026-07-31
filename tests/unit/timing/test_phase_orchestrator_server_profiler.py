@@ -210,57 +210,38 @@ async def test_profiler_stop_network_error_warns_and_does_not_raise() -> None:
 
 
 @pytest.mark.asyncio
-async def test_profiler_lifecycle_callbacks_track_active_state() -> None:
-    active = False
-
-    def mark_active() -> None:
-        nonlocal active
-        active = True
-
-    def mark_inactive() -> None:
-        nonlocal active
-        active = False
+async def test_profiler_start_and_stop_callbacks_wrap_phase() -> None:
+    trace: list[str] = []
 
     async def run_phase() -> None:
-        assert active
+        trace.append("profiling_run")
+
+    async def start(_hooks: object, _headers: object) -> None:
+        trace.append("profiler_start")
 
     async def stop(_hooks: object, _headers: object) -> None:
-        assert active
+        trace.append("profiler_stop")
 
-    hooks = MagicMock(profiler_start_urls=["http://h/start"])
     await run_phase_with_server_profiler(
         phase=CreditPhase.PROFILING,
-        hooks=hooks,
+        hooks=MagicMock(profiler_start_urls=["http://h/start"]),
         headers={},
         run_phase=run_phase,
-        start_fn=AsyncMock(),
+        start_fn=start,
         stop_fn=stop,
         warn_fn=lambda _msg: None,
-        on_start=mark_active,
-        on_stop=mark_inactive,
     )
 
-    assert not active
+    assert trace == ["profiler_start", "profiling_run", "profiler_stop"]
 
 
 @pytest.mark.asyncio
-async def test_profiler_lifecycle_clears_active_state_after_deferred_failure() -> None:
-    active = False
-
-    def mark_active() -> None:
-        nonlocal active
-        active = True
-
-    def mark_inactive() -> None:
-        nonlocal active
-        active = False
-
+async def test_deferred_profiler_failure_stops_before_reraising() -> None:
     async def run_phase() -> None:
         raise RuntimeError("phase boom")
 
-    async def stop(_hooks: object, _headers: object) -> None:
-        assert active
-
+    start = AsyncMock()
+    stop = AsyncMock()
     hooks = MagicMock(profiler_start_urls=["http://h/start"])
     with pytest.raises(RuntimeError, match="phase boom"):
         await run_phase_with_server_profiler(
@@ -268,15 +249,14 @@ async def test_profiler_lifecycle_clears_active_state_after_deferred_failure() -
             hooks=hooks,
             headers={},
             run_phase=run_phase,
-            start_fn=AsyncMock(),
+            start_fn=start,
             stop_fn=stop,
             warn_fn=lambda _msg: None,
-            on_start=mark_active,
-            on_stop=mark_inactive,
             defer_stop=True,
         )
 
-    assert not active
+    start.assert_awaited_once()
+    stop.assert_awaited_once()
 
 
 @pytest.mark.asyncio
