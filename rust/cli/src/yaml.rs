@@ -77,8 +77,7 @@ pub(crate) fn resolve_expanded_inputs(
 /// This is the config-surface twin of `profile::UNIMPLEMENTED_FLAGS`: entries
 /// leave the table by gaining a consumer, not by being deleted, since deleting
 /// one returns the key to silently-ignored — the failure this guards.
-const UNIMPLEMENTED_KEYS: &[(&str, fn(&ConfigFile) -> bool)] =
-    &[("plot", |c| c.plot.is_some())];
+const UNIMPLEMENTED_KEYS: &[(&str, fn(&ConfigFile) -> bool)] = &[("plot", |c| c.plot.is_some())];
 
 /// Warn once for every authored config key the native loader does not act on.
 fn warn_unimplemented_keys(file: &ConfigFile) {
@@ -355,8 +354,8 @@ pub fn apply_multi_run(
     let Some(raw) = base.get("multiRun").or_else(|| base.get("multi_run")) else {
         return Ok(());
     };
-    let section: MultiRunSection = serde_json::from_value(raw.clone())
-        .map_err(|e| anyhow::anyhow!("multiRun: {e}"))?;
+    let section: MultiRunSection =
+        serde_json::from_value(raw.clone()).map_err(|e| anyhow::anyhow!("multiRun: {e}"))?;
     // A flag authored on the command line is the more specific intent and wins;
     // otherwise the config value takes effect.
     if flags.num_profile_runs.is_none() {
@@ -1074,7 +1073,10 @@ impl SynthesisSection {
                 })
         };
         let mut m = serde_json::Map::new();
-        m.insert("speedup_ratio".into(), f(self.speedup_ratio.unwrap_or(1.0))?);
+        m.insert(
+            "speedup_ratio".into(),
+            f(self.speedup_ratio.unwrap_or(1.0))?,
+        );
         m.insert(
             "prefix_len_multiplier".into(),
             f(self.prefix_len_multiplier.unwrap_or(1.0))?,
@@ -3437,7 +3439,8 @@ benchmark:
             \x20   server_profiler: {timeout_seconds: 4.5, start_path: /start, stop_path: /stop}\n\
             \x20 dataset: {prompts: {isl: 8, osl: 4}}\n\
             \x20 phases: {type: concurrency, requests: 1, concurrency: 1}\n";
-        let run = resolve_str(cfg, Some("/tmp/x".into())).expect("fully-authored endpoint resolves");
+        let run =
+            resolve_str(cfg, Some("/tmp/x".into())).expect("fully-authored endpoint resolves");
         let ep = &serde_json::to_value(&run).unwrap()["cfg"]["endpoint"];
 
         for (key, want) in [
@@ -3446,7 +3449,10 @@ benchmark:
             ("streaming", serde_json::json!(true)),
             ("api_key", serde_json::json!("sk-authored")),
             ("timeout_seconds", serde_json::json!(12.5)),
-            ("connection_reuse", serde_json::json!("sticky-user-sessions")),
+            (
+                "connection_reuse",
+                serde_json::json!("sticky-user-sessions"),
+            ),
             ("ssl_verify", serde_json::json!(false)),
             ("uds_path", serde_json::json!("/tmp/authored.sock")),
             ("use_legacy_max_tokens", serde_json::json!(true)),
@@ -3503,7 +3509,11 @@ benchmark:
             .filter(|p| p.extension().is_some_and(|x| x == "yaml"))
             .collect();
         entries.sort();
-        assert!(!entries.is_empty(), "no templates found in {}", dir.display());
+        assert!(
+            !entries.is_empty(),
+            "no templates found in {}",
+            dir.display()
+        );
 
         let failures: Vec<String> = entries
             .iter()
