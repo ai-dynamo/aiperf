@@ -535,6 +535,12 @@ async fn drive_source_realtime(
                 // though wall time may have overshot `at_ns` by timer jitter.
                 source.set_time_ns(at_ns)?;
                 let step = source.step(at_ns)?;
+                // `step.made_progress` is deliberately unused here. The virtual
+                // driver treats a run of no-progress steps as a livelock because
+                // it owns the clock: nothing outside the pump can change the next
+                // step's outcome. On a real clock a source may correctly report no
+                // progress while waiting on a socket, so the same count would
+                // false-positive on a healthy run against a slow endpoint.
                 if step.end_ns < at_ns {
                     return Err(SimDriveError::TimeRegression {
                         now_ns: at_ns,
