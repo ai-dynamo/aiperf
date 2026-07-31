@@ -89,6 +89,7 @@ DAG that failed to drain (worker crash, protocol mismatch, bug).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import time
@@ -1587,10 +1588,10 @@ class BranchOrchestrator:
         """Sleep for ``seconds``, but return early if ``cleanup()`` fires -- so a
         shutdown / duration cancel interrupts a pending think-time instead of
         waiting out the full (possibly large sampled) interval."""
-        try:
+        # TimeoutError == the full think-time elapsed without cleanup: the
+        # normal path, so suppress it and return.
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._cleanup_event.wait(), timeout=seconds)
-        except TimeoutError:
-            pass  # full think-time elapsed (the normal path)
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""

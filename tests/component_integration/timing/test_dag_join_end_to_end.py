@@ -43,6 +43,11 @@ def _mk_source(conversations: list[ConversationMetadata]):
     )
     lookup = {c.conversation_id: c for c in conversations}
     cs.get_metadata.side_effect = lambda cid: lookup[cid]
+    # Give each distinct correlation id a stable, DISTINCT sampling ordinal.
+    # An unconstrained MagicMock returns the same object for every id, so two
+    # instances would seed the same think-time stream (see _sample_think_ms).
+    ordinals: dict[str, int] = {}
+    cs.sample_ordinal.side_effect = lambda x: ordinals.setdefault(x, len(ordinals))
     return cs
 
 
@@ -151,10 +156,9 @@ async def test_join_suppressed_when_issuer_returns_false():
 
 
 @pytest.mark.asyncio
-async def test_release_blocked_join_applies_think_time_before_dispatch(monkeypatch):
+async def test_release_blocked_join_applies_think_time_before_dispatch():
     """A gated turn carrying a per-round think-time sleeps for that duration
     before its join turn is dispatched (the coordinator's inter-round wait)."""
-    from aiperf.timing import branch_orchestrator as bo_mod
     from aiperf.timing.branch_orchestrator import PendingBranchJoin
 
     issuer = MagicMock()
@@ -163,10 +167,12 @@ async def test_release_blocked_join_applies_think_time_before_dispatch(monkeypat
 
     slept: list[float] = []
 
-    async def _fake_sleep(seconds: float) -> None:
+    # The wait now rides the interruptible _sleep_think_ms seam (asyncio.wait_for
+    # on the cleanup event), not asyncio.sleep -- spy on it directly.
+    async def _capture(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(bo_mod.asyncio, "sleep", _fake_sleep)
+    orch._sleep_think_ms = _capture
 
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-spine",
@@ -183,8 +189,7 @@ async def test_release_blocked_join_applies_think_time_before_dispatch(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_release_blocked_join_no_sleep_when_think_time_zero(monkeypatch):
-    from aiperf.timing import branch_orchestrator as bo_mod
+async def test_release_blocked_join_no_sleep_when_think_time_zero():
     from aiperf.timing.branch_orchestrator import PendingBranchJoin
 
     issuer = MagicMock()
@@ -192,10 +197,11 @@ async def test_release_blocked_join_no_sleep_when_think_time_zero(monkeypatch):
     orch = BranchOrchestrator(conversation_source=MagicMock(), credit_issuer=issuer)
 
     slept: list[float] = []
-    monkeypatch.setattr(bo_mod.asyncio, "sleep", lambda s: slept.append(s) or _noop())
 
-    async def _noop() -> None:
-        return None
+    async def _capture(seconds: float) -> None:
+        slept.append(seconds)
+
+    orch._sleep_think_ms = _capture
 
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-spine",
