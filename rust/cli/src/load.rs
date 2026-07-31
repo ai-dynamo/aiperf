@@ -405,6 +405,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         records_formats,
         // No flag narrows the summary artifacts; the flag path ships both formats.
         summary_formats: Vec::new(),
+        // User files are authorable only from Config v2; no flag renders them.
+        user_files: Vec::new(),
         export_raw,
         export_trace,
         export_outputs_json: flags.export_outputs_json.unwrap_or(false),
