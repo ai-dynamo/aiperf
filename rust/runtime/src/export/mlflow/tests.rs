@@ -253,9 +253,12 @@ impl MockServer {
                         stream.set_nonblocking(false).ok();
                         if let Some(rec) = read_request(&mut stream) {
                             let response = canned_response(&rec.path, state);
+                            // Record before responding: the client unblocks on the
+                            // response, so pushing afterwards lets a test observe
+                            // `requests()` without its own final request in it.
+                            requests_thread.lock().unwrap().push(rec);
                             let _ = stream.write_all(response.as_bytes());
                             let _ = stream.flush();
-                            requests_thread.lock().unwrap().push(rec);
                         }
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
