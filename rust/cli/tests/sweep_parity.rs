@@ -28,6 +28,20 @@ fn write_golden(name: &str, value: &serde_json::Value) {
     std::fs::write(&path, s).unwrap_or_else(|e| panic!("write {path}: {e}"));
 }
 
+/// Run a test body on a 64MB thread.
+///
+/// `ProfileFlags` (clap-derived) and the resolved `BenchmarkRun` are large stack
+/// values, and planning holds several at once; the default 8MB test-thread stack
+/// overflows. Mirrors the `on_big_stack` pattern the `profile.rs` test modules use.
+fn on_big_stack(body: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(body)
+        .expect("spawn worker")
+        .join()
+        .expect("worker panicked");
+}
+
 fn fixture_args(name: &str) -> Vec<String> {
     let path = format!("../../tools/parity/fixtures/{name}.args");
     std::fs::read_to_string(&path)
@@ -51,6 +65,10 @@ const MULTI_FIXTURES: &[(&str, sweep::SweepType, u32)] = &[
 
 #[test]
 fn sweep_cells_match_oracle() {
+    on_big_stack(sweep_cells_body);
+}
+
+fn sweep_cells_body() {
     for (name, sweep_type) in SWEEP_FIXTURES {
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
@@ -128,6 +146,10 @@ fn sweep_cells_match_oracle() {
 
 #[test]
 fn yaml_sweep_cells_match_oracle() {
+    on_big_stack(yaml_sweep_cells_body);
+}
+
+fn yaml_sweep_cells_body() {
     let path = std::path::Path::new("../../tools/parity/configs/sweep_dist.yaml");
     let mut base = aiperf_cli::yaml::read_env_substituted(path).expect("read config");
     let sweep = aiperf_cli::sweep::yaml_sweep::parse(&base)
@@ -191,6 +213,10 @@ fn yaml_sweep_cells_match_oracle() {
 
 #[test]
 fn search_recipe_cells_match_oracle() {
+    on_big_stack(search_recipe_cells_body);
+}
+
+fn search_recipe_cells_body() {
     for name in [
         "recipe_ramp",
         "recipe_prefill",
@@ -246,6 +272,10 @@ fn search_recipe_cells_match_oracle() {
 
 #[test]
 fn seed_knob_cells_match_oracle() {
+    on_big_stack(seed_knob_cells_body);
+}
+
+fn seed_knob_cells_body() {
     for name in ["sweep_sameseed", "sweep_noseed"] {
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
@@ -293,6 +323,10 @@ fn seed_knob_cells_match_oracle() {
 
 #[test]
 fn multi_run_cells_match_oracle() {
+    on_big_stack(multi_run_cells_body);
+}
+
+fn multi_run_cells_body() {
     for (name, sweep_type, trials) in MULTI_FIXTURES {
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
