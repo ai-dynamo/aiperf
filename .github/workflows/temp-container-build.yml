@@ -216,8 +216,12 @@ jobs:
           set -euo pipefail
           # The test stage installs aiperf[test] but not the mock server, which
           # is a separate package under tests/ that the integration fixtures need.
+          # Scoped to the two files carrying the ffmpeg marker rather than
+          # tests/: collection runs before -m deselection, so pointing at the
+          # whole tree pulls in 18k unrelated modules and any one of them
+          # failing to import aborts the run.
           cid=$(docker create -w /workspace aiperf-temp:test \
-            "uv pip install -e tests/aiperf_mock_server && pytest tests/ -m ffmpeg -v --no-header -p no:cacheprovider")
+            "uv pip install -e tests/aiperf_mock_server && pytest tests/integration/test_video.py tests/component_integration/media/test_video.py -m ffmpeg -v --no-header -p no:cacheprovider")
           docker cp tests "${cid}:/workspace/tests"
           docker cp pyproject.toml "${cid}:/workspace/pyproject.toml"
           rc=0
