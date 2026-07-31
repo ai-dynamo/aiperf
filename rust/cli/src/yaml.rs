@@ -2610,6 +2610,39 @@ mod tests {
             .to_string()
     }
 
+    /// The authored inline peak form must reach the wire as the nested
+    /// `{distribution, weight}` shape the runtime's multimodal sniff expects;
+    /// parsing it without lowering would run a default single-mode ISL.
+    #[test]
+    fn inline_peaks_lower_to_the_wire_mixture() {
+        let run = resolve_str(
+            &cfg("  dataset:\n    type: synthetic\n    prompts:\n      isl:\n        peaks:\n          - {mean: 128, stddev: 20, weight: 60}\n          - {mean: 2048, median: 1891, weight: 40}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("inline peaks resolve");
+        let dataset = run
+            .cfg
+            .datasets
+            .as_ref()
+            .and_then(|d| d.first())
+            .expect("dataset");
+        let crate::model::dataset::Dataset::Synthetic(synthetic) = dataset else {
+            panic!("expected a synthetic dataset");
+        };
+        let isl = &synthetic.prompts.isl;
+        let peaks = isl.peaks.as_ref().expect("peaks survive resolution");
+        assert_eq!(peaks.len(), 2);
+        assert_eq!(peaks[0].weight, 60.0);
+        assert_eq!(peaks[0].distribution.mean, Some(128.0));
+        assert_eq!(peaks[0].distribution.stddev, Some(20.0));
+        // The log-normal peak keeps median and must not gain a stddev default.
+        assert_eq!(peaks[1].distribution.median, Some(1891.0));
+        assert_eq!(peaks[1].distribution.stddev, None);
+        // A peak-bearing parent is not itself a normal distribution.
+        assert_eq!(isl.stddev, None);
+        assert_eq!(isl.mean, None);
+    }
+
     #[test]
     fn rejects_unknown_dataset_type() {
         let e = err(
