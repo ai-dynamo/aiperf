@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
+from aiperf.config.control_hooks import ResetKvCacheConfig
 from aiperf.config.endpoint import EndpointConfig
 from aiperf.config.flags._converter_endpoint import build_endpoint
 from aiperf.config.flags.cli_config import CLIConfig
@@ -104,8 +105,6 @@ def test_control_hook_path_without_leading_slash_rejected() -> None:
 
 
 def test_control_hooks_require_http_transport_gate() -> None:
-    from aiperf.config.control_hooks import ResetKvCacheConfig
-
     cfg = EndpointConfig.model_construct(
         urls=["http://127.0.0.1:8000"],
         reset_kv_cache=ResetKvCacheConfig(),

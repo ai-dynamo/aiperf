@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,7 +11,10 @@ from aiperf.common.control_hooks import (
 )
 from aiperf.common.control_plane_http import ControlPlaneHttpError
 from aiperf.common.enums import CreditPhase
-from aiperf.timing.phase_orchestrator import run_phase_with_server_profiler
+from aiperf.timing.phase_orchestrator import (
+    PhaseOrchestrator,
+    run_phase_with_server_profiler,
+)
 
 
 @pytest.mark.asyncio
@@ -203,3 +206,92 @@ async def test_profiler_stop_network_error_warns_and_does_not_raise() -> None:
         warn_fn=warnings.append,
     )
     assert any("server_profiler stop failed" in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_profiler_lifecycle_callbacks_track_active_state() -> None:
+    active = False
+
+    def mark_active() -> None:
+        nonlocal active
+        active = True
+
+    def mark_inactive() -> None:
+        nonlocal active
+        active = False
+
+    async def run_phase() -> None:
+        assert active
+
+    async def stop(_hooks, _headers) -> None:
+        assert active
+
+    hooks = MagicMock(profiler_start_urls=["http://h/start"])
+    await run_phase_with_server_profiler(
+        phase=CreditPhase.PROFILING,
+        hooks=hooks,
+        headers={},
+        run_phase=run_phase,
+        start_fn=AsyncMock(),
+        stop_fn=stop,
+        warn_fn=lambda _msg: None,
+        on_start=mark_active,
+        on_stop=mark_inactive,
+    )
+
+    assert not active
+
+
+@pytest.mark.asyncio
+async def test_profiler_lifecycle_clears_active_state_after_deferred_failure() -> None:
+    active = False
+
+    def mark_active() -> None:
+        nonlocal active
+        active = True
+
+    def mark_inactive() -> None:
+        nonlocal active
+        active = False
+
+    async def run_phase() -> None:
+        raise RuntimeError("phase boom")
+
+    async def stop(_hooks, _headers) -> None:
+        assert active
+
+    hooks = MagicMock(profiler_start_urls=["http://h/start"])
+    with pytest.raises(RuntimeError, match="phase boom"):
+        await run_phase_with_server_profiler(
+            phase=CreditPhase.PROFILING,
+            hooks=hooks,
+            headers={},
+            run_phase=run_phase,
+            start_fn=AsyncMock(),
+            stop_fn=stop,
+            warn_fn=lambda _msg: None,
+            on_start=mark_active,
+            on_stop=mark_inactive,
+            defer_stop=True,
+        )
+
+    assert not active
+
+
+@pytest.mark.asyncio
+async def test_stop_server_profiler_skips_inactive_and_stops_active_once() -> None:
+    orchestrator = PhaseOrchestrator.__new__(PhaseOrchestrator)
+    orchestrator._server_profiler_active = False
+    orchestrator._control_hooks = MagicMock(profiler_stop_urls=["http://h/stop"])
+    orchestrator._control_headers = {}
+    orchestrator.warning = MagicMock()
+
+    with patch(
+        "aiperf.timing.phase_orchestrator.stop_server_profiler", new_callable=AsyncMock
+    ) as stop:
+        await orchestrator._stop_server_profiler_warn_only()
+        orchestrator._server_profiler_active = True
+        await orchestrator._stop_server_profiler_warn_only()
+        await orchestrator._stop_server_profiler_warn_only()
+
+    stop.assert_awaited_once_with(orchestrator._control_hooks, {})

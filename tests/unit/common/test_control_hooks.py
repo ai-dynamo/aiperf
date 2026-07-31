@@ -103,6 +103,34 @@ async def test_run_reset_kv_cache_posts_to_each_reset_url() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_reset_kv_cache_stops_after_first_failure() -> None:
+    hooks = _hooks(
+        reset_urls=[
+            "http://a:8000/reset_prefix_cache",
+            "http://b:8000/reset_prefix_cache",
+        ]
+    )
+    headers = {"Authorization": "Bearer t"}
+    error = ControlPlaneHttpError("reset failed")
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ) as post,
+        pytest.raises(ControlPlaneHttpError) as exc_info,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert exc_info.value is error
+    post.assert_awaited_once_with(
+        url="http://a:8000/reset_prefix_cache",
+        headers=headers,
+        timeout_s=1.5,
+    )
+
+
+@pytest.mark.asyncio
 async def test_stop_server_profiler_posts_to_each_stop_url() -> None:
     hooks = _hooks(
         profiler_stop_urls=[
@@ -179,7 +207,9 @@ async def test_start_server_profiler_partial_failure_stops_started_then_reraises
     headers = {"Authorization": "Bearer t"}
     start_error = ControlPlaneHttpError("status 500 for http://b:8000/start_profile")
 
-    async def post_side_effect(*, url: str, headers: dict[str, str], timeout_s: float):
+    async def post_side_effect(
+        *, url: str, headers: dict[str, str], timeout_s: float
+    ) -> None:
         del headers, timeout_s
         if url == "http://b:8000/start_profile":
             raise start_error
@@ -224,7 +254,9 @@ async def test_stop_server_profiler_attempts_all_origins_then_aggregates() -> No
     headers = {"X-Test": "1"}
     calls: list[str] = []
 
-    async def post_side_effect(*, url: str, headers: dict[str, str], timeout_s: float):
+    async def post_side_effect(
+        *, url: str, headers: dict[str, str], timeout_s: float
+    ) -> None:
         del headers, timeout_s
         calls.append(url)
         if url.endswith("a:8000/stop_profile") or url.endswith("c:8000/stop_profile"):
@@ -264,7 +296,9 @@ async def test_start_server_profiler_cleanup_failure_is_logged_then_reraises() -
     )
     start_error = ControlPlaneHttpError("start b failed")
 
-    async def post_side_effect(*, url: str, headers: dict[str, str], timeout_s: float):
+    async def post_side_effect(
+        *, url: str, headers: dict[str, str], timeout_s: float
+    ) -> None:
         del headers, timeout_s
         if url == "http://b:8000/start_profile":
             raise start_error

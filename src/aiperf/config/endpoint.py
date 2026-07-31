@@ -613,7 +613,7 @@ class EndpointConfig(BaseConfig):
         if self.reset_kv_cache is None and self.server_profiler is None:
             return self
         # Transport None means auto-detect HTTP from URL — allowed.
-        if self.transport is not None and str(self.transport) != "http":
+        if self.transport is not None and self.transport != TransportType.HTTP:
             raise ValueError(
                 "endpoint.reset_kv_cache and endpoint.server_profiler require "
                 "HTTP transport; unsupported transport "

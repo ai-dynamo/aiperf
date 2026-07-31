@@ -54,6 +54,8 @@ async def run_phase_with_server_profiler(
     start_fn: Callable[..., Awaitable[None]],
     stop_fn: Callable[..., Awaitable[None]],
     warn_fn: Callable[[str], None],
+    on_start: Callable[[], None] | None = None,
+    on_stop: Callable[[], None] | None = None,
     defer_stop: bool = False,
 ) -> bool:
     """Start/stop server profiler around a profiling phase only.
@@ -72,6 +74,8 @@ async def run_phase_with_server_profiler(
         return False
 
     await start_fn(hooks, headers)
+    if on_start is not None:
+        on_start()
     if defer_stop:
         try:
             await run_phase()
@@ -80,6 +84,9 @@ async def run_phase_with_server_profiler(
                 await stop_fn(hooks, headers)
             except ControlPlaneHttpError as error:
                 warn_fn(f"server_profiler stop failed: {error}")
+            finally:
+                if on_stop is not None:
+                    on_stop()
             raise
         return True
 
@@ -90,6 +97,9 @@ async def run_phase_with_server_profiler(
             await stop_fn(hooks, headers)
         except ControlPlaneHttpError as error:
             warn_fn(f"server_profiler stop failed: {error}")
+        finally:
+            if on_stop is not None:
+                on_stop()
     return False
 
 
@@ -276,6 +286,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
         # Active phase runners (for cancellation) - multiple possible with seamless mode
         self._active_runners: list[PhaseRunner] = []
+        self._server_profiler_active = False
 
     @property
     def conversation_source(self) -> ConversationSource:
@@ -379,6 +390,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                     start_fn=start_server_profiler,
                     stop_fn=stop_server_profiler,
                     warn_fn=self.warning,
+                    on_start=self._mark_server_profiler_active,
+                    on_stop=self._mark_server_profiler_inactive,
                     defer_stop=profiler_will_defer_stop,
                 )
             except Exception as e:
@@ -390,6 +403,14 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             # For seamless phases, this happens after returns complete (background task)
             if not is_seamless_non_final:
                 self._active_runners.remove(runner)
+
+    def _mark_server_profiler_active(self) -> None:
+        """Record that the profiler start hook completed successfully."""
+        self._server_profiler_active = True
+
+    def _mark_server_profiler_inactive(self) -> None:
+        """Record that the profiler no longer needs a stop hook."""
+        self._server_profiler_active = False
 
     def _phase_runner_cleanup_callback(self, runner: PhaseRunner) -> Callable[[], None]:
         """Create callback that removes runner from active list when phase completes."""
@@ -415,9 +436,14 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         return cleanup_and_stop
 
     async def _stop_server_profiler_warn_only(self) -> None:
-        """Best-effort deferred profiler stop (seamless non-final profiling)."""
-        if self._control_hooks is None or not self._control_hooks.profiler_stop_urls:
+        """Best-effort stop for an active profiler."""
+        if (
+            not self._server_profiler_active
+            or self._control_hooks is None
+            or not self._control_hooks.profiler_stop_urls
+        ):
             return
+        self._server_profiler_active = False
         try:
             await stop_server_profiler(self._control_hooks, self._control_headers)
         except ControlPlaneHttpError as error:
