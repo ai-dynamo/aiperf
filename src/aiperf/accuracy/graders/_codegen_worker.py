@@ -111,15 +111,18 @@ def handle_batch(
             continue
         req_id = req.get("id")
         try:
-            all_samples.append(req["evaluation_sample"])
-            all_generations.append(req["generated_code"])
-            id_map.append((i, req_id))
+            sample = req["evaluation_sample"]
+            generation = req["generated_code"]
         except (KeyError, TypeError) as exc:
             responses[i] = {
                 "id": req_id,
                 "ok": False,
                 "error": f"malformed request: {exc!r}",
             }
+            continue
+        all_samples.append(sample)
+        all_generations.append(generation)
+        id_map.append((i, req_id))
 
     if all_samples:
         batch_error: str | None = None
@@ -158,6 +161,11 @@ def handle_batch(
     return [r for r in responses if r is not None]
 
 
+def _drain_in_memory(stdin: BinaryIO) -> list[bytes]:
+    """Drain an in-memory stream (e.g. BytesIO in tests) by reading it all at once."""
+    return [r for r in (ln.strip() for ln in stdin.read().split(b"\n")) if r]
+
+
 def _drain_buffered(stdin: BinaryIO) -> list[bytes]:
     """Drain all lines already buffered in stdin without blocking.
 
@@ -170,43 +178,41 @@ def _drain_buffered(stdin: BinaryIO) -> list[bytes]:
     Blocking mode is restored after the drain so the outer readline() in
     run_worker_loop can block on the next cycle.
 
-    For streams without a raw fd (e.g. BytesIO in tests), reads all remaining
-    data at once — safe because the whole stream is already in memory.
+    For in-memory streams without a raw fd (e.g. BytesIO in tests), delegates to
+    _drain_in_memory. When a real fd exists but fcntl is unavailable, skips the
+    drain to avoid blocking on a real pipe.
     """
-    lines: list[bytes] = []
     raw = getattr(stdin, "raw", None)
     fd = raw.fileno() if raw is not None else -1
 
-    if _HAS_FCNTL and fd >= 0:
-        flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
-        _fcntl.fcntl(fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        try:
-            while True:
-                try:
-                    available = stdin.peek(0)  # type: ignore[union-attr]
-                except BlockingIOError:
-                    break  # Kernel pipe buffer empty; stop without blocking
-                if not available:
-                    break  # EOF
-                if b"\n" not in available:
-                    # Only a partial line is buffered; readline() would need
-                    # another raw read on the non-blocking fd and raise
-                    # BlockingIOError. Leave it for the next cycle's blocking
-                    # readline() to complete.
-                    break
-                line = stdin.readline()
-                if not line:
-                    break
-                line = line.strip()
-                if line:
-                    lines.append(line)
-        finally:
-            _fcntl.fcntl(fd, _fcntl.F_SETFL, flags)  # Restore blocking for next cycle
-    else:
-        for raw_line in stdin.read().split(b"\n"):
-            raw_line = raw_line.strip()
-            if raw_line:
-                lines.append(raw_line)
+    if not _HAS_FCNTL or fd < 0:
+        return _drain_in_memory(stdin) if fd < 0 else []
+
+    lines: list[bytes] = []
+    flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+    _fcntl.fcntl(fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    try:
+        while True:
+            try:
+                available = stdin.peek(0)  # type: ignore[union-attr]
+            except BlockingIOError:
+                break  # Kernel pipe buffer empty; stop without blocking
+            if not available:
+                break  # EOF
+            if b"\n" not in available:
+                # Only a partial line is buffered; readline() would need
+                # another raw read on the non-blocking fd and raise
+                # BlockingIOError. Leave it for the next cycle's blocking
+                # readline() to complete.
+                break
+            line = stdin.readline()
+            if not line:
+                break
+            line = line.strip()
+            if line:
+                lines.append(line)
+    finally:
+        _fcntl.fcntl(fd, _fcntl.F_SETFL, flags)  # Restore blocking for next cycle
     return lines
 
 

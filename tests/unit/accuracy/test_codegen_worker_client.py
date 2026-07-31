@@ -271,22 +271,31 @@ class TestTimeoutRestart:
 
 
 class TestCancellation:
-    async def test_cancellation_kills_worker_and_propagates(self, tmp_path) -> None:
-        """A cancel while awaiting the worker (e.g. shutdown) kills the worker and
-        re-raises, rather than leaving it running with a pending request."""
-        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _HANG_THEN_OK))
+    async def test_cancellation_propagates_without_killing_worker(
+        self, tmp_path
+    ) -> None:
+        # Cancellation removes the request from _pending and re-raises; it does
+        # not fault the worker because the protocol is not desynced (the late
+        # response is dropped as a stale id by _dispatch_response). Concurrent
+        # grades continue unaffected.
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
         try:
             grade = asyncio.create_task(
                 worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
             )
-            for _ in range(200):  # wait until the request is in flight (worker up)
+            for _ in range(200):  # wait until the worker is up
                 if worker._proc is not None:
                     break
                 await asyncio.sleep(0.01)
             grade.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await grade
-            assert worker._proc is None  # cancellation killed the worker
+            assert worker._proc is not None  # worker stays alive after cancel
+            # A subsequent grade still succeeds.
+            result = await worker.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result == {"pass@1": 1.0}
         finally:
             await worker.aclose()
 

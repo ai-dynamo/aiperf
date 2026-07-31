@@ -103,9 +103,18 @@ class CodegenGradingWorker:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         self._pending[req_id] = fut
-        assert self._proc is not None and self._proc.stdin
-        self._proc.stdin.write(orjson.dumps(req) + b"\n")
-        await self._proc.stdin.drain()
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            self._pending.pop(req_id, None)
+            raise CodegenWorkerError("grading worker is not running")
+        try:
+            proc.stdin.write(orjson.dumps(req) + b"\n")
+            await proc.stdin.drain()
+        except (OSError, ConnectionError) as exc:
+            self._pending.pop(req_id, None)
+            raise CodegenWorkerError(
+                f"failed to submit grading request: {exc}"
+            ) from exc
         try:
             return await asyncio.wait_for(fut, timeout)
         except TimeoutError as exc:
@@ -113,14 +122,20 @@ class CodegenGradingWorker:
             await self._handle_fault(count_start_failure=False)
             raise CodegenWorkerError(f"grading worker timed out: {exc!r}") from exc
         except asyncio.CancelledError:
+            # Cancellation does not desync the protocol — the request was already
+            # written and the late response will be dropped as stale by
+            # _dispatch_response. Kill the worker only on real faults.
             self._pending.pop(req_id, None)
-            await self._handle_fault(count_start_failure=False)
             raise
 
     async def _ensure_worker(self) -> None:
         async with self._spawn_lock:
             if self._proc is not None and self._proc.returncode is None:
                 return
+            # The old worker exited; tear down its reader/stderr tasks so a late
+            # EOF from the dead process cannot fault the replacement worker.
+            if self._proc is not None or self._reader_task is not None:
+                await self._kill()
             self._worker_proven = False
             self._stderr_tail.clear()
             self._close_death_pipe()
@@ -191,6 +206,10 @@ class CodegenGradingWorker:
         caller should fault: unhashable id, or ok=True with no metrics dict.
         """
         req_id = resp.get("id")
+        if req_id is None:
+            # The client only writes integer-keyed requests, so a null id means
+            # the worker could not parse a request — the stream has desynced.
+            return False
         try:
             fut = self._pending.pop(req_id, None)
         except TypeError:
