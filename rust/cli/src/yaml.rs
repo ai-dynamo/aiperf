@@ -2873,7 +2873,6 @@ mod tests {
         );
     }
 
-    #[test]
     /// A `plot:` envelope must load and be reported as unacted-on: the native
     /// binary has no plotting command, so rejecting it would break working
     /// configs and accepting it silently would imply plots that never render.
