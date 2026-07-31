@@ -237,7 +237,9 @@ The mock does **not** take `--accuracy-benchmark`. When the client loads a real 
 ```python
 # dump_oracle_dataset.py — requires the accuracy extra (deepeval, etc.)
 import asyncio
-import json
+from pathlib import Path
+
+import orjson
 
 from aiperf.accuracy.benchmarks.bigbench import BigBenchBenchmark
 
@@ -252,19 +254,19 @@ async def main() -> None:
         n_shots=0,
         enable_cot=True,
     )
-    with open("dataset.jsonl", "w") as f:
-        for p in problems[:6]:
-            f.write(
-                json.dumps(
-                    {
-                        "text": p.prompt,
-                        "ground_truth": p.ground_truth,
-                        "task": p.task,
-                        "format": "exact_match",
-                    }
-                )
-                + "\n"
-            )
+    payload = b"".join(
+        orjson.dumps(
+            {
+                "text": p.prompt,
+                "ground_truth": p.ground_truth,
+                "task": p.task,
+                "format": "exact_match",
+            }
+        )
+        + b"\n"
+        for p in problems[:6]
+    )
+    await asyncio.to_thread(Path("dataset.jsonl").write_bytes, payload)
 
 
 asyncio.run(main())
