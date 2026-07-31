@@ -60,6 +60,7 @@ pub(crate) fn resolve_expanded_inputs(
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
+    warn_unimplemented_keys(&file);
     // A nested runtime block takes precedence over the top-level block.
     if file.benchmark.runtime.is_none() {
         file.benchmark.runtime = file.runtime.take();
@@ -67,6 +68,32 @@ pub(crate) fn resolve_expanded_inputs(
     let mut inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
     apply_cli_overrides(&mut inputs, overrides)?;
     Ok(inputs)
+}
+
+/// Config keys the native loader parses for Python-CLI compatibility but does
+/// not act on. Each is accepted so an existing config keeps loading, and each is
+/// warned about so a run never silently ignores an authored intent.
+///
+/// This is the config-surface twin of `profile::UNIMPLEMENTED_FLAGS`: entries
+/// leave the table by gaining a consumer, not by being deleted, since deleting
+/// one returns the key to silently-ignored — the failure this guards.
+const UNIMPLEMENTED_KEYS: &[(&str, fn(&ConfigFile) -> bool)] =
+    &[("plot", |c| c.plot.is_some())];
+
+/// Warn once for every authored config key the native loader does not act on.
+fn warn_unimplemented_keys(file: &ConfigFile) {
+    let authored: Vec<&str> = UNIMPLEMENTED_KEYS
+        .iter()
+        .filter(|(_, is_set)| is_set(file))
+        .map(|(name, _)| *name)
+        .collect();
+    if !authored.is_empty() {
+        tracing::warn!(
+            keys = authored.join(", "),
+            "ignored by the native runtime; these config keys are accepted for \
+             compatibility with the Python CLI and have no effect on this run"
+        );
+    }
 }
 
 /// Overlay an explicitly-set `Option<bool>` flag onto a config-derived `bool`.
@@ -467,6 +494,12 @@ struct ConfigFile {
     #[serde(default, alias = "multiRun")]
     #[allow(dead_code)]
     multi_run: Option<serde_json::Value>,
+    /// `plot:` visualization envelope. The native binary has no plotting
+    /// command, so this is accepted for compatibility with the Python CLI and
+    /// warned about by [`warn_unimplemented_keys`] rather than silently dropped.
+    #[serde(default)]
+    #[allow(dead_code)]
+    plot: Option<serde_json::Value>,
     benchmark: Benchmark,
     /// Top-level deterministic run seed (`randomSeed`).
     #[serde(default, alias = "randomSeed")]
@@ -2837,6 +2870,26 @@ mod tests {
         assert!(
             err.to_string().contains("urlStrategy"),
             "error should name the key: {err}"
+        );
+    }
+
+    #[test]
+    /// A `plot:` envelope must load and be reported as unacted-on: the native
+    /// binary has no plotting command, so rejecting it would break working
+    /// configs and accepting it silently would imply plots that never render.
+    #[test]
+    fn plot_envelope_loads_and_is_reported_as_unimplemented() {
+        let text = cfg("  phases: {type: concurrency, requests: 1, concurrency: 1}\n")
+            + "plot:\n  plot_config:\n    multi_run_plots: []\n";
+        let expanded: serde_json::Value =
+            serde_yaml::from_str(&text).expect("fixture is valid YAML");
+        let file: ConfigFile =
+            serde_json::from_value(expanded).expect("an authored plot envelope loads");
+        assert!(
+            UNIMPLEMENTED_KEYS
+                .iter()
+                .any(|(name, is_set)| *name == "plot" && is_set(&file)),
+            "plot must be reported as accepted-but-unacted-on"
         );
     }
 
