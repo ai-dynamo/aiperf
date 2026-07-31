@@ -89,6 +89,71 @@ Use `--custom-dataset-type dag_jsonl`. Each line of the input file is one conver
 
 **`pre_session_spawns`** is a list of child session ids dispatched as background SPAWN branches **before** this conversation's turn 0 is issued. It exists for trace-timing fidelity: if a captured trace shows a sub-agent's first request overlapping with the parent's turn 0 in-flight window, the literal "spawn after parent turn completes" rule would shift the child later than the trace records. Listing the child here issues it ahead of turn 0 instead. These children are fire-and-forget; each gets a fresh correlation id with `parent_correlation_id=None`, so no SPAWN_JOIN gate can reference them. Pre-session children must be SPAWN-mode (no parent context to inherit) — referencing a session as a `pre_session_spawns` target while it is also a FORK target is rejected at load time.
 
+### Orchestrator conversation
+
+An **orchestrator conversation** is a request-less driver whose only job is to fan out to a fixed set of children on every sampled iteration. Declare it with `orchestrator: true` plus conversation-level `spawns` (and **no** authored `turns`):
+
+```jsonc
+// orchestrator.dag.jsonl (see tests/fixtures/dag/orchestrator.dag.jsonl)
+{"session_id": "start", "orchestrator": true, "spawns": ["fan-out-a", "fan-out-b"]}
+{"session_id": "fan-out-a", "turns": [{"messages": [{"role": "user", "content": "..."}], "max_tokens": 16, "extra": {"min_tokens": 16}}]}
+{"session_id": "fan-out-b", "turns": [{"messages": [{"role": "user", "content": "..."}], "max_tokens": 16, "extra": {"min_tokens": 16}}]}
+```
+
+Semantics:
+
+- **Sends no request.** The loader synthesizes a single no-op turn (`no_request=True`); `StickyCreditRouter.send_credit()` short-circuits the credit in-process (no worker is selected) and synthesizes its return immediately. `BranchOrchestrator.intercept()` then fires the conversation-level `spawns` as real child wire requests.
+- **Re-fires every sampled iteration.** The orchestrator stays a sampleable root, so under `--concurrency`, `--request-count`, or duration limits it is re-sampled repeatedly and re-fans-out its children each time (fire-and-forget; children are SPAWN-mode with `parent_correlation_id=None`, so no SPAWN_JOIN gate can reference them).
+- **Counts as a conversation, not a request.** Each virtual firing takes a session slot and counts toward `--num-conversations`, but the request-less credit does **not** advance the `--request-count` cap — only the child wire requests do. So `--request-count N` caps the children; the orchestrator's own virtual credits are excluded.
+- **Empty `turns` required.** An `orchestrator: true` conversation must omit `turns`, must provide a non-empty `spawns`, and must not also set `pre_session_spawns`; violations are rejected at load time.
+
+#### Gated rounds (spine)
+
+Add `rounds` to an orchestrator to build a **gated spine**: instead of one fire-and-forget firing, the coordinator runs N sequential rounds — each round fans out its branches, waits (`join=all`) for **all** of them to complete, waits a per-round **think-time**, then fires the next round. The spine issues no HTTP itself; only the branch turns are real requests. Two forms:
+
+**Integer — repeated template.** `rounds: N` re-fires the shared conversation-level `spawns` N times (every round is identical):
+
+```jsonc
+{"session_id": "start", "orchestrator": true, "rounds": 3,
+ "think_time_ms": 100, "think_time_sigma": 0.6, "think_time_min_ms": 10,
+ "spawns": ["branch-a", "branch-b"]}
+```
+
+**List — per-round authored branches.** `rounds: [ ... ]` lets each round declare its **own** branch session ids (and optional per-round think-time), so the rounds are distinct authored stages — different prompts, growing pre-baked history, different multimodal payloads per round — rather than one repeated template. Omit conversation-level `spawns` in this form:
+
+```jsonc
+// see tests/fixtures/dag/orchestrator_spine_per_round.dag.jsonl
+{"session_id": "start", "orchestrator": true, "rounds": [
+  {"spawns": ["t0-a", "t0-b"], "think_time_ms": 12000},
+  {"spawns": ["t1-a", "t1-b"], "think_time_ms": 31000},
+  {"spawns": ["t2-a", "t2-b"], "think_time_ms": 18000}
+]}
+// ... plus one conversation line per branch session (t0-a, t0-b, t1-a, ...)
+```
+
+- **Think-time.** `think_time_ms` is the per-round wait before releasing the next round (turn 0 via the normal delay, later rounds via the gated join). Set `think_time_sigma` to draw it from a lognormal (median = `think_time_ms`) sampled independently per (instance, round), reproducible under `--random-seed`; `think_time_min_ms`/`think_time_max_ms` clamp the draw. In list form, a round's `think_time_ms` overrides the conversation-level value.
+- **Counts.** A spine of N rounds with an A branch (`a` turns) and a B branch (`b` turns) produces `N x (a + b)` real requests; the N+1 request-free spine turns produce none.
+
+#### Payload isolation (`context_mode`)
+
+By default DAG conversations accumulate multi-turn history and thread live inference responses into later turns (`deltas_without_responses`). For a workload where **every turn authors its own complete payload** — its own system prompt, pre-baked history, and multimodal blocks, with no accumulation — set `context_mode: message_array_with_responses` on the branch conversation. Each turn is then sent as exactly its authored `messages` array; prior turns and live responses are **not** spliced in:
+
+```jsonc
+{"session_id": "t0-a", "context_mode": "message_array_with_responses", "turns": [ /* each turn = its own full array */ ]}
+```
+
+Under this mode each turn may also carry its **own** system prompt (the non-root system-placement rule is waived, since each turn is its own array), and typed multimodal blocks (`image_url`, `projection_embedding`) pass through verbatim. Note that a non-standard block like `projection_embedding` requires a server that understands it; a vanilla OpenAI-compatible server will reject it.
+
+#### Measurement & attribution
+
+The request-free spine (roots, joins) issues no HTTP and contributes **0** to `request_count`, token throughput, TTFT/ITL, and QPS — only the branch turns are real requests. To attribute a raw record (`--export-level raw`) to its place in the graph, key on:
+
+- **`root_correlation_id`** — the graph *instance* (distinct per `--num-conversations` firing),
+- **`conversation_id`** — the round's branch session (e.g. `t0-a`, `t1-a`), and
+- **`turn_index`** — the node within that branch (`a1`…`a4`).
+
+That triple is unique per request even when the same branch session ids repeat across instances, so per-round latency is fully reconstructable. **Think-time** is applied as a delay *before* a round's requests dispatch, so it is **excluded** from per-request latency/TTFT/ITL and **included** only in end-to-end graph-completion time.
+
 ### Per-turn shape
 
 Each turn is a flat object validated against a strict schema (`DagTurn` in `src/aiperf/dataset/loader/dag_jsonl_models.py`). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:
