@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 
 from aiperf.common.models import (
     BaseResponseData,
@@ -56,23 +57,23 @@ class TestRawEndpointParseResponse:
     @pytest.mark.parametrize(
         "text, expected",
         [
-            pytest.param(
+            param(
                 '[{"index": 0, "score": 0.98}]',
                 RankingsResponseData(rankings=[{"index": 0, "score": 0.98}]),
                 id="list_of_dict_rankings",
             ),
-            pytest.param(
+            param(
                 "[0.1, 0.2, 0.3]",
                 EmbeddingResponseData(embeddings=[[0.1, 0.2, 0.3]]),
                 id="list_of_float_embedding",
             ),
-            pytest.param(
+            param(
                 "[[0.1, 0.2], [0.3, 0.4]]",
                 EmbeddingResponseData(embeddings=[[0.1, 0.2], [0.3, 0.4]]),
                 id="list_of_list_float_batch_embeddings",
             ),
         ],
-    )
+    )  # fmt: skip
     def test_top_level_json_array_is_parsed(
         self,
         raw_endpoint: RawEndpoint,
