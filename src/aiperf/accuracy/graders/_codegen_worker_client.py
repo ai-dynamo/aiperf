@@ -290,10 +290,15 @@ class CodegenGradingWorker:
         task, self._stderr_task = self._stderr_task, None
         reader_task, self._reader_task = self._reader_task, None
         self._close_death_pipe()
-        if proc is not None and proc.returncode is None:
+        if proc is not None:
+            # Kill the process group regardless of returncode: the worker leader may
+            # have already exited while lighteval's forked sandbox grandchildren are
+            # still alive in the same dedicated process group. ProcessLookupError
+            # means the group is already gone — treat that as successful cleanup.
             _kill_process_group(proc)
-            with contextlib.suppress(ProcessLookupError):
-                await proc.wait()
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    await proc.wait()
         # Skip cancel/await if _reader_task is calling _kill from within itself to
         # avoid self-awaiting deadlock when the reader detects a fault condition.
         current = asyncio.current_task()
