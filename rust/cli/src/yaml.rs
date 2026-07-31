@@ -2963,7 +2963,8 @@ benchmark:
             \x20       - {isl: 4096, osl: 256, probability: 30}\n\
             \x20 phases: {type: concurrency, requests: 1, concurrency: 1}\n";
         let run = resolve_str(cfg, Some("/tmp/x".into())).expect("seq-dist config resolves");
-        let dist = &serde_json::to_value(&run).unwrap()["cfg"]["dataset"]["sequence_distribution"];
+        let v = serde_json::to_value(&run).unwrap();
+        let dist = &v["cfg"]["datasets"][0]["prompts"]["sequence_distribution"];
 
         let entries = dist
             .as_array()
