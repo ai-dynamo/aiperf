@@ -217,12 +217,42 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._credit_router.set_first_token_callback(
             self._callback_handler.on_first_token
         )
+        self._credit_router.set_fatal_error_callback(self._record_control_fatal_error)
 
         # Phase configuration
         self._ordered_phase_configs = config.phase_configs
 
         # Active phase runners (for cancellation) - multiple possible with seamless mode
         self._active_runners: list[PhaseRunner] = []
+        # First fatal failure surfaced by a seamless phase's detached return-wait
+        # task; re-raised by _execute_phases so the run fails (not reports success).
+        self._seamless_phase_error: BaseException | None = None
+
+    def _record_control_fatal_error(self, error: BaseException) -> None:
+        """Record a fatal request-free control-node failure.
+
+        Seamless mode can keep several phase runners active at once, so pinning
+        the error to whichever phase currently owns the callback handler's
+        mutable ``progress`` slot could record it on the wrong phase -- or drop
+        it between phases. A control-node failure is fatal to the whole run, so
+        record it on every active phase's tracker (each runner surfaces it on
+        its own exit path). Fall back to the callback handler's current progress
+        only when no runner is active (a failure arriving between phases).
+        """
+        recorded = False
+        for runner in list(self._active_runners):
+            runner.record_control_fatal_error(error)
+            recorded = True
+        if not recorded:
+            progress = getattr(self._callback_handler, "progress", None)
+            if progress is not None:
+                progress.record_fatal_error(error)
+
+    def _on_seamless_phase_error(self, error: BaseException) -> None:
+        """Capture a fatal failure surfaced by a seamless phase's detached
+        return-wait task so ``_execute_phases`` re-raises it. First error wins."""
+        if self._seamless_phase_error is None:
+            self._seamless_phase_error = error
 
     @property
     def conversation_source(self) -> ConversationSource:
@@ -292,6 +322,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 runner.set_phase_complete_callback(
                     self._phase_runner_cleanup_callback(runner)
                 )
+                runner.set_phase_error_callback(self._on_seamless_phase_error)
 
             # Track active runner (multiple possible with seamless mode)
             self._active_runners.append(runner)
@@ -309,6 +340,36 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             # For seamless phases, this happens after returns complete (background task)
             if not is_seamless_non_final:
                 self._active_runners.remove(runner)
+
+        # Barrier: a seamless phase's return-wait runs detached and
+        # ``runner.run()`` never awaited it, so await any still outstanding here.
+        # This guarantees a late fatal control-node failure has been surfaced
+        # before the run is allowed to report success.
+        await self._await_outstanding_seamless_waits()
+        if self._seamless_phase_error is not None:
+            error = self._seamless_phase_error
+            self.error(f"Fatal control-node failure in a seamless phase: {error!r}")
+            await self.cancel()
+            raise error
+
+    async def _await_outstanding_seamless_waits(self) -> None:
+        """Await any detached seamless return-wait tasks still running after the
+        phase loop and capture a fatal control-node failure from each.
+
+        Reads each runner's recorded fatal error directly rather than relying on
+        the task's done-callback having fired, so the check is deterministic.
+        """
+        for runner in list(self._active_runners):
+            task = runner.return_wait_task
+            if task is not None and not task.done():
+                try:
+                    await task
+                except Exception as exc:  # noqa: BLE001 - propagated below
+                    if self._seamless_phase_error is None:
+                        self._seamless_phase_error = exc
+            fatal = runner.control_fatal_error
+            if fatal is not None and self._seamless_phase_error is None:
+                self._seamless_phase_error = fatal
 
     def _phase_runner_cleanup_callback(self, runner: PhaseRunner) -> Callable[[], None]:
         """Create callback that removes runner from active list when phase completes."""
