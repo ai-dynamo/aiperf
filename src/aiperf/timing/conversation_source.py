@@ -190,14 +190,21 @@ class ConversationSource:
         return self._dataset_metadata
 
     def _marker_for_session(
-        self, conversation_id: str, x_correlation_id: str
+        self, conversation_id: str, x_correlation_id: str, *, retain: bool
     ) -> str | None:
-        """Mint one deterministic marker for an ordinary session instance."""
+        """Mint one deterministic marker for an ordinary session instance.
+
+        ``retain`` gates the ``_cache_bust_markers`` cache, which exists only so
+        a caller-supplied correlation id resolves to the SAME marker on every
+        lookup (user-centric reuses ``str(user_id)``; ``marker_for_correlation_id``
+        reads it back). A correlation id minted internally here is a fresh uuid
+        no caller can name, so retaining it would grow the dict without bound —
+        one dead entry per sampled session for the length of the run.
+        """
         if self._cache_bust_target == CacheBustTarget.NONE:
             return None
-        existing = self._cache_bust_markers.get(x_correlation_id)
         if x_correlation_id in self._cache_bust_markers:
-            return existing
+            return self._cache_bust_markers[x_correlation_id]
         marker = build_cache_bust_marker(
             self._benchmark_id,
             self._cache_bust_pass,
@@ -206,8 +213,13 @@ class ConversationSource:
             target=self._cache_bust_target,
         )
         self._cache_bust_pass += 1
-        self._cache_bust_markers[x_correlation_id] = marker
+        if retain:
+            self._cache_bust_markers[x_correlation_id] = marker
         return marker
+
+    def release_marker_for_correlation_id(self, correlation_id: str) -> None:
+        """Drop a retained marker once its session reaches a terminal credit."""
+        self._cache_bust_markers.pop(correlation_id, None)
 
     def next(self, x_correlation_id: str | None = None) -> SampledSession:
         """Sample next conversation and return a new session instance."""
@@ -218,7 +230,9 @@ class ConversationSource:
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=correlation_id,
-            cache_bust_marker=self._marker_for_session(conversation_id, correlation_id),
+            cache_bust_marker=self._marker_for_session(
+                conversation_id, correlation_id, retain=x_correlation_id is not None
+            ),
             cache_bust_target=self._cache_bust_target,
         )
 
@@ -238,7 +252,9 @@ class ConversationSource:
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=correlation_id,
-            cache_bust_marker=self._marker_for_session(conversation_id, correlation_id),
+            cache_bust_marker=self._marker_for_session(
+                conversation_id, correlation_id, retain=x_correlation_id is not None
+            ),
             cache_bust_target=self._cache_bust_target,
         )
 

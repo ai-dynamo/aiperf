@@ -172,9 +172,25 @@ class TestAnthropicMessagesFormatPayload:
         with pytest.raises(ValueError, match="requires at least one turn"):
             endpoint.format_payload(request_info)
 
+    def test_user_context_message_prepended(
+        self, endpoint: MessagesEndpoint, model_endpoint: ModelEndpointInfo
+    ) -> None:
+        turn = Turn(texts=[Text(contents=["Hello"])], model="claude-sonnet-4-20250514")
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            user_context_message="Context info",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 2
+        assert payload["messages"][0]["content"] == "Context info"
+        assert payload["messages"][0]["role"] == "user"
+
     def test_cache_bust_system_prefix_is_top_level_system(
         self, endpoint: MessagesEndpoint, model_endpoint: ModelEndpointInfo
-    ):
+    ) -> None:
         turn = Turn(texts=[Text(contents=["Hello"])])
         request_info = create_request_info(
             model_endpoint=model_endpoint,
@@ -189,7 +205,7 @@ class TestAnthropicMessagesFormatPayload:
 
     def test_cache_bust_first_user_prefix_renders_anthropic_text_block(
         self, endpoint: MessagesEndpoint, model_endpoint: ModelEndpointInfo
-    ):
+    ) -> None:
         turn = Turn(
             texts=[
                 Text(contents=["[rid:abc123]", "\n\nHello"]),
@@ -206,7 +222,7 @@ class TestAnthropicMessagesFormatPayload:
 
     def test_cache_bust_first_user_suffix_preserves_text(
         self, endpoint: MessagesEndpoint, model_endpoint: ModelEndpointInfo
-    ):
+    ) -> None:
         turn = Turn(texts=[Text(contents=["Hello\n\n[rid:abc123]"])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
