@@ -256,6 +256,13 @@ class EndpointMetadata(BaseModel):
     produces_tokens: bool = Field(
         ..., description="Whether endpoint produces token-based output."
     )
+    supports_cache_bust: bool = Field(
+        default=False,
+        description=(
+            "Whether the endpoint formatter can apply a cache-bust marker to "
+            "the structured request payload."
+        ),
+    )
     supports_audio: bool = Field(
         default=False, description="Whether endpoint accepts audio input."
     )

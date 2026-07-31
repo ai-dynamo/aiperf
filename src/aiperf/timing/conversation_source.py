@@ -22,6 +22,7 @@ from aiperf.common.enums import CacheBustTarget, ConversationBranchMode
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
+from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 
 
 @dataclass(slots=True)
@@ -154,6 +155,8 @@ class SampledSession:
             has_forks=meta.has_forks if meta is not None else False,
             no_request=meta.no_request if meta is not None else False,
             branch_mode=self.branch_mode,
+            cache_bust_marker=self.cache_bust_marker,
+            cache_bust_target=self.cache_bust_target,
         )
 
 
@@ -168,10 +171,17 @@ class ConversationSource:
         self,
         dataset_metadata: DatasetMetadata,
         dataset_sampler: DatasetSamplingStrategyProtocol,
-    ):
+        *,
+        benchmark_id: str = "unknown",
+        cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
+    ) -> None:
         """Initialize conversation source."""
         self._dataset_metadata = dataset_metadata
         self._dataset_sampler = dataset_sampler
+        self._benchmark_id = benchmark_id
+        self._cache_bust_target = cache_bust_target
+        self._cache_bust_pass = 0
+        self._cache_bust_markers: dict[str, str | None] = {}
         self._metadata_lookup: dict[str, ConversationMetadata] = {
             conv.conversation_id: conv for conv in dataset_metadata.conversations
         }
@@ -189,15 +199,51 @@ class ConversationSource:
         """Dataset metadata."""
         return self._dataset_metadata
 
+    def _marker_for_session(
+        self, conversation_id: str, x_correlation_id: str, *, retain: bool
+    ) -> str | None:
+        """Mint one deterministic marker for an ordinary session instance.
+
+        ``retain`` gates the ``_cache_bust_markers`` cache, which exists only so
+        a caller-supplied correlation id resolves to the SAME marker on every
+        lookup (user-centric reuses ``str(user_id)``; ``marker_for_correlation_id``
+        reads it back). A correlation id minted internally here is a fresh uuid
+        no caller can name, so retaining it would grow the dict without bound —
+        one dead entry per sampled session for the length of the run.
+        """
+        if self._cache_bust_target == CacheBustTarget.NONE:
+            return None
+        if x_correlation_id in self._cache_bust_markers:
+            return self._cache_bust_markers[x_correlation_id]
+        marker = build_cache_bust_marker(
+            self._benchmark_id,
+            self._cache_bust_pass,
+            self._cache_bust_pass,
+            conversation_id or x_correlation_id,
+            target=self._cache_bust_target,
+        )
+        self._cache_bust_pass += 1
+        if retain:
+            self._cache_bust_markers[x_correlation_id] = marker
+        return marker
+
+    def release_marker_for_correlation_id(self, correlation_id: str) -> None:
+        """Drop a retained marker once its session reaches a terminal credit."""
+        self._cache_bust_markers.pop(correlation_id, None)
+
     def next(self, x_correlation_id: str | None = None) -> SampledSession:
         """Sample next conversation and return a new session instance."""
         conversation_id = self._dataset_sampler.next_conversation_id()
         metadata = self._metadata_lookup[conversation_id]
-
+        correlation_id = x_correlation_id or str(uuid.uuid4())
         session = SampledSession(
             conversation_id=conversation_id,
             metadata=metadata,
-            x_correlation_id=x_correlation_id or str(uuid.uuid4()),
+            x_correlation_id=correlation_id,
+            cache_bust_marker=self._marker_for_session(
+                conversation_id, correlation_id, retain=x_correlation_id is not None
+            ),
+            cache_bust_target=self._cache_bust_target,
         )
         seq = self._sample_seq
         self._sample_seq += 1
@@ -229,6 +275,26 @@ class ConversationSource:
             raise KeyError(f"No metadata for conversation {conversation_id}")
         return self._metadata_lookup[conversation_id]
 
+    def session_for_conversation(
+        self, conversation_id: str, *, x_correlation_id: str | None = None
+    ) -> SampledSession:
+        """Build a session for a known conversation, preserving marker policy."""
+        metadata = self.get_metadata(conversation_id)
+        correlation_id = x_correlation_id or str(uuid.uuid4())
+        return SampledSession(
+            conversation_id=conversation_id,
+            metadata=metadata,
+            x_correlation_id=correlation_id,
+            cache_bust_marker=self._marker_for_session(
+                conversation_id, correlation_id, retain=x_correlation_id is not None
+            ),
+            cache_bust_target=self._cache_bust_target,
+        )
+
+    def marker_for_correlation_id(self, correlation_id: str) -> str | None:
+        """Return the marker minted for a live ordinary session, if any."""
+        return self._cache_bust_markers.get(correlation_id)
+
     def start_branch_child(
         self,
         parent_correlation_id: str,
@@ -240,30 +306,7 @@ class ConversationSource:
         cache_bust_marker: str | None = None,
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     ) -> SampledSession:
-        """Build a SampledSession for a DAG child conversation.
-
-        Under FORK mode, the returned session inherits sticky-routing from its
-        parent via ``parent_correlation_id``; the credit router pins the child
-        to the parent's worker, where ``UserSessionManager.create_and_store``
-        seeds ``turn_list`` by cloning the parent's in-memory session.
-        SPAWN-mode children start with a fresh context, but still carry
-        ``parent_correlation_id`` so the sticky router co-locates them on the
-        parent's worker while that entry is live. The orchestrator skips
-        SPAWN sticky refcount bumps; least-loaded routing applies only once
-        the parent sticky entry is gone.
-
-        ``root_correlation_id`` is the depth-0 root of the spawning parent's
-        tree; the child inherits it so all descendants of one root share a
-        single per-tree session-slot key. Defaults to ``parent_correlation_id``
-        when not supplied (the live spawn path's parent is always the root).
-
-        ``cache_bust_marker`` / ``cache_bust_target`` are resolved by the caller
-        (BranchOrchestrator via ``_marker_for_root``) to the marker of the
-        child's trajectory TREE, so every SPAWN descendant of one root shares
-        the root's marker (the tree is one prefix-cache domain) while subagents
-        in different traces get distinct markers — preventing cross-trace
-        sharing of a server KV-cache prefix and artificially inflated hit rates.
-        """
+        """Build a SampledSession for a DAG child conversation."""
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(
             conversation_id=child_conversation_id,
@@ -283,23 +326,7 @@ class ConversationSource:
         cache_bust_marker: str | None = None,
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     ) -> SampledSession:
-        """Build a SampledSession for a pre-session (turn-0) background SPAWN child.
-
-        Used by ``BranchOrchestrator.dispatch_pre_session_branches`` to fire
-        a child before its parent's turn 0 is issued. The child gets a fresh
-        correlation id, ``agent_depth=1``, and ``parent_correlation_id=None``
-        (no real parent session exists yet). Because ``parent_correlation_id``
-        is None, the child's ``routing_key`` naturally equals its own
-        ``x_correlation_id`` — the child routes freely (no sticky pin).
-
-        Restricted to SPAWN mode with ``dispatch_timing="pre"`` at the validator
-        level; FORK pre-dispatch would require inheriting a non-existent
-        parent session and is rejected at load time.
-
-        ``cache_bust_marker`` / ``cache_bust_target`` are minted by the caller
-        so background SPAWN children get the same per-session unique-marker
-        treatment as parents.
-        """
+        """Build a SampledSession for a pre-session background SPAWN child."""
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(
             conversation_id=child_conversation_id,
@@ -313,11 +340,7 @@ class ConversationSource:
         )
 
     def get_next_turn_metadata(self, credit: Credit) -> TurnMetadata:
-        """Get metadata for next turn after completed credit.
-
-        Raises:
-            ValueError: If next turn doesn't exist (credit is final turn).
-        """
+        """Get metadata for next turn after completed credit."""
         metadata = self.get_metadata(credit.conversation_id)
         next_index = credit.turn_index + 1
 

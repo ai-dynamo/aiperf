@@ -38,13 +38,16 @@ from aiperf.common.models import (
     TurnPrerequisite,
 )
 from aiperf.credit.structs import Credit
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ArrivalPattern,
     DatasetSamplingStrategy,
+    PluginType,
     TimingMode,
 )
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.intervals import IntervalGeneratorConfig
 from aiperf.timing.strategies.fixed_schedule import FixedScheduleStrategy
 from aiperf.timing.strategies.request_rate import RequestRateStrategy
@@ -55,6 +58,20 @@ pytestmark = pytest.mark.component_integration
 # =============================================================================
 # Helpers (mirror the patterns in test_dag_adversarial_timing_modes.py)
 # =============================================================================
+
+
+def _mk_conversation_source(ds: DatasetMetadata) -> ConversationSource:
+    """Real ConversationSource over ``ds``.
+
+    FixedScheduleStrategy builds its schedule through
+    ``session_for_conversation``, so a bare MagicMock source would yield mock
+    turns and make schedule assertions vacuous.
+    """
+    SamplerClass = plugins.get_class(PluginType.DATASET_SAMPLER, ds.sampling_strategy)
+    sampler = SamplerClass(
+        conversation_ids=[c.conversation_id for c in ds.conversations]
+    )
+    return ConversationSource(ds, sampler)
 
 
 def _mk_credit(
@@ -164,9 +181,7 @@ async def test_fixed_schedule_out_of_order_timestamps_within_conversation() -> N
     ds = DatasetMetadata(
         conversations=[conv], sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
     )
-    src = MagicMock()
-    src.dataset_metadata = ds
-    src.get_next_turn_metadata = lambda credit: turns[credit.turn_index + 1]
+    src = _mk_conversation_source(ds)
 
     scheduler = MagicMock()
     issuer = MagicMock()
@@ -236,9 +251,7 @@ async def test_fixed_schedule_very_large_timestamp_no_overflow() -> None:
     ds = DatasetMetadata(
         conversations=[conv], sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
     )
-    src = MagicMock()
-    src.dataset_metadata = ds
-    src.get_next_turn_metadata = lambda credit: turns[credit.turn_index + 1]
+    src = _mk_conversation_source(ds)
 
     scheduler = MagicMock()
     issuer = MagicMock()
@@ -285,8 +298,7 @@ async def test_fixed_schedule_setup_sorts_identical_timestamps_stably() -> None:
     ds = DatasetMetadata(
         conversations=convs, sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
     )
-    src = MagicMock()
-    src.dataset_metadata = ds
+    src = _mk_conversation_source(ds)
 
     scheduler = MagicMock()
     issuer = MagicMock()
@@ -327,8 +339,7 @@ async def test_fixed_schedule_zero_timestamp_fires_at_perf_start() -> None:
     ds = DatasetMetadata(
         conversations=convs, sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
     )
-    src = MagicMock()
-    src.dataset_metadata = ds
+    src = _mk_conversation_source(ds)
 
     scheduler = MagicMock()
     issuer = MagicMock()
@@ -432,8 +443,7 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
     ds = DatasetMetadata(
         conversations=[conv], sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
     )
-    src = MagicMock()
-    src.dataset_metadata = ds
+    src = _mk_conversation_source(ds)
     src.get_next_turn_metadata = lambda credit: turns[credit.turn_index + 1]
 
     issuer = MagicMock()
@@ -486,8 +496,7 @@ async def test_request_rate_dag_child_with_delay_uses_scheduler() -> None:
     ds = DatasetMetadata(
         conversations=[conv], sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
     )
-    src = MagicMock()
-    src.dataset_metadata = ds
+    src = _mk_conversation_source(ds)
     src.get_next_turn_metadata = lambda credit: turns[credit.turn_index + 1]
 
     issuer = MagicMock()
