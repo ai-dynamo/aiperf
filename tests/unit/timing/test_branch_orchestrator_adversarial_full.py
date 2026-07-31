@@ -169,9 +169,11 @@ def _fan_in_metadata() -> list[ConversationMetadata]:
 @pytest.mark.asyncio
 async def test_race_children_complete_before_parent_arrives_pops_silently():
     """All children complete first; parent then arrives at the gated turn.
-    Future gate is satisfied -> popped silently -> intercept returns False.
-    No dispatch_join_turn fires (parent will dispatch the gated turn via the
-    strategy's normal path)."""
+    This is a NORMAL DAG gate (no request-free think-time), so a gate satisfied
+    before the parent arrives is popped silently and the parent breezes through
+    the strategy path -- intercept returns False and no dispatch_join_turn fires.
+    (Spine gates, which carry think-time, take the retain-and-dispatch path
+    instead; see the branch-orchestrator delayed tests.)"""
     cs = _mk_source(_fan_in_metadata())
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -184,15 +186,10 @@ async def test_race_children_complete_before_parent_arrives_pops_silently():
     for cid in ("a1", "a2", "b1", "b2", "b3"):
         await orch.on_child_leaf_reached(f"corr-{cid}")
 
-    # Future gate at T=5 should be popped (satisfied before parent arrived).
-    # Parent arrives at T=4 return -> next is T=5 -> already satisfied -> False.
-    pending_5 = orch._future_joins.get("corr-root", {}).get(5)
-    # Either popped already by _satisfy_prerequisite, or still present and
-    # is_satisfied (popped on next intercept). Both are valid.
-    if pending_5 is not None:
-        assert pending_5.is_satisfied
+    # Normal gate satisfied before the parent arrived -> popped immediately.
+    assert orch._future_joins.get("corr-root", {}).get(5) is None
 
-    # Parent reaches T=4 return.
+    # Parent reaches T=4 return -> next is T=5, already gone -> breeze through.
     suspended = await orch.intercept(_mk_credit("root", "corr-root", 4))
     assert suspended is False
     issuer.dispatch_join_turn.assert_not_called()
@@ -950,6 +947,8 @@ async def test_multi_consumer_single_branch_three_gates_all_advance():
     # Single child completion -> all 3 gates' counters advance.
     await orch.on_child_leaf_reached("corr-c1")
     # T=1 fires; T=2 and T=3 are popped from future_joins (satisfied early).
+    # These are normal DAG gates (no think-time), so early-satisfied future
+    # gates breeze through rather than being retained for a pre-join wait.
     assert issuer.dispatch_join_turn.await_count == 1
     assert "corr-root" not in orch._active_joins
     assert orch._future_joins.get("corr-root", {}) == {}
