@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
+import contextlib
 import time
 
 import pytest
@@ -31,7 +33,38 @@ class TestThreadPacer:
         finally:
             pacer.close()
 
-    async def test_close_is_idempotent_and_stops_thread(self):
+    async def test_cancelled_sleep_does_not_wake_replacement_early(self) -> None:
+        pacer = ThreadPacer()
+        try:
+            first_deadline = time.perf_counter() + 0.1
+            first_sleep = asyncio.create_task(pacer.sleep_until(first_deadline))
+            for _ in range(100):
+                with pacer._condition:
+                    if pacer._waiting_generation is not None:
+                        break
+                await asyncio.sleep(0)
+            else:
+                pytest.fail("pacer worker did not start waiting")
+
+            first_sleep.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await first_sleep
+
+            replacement_deadline = time.perf_counter() + 0.15
+            replacement_sleep = asyncio.create_task(
+                pacer.sleep_until(replacement_deadline)
+            )
+            while time.perf_counter() < first_deadline + 0.02:
+                await asyncio.sleep(0)
+            assert not replacement_sleep.done()
+
+            await replacement_sleep
+            assert time.perf_counter() >= replacement_deadline
+        finally:
+            pacer.close()
+            pacer._thread.join(timeout=2)
+
+    async def test_close_is_idempotent_and_stops_thread(self) -> None:
         pacer = ThreadPacer()
         pacer.close()
         pacer.close()

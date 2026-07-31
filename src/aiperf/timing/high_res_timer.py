@@ -132,46 +132,76 @@ class ThreadPacer:
     def __init__(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._tick = asyncio.Event()
+        self._condition = threading.Condition()
         self._deadline: float | None = None
-        self._wakeup = threading.Event()
+        self._generation = 0
+        self._waiting_generation: int | None = None
         self._closed = False
         self._thread = threading.Thread(
             target=self._run, name="aiperf-rate-pacer", daemon=True
         )
         self._thread.start()
 
+    def _set_tick_if_current(self, generation: int) -> None:
+        with self._condition:
+            if not self._closed and self._generation == generation:
+                self._tick.set()
+
     def _run(self) -> None:
         while True:
-            self._wakeup.wait()
-            self._wakeup.clear()
-            if self._closed:
-                return
-            deadline = self._deadline
-            if deadline is None:
-                continue
-            # Loop compensates for undersleep; oversleep is bounded by the
-            # platform's thread-sleep precision, not the event-loop timer wheel.
-            while not self._closed:
-                remaining = deadline - time.perf_counter()
-                if remaining <= 0:
-                    break
-                time.sleep(remaining)
-            # The loop may already be closing during teardown.
+            with self._condition:
+                while not self._closed:
+                    deadline = self._deadline
+                    if deadline is None:
+                        self._condition.wait()
+                        continue
+
+                    generation = self._generation
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        self._deadline = None
+                        self._waiting_generation = None
+                        break
+
+                    self._waiting_generation = generation
+                    self._condition.wait(timeout=remaining)
+                    if self._waiting_generation == generation:
+                        self._waiting_generation = None
+                else:
+                    return
+
+            # The loop may already be closing during teardown. Check the
+            # generation on the loop thread so a stale callback cannot wake a
+            # later sleep_until call after cancellation and reuse.
             with contextlib.suppress(RuntimeError):
-                self._loop.call_soon_threadsafe(self._tick.set)
+                self._loop.call_soon_threadsafe(self._set_tick_if_current, generation)
 
     async def sleep_until(self, deadline_perf_s: float) -> None:
         """Sleep until an absolute ``time.perf_counter()`` deadline.
 
         Returns immediately if the deadline is already in the past.
         """
-        self._tick.clear()
-        self._deadline = deadline_perf_s
-        self._wakeup.set()
-        await self._tick.wait()
+        with self._condition:
+            self._generation += 1
+            generation = self._generation
+            self._deadline = deadline_perf_s
+            self._tick.clear()
+            self._condition.notify()
+        try:
+            await self._tick.wait()
+        except asyncio.CancelledError:
+            with self._condition:
+                if self._generation == generation:
+                    self._generation += 1
+                    self._deadline = None
+                    self._condition.notify()
+            raise
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._wakeup.set()
+        with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            self._generation += 1
+            self._deadline = None
+            self._condition.notify_all()
