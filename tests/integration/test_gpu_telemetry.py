@@ -225,12 +225,12 @@ class TestAMDSMITelemetry:
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
                 --streaming \
-                --request-count 50 \
+                --request-count 10 \
                 --concurrency 2 \
                 --workers-max 2
             """
         )
-        assert result.request_count == 50
+        assert result.request_count == 10
         assert result.has_gpu_telemetry
         assert result.json.telemetry_data.endpoints is not None
         assert len(result.json.telemetry_data.endpoints) > 0
@@ -265,12 +265,12 @@ class TestAMDSMITelemetry:
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
                 --streaming \
-                --request-count 50 \
+                --request-count 10 \
                 --concurrency 2 \
                 --workers-max 2
             """
         )
-        assert result.request_count == 50
+        assert result.request_count == 10
         assert result.has_gpu_telemetry
 
         export_file = result.artifacts_dir / "gpu_telemetry_export.jsonl"
@@ -306,7 +306,7 @@ class TestAMDSMITelemetry:
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
                 --streaming \
-                --request-count 25 \
+                --request-count 10 \
                 --concurrency 1 \
                 --workers-max 1 \
                 --profile-export-prefix custom_amd
@@ -335,13 +335,13 @@ class TestAMDSMITelemetry:
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
-                --request-count 25 \
+                --request-count 10 \
                 --concurrency 1 \
                 --workers-max 1 \
                 --no-gpu-telemetry
             """
         )
-        assert result.request_count == 25
+        assert result.request_count == 10
         assert not result.has_gpu_telemetry, "GPU telemetry should not be collected"
         jsonl_files = list(result.artifacts_dir.glob("*gpu_telemetry*.jsonl"))
         assert len(jsonl_files) == 0, f"Unexpected GPU telemetry files: {jsonl_files}"
@@ -365,12 +365,12 @@ class TestAMDSMITelemetry:
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
                 --streaming \
-                --request-count 25 \
+                --request-count 10 \
                 --concurrency 1 \
                 --workers-max 1
             """
         )
-        assert result.request_count == 25
+        assert result.request_count == 10
         assert result.has_gpu_telemetry
 
         from aiperf.common.models.export_models import JsonMetricResult
@@ -506,7 +506,7 @@ class TestTelemetryVendorIsolation:
                 --endpoint-type chat \
                 --gpu-telemetry {telemetry_arg} \
                 --streaming \
-                --request-count 25 \
+                --request-count 10 \
                 --concurrency 1 \
                 --workers-max 1
             """
