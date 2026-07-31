@@ -78,23 +78,6 @@ class TestHappyPath:
             await worker.aclose()
 
 
-class TestSerialization:
-    async def test_concurrent_grades_return_correct_results(self, tmp_path) -> None:
-        # Previously tested that grades were serialized (lock enforced).
-        # Now tests that concurrent grades all return correct results without the lock.
-        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
-        try:
-            results = await asyncio.gather(
-                *[
-                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
-                    for _ in range(4)
-                ]
-            )
-            assert all(r == {"pass@1": 1.0} for r in results)
-        finally:
-            await w.aclose()
-
-
 class TestConcurrency:
     async def test_concurrent_grades_all_complete(self, tmp_path) -> None:
         w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
@@ -186,6 +169,19 @@ class TestConcurrency:
         grade_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, CodegenWorkerError):
             await grade_task
+
+    async def test_concurrent_grades_return_correct_results(self, tmp_path) -> None:
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            results = await asyncio.gather(
+                *[
+                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+                    for _ in range(4)
+                ]
+            )
+            assert all(r == {"pass@1": 1.0} for r in results)
+        finally:
+            await w.aclose()
 
 
 # The very first grade (client request id==1) hangs forever to trigger a

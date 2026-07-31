@@ -195,6 +195,47 @@ class TestRunWorkerLoopBatch:
         resps = self._run(reqs)
         assert {r["id"] for r in resps} == {10, 20, 30}
 
+    def test_partial_jsonl_line_is_deferred_to_next_cycle(self) -> None:
+        # Exercises the O_NONBLOCK peek(0) + partial-line guard in _drain_buffered.
+        # A partial write (no trailing newline) must not be submitted as a request;
+        # only after the newline arrives should the line be processed.
+        import threading
+        import time
+
+        req = self._req(42)
+        line = orjson.dumps(req) + b"\n"
+        r_fd, w_fd = os.pipe()
+        out = io.BytesIO()
+
+        with os.fdopen(r_fd, "rb") as reader:
+            t = threading.Thread(
+                target=worker.run_worker_loop,
+                args=(reader, out, _fake_codegen_batch_ok, _fake_compute_metrics),
+                daemon=True,
+            )
+            t.start()
+
+            # Write the request in two parts: body first, newline second
+            os.write(w_fd, line[:-1])  # partial — no newline yet
+            time.sleep(0.05)  # give the loop a chance to drain
+
+            # Worker must still be blocked (no complete line yet)
+            assert t.is_alive()
+            out.seek(0)
+            assert out.read() == b""  # nothing written yet
+
+            # Complete the line and close stdin to trigger EOF after processing
+            os.write(w_fd, b"\n")
+            os.close(w_fd)
+            t.join(timeout=5)
+
+        assert not t.is_alive()
+        out.seek(0)
+        resps = [orjson.loads(ln) for ln in out if ln.strip()]
+        assert len(resps) == 1
+        assert resps[0]["id"] == 42
+        assert resps[0]["ok"] is True
+
 
 class TestRunWorkerLoop:
     def _run(self, requests: list[bytes], codegen_fn) -> list[dict]:
