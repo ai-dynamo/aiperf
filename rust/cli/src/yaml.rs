@@ -438,7 +438,7 @@ struct ConfigFile {
     #[serde(default)]
     #[allow(dead_code)]
     variables: Option<serde_json::Value>,
-    /// `multiRun:` block, read by [`multi_run_overrides`] before this struct is
+    /// `multiRun:` block, read by [`apply_multi_run`] before this struct is
     /// deserialized. Declared so the key is legal rather than rejected as unknown.
     #[serde(default, alias = "multiRun")]
     #[allow(dead_code)]
