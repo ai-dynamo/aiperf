@@ -188,6 +188,12 @@ def _drain_buffered(stdin: BinaryIO) -> list[bytes]:
                     break  # Kernel pipe buffer empty; stop without blocking
                 if not available:
                     break  # EOF
+                if b"\n" not in available:
+                    # Only a partial line is buffered; readline() would need
+                    # another raw read on the non-blocking fd and raise
+                    # BlockingIOError. Leave it for the next cycle's blocking
+                    # readline() to complete.
+                    break
                 line = stdin.readline()
                 if not line:
                     break

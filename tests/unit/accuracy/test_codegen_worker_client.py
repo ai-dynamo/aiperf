@@ -164,7 +164,10 @@ class TestConcurrency:
                     [{"input_output": "{}"}], [["x"]], timeout=0.000001
                 )
             # If stale id handling is broken, the second grade would hang or crash.
-            # Give it a real timeout; it may or may not succeed (worker restarted).
+            result = await w.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result == {"pass@1": 1.0}
         finally:
             await w.aclose()
 
