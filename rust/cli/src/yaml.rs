@@ -2768,7 +2768,7 @@ fn clone_num_or_dist(n: &NumOrDist) -> Distribution {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_expanded_value, resolve_str};
+    use super::{ConfigFile, UNIMPLEMENTED_KEYS, resolve_expanded_value, resolve_str};
 
     /// A minimal valid config with the given `dataset:`/`phases:` bodies spliced in.
     fn cfg(body: &str) -> String {
