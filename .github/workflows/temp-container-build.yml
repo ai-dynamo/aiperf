@@ -19,11 +19,14 @@
 
 name: TEMP Container Build
 
+# Triggered from the mirrored pull-request/<N> ref rather than `pull_request`,
+# matching run-unit-tests and resolve-check. The self-hosted pool runs an
+# admission hook that rejects pull_request events and pushes to unapproved
+# refs, so a `pull_request` trigger never reaches its first step.
 on:
-  pull_request:
   push:
     branches:
-      - 'anants/ffmpeg-codec-allowlist'
+      - 'pull-request/[0-9]+'
   workflow_dispatch:
 
 jobs:
