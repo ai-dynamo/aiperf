@@ -9,6 +9,8 @@ codegen path. Before the fix there was no worker and in-process grading under a
 
 from __future__ import annotations
 
+import asyncio
+
 import orjson
 import pytest
 
@@ -43,5 +45,27 @@ async def test_worker_grades_correct_stdin_solution() -> None:
     try:
         metrics = await worker.grade_codegen(sample, code, timeout=120)
         assert float(metrics["pass@1"]) == 1.0
+    finally:
+        await worker.aclose()
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_worker_grades_multiple_problems_concurrently() -> None:
+    """N concurrent grade_codegen() calls all resolve correctly.
+
+    This exercises the batch-drain path: all N requests are sent before the
+    worker responds, so they are drained into a single codegen_metrics call and
+    processed in parallel by lighteval's ProcessPoolExecutor.
+    """
+    worker = CodegenGradingWorker()
+    sample, code = _sample_and_solution()
+    n = 4
+    try:
+        results = await asyncio.gather(
+            *[worker.grade_codegen(sample, code, timeout=240) for _ in range(n)]
+        )
+        assert len(results) == n
+        assert all(float(r["pass@1"]) == 1.0 for r in results), results
     finally:
         await worker.aclose()
