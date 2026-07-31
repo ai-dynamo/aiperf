@@ -626,6 +626,43 @@ enum RecordsFormats {
 struct GpuTelemetrySection {
     enabled: Option<bool>,
     urls: Option<Vec<String>>,
+    /// Collector backend. `dcgm` is the only backend the native runtime builds
+    /// (`GpuTelemetrySidecar::default_dcgm` always stamps `source_type: "dcgm"`),
+    /// so it is honored by construction; `pynvml` requires the supervised
+    /// `GpuTelemetrySourceSpec::Python` worker, which the config layer cannot
+    /// launch, and is rejected rather than accepted and downgraded to DCGM.
+    #[serde(default)]
+    collector: Option<String>,
+    /// Display mode. `summary` is what the native runtime does; the live TUI
+    /// (`realtime_dashboard`) has no native implementation, so it is rejected
+    /// rather than accepted and silently rendered as a summary table.
+    #[serde(default)]
+    mode: Option<String>,
+}
+
+impl GpuTelemetrySection {
+    /// Reject authored values whose behavior the native runtime does not
+    /// implement, so an unsupported backend or display mode fails loudly instead
+    /// of resolving to the one thing the runtime always does.
+    fn validate(&self) -> anyhow::Result<()> {
+        if let Some(collector) = self.collector.as_deref()
+            && collector != "dcgm"
+        {
+            anyhow::bail!(
+                "gpuTelemetry.collector {collector:?} is not supported \
+                 (the native runtime implements only \"dcgm\")"
+            );
+        }
+        if let Some(mode) = self.mode.as_deref()
+            && mode != "summary"
+        {
+            anyhow::bail!(
+                "gpuTelemetry.mode {mode:?} is not supported \
+                 (the native runtime implements only \"summary\")"
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1985,6 +2022,9 @@ impl Benchmark {
             .unwrap_or_default();
 
         // GPU telemetry (default enabled): optional custom DCGM URLs.
+        if let Some(gpu) = self.gpu_telemetry.as_ref() {
+            gpu.validate()?;
+        }
         let (gpu_enabled, gpu_urls) = self
             .gpu_telemetry
             .as_ref()
@@ -2869,6 +2909,33 @@ mod tests {
         let err = with("random").expect_err("an unimplemented strategy must fail");
         assert!(
             err.to_string().contains("urlStrategy"),
+            "error should name the key: {err}"
+        );
+    }
+
+    /// `dcgm`/`summary` are what the native runtime builds unconditionally, so
+    /// they must be accepted; `pynvml` needs the supervised Python worker and
+    /// `realtime_dashboard` has no native renderer, so both must fail rather than
+    /// resolve to DCGM-and-a-summary-table under another name.
+    #[test]
+    fn gpu_telemetry_rejects_backends_and_modes_it_cannot_honor() {
+        let with = |body: &str| {
+            resolve_str(
+                &cfg(&format!(
+                    "  gpuTelemetry:\n    enabled: true\n{body}  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                )),
+                Some("/tmp/x".into()),
+            )
+        };
+        with("    collector: dcgm\n    mode: summary\n").expect("the native backend and mode");
+        let err = with("    collector: pynvml\n").expect_err("pynvml has no native collector");
+        assert!(
+            err.to_string().contains("collector"),
+            "error should name the key: {err}"
+        );
+        let err = with("    mode: realtime_dashboard\n").expect_err("no native TUI dashboard");
+        assert!(
+            err.to_string().contains("mode"),
             "error should name the key: {err}"
         );
     }
