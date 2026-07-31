@@ -180,8 +180,8 @@ class PromptGenerator(BaseGenerator):
         """
         if self._corpus == PromptCorpus.RANDOM:
             n = len(self._allowed_tokens)
-            offset = int(self._corpus_rng.integers(0, n))
-            return [self._allowed_tokens[(offset + j) % n] for j in range(num_tokens)]
+            ids = self._corpus_rng.integers(0, n, size=num_tokens)
+            return [self._allowed_tokens[i] for i in ids]
         return self._sample_tokens(num_tokens)
 
     def preseed(self, n: int, generator: object) -> None:
