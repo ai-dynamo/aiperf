@@ -372,7 +372,7 @@ fn run_single(inputs: load::Inputs) -> anyhow::Result<i32> {
 /// suppression, and the aggregate match the `--num-profile-runs` flag path.
 fn run_config_trials(
     flags: &ProfileFlags,
-    inputs: crate::config_inputs::Inputs,
+    inputs: load::Inputs,
     trials: u32,
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
