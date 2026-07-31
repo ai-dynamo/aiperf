@@ -324,6 +324,7 @@ enum EnabledOrConfig<T> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DistFields {
     /// Scalar fixed value (`{value: N}` — the object form of the `isl: N`
     /// shorthand, e.g. what the Kubernetes operator projects for a fixed
@@ -358,7 +359,12 @@ where
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConfigFile {
+    /// Config-schema version (`schemaVersion: "2.0"`). Accepted and recorded so
+    /// authoring it is not an unknown key; the loader targets one schema.
+    #[serde(default, alias = "schemaVersion")]
+    schema_version: Option<String>,
     benchmark: Benchmark,
     /// Top-level deterministic run seed (`randomSeed`).
     #[serde(default, alias = "randomSeed")]
@@ -369,6 +375,7 @@ struct ConfigFile {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Benchmark {
     /// `model:` shorthand (single string or list).
     model: Option<StringOrVec>,
@@ -423,6 +430,7 @@ struct Benchmark {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ArtifactsSection {
     /// Run artifact directory (the `--artifact-dir` flag overrides it).
     dir: Option<String>,
@@ -459,12 +467,14 @@ enum RecordsFormats {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GpuTelemetrySection {
     enabled: Option<bool>,
     urls: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ServerMetricsSection {
     enabled: Option<bool>,
     urls: Option<Vec<String>>,
@@ -472,6 +482,7 @@ struct ServerMetricsSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct NetworkLatencySection {
     #[serde(default)]
     enabled: bool,
@@ -482,12 +493,14 @@ struct NetworkLatencySection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OtelSection {
     #[serde(alias = "metricsUrl")]
     metrics_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MlflowSection {
     #[serde(default, alias = "trackingUri")]
     tracking_uri: Option<String>,
@@ -497,14 +510,18 @@ struct MlflowSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WandbSection {
     project: Option<String>,
     entity: Option<String>,
     #[serde(default, alias = "runName")]
     run_name: Option<String>,
+    #[serde(default, alias = "syncUrl")]
+    sync_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeSection {
     workers: Option<u32>,
     #[serde(default, alias = "workersMin")]
@@ -651,6 +668,7 @@ struct ServerProfilerYaml {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EndpointSection {
     #[serde(rename = "type")]
     endpoint_type: Option<String>,
@@ -709,6 +727,7 @@ struct EndpointSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DatasetSection {
     /// `synthetic` (default), `file`, or `public`; drives the loader branch.
     #[serde(rename = "type")]
@@ -796,6 +815,7 @@ struct DatasetSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ImageSection {
     #[serde(default, alias = "batchSize")]
     batch_size: Option<u32>,
@@ -808,6 +828,7 @@ struct ImageSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AudioSection {
     #[serde(default, alias = "batchSize")]
     batch_size: Option<u32>,
@@ -821,6 +842,7 @@ struct AudioSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VideoSection {
     #[serde(default, alias = "batchSize")]
     batch_size: Option<u32>,
@@ -836,6 +858,7 @@ struct VideoSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VideoAudioSection {
     channels: Option<u32>,
     codec: Option<String>,
@@ -845,6 +868,7 @@ struct VideoAudioSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PromptsSection {
     isl: Option<NumOrDist>,
     osl: Option<NumOrDist>,
@@ -860,6 +884,7 @@ struct PromptsSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PrefixPromptsSection {
     #[serde(default, alias = "poolSize")]
     pool_size: Option<u32>,
@@ -871,6 +896,7 @@ struct PrefixPromptsSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TokenizerSection {
     name: Option<String>,
     revision: Option<String>,
@@ -894,6 +920,7 @@ enum Phases {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PhaseSection {
     /// Phase name (`warmup`/`profiling` or a custom workflow id).
     name: Option<String>,
@@ -986,12 +1013,14 @@ impl PhaseSection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CancellationSection {
     rate: f64,
     delay: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SlaFilterSection {
     #[serde(alias = "metricTag")]
     metric_tag: String,
@@ -1039,6 +1068,7 @@ impl AdaptiveScaleField {
 
 /// Nested `adaptive_scale:` block with control and strategy sub-maps.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AdaptiveScaleBlock {
     #[serde(default)]
     enabled: Option<BoolOrStr>,
@@ -1135,6 +1165,7 @@ impl AdaptiveScaleBlock {
 
 /// `adaptive_scale.control: {variable, min, max}` sub-map.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ControlSub {
     #[serde(default)]
     variable: Option<String>,
@@ -1146,6 +1177,7 @@ struct ControlSub {
 
 /// `adaptive_scale.strategy: {type, step_policy, …}` sub-map.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StrategySub {
     #[serde(default, rename = "type")]
     strategy_type: Option<String>,
@@ -1686,12 +1718,14 @@ impl Benchmark {
                 entity: w.entity.clone(),
                 run_name: w.run_name.clone(),
                 tags: Vec::new(),
+                sync_url: w.sync_url.clone(),
             })
             .unwrap_or(crate::model::export::WandbParams {
                 project: None,
                 entity: None,
                 run_name: None,
                 tags: Vec::new(),
+                sync_url: None,
             });
 
         // Runtime worker/cell/dispatch/hop-routing policy.
