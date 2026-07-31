@@ -120,10 +120,64 @@ async def test_delayed_join_k5_parent_progresses():
 
 
 @pytest.mark.asyncio
+async def test_breeze_through_applies_between_round_think_time():
+    """Regression: when children drain before the parent reaches a request-free
+    spine gate, the orchestrator must still apply the gate's authored
+    between-round think-time before dispatching the gated turn -- rather than
+    letting the strategy breeze through with no wait."""
+    metadata = _k5_metadata()
+    # Make the gated turn (index 5) a request-free spine gate with a think-time.
+    gate_turn = metadata[0].turns[5]
+    gate_turn.no_request = True
+    gate_turn.delay_ms = 400.0
+
+    cs = _mk_source(metadata)
+
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **kwargs
+    ):
+        s = MagicMock()
+        s.x_correlation_id = f"corr-{child_conversation_id}"
+        return s
+
+    cs.start_branch_child = MagicMock(side_effect=_start)
+
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    slept: list[float] = []
+
+    async def _capture(seconds: float) -> None:
+        slept.append(seconds)
+
+    orch._sleep_think_ms = _capture
+
+    # Turn 0 spawns; both children finish before the parent nears the gate.
+    await orch.intercept(_mk_credit("root", "corr-root", 0))
+    await orch.on_child_leaf_reached("corr-c0")
+    await orch.on_child_leaf_reached("corr-c1")
+
+    # Parent walks turns 1..3 (no gate), then turn 4's return dispatches the
+    # satisfied turn-5 gate -- honoring its 400 ms authored think-time.
+    for t in range(1, 4):
+        await orch.intercept(_mk_credit("root", "corr-root", t))
+    suspended = await orch.intercept(_mk_credit("root", "corr-root", 4))
+
+    assert suspended is True
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert slept == [0.4]  # 400 ms authored think-time honored on the breeze path
+
+
+@pytest.mark.asyncio
 async def test_delayed_join_children_finish_before_parent_arrives():
-    """Children complete before the parent returns from turn 4. When the
-    parent reaches turn 4's return (about to dispatch turn 5), the future
-    gate is already satisfied -> popped -> intercept returns False."""
+    """Children complete before the parent returns from turn 4. This is a
+    NORMAL DAG gate (no request-free think-time), so a gate satisfied before
+    the parent arrives is popped and the parent breezes through the strategy
+    path -> intercept returns False and no dispatch_join_turn fires. (Spine
+    gates, which carry think-time, take the retain-and-dispatch path instead.)"""
     cs = _mk_source(_k5_metadata())
 
     def _start(

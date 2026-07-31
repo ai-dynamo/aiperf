@@ -194,6 +194,32 @@ class TestBasicCreditIssuance:
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.max_tokens_override == 1
 
+    async def test_issue_credit_propagates_no_request_true(
+        self, credit_issuer, mock_router
+    ):
+        """no_request on the turn should flow into the issued Credit."""
+        turn = TurnToSend(
+            conversation_id="conv1",
+            x_correlation_id="corr-conv1",
+            turn_index=0,
+            num_turns=1,
+            no_request=True,
+        )
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.no_request is True
+
+    async def test_issue_credit_no_request_defaults_false(
+        self, credit_issuer, mock_router
+    ):
+        """A normal turn yields a Credit with no_request False."""
+        await credit_issuer.issue_credit(make_turn())
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.no_request is False
+
     async def test_issue_credit_returns_true_when_more_credits_can_be_sent(
         self, credit_issuer, mock_progress
     ):
@@ -854,3 +880,35 @@ class TestURLSelectionStrategy:
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.url_index is None
+
+
+class TestDispatchJoinTurnNoRequest:
+    """The gated (join) turn must inherit ``no_request`` from the join state so a
+    request-free orchestrator spine's join turns issue no HTTP request."""
+
+    def _pending(self, *, no_request: bool):
+        from aiperf.timing.branch_orchestrator import PendingBranchJoin
+
+        return PendingBranchJoin(
+            parent_x_correlation_id="corr-spine",
+            parent_conversation_id="spine",
+            parent_num_turns=3,
+            gated_turn_index=1,
+            parent_no_request_on_gated_turn=no_request,
+        )
+
+    async def test_dispatch_join_turn_propagates_no_request_true(
+        self, credit_issuer, mock_router
+    ):
+        await credit_issuer.dispatch_join_turn(self._pending(no_request=True))
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.no_request is True
+
+    async def test_dispatch_join_turn_no_request_defaults_false(
+        self, credit_issuer, mock_router
+    ):
+        await credit_issuer.dispatch_join_turn(self._pending(no_request=False))
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.no_request is False
