@@ -1693,3 +1693,106 @@ mod unimplemented_flag_tests {
         });
     }
 }
+
+#[cfg(test)]
+mod yaml_sweep_trial_tests {
+    use crate::flags::ProfileFlags;
+
+    /// Plan the shipped `sweep_distributions.yaml` (a grid `sweep:` plus
+    /// `multiRun.numRuns: 3`) exactly as `run_yaml_sweep` does.
+    fn plan(extra: &[&str]) -> Vec<crate::sweep::run::Cell> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/aiperf/config/templates/sweep_distributions.yaml");
+        let mut base = crate::yaml::read_env_substituted(&path).expect("read template");
+        let sweep = crate::sweep::yaml_sweep::parse(&base)
+            .expect("parse sweep")
+            .expect("sweep block present");
+        crate::sweep::yaml_sweep::normalize_benchmark(&mut base);
+
+        let mut args: Vec<String> = ["--config", path.to_str().unwrap()]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let mut flags = ProfileFlags::parse_from_args(&args).expect("flags parse");
+        crate::yaml::apply_multi_run(&base, &mut flags).expect("apply multiRun");
+
+        super::plan_yaml_cells(
+            Some(std::path::PathBuf::from("/tmp/aiperf-yaml-trials")),
+            &base,
+            &sweep,
+            "trial-test",
+            Some(&flags),
+        )
+        .expect("plan yaml cells")
+    }
+
+    /// `sweep:` + `multiRun.numRuns: N` must plan `N` trials of every variation.
+    /// This path used to hardcode one trial, so an authored `numRuns` parsed,
+    /// passed range validation, and was then discarded without a word.
+    #[test]
+    fn num_runs_yields_one_cell_per_variation_and_trial() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let cells = plan(&[]);
+                // The template sweeps 3 ISL values x 3 rates with numRuns: 3.
+                assert_eq!(cells.len(), 27, "3 trials x 9 variations");
+
+                let trials: std::collections::BTreeSet<u32> =
+                    cells.iter().map(|c| c.trial).collect();
+                assert_eq!(
+                    trials,
+                    std::collections::BTreeSet::from([0, 1, 2]),
+                    "every trial index must be represented"
+                );
+                // Repeated order groups by trial: `<base>/profile_runs/trial_NNNN/<dir_name>`.
+                for cell in &cells {
+                    let dir = cell.run.artifact_dir.to_string_lossy();
+                    let want = format!("profile_runs/trial_{:04}/", cell.trial + 1);
+                    assert!(
+                        dir.contains(&want),
+                        "cell trial {} dir {dir} missing {want}",
+                        cell.trial
+                    );
+                    assert_eq!(
+                        cell.run.artifact_dir,
+                        cell.inputs.as_ref().expect("inputs").artifact_dir,
+                        "authoring inputs must mirror the planned dir"
+                    );
+                }
+                // A distinct dir per (variation, trial) — no cell overwrites another.
+                let dirs: std::collections::BTreeSet<_> =
+                    cells.iter().map(|c| c.run.artifact_dir.clone()).collect();
+                assert_eq!(dirs.len(), cells.len(), "artifact dirs must be unique");
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    /// `--parameter-sweep-mode independent` nests trials under each variation.
+    /// The YAML path hardcoded `Repeated`, making `Independent` unreachable.
+    #[test]
+    fn independent_mode_nests_trials_under_each_variation() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let cells = plan(&["--parameter-sweep-mode", "independent"]);
+                assert_eq!(cells.len(), 27);
+                for cell in &cells {
+                    let dir = cell.run.artifact_dir.to_string_lossy();
+                    let want = format!("/profile_runs/trial_{:04}", cell.trial + 1);
+                    assert!(dir.ends_with(&want), "dir {dir} must end with {want}");
+                    // Independent puts the variation dir *before* profile_runs.
+                    assert!(
+                        !dir.contains("profile_runs/trial_0001/isl"),
+                        "independent must not lay out trial-major: {dir}"
+                    );
+                }
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+}
