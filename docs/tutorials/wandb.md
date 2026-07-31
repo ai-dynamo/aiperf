@@ -60,6 +60,7 @@ aiperf profile \
 | `--wandb-entity my-team` | Team or username owning the project. Defaults to your API key's default entity. |
 | `--wandb-run-name baseline-c4` | Run name shown in the wandb UI. Defaults to `aiperf-<benchmark-id>`. |
 | `--wandb-tag experiment:baseline` | Additional run tag. Repeat the flag for multiple tags. |
+| `--wandb-sync-url URL` | Also POST the completed `.wandb` datastore to AIPerf's test receiver seam. This is intended for mock-backed integration tests, not as a replacement for `wandb sync`. |
 
 The equivalent config-v2 YAML:
 
@@ -69,6 +70,8 @@ benchmark:
     project: my-benchmarks
     entity: my-team
     run_name: baseline-c4
+    # Test-only receiver, when needed:
+    # sync_url: http://localhost:8000/api/wandb/runs
     tags:
       - "experiment:baseline"
 ```

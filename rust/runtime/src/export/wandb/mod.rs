@@ -54,6 +54,7 @@ mod tests;
 
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{Datelike, Timelike, Utc};
@@ -68,6 +69,7 @@ const STAT_COLUMN_KEYS: [&str; 7] = ["avg", "min", "max", "p99", "p90", "p50", "
 const HEADER_PRODUCER: &str = "aiperf-native-wandb";
 /// Minimum consumer able to read the streams we emit.
 const HEADER_MIN_CONSUMER: &str = "0.65.0";
+const SYNC_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// W&B export policy plus values unavailable from the report. A project enables
 /// the sink.
@@ -95,6 +97,8 @@ pub struct WandbExportConfig {
     /// Redacted CLI command (`redact_cli_command(run.cli_command)`), recorded
     /// under the config key `aiperf.cli_command`.
     pub cli_command: Option<String>,
+    /// Optional AIPerf datastore receiver URL. The offline file remains canonical.
+    pub sync_url: Option<String>,
 }
 
 /// The W&B [`Exporter`] (offline `.wandb` transaction log).
@@ -257,10 +261,106 @@ impl Exporter for WandbExporter {
         );
 
         let wandb_path = run_dir.join(format!("run-{run_id}.wandb"));
-        fs::write(&wandb_path, store.into_bytes())
+        let datastore = store.into_bytes();
+        fs::write(&wandb_path, &datastore)
             .with_context(|| format!("writing {}", wandb_path.display()))?;
+        if let Some(sync_url) = wandb.sync_url.as_deref() {
+            sync_datastore(
+                sync_url,
+                project,
+                wandb.entity.as_deref(),
+                &run_id,
+                datastore,
+            )?;
+        }
         Ok(())
     }
+}
+
+/// POST an offline datastore to AIPerf's deliberately small W&B receiver seam.
+///
+/// This is not an implementation of W&B's private cloud API. It gives the native
+/// exporter a deterministic server boundary for integration tests while keeping
+/// the SDK-readable offline datastore as the production interoperability format.
+fn sync_datastore(
+    endpoint: &str,
+    project: &str,
+    entity: Option<&str>,
+    run_id: &str,
+    body: Vec<u8>,
+) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("wandb: build sync runtime")?;
+    runtime.block_on(async move {
+        tokio::time::timeout(
+            SYNC_TIMEOUT,
+            send_datastore(endpoint, project, entity, run_id, body),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("wandb: sync timed out after {SYNC_TIMEOUT:?}"))?
+    })
+}
+
+async fn send_datastore(
+    endpoint: &str,
+    project: &str,
+    entity: Option<&str>,
+    run_id: &str,
+    body: Vec<u8>,
+) -> anyhow::Result<()> {
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Bytes;
+    use hyper_util::rt::TokioIo;
+
+    let url = url::Url::parse(endpoint)
+        .with_context(|| format!("wandb: invalid sync URL {endpoint:?}"))?;
+    if url.scheme() != "http" {
+        anyhow::bail!("wandb: sync URL must use http (the receiver seam is test-only)");
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("wandb: sync URL has no host"))?;
+    let authority = format!("{host}:{}", url.port().unwrap_or(80));
+    let path = match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_string(),
+    };
+    let mut builder = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .uri(path)
+        .header(hyper::header::HOST, &authority)
+        .header(hyper::header::CONTENT_TYPE, "application/octet-stream")
+        .header("x-wandb-project", project)
+        .header("x-wandb-run-id", run_id);
+    if let Some(entity) = entity {
+        builder = builder.header("x-wandb-entity", entity);
+    }
+    let request = builder
+        .body(Full::new(Bytes::from(body)))
+        .context("wandb: build sync request")?;
+    let stream = tokio::net::TcpStream::connect(&authority)
+        .await
+        .with_context(|| format!("wandb: connect {authority}"))?;
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .context("wandb: HTTP handshake")?;
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            tracing::debug!(error = %error, "W&B sync connection closed");
+        }
+    });
+    let response = sender
+        .send_request(request)
+        .await
+        .context("wandb: send datastore")?;
+    let status = response.status();
+    let _ = response.into_body().collect().await;
+    if !status.is_success() {
+        anyhow::bail!("wandb: receiver returned HTTP {status}");
+    }
+    Ok(())
 }
 
 /// One rendered metric row: the display label and the 7 stat cells.

@@ -316,6 +316,98 @@ async fn test_mlflow_file_store_export_writes_a_readable_run() {
     // every run. Asserting on it would assert a gap, not a contract.
 }
 
+/// One profile can use the inference mock as all three observability servers.
+///
+/// This covers the product CLI projection as well as each exporter-to-server
+/// boundary. Assertions inspect captured payloads, not merely process success.
+#[tokio::test]
+async fn test_profile_exports_otlp_mlflow_and_wandb_to_mock_server() {
+    const REQUESTS: u32 = 4;
+
+    let h = AIPerfHarness::new().await;
+    let r = h.run_env(
+        &format!(
+            "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
+             --synthetic-input-tokens-mean 8 --output-tokens-mean 4 \
+             --request-count {REQUESTS} --concurrency 2 --export-level raw \
+             --otel-url {}/v1/metrics \
+             --otel-resource-attributes deployment.environment=mock-e2e \
+             --mlflow-tracking-uri {} --mlflow-experiment mock-e2e \
+             --mlflow-run-name mock-profile --mlflow-tag source:mock \
+             --wandb-project mock-project --wandb-entity mock-team \
+             --wandb-run-name mock-profile --wandb-tag source:mock \
+             --wandb-sync-url {}/api/wandb/runs --ui none",
+            h.mock.url, h.mock.url, h.mock.url, h.mock.url
+        ),
+        &[("AIPERF_RUNTIME_EXACT_FOLD", "0")],
+    );
+    assert!(r.success(), "run failed: {}", r.stderr);
+
+    let otlp = h.mock.state.observability.otlp_metrics();
+    assert_eq!(otlp.len(), 1, "expected one OTLP export, stderr: {}", r.stderr);
+    let request =
+        ExportMetricsServiceRequest::decode(otlp[0].as_slice()).expect("decode captured OTLP");
+    let metrics: Vec<_> = request
+        .resource_metrics
+        .into_iter()
+        .flat_map(|resource| resource.scope_metrics)
+        .flat_map(|scope| scope.metrics)
+        .collect();
+    let duration = metrics
+        .iter()
+        .find(|metric| metric.name == "gen_ai.client.operation.duration")
+        .expect("captured OTLP duration histogram");
+    let Data::Histogram(histogram) = duration.data.as_ref().expect("duration data") else {
+        panic!("duration metric is not a histogram");
+    };
+    assert_eq!(
+        histogram.data_points.iter().map(|point| point.count).sum::<u64>(),
+        u64::from(REQUESTS)
+    );
+
+    let mlflow = h.mock.state.observability.mlflow_requests();
+    for route in [
+        "experiments/create",
+        "runs/create",
+        "runs/log-batch",
+        "runs/update",
+    ] {
+        assert!(
+            mlflow.iter().any(|request| request.route == route),
+            "missing MLflow {route}; captured: {mlflow:?}"
+        );
+    }
+    let batch = mlflow
+        .iter()
+        .find(|request| request.route == "runs/log-batch")
+        .expect("MLflow batch");
+    assert!(
+        batch.body["metrics"]
+            .as_array()
+            .is_some_and(|metrics| !metrics.is_empty()),
+        "MLflow batch carried no metrics: {:?}",
+        batch.body
+    );
+    assert!(
+        h.mock
+            .state
+            .observability
+            .mlflow_artifacts()
+            .iter()
+            .any(|artifact| !artifact.body.is_empty()),
+        "MLflow proxy received no artifacts"
+    );
+
+    let wandb = h.mock.state.observability.wandb_runs();
+    assert_eq!(wandb.len(), 1, "expected one W&B datastore upload");
+    assert_eq!(wandb[0].project, "mock-project");
+    assert_eq!(wandb[0].entity.as_deref(), Some("mock-team"));
+    assert!(
+        wandb[0].body.starts_with(b":W&B"),
+        "uploaded W&B datastore has an invalid header"
+    );
+}
+
 /// The single non-hidden child directory of `parent`, or a failure naming `label`.
 fn single_subdir(parent: &Path, label: &str) -> PathBuf {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(parent)

@@ -52,6 +52,7 @@ fn sample_cfg() -> ExportConfig {
             aiperf_version: None,
             config_json: Some(r#"{"a":1,"nested":{"x":"y"}}"#.to_string()),
             cli_command: Some("aiperf profile --secret redacted".to_string()),
+            sync_url: None,
         },
         ..ExportConfig::default()
     }

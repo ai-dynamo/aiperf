@@ -22,7 +22,10 @@ purpose for each, so an agent knows which file to open for a given question.
   runner binary). The runtime library it links is crate `aiperf-runtime` (`rust/runtime`).
   The standalone `aiperf-mock-server`
   developer/test target is an ordinary online inference server, not an
-  orchestrated backend process. `rust/runtime` is a runtime library and
+  orchestrated backend process. Its router also captures OTLP/HTTP metrics,
+  the MLflow REST run lifecycle and artifact proxy, and opt-in AIPerf W&B
+  datastore uploads (`--wandb-sync-url`) for full-stack exporter tests.
+  `rust/runtime` is a runtime library and
   intentionally has no binary target (the native binary is the `aiperf-cli` crate).
 - **Source organization:** Rust execution truth is `rust/`; Python frontend
   truth includes `src/aiperf/config`, `src/aiperf/orchestrator`, and

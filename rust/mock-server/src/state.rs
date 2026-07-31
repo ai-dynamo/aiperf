@@ -50,6 +50,8 @@ pub struct AppState {
     /// speaks plain HTTP only (the content server serves plain HTTP) and ignores
     /// any ambient `HTTP_PROXY`, so localhost content URLs are reached directly.
     pub content_fetch_client: Option<ContentFetchClient>,
+    /// In-memory observability collector state used by integration tests.
+    pub observability: crate::observability::ObservabilityState,
 }
 
 /// Pooled plain-HTTP client used to fetch content URLs. `Empty<Bytes>` is the
@@ -169,6 +171,7 @@ impl AppState {
             accuracy,
             accuracy_live: crate::accuracy::AccuracyLive::default(),
             content_fetch_client,
+            observability: crate::observability::ObservabilityState::default(),
         });
 
         if config.dcgm_auto_load {

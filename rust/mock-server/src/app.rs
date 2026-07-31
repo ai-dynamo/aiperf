@@ -11,6 +11,7 @@ use axum::routing::{get, post};
 
 use crate::config::MockServerConfig;
 use crate::handlers;
+use crate::observability;
 pub use crate::state::AppState;
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -90,6 +91,32 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Explicit DCGM routes avoid conflicts with the other metrics paths.
         .route("/dcgm1/metrics", get(handlers::dcgm_metrics_1))
         .route("/dcgm2/metrics", get(handlers::dcgm_metrics_2))
+        .route("/v1/metrics", post(observability::receive_otlp))
+        .route(
+            "/api/2.0/mlflow/experiments/get-by-name",
+            get(observability::mlflow_get_experiment),
+        )
+        .route(
+            "/api/2.0/mlflow/experiments/create",
+            post(observability::mlflow_create_experiment),
+        )
+        .route(
+            "/api/2.0/mlflow/runs/create",
+            post(observability::mlflow_create_run),
+        )
+        .route(
+            "/api/2.0/mlflow/runs/log-batch",
+            post(observability::mlflow_log_batch),
+        )
+        .route(
+            "/api/2.0/mlflow/runs/update",
+            post(observability::mlflow_update_run),
+        )
+        .route(
+            "/api/2.0/mlflow-artifacts/artifacts/{*path}",
+            axum::routing::put(observability::mlflow_artifact),
+        )
+        .route("/api/wandb/runs", post(observability::receive_wandb))
         // Large prompts can exceed axum's 2 MiB default before reaching a handler.
         .layer(DefaultBodyLimit::disable())
         .with_state(state)

@@ -16,7 +16,7 @@ AIPerf is a load generator and measurement front end for inference servers. The 
 
 Native commands also include `controller`, `cell`, `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`, `speed-bench-report`, `synthesize`, `slurm`, and `compare`. Other commands dispatch to `aiperf.entrypoint.main`: builds with `pyo3-embed` invoke it in-process, while lean builds invoke `python -m aiperf`.
 
-`aiperf-mock-server` is a separately launched benchmark and test target. It is not supervised by a profile run.
+`aiperf-mock-server` is a separately launched benchmark and test target. It is not supervised by a profile run. Its HTTP router also provides in-memory OTLP/HTTP, MLflow REST/artifact-proxy, and AIPerf W&B datastore receiver seams for exporter end-to-end tests; `--wandb-sync-url` opts a profile into the latter while the offline `.wandb` file remains canonical.
 
 Source-of-truth locations:
 

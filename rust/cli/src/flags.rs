@@ -1264,6 +1264,9 @@ pub struct ProfileFlags {
     /// W&B run tags (`--wandb-tag`), repeatable.
     #[arg(long = "wandb-tag", num_args = 1..)]
     pub wandb_tag: Vec<String>,
+    /// Optional AIPerf W&B datastore receiver URL (used by mock-backed tests).
+    #[arg(long = "wandb-sync-url")]
+    pub wandb_sync_url: Option<String>,
 
     /// YAML configuration file (`--config` / `-f`).
     #[arg(long = "config", short = 'f')]

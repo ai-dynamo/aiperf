@@ -21,6 +21,7 @@ pub mod latency;
 pub mod listener;
 pub mod metrics;
 pub mod models;
+pub mod observability;
 pub mod prefix_cache;
 pub mod prom;
 pub mod scheduler;
