@@ -113,6 +113,9 @@ fn cfg(stem: &str) -> ExportConfig {
     ExportConfig {
         genai_perf: GenaiPerfExportConfig {
             enabled: true,
+            // Predates the per-format split; `enabled: true` alone used to emit both.
+            json: true,
+            csv: true,
             stem: stem.to_owned(),
             header_map: header_map(),
             filtered_tags: ["min_request_timestamp".to_owned()].into_iter().collect(),
