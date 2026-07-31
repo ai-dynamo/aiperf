@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -19,7 +19,12 @@ from aiperf.common.models import (
 )
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
-from aiperf.workers.worker import Worker, _phase_needs_first_token_callback
+from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.workers.worker import (
+    Worker,
+    _is_terminal_context_overflow,
+    _phase_needs_first_token_callback,
+)
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
@@ -462,6 +467,7 @@ class TestWarmupSystemMessage:
             Worker._system_message_for_phase(
                 system_message="existing system",
                 phase=CreditPhase.PROFILING,
+                cache_bust_target=None,
             )
             == "existing system"
         )
@@ -471,6 +477,7 @@ class TestWarmupSystemMessage:
             Worker._system_message_for_phase(
                 system_message=None,
                 phase=CreditPhase.WARMUP,
+                cache_bust_target=None,
             )
             == "warmup"
         )
@@ -480,9 +487,250 @@ class TestWarmupSystemMessage:
             Worker._system_message_for_phase(
                 system_message="existing system",
                 phase=CreditPhase.WARMUP,
+                cache_bust_target=None,
             )
             == "warmup\nexisting system"
         )
+
+    def test_warmup_prefixes_when_cache_bust_target_none_enum(self):
+        """``CacheBustTarget.NONE`` is cache-bust-disabled, so the prefix applies."""
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.WARMUP,
+                cache_bust_target=CacheBustTarget.NONE,
+            )
+            == "warmup\nexisting system"
+        )
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            param(CacheBustTarget.SYSTEM_PREFIX, id="system_prefix"),
+            param(CacheBustTarget.SYSTEM_SUFFIX, id="system_suffix"),
+            param(CacheBustTarget.FIRST_TURN_PREFIX, id="first_turn_prefix"),
+            param(CacheBustTarget.FIRST_TURN_SUFFIX, id="first_turn_suffix"),
+        ],
+    )  # fmt: skip
+    def test_warmup_skips_prefix_when_cache_bust_active(self, target):
+        """Cache-bust markers are warmup-coherent: warmup primes the prefix
+        profiling hits, so prefixing in front of the shared marker would break
+        the prime. Every non-NONE target already isolates per trajectory tree.
+        """
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.WARMUP,
+                cache_bust_target=target,
+            )
+            == "existing system"
+        )
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            param(CacheBustTarget.SYSTEM_PREFIX, id="system_prefix"),
+            param(CacheBustTarget.FIRST_TURN_PREFIX, id="first_turn_prefix"),
+        ],
+    )  # fmt: skip
+    def test_warmup_leaves_system_message_none_when_cache_bust_active(self, target):
+        """No synthetic system message is invented under cache-bust — a
+        warmup-only ``system`` role would diverge the message array from
+        profiling's even before content is compared.
+        """
+        assert (
+            Worker._system_message_for_phase(
+                system_message=None,
+                phase=CreditPhase.WARMUP,
+                cache_bust_target=target,
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+class TestCreateRequestInfo:
+    async def test_create_request_info_overrides_only_outgoing_turn(self, mock_worker):
+        original = Turn(max_tokens=4096)
+        turns = [original]
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.WARMUP,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+                max_tokens_override=1,
+            ),
+            drop_perf_ns=0,
+        )
+
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=credit_context,
+            turns=turns,
+        )
+
+        assert request_info.turns[-1].max_tokens == 1
+        assert original.max_tokens == 4096
+
+    @pytest.mark.parametrize(
+        "recorded_payload, cap_key",
+        [
+            param(
+                {"model": "m", "messages": [], "max_tokens": 4096, "stream": True},
+                "max_tokens",
+                id="chat-max_tokens",
+            ),
+            param(
+                {"model": "m", "messages": [], "max_completion_tokens": 4096},
+                "max_completion_tokens",
+                id="chat-max_completion_tokens",
+            ),
+            param(
+                {"model": "m", "input": [], "max_output_tokens": 4096},
+                "max_output_tokens",
+                id="responses-max_output_tokens",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_create_request_info_override_rewrites_raw_payload_wire_cap(
+        self, mock_worker, recorded_payload, cap_key
+    ):
+        # PAYLOAD_BYTES turns carry a verbatim raw_payload dict that
+        # inference_client ships as-is, so the override must rewrite the wire
+        # max-token keys too -- not just Turn.max_tokens -- or the recorded cap
+        # would reach the server while the record claims the override.
+        original = Turn(max_tokens=4096, raw_payload=recorded_payload)
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=self._warmup_override_credit(),
+            turns=[original],
+        )
+
+        outgoing = request_info.turns[-1]
+        assert outgoing.max_tokens == 1
+        assert outgoing.raw_payload[cap_key] == 1
+        # Source turn (and its nested dict) left untouched.
+        assert original.max_tokens == 4096
+        assert original.raw_payload[cap_key] == 4096
+
+    @pytest.mark.parametrize(
+        "recorded_payload, expected_key",
+        [
+            param({"model": "m", "messages": []}, "max_tokens", id="chat-no-cap"),
+            param(
+                {"model": "m", "input": []},
+                "max_output_tokens",
+                id="responses-no-cap",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_create_request_info_override_injects_dialect_cap_when_none_recorded(
+        self, mock_worker, recorded_payload, expected_key
+    ):
+        # A recorded body with no cap key must still get the override, using the
+        # dialect's canonical key so the server honors it: Responses bodies
+        # (keyed by "input") take max_output_tokens; chat/completions take
+        # max_tokens.
+        original = Turn(max_tokens=None, raw_payload=recorded_payload)
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=self._warmup_override_credit(),
+            turns=[original],
+        )
+
+        outgoing = request_info.turns[-1]
+        assert outgoing.max_tokens == 1
+        assert outgoing.raw_payload[expected_key] == 1
+        # Only the dialect-canonical key is injected, no cross-dialect leakage.
+        other_keys = {"max_tokens", "max_completion_tokens", "max_output_tokens"} - {
+            expected_key
+        }
+        assert not (other_keys & outgoing.raw_payload.keys())
+
+    @staticmethod
+    def _warmup_override_credit() -> CreditContext:
+        return CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.WARMUP,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+                max_tokens_override=1,
+            ),
+            drop_perf_ns=0,
+        )
+
+    async def test_create_request_info_plumbs_phase_fields_from_credit(
+        self, mock_worker
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                profiling_index=1,
+                phase_name="second-profiling",
+                phase_kind="profiling",
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+        )
+
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=credit_context,
+            turns=[Turn()],
+        )
+
+        assert request_info.phase_index == 2
+        assert request_info.profiling_index == 1
+        assert request_info.phase_name == "second-profiling"
+        assert request_info.phase_kind == "profiling"
+
+
+@pytest.mark.asyncio
+class TestEmitCreditFailureRecord:
+    async def test_emit_credit_failure_record_plumbs_phase_fields(
+        self,
+        mock_worker,
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                profiling_index=1,
+                phase_name="second-profiling",
+                phase_kind="profiling",
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+            error=ErrorDetails(message="boom", type="CreditProcessingError", code=500),
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+
+        await mock_worker._emit_credit_failure_record(credit_context)
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.request_info.phase_index == 2
+        assert record.request_info.profiling_index == 1
+        assert record.request_info.phase_name == "second-profiling"
+        assert record.request_info.phase_kind == "profiling"
 
 
 # --- Fixture for CreditContext ---
@@ -495,6 +743,7 @@ def sample_credit_context() -> CreditContext:
         credit=Credit(
             id=1,
             phase=CreditPhase.PROFILING,
+            phase_index=2,
             conversation_id="test-conv-123",
             x_correlation_id="test-correlation-id",
             turn_index=0,
@@ -562,6 +811,82 @@ class TestRetrieveConversation:
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
 
 
+@pytest.mark.asyncio
+class TestReleaseAndEvictForTerminal:
+    """Test suite for Worker's _release_and_evict_for_terminal method."""
+
+    async def test_release_and_evict_for_terminal_evicts_session(
+        self, mock_worker, sample_credit_context
+    ):
+        """A terminal eviction removes the (non-fork) session from the session manager."""
+        credit = sample_credit_context.credit
+        mock_worker.session_manager = MagicMock()
+        mock_worker.session_manager.get.return_value = None
+
+        mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
+
+        mock_worker.session_manager.evict.assert_called_once_with(
+            credit.x_correlation_id
+        )
+
+
+_OVERFLOW_BODY = "This model's maximum context length is 8192 tokens"
+
+
+class TestTerminalContextOverflowClassifier:
+    """``_is_terminal_context_overflow`` classifies a context-overflow error on a non-final, non-cancelled turn as terminal, but not final-turn or cancelled returns."""
+
+    @pytest.mark.parametrize(
+        "is_final, cancelled, error, expected",
+        [
+            param(False, False, _OVERFLOW_BODY, True, id="nonfinal-overflow"),
+            param(False, False, "connection reset by peer", False, id="nonfinal-plain-error"),
+            param(False, False, None, False, id="nonfinal-no-error"),
+            param(True, False, _OVERFLOW_BODY, False, id="final-turn"),
+            param(False, True, _OVERFLOW_BODY, False, id="cancelled"),
+        ],
+    )  # fmt: skip
+    def test_classifier(self, is_final, cancelled, error, expected) -> None:
+        credit = MagicMock(is_final_turn=is_final)
+        ctx = MagicMock(cancelled=cancelled, error=error)
+        assert _is_terminal_context_overflow(credit, ctx) is expected
+
+
+class TestTerminalDisposition:
+    """Every terminal disposition (final turn, cancellation, terminal context overflow) routes to ``_release_and_evict_for_terminal``; a non-final plain error does not."""
+
+    def _dispatch_terminal(
+        self, *, is_final: bool, cancelled: bool, error
+    ) -> MagicMock:
+        """Drive the real terminal-disposition gate on a mock worker."""
+        worker = MagicMock()
+        worker._release_and_evict_for_terminal = Mock()
+        credit = MagicMock(is_final_turn=is_final)
+        ctx = MagicMock(cancelled=cancelled, error=error)
+        Worker._handle_terminal_disposition.__get__(worker)(credit, ctx, "conv-X")
+        return worker
+
+    def test_final_turn_evicts(self) -> None:
+        worker = self._dispatch_terminal(is_final=True, cancelled=False, error=None)
+        worker._release_and_evict_for_terminal.assert_called_once()
+
+    def test_cancelled_evicts(self) -> None:
+        worker = self._dispatch_terminal(is_final=False, cancelled=True, error=None)
+        worker._release_and_evict_for_terminal.assert_called_once()
+
+    def test_terminal_context_overflow_evicts(self) -> None:
+        worker = self._dispatch_terminal(
+            is_final=False, cancelled=False, error=_OVERFLOW_BODY
+        )
+        worker._release_and_evict_for_terminal.assert_called_once()
+
+    def test_nonfinal_plain_error_does_not_evict(self) -> None:
+        worker = self._dispatch_terminal(
+            is_final=False, cancelled=False, error="connection reset by peer"
+        )
+        worker._release_and_evict_for_terminal.assert_not_called()
+
+
 # --- Payload Bytes Fast Path Tests ---
 
 
@@ -580,7 +905,7 @@ class TestPayloadBytesFastPath:
         )
 
         assert handled is False
-        mock_worker._dataset_client.get_payload_bytes.assert_not_called()
+        mock_worker._dataset_client.get_payload_turn.assert_not_called()
 
     async def test_returns_false_for_dag_descendants(self, mock_worker):
         mock_worker._is_payload_bytes = True
@@ -605,7 +930,7 @@ class TestPayloadBytesFastPath:
         )
 
         assert handled is False
-        mock_worker._dataset_client.get_payload_bytes.assert_not_called()
+        mock_worker._dataset_client.get_payload_turn.assert_not_called()
 
     async def test_returns_false_when_no_payload_for_turn(
         self, mock_worker, sample_credit_context
@@ -613,14 +938,14 @@ class TestPayloadBytesFastPath:
         """A missing per-turn payload defers to the normal session path."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
-        mock_worker._dataset_client.get_payload_bytes.return_value = None
+        mock_worker._dataset_client.get_payload_turn.return_value = None
 
         handled = await mock_worker._try_payload_bytes_fast_path(
             sample_credit_context, "x-req-3", None
         )
 
         assert handled is False
-        mock_worker._dataset_client.get_payload_bytes.assert_awaited_once_with(
+        mock_worker._dataset_client.get_payload_turn.assert_awaited_once_with(
             "test-conv-123", 0
         )
 
@@ -629,7 +954,9 @@ class TestPayloadBytesFastPath:
     ):
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
-        mock_worker._dataset_client.get_payload_bytes.return_value = b'{"p": 1}'
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=b'{"p": 1}'
+        )
 
         error_record = RequestRecord(
             timestamp_ns=1,
@@ -639,6 +966,7 @@ class TestPayloadBytesFastPath:
         )
         mock_worker.inference_client.send_request = AsyncMock(return_value=error_record)
         mock_worker._send_inference_result_message = AsyncMock()
+        mock_worker._process_credit_with_session = AsyncMock()
 
         handled = await mock_worker._try_payload_bytes_fast_path(
             sample_credit_context, "x-req-4", None
@@ -646,8 +974,153 @@ class TestPayloadBytesFastPath:
 
         assert handled is True
         assert sample_credit_context.error == error_record.error
+        assert sample_credit_context.record_emitted is True
         mock_worker._send_inference_result_message.assert_awaited_once_with(
             error_record
         )
         sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
         assert sent_request_info.payload_bytes == b'{"p": 1}'
+        # The fast path handled the credit; the session path never ran.
+        mock_worker._process_credit_with_session.assert_not_awaited()
+
+    async def test_successful_fast_path_sets_record_emitted(
+        self, mock_worker, sample_credit_context
+    ):
+        """Lockstep guard must not emit a duplicate failure record after success."""
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=b'{"p": 1}'
+        )
+
+        success_record = RequestRecord(
+            timestamp_ns=1,
+            start_perf_ns=1,
+            end_perf_ns=2,
+        )
+        mock_worker.inference_client.send_request = AsyncMock(
+            return_value=success_record
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+
+        assert sample_credit_context.record_emitted is False
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            sample_credit_context, "x-req-5", None
+        )
+
+        assert handled is True
+        assert sample_credit_context.record_emitted is True
+        assert sample_credit_context.error is None
+        mock_worker._send_inference_result_message.assert_awaited_once_with(
+            success_record
+        )
+
+    async def test_fast_path_turn_carries_max_tokens_and_timestamp(
+        self, mock_worker, sample_credit_context
+    ):
+        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent."""
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        payload = b'{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=payload,
+            max_tokens=64,
+            timestamp=1234.5,
+        )
+
+        success_record = RequestRecord(
+            timestamp_ns=1,
+            start_perf_ns=1,
+            end_perf_ns=2,
+        )
+        mock_worker.inference_client.send_request = AsyncMock(
+            return_value=success_record
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            sample_credit_context, "x-req-scalars", None
+        )
+
+        assert handled is True
+        sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
+        assert sent_request_info.payload_bytes == payload
+        assert len(sent_request_info.turns) == 1
+        assert sent_request_info.turns[0].max_tokens == 64
+        assert sent_request_info.turns[0].timestamp == 1234.5
+
+    async def test_retrieve_conversation_for_session_restores_scalars(
+        self, mock_worker, sample_credit_context
+    ):
+        """Session-path reconstruction must restore max_tokens and timestamp."""
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=b'{"max_completion_tokens":32,"messages":[]}',
+            max_tokens=32,
+            timestamp=99,
+        )
+        mock_worker.session_manager = MagicMock()
+        mock_worker.session_manager.default_context_mode = None
+
+        conversation = await mock_worker._retrieve_conversation_for_session(
+            credit_context=sample_credit_context
+        )
+
+        assert len(conversation.turns) == 1
+        assert conversation.turns[0].max_tokens == 32
+        assert conversation.turns[0].timestamp == 99
+        assert conversation.turns[0].raw_payload == {
+            "max_completion_tokens": 32,
+            "messages": [],
+        }
+
+
+@pytest.mark.asyncio
+class TestMakeFirstTokenCallback:
+    """Coverage for the REAL Worker._make_first_token_callback factory."""
+
+    async def test_returns_none_when_prefill_concurrency_disabled(
+        self, mock_worker, sample_credit_context
+    ):
+        mock_worker._prefill_concurrency_enabled = False
+        assert mock_worker._make_first_token_callback(sample_credit_context) is None
+
+    async def test_callback_skips_meaningless_content(
+        self, monkeypatch, mock_worker, sample_credit_context
+    ):
+        mock_worker._prefill_concurrency_enabled = True
+        mock_worker.credit_return_push_client = AsyncMock()
+        setup_mock_endpoint(mock_worker, monkeypatch, None)
+
+        callback = mock_worker._make_first_token_callback(sample_credit_context)
+        assert callback is not None
+
+        result = await callback(50_000_000, SSEMessage(perf_ns=100_000_000))
+
+        assert result is False
+        assert sample_credit_context.first_token_sent is False
+        mock_worker.credit_return_push_client.send.assert_not_called()
+
+    async def test_callback_sends_first_token_on_meaningful_content(
+        self, monkeypatch, mock_worker, sample_credit_context
+    ):
+        mock_worker._prefill_concurrency_enabled = True
+        mock_worker.credit_return_push_client = AsyncMock()
+        setup_mock_endpoint(
+            mock_worker,
+            monkeypatch,
+            ParsedResponse(perf_ns=100_000_000, data=TextResponseData(text="hi")),
+        )
+
+        callback = mock_worker._make_first_token_callback(sample_credit_context)
+        assert callback is not None
+
+        result = await callback(50_000_000, SSEMessage(perf_ns=100_000_000))
+
+        assert result is True
+        assert sample_credit_context.first_token_sent is True
+        sent = mock_worker.credit_return_push_client.send.call_args.args[0]
+        assert sent.credit_id == sample_credit_context.credit.id
+        assert sent.phase_index == sample_credit_context.credit.phase_index
+        assert sent.ttft_ns == 50_000_000

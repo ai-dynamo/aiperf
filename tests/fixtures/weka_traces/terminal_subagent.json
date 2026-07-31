@@ -1,0 +1,10 @@
+{
+  "id": "trace_term",
+  "models": ["claude-opus-4-5-20251101"],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "requests": [
+    {"t": 0.0, "type": "n", "model": "claude-opus-4-5-20251101", "in": 100, "out": 10, "hash_ids": [1], "input_types": ["text"], "output_types": ["text"], "stop": "tool_use"},
+    {"t": 1.0, "type": "subagent", "agent_id": "agent_term", "subagent_type": "Explore", "duration_ms": 100, "total_tokens": 10, "tool_use_count": 1, "status": "completed", "requests": [{"t": 0.0, "type": "n", "model": "claude-haiku-4-5-20251001", "in": 10, "out": 5, "hash_ids": [20]}], "models": ["claude-haiku-4-5-20251001"]}
+  ]
+}

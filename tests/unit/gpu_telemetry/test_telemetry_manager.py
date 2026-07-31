@@ -215,7 +215,7 @@ class TestCallbackFunctions:
         assert isinstance(call_args, TelemetryRecordsMessage)
         assert call_args.service_id == "test_manager"
         assert call_args.collector_id == "test_collector"
-        assert call_args.dcgm_url == "http://localhost:9400/metrics"
+        assert call_args.telemetry_source_url == "http://localhost:9400/metrics"
         assert call_args.records == sample_telemetry_records
         assert call_args.error is None
 
@@ -274,7 +274,7 @@ class TestCallbackFunctions:
         assert isinstance(call_args, TelemetryRecordsMessage)
         assert call_args.service_id == "test_manager"
         assert call_args.collector_id == "test_collector"
-        assert call_args.dcgm_url == "http://localhost:9400/metrics"
+        assert call_args.telemetry_source_url == "http://localhost:9400/metrics"
         assert call_args.records == []
         assert call_args.error == error_details
 

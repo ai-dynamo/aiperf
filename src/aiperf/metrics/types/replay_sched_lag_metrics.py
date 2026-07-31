@@ -73,7 +73,8 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
     only differences between them are meaningful; see the module docstring.
 
     Formula:
-        Offset = RequestRecord.timestamp_ns - Turn.timestamp * NANOS_PER_MILLIS
+        Offset = RequestRecord.timestamp_ns
+                 - RecordContext.scheduled_send_ms * NANOS_PER_MILLIS
     """
 
     tag = "replay_send_schedule_offset"

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.messages import ProfileCancelCommand
 from aiperf.common.models import CreditPhaseStats
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -72,4 +73,12 @@ class TestPhasePublisher:
         mock_pub_client.publish.assert_called_once()
         msg = mock_pub_client.publish.call_args[0][0]
         assert isinstance(msg, CreditsCompleteMessage)
+        assert msg.service_id == "tm-001"
+
+    async def test_publish_profile_cancel(self, mock_pub_client: MagicMock) -> None:
+        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        await pub.publish_profile_cancel()
+        mock_pub_client.publish.assert_called_once()
+        msg = mock_pub_client.publish.call_args[0][0]
+        assert isinstance(msg, ProfileCancelCommand)
         assert msg.service_id == "tm-001"

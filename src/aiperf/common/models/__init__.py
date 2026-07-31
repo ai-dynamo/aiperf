@@ -21,6 +21,7 @@ from aiperf.common.models.dataset_models import (
     InputsFile,
     Media,
     MemoryMapClientMetadata,
+    ReplayTurnReference,
     SessionPayloads,
     Text,
     Turn,
@@ -131,6 +132,7 @@ from aiperf.common.models.server_metrics_models import (
     TimeRangeFilter,
 )
 from aiperf.common.models.service_models import ServiceRunInfo
+from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.telemetry_models import (
     GpuMetadata,
     GpuMetricTimeSeries,
@@ -208,6 +210,7 @@ __all__ = [
     "JsonMetricResult",
     "Media",
     "MemoryMapClientMetadata",
+    "ReplayTurnReference",
     "MetricFamily",
     "MetricRecordInfo",
     "MetricRecordMetadata",
@@ -252,6 +255,7 @@ __all__ = [
     "ServiceRunInfo",
     "SessionPayloads",
     "SlimRecord",
+    "SpecDecodeAcceptanceRecord",
     "TelemetryExportData",
     "TelemetryHierarchy",
     "TelemetryMetrics",

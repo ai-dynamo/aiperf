@@ -60,7 +60,7 @@ def sample_telemetry_record() -> TelemetryRecord:
     """Create a sample TelemetryRecord with typical values."""
     return make_telemetry_record(
         timestamp_ns=1000000000,
-        dcgm_url="http://node1:9401/metrics",
+        telemetry_source_url="http://node1:9401/metrics",
         gpu_index=0,
         gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
         gpu_model_name="NVIDIA RTX 6000 Ada Generation",
@@ -108,11 +108,14 @@ class TestGPUTelemetryAccumulator:
 
         await processor.process_telemetry_record(sample_telemetry_record)
 
-        dcgm_url = sample_telemetry_record.dcgm_url
+        telemetry_source_url = sample_telemetry_record.telemetry_source_url
         gpu_uuid = sample_telemetry_record.gpu_uuid
 
-        assert dcgm_url in processor._hierarchy.dcgm_endpoints
-        assert gpu_uuid in processor._hierarchy.dcgm_endpoints[dcgm_url]
+        assert telemetry_source_url in processor._hierarchy.telemetry_source_endpoints
+        assert (
+            gpu_uuid
+            in processor._hierarchy.telemetry_source_endpoints[telemetry_source_url]
+        )
 
     @pytest.mark.asyncio
     async def test_get_hierarchy(
@@ -134,10 +137,15 @@ class TestGPUTelemetryAccumulator:
         hierarchy = processor._hierarchy
 
         assert isinstance(hierarchy, TelemetryHierarchy)
-        assert sample_telemetry_record.dcgm_url in hierarchy.dcgm_endpoints
+        assert (
+            sample_telemetry_record.telemetry_source_url
+            in hierarchy.telemetry_source_endpoints
+        )
         assert (
             sample_telemetry_record.gpu_uuid
-            in hierarchy.dcgm_endpoints[sample_telemetry_record.dcgm_url]
+            in hierarchy.telemetry_source_endpoints[
+                sample_telemetry_record.telemetry_source_url
+            ]
         )
 
     @pytest.mark.asyncio
@@ -156,7 +164,7 @@ class TestGPUTelemetryAccumulator:
         for i in range(5):
             record = make_telemetry_record(
                 timestamp_ns=1000000000 + i * 1000000,
-                dcgm_url=sample_telemetry_record.dcgm_url,
+                telemetry_source_url=sample_telemetry_record.telemetry_source_url,
                 gpu_index=sample_telemetry_record.gpu_index,
                 gpu_uuid=sample_telemetry_record.gpu_uuid,
                 gpu_model_name=sample_telemetry_record.gpu_model_name,
@@ -196,7 +204,7 @@ class TestGPUTelemetryAccumulator:
             gpu_model_name="Test GPU",
         )
         mock_telemetry_data = GpuTelemetryData(metadata=mock_metadata)
-        processor._hierarchy.dcgm_endpoints = {
+        processor._hierarchy.telemetry_source_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-12345678": mock_telemetry_data,
             }
@@ -236,7 +244,7 @@ class TestGPUTelemetryAccumulator:
             "Unexpected error"
         )
 
-        processor._hierarchy.dcgm_endpoints = {
+        processor._hierarchy.telemetry_source_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-87654321": mock_telemetry_data,
             }
@@ -297,7 +305,7 @@ class TestGPUTelemetryAccumulator:
 
         mock_telemetry_data.get_metric_result.side_effect = side_effect_func
 
-        processor._hierarchy.dcgm_endpoints = {
+        processor._hierarchy.telemetry_source_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-mixed-results": mock_telemetry_data,
             }

@@ -111,8 +111,8 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
         assert result.json.telemetry_data.endpoints is not None
         assert len(result.json.telemetry_data.endpoints) > 0
 
-        for dcgm_url in result.json.telemetry_data.endpoints:
-            endpoint_data = result.json.telemetry_data.endpoints[dcgm_url]
+        for telemetry_source_url in result.json.telemetry_data.endpoints:
+            endpoint_data = result.json.telemetry_data.endpoints[telemetry_source_url]
             assert endpoint_data.gpus is not None
             assert len(endpoint_data.gpus) > 0
 
@@ -197,8 +197,8 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
         assert result.has_gpu_telemetry
         assert result.json.telemetry_data.endpoints is not None
 
-        for dcgm_url in result.json.telemetry_data.endpoints:
-            endpoint_data = result.json.telemetry_data.endpoints[dcgm_url]
+        for telemetry_source_url in result.json.telemetry_data.endpoints:
+            endpoint_data = result.json.telemetry_data.endpoints[telemetry_source_url]
             for gpu_data in endpoint_data.gpus.values():
                 metric_names = list(gpu_data.metrics.keys())
                 unique_metric_names = set(metric_names)
@@ -243,8 +243,8 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
         assert result.request_count > 0
         assert result.has_gpu_telemetry
 
-        for dcgm_url in result.json.telemetry_data.endpoints:
-            endpoint_data = result.json.telemetry_data.endpoints[dcgm_url]
+        for telemetry_source_url in result.json.telemetry_data.endpoints:
+            endpoint_data = result.json.telemetry_data.endpoints[telemetry_source_url]
             for gpu_data in endpoint_data.gpus.values():
                 assert "nvidia_sm_clock" in gpu_data.metrics
 

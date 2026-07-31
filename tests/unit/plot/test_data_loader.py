@@ -1161,7 +1161,7 @@ class TestDataLoaderLoadRunWithGPUTelemetry:
             "nvidia_temperature",
             "sm_clock_frequency",
             "memory_clock_frequency",
-            "dcgm_url",
+            "telemetry_source_url",
             "gpu_uuid",
             "hostname",
         ]
@@ -1304,7 +1304,7 @@ class TestDataLoaderLoadGPUTelemetryJSONL:
         # Verify top-level metadata fields are present
         assert "timestamp_ns" in df.columns
         assert "gpu_index" in df.columns
-        assert "dcgm_url" in df.columns
+        assert "telemetry_source_url" in df.columns
         assert "gpu_uuid" in df.columns
         assert "hostname" in df.columns
 
