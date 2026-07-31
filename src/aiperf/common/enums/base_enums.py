@@ -22,13 +22,13 @@ class CaseInsensitiveStrEnum(str, Enum):
     lookup functionality for its members.
     """
 
-    def __init__(self, *args: object) -> None:
+    def __init__(self: Self, *args: object) -> None:
         # Comparisons and hashing sit on hot paths (per-SSE-chunk field checks
         # at >1M/s under load); normalize once per member instead of per call.
         self._norm_value_ = _normalize_name(self.value)
         self._norm_hash_ = hash(self._norm_value_)
 
-    def _norm_value(self) -> str:
+    def _norm_value(self: Self) -> str:
         # Lazy fallback for members created outside Enum construction
         # (e.g. dynamically registered custom members), which skip __init__.
         norm = self.__dict__.get("_norm_value_")
@@ -43,7 +43,7 @@ class CaseInsensitiveStrEnum(str, Enum):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}.{self.name}"
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self: Self, other: object) -> bool:
         if self is other:
             return True
         if isinstance(other, CaseInsensitiveStrEnum):
@@ -60,7 +60,7 @@ class CaseInsensitiveStrEnum(str, Enum):
             )
         return super().__eq__(other)
 
-    def __hash__(self) -> int:
+    def __hash__(self: Self) -> int:
         norm_hash = self.__dict__.get("_norm_hash_")
         if norm_hash is None:
             norm_hash = hash(self._norm_value())

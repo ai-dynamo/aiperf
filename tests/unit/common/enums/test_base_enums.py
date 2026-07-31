@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for CaseInsensitiveStrEnum and dash/underscore normalization."""
 
+from typing import Self
+
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -295,29 +297,29 @@ class TestEdgeCases:
 class TestNormalizationCaching:
     """Tests for the per-member cached normalized value/hash hot-path."""
 
-    def test_norm_value_cached_on_construction(self):
+    def test_norm_value_cached_on_construction(self: Self) -> None:
         """Members precompute the normalized value once during construction."""
         assert SampleEnum.FOO_BAR.__dict__.get("_norm_value_") == "foo_bar"
         assert DashValueEnum.MY_VALUE.__dict__.get("_norm_value_") == "my_value"
 
-    def test_norm_hash_cached_on_construction(self):
+    def test_norm_hash_cached_on_construction(self: Self) -> None:
         """Members precompute the normalized hash once during construction."""
         member = DashValueEnum.MY_VALUE
         assert member.__dict__.get("_norm_hash_") == hash("my_value")
         assert hash(member) == hash("my_value")
 
-    def test_exact_match_fast_path(self):
+    def test_exact_match_fast_path(self: Self) -> None:
         """An exact string match compares equal without normalization work."""
         assert SampleEnum.FOO_BAR == "foo_bar"
         # Non-exact but normalized-equal still matches via the fallback.
         assert SampleEnum.FOO_BAR == "FOO-BAR"
 
-    def test_identity_fast_path(self):
+    def test_identity_fast_path(self: Self) -> None:
         """A member is equal to itself via the identity short-circuit."""
         member = SampleEnum.ALPHA
         assert member == member
 
-    def test_lazy_norm_value_fallback(self):
+    def test_lazy_norm_value_fallback(self: Self) -> None:
         """A member missing the cached attr recomputes and caches lazily.
 
         A non-exact (normalized-equal) compare misses the exact-match fast path
@@ -332,7 +334,7 @@ class TestNormalizationCaching:
         assert hash(member) == hash("beta")
         assert member.__dict__.get("_norm_hash_") == hash("beta")
 
-    def test_enum_vs_enum_uses_cached_norm(self):
+    def test_enum_vs_enum_uses_cached_norm(self: Self) -> None:
         """Cross-enum equality still holds using cached normalized values."""
 
         class EnumA(CaseInsensitiveStrEnum):
@@ -344,7 +346,7 @@ class TestNormalizationCaching:
         assert EnumA.ITEM == EnumB.ITEM
         assert hash(EnumA.ITEM) == hash(EnumB.ITEM)
 
-    def test_non_str_enum_not_equal(self):
+    def test_non_str_enum_not_equal(self: Self) -> None:
         """An Enum whose value is not a str does not compare equal."""
         from enum import Enum
 
