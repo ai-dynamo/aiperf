@@ -15,6 +15,7 @@ Covers the delayed-join semantics:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -229,11 +230,9 @@ async def test_join_deadline_uses_shared_scheduler_idle_cap() -> None:
     assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
     assert scheduler.pending_count == 1
     assert scheduler.cap_pending_delay(0.0) == pytest.approx(60.0, abs=0.02)
-    handle_id, (handle, deadline_coro) = next(iter(scheduler._handles.items()))
-    assert handle.when() - scheduler._loop.time() <= 0.02
-    scheduler._handles.pop(handle_id)
-    handle.cancel()
-    await deadline_coro
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert scheduler.pending_count == 0
     issuer.dispatch_join_turn.assert_not_awaited()
 
     await orch.on_child_leaf_reached("corr-child")

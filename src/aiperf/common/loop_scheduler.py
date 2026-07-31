@@ -320,6 +320,18 @@ class LoopScheduler:
             return 0.0
 
         now = self._loop.time()
+        # ``cap_pending_delay(0)`` deliberately moves due work into the
+        # event loop's ready queue with ``call_soon``.  A second cap may run
+        # before that callback gets a turn.  Such an asyncio.Handle has no
+        # ``when()`` and already represents the minimum possible delay, so
+        # there is nothing left to advance.
+        # Use the timer protocol rather than ``isinstance(TimerHandle)``:
+        # uvloop supplies its own compatible timer-handle implementation.
+        if any(
+            not callable(getattr(handle, "when", None))
+            for handle, _ in self._handles.values()
+        ):
+            return 0.0
         earliest = min(handle.when() for handle, _ in self._handles.values())
         shift_sec = earliest - now - max_delay_sec
         if shift_sec <= 0:
@@ -331,9 +343,18 @@ class LoopScheduler:
             target = max(now, handle.when() - shift_sec)
             handle.cancel()
             handle_container = [None]
-            replacement = self._loop.call_at(
-                target, self._safe_callback, handle_container, coro
-            )
+            if target <= now:
+                # A timer advanced exactly to ``loop.time()`` can be stranded
+                # in some event-loop implementations until another timed wake
+                # occurs. Queue it as ready work explicitly; this also states
+                # the max_delay_sec=0 contract directly.
+                replacement = self._loop.call_soon(
+                    self._safe_callback, handle_container, coro
+                )
+            else:
+                replacement = self._loop.call_at(
+                    target, self._safe_callback, handle_container, coro
+                )
             handle_container[0] = replacement
             self._track_handle_and_return_id(replacement, coro)
         return shift_sec

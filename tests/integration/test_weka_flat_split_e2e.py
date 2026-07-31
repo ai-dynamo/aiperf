@@ -711,6 +711,55 @@ async def test_issue_1231_shape_preserves_parent_replay_deadline(
     )
 
 
+async def test_system_idle_cap_advances_issue_1231_join_without_bypassing_child(
+    tmp_path: Path, mock_server_factory: MockServerFactory
+) -> None:
+    """The global idle guard advances a gated replay deadline, never its join."""
+    corpus = _write_issue_1231_trace(tmp_path / "traces")
+    async with mock_server_factory(ttft=30.0, itl=0.0, workers=2) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=1.0,
+            concurrency=1,
+            extra_args=[
+                "--scenario",
+                "inferencex-agentx-mvp",
+                "--unsafe-override",
+                "--system-idle-gap-cap-seconds",
+                "0.05",
+            ],
+        )
+    _assert_success(result, "issue #1231 timing shape with global idle cap")
+
+    complete = [
+        play
+        for play in _collect_plays(result)
+        if play.trace_id == "trace_issue_1231"
+        and len(play.root) == 2
+        and sorted(len(records) for records in play.children.values()) == [1]
+    ]
+    assert complete, "no complete replay of the capped #1231 join shape"
+    play = complete[0]
+    previous, gated = play.root
+    child_last = next(iter(play.children.values()))[-1]
+
+    assert gated.request_start_ns >= child_last.request_end_ns, (
+        "the system-idle cap bypassed the required child-completion gate"
+    )
+    parent_gap_ms = (gated.request_start_ns - previous.request_end_ns) / 1_000_000
+    post_child_gap_ms = (gated.request_start_ns - child_last.request_end_ns) / 1_000_000
+    assert 35.0 <= post_child_gap_ms <= 100.0, (
+        f"capped join resumed {post_child_gap_ms:.1f}ms after the child; "
+        "expected the 50ms whole-system idle guard within process jitter"
+    )
+    assert parent_gap_ms < 173.0, (
+        f"capped join still waited {parent_gap_ms:.1f}ms from its parent; "
+        "the replay deadline was not advanced"
+    )
+
+
 async def test_background_worker_chain_runs_after_root_and_drains_cleanly(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:

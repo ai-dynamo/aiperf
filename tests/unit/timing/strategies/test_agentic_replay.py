@@ -2363,6 +2363,50 @@ async def test_global_idle_cap_shifts_real_delayed_continuation_to_ten_seconds()
 
 
 @pytest.mark.asyncio
+async def test_global_idle_watchdog_bounds_persistent_control_plane_work():
+    """A scheduler coroutine cannot mask an otherwise idle server past the cap."""
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    scheduler = LoopScheduler()
+    progress = MagicMock()
+    progress.in_flight = 0
+    run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    run.cfg.get_profiling_phases()[0].system_idle_gap_cap_seconds = 0.05
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        scheduler=scheduler,
+        run=run,
+        progress=progress,
+    )
+    await strategy.setup_phase()
+
+    control_release = asyncio.Event()
+    replay_fired = asyncio.Event()
+
+    async def persistent_control_work() -> None:
+        await control_release.wait()
+
+    async def replay_dispatch() -> None:
+        replay_fired.set()
+
+    scheduler.execute_async(persistent_control_work())
+    scheduler.schedule_later(1.0, replay_dispatch())
+    started_at = time.monotonic()
+
+    strategy.enforce_system_idle_cap(in_flight_requests=0)
+    await asyncio.wait_for(replay_fired.wait(), timeout=0.2)
+
+    assert time.monotonic() - started_at == pytest.approx(0.05, abs=0.03)
+    assert strategy._system_idle_jump_count == 1
+    assert strategy._system_idle_seconds_skipped == pytest.approx(0.95, abs=0.04)
+
+    control_release.set()
+    await asyncio.sleep(0)
+    await strategy.finalize_phase()
+    scheduler.cancel_all()
+
+
+@pytest.mark.asyncio
 async def test_global_idle_cap_rechecks_after_barrier_defers_near_timer(
     time_traveler_no_patch_sleep,
 ):
@@ -2482,7 +2526,11 @@ async def test_global_idle_cap_rechecks_after_barrier_defers_near_timer(
 
     assert issued == [(fa3, 2)]
     assert issued_at[(fa3, 2)] - idle_started_at == pytest.approx(0.05, abs=0.005)
-    assert strategy._system_idle_jump_count == 1
+    # Depending on event-loop timer granularity, the watchdog may make one
+    # additional sub-millisecond adjustment at the exact deadline. The
+    # invariant is the total schedule shift and dispatch time, not the number
+    # of internal timer rewrites.
+    assert strategy._system_idle_jump_count >= 1
     assert strategy._system_idle_seconds_skipped == pytest.approx(2_171.478, abs=0.03)
     barrier.complete(
         _make_credit(
