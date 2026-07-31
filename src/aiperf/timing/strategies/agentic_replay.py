@@ -1633,10 +1633,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         per-lane start offset differs.
 
         Gated parents (``waiting_on_children``) are not dispatched here; their
-        join is seeded with the orchestrator and their gated turn fires when
-        the blocking children complete during PROFILING. No stream completes
-        during WARMUP (warmup only ever sends a non-terminal turn), so there
-        is no warmup-continuation or terminal-root recycle step.
+        join is seeded with the orchestrator and their gated turn fires at the
+        later of its recorded replay deadline and the blocking-child completion
+        frontier. No stream completes during WARMUP (warmup only ever sends a
+        non-terminal turn), so there is no warmup-continuation or terminal-root
+        recycle step.
         """
         snapshot = self._get_snapshot(trajectory)
         for state in snapshot.states:
@@ -1647,13 +1648,39 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 lane,
             )
 
+        dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
+        # Compute one normalized replay timeline for dispatchable streams and
+        # gated parents alike. A parent's join deadline must use the same
+        # leading-idle shift / optional burst anchor as every other request in
+        # its trajectory; only its child gate is additional.
+        leading_shift_ms = self._leading_idle_shift_ms(
+            s.next_dispatch_offset_ms for s in dispatchable
+        )
+        offset_by_corr = {
+            s.x_correlation_id: s.next_dispatch_offset_ms - leading_shift_ms
+            for s in snapshot.states
+        }
+        if self._burst_phase_starts and dispatchable:
+            t0_offset_ms = min(
+                offset_by_corr[state.x_correlation_id] for state in dispatchable
+            )
+        else:
+            t0_offset_ms = 0.0
+
         if self.branch_orchestrator is not None:
             self.branch_orchestrator.seed_snapshot(
                 snapshot.states,
                 cache_bust_markers=self._session_marker,
+                join_release_delays_ms={
+                    state.x_correlation_id: max(
+                        0.0,
+                        offset_by_corr[state.x_correlation_id] - t0_offset_ms,
+                    )
+                    for state in snapshot.states
+                    if state.waiting_on_children
+                },
             )
 
-        dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
         # A lane needs its own session credit when it dispatches no
         # slot-acquiring depth-0 root credit at PROFILING start. Two cases:
         #   - rootless: the root's turns are all before t*, so the snapshot has
@@ -1725,17 +1752,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # Spread (default): t0 = 0, each lane fires at its (shifted) offset from
         # t*. Burst (--burst-phase-starts): t0 = the lane's min offset, anchoring
         # the earliest post-t* request at profiling-0.
-        leading_shift_ms = self._leading_idle_shift_ms(
-            s.next_dispatch_offset_ms for s in dispatchable
-        )
-        offset_by_corr = {
-            s.x_correlation_id: s.next_dispatch_offset_ms - leading_shift_ms
-            for s in dispatchable
-        }
-        if self._burst_phase_starts and offset_by_corr:
-            t0_offset_ms = min(offset_by_corr.values())
-        else:
-            t0_offset_ms = 0.0
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)

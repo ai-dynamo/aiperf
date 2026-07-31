@@ -70,11 +70,12 @@ def _req(
     api_time: float,
     out: int = 8,
     model: str = TRACE_MODEL,
+    request_type: str = "n",
 ) -> dict:
     """One hash-aligned top-level normal request (in == len(hash_ids) * 64)."""
     return {
         "t": t,
-        "type": "n",
+        "type": request_type,
         "model": model,
         "in": len(hash_ids) * BLOCK_SIZE,
         "out": out,
@@ -151,6 +152,38 @@ def _write_join_trace(target_dir: Path) -> Path:
         chain = [*chain, 10 + k]
     requests.append(_req(1.0, [1, 2, 3, 4], api_time=0.05))
     _write_trace(target_dir, "trace_join", requests)
+    return target_dir
+
+
+def _write_issue_1231_trace(target_dir: Path) -> Path:
+    """Scaled form of issue #1231's root-child-root join timing.
+
+    Source seconds are divided by 1000 so the integration test stays fast:
+    the previous root ends at 31.042ms, the child ends at 47.658ms, and the
+    gated root is due at 229.088ms. That preserves both the parent's 198.046ms
+    end-to-start delay and the source-aligned 181.430ms post-child residual.
+    """
+    _write_trace(
+        target_dir,
+        "trace_issue_1231",
+        [
+            _req(
+                0.0,
+                [1, 2, 3],
+                api_time=0.031042,
+                out=1,
+                request_type="s",
+            ),
+            _req(0.021181, [1, 2, 50, 51], api_time=0.026477, out=1),
+            _req(
+                0.229088,
+                [1, 2, 3, 4],
+                api_time=0.005489,
+                out=1,
+                request_type="s",
+            ),
+        ],
+    )
     return target_dir
 
 
@@ -414,12 +447,19 @@ def _sibling_children_overlap(plays: list[_Play]) -> bool:
     return False
 
 
-def _assert_complete_play_order_and_joins(plays: list[_Play]) -> None:
-    """Assert source turn order and every known synthetic SPAWN_JOIN frontier."""
+def _assert_complete_play_order_and_joins(
+    plays: list[_Play], *, assert_timing: bool = False
+) -> None:
+    """Assert source order, SPAWN_JOIN frontiers, and optional replay delays."""
     join_specs = {
         "trace_alpha": {1: ("fa:001",), 2: ("fa:000",)},
         "trace_beta": {1: ("fa:000", "fa:001")},
         "trace_gamma": {1: ("fa:000",)},
+    }
+    residual_delay_ms = {
+        "trace_alpha": {1: 980.0, 2: 530.0},
+        "trace_beta": {1: 900.0},
+        "trace_gamma": {1: 900.0},
     }
     checked_trace_ids: set[str] = set()
     for play in plays:
@@ -445,6 +485,19 @@ def _assert_complete_play_order_and_joins(plays: list[_Play]) -> None:
                 assert gated.request_start_ns >= child_last.request_end_ns, (
                     f"{play.trace_id}: root turn {root_turn_index} crossed "
                     f"SPAWN_JOIN before child {suffix} completed"
+                )
+            if assert_timing:
+                previous = play.root[root_turn_index - 1]
+                replay_gap_ms = (
+                    gated.request_start_ns - previous.request_end_ns
+                ) / 1_000_000.0
+                assert replay_gap_ms >= (
+                    residual_delay_ms[play.trace_id][root_turn_index] - 25.0
+                ), (
+                    f"{play.trace_id}: root turn {root_turn_index} replayed "
+                    f"after {replay_gap_ms:.1f}ms, shorter than its recorded "
+                    f"{residual_delay_ms[play.trace_id][root_turn_index]:.1f}ms "
+                    "end-to-start delay"
                 )
         checked_trace_ids.add(play.trace_id)
     assert checked_trace_ids == set(FANOUT_EXPECTED), (
@@ -500,6 +553,7 @@ async def test_fanout_dir_splits_and_replays_recorded_concurrency(
         f"{sorted(_play_signature(p) for p in complete)}; all plays: "
         f"{sorted(_play_signature(p) for p in plays)}"
     )
+    _assert_complete_play_order_and_joins(plays, assert_timing=True)
 
     # Recorded concurrency reproduced: two sibling worker sessions of one
     # play overlap in wall-clock (each request takes >= ttft=150ms and the
@@ -613,6 +667,48 @@ async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
     )
     assert branch_stats.parents_resumed >= 1, branch_stats
     assert branch_stats.children_errored == 0, branch_stats
+
+
+async def test_issue_1231_shape_preserves_parent_replay_deadline(
+    tmp_path: Path, mock_server_factory: MockServerFactory
+) -> None:
+    """The exact #1231 timing shape waits on replay time and child completion."""
+    corpus = _write_issue_1231_trace(tmp_path / "traces")
+    async with mock_server_factory(ttft=30.0, itl=0.0, workers=2) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=1.0,
+            concurrency=1,
+        )
+    _assert_success(result, "issue #1231 timing shape")
+
+    complete = [
+        play
+        for play in _collect_plays(result)
+        if play.trace_id == "trace_issue_1231"
+        and len(play.root) == 2
+        and sorted(len(records) for records in play.children.values()) == [1]
+    ]
+    assert complete, "no complete replay of the #1231 root-child-root shape"
+    play = complete[0]
+    previous, gated = play.root
+    child_last = next(iter(play.children.values()))[-1]
+
+    assert [record.source_outer_idx for record in play.root] == [0, 2]
+    assert child_last.source_outer_idx == 1
+    assert gated.request_start_ns >= child_last.request_end_ns
+    parent_gap_ms = (gated.request_start_ns - previous.request_end_ns) / 1_000_000
+    assert parent_gap_ms >= 173.0, (
+        f"gated parent replayed after {parent_gap_ms:.1f}ms; expected the "
+        "198.046ms recorded parent delay within scheduler tolerance"
+    )
+    post_child_gap_ms = (gated.request_start_ns - child_last.request_end_ns) / 1_000_000
+    assert post_child_gap_ms >= 140.0, (
+        f"gated parent resumed only {post_child_gap_ms:.1f}ms after the child; "
+        "the issue #1231 residual delay was dropped"
+    )
 
 
 async def test_background_worker_chain_runs_after_root_and_drains_cleanly(
