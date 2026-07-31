@@ -811,7 +811,8 @@ mod tests {
         merge_cell_inputs_json(&cell_dirs, dir.path(), &artifacts).unwrap();
 
         let merged: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(dir.path().join("inputs.json")).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(dir.path().join("inputs.json")).unwrap())
+                .unwrap();
         let ids: Vec<&str> = merged["data"]
             .as_array()
             .unwrap()

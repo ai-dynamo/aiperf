@@ -144,11 +144,7 @@ pub struct Endpoint {
     pub ssl_verify: bool,
     /// Unix-domain socket to dial instead of the URL host. The URL still supplies
     /// the request path and `Host` header.
-    #[serde(
-        default,
-        alias = "udsPath",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, alias = "udsPath", skip_serializing_if = "Option::is_none")]
     pub uds_path: Option<String>,
     /// Maximum concurrent connections.
     #[serde(default = "default_connection_limit")]
