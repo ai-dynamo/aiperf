@@ -101,11 +101,23 @@ pub struct GenaiPerfEnvelope {
     pub run_info: serde_json::Value,
 }
 
+/// Serde default for the summary-format toggles: both formats ship unless the
+/// authored `artifacts.summary` list narrows them.
+pub(crate) fn default_true() -> bool {
+    true
+}
+
 /// Aiperf-v1 summary sink policy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenaiPerf {
-    /// Whether `profile_export_aiperf.{json,csv}` are written.
+    /// Whether the sink runs at all (either format selected).
     pub enabled: bool,
+    /// Whether `profile_export_aiperf.json` is written.
+    #[serde(default = "crate::config::model::export::default_true")]
+    pub json: bool,
+    /// Whether `profile_export_aiperf.csv` is written.
+    #[serde(default = "crate::config::model::export::default_true")]
+    pub csv: bool,
     /// Per-tag display headers.
     pub header_map: BTreeMap<String, String>,
     /// Registered tags the file exporters drop (sorted).
@@ -243,6 +255,9 @@ pub struct WandbExport {
     /// W&B run tags (`--wandb-tag`), present when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Optional AIPerf datastore receiver URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_url: Option<String>,
 }
 
 /// Export policy; omitted sinks decode as disabled.
@@ -373,6 +388,8 @@ pub struct WandbParams {
     pub run_name: Option<String>,
     /// Run tags (`--wandb-tag`).
     pub tags: Vec<String>,
+    /// Optional AIPerf datastore receiver URL.
+    pub sync_url: Option<String>,
 }
 
 impl MlflowExport {
@@ -412,6 +429,7 @@ impl WandbExport {
             project: params.project.clone(),
             run_name: params.run_name.clone(),
             tags: (!params.tags.is_empty()).then(|| params.tags.clone()),
+            sync_url: params.sync_url.clone(),
         })
     }
 }
@@ -420,9 +438,12 @@ impl Export {
     /// Build the export policy for a run.
     ///
     /// `endpoint_type` selects the console title. Envelope values remain opaque.
+    ///
+    /// `summary_formats` is the authored `artifacts.summary` list; an empty list
+    /// means unauthored and ships both formats.
     pub fn build(
         endpoint_type: &str,
-        genai_perf_enabled: bool,
+        summary_formats: &[String],
         benchmark_id: &str,
         input_config: serde_json::Value,
         run_info: serde_json::Value,
@@ -433,9 +454,14 @@ impl Export {
             input_config,
             run_info,
         };
+        let unauthored = summary_formats.is_empty();
+        let json = unauthored || summary_formats.iter().any(|f| f == "json");
+        let csv = unauthored || summary_formats.iter().any(|f| f == "csv");
         Export {
             genai_perf: GenaiPerf {
-                enabled: genai_perf_enabled,
+                enabled: json || csv,
+                json,
+                csv,
                 header_map: META.header_map.clone(),
                 filtered_tags: META.filtered_tags.clone(),
                 scalar_tags: META.scalar_tags.clone(),

@@ -451,6 +451,9 @@ struct ArtifactsSection {
     slice_duration: Option<f64>,
     /// Per-record export formats (`[jsonl,csv,parquet]`) or `false` to disable.
     records: Option<RecordsFormats>,
+    /// Summary export formats (`[json,csv]`). Unauthored ships both.
+    #[serde(default)]
+    summary: Option<Vec<String>>,
     /// Emit the raw request/response JSONL.
     #[serde(default)]
     raw: bool,
@@ -1802,6 +1805,24 @@ impl Benchmark {
             Some(RecordsFormats::Disabled(_)) => Vec::new(),
             None => vec!["jsonl".to_string()],
         };
+        // `artifacts.summary`: an authored list narrows the summary artifacts, so
+        // an unknown format name must fail rather than silently ship both.
+        let summary_formats = match self.artifacts.as_ref().and_then(|a| a.summary.as_ref()) {
+            Some(v) => {
+                for f in v {
+                    anyhow::ensure!(
+                        f == "json" || f == "csv",
+                        "artifacts.summary: unknown format {f:?} (expected `json` or `csv`)"
+                    );
+                }
+                anyhow::ensure!(
+                    !v.is_empty(),
+                    "artifacts.summary: empty list; omit the key to keep both formats"
+                );
+                v.clone()
+            }
+            None => Vec::new(),
+        };
         let export_raw = self.artifacts.as_ref().is_some_and(|a| a.raw);
         let show_trace_timing = self.artifacts.as_ref().is_some_and(|a| a.show_trace_timing);
         let export_trace = self.artifacts.as_ref().is_some_and(|a| a.trace) || show_trace_timing;
@@ -1893,6 +1914,7 @@ impl Benchmark {
             reset_kv_cache,
             server_profiler,
             records_formats,
+            summary_formats,
             export_raw,
             export_trace,
             export_outputs_json,

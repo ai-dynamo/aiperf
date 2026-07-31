@@ -291,6 +291,9 @@ pub struct Inputs {
     /// Per-record export formats (`artifacts.records`; default `["jsonl"]`,
     /// empty = summary-only).
     pub records_formats: Vec<String>,
+    /// Summary-export formats (`artifacts.summary`); empty = unauthored, both
+    /// `json` and `csv` ship.
+    pub summary_formats: Vec<String>,
     /// Emit the raw request/response JSONL (`artifacts.raw`).
     pub export_raw: bool,
     /// Emit per-request HTTP trace columns (`artifacts.trace`).
@@ -1432,7 +1435,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     crate::config::redact::redact_input_config(&mut input_config);
     let mut export = crate::config::model::export::Export::build(
         &endpoint_type,
-        true,
+        &inputs.summary_formats,
         &benchmark_id,
         input_config.clone(),
         serde_json::json!({}),

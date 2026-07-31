@@ -40,8 +40,12 @@ use serde_json::{Map, Value};
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GenaiPerfExportConfig {
-    /// Emit the v1 summary JSON/CSV artifacts.
+    /// Emit the v1 summary artifacts at all (either format selected).
     pub enabled: bool,
+    /// Emit `<stem>_aiperf.json`.
+    pub json: bool,
+    /// Emit `<stem>_aiperf.csv`.
+    pub csv: bool,
     /// Filename stem for the compat artifacts (before the `_aiperf` suffix).
     pub stem: String,
     /// Display header by registered metric tag.
@@ -58,6 +62,8 @@ impl Default for GenaiPerfExportConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            json: true,
+            csv: true,
             stem: "profile_export".to_owned(),
             header_map: HashMap::new(),
             filtered_tags: HashSet::new(),
@@ -151,11 +157,16 @@ impl Exporter for GenaiPerfV1Exporter {
             anyhow::bail!("invalid genai-perf export stem {stem:?}: must be a bare filename stem");
         }
 
-        let json = render_json(report, &cfg.genai_perf);
-        let csv = render_csv(report, &cfg.genai_perf)?;
-
-        std::fs::write(artifact_dir.join(format!("{stem}_aiperf.json")), json)?;
-        std::fs::write(artifact_dir.join(format!("{stem}_aiperf.csv")), csv)?;
+        // Each format is gated on the authored `artifacts.summary` list: writing
+        // an unrequested artifact is as wrong as dropping a requested one.
+        if cfg.genai_perf.json {
+            let json = render_json(report, &cfg.genai_perf);
+            std::fs::write(artifact_dir.join(format!("{stem}_aiperf.json")), json)?;
+        }
+        if cfg.genai_perf.csv {
+            let csv = render_csv(report, &cfg.genai_perf)?;
+            std::fs::write(artifact_dir.join(format!("{stem}_aiperf.csv")), csv)?;
+        }
         Ok(())
     }
 }
