@@ -269,6 +269,9 @@ def sync_accuracy_prometheus(snapshot: object | None) -> None:
     """
     from aiperf_mock_server.accuracy import AccuracyLiveSnapshot
 
+    ACCURACY_TASK_MATCHED_TOTAL.clear()
+    ACCURACY_TASK_CORRECT_TOTAL.clear()
+    ACCURACY_TASK_RATIO.clear()
     if snapshot is None or not isinstance(snapshot, AccuracyLiveSnapshot):
         ACCURACY_MATCHED_TOTAL.set(0)
         ACCURACY_CORRECT_TOTAL.set(0)

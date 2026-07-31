@@ -149,6 +149,10 @@ def test_live_accuracy_endpoint_and_prometheus_reflect_served_requests(
     assert "aiperf_mock_accuracy_ratio 1.0" in metrics
     assert 'aiperf_mock_accuracy_task_correct_total{task="demo"} 3.0' in metrics
 
+    set_accuracy_state(None, None)
+    metrics = test_client.get("/metrics").text
+    assert 'aiperf_mock_accuracy_task_correct_total{task="demo"}' not in metrics
+
 
 def test_accuracy_endpoint_disabled_without_dataset(test_client: TestClient) -> None:
     status = test_client.get("/accuracy").json()
@@ -168,6 +172,20 @@ def test_adversarial_null_object_frame_is_served_in_stream(
         if '"object":null' in body or '"object": null' in body:
             saw_null = True
     assert saw_null
+
+
+def test_accuracy_does_not_override_embeddings(
+    test_client: TestClient, tmp_path: Path
+) -> None:
+    _load_accuracy(
+        tmp_path, '{"text": "known prompt", "ground_truth": "B"}', correct_rate=1.0
+    )
+    response = test_client.post(
+        "/v1/embeddings",
+        json={"model": "text-embedding", "input": "known prompt"},
+    )
+    assert response.status_code == 200
+    assert test_client.get("/accuracy").json()["matched"] == 0
 
 
 def test_accuracy_dataset_forces_workers_one() -> None:

@@ -395,6 +395,19 @@ class RequestCtx:
         return self.tokenized.reasoning_content_tokens
 
 
+_ACCURACY_GENERATION_ENDPOINTS = frozenset(
+    {
+        "/v1/chat/completions",
+        "/v1/messages",
+        "/v1/completions",
+        "/v1/responses",
+        "/generate",
+        "/generate_stream",
+        "/rag/api/prompt",
+    }
+)
+
+
 def make_ctx(
     request: RequestT,
     endpoint: str,
@@ -413,7 +426,11 @@ def make_ctx(
     tokenized = tokenize_request(request)
     request_id = _create_request_id(request)
     _maybe_record_request(request, endpoint, request_id, model)
-    null_object_chunk = _maybe_apply_accuracy(tokenized)
+    null_object_chunk = (
+        _maybe_apply_accuracy(tokenized)
+        if endpoint in _ACCURACY_GENERATION_ENDPOINTS
+        else False
+    )
 
     return RequestCtx(
         request_id=request_id,
