@@ -346,6 +346,93 @@ class TestAMDSMITelemetry:
         jsonl_files = list(result.artifacts_dir.glob("*gpu_telemetry*.jsonl"))
         assert len(jsonl_files) == 0, f"Unexpected GPU telemetry files: {jsonl_files}"
 
+    async def test_amd_derived_efficiency_metrics(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+    ) -> None:
+        """AMD energy-efficiency derived metrics are present and internally consistent.
+
+        Validates three cross-metric relationships that must hold by construction:
+          energy_per_output_token (mJ/tok) = total_energy (J) * 1000 / total_osl
+          energy_per_request (J/req)       = total_energy (J) / request_count
+          output_tokens_per_joule (tok/J)  = total_osl / total_energy (J)
+        """
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model nvidia/llama-3.1-nemotron-70b-instruct \
+                --url {aiperf_mock_server.url} \
+                --tokenizer builtin \
+                --endpoint-type chat \
+                --gpu-telemetry amdsmi \
+                --streaming \
+                --request-count 25 \
+                --concurrency 1 \
+                --workers-max 1
+            """
+        )
+        assert result.request_count == 25
+        assert result.has_gpu_telemetry
+
+        j = result.json
+        extra = j.model_extra or {}
+
+        def _m(name: str):
+            return getattr(j, name, None) or extra.get(name)
+
+        total_energy = _m("amd_total_gpu_energy")
+        energy_per_output_token = _m("amd_energy_per_output_token")
+        energy_per_request = _m("amd_energy_per_request")
+        output_tokens_per_joule = _m("amd_output_tokens_per_joule")
+
+        assert total_energy is not None, "amd_total_gpu_energy missing from JSON export"
+        assert energy_per_output_token is not None, (
+            "amd_energy_per_output_token missing"
+        )
+        assert energy_per_request is not None, "amd_energy_per_request missing"
+
+        total_energy_j: float = total_energy.avg
+        assert total_energy_j > 0, "Total AMD GPU energy must be positive"
+        assert energy_per_output_token.avg > 0
+        assert energy_per_request.avg > 0
+
+        # energy_per_output_token (mJ/tok) = total_energy_j * 1000 / total_osl
+        if j.total_osl and j.total_osl.avg and j.total_osl.avg > 0:
+            expected_mj_per_tok = total_energy_j * 1000.0 / j.total_osl.avg
+            assert energy_per_output_token.avg == pytest.approx(
+                expected_mj_per_tok, rel=1e-3
+            ), (
+                f"energy_per_output_token={energy_per_output_token.avg:.4f} mJ/tok "
+                f"!= total_energy*1000/total_osl={expected_mj_per_tok:.4f} mJ/tok"
+            )
+
+            # output_tokens_per_joule = 1 / (energy_per_output_token / 1000)
+            if output_tokens_per_joule is not None:
+                expected_tpj = j.total_osl.avg / total_energy_j
+                assert output_tokens_per_joule.avg == pytest.approx(
+                    expected_tpj, rel=1e-3
+                )
+
+        # energy_per_request (J/req) = total_energy_j / request_count
+        if j.request_count and j.request_count.avg and j.request_count.avg > 0:
+            expected_j_per_req = total_energy_j / j.request_count.avg
+            assert energy_per_request.avg == pytest.approx(
+                expected_j_per_req, rel=1e-3
+            ), (
+                f"energy_per_request={energy_per_request.avg:.4f} J/req "
+                f"!= total_energy/request_count={expected_j_per_req:.4f} J/req"
+            )
+
+        # energy_per_total_token <= energy_per_output_token (more tokens in denominator)
+        energy_per_total_token = _m("amd_energy_per_total_token")
+        if (
+            energy_per_total_token is not None
+            and energy_per_total_token.avg is not None
+        ):
+            assert energy_per_total_token.avg <= energy_per_output_token.avg, (
+                "energy_per_total_token should be <= energy_per_output_token "
+                "(total tokens >= output tokens)"
+            )
+
 
 _PLATFORM_EXPECTED_PREFIX: dict[str, str] = {
     "nvidia": "nvidia_",
