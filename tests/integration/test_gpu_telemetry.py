@@ -373,11 +373,18 @@ class TestAMDSMITelemetry:
         assert result.request_count == 25
         assert result.has_gpu_telemetry
 
+        from aiperf.common.models.export_models import JsonMetricResult
+
         j = result.json
         extra = j.model_extra or {}
 
-        def _m(name: str):
-            return getattr(j, name, None) or extra.get(name)
+        def _m(name: str) -> JsonMetricResult | None:
+            val = getattr(j, name, None) or extra.get(name)
+            if val is None:
+                return None
+            if isinstance(val, dict):
+                return JsonMetricResult.model_validate(val)
+            return val
 
         total_energy = _m("amd_total_gpu_energy")
         energy_per_output_token = _m("amd_energy_per_output_token")
