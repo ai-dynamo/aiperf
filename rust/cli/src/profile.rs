@@ -1520,6 +1520,18 @@ mod unimplemented_flag_tests {
     use super::{UNIMPLEMENTED_FLAGS, warn_unimplemented_flags};
     use crate::flags::ProfileFlags;
 
+    /// `ProfileFlags` is large enough that clap's derived parser overflows the
+    /// default test-thread stack; see `flags.rs`'s `on_big_stack` for the same
+    /// workaround.
+    fn on_big_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
     fn parse(extra: &[&str]) -> ProfileFlags {
         let mut args: Vec<String> = ["-m", "mock-model", "--url", "http://127.0.0.1:8000"]
             .iter()
@@ -1534,6 +1546,7 @@ mod unimplemented_flag_tests {
     /// the wrong field would otherwise leave the flag silently ignored again.
     #[test]
     fn every_table_entry_detects_its_own_flag() {
+        on_big_stack(|| {
         for (name, is_set) in UNIMPLEMENTED_FLAGS {
             let baseline = parse(&[]);
             assert!(!is_set(&baseline), "{name} reads as set with no args");
@@ -1558,17 +1571,20 @@ mod unimplemented_flag_tests {
 
             assert!(is_set(&flags), "{name} did not flip its own predicate");
         }
+        });
     }
 
     /// The warn path must stay silent on a clean command line, so a default run
     /// never emits a spurious compatibility warning.
     #[test]
     fn a_clean_command_line_warns_about_nothing() {
+        on_big_stack(|| {
         let flags = parse(&[]);
         assert!(
             !UNIMPLEMENTED_FLAGS.iter().any(|(_, is_set)| is_set(&flags)),
             "a minimal command line must trip no entry"
         );
         warn_unimplemented_flags(&flags);
+        });
     }
 }
