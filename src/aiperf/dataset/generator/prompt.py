@@ -177,10 +177,16 @@ class PromptGenerator(BaseGenerator):
         advance _random_request_index (which would shift the arithmetic-sequence
         index for all subsequent requests) and must not consume preseed cache
         entries (one cache entry per request, not per retry).
+
+        When preseed is active, draws from the same generator stream used for
+        ISL/OSL/offset draws (matching vLLM's gen_prompt_decode_to_target_len
+        which uses its single shared rng for top-up). Falls back to
+        _corpus_rng when preseed is not in use.
         """
         if self._corpus == PromptCorpus.RANDOM:
             n = len(self._allowed_tokens)
-            ids = self._corpus_rng.integers(0, n, size=num_tokens)
+            rng = getattr(self, "_preseed_rng", None) or self._corpus_rng
+            ids = rng.integers(0, n, size=num_tokens)
             return [self._allowed_tokens[i] for i in ids]
         return self._sample_tokens(num_tokens)
 
@@ -191,10 +197,16 @@ class PromptGenerator(BaseGenerator):
         be the same numpy Generator passed to
         :meth:`RangeRatioDistribution.preseed`, advanced past its ISL/OSL draws,
         so that offsets are drawn from the correct position in the shared stream.
+
+        The generator is retained as ``_preseed_rng`` so that BPE top-up draws
+        in :meth:`_sample_topup_tokens` continue from the same stream, matching
+        vLLM's ``gen_prompt_decode_to_target_len`` which uses its single shared
+        rng for both the initial sequence and any top-up tokens.
         """
         pool = len(self._allowed_tokens)
         self._offset_cache: list[int] = generator.integers(0, pool, size=n).tolist()  # type: ignore[union-attr]
         self._offset_idx: int = 0
+        self._preseed_rng = generator
 
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse.
