@@ -223,7 +223,7 @@ async def test_profiler_lifecycle_callbacks_track_active_state() -> None:
     async def run_phase() -> None:
         assert active
 
-    async def stop(_hooks, _headers) -> None:
+    async def stop(_hooks: object, _headers: object) -> None:
         assert active
 
     hooks = MagicMock(profiler_start_urls=["http://h/start"])
@@ -257,7 +257,7 @@ async def test_profiler_lifecycle_clears_active_state_after_deferred_failure() -
     async def run_phase() -> None:
         raise RuntimeError("phase boom")
 
-    async def stop(_hooks, _headers) -> None:
+    async def stop(_hooks: object, _headers: object) -> None:
         assert active
 
     hooks = MagicMock(profiler_start_urls=["http://h/start"])
