@@ -988,6 +988,10 @@ struct PhaseSection {
     cancellation: Option<CancellationSection>,
     /// User-centric concurrent-user count (`user_centric` phase).
     users: Option<u32>,
+    /// Exclude this phase's records from the reported results. Defaults to the
+    /// phase role (warmup excluded, profiling included) when unauthored.
+    #[serde(default, alias = "excludeFromResults")]
+    exclude_from_results: Option<bool>,
     /// Fixed-schedule auto-offset toggle (defaults to "no explicit offsets").
     #[serde(default, alias = "autoOffset")]
     auto_offset: Option<bool>,
@@ -2226,7 +2230,9 @@ fn yaml_phase_to_model(section: &PhaseSection) -> anyhow::Result<crate::model::p
             timing_mode: None,
             name,
             kind: Some(role),
-            exclude_from_results: role == PhaseRole::Warmup,
+            exclude_from_results: section
+                .exclude_from_results
+                .unwrap_or(role == PhaseRole::Warmup),
             seamless: false,
             requests: section.requests,
             sessions: section.sessions,
@@ -2941,6 +2947,46 @@ benchmark:
                  full projected endpoint: {ep:#}"
             );
         }
+    }
+
+    /// Every shipped `config/templates/*.yaml` must resolve, exactly as
+    /// `aiperf config validate` resolves it.
+    ///
+    /// The templates are the authoring surface users copy, so a key the loader
+    /// drops ships as a benchmark that silently runs something else: six
+    /// templates authored `isl`/`osl` directly under `dataset:` and ran the
+    /// default sequence lengths, and fourteen authored `excludeFromResults` on
+    /// a phase that was derived from the role instead. This runs in-process
+    /// against the same `resolve` the CLI calls, so it cannot pass against a
+    /// stale binary.
+    #[test]
+    fn every_shipped_template_resolves() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/aiperf/config/templates");
+        let mut entries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("templates dir {} unreadable: {e}", dir.display()))
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "yaml"))
+            .collect();
+        entries.sort();
+        assert!(!entries.is_empty(), "no templates found in {}", dir.display());
+
+        let failures: Vec<String> = entries
+            .iter()
+            .filter_map(|p| {
+                super::resolve(p, Some("/tmp/aiperf-template-test".into()))
+                    .err()
+                    .map(|e| format!("  {}: {e:#}", p.file_name().unwrap().to_string_lossy()))
+            })
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "{} of {} shipped templates do not resolve:\n{}",
+            failures.len(),
+            entries.len(),
+            failures.join("\n")
+        );
     }
 
     /// `dataset.prompts.sequenceDistribution` must reach the protocol-v2
