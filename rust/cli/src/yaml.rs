@@ -851,6 +851,14 @@ struct EndpointSection {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DatasetSection {
+    /// Entry identity, consumed by the `sweep:` path resolver
+    /// (`sweep::yaml_sweep::find_named_index`) so a dotted parameter like
+    /// `datasets.main.format` targets this entry. Resolution happens on the raw
+    /// config before this struct is deserialized, so the field is declared here
+    /// only to keep the key legal rather than rejected as unknown.
+    #[serde(default)]
+    #[allow(dead_code)]
+    name: Option<String>,
     /// `synthetic` (default), `file`, or `public`; drives the loader branch.
     #[serde(rename = "type")]
     dataset_type: Option<String>,
