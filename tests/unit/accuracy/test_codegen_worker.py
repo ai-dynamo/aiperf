@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -142,8 +143,10 @@ class TestRunWorkerLoopBatch:
     def _run(
         self,
         payloads: list[dict[str, Any]],
-        codegen_fn=_fake_codegen_batch_ok,
-        compute_metrics_fn=_fake_compute_metrics,
+        codegen_fn: Callable[
+            ..., tuple[dict[str, Any], dict[int, list]]
+        ] = _fake_codegen_batch_ok,
+        compute_metrics_fn: Callable[..., dict[str, Any]] = _fake_compute_metrics,
     ) -> list[dict[str, Any]]:
         # Write all payloads to a BytesIO pipe so they are already queued when
         # run_worker_loop reads; this exercises the non-blocking drain path.
