@@ -928,12 +928,126 @@ struct DatasetSection {
     omit_kv_hints: Option<bool>,
     #[serde(default, alias = "forceMinTokens")]
     force_min_tokens: Option<bool>,
+    /// Recorded-graph / trace synthesis transforms (`TraceSynthesisSpec`).
+    synthesis: Option<SynthesisSection>,
     /// Synthetic image generation (`synthetic.images`).
     images: Option<ImageSection>,
     /// Synthetic audio generation (`synthetic.audio`).
     audio: Option<AudioSection>,
     /// Synthetic video generation (`synthetic.video`).
     video: Option<VideoSection>,
+}
+
+/// Authored `dataset.synthesis:` block. Mirrors the wire `TraceSynthesisSpec`,
+/// whose multiplier fields are non-optional, so [`SynthesisSection::to_value`]
+/// stamps the same identity defaults the `--synthesis-*` flag path uses.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SynthesisSection {
+    corpus: Option<String>,
+    #[serde(default, alias = "speedupRatio")]
+    speedup_ratio: Option<f64>,
+    #[serde(default, alias = "prefixLenMultiplier")]
+    prefix_len_multiplier: Option<f64>,
+    #[serde(default, alias = "prefixRootMultiplier")]
+    prefix_root_multiplier: Option<u64>,
+    #[serde(default, alias = "promptLenMultiplier")]
+    prompt_len_multiplier: Option<f64>,
+    #[serde(default, alias = "outputLenMultiplier")]
+    output_len_multiplier: Option<f64>,
+    #[serde(default, alias = "maxIsl")]
+    max_isl: Option<u64>,
+    #[serde(default, alias = "maxOsl")]
+    max_osl: Option<u32>,
+    #[serde(default, alias = "maxContextLength")]
+    max_context_length: Option<u64>,
+    #[serde(default, alias = "allowDatasetWrap")]
+    allow_dataset_wrap: Option<bool>,
+    #[serde(default, alias = "idleGapCapSeconds")]
+    idle_gap_cap_seconds: Option<f64>,
+    #[serde(default, alias = "trajectoryStartMinRatio")]
+    trajectory_start_min_ratio: Option<f64>,
+    #[serde(default, alias = "trajectoryStartMaxRatio")]
+    trajectory_start_max_ratio: Option<f64>,
+    #[serde(default, alias = "tStarRandomSeed")]
+    t_star_random_seed: Option<u64>,
+    #[serde(default, alias = "datasetSamplingStrategy")]
+    dataset_sampling_strategy: Option<String>,
+    #[serde(default, alias = "cacheBustTarget")]
+    cache_bust_target: Option<String>,
+}
+
+impl SynthesisSection {
+    /// Lower to the JSON object `Inputs::synthesis` carries to the dataset wire.
+    fn to_value(&self) -> anyhow::Result<serde_json::Value> {
+        // JSON has no non-finite numbers; reject rather than panic in `from_f64`.
+        let f = |v: f64| -> anyhow::Result<serde_json::Value> {
+            serde_json::Number::from_f64(v)
+                .map(serde_json::Value::Number)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("dataset.synthesis numeric value must be finite, got {v}")
+                })
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("speedup_ratio".into(), f(self.speedup_ratio.unwrap_or(1.0))?);
+        m.insert(
+            "prefix_len_multiplier".into(),
+            f(self.prefix_len_multiplier.unwrap_or(1.0))?,
+        );
+        m.insert(
+            "prefix_root_multiplier".into(),
+            serde_json::Value::from(self.prefix_root_multiplier.unwrap_or(1)),
+        );
+        m.insert(
+            "prompt_len_multiplier".into(),
+            f(self.prompt_len_multiplier.unwrap_or(1.0))?,
+        );
+        m.insert(
+            "output_len_multiplier".into(),
+            f(self.output_len_multiplier.unwrap_or(1.0))?,
+        );
+        m.insert(
+            "idle_gap_cap_seconds".into(),
+            f(self.idle_gap_cap_seconds.unwrap_or(60.0))?,
+        );
+        if let Some(v) = &self.corpus {
+            m.insert("corpus".into(), serde_json::Value::String(v.clone()));
+        }
+        if let Some(v) = self.max_isl {
+            m.insert("max_isl".into(), serde_json::Value::from(v));
+        }
+        if let Some(v) = self.max_osl {
+            m.insert("max_osl".into(), serde_json::Value::from(v));
+        }
+        if let Some(v) = self.max_context_length {
+            m.insert("max_context_length".into(), serde_json::Value::from(v));
+        }
+        if let Some(v) = self.allow_dataset_wrap {
+            m.insert("allow_dataset_wrap".into(), serde_json::Value::Bool(v));
+        }
+        if let Some(v) = self.trajectory_start_min_ratio {
+            m.insert("trajectory_start_min_ratio".into(), f(v)?);
+        }
+        if let Some(v) = self.trajectory_start_max_ratio {
+            m.insert("trajectory_start_max_ratio".into(), f(v)?);
+        }
+        if let Some(v) = self.t_star_random_seed {
+            m.insert("t_star_random_seed".into(), serde_json::Value::from(v));
+        }
+        if let Some(v) = &self.dataset_sampling_strategy {
+            m.insert(
+                "dataset_sampling_strategy".into(),
+                serde_json::Value::String(v.clone()),
+            );
+        }
+        if let Some(v) = &self.cache_bust_target {
+            m.insert(
+                "cache_bust_target".into(),
+                serde_json::Value::String(v.clone()),
+            );
+        }
+        Ok(serde_json::Value::Object(m))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1513,6 +1627,10 @@ impl Benchmark {
             .as_ref()
             .and_then(|d| d.force_min_tokens)
             .unwrap_or(true);
+        let synthesis = match dataset.as_ref().and_then(|d| d.synthesis.as_ref()) {
+            Some(section) => Some(section.to_value()?),
+            None => None,
+        };
 
         // Multi-turn (turns / inter-turn delay / think-time ratio).
         let turns = dataset
@@ -2201,7 +2319,7 @@ impl Benchmark {
             agentic_cache_warmup_duration: None,
             rankings: None,
             accuracy: None,
-            synthesis: None,
+            synthesis,
             dataset_filters: None,
             // A `dry_run` config transport emits the dataset-analysis family with
             // default knobs; `apply_cli_overrides` layers `--kv-*` /
@@ -2641,6 +2759,38 @@ mod tests {
         // A peak-bearing parent is not itself a normal distribution.
         assert_eq!(isl.stddev, None);
         assert_eq!(isl.mean, None);
+    }
+
+    /// An authored `dataset.synthesis:` block must reach the wire, not merely
+    /// parse: the multipliers drive the recorded-graph transforms, so dropping
+    /// them silently replays the trace at its recorded scale.
+    #[test]
+    fn authored_synthesis_reaches_the_wire() {
+        let run = resolve_str(
+            &cfg("  dataset:\n    type: file\n    path: /tmp/trace.jsonl\n    format: mooncake_trace\n    synthesis:\n      speedupRatio: 2.0\n      promptLenMultiplier: 1.5\n      maxIsl: 8192\n      maxOsl: 2048\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("authored synthesis resolves");
+        let dataset = run
+            .cfg
+            .datasets
+            .as_ref()
+            .and_then(|d| d.first())
+            .expect("dataset");
+        let crate::model::dataset::Dataset::File(file) = dataset else {
+            panic!("expected a file dataset");
+        };
+        let synthesis = file.synthesis.as_ref().expect("synthesis survives");
+        assert_eq!(synthesis["speedup_ratio"], 2.0);
+        assert_eq!(synthesis["prompt_len_multiplier"], 1.5);
+        assert_eq!(synthesis["max_isl"], 8192);
+        assert_eq!(synthesis["max_osl"], 2048);
+        // Omitted multipliers take the wire's non-optional identity defaults.
+        assert_eq!(synthesis["prefix_len_multiplier"], 1.0);
+        assert_eq!(synthesis["output_len_multiplier"], 1.0);
+        assert_eq!(synthesis["prefix_root_multiplier"], 1);
+        // Unauthored optional keys stay absent rather than materializing nulls.
+        assert!(synthesis.get("cache_bust_target").is_none());
     }
 
     #[test]
