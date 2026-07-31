@@ -37,7 +37,7 @@ def test_parses_aliases_and_normalizes() -> None:
         '{"text": "Capital of France?", "ground_truth": " B ", "subject": "geo"}'
     )
     ds = _dataset(body)
-    assert ds.len() == 2
+    assert len(ds) == 2
     entry = ds.lookup("What is 2+2?")
     assert entry is not None
     assert entry.gold == "4"
@@ -165,6 +165,20 @@ def test_decision_is_deterministic_per_prompt() -> None:
     b = ds.decide(entry)
     assert a.content == b.content
     assert a.correct == b.correct
+
+
+def test_decision_is_deterministic_for_any_integer_seed() -> None:
+    body = '{"prompt":"q","answer":"B"}'
+    for random_seed in (-1, 1 << 80):
+        ds = _dataset(
+            body,
+            random_seed=random_seed,
+            default_format=AccuracyFormat.MMLU,
+            correct_rate=0.5,
+        )
+        entry = ds.lookup("q")
+        assert entry is not None
+        assert ds.decide(entry) == ds.decide(entry)
 
 
 def test_correct_rate_is_honored_across_prompts() -> None:

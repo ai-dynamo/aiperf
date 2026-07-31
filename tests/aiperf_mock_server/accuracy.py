@@ -244,9 +244,7 @@ def _field(obj: dict[str, Any], aliases: tuple[str, ...]) -> Any | None:
 def _derive_seed(random_seed: int, key_norm: str) -> int:
     """Stable seed from ``(random_seed, key_norm)``."""
     digest = hashlib.blake2b(
-        random_seed.to_bytes(8, "little", signed=False)
-        + key_norm.encode()
-        + b"mock.accuracy",
+        str(random_seed).encode("ascii") + key_norm.encode() + b"mock.accuracy",
         digest_size=8,
     ).digest()
     return int.from_bytes(digest, "big", signed=False)
@@ -337,9 +335,6 @@ class AccuracyDataset:
             )
         entries = sorted(exact.values(), key=lambda e: len(e.key_norm), reverse=True)
         return cls(exact, entries, settings)
-
-    def len(self) -> int:
-        return len(self._exact)
 
     def __len__(self) -> int:
         return len(self._exact)
