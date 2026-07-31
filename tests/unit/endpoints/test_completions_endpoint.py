@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 
 from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.models import Text, Turn
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -89,6 +90,52 @@ class TestCompletionsEndpoint:
             model_endpoint=model_endpoint,
             turns=[turn],
             credit_phase=CreditPhase.WARMUP,
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nPrompt 1"
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            param(CacheBustTarget.SYSTEM_PREFIX, id="system_prefix"),
+            param(CacheBustTarget.SYSTEM_SUFFIX, id="system_suffix"),
+            param(CacheBustTarget.FIRST_TURN_PREFIX, id="first_turn_prefix"),
+            param(CacheBustTarget.FIRST_TURN_SUFFIX, id="first_turn_suffix"),
+        ],
+    )  # fmt: skip
+    def test_format_payload_warmup_skips_prefix_when_cache_bust_active(
+        self, endpoint, model_endpoint, target
+    ):
+        """Cache-bust markers are warmup-coherent, so warmup primes the prefix
+        profiling hits. Prefixing in front of the shared marker would diverge
+        the two at token 0 and prime an entry profiling never touches.
+        """
+        turn = Turn(texts=[Text(contents=["Prompt 1"])], model="completion-model")
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            credit_phase=CreditPhase.WARMUP,
+            cache_bust_target=target,
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == "Prompt 1"
+
+    def test_format_payload_warmup_prefixes_when_cache_bust_target_none_enum(
+        self, endpoint, model_endpoint
+    ):
+        """``CacheBustTarget.NONE`` means cache-bust is off, so warmup still
+        needs its own prefix isolation.
+        """
+        turn = Turn(texts=[Text(contents=["Prompt 1"])], model="completion-model")
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            credit_phase=CreditPhase.WARMUP,
+            cache_bust_target=CacheBustTarget.NONE,
         )
 
         payload = endpoint.format_payload(request_info)
