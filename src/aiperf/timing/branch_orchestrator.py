@@ -89,6 +89,7 @@ DAG that failed to drain (worker crash, protocol mismatch, bug).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import time
@@ -96,6 +97,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from aiperf.common import random_generator as _rng
 from aiperf.common.enums import (
     CacheBustTarget,
     ConversationBranchMode,
@@ -194,6 +196,14 @@ class PendingBranchJoin:
     # cache-bust for that one turn).
     parent_cache_bust_marker: str | None = None
     parent_cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
+    # True iff the gated (join) turn is itself request-free -- carried so
+    # ``dispatch_join_turn`` builds a ``no_request`` ``TurnToSend`` (a
+    # request-free orchestrator spine's join turns issue no HTTP request).
+    parent_no_request_on_gated_turn: bool = False
+    # Per-round think-time (ms) applied before the gated turn is dispatched --
+    # the coordinator's wait after a round's branches drain, before the next
+    # round fires. Median for the sampled-distribution draw in _resolve_think_ms.
+    parent_delay_ms_on_gated_turn: float = 0.0
 
     @property
     def is_satisfied(self) -> bool:
@@ -284,6 +294,9 @@ class BranchOrchestrator:
         self._overlap_dispatched_branches: set[tuple[str, str]] = set()
         self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
+        # Set by cleanup() so an in-flight think-time sleep returns early instead
+        # of making shutdown wait out a full (possibly large, sampled) interval.
+        self._cleanup_event: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
         # spawn dispatch via delayed background tasks (see
         # _start_delayed_first_turn). cleanup() cancels pending sleepers.
@@ -397,6 +410,14 @@ class BranchOrchestrator:
                     self._prereq_spawning_turn[
                         (conv.conversation_id, gated_idx, prereq_key)
                     ] = spawning_idx
+        # Per-round think-time distributions, keyed by orchestrator conversation
+        # id. Present only for spines authored with a sampled think-time; the
+        # median is each gated turn's stamped delay_ms.
+        self._think_time_by_conv = {
+            c.conversation_id: c.think_time
+            for c in conversations
+            if getattr(c, "think_time", None) is not None
+        }
 
     def get_branch_ids(self, credit) -> list[str]:
         """Look up the completed turn's ``branch_ids`` from metadata.
@@ -718,8 +739,18 @@ class BranchOrchestrator:
             return future
 
         has_forks = False
+        no_request = False
+        delay_ms = 0.0
         if 0 <= gated_idx < len(parent_meta.turns):
-            has_forks = bool(getattr(parent_meta.turns[gated_idx], "has_forks", False))
+            gated_turn = parent_meta.turns[gated_idx]
+            has_forks = bool(getattr(gated_turn, "has_forks", False))
+            # Parity with _ensure_future_join: a request-free spine's gated
+            # turn must stay no_request and keep its per-round think-time even
+            # when the join is reconstructed on the t*-warmup seeding path,
+            # otherwise a seeded spine silently sends a real join request with
+            # no inter-round wait.
+            no_request = bool(getattr(gated_turn, "no_request", False))
+            delay_ms = float(getattr(gated_turn, "delay_ms", 0.0) or 0.0)
 
         pending = PendingBranchJoin(
             parent_x_correlation_id=parent_corr,
@@ -732,6 +763,8 @@ class BranchOrchestrator:
             parent_has_forks_on_gated_turn=has_forks,
             parent_cache_bust_marker=cache_bust_marker,
             parent_cache_bust_target=self._cache_bust_target,
+            parent_no_request_on_gated_turn=no_request,
+            parent_delay_ms_on_gated_turn=delay_ms,
         )
         for prereq_key in self._gated_turn_prereq_keys.get(
             (parent_state.conversation_id, gated_idx), set()
@@ -793,12 +826,37 @@ class BranchOrchestrator:
         # ``_maybe_suspend_parent`` (which returns False for them), so the
         # agentic tree-descendant path is unaffected.
 
+        # Root0 pre-delay: applied before round 0's branches fire, outside the
+        # per-parent lock (mirrors the between-round wait in _release_blocked_join,
+        # which sleeps before dispatching the gated turn -- not under the lock).
+        await self._maybe_apply_root0_think_ms(credit)
+
+        # Graph-admission event: turn 0 of a request-free orchestrator instance.
+        if getattr(credit, "no_request", False) and credit.turn_index == 0:
+            self.stats.graphs_admitted += 1
+
         parent_corr = credit.x_correlation_id
 
         async with self._parent_locks[parent_corr]:
             branch_ids = self.get_branch_ids(credit)
             if branch_ids:
                 await self._spawn_children_and_register_gates(credit, branch_ids)
+            elif getattr(credit, "no_request", False):
+                # Terminal request-free gate (no branches to spawn): all rounds
+                # drained, so this graph instance reached END. All think-times
+                # are resolved, so drop its sampling ordinal to bound the map.
+                self.stats.graphs_completed_to_end += 1
+                self._cs.forget_ordinal(credit.x_correlation_id)
+
+            # Breeze-through: the parent's next turn is a gate whose children
+            # already drained before the parent arrived. Rather than let the
+            # strategy dispatch the gated turn immediately (dropping the
+            # between-round think-time), apply the same wait + dispatch as the
+            # blocked path and suppress the strategy's default dispatch.
+            breezed = self._take_satisfied_future(credit)
+            if breezed is not None:
+                await self._release_blocked_join(breezed)
+                return True
             return self._maybe_suspend_parent(credit)
 
     async def _spawn_children_and_register_gates(
@@ -877,16 +935,25 @@ class BranchOrchestrator:
 
             for child_conv_id in branch.child_conversation_ids:
                 try:
+                    credit_marker = getattr(credit, "cache_bust_marker", None)
+                    marker = (
+                        credit_marker
+                        if isinstance(credit_marker, str)
+                        else self._marker_for_root(credit.effective_root_correlation_id)
+                    )
+                    credit_target = getattr(credit, "cache_bust_target", None)
                     child = self._cs.start_branch_child(
                         parent_correlation_id=parent_corr,
                         child_conversation_id=child_conv_id,
                         agent_depth=parent_depth + 1,
                         root_correlation_id=credit.effective_root_correlation_id,
                         branch_mode=branch.mode,
-                        cache_bust_marker=self._marker_for_root(
-                            credit.effective_root_correlation_id
+                        cache_bust_marker=marker,
+                        cache_bust_target=(
+                            credit_target
+                            if isinstance(credit_target, CacheBustTarget)
+                            else self._cache_bust_target
                         ),
-                        cache_bust_target=self._cache_bust_target,
                     )
                 except Exception:
                     logger.exception("start_branch_child failed for %s", child_conv_id)
@@ -1267,10 +1334,13 @@ class BranchOrchestrator:
         pending = gates_for_parent.get(gated_idx)
         if pending is None:
             has_forks = False
+            no_request = False
+            delay_ms = 0.0
             if 0 <= gated_idx < len(parent_meta.turns):
-                has_forks = bool(
-                    getattr(parent_meta.turns[gated_idx], "has_forks", False)
-                )
+                gated_turn = parent_meta.turns[gated_idx]
+                has_forks = bool(getattr(gated_turn, "has_forks", False))
+                no_request = bool(getattr(gated_turn, "no_request", False))
+                delay_ms = float(getattr(gated_turn, "delay_ms", 0.0) or 0.0)
             pending = PendingBranchJoin(
                 parent_x_correlation_id=parent_corr,
                 parent_conversation_id=credit.conversation_id,
@@ -1291,6 +1361,8 @@ class BranchOrchestrator:
                 parent_cache_bust_target=getattr(
                     credit, "cache_bust_target", CacheBustTarget.NONE
                 ),
+                parent_no_request_on_gated_turn=no_request,
+                parent_delay_ms_on_gated_turn=delay_ms,
             )
             # Phase 3 fan-in seed: pre-populate every prereq_key declared
             # by the gated turn with an unregistered PrereqState so the
@@ -1334,6 +1406,27 @@ class BranchOrchestrator:
             for pending in gates.values():
                 out.append((parent_corr, pending))
         return out
+
+    def _take_satisfied_future(self, credit) -> PendingBranchJoin | None:
+        """Pop and return the parent's next-turn gate iff it is a request-free
+        SPINE gate that children already satisfied before the parent arrived.
+
+        Only spine gates carry between-round think-time, so only they need this
+        path: routing the pending through ``_release_blocked_join`` honors the
+        think-time even when the parent never had to block. A normal DAG gate has
+        no think-time -- it is left for ``_maybe_suspend_parent`` to breeze
+        through the strategy path unchanged (preserving normal-DAG dispatch
+        timing). Returns None when the next turn is not a satisfied spine gate.
+        """
+        parent_corr = credit.x_correlation_id
+        next_idx = credit.turn_index + 1
+        future = self._future_joins.get(parent_corr, {}).get(next_idx)
+        if future is None or not future.is_satisfied:
+            return None
+        if not future.parent_no_request_on_gated_turn:
+            return None
+        self._pop_future_join(parent_corr, next_idx)
+        return future
 
     def _maybe_suspend_parent(self, credit) -> bool:
         """Suspend the parent iff its NEXT turn is a gated turn.
@@ -1411,16 +1504,120 @@ class BranchOrchestrator:
             return None
         if pending.is_blocked:
             return self._active_joins.pop(parent_corr, None)
-        # Satisfied before the parent arrived — pop the future entry and
-        # let the parent breeze through when it reaches the turn.
-        self._pop_future_join(parent_corr, gated_idx)
+        # Satisfied before the parent arrived. A request-free SPINE gate carries
+        # between-round think-time, so leave it in place (marked satisfied) for
+        # ``_take_satisfied_future`` to pick up and apply the wait before
+        # dispatching. A normal DAG gate has no think-time, so pop it now and let
+        # the parent breeze through the strategy path unchanged.
+        if not pending.parent_no_request_on_gated_turn:
+            self._pop_future_join(parent_corr, gated_idx)
         return None
+
+    def _resolve_think_ms(self, pending: PendingBranchJoin) -> float:
+        """Resolve this round's think-time (milliseconds) before the gated turn.
+
+        The base value is the gated turn's stamped ``delay_ms`` (the median). If
+        the orchestrator conversation declared a sampled distribution, draw a
+        lognormal value around that median with an independent, reproducible
+        stream seeded per (conversation instance, round) -- so no value is shared
+        across instances or rounds and runs are stable under ``--random-seed``.
+        The draw plugs into a mean-pinned lognormal/weibull sampler (e.g. PR
+        #1188's ``common/distributions.py``) without changing this seam.
+        """
+        # Per-round think-time applies ONLY to request-free orchestrator spine
+        # gates. A normal DAG join turn may carry an authored ``delay_ms`` (trace
+        # timing); agentx fires such joins immediately (``dispatch_join_turn``
+        # applies no delay), so we must NOT turn that delay into a pre-join sleep
+        # here. Spine gates are ``no_request``; normal DAG gates are not.
+        if not pending.parent_no_request_on_gated_turn:
+            return 0.0
+        return self._sample_think_ms(
+            pending.parent_conversation_id,
+            pending.parent_x_correlation_id,
+            pending.gated_turn_index,
+            pending.parent_delay_ms_on_gated_turn,
+        )
+
+    def _sample_think_ms(
+        self,
+        conversation_id: str,
+        x_correlation_id: str,
+        round_index: int,
+        median_ms: float,
+    ) -> float:
+        """Resolve one round's think-time (ms) around ``median_ms``.
+
+        Fixed when the conversation declared no distribution; otherwise a
+        lognormal draw seeded on a STABLE per-(instance, round) key so runs
+        reproduce under ``--random-seed``. The orchestrator root's deterministic
+        sampling ordinal replaces its random-UUID ``x_correlation_id`` (which
+        varies per run); fall back to the id only if the ordinal is unavailable.
+        """
+        spec = self._think_time_by_conv.get(conversation_id)
+        if spec is None or median_ms <= 0.0:
+            return median_ms
+        ordinal = self._cs.sample_ordinal(x_correlation_id)
+        instance_key = str(ordinal) if ordinal is not None else x_correlation_id
+        stream = _rng.derive(f"dag_think:{instance_key}:{round_index}")
+        # Lognormal with median == median_ms: median * exp(N(0, sigma)). Cap the
+        # exponent below math.exp's overflow threshold (~709) so no draw can raise
+        # OverflowError even if inputs are pathological.
+        draw = median_ms * math.exp(min(stream.normal(0.0, spec.sigma), 700.0))
+        # Even with the exponent capped, ``median * exp(700)`` can overflow to
+        # inf for a large median (Cristian's spec uses 31 s medians). Reject a
+        # non-finite draw so it never reaches asyncio.sleep -- fall back to the
+        # (load-clamped, finite) median.
+        if not math.isfinite(draw):
+            draw = median_ms
+        if spec.min_ms is not None:
+            draw = max(draw, spec.min_ms)
+        if spec.max_ms is not None:
+            draw = min(draw, spec.max_ms)
+        return draw
+
+    async def _maybe_apply_root0_think_ms(self, credit) -> None:
+        """Apply the orchestrator root's turn-0 think-time before round 0 fires.
+
+        Between-round waits ride the gated join (``_release_blocked_join``), but
+        round 0 has no join -- so root0's authored delay (the pre-delay before
+        the graph's first branches) would otherwise be dropped. Applied here on
+        the turn-0 return, before its branches spawn, mirroring the later rounds.
+        Only orchestrator spine turn-0 credits qualify (``no_request`` +
+        ``turn_index == 0``); normal roots are paced by the strategy.
+        """
+        if credit.turn_index != 0 or not getattr(credit, "no_request", False):
+            return
+        meta = self._cs.get_metadata(credit.conversation_id)
+        if not meta.turns:
+            return
+        median_ms = float(meta.turns[0].delay_ms or 0.0)
+        if median_ms <= 0.0:
+            return
+        think_ms = self._sample_think_ms(
+            credit.conversation_id, credit.x_correlation_id, 0, median_ms
+        )
+        if think_ms > 0.0 and math.isfinite(think_ms):
+            await self._sleep_think_ms(think_ms / 1000.0)
+
+    async def _sleep_think_ms(self, seconds: float) -> None:
+        """Sleep for ``seconds``, but return early if ``cleanup()`` fires -- so a
+        shutdown / duration cancel interrupts a pending think-time instead of
+        waiting out the full (possibly large sampled) interval."""
+        # TimeoutError == the full think-time elapsed without cleanup: the
+        # normal path, so suppress it and return.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._cleanup_event.wait(), timeout=seconds)
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""
         assert pending.gated_turn_index is not None, (
             "_release_blocked_join called without a gated_turn_index"
         )
+        # Per-round think-time: wait after this round's branches have all drained
+        # and before the gated turn fires (which releases the next round).
+        think_ms = self._resolve_think_ms(pending)
+        if think_ms > 0.0 and math.isfinite(think_ms):
+            await self._sleep_think_ms(think_ms / 1000.0)
         issued = await self._issuer.dispatch_join_turn(pending)
         if issued:
             self.stats.parents_resumed += 1
@@ -1629,6 +1826,7 @@ class BranchOrchestrator:
         if self._cleaning_up:
             return
         self._cleaning_up = True
+        self._cleanup_event.set()  # interrupt any in-flight think-time sleep
         self._drain_observer = None
         for task in self._delayed_dispatch_tasks:
             task.cancel()

@@ -77,6 +77,9 @@ class Credit(
     ``agent_depth``.
     """
     has_forks: bool = False
+    no_request: bool = False
+    """When True, this credit is a virtual orchestrator firing -- the worker sends
+    no HTTP request and returns it immediately."""
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     """DAG branch mode for this credit. Ignored when parent_correlation_id is None
     (i.e. for root sessions). FORK = inherit parent turn_list; SPAWN =
@@ -184,6 +187,9 @@ class TurnToSend(Struct, frozen=True):
     session start regardless of this flag. A mid-trace session start can only
     legitimately occur during a phase's initial dispatch (execute_phase)."""
     has_forks: bool = False
+    no_request: bool = False
+    """When True, this credit is a virtual orchestrator firing -- the worker sends
+    no HTTP request and returns it immediately."""
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
     cache_bust_marker: str | None = None
@@ -227,6 +233,7 @@ class TurnToSend(Struct, frozen=True):
             root_correlation_id=credit.root_correlation_id,
             counts_toward_phase_target=credit.counts_toward_phase_target,
             has_forks=next_meta.has_forks if next_meta is not None else False,
+            no_request=next_meta.no_request if next_meta is not None else False,
             branch_mode=credit.branch_mode,
             cache_bust_marker=credit.cache_bust_marker,
             cache_bust_target=credit.cache_bust_target,
