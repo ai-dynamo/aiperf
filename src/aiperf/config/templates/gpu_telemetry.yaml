@@ -44,8 +44,9 @@ benchmark:
   dataset:
     type: synthetic
     entries: 500
-    isl: {mean: 256, stddev: 50}
-    osl: {mean: 256, stddev: 25}
+    prompts:
+      isl: {mean: 256, stddev: 50}
+      osl: {mean: 256, stddev: 25}
 
   warmup:
     type: concurrency

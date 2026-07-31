@@ -469,6 +469,23 @@ struct ArtifactsSection {
     /// Base filename stem for exported artifacts (`artifacts.prefix`).
     #[serde(default)]
     prefix: Option<String>,
+    /// Files materialized into the run directory before the benchmark starts.
+    #[serde(default, alias = "userFiles")]
+    user_files: Option<Vec<UserFileSection>>,
+}
+
+/// One `artifacts.userFiles` entry. `format` is inferred from `content` when
+/// omitted: a string is `text`, structured content is `json`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserFileSection {
+    /// POSIX-style path relative to the run directory.
+    path: String,
+    /// `json`, `yaml`, or `text`.
+    #[serde(default)]
+    format: Option<String>,
+    /// Structured content (serialized per `format`) or a text body.
+    content: serde_json::Value,
 }
 
 /// `artifacts.records`: a format list, or `false` to disable per-record export.
@@ -1823,6 +1840,44 @@ impl Benchmark {
             }
             None => Vec::new(),
         };
+        // `artifacts.userFiles`: rendered once here, so the runner materializes
+        // bytes rather than re-rendering templates at run time.
+        let mut user_files = Vec::new();
+        for f in self
+            .artifacts
+            .as_ref()
+            .and_then(|a| a.user_files.as_ref())
+            .into_iter()
+            .flatten()
+        {
+            let is_text = f.content.is_string();
+            let format = match f.format.as_deref() {
+                Some(v @ ("json" | "yaml" | "text")) => v,
+                Some(other) => anyhow::bail!(
+                    "artifacts.userFiles[{}]: unknown format {other:?} (expected `json`, `yaml`, or `text`)",
+                    f.path
+                ),
+                // Inferred: a string body is text, structured content is JSON.
+                None if is_text => "text",
+                None => "json",
+            };
+            let content = match format {
+                "text" => f.content.as_str().map(str::to_owned).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "artifacts.userFiles[{}]: format `text` requires a string `content`",
+                        f.path
+                    )
+                })?,
+                "yaml" => serde_yaml::to_string(&f.content)?,
+                _ => serde_json::to_string_pretty(&f.content)?,
+            };
+            user_files.push(crate::model::artifacts::UserFile {
+                path: f.path.clone(),
+                format: format.to_owned(),
+                content,
+            });
+        }
+
         let export_raw = self.artifacts.as_ref().is_some_and(|a| a.raw);
         let show_trace_timing = self.artifacts.as_ref().is_some_and(|a| a.show_trace_timing);
         let export_trace = self.artifacts.as_ref().is_some_and(|a| a.trace) || show_trace_timing;
@@ -1915,6 +1970,7 @@ impl Benchmark {
             server_profiler,
             records_formats,
             summary_formats,
+            user_files,
             export_raw,
             export_trace,
             export_outputs_json,

@@ -294,6 +294,8 @@ pub struct Inputs {
     /// Summary-export formats (`artifacts.summary`); empty = unauthored, both
     /// `json` and `csv` ship.
     pub summary_formats: Vec<String>,
+    /// Files to materialize into the run directory (`artifacts.user_files`).
+    pub user_files: Vec<crate::config::model::artifacts::UserFile>,
     /// Emit the raw request/response JSONL (`artifacts.raw`).
     pub export_raw: bool,
     /// Emit per-request HTTP trace columns (`artifacts.trace`).
@@ -1402,6 +1404,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     .dataset_analysis
                     .as_ref()
                     .and_then(|a| a.cache_blocks),
+                user_files: (!inputs.user_files.is_empty()).then(|| inputs.user_files.clone()),
                 dataset_analysis_per_conversation: inputs
                     .dataset_analysis
                     .as_ref()
