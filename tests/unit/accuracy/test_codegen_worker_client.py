@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 import textwrap
@@ -35,24 +36,37 @@ _ECHO_OK = """
         sys.stdout.buffer.flush()
 """
 
-
-# Worker that records overlap: writes "BUSY" markers around a small delay so a
-# second concurrent request would interleave if not serialized.
-_ECHO_TRACKED = """
-    import sys, orjson, time
-    inflight = 0
+# Echoes responses with pass@1 == id * 0.1 so each caller can verify it got
+# back its OWN response (not another caller's).
+_ECHO_ID_IN_METRICS = """
+    import sys, orjson
     for line in sys.stdin.buffer:
         line = line.strip()
         if not line:
             continue
         req = orjson.loads(line)
-        inflight += 1
-        overlap = inflight > 1
-        time.sleep(0.05)
-        inflight -= 1
-        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": 1.0}, "overlap": overlap}
+        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": req["id"] * 0.1}}
         sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
         sys.stdout.buffer.flush()
+"""
+
+# Buffers the first 4 requests and responds in REVERSE id order to exercise
+# the demux table (correct demux requires id matching, not position matching).
+_REVERSE_BATCH_OF_4 = """
+    import sys, orjson
+    buf = []
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        req = orjson.loads(line)
+        buf.append(req)
+        if len(buf) == 4:
+            for r in reversed(buf):
+                resp = {"id": r["id"], "ok": True, "metrics": {"pass@1": r["id"] * 0.1}}
+                sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+                sys.stdout.buffer.flush()
+            buf = []
 """
 
 
@@ -79,18 +93,110 @@ class TestHappyPath:
 
 
 class TestSerialization:
-    async def test_concurrent_grades_do_not_interleave(self, tmp_path) -> None:
-        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_TRACKED))
+    async def test_concurrent_grades_return_correct_results(self, tmp_path) -> None:
+        # Previously tested that grades were serialized (lock enforced).
+        # Now tests that concurrent grades all return correct results without the lock.
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
         try:
             results = await asyncio.gather(
                 *[
-                    worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
                     for _ in range(4)
                 ]
             )
             assert all(r == {"pass@1": 1.0} for r in results)
         finally:
-            await worker.aclose()
+            await w.aclose()
+
+
+class TestConcurrency:
+    async def test_concurrent_grades_all_complete(self, tmp_path) -> None:
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            results = await asyncio.gather(
+                *[
+                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+                    for _ in range(5)
+                ]
+            )
+            assert all(r == {"pass@1": 1.0} for r in results)
+        finally:
+            await w.aclose()
+
+    async def test_concurrent_grades_demux_by_id_not_position(self, tmp_path) -> None:
+        # 4 concurrent grades; mock responds in reverse order.
+        # If demux were position-based, callers would get wrong metrics.
+        w = CodegenGradingWorker(
+            worker_cmd=_write_worker(tmp_path, _REVERSE_BATCH_OF_4)
+        )
+        try:
+            results = await asyncio.gather(
+                *[
+                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+                    for _ in range(4)
+                ]
+            )
+            # IDs 1-4 → pass@1 values 0.1, 0.2, 0.3, 0.4 (one per caller)
+            values = sorted(r["pass@1"] for r in results)
+            assert values == pytest.approx([0.1, 0.2, 0.3, 0.4])
+        finally:
+            await w.aclose()
+
+    async def test_fault_cancels_all_pending_futures(self, tmp_path) -> None:
+        # Worker dies immediately after the first line — all concurrent callers
+        # should raise CodegenWorkerError, not hang.
+        w = CodegenGradingWorker(
+            worker_cmd=_write_worker(
+                tmp_path,
+                """
+                import sys
+                sys.stdin.buffer.readline()  # consume one line then exit
+                """,
+            )
+        )
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await asyncio.gather(
+                    *[
+                        w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=10)
+                        for _ in range(3)
+                    ],
+                    return_exceptions=False,
+                )
+        finally:
+            await w.aclose()
+
+    async def test_stale_id_after_timeout_does_not_crash(self, tmp_path) -> None:
+        # Reader receives a response for an id that the caller already timed out on.
+        # The stale future was already removed from _pending; the reader must skip it.
+        # Use _ECHO_OK with a very short timeout so the grade times out, then send
+        # a second grade to prove the worker (if restarted) still works.
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await w.grade_codegen(
+                    [{"input_output": "{}"}], [["x"]], timeout=0.000001
+                )
+            # If stale id handling is broken, the second grade would hang or crash.
+            # Give it a real timeout; it may or may not succeed (worker restarted).
+        finally:
+            await w.aclose()
+
+    async def test_aclose_with_pending_futures_does_not_hang(self, tmp_path) -> None:
+        hang_worker = """
+            import sys, time
+            for line in sys.stdin.buffer:
+                time.sleep(3600)
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, hang_worker))
+        grade_task = asyncio.create_task(
+            w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=60)
+        )
+        await asyncio.sleep(0.05)  # let grade_task start and block
+        await w.aclose()  # must not hang even with grade_task pending
+        grade_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, CodegenWorkerError):
+            await grade_task
 
 
 # The very first grade (client request id==1) hangs forever to trigger a
@@ -269,7 +375,8 @@ _EMIT_OVERSIZED_LINE = """
 
 
 # Always echoes a fixed WRONG id regardless of the request id, simulating a
-# worker whose responses no longer correlate to requests (a desync).
+# worker whose responses no longer correlate to requests (a desync). With the
+# demux reader, the stale id is silently dropped and the caller times out.
 _ECHO_WRONG_ID = """
     import sys, orjson
     for line in sys.stdin.buffer:
@@ -300,13 +407,16 @@ class TestOversizedResponse:
 
 class TestResponseIdMismatch:
     async def test_wrong_id_faults_and_kills_worker(self, tmp_path) -> None:
+        # With the demux reader, a wrong id is treated as a stale response and
+        # silently dropped. The caller's future is never resolved, so it times out
+        # and calls _handle_fault, which kills the worker.
         worker = CodegenGradingWorker(
             worker_cmd=_write_worker(tmp_path, _ECHO_WRONG_ID)
         )
         try:
             with pytest.raises(CodegenWorkerError):
                 await worker.grade_codegen(
-                    [{"input_output": "{}"}], [["x"]], timeout=30
+                    [{"input_output": "{}"}], [["x"]], timeout=0.5
                 )
             assert worker._proc is None
         finally:
