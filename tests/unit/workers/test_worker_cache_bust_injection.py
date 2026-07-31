@@ -750,6 +750,29 @@ def _make_delta_session_with_resets(
     )
 
 
+def test_first_turn_prefix_reapplied_after_empty_reset_delta():
+    turn_0 = [{"role": "user", "content": "old prefix"}]
+    turn_1_empty_reset: list[dict] = []
+    turn_2 = [{"role": "user", "content": "new prefix"}]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_empty_reset, turn_2],
+        reset_flags=[False, True, False],
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=2,
+        num_turns=3,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == "old prefix"
+    assert (
+        session.turn_list[2].raw_messages[0]["content"] == _PREFIX_MARKER + "new prefix"
+    )
+
+
 def test_first_turn_prefix_reapplied_on_reset_context_turn():
     """FIRST_TURN_PREFIX at turn_index > 0 must inject into the reset turn (the new wire prefix), not be skipped."""
     turn_0 = [

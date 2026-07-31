@@ -47,6 +47,15 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
+  - [Speculative Decoding Metrics](#speculative-decoding-metrics)
+    - [Acceptance Length](#acceptance-length)
+    - [Token-Weighted Acceptance Length](#token-weighted-acceptance-length)
+    - [Draft Acceptance Rate](#draft-acceptance-rate)
+    - [Overall Draft Acceptance Rate](#overall-draft-acceptance-rate)
+    - [Accepted per Verified](#accepted-per-verified)
+    - [Spec Decode Steps](#spec-decode-steps)
+    - [Accepted / Draft Token Counts](#accepted--draft-token-counts)
+    - [Pooled Acceptance Histogram](#pooled-acceptance-histogram)
   - [Usage Field Metrics](#usage-field-metrics)
     - [Usage Prompt Tokens](#usage-prompt-tokens)
     - [Usage Completion Tokens](#usage-completion-tokens)
@@ -704,6 +713,131 @@ total_reasoning_tokens = sum(r.reasoning_token_count for r in records if r.valid
 
 **Notes:**
 - Useful for understanding the reasoning overhead and cost for reasoning-enabled models.
+
+---
+
+## Speculative Decoding Metrics
+
+> [!NOTE]
+> All metrics in this section read only the engine-neutral per-request
+> [`SpecDecodeAcceptanceRecord`](reference/spec-decode-acceptance.md) attached to
+> each record. They are fully engine-agnostic: any engine whose adapter fills the
+> record lights them up unchanged, and none of them branch on the engine. When
+> spec decode is off (or a request had no verify steps) the record is absent and
+> every metric here drops out cleanly -- nothing is shown or exported.
+
+<!-- -->
+
+> [!IMPORTANT]
+> Acceptance length can be **concurrency / batch-size dependent for adaptive
+> drafters** (DSpark, vLLM's dynamic speculative decoding), which tune the number
+> of draft tokens per step -- or disable speculation -- as load rises. For
+> fixed-length drafters (a fixed-`k` draft model, Medusa, classic or dynamic-tree
+> EAGLE) the per-token acceptance rate is a property of the draft/target model
+> pair and the context, so acceptance length is essentially load-invariant. Either
+> way these metrics report at the run's offered load; when the drafter is adaptive,
+> cross-run comparisons are only meaningful with concurrency held fixed.
+
+These metrics render in a dedicated `Spec Decode` console section (`console_group = MetricConsoleGroup.SPEC_DECODE`), followed by a one-line pooled acceptance histogram. Notation: `j` = accepted draft tokens in a step, `l` = proposed draft tokens in a step; the always-accepted bonus token adds the `+1`.
+
+### Acceptance Length
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** ratio · larger is better
+
+Per-request mean tokens emitted per verify step, including the always-accepted bonus token (the `j + 1` acceptance length).
+
+**Formula:**
+```python
+spec_decode_acceptance_length = 1 + num_accepted_draft_tokens / num_spec_steps
+```
+
+**Notes:**
+- Averages per-request means equally. Compare against [Token-Weighted Acceptance Length](#token-weighted-acceptance-length), which weights by verify steps. The two can diverge when requests differ in how many verify steps they run and that step count correlates with per-request acceptance -- e.g. a few long, high-acceptance requests pull the token-weighted value above the equal-per-request mean. They coincide when every request runs a similar number of steps.
+
+---
+
+### Token-Weighted Acceptance Length
+
+**Type:** [Derived Metric](#derived-metrics) · **Unit:** ratio · larger is better
+
+Run-level acceptance length weighting every verify step equally rather than every request.
+
+**Formula:**
+```python
+spec_decode_token_weighted_acceptance_length = 1 + sum(num_accepted_draft_tokens) / sum(num_spec_steps)
+```
+
+**Notes:**
+- Reported **alongside** the per-request-mean acceptance length and clearly labeled, because the two answer different questions (per-request vs per-step weighting).
+
+---
+
+### Draft Acceptance Rate
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** % · larger is better
+
+Per-request fraction of proposed draft tokens that were accepted, as a percentage. Draft-only -- excludes the bonus token.
+
+**Formula:**
+```python
+spec_decode_draft_acceptance_rate = 100 * num_accepted_draft_tokens / num_draft_tokens
+```
+
+---
+
+### Overall Draft Acceptance Rate
+
+**Type:** [Derived Metric](#derived-metrics) · **Unit:** % · larger is better
+
+Run-level (draft-volume-weighted) draft acceptance rate: summed accepted drafts over summed proposed drafts across the whole run, so large and small requests contribute in proportion to their draft volume.
+
+**Formula:**
+```python
+spec_decode_overall_draft_acceptance_rate = 100 * sum(num_accepted_draft_tokens) / sum(num_draft_tokens)
+```
+
+---
+
+### Accepted per Verified
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** ratio · larger is better
+
+Per-request emitted tokens over verified tokens: accepted drafts plus one bonus per step, over proposed drafts plus one bonus per step.
+
+**Formula:**
+```python
+spec_decode_accepted_per_verified = (num_accepted_draft_tokens + num_spec_steps) / (num_draft_tokens + num_spec_steps)  # = (j + 1) / (l + 1)
+```
+
+---
+
+### Spec Decode Steps
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** count
+
+Per-request number of speculative verification steps (`num_spec_steps`). Equals the sum of the request's acceptance-histogram counts. The run-level `total_spec_decode_steps` is its sum across requests.
+
+---
+
+### Accepted / Draft Token Counts
+
+**Type:** [Record Metrics](#record-metrics) · **Unit:** tokens · `console_group = NONE`
+
+`spec_decode_accepted_draft_tokens` (`num_accepted_draft_tokens`) and `spec_decode_draft_tokens` (`num_draft_tokens`) travel per request and sum into `total_accepted_draft_tokens` / `total_draft_tokens`. They are exported to JSON/CSV/JSONL but hidden from the console to keep the section compact.
+
+---
+
+### Pooled Acceptance Histogram
+
+**Type:** dedicated reducer (outside the metric registry)
+
+The per-request `acceptance_histogram {j: steps}` pooled elementwise across the run into a single `{j: total_steps}` -- verify steps bucketed by accepted-draft count over the whole run. AIPerf's metric accumulator handles scalars and lists but not dicts, so this one aggregate is pooled by a dedicated per-phase reducer in the accumulator and rides on `ProfileResults.pooled_spec_decode_acceptance_histogram`.
+
+- **Console:** a one-line row beneath the Spec Decode table showing the % of steps per bucket, capped to buckets `0 .. 7` with any `j >= 8` folded into a trailing `>=8` bucket.
+- **Aggregate JSON** (`profile_export_aiperf.json`): the full `{j: count}` object under `pooled_spec_decode_acceptance_histogram` (no cap).
+- **CSV:** the scalar metrics carry the CSV; the structured histogram is JSON-only.
+
+**Reconciliation:** the pooled bucket counts sum to `total_spec_decode_steps`, which equals the sum of every request's `num_spec_steps`.
 
 ---
 
@@ -2274,6 +2408,7 @@ The `console_group` class attribute on a metric controls which console table the
 | <a id="group-prediction"></a>`MetricConsoleGroup.PREDICTION` | Speculative prediction token metrics (accepted/rejected). |
 | <a id="group-audio"></a>`MetricConsoleGroup.AUDIO` | Audio token metrics (prompt/completion). |
 | <a id="group-reasoning"></a>`MetricConsoleGroup.REASONING` | Reasoning token metrics. |
+| <a id="group-spec-decode"></a>`MetricConsoleGroup.SPEC_DECODE` | Speculative-decoding acceptance metrics (acceptance length, draft acceptance rate, accepted-per-verified, spec-decode steps). Rendered in a dedicated `Spec Decode` section, followed by a one-line pooled accepted-draft histogram from a separate exporter. |
 | <a id="group-gpu-power-efficiency-nvidia"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA` | NVIDIA cross-GPU power efficiency totals (`nvidia_total_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (NVIDIA)` section instead of the main table. |
 | <a id="group-gpu-power-efficiency-amd"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD` | AMD cross-GPU power efficiency totals (`amd_total_gpu_power`, `amd_total_gpu_energy`, `amd_output_tokens_per_joule`, `amd_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (AMD)` section instead of the main table. |
 

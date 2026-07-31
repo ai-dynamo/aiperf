@@ -191,11 +191,12 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     #
     #   1. iterate ``request_info.turns`` in order
     #   2. if the turn carries ``raw_messages`` (author-provided OpenAI-shape
-    #      entries - ``dag_jsonl``, ``mooncake_trace`` payload mode, or a
-    #      captured live assistant turn), splice them in verbatim
-    #   3. otherwise synthesise a single role/content message from the
-    #      structured ``Turn`` fields (``role``, ``texts``, ``images``,
-    #      ``audios``, ``videos``).
+    #      entries - ``dag_jsonl``, ``mooncake_trace`` payload mode, weka
+    #      delta-encoded traces, or a captured live assistant turn), splice
+    #      them in verbatim - an empty list splices nothing
+    #   3. only when ``raw_messages`` is None, synthesise a single
+    #      role/content message from the structured ``Turn`` fields
+    #      (``role``, ``texts``, ``images``, ``audios``, ``videos``).
     #
     # Only step 3 depends on the endpoint's wire shape - OpenAI chat uses
     # ``{"type": "text"}`` / ``{"type": "image_url"}`` parts, the Responses
@@ -230,12 +231,15 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def build_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
         """Flatten ``turns`` into a wire-ready role/content message array.
 
-        Turns carrying a non-empty ``raw_messages`` extend the array
-        verbatim; every other turn (including those with
-        ``raw_messages=[]``, which would otherwise silently drop the
-        turn) renders through ``_render_turn_message``. The result is
-        ``payload["messages"]`` for chat endpoints, ``payload["input"]``
-        for the Responses API, and any similar shape for plugins.
+        Turns carrying ``raw_messages`` extend the array verbatim; turns
+        with ``raw_messages=None`` render through ``_render_turn_message``.
+        An explicit ``raw_messages=[]`` contributes nothing: it is the
+        zero-new-message delta that delta-encoded trace sources emit when a
+        turn adds no new context (weka's block-aligned pull-back), and
+        synthesising a message for it would put ``content: []`` on the wire,
+        which servers reject. The result is ``payload["messages"]`` for chat
+        endpoints, ``payload["input"]`` for the Responses API, and any
+        similar shape for plugins.
 
         When a turn sets ``reset_context=True``, any messages already
         accumulated from prior turns in this call are discarded before
@@ -263,12 +267,13 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         """Shared flatten-and-merge skeleton for ``build_messages`` overrides.
 
         ``transform_raw_item`` maps each ``raw_messages`` item to its wire form
-        or returns ``None`` to drop it; ``render_synthetic`` renders a turn with
-        no ``raw_messages``. Both default to identity / ``_render_turn_message``.
+        or returns ``None`` to drop it; ``render_synthetic`` renders a turn whose
+        ``raw_messages`` is None. Both default to identity /
+        ``_render_turn_message``.
         """
         messages: list[dict[str, Any]] = []
         for turn in turns:
-            if turn.raw_messages:
+            if turn.raw_messages is not None:
                 if turn.reset_context:
                     messages = []
                 for item in turn.raw_messages:
@@ -324,7 +329,10 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         self._extend_image_parts(parts, turn.images)
         self._extend_parts(parts, turn.audios, self._render_audio_part)
         self._extend_parts(parts, turn.videos, self._render_video_part)
-        return parts
+        # An empty part list would serialise as ``content: []``, which servers
+        # reject ("message content parts cannot be empty"). Degrade to the
+        # empty string, matching the single-text fast path above.
+        return parts or ""
 
     def _extend_image_parts(
         self, parts: list[dict[str, Any]], images: list[Image]

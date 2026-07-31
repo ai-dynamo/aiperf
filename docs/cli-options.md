@@ -558,7 +558,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
@@ -2120,7 +2120,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
