@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -279,9 +280,10 @@ async def test_profiler_lifecycle_clears_active_state_after_deferred_failure() -
 
 
 @pytest.mark.asyncio
-async def test_stop_server_profiler_skips_inactive_and_stops_active_once() -> None:
+async def test_stop_server_profiler_skips_without_owners_and_stops_once() -> None:
     orchestrator = PhaseOrchestrator.__new__(PhaseOrchestrator)
-    orchestrator._server_profiler_active = False
+    owner = MagicMock()
+    orchestrator._server_profiler_owners = set()
     orchestrator._control_hooks = MagicMock(profiler_stop_urls=["http://h/stop"])
     orchestrator._control_headers = {}
     orchestrator.warning = MagicMock()
@@ -290,8 +292,86 @@ async def test_stop_server_profiler_skips_inactive_and_stops_active_once() -> No
         "aiperf.timing.phase_orchestrator.stop_server_profiler", new_callable=AsyncMock
     ) as stop:
         await orchestrator._stop_server_profiler_warn_only()
-        orchestrator._server_profiler_active = True
+        orchestrator._server_profiler_owners.add(owner)
         await orchestrator._stop_server_profiler_warn_only()
         await orchestrator._stop_server_profiler_warn_only()
+
+    stop.assert_awaited_once_with(orchestrator._control_hooks, {})
+
+
+@pytest.mark.asyncio
+async def test_profiler_owners_stop_only_after_last_runner_drains() -> None:
+    orchestrator = PhaseOrchestrator.__new__(PhaseOrchestrator)
+    first_runner = MagicMock()
+    second_runner = MagicMock()
+    hooks = MagicMock()
+    orchestrator._server_profiler_owners = {first_runner, second_runner}
+
+    stop = AsyncMock()
+    with patch("aiperf.timing.phase_orchestrator.stop_server_profiler", stop):
+        await orchestrator._stop_server_profiler_for_runner(first_runner, hooks, {})
+        stop.assert_not_awaited()
+        await orchestrator._stop_server_profiler_for_runner(second_runner, hooks, {})
+
+    stop.assert_awaited_once_with(hooks, {})
+
+
+@pytest.mark.asyncio
+async def test_profiler_start_and_stop_are_serialized_by_runner_ownership() -> None:
+    orchestrator = PhaseOrchestrator.__new__(PhaseOrchestrator)
+    first_runner = MagicMock()
+    second_runner = MagicMock()
+    hooks = MagicMock()
+    orchestrator._server_profiler_owners = set()
+
+    start = AsyncMock()
+    stop = AsyncMock()
+    with (
+        patch("aiperf.timing.phase_orchestrator.start_server_profiler", start),
+        patch("aiperf.timing.phase_orchestrator.stop_server_profiler", stop),
+    ):
+        await orchestrator._start_server_profiler_for_runner(first_runner, hooks, {})
+        await orchestrator._start_server_profiler_for_runner(second_runner, hooks, {})
+        await orchestrator._stop_server_profiler_for_runner(first_runner, hooks, {})
+        await orchestrator._stop_server_profiler_for_runner(second_runner, hooks, {})
+
+    start.assert_awaited_once_with(hooks, {})
+    stop.assert_awaited_once_with(hooks, {})
+
+
+@pytest.mark.asyncio
+async def test_deferred_profiler_cancellation_stops_and_propagates() -> None:
+    async def run_phase() -> None:
+        raise asyncio.CancelledError
+
+    stop = AsyncMock()
+    with pytest.raises(asyncio.CancelledError):
+        await run_phase_with_server_profiler(
+            phase=CreditPhase.PROFILING,
+            hooks=MagicMock(profiler_start_urls=["http://h/start"]),
+            headers={},
+            run_phase=run_phase,
+            start_fn=AsyncMock(),
+            stop_fn=stop,
+            warn_fn=lambda _msg: None,
+            defer_stop=True,
+        )
+
+    stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_outstanding_profiler_owners() -> None:
+    orchestrator = PhaseOrchestrator.__new__(PhaseOrchestrator)
+    orchestrator._active_runners = []
+    orchestrator._server_profiler_owners = {MagicMock()}
+    orchestrator._control_hooks = MagicMock(profiler_stop_urls=["http://h/stop"])
+    orchestrator._control_headers = {}
+    orchestrator.warning = MagicMock()
+
+    with patch(
+        "aiperf.timing.phase_orchestrator.stop_server_profiler", new_callable=AsyncMock
+    ) as stop:
+        await orchestrator._stop_orchestrator()
 
     stop.assert_awaited_once_with(orchestrator._control_hooks, {})
