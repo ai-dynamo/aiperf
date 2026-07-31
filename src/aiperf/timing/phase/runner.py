@@ -287,6 +287,7 @@ class PhaseRunner(TaskManagerMixin):
             session_tree_registry=self._session_tree_registry,
             cache_bust_ledger=getattr(conversation_source, "cache_bust_ledger", None),
             allow_accelerated_warmup=self._cache_warmup_enabled,
+            scheduler=self._scheduler,
         )
 
     def _wire_replay_gate(self) -> None:
@@ -1061,13 +1062,21 @@ class PhaseRunner(TaskManagerMixin):
                 f"Error waiting for phase {self._config.phase} to send all credits: {e!r}"
             )
         finally:
+            preserve_branch_handoff = self._preserve_replay_gate_until_finalize(
+                strategy
+            )
             if not self._lifecycle.is_sending_complete:
                 self._lifecycle.mark_sending_complete(timeout_triggered=timed_out)
                 self._progress.freeze_sent_counts()
                 self._scheduler.cancel_all_pending()
+                if (
+                    self._branch_orchestrator is not None
+                    and not preserve_branch_handoff
+                ):
+                    await self._branch_orchestrator.expire_replay_deadlines()
                 self._progress.all_credits_sent_event.set()
 
-            if not self._preserve_replay_gate_until_finalize(strategy):
+            if not preserve_branch_handoff:
                 await self._credit_issuer.replay_gate.cancel(
                     notify_refused=self._config.phase == CreditPhase.PROFILING
                 )
