@@ -234,6 +234,15 @@ def _weka_subagent(
     }
 
 
+def _children_by_parent(parents: dict[str, str | None]) -> dict[str, list[str]]:
+    """Index child sessions by their direct parent."""
+    children: dict[str, list[str]] = defaultdict(list)
+    for session_id, parent_session_id in parents.items():
+        if parent_session_id is not None:
+            children[parent_session_id].append(session_id)
+    return children
+
+
 def _dynamo_traces_to_weka(input_file: Path) -> list[WekaTrace]:
     """Convert roots and direct ``agent_context`` children into Weka traces."""
     rows = _load_dynamo_rows(input_file)
@@ -263,6 +272,8 @@ def _dynamo_traces_to_weka(input_file: Path) -> list[WekaTrace]:
                 f"{session_id}"
             )
 
+    children_by_parent = _children_by_parent(parents)
+
     traces: list[WekaTrace] = []
     root_ids = sorted(
         (
@@ -274,11 +285,7 @@ def _dynamo_traces_to_weka(input_file: Path) -> list[WekaTrace]:
     )
     for root_id in root_ids:
         child_ids = sorted(
-            (
-                session_id
-                for session_id, parent_session_id in parents.items()
-                if parent_session_id == root_id
-            ),
+            children_by_parent[root_id],
             key=lambda session_id: sessions[session_id][0]["received_ms"],
         )
         selected_rows = [
