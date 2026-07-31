@@ -241,6 +241,131 @@ async def test_request_rate_update_wakes_pending_sleep() -> None:
     credit_issuer.try_issue_credit.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_high_res_pacer_rate_update_reschedules_before_issuing_credit() -> None:
+    class FakeIntervalGenerator:
+        def __init__(self, config) -> None:
+            self.rate = config.request_rate
+
+        def next_interval(self) -> float:
+            return 0.05 if self.rate == 0.1 else 0.001
+
+        def set_rate(self, new_rate: float) -> None:
+            self.rate = new_rate
+
+    class FakePacer:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = False
+            self.deadlines: list[float] = []
+
+        async def sleep_until(self, deadline_perf_s: float) -> None:
+            self.deadlines.append(deadline_perf_s)
+            if len(self.deadlines) == 1:
+                self.started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.cancelled = True
+                    raise
+
+        def close(self) -> None:
+            pass
+
+    lifecycle = MagicMock()
+    lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
+    conversation_source = MagicMock()
+    conversation_source.next.return_value.build_first_turn.return_value = object()
+    credit_issuer = MagicMock()
+    credit_issuer.try_issue_credit = AsyncMock(return_value=False)
+    stop_checker = MagicMock()
+    stop_checker.can_start_new_session.return_value = True
+    config = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.REQUEST_RATE,
+        request_rate=0.1,
+        total_expected_requests=1,
+    )
+    with patch(
+        "aiperf.timing.strategies.request_rate.plugins.get_class",
+        return_value=FakeIntervalGenerator,
+    ):
+        strategy = RequestRateStrategy(
+            config=config,
+            conversation_source=conversation_source,
+            scheduler=MagicMock(),
+            stop_checker=stop_checker,
+            credit_issuer=credit_issuer,
+            lifecycle=lifecycle,
+        )
+
+    pacer = FakePacer()
+    with patch.object(strategy, "_create_high_res_pacer", return_value=pacer):
+        task = asyncio.create_task(strategy.execute_phase())
+        await pacer.started.wait()
+        strategy.set_request_rate(1000.0)
+        await asyncio.wait_for(task, timeout=1.0)
+
+    assert pacer.cancelled
+    assert len(pacer.deadlines) == 2
+    assert pacer.deadlines[1] < pacer.deadlines[0]
+    credit_issuer.try_issue_credit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_high_res_pacer_os_error_falls_back_to_event_loop_timers() -> None:
+    class FakeIntervalGenerator:
+        def __init__(self, config) -> None:
+            self.rate = config.request_rate
+
+        def next_interval(self) -> float:
+            return 0.001
+
+    class FailingPacer:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def sleep_until(self, _deadline_perf_s: float) -> None:
+            raise OSError("timerfd failed")
+
+        def close(self) -> None:
+            self.closed = True
+
+    lifecycle = MagicMock()
+    lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
+    conversation_source = MagicMock()
+    conversation_source.next.return_value.build_first_turn.return_value = object()
+    credit_issuer = MagicMock()
+    credit_issuer.try_issue_credit = AsyncMock(return_value=False)
+    stop_checker = MagicMock()
+    stop_checker.can_start_new_session.return_value = True
+    config = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.REQUEST_RATE,
+        request_rate=1000.0,
+        total_expected_requests=1,
+    )
+    with patch(
+        "aiperf.timing.strategies.request_rate.plugins.get_class",
+        return_value=FakeIntervalGenerator,
+    ):
+        strategy = RequestRateStrategy(
+            config=config,
+            conversation_source=conversation_source,
+            scheduler=MagicMock(),
+            stop_checker=stop_checker,
+            credit_issuer=credit_issuer,
+            lifecycle=lifecycle,
+        )
+
+    pacer = FailingPacer()
+    with patch.object(strategy, "_create_high_res_pacer", return_value=pacer):
+        await asyncio.wait_for(strategy.execute_phase(), timeout=1.0)
+
+    assert pacer.closed
+    credit_issuer.try_issue_credit.assert_awaited_once()
+
+
 def _build_minimal_strategy() -> RequestRateStrategy:
     class FakeIntervalGenerator:
         def __init__(self, config):

@@ -159,6 +159,69 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             )
             return None
 
+    def _reschedule_for_rate_update(self, next_target_perf: float) -> float:
+        """Clear a rate update and calculate its earliest eligible target."""
+        self._rate_update_event.clear()
+        return min(
+            next_target_perf,
+            time.perf_counter() + self._rate_generator.next_interval(),
+        )
+
+    async def _wait_for_pacer_or_rate_update(self, deadline_perf_s: float) -> bool:
+        """Wait for a high-resolution deadline or a request-rate update."""
+        if self._pacer is None:
+            return False
+
+        pacer_task = asyncio.create_task(self._pacer.sleep_until(deadline_perf_s))
+        rate_update_task = asyncio.create_task(self._rate_update_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {pacer_task, rate_update_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (pacer_task, rate_update_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(pacer_task, rate_update_task, return_exceptions=True)
+
+        if pacer_task in done:
+            pacer_task.result()
+        return rate_update_task in done
+
+    async def _wait_until_next_target(
+        self, next_target_perf: float, now: float
+    ) -> bool:
+        """Wait until the target and return whether a rate update won."""
+        sleep_duration = next_target_perf - now
+        if sleep_duration <= 0:
+            await yield_to_event_loop()
+            return False
+
+        if (
+            self._pacer is not None
+            and sleep_duration <= Environment.TIMING.RATE_RAMP_UPDATE_INTERVAL
+        ):
+            try:
+                return await self._wait_for_pacer_or_rate_update(next_target_perf)
+            except OSError as e:
+                self.warning(
+                    f"high-res pacing failed ({e}); falling back to event-loop timers"
+                )
+                self._pacer.close()
+                self._pacer = None
+                return await self._wait_until_next_target(
+                    next_target_perf, time.perf_counter()
+                )
+
+        try:
+            await asyncio.wait_for(
+                self._rate_update_event.wait(), timeout=sleep_duration
+            )
+        except asyncio.TimeoutError:  # noqa: UP041 - distinct on Python 3.10
+            return False
+        return True
+
     async def execute_phase(self) -> None:
         """Execute request rate main loop until stop condition reached.
 
@@ -197,47 +260,16 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                     next_target_perf = now
 
                 if self._rate_update_event.is_set():
-                    self._rate_update_event.clear()
-                    next_target_perf = min(
-                        next_target_perf,
-                        time.perf_counter() + self._rate_generator.next_interval(),
+                    next_target_perf = self._reschedule_for_rate_update(
+                        next_target_perf
                     )
                     continue
 
-                sleep_duration = next_target_perf - now
-                if sleep_duration > 0:
-                    # Use the high-res pacer only for short sleeps: that is where
-                    # ~1ms event-loop timer quantization actually distorts the
-                    # rate, and where the loop re-checks for rate updates before
-                    # the next ramp tick anyway. Longer sleeps keep the event-wait
-                    # so mid-sleep rate updates (ramping, set_request_rate) wake
-                    # promptly; ~1ms precision is irrelevant at that timescale.
-                    if (
-                        self._pacer is not None
-                        and sleep_duration
-                        <= Environment.TIMING.RATE_RAMP_UPDATE_INTERVAL
-                    ):
-                        await self._pacer.sleep_until(next_target_perf)
-                    else:
-                        try:
-                            await asyncio.wait_for(
-                                self._rate_update_event.wait(), timeout=sleep_duration
-                            )
-                        except asyncio.TimeoutError:  # noqa: UP041 - distinct on Python 3.10
-                            pass
-                        else:
-                            self._rate_update_event.clear()
-                            next_target_perf = min(
-                                next_target_perf,
-                                time.perf_counter()
-                                + self._rate_generator.next_interval(),
-                            )
-                            continue
-                else:
-                    # CRITICAL: Always yield to event loop to allow callbacks to run.
-                    # Without this, CONCURRENCY_BURST mode (0 interval) busy-loops and
-                    # starves credit return callbacks, causing deadlock.
-                    await yield_to_event_loop()
+                if await self._wait_until_next_target(next_target_perf, now):
+                    next_target_perf = self._reschedule_for_rate_update(
+                        next_target_perf
+                    )
+                    continue
 
                 # Schedule next interval BEFORE issuing credit. This way, variable
                 # credit issuance latency doesn't affect the timing of the next interval.

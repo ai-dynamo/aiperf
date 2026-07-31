@@ -63,6 +63,15 @@ class TimerFdPacer:
                 f"got {clock_impl!r}: timerfd deadlines would be on a different clock"
             )
         self._libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        self._libc.timerfd_create.argtypes = [ctypes.c_int, ctypes.c_int]
+        self._libc.timerfd_create.restype = ctypes.c_int
+        self._libc.timerfd_settime.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.POINTER(_Itimerspec),
+            ctypes.POINTER(_Itimerspec),
+        ]
+        self._libc.timerfd_settime.restype = ctypes.c_int
         fd = self._libc.timerfd_create(_CLOCK_MONOTONIC, _TFD_NONBLOCK | _TFD_CLOEXEC)
         if fd < 0:
             errno = ctypes.get_errno()
