@@ -397,6 +397,30 @@ struct DistFields {
     median: Option<f64>,
     min: Option<f64>,
     max: Option<f64>,
+    /// Weighted mixture components; selects a multi-modal distribution.
+    peaks: Option<Vec<PeakFields>>,
+}
+
+/// One mixture component, authored inline as `{mean: 128, stddev: 20, weight: 60}`.
+/// The wire form nests the component under `distribution:`, so [`dist_from`]
+/// canonicalizes; `weight` defaults to an equal share.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PeakFields {
+    value: Option<f64>,
+    mean: Option<f64>,
+    stddev: Option<f64>,
+    median: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    #[serde(default = "one")]
+    weight: f64,
+}
+
+/// Default mixture weight, giving every peak an equal share when `weight:` is
+/// omitted from all of them.
+fn one() -> f64 {
+    1.0
 }
 
 /// Deserialize seconds from a number, `30s`, `5m`, `2h`, or `inf`.
@@ -2513,7 +2537,23 @@ fn dist_from(d: &DistFields) -> Distribution {
         median: d.median,
         min: d.min,
         max: d.max,
-        ..Default::default()
+        peaks: d.peaks.as_ref().map(|peaks| {
+            peaks
+                .iter()
+                .map(|p| crate::model::dataset::Peak {
+                    distribution: normalize_dist(Distribution {
+                        value: p.value,
+                        mean: p.mean,
+                        stddev: p.stddev,
+                        median: p.median,
+                        min: p.min,
+                        max: p.max,
+                        ..Default::default()
+                    }),
+                    weight: p.weight,
+                })
+                .collect()
+        }),
     })
 }
 
