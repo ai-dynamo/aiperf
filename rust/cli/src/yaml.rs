@@ -364,6 +364,7 @@ struct ConfigFile {
     /// Config-schema version (`schemaVersion: "2.0"`). Accepted and recorded so
     /// authoring it is not an unknown key; the loader targets one schema.
     #[serde(default, alias = "schemaVersion")]
+    #[allow(dead_code)]
     schema_version: Option<String>,
     /// `sweep:` block, consumed by [`crate::sweep::yaml_sweep::parse`] before this
     /// struct sees the value and stripped per variation. Declared so the key is
@@ -2860,9 +2861,8 @@ benchmark:
     /// Every authorable `endpoint:` key must survive YAML -> `Inputs` ->
     /// `Endpoint` -> the protocol-v2 `cfg.endpoint` object.
     ///
-    /// `EndpointSection` is NOT `deny_unknown_fields` (an unrecognized
-    /// `endpoint:` key is silently ignored), and each field needs three
-    /// independent touches — the YAML struct, the `Inputs` projection, and
+    /// `deny_unknown_fields` catches a *misspelled* key, but not a *declared*
+    /// one that goes nowhere: each field needs three independent touches — the YAML struct, the `Inputs` projection, and
     /// `resolve::resolve`'s `Endpoint` construction. A field wired into only
     /// the first two reaches the runtime as its default while the config
     /// validates clean; `ssl_verify` and `uds_path` both shipped that way. This
@@ -2941,5 +2941,41 @@ benchmark:
                  full projected endpoint: {ep:#}"
             );
         }
+    }
+
+    /// `dataset.prompts.sequenceDistribution` must reach the protocol-v2
+    /// dataset object.
+    ///
+    /// This is the same three-touch trap as the endpoint fields above: the
+    /// runtime consumed `SeqDistEntry` and only `--seq-dist` filled it, so a
+    /// YAML-authored mixture parsed clean and then ran the scalar `isl`/`osl`
+    /// default instead.
+    #[test]
+    fn authored_sequence_distribution_reaches_protocol_v2() {
+        let cfg = "schemaVersion: \"2.0\"\n\
+             benchmark:\n\
+            \x20 model: m\n\
+            \x20 endpoint: {type: chat, url: 127.0.0.1:8000}\n\
+            \x20 dataset:\n\
+            \x20   prompts:\n\
+            \x20     sequenceDistribution:\n\
+            \x20       - {isl: 128, osl: 16, probability: 70}\n\
+            \x20       - {isl: 4096, osl: 256, probability: 30}\n\
+            \x20 phases: {type: concurrency, requests: 1, concurrency: 1}\n";
+        let run = resolve_str(cfg, Some("/tmp/x".into())).expect("seq-dist config resolves");
+        let dist = &serde_json::to_value(&run).unwrap()["cfg"]["dataset"]["sequence_distribution"];
+
+        let entries = dist
+            .as_array()
+            .unwrap_or_else(|| panic!("sequence_distribution absent from projection: {dist:#}"));
+        assert_eq!(entries.len(), 2, "both mixture entries must survive");
+        assert_eq!(entries[0]["probability"], serde_json::json!(70.0));
+        assert_eq!(entries[1]["probability"], serde_json::json!(30.0));
+        // The scalar forms must project as fixed distributions, not be dropped.
+        assert!(
+            entries[1]["isl"].to_string().contains("4096"),
+            "second entry lost its isl: {:#}",
+            entries[1]
+        );
     }
 }
