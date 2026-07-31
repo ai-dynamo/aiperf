@@ -365,6 +365,17 @@ struct ConfigFile {
     /// authoring it is not an unknown key; the loader targets one schema.
     #[serde(default, alias = "schemaVersion")]
     schema_version: Option<String>,
+    /// `sweep:` block, consumed by [`crate::sweep::yaml_sweep::parse`] before this
+    /// struct sees the value and stripped per variation. Declared so the key is
+    /// legal on the single-run path rather than rejected as unknown.
+    #[serde(default)]
+    #[allow(dead_code)]
+    sweep: Option<serde_json::Value>,
+    /// `variables:` block, consumed by [`crate::expand`] during Jinja expansion.
+    /// Declared for the same reason as `sweep`.
+    #[serde(default)]
+    #[allow(dead_code)]
+    variables: Option<serde_json::Value>,
     benchmark: Benchmark,
     /// Top-level deterministic run seed (`randomSeed`).
     #[serde(default, alias = "randomSeed")]
@@ -881,6 +892,19 @@ struct PromptsSection {
     prefix_reuse_fraction: Option<f64>,
     #[serde(default, alias = "prefixReuseRatio")]
     prefix_reuse_ratio: Option<f64>,
+    /// Weighted `(isl, osl)` mixture, the YAML form of `--seq-dist`. Overrides
+    /// the scalar `isl`/`osl` above when authored.
+    #[serde(default, alias = "sequenceDistribution")]
+    sequence_distribution: Option<Vec<SeqDistEntrySection>>,
+}
+
+/// One `sequenceDistribution:` entry: a weighted `(isl, osl)` pair.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SeqDistEntrySection {
+    isl: NumOrDist,
+    osl: NumOrDist,
+    probability: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1327,6 +1351,20 @@ impl Benchmark {
             .as_ref()
             .and_then(|d| d.prompts.as_ref())
             .and_then(|p| p.corpus.clone());
+        let sequence_distribution = dataset
+            .as_ref()
+            .and_then(|d| d.prompts.as_ref())
+            .and_then(|p| p.sequence_distribution.as_ref())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|e| crate::model::dataset::SeqDistEntry {
+                        isl: clone_num_or_dist(&e.isl),
+                        osl: clone_num_or_dist(&e.osl),
+                        probability: e.probability,
+                    })
+                    .collect()
+            });
         let num_conversations = dataset.as_ref().and_then(|d| d.num_conversations);
         let dataset_entries = dataset.as_ref().and_then(|d| d.entries);
         // Per-dataset seed is separate from the top-level run seed.
@@ -1866,7 +1904,7 @@ impl Benchmark {
             trace_session_sample_ratio: None,
             agentic_warmup_grace_period: None,
             failed_request_threshold: None,
-            sequence_distribution: None,
+            sequence_distribution,
             batch_size: batch_size.unwrap_or(1),
             sampling,
             entries,
