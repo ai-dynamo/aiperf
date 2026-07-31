@@ -211,7 +211,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
 ///
 /// Entries leave this table by gaining a consumer, not by being deleted: dropping
 /// one returns the flag to silently-ignored, which is the failure this guards.
-const UNIMPLEMENTED_FLAGS: &[(&str, fn(&ProfileFlags) -> bool)] = &[
+type FlagIsAuthored = fn(&ProfileFlags) -> bool;
+
+const UNIMPLEMENTED_FLAGS: &[(&str, FlagIsAuthored)] = &[
     ("--adaptive-scale-control", |f| {
         f.adaptive_scale_control.is_some()
     }),
