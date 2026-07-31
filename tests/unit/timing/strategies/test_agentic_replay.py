@@ -443,7 +443,7 @@ async def test_cache_warmup_handoff_preserves_every_quota_refused_turn_once(
     assert admission(refused_turn) is TurnAdmission.DEFER
     issuer.replay_gate.pause_releases.assert_not_called()
 
-    states = strategy._build_handoff_states(finalized_at_ns=0)
+    states = strategy._build_handoff_states()
 
     assert len(states[0]) == 1
     state = states[0][0]
@@ -678,7 +678,7 @@ async def test_cache_warmup_cutoff_stops_issuer_and_persists_next_turn():
     assert snapshot.replay_resume_boundaries == (ReplayResumeBoundary("trace_0", 3),)
 
 
-def test_cache_warmup_handoff_preserves_residual_next_turn_delay() -> None:
+def test_cache_warmup_handoff_preserves_full_next_turn_delay() -> None:
     dataset = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -706,14 +706,13 @@ def test_cache_warmup_handoff_preserves_residual_next_turn_delay() -> None:
         phase=CreditPhase.WARMUP,
     )
     strategy._handoff_credits[credit.x_correlation_id] = credit
-    strategy._handoff_returned_at_ns[credit.x_correlation_id] = 1_000_000_000
     strategy._root_to_lane[credit.effective_root_correlation_id] = 0
 
-    states_by_lane = strategy._build_handoff_states(finalized_at_ns=3_500_000_000)
+    states_by_lane = strategy._build_handoff_states()
 
     state = states_by_lane[0][0]
     assert state.next_turn_index == 2
-    assert state.next_dispatch_offset_ms == pytest.approx(5_500.0)
+    assert state.next_dispatch_offset_ms == pytest.approx(8_000.0)
 
 
 def test_cache_warmup_handoff_uses_timestamp_fallback_without_per_stream_cap() -> None:
@@ -744,14 +743,13 @@ def test_cache_warmup_handoff_uses_timestamp_fallback_without_per_stream_cap() -
         phase=CreditPhase.WARMUP,
     )
     strategy._handoff_credits[credit.x_correlation_id] = credit
-    strategy._handoff_returned_at_ns[credit.x_correlation_id] = 1_000_000_000
     strategy._root_to_lane[credit.effective_root_correlation_id] = 0
 
-    states_by_lane = strategy._build_handoff_states(finalized_at_ns=1_250_000_000)
+    states_by_lane = strategy._build_handoff_states()
 
-    # Timestamp fallback gives 6000 - (1000 + 500) = 4500ms, less the 250ms
-    # handoff drain wait = 4250ms. The raw stream offset stays intact.
-    assert states_by_lane[0][0].next_dispatch_offset_ms == pytest.approx(4_250.0)
+    # Timestamp fallback gives 6000 - (1000 + 500) = 4500ms. Warmup barrier
+    # time does not consume the profiling delay.
+    assert states_by_lane[0][0].next_dispatch_offset_ms == pytest.approx(4_500.0)
 
 
 def test_cache_warmup_handoff_preserves_raw_stream_offsets() -> None:
@@ -800,24 +798,20 @@ def test_cache_warmup_handoff_preserves_raw_stream_offsets() -> None:
         branch_mode=ConversationBranchMode.SPAWN,
     )
     strategy._handoff_credits = {"root": root, "child": child}
-    strategy._handoff_returned_at_ns = {
-        "root": 1_000_000_000,
-        "child": 1_000_000_000,
-    }
     strategy._root_to_lane["root"] = 0
 
-    states = strategy._build_handoff_states(finalized_at_ns=144_259_000_000)[0]
+    states = strategy._build_handoff_states()[0]
     offsets = {
         state.x_correlation_id: state.next_dispatch_offset_ms for state in states
     }
 
     assert offsets == {
-        "root": pytest.approx(676_750.0),
-        "child": pytest.approx(9_212_954.0),
+        "root": pytest.approx(820_009.0),
+        "child": pytest.approx(9_356_213.0),
     }
 
 
-def test_cache_warmup_handoff_elapsed_wait_can_exhaust_delay() -> None:
+def test_cache_warmup_handoff_barrier_wait_does_not_exhaust_delay() -> None:
     dataset = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -845,12 +839,11 @@ def test_cache_warmup_handoff_elapsed_wait_can_exhaust_delay() -> None:
         phase=CreditPhase.WARMUP,
     )
     strategy._handoff_credits[credit.x_correlation_id] = credit
-    strategy._handoff_returned_at_ns[credit.x_correlation_id] = 1_000_000_000
     strategy._root_to_lane[credit.effective_root_correlation_id] = 0
 
-    states_by_lane = strategy._build_handoff_states(finalized_at_ns=4_000_000_000)
+    states_by_lane = strategy._build_handoff_states()
 
-    assert states_by_lane[0][0].next_dispatch_offset_ms == pytest.approx(0.0)
+    assert states_by_lane[0][0].next_dispatch_offset_ms == pytest.approx(2_000.0)
 
 
 def test_handoff_preserves_completed_streams_absent_from_live_state() -> None:
@@ -879,16 +872,36 @@ def test_handoff_preserves_completed_streams_absent_from_live_state() -> None:
 
 
 def test_cache_warmup_handoff_preserves_pending_replay_barrier_turns() -> None:
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[TurnMetadata(delay_ms=0.0)],
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::fa:001",
+                turns=[
+                    TurnMetadata(delay_ms=0.0),
+                    TurnMetadata(delay_ms=30_000.0),
+                ],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP,
         trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
+        dataset=dataset,
         cache_warmup_duration=10.0,
     )
     pending_turn = TurnToSend(
         conversation_id="trace_0::fa:001",
         x_correlation_id="child",
-        turn_index=0,
-        num_turns=3,
+        turn_index=1,
+        num_turns=2,
         agent_depth=1,
         parent_correlation_id="root",
         root_correlation_id="root",
@@ -896,14 +909,14 @@ def test_cache_warmup_handoff_preserves_pending_replay_barrier_turns() -> None:
     issuer.replay_gate.pending_turns_by_root.return_value = {"root": (pending_turn,)}
     strategy._root_to_lane["root"] = 0
 
-    states_by_lane = strategy._build_handoff_states(finalized_at_ns=0)
+    states_by_lane = strategy._build_handoff_states()
 
     assert len(states_by_lane[0]) == 1
     state = states_by_lane[0][0]
     assert state.conversation_id == "trace_0::fa:001"
     assert state.x_correlation_id == "child"
-    assert state.next_turn_index == 0
-    assert state.next_dispatch_offset_ms == 0.0
+    assert state.next_turn_index == 1
+    assert state.next_dispatch_offset_ms == pytest.approx(30_000.0)
     assert state.agent_depth == 1
     assert state.parent_correlation_id == "root"
     assert state.root_correlation_id == "root"
@@ -1561,8 +1574,8 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
 
 
 @pytest.mark.asyncio
-async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_spacing():
-    """A trajectory idle at t* caps only the leading idle and shifts every stream left uniformly, preserving subagent spacing: children at 100s/130s/220s with a 60s cap fire at 60s/90s/180s, not collapsed to 60s each."""
+async def test_profiling_global_anchor_preserves_subagent_spacing():
+    """One phase anchor shifts 100s/130s/220s to 0s/30s/120s."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -1659,12 +1672,10 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    # The runtime-only trace cap does not alter phase-start offsets.
-    assert issued == []
+    assert issued == ["trace_0::sa:a:fa:000"]
     assert [delay for delay, _ in scheduled] == [
-        pytest.approx(100.0),
-        pytest.approx(130.0),
-        pytest.approx(220.0),
+        pytest.approx(30.0),
+        pytest.approx(120.0),
     ]
     for _, coro in scheduled:
         await coro
@@ -1711,40 +1722,47 @@ def test_profiling_spread_reports_first_request_per_trajectory_not_all_streams()
 
 
 @pytest.mark.asyncio
-async def test_profiling_preserve_start_gap_delays_first_request_by_default():
-    """By default (spread), a trajectory's first post-t* request waits out its recorded offset instead of firing at 0: a root resuming 8s after t* is scheduled 8s out, preserving the leading idle gap."""
+async def test_profiling_globally_anchors_earliest_request_preserving_spacing():
+    """Offsets 30s/60s become 0s/30s under one phase-wide anchor."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
                 conversation_id="trace_0",
-                turns=[
-                    TurnMetadata(timestamp_ms=0.0),
-                    TurnMetadata(timestamp_ms=18_000.0),
-                ],
+                turns=[TurnMetadata(timestamp_ms=30_000.0)],
+            ),
+            ConversationMetadata(
+                conversation_id="trace_1",
+                turns=[TurnMetadata(timestamp_ms=60_000.0)],
             ),
         ],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-    # t* = 10_000: turn 0 < t* (warmed), turn 1 (18s) is 8s out from t*.
-    root_state = ConversationState(
-        conversation_id="trace_0",
-        x_correlation_id="root",
-        next_turn_index=1,
-        next_dispatch_offset_ms=8_000.0,
-    )
-    trajectory = Trajectory(
-        conversation_id="trace_0",
-        start_turn_index=1,
-        snapshot=TrajectorySnapshot(
-            t_star_ms=10_000.0,
-            states=(root_state,),
-        ),
-    )
+    trajectories = [
+        Trajectory(
+            conversation_id=conversation_id,
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id=conversation_id,
+                        x_correlation_id=correlation_id,
+                        next_turn_index=0,
+                        next_dispatch_offset_ms=offset_ms,
+                    ),
+                ),
+            ),
+        )
+        for conversation_id, correlation_id, offset_ms in (
+            ("trace_0", "root-0", 30_000.0),
+            ("trace_1", "root-1", 60_000.0),
+        )
+    ]
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = ds
     src._dataset_sampler = MagicMock()
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
-    src.trajectories = [trajectory]
+    src.trajectories = trajectories
 
     issued: list[tuple[str, int]] = []
 
@@ -1762,7 +1780,7 @@ async def test_profiling_preserve_start_gap_delays_first_request_by_default():
 
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
-    cfg.concurrency = 1
+    cfg.concurrency = 2
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -1775,12 +1793,11 @@ async def test_profiling_preserve_start_gap_delays_first_request_by_default():
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    # Leading gap preserved: nothing fires inline; turn 1 scheduled 8s out.
-    assert issued == []
-    assert [delay for delay, _ in scheduled] == [pytest.approx(8.0)]
+    assert issued == [("trace_0", 0)]
+    assert [delay for delay, _ in scheduled] == [pytest.approx(30.0)]
     for _, coro in scheduled:
         await coro
-    assert issued == [("trace_0", 1)]
+    assert issued == [("trace_0", 0), ("trace_1", 0)]
 
 
 @pytest.mark.asyncio
