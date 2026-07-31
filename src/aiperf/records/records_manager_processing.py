@@ -201,6 +201,38 @@ def load_analyzers(host: _LoaderHost) -> list[LoadedAnalyzer]:
     return analyzers
 
 
+def accumulators_for_record_type(
+    accumulators: dict[AccumulatorType, AccumulatorProtocol],
+    record_type: str,
+) -> list[AccumulatorProtocol]:
+    """Return accumulators whose plugin metadata declares ``record_type``."""
+    matched: list[AccumulatorProtocol] = []
+    for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if record_type not in record_types:
+            continue
+        acc_type = AccumulatorType(entry.name)
+        if acc_type in accumulators:
+            matched.append(accumulators[acc_type])
+    return matched
+
+
+def stream_exporters_for_record_type(
+    exporters: dict[StreamExporterType, StreamExporterProtocol],
+    record_type: str,
+) -> list[StreamExporterProtocol]:
+    """Return stream exporters whose plugin metadata declares ``record_type``."""
+    matched: list[StreamExporterProtocol] = []
+    for entry in plugins.iter_entries(PluginType.STREAM_EXPORTER):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if record_type not in record_types:
+            continue
+        exp_type = StreamExporterType(entry.name)
+        if exp_type in exporters:
+            matched.append(exporters[exp_type])
+    return matched
+
+
 async def generate_realtime_metrics(
     accumulators: list[AccumulatorProtocol],
     timeout: float = 30.0,

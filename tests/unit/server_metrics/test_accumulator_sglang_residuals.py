@@ -221,3 +221,47 @@ async def test_export_results_extends_parquet_filter_to_endpoint_last_update(
     assert exported_filters[0].start_ns == 1_000_000_000
     # end_ns widened from the 2e9 profiling end to the 3e9 last collection.
     assert exported_filters[0].end_ns == 3_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_phase_scoped_export_does_not_write_parquet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parquet is a single whole-run artifact. A phase-scoped export
+    (``phase_index`` set) must NOT write it, or per-phase windows would
+    overwrite the whole-run file in a multi-phase run. Guards the multi-phase
+    fix carried over from main (#1150).
+    """
+    acc = _accumulator()
+    exported_filters = []
+
+    async def capture_export_filter(time_filter):
+        exported_filters.append(time_filter)
+
+    monkeypatch.setattr(acc, "_export_parquet_if_enabled", capture_export_filter)
+
+    gauge = MetricFamily(
+        type=PrometheusMetricType.GAUGE,
+        description="Cache usage",
+        samples=[MetricSample(labels=None, value=0.5)],
+    )
+    await acc.process_server_metrics_record(
+        ServerMetricsRecord(
+            endpoint_url="http://node1:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={"cache_usage": gauge},
+        )
+    )
+
+    result = await acc.export_results(
+        ExportContext(
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
+            phase_index=1,
+            is_phase_scoped=True,
+        )
+    )
+
+    assert result is not None
+    assert exported_filters == []

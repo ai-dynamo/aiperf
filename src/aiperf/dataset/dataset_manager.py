@@ -19,6 +19,7 @@ from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import (
+    CacheBustTarget,
     CommAddress,
     CommandType,
     ConversationContextMode,
@@ -52,10 +53,12 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
+from aiperf.dataset.memory_map_utils import turn_from_payload_turn
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
+    CustomDatasetType,
     DatasetBackingStoreType,
     PhaseType,
     PluginType,
@@ -109,8 +112,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # In Kubernetes mode, use compress_only to stream directly to compressed files.
         # This avoids creating large uncompressed files on the control plane.
         # WorkerPodManagers will download compressed files and decompress locally.
-        # KUBERNETES is intentionally absent from this branch's plugins.yaml,
-        # so probe via getattr.
+        # KUBERNETES is an optional service-run plugin, so probe via getattr.
         self._compress_only = self._is_kubernetes_run()
 
         # The backing store is created in _configure_dataset once the mmap
@@ -119,6 +121,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._backing_store: DatasetBackingStoreProtocol | None = None
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._default_context_mode: ConversationContextMode | None = None
+        # The CustomDatasetComposer's resolved dataset type (set after compose),
+        # used by the inputs.json skip decision for weka/raw/payload loaders.
+        self._detected_dataset_type: CustomDatasetType | None = None
         # Whether every turn carried a source-loaded raw_payload BEFORE
         # _preformat_payloads ran. Persisted in the cache manifest so a HIT
         # restores the same distinction (source-loaded vs synthesized payloads).
@@ -130,7 +135,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._cache_hit_used: bool = False
 
     def _is_kubernetes_run(self) -> bool:
-        """KUBERNETES isn't always registered in this branch's plugins.yaml."""
+        """Return whether the optional KUBERNETES service-run plugin is active."""
         kubernetes_run_type = getattr(ServiceRunType, "KUBERNETES", None)
         return (
             kubernetes_run_type is not None
@@ -260,14 +265,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     def _should_skip_inputs_json(self) -> bool:
         """Whether to skip inputs.json generation for the active dataset.
 
-        Skipped for trace / verbatim datasets -- mooncake (all modes),
-        sagemaker, burst_gpt, bailian, raw_payload, and inputs_json -- whose
-        per-turn payloads are verbatim and would be huge (or just the verbatim
-        source bytes) in inputs.json. Same predicate the mmap cache gate uses
-        (``mmap_cache.is_trace_or_verbatim_dataset``), keyed off the CONFIG
-        dataset type, so cached datasets and skipped inputs.json stay in
-        lockstep (a cache HIT never emits inputs.json -- the composer is
-        skipped entirely).
+        Skipped for trace / verbatim / weka datasets -- mooncake (all modes),
+        sagemaker, burst_gpt, bailian, raw_payload, inputs_json, and weka -- whose
+        per-turn payloads are verbatim or synthesized at runtime and would be
+        huge (and for weka, meaningless) in inputs.json. Uses the loader's
+        DETECTED type so auto-detected traces (e.g. a bare BurstGPT CSV) are
+        skipped too. Same predicate the mmap cache uses
+        (``mmap_cache.is_trace_or_verbatim_dataset``), but the cache gate keys
+        off the pre-load CONFIG type: an explicitly-typed trace is both cached
+        and skipped, while an auto-detected trace is skipped-but-uncached (a
+        re-tokenize perf miss, never a correctness issue).
         """
         default_dataset = self.run.cfg.get_default_dataset()
         public_dataset = (
@@ -275,13 +282,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             if isinstance(default_dataset, PublicDataset)
             else None
         )
-        custom_dataset_type = (
-            str(default_dataset.format)
-            if getattr(default_dataset, "format", None) is not None
-            else None
-        )
         return mmap_cache.is_trace_or_verbatim_dataset(
-            custom_dataset_type, public_dataset
+            self._detected_dataset_type, public_dataset
         )
 
     def _lookup_under_lock(self) -> mmap_cache.CacheHit | None:
@@ -537,6 +539,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         conversations = composer.create_dataset()
         self._default_context_mode = composer.get_default_context_mode()
+        self._detected_dataset_type = getattr(composer, "detected_dataset_type", None)
         return conversations
 
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
@@ -597,9 +600,18 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         Conversations that already carry raw_payload on ALL turns are skipped.
         If ANY conversation cannot be preformatted, the entire batch is skipped
-        to avoid mixed raw_payload state (which the mmap format check rejects).
+        to avoid mixed raw_payload state (which forces the CONVERSATION mmap path).
         """
         from aiperf.dataset.payload_formatting import format_conversation_payloads
+
+        # Cache-bust dispatch (worker `_process_credit_with_session`) mutates
+        # session_message / raw_messages per credit; the PAYLOAD_BYTES fast path
+        # early-returns before that dispatch, sending pre-encoded mmap bytes to
+        # the wire verbatim. Pre-formatting under cache-bust would silently
+        # no-op the marker injection. Bail to the structured-turns path whenever
+        # cache-bust is enabled.
+        if self.run.cfg.get_cache_bust_target() != CacheBustTarget.NONE:
+            return
 
         # Synthesizing raw_payload for structured conversations promotes them to
         # the PAYLOAD_BYTES mmap fast path, which discards the structured prompt
@@ -650,36 +662,92 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.info(f"Pre-formatted {count} payloads for payload mmap fast path")
 
+    def _body_mutating_feature(self) -> str | None:
+        """Name of the active body-mutating feature, or None.
+
+        Both PAYLOAD_BYTES gates (build-path format selection and cache-hit
+        adoption) key off this: the mmap cache key deliberately excludes
+        cache-bust settings, so the cache-hit gate cannot be skipped (a
+        feature-free run's PAYLOAD_BYTES entry is a valid hit for a
+        feature-enabled run).
+        """
+        if self.run.cfg.get_cache_bust_target() != CacheBustTarget.NONE:
+            return "cache-bust"
+        return None
+
+    def _reject_body_mutators_for_payload_bytes(
+        self, mmap_format: MemoryMapFormat | str
+    ) -> None:
+        """Refuse a cached PAYLOAD_BYTES dataset when a body-mutator is active.
+
+        The mmap cache key excludes cache-bust settings, so a PAYLOAD_BYTES
+        entry built by a feature-free run is a valid hit for a feature-enabled
+        run. Guard cache-hit adoption at both call sites.
+        """
+        if MemoryMapFormat(mmap_format) != MemoryMapFormat.PAYLOAD_BYTES:
+            return
+        feature = self._body_mutating_feature()
+        if feature is not None:
+            raise ValueError(
+                f"{feature} is incompatible with this cached PAYLOAD_BYTES "
+                "dataset (the cache key excludes cache-bust settings, "
+                "so this entry was built by a feature-free run). Clear the "
+                "dataset cache directory."
+            )
+
     def _select_mmap_format(self, conversations: list[Conversation]) -> MemoryMapFormat:
-        """Pick the dataset mmap format.
+        """Pick the dataset mmap format and refuse PAYLOAD_BYTES for body-mutators.
 
         This is the earliest authoritative point in the loader where the run's
         ``MemoryMapFormat`` is finalized. PAYLOAD_BYTES is the mmap fast path:
-        workers stream pre-encoded bytes verbatim, so it requires EVERY turn to
-        carry ``raw_payload`` (loaders that natively populate it -- raw_payload
-        / inputs_json / mooncake_trace with a payload field -- or the opt-in
-        pre-formatting pass). Mixed state is refused here with a clear,
-        actionable error rather than at worker runtime.
+        workers stream pre-encoded bytes verbatim and skip the per-credit
+        dispatch. Loaders that natively populate ``Turn.raw_payload``
+        (raw_payload / inputs_json / mooncake_trace with a payload field) would
+        otherwise silently bypass cache-bust marker injection. Refuse here with
+        a clear, actionable error rather than at worker runtime.
+
+        PAYLOAD_BYTES requires every turn across the dataset to carry
+        ``raw_payload``. Mixes *across* conversations fall back to CONVERSATION
+        (``_generate_input_payloads`` already enforces all-or-none *within* a
+        conversation). A single conversation with mixed turns is rejected here
+        for an early, actionable error.
         """
-        has_payload_bytes = any(
+        for conv in conversations:
+            raw_flags = [turn.raw_payload is not None for turn in conv.turns]
+            if any(raw_flags) and not all(raw_flags):
+                raw_indexes = [i for i, r in enumerate(raw_flags) if r]
+                missing_indexes = [i for i, r in enumerate(raw_flags) if not r]
+                raise ValueError(
+                    f"conversation '{conv.session_id}' has mixed raw_payload "
+                    f"state: turns {raw_indexes} have raw_payload, turns "
+                    f"{missing_indexes} do not; raw_payload must be all-or-none "
+                    f"per conversation"
+                )
+
+        has_any_raw = any(
             turn.raw_payload is not None
             for conv in conversations
             for turn in conv.turns
         )
-        if has_payload_bytes and not all(
+        all_have_raw = has_any_raw and all(
             turn.raw_payload is not None
             for conv in conversations
             for turn in conv.turns
-        ):
+        )
+        if not all_have_raw:
+            # None have raw_payload, or some conversations do and others don't:
+            # CONVERSATION can serialize both shapes. PAYLOAD_BYTES cannot.
+            return MemoryMapFormat.CONVERSATION
+
+        feature = self._body_mutating_feature()
+        if feature is not None:
             raise ValueError(
-                "Mixed raw_payload state: all turns must have raw_payload "
-                "when any turn does (PAYLOAD_BYTES format requires uniformity)"
+                f"{feature} must mutate request bodies and is incompatible with the "
+                "verbatim PAYLOAD_BYTES mmap fast path. Choose a headers-based "
+                "routing mode / disable cache-bust, or use a dataset type that "
+                "produces structured turns (e.g. single_turn / multi_turn / dag_jsonl)."
             )
-        return (
-            MemoryMapFormat.PAYLOAD_BYTES
-            if has_payload_bytes
-            else MemoryMapFormat.CONVERSATION
-        )
+        return MemoryMapFormat.PAYLOAD_BYTES
 
     def _run_mmap_paths(self) -> tuple[Path, Path]:
         """Return the (data, index) paths the backing store writes to.
@@ -725,6 +793,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         download) sees byte-identical files to a non-cached run. On a corrupt
         manifest, falls back to a MISS (``_cache_hit_used`` stays False).
         """
+        self._reject_body_mutators_for_payload_bytes(hit.manifest.mmap_format)
+
         run_data_path, run_index_path = self._run_mmap_paths()
         await asyncio.to_thread(
             mmap_cache.restore_to_run_dir, hit, run_data_path, run_index_path
@@ -743,6 +813,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             with contextlib.suppress(OSError):
                 run_data_path.unlink(missing_ok=True)
                 run_index_path.unlink(missing_ok=True)
+            # Drop the poisoned cache entry so post-run populate can heal it.
+            # Without this, populate() sees an existing manifest and skips forever.
+            if self._cache_key_for_run is not None:
+                with contextlib.suppress(Exception):
+                    mmap_cache.invalidate(self._cache_key_for_run)
             return
 
         self._default_context_mode = self.dataset_metadata.default_context_mode
@@ -987,13 +1062,35 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> Conversation | None:
         """Rebuild a minimal Conversation from per-turn payload bytes.
 
+        Restores ``max_tokens`` / ``timestamp`` from index metadata (or wire
+        JSON for legacy indexes) so metric enrichment stays live on the
+        PAYLOAD_BYTES fallback path.
+
         Returns None when the client store has no payload-bytes API or the
         conversation has no payload turns (caller reports not-found).
         """
+        get_payload_turn = getattr(self._dataset_client, "get_payload_turn", None)
+        if get_payload_turn is not None:
+            turns: list[Turn] = []
+            turn_index = 0
+            while (
+                payload_turn := await get_payload_turn(conversation_id, turn_index)
+            ) is not None:
+                turns.append(turn_from_payload_turn(payload_turn))
+                turn_index += 1
+            if not turns:
+                return None
+            return Conversation(
+                session_id=conversation_id,
+                turns=turns,
+                context_mode=self._default_context_mode,
+            )
+
+        # Legacy clients only expose get_payload_bytes.
         get_payload_bytes = getattr(self._dataset_client, "get_payload_bytes", None)
         if get_payload_bytes is None:
             return None
-        turns: list[Turn] = []
+        turns = []
         turn_index = 0
         while (
             payload_bytes := await get_payload_bytes(conversation_id, turn_index)

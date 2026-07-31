@@ -68,13 +68,19 @@ class LoopScheduler:
         self._exception_handler: Callable[[asyncio.Task], None] | None = (
             exception_handler
         )
+        self._drain_observer: Callable[[], None] | None = None
 
     def set_exception_handler(self, handler: Callable[[asyncio.Task], None]) -> None:
         """Set callback for unhandled task exceptions."""
         self._exception_handler = handler
 
+    def set_drain_observer(self, observer: Callable[[], None] | None) -> None:
+        """Observe transitions from running work to no running work."""
+        self._drain_observer = observer
+
     def _done_callback(self, task: asyncio.Task) -> None:
         """Remove completed task from tracking; invoke exception handler if failed."""
+        was_tracked = task in self._tasks
         self._tasks.discard(task)  # discard() is safe if already removed by cancel_all
         # Must check cancelled() first - calling exception() on a cancelled task raises CancelledError
         if (
@@ -83,6 +89,17 @@ class LoopScheduler:
             and self._exception_handler is not None
         ):
             self._exception_handler(task)
+        if was_tracked and not self._tasks and self._drain_observer is not None:
+            try:
+                self._drain_observer()
+            except Exception as exc:  # noqa: BLE001
+                self._loop.call_exception_handler(
+                    {
+                        "message": "LoopScheduler drain observer failed",
+                        "exception": exc,
+                        "task": task,
+                    }
+                )
 
     def _safe_callback(
         self,
@@ -283,6 +300,43 @@ class LoopScheduler:
         """Cancel all pending timers and running tasks. Returns cancelled tasks."""
         self.cancel_all_pending()
         return self.cancel_all_running()
+
+    def cap_pending_delay(self, max_delay_sec: float) -> float:
+        """Shift every pending timer uniformly when the next is too far away.
+
+        Running tasks are unaffected. Applying the same shift to every pending
+        timer preserves their ordering and relative spacing.
+
+        Args:
+            max_delay_sec: Maximum delay from now to the earliest pending timer.
+
+        Returns:
+            Seconds removed from the pending schedule, or zero when no shift
+            was needed.
+        """
+        if max_delay_sec < 0:
+            raise ValueError("max_delay_sec must be non-negative")
+        if not self._handles:
+            return 0.0
+
+        now = self._loop.time()
+        earliest = min(handle.when() for handle, _ in self._handles.values())
+        shift_sec = earliest - now - max_delay_sec
+        if shift_sec <= 0:
+            return 0.0
+
+        items = list(self._handles.values())
+        self._handles.clear()
+        for handle, coro in items:
+            target = max(now, handle.when() - shift_sec)
+            handle.cancel()
+            handle_container = [None]
+            replacement = self._loop.call_at(
+                target, self._safe_callback, handle_container, coro
+            )
+            handle_container[0] = replacement
+            self._track_handle_and_return_id(replacement, coro)
+        return shift_sec
 
     @property
     def pending_count(self) -> int:

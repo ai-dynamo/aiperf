@@ -407,7 +407,11 @@ class ServerMetricsSummary(AIPerfBaseModel):
     )
     phase_time_ranges: dict[str, TimeRangeFilter] | None = Field(
         default=None,
-        description="Nanosecond time ranges used for phase-scoped server metric aggregation.",
+        description=(
+            "Nanosecond time ranges used for phase-scoped server metric aggregation. "
+            "The warmup range end matches the aggregation window (may extend past "
+            "credit-phase complete to include the end-of-warmup scrape)."
+        ),
     )
 
 
@@ -771,7 +775,12 @@ class ServerMetricsResults(AIPerfBaseModel):
     warmup_end_ns: int | None = Field(
         default=None,
         ge=0,
-        description="End of the warmup server-metrics aggregation window.",
+        description=(
+            "Inclusive end of the warmup server-metrics aggregation window. "
+            "May extend past the warmup credit-phase complete timestamp to "
+            "include the dedicated end-of-warmup scrape; matches "
+            "phase_time_ranges['warmup'] and warmup_endpoint_summaries."
+        ),
     )
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,

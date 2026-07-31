@@ -90,12 +90,15 @@ class RawRecordWriterProcessor(
         request before transport dispatch, so the exporter reads it directly
         and splices it into the JSONL line via ``orjson.Fragment`` in
         ``buffered_write``. Records that never reached transport carry no
-        ``payload_bytes``; those export with ``payload=None`` and rely on the
-        attached ``error`` field for replay context (matches the v1
-        null-payload invariant).
+        ``payload_bytes`` — and the full ``turns`` list no longer crosses the
+        ZMQ hop, so there is nothing to reconstruct: those export with
+        ``payload=None`` and rely on the attached ``error`` field for replay
+        context (matches the v1 null-payload invariant).
         """
         ctx = record.request.request_info
         payload_bytes = ctx.payload_bytes if ctx is not None else None
+        cache_bust_marker = ctx.cache_bust_marker if ctx is not None else None
+        cache_bust_target = ctx.cache_bust_target if ctx is not None else None
 
         return RawRecordInfo(
             metadata=metadata,
@@ -107,6 +110,8 @@ class RawRecordWriterProcessor(
             status=record.request.status,
             responses=record.request.responses,
             error=record.request.error,
+            cache_bust_marker=cache_bust_marker,
+            cache_bust_target=cache_bust_target,
         )
 
     async def buffered_write(self, record: RawRecordInfo) -> None:

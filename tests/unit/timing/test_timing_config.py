@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.config.flags.cli_config import CLIConfig
@@ -341,6 +342,26 @@ class TestTimingConfigFromCLIConfig:
         cfg = _make_timing_config(**kwargs)
         warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
         assert warmup.grace_period_sec == expected
+
+    @pytest.mark.parametrize(
+        "benchmark_grace_period,expected",
+        [
+            param(None, 30.0, id="default"),
+            param(15.0, 15.0, id="explicit_positive"),
+            param(0.0, 0.0, id="explicit_zero"),
+        ],
+    )  # fmt: skip
+    def test_build_profiling_duration_grace_period_returns_expected_value(
+        self, benchmark_grace_period: float | None, expected: float
+    ) -> None:
+        kwargs: dict[str, Any] = {"benchmark_duration": 5.0}
+        if benchmark_grace_period is not None:
+            kwargs["benchmark_grace_period"] = benchmark_grace_period
+        cfg = _make_timing_config(**kwargs)
+        profiling = next(
+            pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING
+        )
+        assert profiling.grace_period_sec == expected
 
 
 class TestPhaseRequestRate:

@@ -43,7 +43,7 @@ def sample_telemetry_record() -> TelemetryRecord:
     """Create a sample TelemetryRecord with all fields populated."""
     return make_telemetry_record(
         timestamp_ns=1_000_000_000,
-        dcgm_url="http://node1:9401/metrics",
+        telemetry_source_url="http://node1:9401/metrics",
         gpu_index=0,
         gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
         gpu_model_name="NVIDIA RTX 6000 Ada Generation",
@@ -65,7 +65,7 @@ def sample_telemetry_record_partial() -> TelemetryRecord:
     """Create a sample TelemetryRecord with some fields None."""
     return make_telemetry_record(
         timestamp_ns=2_000_000_000,
-        dcgm_url="http://node2:9401/metrics",
+        telemetry_source_url="http://node2:9401/metrics",
         gpu_index=1,
         gpu_uuid="GPU-a1b2c3d4-e5f6-7890-abcd-1234567890ab",
         gpu_model_name="NVIDIA H100 80GB HBM3",
@@ -219,7 +219,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
         record = TelemetryRecord.model_validate(record_dict)
 
         assert record.timestamp_ns == 1_000_000_000
-        assert record.dcgm_url == "http://node1:9401/metrics"
+        assert record.telemetry_source_url == "http://node1:9401/metrics"
         assert record.gpu_index == 0
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
@@ -382,7 +382,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
 
         records = [
             make_telemetry_record(
-                dcgm_url=f"http://node{i}:9401/metrics",
+                telemetry_source_url=f"http://node{i}:9401/metrics",
                 gpu_uuid=f"GPU-node{i}",
                 hostname=f"node{i}",
             )
@@ -394,11 +394,11 @@ class TestGPUTelemetryJSONLWriterProcessing:
                 await processor.process_telemetry_record(record)
 
         lines = processor.output_file.read_text().splitlines()
-        dcgm_urls = [orjson.loads(line)["dcgm_url"] for line in lines]
+        source_urls = [orjson.loads(line)["telemetry_source_url"] for line in lines]
 
-        assert "http://node0:9401/metrics" in dcgm_urls
-        assert "http://node1:9401/metrics" in dcgm_urls
-        assert "http://node2:9401/metrics" in dcgm_urls
+        assert "http://node0:9401/metrics" in source_urls
+        assert "http://node1:9401/metrics" in source_urls
+        assert "http://node2:9401/metrics" in source_urls
 
     @pytest.mark.asyncio
     async def test_records_written_count(
@@ -478,7 +478,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
             record = TelemetryRecord.model_validate(record_dict)
 
             assert isinstance(record.timestamp_ns, int)
-            assert isinstance(record.dcgm_url, str)
+            assert isinstance(record.telemetry_source_url, str)
             assert isinstance(record.gpu_index, int)
             assert isinstance(record.gpu_uuid, str)
             assert isinstance(record.gpu_model_name, str)
@@ -506,7 +506,9 @@ class TestGPUTelemetryJSONLWriterFileFormat:
 
         # Check all metadata fields
         assert record.timestamp_ns == sample_telemetry_record.timestamp_ns
-        assert record.dcgm_url == sample_telemetry_record.dcgm_url
+        assert (
+            record.telemetry_source_url == sample_telemetry_record.telemetry_source_url
+        )
         assert record.gpu_index == sample_telemetry_record.gpu_index
         assert record.gpu_uuid == sample_telemetry_record.gpu_uuid
         assert record.gpu_model_name == sample_telemetry_record.gpu_model_name
@@ -597,7 +599,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
 
         # Check all required metadata fields
         assert "timestamp_ns" in record_dict
-        assert "dcgm_url" in record_dict
+        assert "telemetry_source_url" in record_dict
         assert "gpu_index" in record_dict
         assert "gpu_uuid" in record_dict
         assert "gpu_model_name" in record_dict
@@ -624,7 +626,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         record_dict = orjson.loads(lines[0])
 
         # Verify hierarchical keys are present
-        assert record_dict["dcgm_url"] == "http://node1:9401/metrics"
+        assert record_dict["telemetry_source_url"] == "http://node1:9401/metrics"
         assert record_dict["gpu_uuid"] == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record_dict["timestamp_ns"] == 1_000_000_000
 
@@ -878,7 +880,7 @@ class TestGPUTelemetryJSONLWriterIntegration:
             for i in range(num_records):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    dcgm_url=f"http://node{i % 3}:9401/metrics",
+                    telemetry_source_url=f"http://node{i % 3}:9401/metrics",
                     gpu_index=i % 4,
                     gpu_uuid=f"GPU-{i}",
                     hostname=f"node{i % 3}",
