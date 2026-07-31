@@ -193,21 +193,17 @@ def _drain_buffered(stdin: BinaryIO) -> list[bytes]:
     _fcntl.fcntl(fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
     try:
         while True:
-            try:
-                available = stdin.peek(0)  # type: ignore[union-attr]
-            except BlockingIOError:
-                break  # Kernel pipe buffer empty; stop without blocking
+            # BufferedReader.peek() catches BlockingIOError internally and returns
+            # b"" when the kernel pipe buffer is empty — so b"" means "no more data
+            # available now" (WouldBlock) or EOF. Both stop the drain.
+            available = stdin.peek(0)  # type: ignore[union-attr]
             if not available:
-                break  # EOF
+                break
             if b"\n" not in available:
-                # Only a partial line is buffered; readline() would need
-                # another raw read on the non-blocking fd and raise
-                # BlockingIOError. Leave it for the next cycle's blocking
-                # readline() to complete.
+                # Only a partial line is buffered; leave it for the next cycle's
+                # blocking readline() to complete.
                 break
             line = stdin.readline()
-            if not line:
-                break
             line = line.strip()
             if line:
                 lines.append(line)

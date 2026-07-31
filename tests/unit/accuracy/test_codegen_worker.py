@@ -132,6 +132,27 @@ class TestHandleBatch:
         assert resps[0]["ok"] is True
         assert resps[0]["metrics"]["pass@1"] == [1.0]
 
+    def test_compute_metrics_exception_produces_error_response(self) -> None:
+        def boom_compute(_results: dict, **_kw: Any) -> dict[str, Any]:
+            raise RuntimeError("metrics exploded")
+
+        resps = worker.handle_batch(
+            [self._req(1)], _fake_codegen_batch_ok, boom_compute
+        )
+        assert not resps[0]["ok"]
+        assert "metrics exploded" in resps[0]["error"]
+
+    def test_truncate_error_long_string(self) -> None:
+        long_err = "x" * 5000
+        truncated = worker._truncate_error(long_err)
+        assert len(truncated) < 5000
+        assert truncated.endswith("...[truncated]")
+
+    def test_is_number_non_numeric_returns_false(self) -> None:
+        assert not worker._is_number("notanumber")
+        assert not worker._is_number(None)
+        assert not worker._is_number([1, 2])
+
     def test_non_finite_metric_values_are_dropped(self) -> None:
         # NaN/Inf must not cross the JSONL boundary (repo NaN/Inf discipline).
         def _nan_inf(
@@ -194,6 +215,80 @@ class TestRunWorkerLoopBatch:
         reqs = [self._req(i) for i in [10, 20, 30]]
         resps = self._run(reqs)
         assert {r["id"] for r in resps} == {10, 20, 30}
+
+    def test_drain_in_memory_splits_on_newlines(self) -> None:
+        data = b'{"id":1}\n{"id":2}\n'
+        result = worker._drain_in_memory(io.BytesIO(data))
+        assert result == [b'{"id":1}', b'{"id":2}']
+
+    def test_drain_buffered_no_fcntl_and_no_fd_uses_in_memory_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(worker, "_HAS_FCNTL", False)
+        data = io.BytesIO(b'{"id":1}\n{"id":2}\n')
+        result = worker._drain_buffered(data)
+        assert result == [b'{"id":1}', b'{"id":2}']
+
+    def test_drain_buffered_no_fcntl_with_real_fd_skips_drain(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(worker, "_HAS_FCNTL", False)
+        r_fd, w_fd = os.pipe()
+        try:
+            os.write(w_fd, b'{"id":1}\n')
+            with os.fdopen(r_fd, "rb") as reader:
+                r_fd = -1  # fdopen takes ownership
+                result = worker._drain_buffered(reader)
+            assert result == []  # skipped, not blocked
+        finally:
+            if r_fd >= 0:
+                os.close(r_fd)
+            os.close(w_fd)
+
+    def test_drain_buffered_complete_line_then_empty_pipe_stops(self) -> None:
+        # BufferedReader.peek() returns b"" (not BlockingIOError) when the kernel
+        # pipe buffer is empty with write end still open. Verifies that the drain
+        # reads one complete line and stops cleanly on the next b"" peek.
+        req = self._req(77)
+        data = orjson.dumps(req) + b"\n"
+        r_fd, w_fd = os.pipe()
+        try:
+            os.write(w_fd, data)  # one complete line, write end still open
+            with os.fdopen(r_fd, "rb") as reader:
+                r_fd = -1
+                result = worker._drain_buffered(reader)
+            assert result == [data.strip()]
+        finally:
+            if r_fd >= 0:
+                os.close(r_fd)
+            os.close(w_fd)
+
+    def test_drain_buffered_partial_line_breaks_without_readline(self) -> None:
+        # Covers lines 202-207: peek returns bytes without newline → break.
+        r_fd, w_fd = os.pipe()
+        try:
+            os.write(w_fd, b"partial-no-newline")  # no \n, write end still open
+            with os.fdopen(r_fd, "rb") as reader:
+                r_fd = -1
+                result = worker._drain_buffered(reader)
+            assert result == []  # nothing drained; no complete line
+        finally:
+            if r_fd >= 0:
+                os.close(r_fd)
+            os.close(w_fd)
+
+    def test_run_worker_loop_skips_blank_lines(self) -> None:
+        # Covers line 237: blank lines between requests are skipped (continue).
+        reqs = [self._req(1), self._req(2)]
+        data = b"\n" + orjson.dumps(reqs[0]) + b"\n\n" + orjson.dumps(reqs[1]) + b"\n"
+        stdin = io.BytesIO(data)
+        out = io.BytesIO()
+        worker.run_worker_loop(
+            stdin, out, _fake_codegen_batch_ok, _fake_compute_metrics
+        )
+        out.seek(0)
+        resps = [orjson.loads(ln) for ln in out if ln.strip()]
+        assert {r["id"] for r in resps} == {1, 2}
 
     def test_partial_jsonl_line_is_deferred_to_next_cycle(self) -> None:
         # Exercises the O_NONBLOCK peek(0) + partial-line guard in _drain_buffered.
