@@ -798,6 +798,13 @@ struct EndpointSection {
     /// DynoSim endpoints carry no URL (the sentinel is injected).
     #[serde(alias = "urls")]
     url: Option<StringOrVec>,
+    /// Multi-URL selection strategy. `round_robin` is the only strategy the
+    /// native runtime implements (`ancillary::url_selector` always builds
+    /// `RoundRobinUrlSelector`), so it is honored by construction and any other
+    /// name is rejected during `into_inputs` rather than accepted and silently
+    /// downgraded to round-robin.
+    #[serde(default, alias = "urlStrategy")]
+    url_strategy: Option<String>,
     #[serde(default)]
     streaming: bool,
     #[serde(default, alias = "apiKey")]
@@ -1565,6 +1572,17 @@ impl Benchmark {
         });
 
         // DynoSim needs a never-dialed sentinel when no URL is authored.
+        // Honored by construction (round-robin is the only native selector), so
+        // reject any other name instead of running a strategy nobody asked for.
+        if let Some(strategy) = self.endpoint.url_strategy.as_deref()
+            && strategy != "round_robin"
+        {
+            anyhow::bail!(
+                "endpoint.urlStrategy {strategy:?} is not supported \
+                 (the native runtime implements only \"round_robin\")"
+            );
+        }
+
         let urls = match self.endpoint.url {
             Some(u) => u.into_vec(),
             None if is_dynosim => vec!["dynosim://offline".to_string()],
@@ -2799,6 +2817,27 @@ mod tests {
         assert_eq!(synthesis["prefix_root_multiplier"], 1);
         // Unauthored optional keys stay absent rather than materializing nulls.
         assert!(synthesis.get("cache_bust_target").is_none());
+    }
+
+    /// `round_robin` is the only native selector, so it must be accepted and
+    /// every other name rejected — accepting one and silently round-robining
+    /// would report a strategy the run never used.
+    #[test]
+    fn url_strategy_accepts_round_robin_and_rejects_others() {
+        let with = |strategy: &str| {
+            resolve_str(
+                &cfg(&format!(
+                    "  endpoint:\n    urls: [http://a:8000/v1, http://b:8000/v1]\n    urlStrategy: {strategy}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                )),
+                Some("/tmp/x".into()),
+            )
+        };
+        with("round_robin").expect("round_robin is the native strategy");
+        let err = with("random").expect_err("an unimplemented strategy must fail");
+        assert!(
+            err.to_string().contains("urlStrategy"),
+            "error should name the key: {err}"
+        );
     }
 
     #[test]
