@@ -18,6 +18,12 @@ export type DeckListing = {
 /** Every browsable deck. Add an entry here whenever a new deck route is wired into `App.tsx`. */
 export const DECKS: readonly DeckListing[] = [
   {
+    path: "/async-dataflow-engine",
+    title: "How the Async Dataflow Engine Works",
+    description:
+      "Narrated autoplay walkthrough of the Graph-IR engine: why scheduling and readiness are different mechanisms, the check-then-park pattern that makes it race-free, version-frozen reads, and why simulation cannot run thread-per-core. Press play and it narrates itself.",
+  },
+  {
     path: "/segment-pools",
     title: "Segment Pools",
     description:

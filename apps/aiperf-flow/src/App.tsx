@@ -5,6 +5,8 @@
 
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DeckRoute } from "./deck/DeckRoute.js";
+import { registerDeck } from "./deck/registry.js";
+import { ASYNC_DATAFLOW_ENGINE_DECK } from "./decks/async-dataflow-engine/deck.js";
 import { AiperfGraphEngineDeck } from "./decks/aiperf-graph-engine/AiperfGraphEngineDeck.js";
 import { AiperfMetricsAccumulatorDeck } from "./decks/aiperf-metrics-accumulator/AiperfMetricsAccumulatorDeck.js";
 import { CanvasRepoLayoutDeck } from "./decks/canvas-repo-layout/CanvasRepoLayoutDeck.js";
@@ -36,6 +38,11 @@ import { WekaTimingTransformsDeck } from "./decks/weka-timing-transforms/WekaTim
 import { WekaTimingTransformsInteractiveDeck } from "./decks/weka-timing-transforms-interactive/WekaTimingTransformsInteractiveDeck.js";
 import { WekaTrieBuildDeck } from "./decks/weka-trie-build/WekaTrieBuildDeck.js";
 import { Home } from "./routes/Home.js";
+
+// Module scope, so the duplicate-id guard in `registerDeck` still means something:
+// this runs once per module load, not once per render. Declarative decks are served
+// by the generic `DeckRoute` catch-all rather than a dedicated component route.
+registerDeck(ASYNC_DATAFLOW_ENGINE_DECK);
 
 export function App(): React.JSX.Element {
   return (
