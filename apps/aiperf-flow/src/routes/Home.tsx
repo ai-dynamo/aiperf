@@ -18,10 +18,16 @@ export type DeckListing = {
 /** Every browsable deck. Add an entry here whenever a new deck route is wired into `App.tsx`. */
 export const DECKS: readonly DeckListing[] = [
   {
+    path: "/python-graph-workload",
+    title: "Python Graph Workload",
+    description:
+      "Narrated walkthrough of the Python plane: Dynamo trace ingest into a session forest, the four-stage workload build, idle warp, and the asyncio dataflow executor with its dual fan-out and parked-Future returns.",
+  },
+  {
     path: "/async-dataflow-engine",
     title: "How the Async Dataflow Engine Works",
     description:
-      "Narrated autoplay walkthrough of the Graph-IR engine: why scheduling and readiness are different mechanisms, the check-then-park pattern that makes it race-free, version-frozen reads, and why simulation cannot run thread-per-core. Press play and it narrates itself.",
+      "Narrated autoplay walkthrough of the native Graph Workload engine: why scheduling and readiness are different mechanisms, the check-then-park pattern that makes it race-free, version-frozen reads, and why simulation cannot run thread-per-core. Press play and it narrates itself.",
   },
   {
     path: "/segment-pools",

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Narrated walkthrough of the Graph-IR async dataflow engine, and the reference
+//! Narrated walkthrough of the Graph Workload async dataflow engine, and the reference
 //! example for `src/audio` autoplay.
 //!
 //! Every claim is grounded in `rust/runtime/src/graph/`; slide captions carry the
@@ -12,7 +12,7 @@
 //! than flattening each idea into a chain.
 
 import type { DeckDefinition, SlideDefinition } from "../../deck/types.js";
-import { band, card, chip, fanIn, fanOut, link, note } from "./layout.js";
+import { band, card, chip, fanIn, fanOut, link, note } from "../shared/diagram.js";
 
 const SLIDES: readonly SlideDefinition[] = [
   {
@@ -55,7 +55,7 @@ const SLIDES: readonly SlideDefinition[] = [
     narration:
       "Before the interesting cases, the universal rules. Lowering emits exactly one node per authored turn, and exactly one output channel per node. Both ids come from one flat counter, so node three writes reply three — the id tells you nothing else. Every channel is declared the same way, a message list with an append reducer. What distinguishes one node from another is its metadata, not its name.",
     caption:
-      "lowering.rs:596 allocate_node `n{:08}`; :575 allocate_channel `reply_{:08}`, always ChannelType::Messages + ReducerName::AddMessages. Text/Overwrite appear only on hand-authored Graph-IR, never here.",
+      "lowering.rs:596 allocate_node `n{:08}`; :575 allocate_channel `reply_{:08}`, always ChannelType::Messages + ReducerName::AddMessages. Text/Overwrite appear only on hand-authored graph workloads, never here.",
     nodes: [
       band("b-a", "AUTHORED · ONE JSONL ROW", { col: 0, row: 0.4 }),
       card("row", "dag_jsonl row", "session_id + turns[]", "muted", { col: 0, row: 0.4 }),
@@ -277,7 +277,7 @@ const SLIDES: readonly SlideDefinition[] = [
       note(
         "note",
         "Spawned is not ready",
-        "An AND fan-in node is scheduled by whichever predecessor finishes first, then parks until the rest arrive. Two of three producers is not enough. Lowering emits one count-1 requirement per producer; count \"all\" exists for hand-authored Graph-IR.",
+        "An AND fan-in node is scheduled by whichever predecessor finishes first, then parks until the rest arrive. Two of three producers is not enough. Lowering emits one count-1 requirement per producer; count \"all\" exists for hand-authored graph workloads.",
         { col: 2.9, row: 0.2 },
       ),
     ],

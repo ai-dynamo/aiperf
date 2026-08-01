@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Diagram vocabulary for the async-dataflow-engine deck.
+//! Shared diagram vocabulary for narrated decks.
 //!
 //! The engine's whole subject is fan-out and fan-in — successors spawning, AND-joins on
 //! channel counts, traces spreading across workers. These helpers place nodes on an
