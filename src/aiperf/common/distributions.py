@@ -21,6 +21,7 @@ from numpy.random import Generator
 from pydantic import ConfigDict, Field, model_validator
 from scipy.optimize import brentq
 
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel
 
 # Native parameters that identify one family to the exclusion of the other.
@@ -49,22 +50,28 @@ class LognormalParams(AIPerfBaseModel):
     Can be constructed in two ways:
     1. Full: mu, sigma, mean, median all provided (e.g. from manifest.json or fit-stats)
     2. Simplified: just mean and median — mu/sigma auto-computed via model validator
+
+    Carries no distribution tag: selecting a family is a delay-union concern, so
+    the tag lives on the delay-only subclass (LognormalDelayParams) instead of
+    leaking into every token-count and size config that reuses these params.
     """
 
     # Mirrors the _reject_foreign_fields validator so schema consumers (editors,
     # authoring-time validation) reject an untagged Weibull config too, instead
-    # of silently matching this branch and dropping shape/scale.
+    # of silently matching this branch and dropping shape/scale. This guard
+    # applies to every user of these params, tagged or not, because the
+    # validator does: a schema weaker than the loader green-lights configs that
+    # then fail to load.
     model_config = ConfigDict(
         json_schema_extra={
             "not": {"anyOf": [{"required": ["shape"]}, {"required": ["scale"]}]}
         }
     )
 
-    distribution: Literal["lognormal"] = Field(
-        default="lognormal",
-        description="Distribution family tag; defaults to lognormal so untagged configs stay backward compatible",
-    )
-    mu: float | None = Field(default=None, description="Log-space mean")
+    # Log-space mean is legitimately negative for sub-1 medians, so it takes no
+    # ge/gt bound -- but it must still be finite, which FiniteFloat enforces at
+    # validation time rather than leaving to the model validator below.
+    mu: FiniteFloat | None = Field(default=None, description="Log-space mean")
     sigma: float | None = Field(
         default=None, ge=0.0, description="Log-space standard deviation"
     )

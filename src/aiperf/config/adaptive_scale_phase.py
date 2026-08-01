@@ -347,6 +347,19 @@ class AdaptiveScalePhaseMixin:
         self._validate_adaptive_control_bounds(variable, max_value)
         return self
 
+    def adaptive_users_control_floor(self) -> float | None:
+        """Return the user count an adaptive-users run starts at, or None.
+
+        ``UsersControlBackend`` initializes its current value at ``control.min``
+        and ``AdaptiveScaleStrategy.setup_phase`` pushes that value before the
+        first request, so ``control.min`` -- not the phase's ``users`` target --
+        is the first user count the run reaches. Callers that validate against a
+        user count must account for this floor.
+        """
+        if not self.adaptive_scale or self.adaptive_control_variable != "users":
+            return None
+        return self.adaptive_control_min
+
     def _validate_adaptive_scale_required_fields(self) -> None:
         if self.duration is None:
             raise ValueError("adaptive_scale requires duration")

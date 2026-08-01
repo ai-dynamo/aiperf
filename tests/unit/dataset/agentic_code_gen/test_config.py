@@ -10,6 +10,7 @@ from pathlib import Path
 import jsonschema
 import orjson
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.dataset.agentic_code_gen import config
@@ -18,7 +19,11 @@ from aiperf.dataset.agentic_code_gen.config import (
     list_bundled_configs,
     load_config,
 )
-from aiperf.dataset.agentic_code_gen.models import LognormalParams, WeibullParams
+from aiperf.dataset.agentic_code_gen.models import (
+    LognormalParams,
+    MixtureDelayConfig,
+    WeibullParams,
+)
 
 
 class TestLoadConfig:
@@ -71,9 +76,144 @@ class TestLoadConfig:
         Otherwise a schema-driven editor accepts an untagged Weibull config that
         silently samples a lognormal.
         """
-        schema = build_config_schema()["$defs"]["LognormalParams"]
+        schema = build_config_schema()["$defs"]["LognormalDelayParams"]
         errors = list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
         assert (not errors) is valid
+
+    @pytest.mark.parametrize(
+        "def_name",
+        [
+            param("LognormalParams", id="plain_lognormal_size_config"),
+            param("NewTokensPerTurnConfig", id="token_count_config"),
+        ],
+    )  # fmt: skip
+    def test_non_delay_defs_carry_no_family_tag(self, def_name: str) -> None:
+        """Only delay components advertise a family tag.
+
+        A token-count or size config has no Weibull alternative, so a
+        distribution discriminator there is noise in a schema-driven editor.
+        """
+        definition = build_config_schema()["$defs"][def_name]
+        assert "distribution" not in definition["properties"]
+
+    @pytest.mark.parametrize(
+        "def_name",
+        [
+            param("LognormalParams", id="plain_lognormal_size_config"),
+            param("NewTokensPerTurnConfig", id="token_count_config"),
+            param("LognormalDelayParams", id="delay_component"),
+        ],
+    )  # fmt: skip
+    def test_every_lognormal_def_keeps_the_weibull_guard(self, def_name: str) -> None:
+        """The tag is delay-only, but the Weibull-field rejection is not.
+
+        _reject_foreign_fields fires for every user of these params, so dropping
+        the clause from non-delay defs would leave the schema more permissive
+        than the loader.
+        """
+        definition = build_config_schema()["$defs"][def_name]
+        assert definition["not"] == {
+            "anyOf": [{"required": ["shape"]}, {"required": ["scale"]}]
+        }
+
+    def test_delay_def_carries_the_family_tag(self) -> None:
+        definition = build_config_schema()["$defs"]["LognormalDelayParams"]
+        assert definition["properties"]["distribution"]["const"] == "lognormal"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            param({"mean": 3_500, "median": 1_800}, id="plain"),
+            param({"mu": 7.5, "sigma": 0.9, "mean": 3_500, "median": 1_800}, id="full"),
+            param(
+                {"shape": 1.2, "scale": 42_000, "mean": 40_000, "median": 25_000},
+                id="weibull_shape_scale",
+            ),
+            param({"shape": 1.2, "mean": 40_000, "median": 25_000}, id="lone_shape"),
+            param({"scale": 42_000, "mean": 40_000, "median": 25_000}, id="lone_scale"),
+        ],
+    )  # fmt: skip
+    def test_non_delay_schema_agrees_with_the_runtime_validator(
+        self, payload: dict[str, float]
+    ) -> None:
+        """A schema-driven editor must reject exactly what the loader rejects."""
+        schema = build_config_schema()["$defs"]["LognormalParams"]
+        schema_ok = not list(
+            jsonschema.Draft202012Validator(schema).iter_errors(payload)
+        )
+
+        try:
+            LognormalParams.model_validate(payload)
+        except ValidationError:
+            runtime_ok = False
+        else:
+            runtime_ok = True
+
+        assert schema_ok is runtime_ok
+
+    @pytest.mark.parametrize(
+        ("delay", "valid"),
+        [
+            param({"mean": 40_000, "median": 25_000}, True, id="untagged_lognormal"),
+            param(
+                {"distribution": "weibull", "mean": 40_000, "median": 25_000},
+                True,
+                id="tagged_weibull",
+            ),
+            param(
+                {"shape": 1.2, "scale": 42_000, "mean": 40_000, "median": 25_000},
+                False,
+                id="untagged_weibull_fields_rejected",
+            ),
+        ],
+    )  # fmt: skip
+    def test_generated_schema_validates_delay_components(
+        self, delay: dict[str, float], valid: bool
+    ) -> None:
+        schema = build_config_schema()
+        document = {"interTurnDelay": {"human_delay": delay}}
+        errors = list(jsonschema.Draft202012Validator(schema).iter_errors(document))
+        assert (not errors) is valid
+
+    def test_tagged_weibull_mismatch_reports_only_the_weibull_error(self) -> None:
+        """The discriminator collapses the union to the branch the tag names.
+
+        Without it the untagged smart union reported the lognormal literal
+        mismatch first, burying the message that explains the rejection.
+        """
+        with pytest.raises(ValidationError) as excinfo:
+            MixtureDelayConfig.model_validate(
+                {
+                    "human_delay": {
+                        "distribution": "weibull",
+                        "shape": 1.2,
+                        "scale": 42_000.0,
+                        "mean": 40_000,
+                        "median": 25_000,
+                    }
+                }
+            )
+
+        errors = excinfo.value.errors()
+        assert len(errors) == 1
+        assert errors[0]["type"] == "value_error"
+        assert "disagrees with the mean implied" in errors[0]["msg"]
+        assert "literal_error" not in str(excinfo.value)
+
+    def test_unknown_distribution_tag_reports_expected_tags(self) -> None:
+        with pytest.raises(ValidationError, match="does not match any of the expected"):
+            MixtureDelayConfig.model_validate(
+                {"human_delay": {"distribution": "gamma", "mean": 2, "median": 1}}
+            )
+
+    def test_plain_lognormal_params_instance_is_accepted_as_delay(self) -> None:
+        """Regression: callers building delay components programmatically."""
+        delay = MixtureDelayConfig(
+            agentic_delay=LognormalParams(mean=3_000, median=2_000, max=4_000)
+        ).agentic_delay
+        assert isinstance(delay, LognormalParams)
+        assert delay.distribution == "lognormal"
+        assert delay.max == 4_000
 
     def test_spec_json_is_not_loadable_config(self) -> None:
         with pytest.raises(ValueError, match="JSON Schema reference"):

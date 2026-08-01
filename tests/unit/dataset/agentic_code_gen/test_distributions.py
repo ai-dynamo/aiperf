@@ -111,7 +111,9 @@ class TestLognormalParamsAutoCompute:
             LognormalParams(mean=100, median=100, **kwargs)
 
     def test_non_finite_explicit_mu_sigma_raises(self) -> None:
-        with pytest.raises(ValueError, match="mu must be finite"):
+        # mu is annotated FiniteFloat, so the field validator rejects it before
+        # the model validator's own "mu must be finite" branch is reached.
+        with pytest.raises(ValueError, match="value must be finite"):
             LognormalParams(mu=math.inf, sigma=0.1, mean=100, median=100)
         with pytest.raises(ValueError, match="sigma must be finite"):
             LognormalParams(mu=1.0, sigma=math.inf, mean=100, median=100)

@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Annotated, Any, Literal
 
 import numpy as np
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Discriminator, Field, Tag, model_validator
 
 from aiperf.common.distributions import LognormalParams, WeibullParams
 from aiperf.common.finite import FiniteFloat
@@ -87,12 +88,60 @@ class NewTokensPerTurnConfig(LognormalParams):
     )
 
 
-def _default_agentic_delay() -> LognormalParams:
-    return LognormalParams(mean=2_500, median=1_800)
+class LognormalDelayParams(LognormalParams):
+    """Lognormal params carrying the delay-union family tag.
+
+    Selecting a family only makes sense for a member of the inter-turn delay
+    union, so the tag lives here rather than on LognormalParams: token-count and
+    size configs reuse the plain params without advertising a distribution they
+    have no alternative to. The inherited Weibull-field rejection stays on the
+    base, where it mirrors the _reject_foreign_fields validator that fires for
+    every user of these params.
+    """
+
+    distribution: Literal["lognormal"] = Field(
+        default="lognormal",
+        description="Distribution family tag; defaults to lognormal so untagged configs stay backward compatible",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_plain_lognormal_params(cls, data: Any) -> Any:
+        """Accept a plain LognormalParams instance as a delay component."""
+        if isinstance(data, LognormalParams) and not isinstance(data, cls):
+            return dict(data)
+        return data
 
 
-def _default_human_delay() -> LognormalParams:
-    return LognormalParams(mean=40_000, median=25_000)
+def _delay_distribution_tag(value: Any) -> str:
+    """Select the delay union branch, defaulting untagged payloads to lognormal.
+
+    Untagged {mean, median} components predate the Weibull option and must keep
+    parsing as lognormal. Dispatching on the tag also keeps a rejected component
+    reporting only its own family's error instead of a misleading literal
+    mismatch from the other branch.
+    """
+    tag = (
+        value.get("distribution")
+        if isinstance(value, dict)
+        else getattr(value, "distribution", None)
+    )
+    return str(tag) if tag else "lognormal"
+
+
+DelayComponentParams = Annotated[
+    Annotated[LognormalDelayParams, Tag("lognormal")]
+    | Annotated[WeibullParams, Tag("weibull")],
+    Discriminator(_delay_distribution_tag),
+]
+
+
+def _default_agentic_delay() -> LognormalDelayParams:
+    return LognormalDelayParams(mean=2_500, median=1_800)
+
+
+def _default_human_delay() -> LognormalDelayParams:
+    return LognormalDelayParams(mean=40_000, median=25_000)
 
 
 class MixtureDelayConfig(AIPerfBaseModel):
@@ -110,11 +159,11 @@ class MixtureDelayConfig(AIPerfBaseModel):
         le=1.0,
         description="Probability of sampling the fast agentic delay",
     )
-    agentic_delay: LognormalParams | WeibullParams = Field(
+    agentic_delay: DelayComponentParams = Field(
         default_factory=_default_agentic_delay,
         description="Fast delay distribution (tool-call follow-ups)",
     )
-    human_delay: LognormalParams | WeibullParams = Field(
+    human_delay: DelayComponentParams = Field(
         default_factory=_default_human_delay,
         description="Slow delay distribution (human think time)",
     )

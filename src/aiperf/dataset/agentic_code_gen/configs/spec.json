@@ -52,9 +52,9 @@
       "title": "Layer15GroupConfig",
       "type": "object"
     },
-    "LognormalParams": {
+    "LognormalDelayParams": {
       "additionalProperties": true,
-      "description": "Lognormal distribution parameters with real-space summary statistics.\n\nCan be constructed in two ways:\n1. Full: mu, sigma, mean, median all provided (e.g. from manifest.json or fit-stats)\n2. Simplified: just mean and median — mu/sigma auto-computed via model validator",
+      "description": "Lognormal params carrying the delay-union family tag.\n\nSelecting a family only makes sense for a member of the inter-turn delay\nunion, so the tag lives here rather than on LognormalParams: token-count and\nsize configs reuse the plain params without advertising a distribution they\nhave no alternative to. The inherited Weibull-field rejection stays on the\nbase, where it mirrors the _reject_foreign_fields validator that fires for\nevery user of these params.",
       "not": {
         "anyOf": [
           {
@@ -149,6 +149,99 @@
         "mean",
         "median"
       ],
+      "title": "LognormalDelayParams",
+      "type": "object"
+    },
+    "LognormalParams": {
+      "additionalProperties": true,
+      "description": "Lognormal distribution parameters with real-space summary statistics.\n\nCan be constructed in two ways:\n1. Full: mu, sigma, mean, median all provided (e.g. from manifest.json or fit-stats)\n2. Simplified: just mean and median — mu/sigma auto-computed via model validator\n\nCarries no distribution tag: selecting a family is a delay-union concern, so\nthe tag lives on the delay-only subclass (LognormalDelayParams) instead of\nleaking into every token-count and size config that reuses these params.",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "shape"
+            ]
+          },
+          {
+            "required": [
+              "scale"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "max": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard upper bound (rejection sampled)",
+          "title": "Max"
+        },
+        "mean": {
+          "description": "Real-space mean (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Mean",
+          "type": "number"
+        },
+        "median": {
+          "description": "Real-space median (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Median",
+          "type": "number"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard lower bound (rejection sampled)",
+          "title": "Min"
+        },
+        "mu": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Log-space mean",
+          "title": "Mu"
+        },
+        "sigma": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Log-space standard deviation",
+          "title": "Sigma"
+        }
+      },
+      "required": [
+        "mean",
+        "median"
+      ],
       "title": "LognormalParams",
       "type": "object"
     },
@@ -157,15 +250,15 @@
       "description": "Two-component mixture model for inter-turn delays.\n\nAgentic turns (tool-call follow-ups) are fast; human turns are slow.\nA Bernoulli draw selects which component to sample from. Each component is\nlognormal by default; tag a component with distribution \"weibull\" to use a\nWeibull instead.",
       "properties": {
         "agentic_delay": {
-          "anyOf": [
+          "description": "Fast delay distribution (tool-call follow-ups)",
+          "oneOf": [
             {
-              "$ref": "#/$defs/LognormalParams"
+              "$ref": "#/$defs/LognormalDelayParams"
             },
             {
               "$ref": "#/$defs/WeibullParams"
             }
           ],
-          "description": "Fast delay distribution (tool-call follow-ups)",
           "title": "Agentic Delay"
         },
         "agentic_fraction": {
@@ -177,15 +270,15 @@
           "type": "number"
         },
         "human_delay": {
-          "anyOf": [
+          "description": "Slow delay distribution (human think time)",
+          "oneOf": [
             {
-              "$ref": "#/$defs/LognormalParams"
+              "$ref": "#/$defs/LognormalDelayParams"
             },
             {
               "$ref": "#/$defs/WeibullParams"
             }
           ],
-          "description": "Slow delay distribution (human think time)",
           "title": "Human Delay"
         },
         "max": {
@@ -230,13 +323,6 @@
           "exclusiveMinimum": 0.0,
           "title": "Bias",
           "type": "number"
-        },
-        "distribution": {
-          "const": "lognormal",
-          "default": "lognormal",
-          "description": "Distribution family tag; defaults to lognormal so untagged configs stay backward compatible",
-          "title": "Distribution",
-          "type": "string"
         },
         "max": {
           "anyOf": [
