@@ -25,16 +25,16 @@ class CaseInsensitiveStrEnum(str, Enum):
     def __init__(self: Self, *args: object) -> None:
         # Comparisons and hashing sit on hot paths (per-SSE-chunk field checks
         # at >1M/s under load); normalize once per member instead of per call.
-        self._norm_value_ = _normalize_name(self.value)
-        self._norm_hash_ = hash(self._norm_value_)
+        self._norm_value_cache = _normalize_name(self.value)
+        self._norm_hash_cache = hash(self._norm_value_cache)
 
     def _norm_value(self: Self) -> str:
         # Lazy fallback for members created outside Enum construction
         # (e.g. dynamically registered custom members), which skip __init__.
-        norm = self.__dict__.get("_norm_value_")
+        norm = self.__dict__.get("_norm_value_cache")
         if norm is None:
             norm = _normalize_name(self.value)
-            self._norm_value_ = norm
+            self._norm_value_cache = norm
         return norm
 
     def __str__(self) -> str:
@@ -61,10 +61,10 @@ class CaseInsensitiveStrEnum(str, Enum):
         return super().__eq__(other)
 
     def __hash__(self: Self) -> int:
-        norm_hash = self.__dict__.get("_norm_hash_")
+        norm_hash = self.__dict__.get("_norm_hash_cache")
         if norm_hash is None:
             norm_hash = hash(self._norm_value())
-            self._norm_hash_ = norm_hash
+            self._norm_hash_cache = norm_hash
         return norm_hash
 
     @classmethod

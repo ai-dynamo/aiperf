@@ -242,12 +242,12 @@ class TestExtensibleStrEnum:
         cache is populated on the first comparison/hash rather than eagerly.
         """
         ext = enum_with_extension.EXT
-        ext.__dict__.pop("_norm_value_", None)
-        ext.__dict__.pop("_norm_hash_", None)
+        ext.__dict__.pop("_norm_value_cache", None)
+        ext.__dict__.pop("_norm_hash_cache", None)
         assert ext == "EXT"  # non-exact -> normalization path caches
-        assert ext.__dict__.get("_norm_value_") == "ext"
+        assert ext.__dict__.get("_norm_value_cache") == "ext"
         assert hash(ext) == hash("ext")
-        assert ext.__dict__.get("_norm_hash_") == hash("ext")
+        assert ext.__dict__.get("_norm_hash_cache") == hash("ext")
 
 
 # =============================================================================

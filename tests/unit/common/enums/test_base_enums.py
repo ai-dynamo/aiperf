@@ -299,13 +299,13 @@ class TestNormalizationCaching:
 
     def test_norm_value_cached_on_construction(self: Self) -> None:
         """Members precompute the normalized value once during construction."""
-        assert SampleEnum.FOO_BAR.__dict__.get("_norm_value_") == "foo_bar"
-        assert DashValueEnum.MY_VALUE.__dict__.get("_norm_value_") == "my_value"
+        assert SampleEnum.FOO_BAR.__dict__.get("_norm_value_cache") == "foo_bar"
+        assert DashValueEnum.MY_VALUE.__dict__.get("_norm_value_cache") == "my_value"
 
     def test_norm_hash_cached_on_construction(self: Self) -> None:
         """Members precompute the normalized hash once during construction."""
         member = DashValueEnum.MY_VALUE
-        assert member.__dict__.get("_norm_hash_") == hash("my_value")
+        assert member.__dict__.get("_norm_hash_cache") == hash("my_value")
         assert hash(member) == hash("my_value")
 
     def test_exact_match_fast_path(self: Self) -> None:
@@ -327,12 +327,12 @@ class TestNormalizationCaching:
         """
         member = SampleEnum.BETA
         # Simulate a member that skipped __init__ (e.g. dynamic creation).
-        member.__dict__.pop("_norm_value_", None)
-        member.__dict__.pop("_norm_hash_", None)
+        member.__dict__.pop("_norm_value_cache", None)
+        member.__dict__.pop("_norm_hash_cache", None)
         assert member == "BETA"  # non-exact -> normalization path
-        assert member.__dict__.get("_norm_value_") == "beta"
+        assert member.__dict__.get("_norm_value_cache") == "beta"
         assert hash(member) == hash("beta")
-        assert member.__dict__.get("_norm_hash_") == hash("beta")
+        assert member.__dict__.get("_norm_hash_cache") == hash("beta")
 
     def test_enum_vs_enum_uses_cached_norm(self: Self) -> None:
         """Cross-enum equality still holds using cached normalized values."""
