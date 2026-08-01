@@ -7,6 +7,9 @@
 //! set of request intervals into signed +/- weight events, sort them by time, and take a running
 //! cumulative sum to reconstruct the exact step function (concurrency / tokens-in-flight /
 //! decode-throughput curves) in `O(E log E)` without scanning the timeline point by point.
+//!
+//! Lives beside the node layouts rather than in a deck because the `sweep` node type draws this,
+//! and the metrics-accumulator deck's interactive view reads the same functions.
 
 export type SweepRequest = {
   id: string;

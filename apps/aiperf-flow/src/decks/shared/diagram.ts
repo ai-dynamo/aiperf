@@ -14,6 +14,10 @@ import type { Edge, Node } from "@xyflow/react";
 import { timelineNodeSize, type TimelineBar, type TimelineGap } from "../../nodes/timelineLayout.js";
 import { intervalsNodeSize, type IntervalRow } from "../../nodes/intervalsLayout.js";
 import { blocksNodeSize, type BlockStrip } from "../../nodes/blocksLayout.js";
+import { sweepNodeSize } from "../../nodes/sweepLayout.js";
+import { slicesNodeSize, type SliceRequest } from "../../nodes/slicesLayout.js";
+import { raggedNodeSize } from "../../nodes/raggedLayout.js";
+import type { SweepCurveId, SweepRequest } from "../../nodes/sweepMath.js";
 
 /** Grid step. One column clears a card's max width; one row clears its height. */
 export const COL = 300;
@@ -192,6 +196,93 @@ export function blocks(
       hasDetail: opts.detail !== undefined,
     }),
     data: { ...opts },
+  };
+}
+
+/**
+ * Intervals over the step function they generate — the sweep-line identity.
+ *
+ * Sized explicitly, for the same reason as `timeline`.
+ */
+export function sweep(
+  id: string,
+  opts: {
+    title?: string;
+    requests: SweepRequest[];
+    curve?: SweepCurveId;
+    tMax?: number;
+    axisLabel?: string;
+    valueLabel?: string;
+    width?: number;
+  },
+  { col, row }: Placed,
+): Node {
+  const curve = opts.curve ?? "concurrency";
+  return {
+    id,
+    type: "sweep",
+    position: { x: col * COL, y: row * ROW },
+    style: sweepNodeSize({
+      requests: opts.requests,
+      curve,
+      hasTitle: opts.title !== undefined,
+      tMax: opts.tMax,
+      width: opts.width,
+    }),
+    data: { ...opts, curve },
+  };
+}
+
+/** A uniform bucket grid over a Gantt, showing binning and the incomplete trailing slice. */
+export function slices(
+  id: string,
+  opts: {
+    title?: string;
+    requests: SliceRequest[];
+    duration: number;
+    axisLabel?: string;
+    width?: number;
+  },
+  { col, row }: Placed,
+): Node {
+  return {
+    id,
+    type: "slices",
+    position: { x: col * COL, y: row * ROW },
+    style: slicesNodeSize({
+      requests: opts.requests,
+      duration: opts.duration,
+      hasTitle: opts.title !== undefined,
+      width: opts.width,
+    }),
+    data: { ...opts },
+  };
+}
+
+/** Ragged per-record lists over the flat arrays they pack into. */
+export function ragged(
+  id: string,
+  opts: {
+    title?: string;
+    lists: number[][];
+    highlight?: number;
+    showFlat?: boolean;
+    raggedLabel?: string;
+    flatLabel?: string;
+  },
+  { col, row }: Placed,
+): Node {
+  const showFlat = opts.showFlat ?? true;
+  return {
+    id,
+    type: "ragged",
+    position: { x: col * COL, y: row * ROW },
+    style: raggedNodeSize({
+      lists: opts.lists,
+      hasTitle: opts.title !== undefined,
+      showFlat,
+    }),
+    data: { ...opts, showFlat },
   };
 }
 

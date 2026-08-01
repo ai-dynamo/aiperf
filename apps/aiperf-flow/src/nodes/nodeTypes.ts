@@ -11,6 +11,9 @@ import { CardNode } from "./Card.js";
 import { TimelineNode } from "./Timeline.js";
 import { IntervalsNode } from "./Intervals.js";
 import { BlocksNode } from "./Blocks.js";
+import { SweepNode } from "./Sweep.js";
+import { SlicesNode } from "./Slices.js";
+import { RaggedNode } from "./Ragged.js";
 
 /** Registered once, passed to every `<ReactFlow nodeTypes={nodeTypes}>` in the app. */
 export const nodeTypes: NodeTypes = {
@@ -21,4 +24,7 @@ export const nodeTypes: NodeTypes = {
   timeline: TimelineNode,
   intervals: IntervalsNode,
   blocks: BlocksNode,
+  sweep: SweepNode,
+  slices: SlicesNode,
+  ragged: RaggedNode,
 };

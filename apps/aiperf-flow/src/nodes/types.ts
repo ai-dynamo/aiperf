@@ -7,6 +7,8 @@ import type { SurfaceRole, StrokeRole } from "../theme/tokens.js";
 import type { TimelineBar, TimelineGap } from "./timelineLayout.js";
 import type { IntervalRow } from "./intervalsLayout.js";
 import type { BlockStrip } from "./blocksLayout.js";
+import type { SweepCurveId, SweepRequest } from "./sweepMath.js";
+import type { SliceRequest } from "./slicesLayout.js";
 
 /** Every node data shape accepts an optional `className`, merged onto the component's own root classes. */
 type BaseNodeData = {
@@ -70,6 +72,51 @@ export type BlocksNodeData = BaseNodeData & {
   highlight?: number;
   /** Prose beneath the strips; sized into the node's box, so keep it to about two lines. */
   detail?: React.ReactNode;
+  surfaceRole?: SurfaceRole;
+};
+
+/**
+ * Intervals over the step function they generate — the sweep-line identity, drawn so a reader can
+ * follow a bar's edge down to the event tick that moves the curve.
+ */
+export type SweepNodeData = BaseNodeData & {
+  title?: string;
+  requests: SweepRequest[];
+  /** Which weight the sweep uses. Defaults to `concurrency` (weight 1 per interval). */
+  curve?: SweepCurveId;
+  /** Right edge of the time axis; defaults to the latest request end. */
+  tMax?: number;
+  axisLabel?: string;
+  /** Rotated label on the value axis, e.g. "concurrent requests". */
+  valueLabel?: string;
+  surfaceRole?: SurfaceRole;
+  width?: number;
+  ariaLabel?: string;
+};
+
+/** A uniform bucket grid over a Gantt: which slice each interval bins into, and where the grid
+ * overruns real activity. */
+export type SlicesNodeData = BaseNodeData & {
+  title?: string;
+  requests: SliceRequest[];
+  /** Bucket width in the same units as the request timestamps. */
+  duration: number;
+  axisLabel?: string;
+  surfaceRole?: SurfaceRole;
+  width?: number;
+  ariaLabel?: string;
+};
+
+/** Variable-length per-record lists and the flat `values`/`record_indices`/`offsets` they pack into. */
+export type RaggedNodeData = BaseNodeData & {
+  title?: string;
+  lists: number[][];
+  /** Tint only this record's cells, to follow it through the indirection. */
+  highlight?: number;
+  /** Draw the flat arrays beneath the ragged rows. Defaults to true. */
+  showFlat?: boolean;
+  raggedLabel?: string;
+  flatLabel?: string;
   surfaceRole?: SurfaceRole;
 };
 

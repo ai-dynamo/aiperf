@@ -37,7 +37,7 @@ import {
   stepPoints,
   type SweepCurveId,
   type SweepRequest,
-} from "./sweepMath.js";
+} from "../../nodes/sweepMath.js";
 
 // ---------------------------------------------------------------------------
 // Illustrative datasets (synthetic — chosen to make the concepts legible),
