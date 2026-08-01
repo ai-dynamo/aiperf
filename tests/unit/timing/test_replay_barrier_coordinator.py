@@ -231,6 +231,46 @@ async def test_new_request_cancels_runtime_root_idle_watchdog() -> None:
 
 
 @pytest.mark.asyncio
+async def test_idle_watchdog_retries_when_advanced_turn_is_barrier_blocked() -> None:
+    """A blocked candidate cannot consume the cap and strand later timers."""
+    scheduler = LoopScheduler()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(),
+        scheduler=scheduler,
+        root_idle_gap_cap_seconds=0.02,
+    )
+    coordinator.activate()
+    issued = asyncio.Event()
+
+    async def submit_blocked() -> None:
+        await coordinator.submit(_turn("d"), lambda: _record_issue([], "d"))
+
+    async def submit_ready() -> None:
+        async def mark_issued() -> bool:
+            issued.set()
+            return True
+
+        await coordinator.submit(
+            _turn("a"),
+            mark_issued,
+        )
+
+    # The first cap advance lands on d, which is retained behind a/b/c.  The
+    # watchdog must immediately retry and advance ready turn a as part of the
+    # same already-expired idle interval.
+    scheduler.schedule_later(1.0, submit_blocked(), group_id="root")
+    scheduler.schedule_later(2.0, submit_ready(), group_id="root")
+    started = asyncio.get_running_loop().time()
+    coordinator.observe_idle_root("root")
+
+    await asyncio.wait_for(issued.wait(), timeout=0.15)
+
+    assert asyncio.get_running_loop().time() - started < 0.10
+    await coordinator.cancel_pending(notify_refused=False)
+    scheduler.cancel_all()
+
+
+@pytest.mark.asyncio
 async def test_scalar_peak_would_slip_d_after_only_one_completion() -> None:
     coordinator = ReplayBarrierCoordinator(_metadata())
     coordinator.activate()

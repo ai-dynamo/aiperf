@@ -2620,6 +2620,40 @@ async def test_global_idle_watchdog_bounds_persistent_control_plane_work():
 
 
 @pytest.mark.asyncio
+async def test_active_phase_owns_global_idle_drain_observer() -> None:
+    """Warmup teardown cannot clear a preconstructed profiling observer."""
+    scheduler = LoopScheduler()
+    run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    run.cfg.get_profiling_phases()[0].system_idle_gap_cap_seconds = 0.05
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    warmup, _, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        scheduler=scheduler,
+        run=run,
+    )
+    profiling, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        scheduler=scheduler,
+        run=run,
+    )
+
+    # Construct both phases first, matching TimingManager lifecycle.  Observer
+    # ownership follows setup/finalize of the active phase, not construction.
+    assert scheduler._drain_observer is None
+    await warmup.setup_phase()
+    assert getattr(scheduler._drain_observer, "__self__", None) is warmup
+    await warmup.finalize_phase()
+    assert scheduler._drain_observer is None
+
+    await profiling.setup_phase()
+    assert getattr(scheduler._drain_observer, "__self__", None) is profiling
+    await profiling.finalize_phase()
+    assert scheduler._drain_observer is None
+
+
+@pytest.mark.asyncio
 async def test_global_idle_cap_rechecks_after_barrier_defers_near_timer(
     time_traveler_no_patch_sleep,
 ):

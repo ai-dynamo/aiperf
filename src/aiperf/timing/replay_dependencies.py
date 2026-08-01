@@ -157,6 +157,8 @@ class _RootBarrierState:
     """Requests from this runtime tree currently on the wire."""
     idle_watchdog: asyncio.TimerHandle | None = None
     """Per-tree idle-cap callback, armed only while no request is in flight."""
+    idle_cap_expired: bool = False
+    """Whether this idle interval has already consumed its full cap budget."""
 
 
 class ReplayBarrierCoordinator:
@@ -197,6 +199,7 @@ class ReplayBarrierCoordinator:
             return
         state = self._root_state(credit.effective_root_correlation_id)
         state.in_flight += 1
+        state.idle_cap_expired = False
         if state.idle_watchdog is not None:
             state.idle_watchdog.cancel()
             state.idle_watchdog = None
@@ -260,6 +263,13 @@ class ReplayBarrierCoordinator:
         state.pending[key] = _PendingDispatch(
             turn=turn, issue=issue, on_refused=on_refused
         )
+        # A cap-expired timer can land here because its recorded predecessor
+        # has not completed yet.  The tree is still fully idle, so immediately
+        # advance the next timer in this tree instead of waiting another full
+        # cap interval (or never re-arming at all).  ``observe_issued`` cancels
+        # this retry as soon as any candidate actually reaches the wire.
+        if state.in_flight == 0 and state.idle_cap_expired:
+            self._arm_root_idle_watchdog(root_id, state)
         return retained_result
 
     def complete(self, credit: Credit) -> None:
@@ -279,6 +289,7 @@ class ReplayBarrierCoordinator:
             self._dispatch_tasks.add(task)
             task.add_done_callback(self._dispatch_tasks.discard)
         if state.in_flight == 0:
+            state.idle_cap_expired = False
             self._arm_root_idle_watchdog(root_id, state)
 
     def _arm_root_idle_watchdog(self, root_id: str, state: _RootBarrierState) -> None:
@@ -292,7 +303,10 @@ class ReplayBarrierCoordinator:
         ):
             return
         loop = asyncio.get_running_loop()
-        state.idle_watchdog = loop.call_later(cap, self._enforce_root_idle_cap, root_id)
+        delay = 0.0 if state.idle_cap_expired else cap
+        state.idle_watchdog = loop.call_later(
+            delay, self._enforce_root_idle_cap, root_id
+        )
 
     def _enforce_root_idle_cap(self, root_id: str) -> None:
         state = self._roots.get(root_id)
@@ -301,6 +315,7 @@ class ReplayBarrierCoordinator:
         state.idle_watchdog = None
         if state.in_flight != 0 or self._scheduler is None:
             return
+        state.idle_cap_expired = True
         shifted = self._scheduler.cap_pending_delay_for_group(root_id, 0.0)
         if shifted <= 0:
             return

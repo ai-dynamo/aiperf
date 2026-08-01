@@ -259,8 +259,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._system_idle_seconds_skipped = 0.0
         self._system_idle_started_at: float | None = None
         self._system_idle_watchdog: asyncio.TimerHandle | None = None
-        if self._system_idle_gap_cap_seconds is not None:
-            self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
         # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
@@ -404,6 +402,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         dataset's ``sampling_strategy`` and reuses every root about equally --
         no strategy-side recycle queue to keep in sync.
         """
+        # Strategies for later phases may be constructed before the current
+        # phase finalizes.  Register the observer when this phase becomes
+        # active, not in ``__init__``; otherwise warmup teardown can clear the
+        # already-constructed profiling observer and a barrier-retained timer
+        # can leave the whole system idle past the global cap.
+        if self._system_idle_gap_cap_seconds is not None:
+            self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
         if self._has_tree_registry:
             self._session_tree_registry.set_drain_callback(self._on_tree_drained)
         if (
