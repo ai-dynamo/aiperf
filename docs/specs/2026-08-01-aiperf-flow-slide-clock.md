@@ -116,23 +116,41 @@ Cues cross it in the handful of words the narration actually spends on it.
 
 Owns the one `requestAnimationFrame` loop and is the sole writer to the store.
 
-**Progress estimation.** `useNarratedDeck` exposes `activeWordIndex`, updated on
-speech-synthesis `onboundary` events. That signal is discrete — it jumps once per
-spoken word, which would make a playhead stutter. The provider smooths it:
+**Progress estimation.** `useNarratedDeck` exposes `activeWordIndex`. That signal is
+discrete — it advances one word at a time, which would make a playhead stutter. The
+provider smooths it:
 
 ```
-wordProgress = activeWordIndex + clamp(msSinceBoundary / avgWordMs, 0, 1)
+wordProgress = activeWordIndex + clamp(msSinceWordChange / avgWordMs, 0, 1)
 ```
 
-The integer part snaps back to truth on every boundary event, so error cannot
+The integer part snaps back to truth on every word change, so error cannot
 accumulate; the fractional part interpolates between them. `avgWordMs` is derived
 from the step's own elapsed time and word count, so it adapts to the actual voice
 rather than assuming a rate.
 
-**Silent mode.** When `narrationEnabled` is false the deck auto-advances without
-speech and no boundary events arrive. `src/audio/narration.ts` already exports
-`formatStepDuration`, which estimates a step's duration from its text; progress
-falls back to `elapsed / estimatedDuration`.
+Word count must come from `splitWords(narration).length` in
+`src/audio/narration.ts` — the same function `speakNarration` indexes against, so
+`activeWordIndex` and `wordCount` cannot disagree about what a word is.
+
+**`activeWordIndex` is not monotonic, and the clock must be.** `speakNarration`
+drives word events from *two* sources at once: `driveEstimatedWords()` schedules a
+timer per word at the estimated rate, and `utterance.onboundary` reports the real
+position. Both call the same `onWord`. When actual speech runs slower than the
+estimate, a boundary event reports a *lower* index than an already-fired timer and
+`activeWordIndex` jumps backwards. Mapped straight through, virtual time would jump
+backwards with it and a self-drawing curve would visibly un-draw.
+
+The provider therefore clamps `t` monotonically within a step: `t = max(t, resolved)`,
+reset on `restartKey`. Backwards narration corrections are absorbed as a pause in the
+playhead rather than a rewind.
+
+**Silent mode needs no separate path.** `speakNarration` calls `driveEstimatedWords()`
+in its non-speech branch too, so `activeWordIndex` advances on estimated timers
+whether or not speech is enabled, and whether or not the browser supports
+`onboundary`. One progress source covers all three cases. `estimateNarrationMs(text,
+speed)` is available for a duration-based sanity bound if one is ever needed;
+`formatStepDuration` is *not* usable for this — it returns a display string (`"12s"`).
 
 **Reduced motion.** When `useReducedMotion()` is true the provider pins `t` to
 `span[1]` and never starts the loop. Charts then render exactly what they render
@@ -191,6 +209,12 @@ this scope.
 Geometry additions live in the existing `*Layout.ts` modules beside the coordinates
 they extend, keeping the components free of arithmetic and the geometry unit-testable.
 
+`sweepMath.ts` needs no change. Its `stepPathD(pts, x, y, tMin, tMax)` already
+produces a correctly clipped curve when given
+`stepPathD(points.filter((p) => p.t <= t), x, y, 0, t)`: the final segment holds the
+last value out to `t`, which is exactly a curve drawn up to now. Verified against the
+existing implementation rather than assumed.
+
 ### Scope boundary
 
 This spec does **not** cover: new node types (`stage`, `firing`, `store`, `cells`),
@@ -225,7 +249,21 @@ in the runtime. A scene at a given `t` is exactly assertable, with no timers, no
   delivery decision exists to prevent, so it gets an explicit test rather than a
   comment.
 - **Reduced motion** — with `useReducedMotion()` true, a clocked slide renders
-  identically to the same slide with no clock authored.
+  identically to the same slide with no clock authored. jsdom provides no
+  `window.matchMedia`, so `useReducedMotion()` returns null under test and this case
+  needs an explicit `vi.mock("motion/react")` (or a `matchMedia` polyfill in
+  `vitest.setup.ts`) rather than relying on the environment.
+- **Monotonicity** — feeding the provider a decreasing `activeWordIndex` must not
+  decrease `t`. This is a real code path, not a hypothetical: see the two competing
+  word-event sources above.
+
+`requestAnimationFrame` is available in jsdom and `useSyncExternalStore` works there
+(React 19.2.7), both confirmed by probe. Hook tests follow the existing
+`vi.useFakeTimers()` + `renderHook` + `act` convention from `useReveal.test.ts`.
+
+Browser verification uses the existing Playwright suite (`npm run test:browser`,
+`e2e/decks.spec.ts`), which asserts no clipped nodes, correct framing after the reveal
+cascade, and no console errors — the checks jsdom cannot make.
 
 ## Risks
 
