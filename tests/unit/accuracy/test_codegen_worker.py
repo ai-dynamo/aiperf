@@ -245,6 +245,9 @@ class TestRunWorkerLoopBatch:
                 os.close(r_fd)
             os.close(w_fd)
 
+    @pytest.mark.skipif(
+        not worker._HAS_FCNTL, reason="fcntl required for O_NONBLOCK drain"
+    )
     def test_drain_buffered_complete_line_then_empty_pipe_stops(self) -> None:
         # BufferedReader.peek() returns b"" (not BlockingIOError) when the kernel
         # pipe buffer is empty with write end still open. Verifies that the drain
