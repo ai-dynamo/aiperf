@@ -767,8 +767,8 @@ Benchmark style for RANDOM corpus generation. Controls range ratio formula, toke
 
 | | | |
 |-------|:-------:|-------------|
-| `vllm` | _default_ | vllm bench serve semantics: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). |
-| `sglang` |  | sglang bench_serving semantics: lower-bounded window `[max(1, int(mean*r)), mean]`. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Produces an average length &lt;= mean, which skews benchmark throughput relative to the "mean" reading. |
+| `vllm` | _default_ | vllm bench serve semantics: symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). Special tokens excluded from the sampling pool. BOS subtracted from ISL mean. |
+| `sglang` |  | sglang bench_serving semantics: lower-bounded window ``[max(1, int(mean*r)), mean]``. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range used for token sampling (no special-token exclusion). No BOS adjustment. |
 
 ### Output Sequence Length (OSL)
 
@@ -2345,8 +2345,8 @@ Benchmark style for RANDOM corpus generation. Controls range ratio formula, toke
 
 | | | |
 |-------|:-------:|-------------|
-| `vllm` | _default_ | vllm bench serve semantics: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). |
-| `sglang` |  | sglang bench_serving semantics: lower-bounded window `[max(1, int(mean*r)), mean]`. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Produces an average length &lt;= mean, which skews benchmark throughput relative to the "mean" reading. |
+| `vllm` | _default_ | vllm bench serve semantics: symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). Special tokens excluded from the sampling pool. BOS subtracted from ISL mean. |
+| `sglang` |  | sglang bench_serving semantics: lower-bounded window ``[max(1, int(mean*r)), mean]``. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range used for token sampling (no special-token exclusion). No BOS adjustment. |
 
 ### Output Sequence Length (OSL)
 

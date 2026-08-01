@@ -781,15 +781,40 @@ class ExportFormat(CaseInsensitiveStrEnum):
 class RandomCorpusStyle(CaseInsensitiveStrEnum):
     """Benchmark style for RANDOM corpus generation.
 
-    Controls the full set of behaviors that vary between tools: range ratio
-    formula, token pool composition, and any future per-tool differences.
+    Controls the full set of behaviors that vary between tools. Each style
+    is a bundle of decisions that together reproduce the statistical
+    distribution of a specific benchmarking tool:
+
+    .. list-table::
+       :header-rows: 1
+       :widths: 30 35 35
+
+       * - Concern
+         - VLLM
+         - SGLANG
+       * - Token pool
+         - ``valid_token_ids`` (special tokens excluded via ``all_special_ids``)
+         - ``all_token_ids`` (full ``range(vocab_size)``, no exclusion)
+       * - BOS / special-token adjustment
+         - ``max(0, mean - num_special_tokens)``
+         - No adjustment (raw configured mean used directly)
+       * - ISL/OSL range formula
+         - Symmetric: ``[floor(mean*(1-r)), ceil(mean*(1+r))]``
+         - Lower-bounded: ``[max(1, int(mean*r)), mean]``
+       * - RNG draw order (with preseed)
+         - All ISLs → all OSLs → all offsets from ``default_rng(seed)``
+         - Uses ``_corpus_rng`` (derived RNG, no global-state preseed)
+       * - Top-up RNG
+         - Continues from the same ``default_rng`` stream (``_preseed_rng``)
+         - Uses ``_corpus_rng`` with independent random draws
     """
 
     VLLM = "vllm"
-    """vllm bench serve semantics: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`.
-    r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1)."""
+    """vllm bench serve semantics: symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``.
+    r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1).
+    Special tokens excluded from the sampling pool. BOS subtracted from ISL mean."""
 
     SGLANG = "sglang"
-    """sglang bench_serving semantics: lower-bounded window `[max(1, int(mean*r)), mean]`.
-    r=0 allows full variability [1, mean]; r=1 fixes length at mean. Produces an average
-    length <= mean, which skews benchmark throughput relative to the "mean" reading."""
+    """sglang bench_serving semantics: lower-bounded window ``[max(1, int(mean*r)), mean]``.
+    r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range
+    used for token sampling (no special-token exclusion). No BOS adjustment."""
