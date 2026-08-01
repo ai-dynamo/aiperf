@@ -287,6 +287,52 @@ class TestSearchRecipes:
             assert feasible_max["value"] >= 1, history
 
     @pytest.mark.slow
+    async def test_max_concurrency_error_rate_sla_accepts_zero_error_runs(
+        self,
+        cli: AIPerfCLI,
+        mock_server_factory,
+        temp_output_dir: Path,
+    ) -> None:
+        async with mock_server_factory(error_rate=0.0, fast=True, workers=1) as server:
+            await cli.run(
+                f"""
+                aiperf profile
+                    --model mock-model
+                    --url {server.url}
+                    --endpoint-type chat
+                    --search-recipe max-concurrency-under-sla
+                    --search-style monotonic
+                    --error-rate-sla 0.15
+                    --concurrency-min 1
+                    --concurrency-max 2
+                    --search-max-iterations 4
+                    --request-count 4
+                    --warmup-request-count 1
+                    --synthetic-input-tokens-mean 8
+                    --synthetic-input-tokens-stddev 0
+                    --output-tokens-mean 4
+                    --output-tokens-stddev 0
+                    --extra-inputs ignore_eos:true
+                    --ui none
+                """,
+                timeout=300.0,
+            )
+
+        exports = list(temp_output_dir.glob("**/profile_export_aiperf.json"))
+        assert exports, "adaptive search did not emit profile JSON artifacts"
+        for export_path in exports:
+            export = orjson.loads(export_path.read_bytes())
+            assert export["request_error_rate"]["avg"] == 0.0, export_path
+
+        history_path = temp_output_dir / "search_history.json"
+        assert history_path.exists(), "adaptive search did not emit search_history.json"
+        history = orjson.loads(history_path.read_bytes())
+        assert history["iterations"], history
+        assert all(iteration["feasible"] is True for iteration in history["iterations"])
+        assert history["boundary_summary"]["feasible_max"] is not None, history
+        assert history["convergence_reason"] != "monotonic_no_pass_in_range", history
+
+    @pytest.mark.slow
     async def test_max_goodput_under_slo_lands_near_collapse_point(
         self,
         cli: AIPerfCLI,
