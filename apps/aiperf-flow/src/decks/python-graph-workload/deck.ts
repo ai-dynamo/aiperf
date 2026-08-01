@@ -10,7 +10,7 @@
 //! `ajc/dynamo-graph-ir` worktree; captions carry file and symbol.
 
 import type { DeckDefinition, SlideDefinition } from "../../deck/types.js";
-import { band, card, chip, fanIn, fanOut, link, note, timeline } from "../shared/diagram.js";
+import { band, blocks, card, chip, fanIn, fanOut, intervals, link, note, timeline } from "../shared/diagram.js";
 
 const SLIDES: readonly SlideDefinition[] = [
   {
@@ -237,8 +237,60 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-p", "p1", "p2", "p3", "b-c", "c1", "c2", "c3", "same", "flip"],
   },
   {
-    id: "splice",
+    id: "relabel",
     eyebrow: "07 · TRIE GENERATION",
+    title: "One relabelled block costs the whole prefix",
+    lede:
+      "Per-turn tagging let advance_turn relabel block 20 on the parent but not on the forking subagent. Twenty-three blocks agree; the prefix still misses.",
+    narration:
+      "This is the failure the freezing rule exists to prevent, drawn at block resolution. Both paths carry a twenty-three block shared prefix. Under the old per-turn scheme, advancing a turn relabelled block twenty on the parent chain to assistant, while the forking subagent still had it as user. One block out of twenty-three. But the tag decides tokenization, and tokenization decides the segment id chain, so the chains diverge at block twenty and every block after it is a different segment. The server's prefix match stops there. Freezing the tag at creation makes both strips identical, and the whole prefix hits.",
+    caption:
+      "trie_content.py:829-836 gives the freezing rationale; the divergence is the receipt block 57f2a77e. Role and message_index are set by the creating node and inherited verbatim thereafter.",
+    nodes: [
+      blocks(
+        "old",
+        {
+          title: "advance_turn relabels block 20 — per-turn (old)",
+          strips: [
+            {
+              label: "parent chain",
+              cells: Array.from({ length: 23 }, (_, i) => (i < 20 ? "blue" : "purple")),
+            },
+            { label: "forking subagent", cells: Array.from({ length: 23 }, () => "blue") },
+          ],
+          highlight: 20,
+          detail:
+            "Block 20 is assistant on the parent but user on the subagent — different tokenization, KV-cache miss from there on.",
+        },
+        { col: 0, row: 0 },
+      ),
+      blocks(
+        "new",
+        {
+          title: "role fixed at creation — frozen per-block (new)",
+          strips: [
+            { label: "parent chain", cells: Array.from({ length: 23 }, () => "blue") },
+            { label: "forking subagent", cells: Array.from({ length: 23 }, () => "blue") },
+          ],
+          highlight: 20,
+          detail:
+            "Block 20's (role, message_index) is inherited verbatim, so both paths emit an identical segment-id chain and the prefix hits.",
+        },
+        { col: 1.7, row: 0 },
+      ),
+      note(
+        "cost",
+        "Why one block is not a rounding error",
+        "Segment ids are prefix-dependent. A single differing tag changes that block's id and every id after it, so a 23-block prefix degrades to a 20-block one.",
+        { col: 0.6, row: 1.9 },
+      ),
+    ],
+    edges: [],
+    revealOrder: ["old", "new", "cost"],
+  },
+  {
+    id: "splice",
+    eyebrow: "08 · TRIE GENERATION",
     title: "Reuse every whole message inside the boundary",
     lede:
       "A bisect over the parent's message end-blocks splits reused from fresh. Only the straddling message and the new region are decoded and hashed again.",
@@ -277,7 +329,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "determinism",
-    eyebrow: "08 · TRIE GENERATION",
+    eyebrow: "09 · TRIE GENERATION",
     title: "The gate counts what was actually assembled",
     lede:
       "assert_covered_isl checks reused plus fresh tokens against the covered-block target — not a value re-derived from the tags, which would be tautological.",
@@ -313,7 +365,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "parents",
-    eyebrow: "09 · CONTENT vs TIMING",
+    eyebrow: "10 · CONTENT vs TIMING",
     title: "The content parent is not the timing parent",
     lede:
       "Prefix sharing can reach arbitrarily far back. Using that same link for the firing delay would accumulate the whole distance — the aggregate-timestamp bug.",
@@ -347,7 +399,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "warp",
-    eyebrow: "10 · IDLE WARP",
+    eyebrow: "11 · IDLE WARP",
     title: "Cap the dead air, never the request",
     lede:
       "The warp collapses gaps between the running-max end and the next start. Capping start-to-start would eat into a long request's own service time.",
@@ -383,7 +435,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "warp-timeline",
-    eyebrow: "11 · IDLE WARP",
+    eyebrow: "12 · IDLE WARP",
     title: "The same trace, on both clocks",
     lede:
       "Two 87-second and 10-second dead-air stretches collapse to the 5-second cap. Every bar keeps its width, and sub-A and sub-B still overlap exactly as recorded.",
@@ -432,7 +484,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "clocks",
-    eyebrow: "12 · INTERVAL ORDER",
+    eyebrow: "13 · INTERVAL ORDER",
     title: "Two clocks, two jobs",
     lede:
       "raw_start and raw_end decide who depends on whom. The warped start and end decide how long to wait. Every rule reads one for shape and the other for numbers.",
@@ -465,8 +517,49 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-r", "raw", "cand", "front", "b-w", "warp", "bind", "root", "mix"],
   },
   {
+    id: "rank",
+    eyebrow: "14 · INTERVAL ORDER",
+    title: "Rank is what breaks the ties",
+    lede:
+      "An edge runs A to B only when A ended before B started AND A outranks B. Rank is the position in sort(start, end, id) — a total order over a partial one.",
+    narration:
+      "Finished-before is a partial order: it says nothing about two requests that overlapped. Derivation needs a total order to break those ties, and that is what rank is — every interval's position once they are sorted by start, then end, then id. Each badge here is that number, sitting on the interval's end. Read an edge by comparing two things: does the bar end before the other begins, and is the badge smaller. Explore two is drawn dashed because it was launched asynchronously, so it never serializes anything outside its own subtree — it can finish first and still not become anyone's predecessor.",
+    caption:
+      "interval_order.py rank = sort(start, end, id); the AND-join frontier keeps only maximal finished-before predecessors, and async-launched leaves are excluded as out-of-subtree preds.",
+    nodes: [
+      intervals(
+        "iv",
+        {
+          title: "Intervals on the warped clock — rank badge on each end",
+          rows: [
+            { id: "P0", label: "parent", start: 0, end: 1.0, role: "blue" },
+            { id: "A0", label: "Explore #1", start: 1.2, end: 4.0, role: "green" },
+            { id: "B0", label: "Explore #2", start: 1.3, end: 5.0, role: "green", dashed: true },
+            { id: "C0", label: "spawned", start: 5.2, end: 7.0, role: "purple" },
+            { id: "P1", label: "parent resume", start: 7.5, end: 8.0, role: "blue" },
+          ],
+        },
+        { col: 0, row: 0 },
+      ),
+      note(
+        "tie",
+        "Why a total order at all",
+        "A0 and B0 overlap, so finished-before cannot separate them. Rank can, and it does so identically on every run — the derivation is deterministic.",
+        { col: 0, row: 2.5 },
+      ),
+      note(
+        "async",
+        "The dashed exclusion",
+        "B0 ends at 5.0, before C0 starts at 5.2, and outranks it. It is still not a predecessor: an async-launched leaf is dropped for any target outside its subtree.",
+        { col: 1.1, row: 2.5 },
+      ),
+    ],
+    edges: [],
+    revealOrder: ["iv", "tie", "async"],
+  },
+  {
     id: "candidates",
-    eyebrow: "13 · INTERVAL ORDER",
+    eyebrow: "15 · INTERVAL ORDER",
     title: "Three conjuncts, then async exclusion",
     lede:
       "A is a candidate for B when A ranks earlier, A finished before B started on the raw clock, and A is not inside a fire-and-forget subtree that B sits outside of.",
@@ -503,7 +596,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "frontier",
-    eyebrow: "14 · INTERVAL ORDER",
+    eyebrow: "16 · INTERVAL ORDER",
     title: "Keep only the maximal predecessors",
     lede:
       "Drop c when a later candidate d covers it — but only when the covering edge c to d actually exists.",
@@ -541,7 +634,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "binding",
-    eyebrow: "15 · INTERVAL ORDER",
+    eyebrow: "17 · INTERVAL ORDER",
     title: "One edge carries the delay, the rest wait at zero",
     lede:
       "The latest-ending frontier member carries the warped gap. Every other frontier edge is an AND-join at delay zero. An empty frontier roots the node at START instead.",
@@ -582,7 +675,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "anchors",
-    eyebrow: "16 · INTERVAL ORDER",
+    eyebrow: "18 · INTERVAL ORDER",
     title: "A mid-flight child replaces its whole edge set",
     lede:
       "When a child's recorded start falls inside its causal parent's interval, every interval-order edge is discarded and replaced by one start-anchored edge.",
@@ -618,7 +711,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "addressing",
-    eyebrow: "17 · SEGMENT STORE",
+    eyebrow: "19 · SEGMENT STORE",
     title: "Identity folds in the parent, and the domain",
     lede:
       "Three id functions over blake2b. parent_id is hashed first in all three, so an id encodes its whole ancestor chain. Domain tags keep the three from ever aliasing.",
@@ -654,7 +747,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "layout",
-    eyebrow: "18 · SEGMENT STORE",
+    eyebrow: "20 · SEGMENT STORE",
     title: "Four files, two different index shapes",
     lede:
       "Content is dense and index-addressed: a packed array of offset and size pairs where the handle is the array index. Nodes are sparse and string-keyed, so their index is JSON.",
@@ -692,7 +785,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "reader",
-    eyebrow: "19 · SEGMENT STORE",
+    eyebrow: "21 · SEGMENT STORE",
     title: "Assemble the body straight from mapped pages",
     lede:
       "Each stored segment is already valid JSON, so a request body is built by concatenating memoryview slices — no per-segment parse, no re-encode.",
@@ -729,7 +822,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "builder",
-    eyebrow: "20 · SEGMENT STORE",
+    eyebrow: "22 · SEGMENT STORE",
     title: "Two drains, one store shape, one abort",
     lede:
       "A dynamo trace without max_isl streams through a worker pool; everything else parses eagerly. Both converge on the same store, and both are wrapped in the same cleanup.",
@@ -767,7 +860,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "envelope",
-    eyebrow: "21 · SEGMENT STORE",
+    eyebrow: "23 · SEGMENT STORE",
     title: "What the worker actually reads",
     lede:
       "An envelope is handles plus dispatch overrides plus a stream flag. Optional keys are omitted entirely when unset, so envelopes stay byte-identical across corpora.",
@@ -803,7 +896,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "firing",
-    eyebrow: "22 · THE EXECUTOR",
+    eyebrow: "24 · THE EXECUTOR",
     title: "One task per node, four ways out",
     lede:
       "Every node is an asyncio Task in a TaskGroup. Awaiting inputs, then the firing gate, then dispatch — and four distinct exits, only one of them normal.",
@@ -835,7 +928,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "dualfan",
-    eyebrow: "23 · DUAL FAN-OUT",
+    eyebrow: "25 · DUAL FAN-OUT",
     title: "A node fans out twice, at different moments",
     lede:
       "Start-anchored children launch at the parent's dispatch and run alongside it. Completion children launch after. Two separate adjacency maps keep them apart.",
@@ -868,7 +961,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "lanes",
-    eyebrow: "24 · CONCURRENCY",
+    eyebrow: "26 · CONCURRENCY",
     title: "Lanes with a feedback loop, not a queue",
     lede:
       "A fixed pool of lanes each loop: draw a template, run it, release, draw again. Two terminal conditions, and a bare run must not recycle forever.",
@@ -903,7 +996,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "demux",
-    eyebrow: "25 · RETURNS",
+    eyebrow: "27 · RETURNS",
     title: "One observer, de-multiplexed to a parked Future",
     lede:
       "No queue. A return routes observer to adapter to the Future parked for one correlation id and turn, while first tokens travel a parallel track to an Event.",
