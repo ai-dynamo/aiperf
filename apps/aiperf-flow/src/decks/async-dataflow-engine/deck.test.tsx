@@ -44,7 +44,7 @@ describe("async dataflow engine deck", () => {
     renderDeck();
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText("1 / 9")).toBeInTheDocument();
+    expect(screen.getByText("1 / 13")).toBeInTheDocument();
   });
 
   it("takes arrow keys straight after the gate, with no intervening click", () => {
@@ -60,6 +60,6 @@ describe("async dataflow engine deck", () => {
     expect(focused).not.toBe(document.body);
 
     fireEvent.keyDown(focused as Element, { key: "ArrowRight" });
-    expect(screen.getByText("2 / 9")).toBeInTheDocument();
+    expect(screen.getByText("2 / 13")).toBeInTheDocument();
   });
 });

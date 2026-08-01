@@ -35,7 +35,7 @@ const SLIDES: readonly SlideDefinition[] = [
       band("b-node", "ONE NODE, WHATEVER ITS FAN-IN", { col: 2.6, row: 0 }),
       card("in1", "input: prompt", "count 1", "data", { col: 2.6, row: 0 }),
       card("in2", "input: reply", "count 1", "data", { col: 2.6, row: 1 }),
-      card("in3", "input: gate", "count all", "data", { col: 2.6, row: 2 }),
+      card("in3", "input: gate", "count 1", "data", { col: 2.6, row: 2 }),
       card("llm", "LlmNode", "fires once, when all are met", "control", { col: 3.8, row: 1 }),
       card("out", "output", "exactly one channel", "done", { col: 4.9, row: 1 }),
     ],
@@ -47,8 +47,173 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-rec", "record", "state", "nodes", "edges", "b-node", "in1", "in2", "in3", "llm", "out"],
   },
   {
+    id: "lowering",
+    eyebrow: "02 · WHAT LOWERING EMITS",
+    title: "One node per turn, one channel per node",
+    lede:
+      "Ids come from a single flat counter and carry no structure. Every channel is declared identically: a message list with an append reducer.",
+    narration:
+      "Before the interesting cases, the universal rules. Lowering emits exactly one node per authored turn, and exactly one output channel per node. Both ids come from one flat counter, so node three writes reply three — the id tells you nothing else. Every channel is declared the same way, a message list with an append reducer. What distinguishes one node from another is its metadata, not its name.",
+    caption:
+      "lowering.rs:596 allocate_node `n{:08}`; :575 allocate_channel `reply_{:08}`, always ChannelType::Messages + ReducerName::AddMessages. Text/Overwrite appear only on hand-authored Graph-IR, never here.",
+    nodes: [
+      band("b-a", "AUTHORED · ONE JSONL ROW", { col: 0, row: 0.4 }),
+      card("row", "dag_jsonl row", "session_id + turns[]", "muted", { col: 0, row: 0.4 }),
+      card("t0", "turn 0", "messages, delay", "data", { col: 1.1, row: -0.5 }),
+      card("t1", "turn 1", "messages, delay", "data", { col: 1.1, row: 0.4 }),
+      card("t2", "turn 2", "messages, delay", "data", { col: 1.1, row: 1.3 }),
+
+      band("b-l", "LOWERED · NODES AND CHANNELS", { col: 2.35, row: -0.5 }),
+      card("n0", "n00000000", "writes reply_00000000", "control", { col: 2.35, row: -0.5 }),
+      card("n1", "n00000001", "writes reply_00000001", "control", { col: 2.35, row: 0.4 }),
+      card("n2", "n00000002", "writes reply_00000002", "control", { col: 2.35, row: 1.3 }),
+
+      note(
+        "spec",
+        "Every channel, the same spec",
+        "ChannelType::Messages with ReducerName::AddMessages, unconditionally. A four-node graph has four channels.",
+        { col: 3.6, row: -0.4 },
+      ),
+      note(
+        "meta",
+        "Ids carry no structure",
+        "conversation_id, turn_index and occurrence live in metadata. The same authored child under two parents gets distinct occurrence numbers.",
+        { col: 3.6, row: 1.1 },
+      ),
+    ],
+    edges: [
+      ...fanOut("row", ["t0", "t1", "t2"], "muted", "slow"),
+      link("t0", "n0", "data"),
+      link("t1", "n1", "data"),
+      link("t2", "n2", "data"),
+      link("n0", "n1", "control", "slow"),
+      link("n1", "n2", "control", "slow"),
+    ],
+    revealOrder: ["b-a", "row", "t0", "t1", "t2", "b-l", "n0", "n1", "n2", "spec", "meta"],
+  },
+  {
+    id: "spawn",
+    eyebrow: "03 · SPAWN",
+    title: "A SPAWN is an edge, and nothing else",
+    lede:
+      "The child is edge-connected so it stays reachable from START, but inherits none of the parent's prompt. A pre-session spawn is the same shape hung off START.",
+    narration:
+      "A spawn lowers to a single static edge, from the parent's turn node to the child's first turn node, carrying the authored delay. The child gets its own nodes and its own channel, and no prompt inheritance at all. Note the asymmetry, because it is the whole point: the child is edge-connected, so it stays reachable from start and passes validation, but it is not context-connected. It cannot see the parent's reply. A pre-session spawn is the same shape hung off start, with the delay moving to a different field.",
+    caption:
+      "lowering.rs:411-414 `Spawn => Vec::new()`. add_entry_edge:732 emits After(parent) with delay_after_predecessor_us; the Start form uses min_start_delay_us (:740-747). Tests at :914 and :933.",
+    nodes: [
+      band("b-au", "AUTHORED", { col: 0, row: 0.5 }),
+      card("auth", "turn i", "spawns: [\"child\"]", "muted", { col: 0, row: 0.5 }),
+
+      band("b-lo", "LOWERED", { col: 1.2, row: 0.5 }),
+      card("parent", "parent turn node", "n00000000", "control", { col: 1.2, row: 0.5 }),
+      card("child", "child turn 0", "fresh context", "control", { col: 2.4, row: 0.5 }),
+      card("chan", "reply channel", "its own", "data", { col: 3.5, row: 0.5 }),
+
+      band("b-pre", "PRE-SESSION FORM", { col: 1.2, row: 2 }),
+      card("start", "START", "before the root", "muted", { col: 1.2, row: 2 }),
+      card("pre", "pre child turn 0", "min_start_delay_us", "time", { col: 2.4, row: 2 }),
+
+      note(
+        "asym",
+        "Edge-connected, not context-connected",
+        "The edge exists so the child is reachable and validation's reachability check passes. It carries no prompt: the child's items hold no Splice at all.",
+        { col: 0, row: 3.2 },
+      ),
+    ],
+    edges: [
+      link("auth", "parent", "muted", "slow"),
+      link("parent", "child", "control"),
+      link("child", "chan", "data"),
+      link("start", "pre", "time"),
+    ],
+    revealOrder: ["b-au", "auth", "b-lo", "parent", "child", "chan", "b-pre", "start", "pre", "asym"],
+  },
+  {
+    id: "fork",
+    eyebrow: "04 · FORK",
+    title: "A FORK is the same wiring, a different prompt",
+    lede:
+      "Identical nodes, channels, and edges to a SPAWN. The entire difference is the child's items: the parent's ordered program, plus a splice of the parent's output.",
+    narration:
+      "Here is the part worth internalising. A fork emits exactly the same nodes, the same channels, and the same edges as a spawn. The entire difference is the child's prompt program. A fork child inherits the parent's ordered items and appends a splice of the parent's output channel, so it does see the parent's reply. Chain three levels and the grandchild carries one splice per ancestor, in ancestor order. Background versus foreground changes validation only — not a single emitted field.",
+    caption:
+      "lowering.rs:412 `Fork => after.clone()`, built at :381-384 as parent items + Splice{parent output}. Transitive chain asserted at :1086. `background` affects only the guard at :402.",
+    nodes: [
+      band("b-s", "SPAWN CHILD ITEMS", { col: 0, row: 0.3 }),
+      card("s1", "RawMessages", "its own turn", "muted", { col: 0, row: 0.3 }),
+      chip("snone", "no Splice", { col: 1.05, row: 0.3 }),
+
+      band("b-f", "FORK CHILD ITEMS", { col: 0, row: 1.7 }),
+      card("f1", "parent items", "inherited, in order", "data", { col: 0, row: 1.7 }),
+      card("f2", "Splice{parent output}", "sees the reply", "done", { col: 1.15, row: 1.7 }),
+      card("f3", "RawMessages", "its own turn", "muted", { col: 2.4, row: 1.7 }),
+
+      band("b-c", "THREE LEVELS DEEP", { col: 0, row: 3.1 }),
+      card("g1", "root output", "splice 1", "done", { col: 0, row: 3.1 }),
+      card("g2", "child output", "splice 2", "done", { col: 1.15, row: 3.1 }),
+      card("g3", "grandchild items", "both, ancestor order", "data", { col: 2.4, row: 3.1 }),
+
+      note(
+        "bg",
+        "background changes nothing structural",
+        "It only gates a validation rule: a foreground FORK attached before the parent's terminal turn is rejected. No node, channel, edge, or delay field differs.",
+        { col: 3.6, row: 1.5 },
+      ),
+    ],
+    edges: [
+      link("s1", "snone", "muted", "slow"),
+      link("f1", "f2", "data"),
+      link("f2", "f3", "data"),
+      ...fanIn(["g1", "g2"], "g3", "done", "slow"),
+    ],
+    revealOrder: ["b-s", "s1", "snone", "b-f", "f1", "f2", "f3", "b-c", "g1", "g2", "g3", "bg"],
+  },
+  {
+    id: "join",
+    eyebrow: "05 · SPAWN_JOIN",
+    title: "A join adds no nodes, channels, or edges",
+    lede:
+      "It pushes one channel requirement per child's terminal channel onto the joining turn, each with count 1 — so the channel store owns the fan-in.",
+    narration:
+      "And the join. Authored as join-at inside a spawn group, it emits nothing structural at all — no nodes, no channels, no edges. It pushes one channel requirement onto the joining turn for each selected child's terminal channel, each with a count of one. Three children means three separate requirements, not one requirement of three. Why a requirement instead of an edge? An edge would only say the predecessor finished. The channel store counts distinct producers, so the join cannot satisfy early — and the fireability fixpoint can prove it statically.",
+    caption:
+      "lowering.rs:658-684 SpawnJoin arm; :723-727 hardcodes Count::N(1); terminal channel from :422. Doc at :12 — 'the channel store owns fan-in and cannot satisfy early'.",
+    nodes: [
+      band("b-au", "AUTHORED", { col: 0, row: 1 }),
+      card("auth", "spawns", "children: [a, b, c], join_at: 2", "muted", { col: 0, row: 1 }),
+
+      band("b-t", "CHILD TERMINAL CHANNELS", { col: 1.3, row: 0 }),
+      card("ca", "child a terminal", "reply_0000000a", "done", { col: 1.3, row: 0 }),
+      card("cb", "child b terminal", "reply_0000000b", "done", { col: 1.3, row: 1 }),
+      card("cc", "child c terminal", "reply_0000000c", "done", { col: 1.3, row: 2 }),
+
+      chip("req", "3 × count 1", { col: 2.5, row: 1 }),
+      card("join", "joining turn", "waits on all three", "control", { col: 3.1, row: 1 }),
+
+      note(
+        "why",
+        "Why a requirement, not an edge",
+        "An edge says only that a predecessor finished. The channel store counts distinct producers, so a partial fan-in cannot satisfy the join — and validation's fixpoint can prove it statically.",
+        { col: 0, row: 2.6 },
+      ),
+      note(
+        "term",
+        "Terminal, not first",
+        "The join waits on each child's last turn's output channel, so it waits for the whole child session rather than its first reply.",
+        { col: 1.6, row: 3.3 },
+      ),
+    ],
+    edges: [
+      link("auth", "req", "muted", "slow"),
+      ...fanIn(["ca", "cb", "cc"], "req", "done"),
+      link("req", "join", "control"),
+    ],
+    revealOrder: ["b-au", "auth", "b-t", "ca", "cb", "cc", "req", "join", "why", "term"],
+  },
+  {
     id: "compile",
-    eyebrow: "02 · BEFORE ANYTHING RUNS",
+    eyebrow: "06 · BEFORE ANYTHING RUNS",
     title: "Validation proves the graph cannot deadlock",
     lede:
       "Lowering, then four checks that fan out and must all pass. The fourth is a fireability fixpoint that subsumes self-dependency, unreachable producers, and impossible counts.",
@@ -86,7 +251,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "readiness",
-    eyebrow: "03 · THE CORE IDEA",
+    eyebrow: "07 · THE CORE IDEA",
     title: "Scheduling and readiness are different things",
     lede:
       "Topology spawns a task; the channel store decides when it may run. An AND-join waits for every producer, however many predecessors already finished.",
@@ -106,13 +271,13 @@ const SLIDES: readonly SlideDefinition[] = [
       card("pA", "producer A", "wrote - arrived", "done", { col: 0, row: -0.3 }),
       card("pB", "producer B", "wrote - arrived", "done", { col: 0, row: 0.7 }),
       card("pC", "producer C", "still running", "muted", { col: 0, row: 1.7 }),
-      chip("gate", "count: all", { col: 1.15, row: 0.7 }),
+      chip("gate", "all counts met?", { col: 1.15, row: 0.7 }),
       card("fires", "node fires", "only now", "done", { col: 1.9, row: 0.7 }),
 
       note(
         "note",
         "Spawned is not ready",
-        "An AND fan-in node is scheduled by whichever predecessor finishes first, then parks until the rest arrive. Two of three producers is not enough.",
+        "An AND fan-in node is scheduled by whichever predecessor finishes first, then parks until the rest arrive. Two of three producers is not enough. Lowering emits one count-1 requirement per producer; count \"all\" exists for hand-authored Graph-IR.",
         { col: 2.9, row: 0.2 },
       ),
     ],
@@ -127,7 +292,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "park",
-    eyebrow: "04 · WHY IT IS RACE-FREE",
+    eyebrow: "08 · WHY IT IS RACE-FREE",
     title: "Check, then park — and nothing runs in between",
     lede:
       "A closed loop: check, park, wake, re-check. Single-threaded per trace, so nothing runs between the check and the park and a notify cannot be lost.",
@@ -167,7 +332,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "gates",
-    eyebrow: "05 · TIME",
+    eyebrow: "09 · TIME",
     title: "Readiness freezes the version, then time passes",
     lede:
       "Four independent delay anchors converge on one firing instant via max, and the read happens at a sequence frozen before any of them elapse.",
@@ -207,7 +372,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "data",
-    eyebrow: "06 · DATA MOVEMENT",
+    eyebrow: "10 · DATA MOVEMENT",
     title: "Content-addressed once, never reserialized",
     lede:
       "One content-addressed arena fans out to every node that cites it, and one reply fans out to every successor that splices it — with no reserialization on either path.",
@@ -246,7 +411,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "dispatch",
-    eyebrow: "07 · IN FLIGHT",
+    eyebrow: "11 · IN FLIGHT",
     title: "First token does double duty",
     lede:
       "First token is a fan-out: it releases the prefill slot and unblocks anchored successors on the same edge, while the stream runs on to terminal.",
@@ -282,7 +447,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "finish",
-    eyebrow: "08 · COMPLETION AND FAILURE",
+    eyebrow: "12 · COMPLETION AND FAILURE",
     title: "Mutate state, then notify — in that order",
     lede:
       "Completion is strictly ordered. Failure is the opposite shape: one error fans out to poison every channel at once.",
@@ -322,7 +487,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "placement",
-    eyebrow: "09 · SCALING OUT",
+    eyebrow: "13 · SCALING OUT",
     title: "A trace is the atomic unit of placement",
     lede:
       "One controller fans traces out across workers, each trace moving whole. Simulation cannot take this path at all.",
