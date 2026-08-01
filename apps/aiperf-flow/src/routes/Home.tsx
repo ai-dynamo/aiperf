@@ -30,6 +30,12 @@ export const DECKS: readonly DeckListing[] = [
       "Narrated autoplay walkthrough of the native Graph Workload engine: why scheduling and readiness are different mechanisms, the check-then-park pattern that makes it race-free, version-frozen reads, and why simulation cannot run thread-per-core. Press play and it narrates itself.",
   },
   {
+    path: "/native-diagram-vocabulary",
+    title: "What Changed: the native diagram vocabulary",
+    description:
+      "Watch one dataset become progressively more expressible. Six requests start as six identical boxes, then each new node type lands in turn — timeline, intervals, blocks, sweep, slices, ragged — re-reading the same data until every claim a box could not make is simply visible. Ends with what adding the next one takes.",
+  },
+  {
     path: "/metrics-plane",
     title: "The Metrics Plane",
     description:
