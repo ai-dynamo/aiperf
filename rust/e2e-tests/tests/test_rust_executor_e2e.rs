@@ -54,9 +54,15 @@ async fn test_request_timeout_errors_requests_past_the_deadline() {
     let h = AIPerfHarness::new_with(tuned_mock_config(TIMEOUT_TTFT_MS, TIMEOUT_ITL_MS)).await;
     let r = h.run(&timeout_probe_args(&h, "--request-timeout-seconds 0.5"));
 
-    // The run itself completes: a timed-out request is a recorded error, not a
-    // harness failure. Only the per-request outcome differs.
-    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    // Every request timing out means no successful responses were collected, which the
+    // engine reports as a failed run (exit 1). The report is persisted before that
+    // terminal envelope, so the per-request outcomes below are still readable.
+    assert_eq!(r.exit_code, 1, "stderr: {}", r.stderr);
+    assert!(
+        r.stderr.contains("All 2 inference request(s) failed"),
+        "expected the all-requests-failed diagnostic; stderr: {}",
+        r.stderr
+    );
     let export = r.artifacts.json();
     assert_eq!(
         export["error_request_count"]["sum"].as_f64(),
