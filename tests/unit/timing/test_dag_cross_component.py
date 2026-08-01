@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import (
+    CacheBustTarget,
     ConversationBranchMode,
     CreditPhase,
     PrerequisiteKind,
@@ -555,6 +556,34 @@ async def test_spawn_child_does_not_call_register_child_routing():
     await orch.on_child_leaf_reached("corr-s0")
     await orch.on_child_leaf_reached("corr-s1")
     sticky.release_child_routing.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_spawn_child_inherits_parent_cache_bust_state():
+    """A non-agentic SPAWN child preserves its parent's cache-bust state."""
+    branch = ConversationBranchInfo(
+        branch_id="root:0",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.SPAWN,
+    )
+    root = _mk_conv_meta("root", [TurnMetadata(branch_ids=["root:0"])], [branch])
+    cs = _mk_source([root, _mk_conv_meta("child", [TurnMetadata()], [])])
+    issuer = _mk_issuer()
+    orch = BranchOrchestrator(
+        conversation_source=cs,
+        credit_issuer=issuer,
+        cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
+    )
+    credit = _mk_credit("root", "corr-root", 0)
+    credit.effective_root_correlation_id = "corr-root"
+    credit.cache_bust_marker = "[rid:parent]"
+    credit.cache_bust_target = CacheBustTarget.FIRST_TURN_PREFIX
+
+    await orch.intercept(credit)
+
+    kwargs = cs.start_branch_child.call_args.kwargs
+    assert kwargs["cache_bust_marker"] == "[rid:parent]"
+    assert kwargs["cache_bust_target"] == CacheBustTarget.FIRST_TURN_PREFIX
 
 
 def test_pre_session_child_routing_key_falls_back_to_own_correlation():

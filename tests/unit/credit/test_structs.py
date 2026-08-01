@@ -75,3 +75,65 @@ def test_turn_to_send_does_not_propagate_max_tokens_override():
     parent = _make_credit(max_tokens_override=1)
     next_turn = TurnToSend.from_previous_credit(parent)
     assert next_turn.max_tokens_override is None
+
+
+def _base_credit_kwargs() -> dict:
+    return {
+        "id": 0,
+        "phase": CreditPhase.PROFILING,
+        "conversation_id": "c",
+        "x_correlation_id": "x",
+        "turn_index": 0,
+        "num_turns": 1,
+        "issued_at_ns": 0,
+    }
+
+
+class TestCreditNoRequest:
+    def test_default_is_false(self):
+        c = Credit(**_base_credit_kwargs())
+        assert c.no_request is False
+
+    def test_explicit_true_preserved(self):
+        c = Credit(**_base_credit_kwargs(), no_request=True)
+        assert c.no_request is True
+
+    def test_roundtrip_true_preserved(self):
+        c = Credit(**_base_credit_kwargs(), no_request=True)
+        decoded = msgspec.msgpack.decode(msgspec.msgpack.encode(c), type=Credit)
+        assert decoded.no_request is True
+
+    def test_roundtrip_false_omitted_on_wire(self):
+        c = Credit(**_base_credit_kwargs())
+        raw = msgspec.msgpack.decode(msgspec.msgpack.encode(c))
+        assert "no_request" not in raw
+        decoded = msgspec.msgpack.decode(msgspec.msgpack.encode(c), type=Credit)
+        assert decoded.no_request is False
+
+
+class TestTurnToSendNoRequest:
+    def _kwargs(self) -> dict:
+        return {
+            "conversation_id": "c",
+            "x_correlation_id": "x",
+            "turn_index": 0,
+            "num_turns": 1,
+        }
+
+    def test_default_is_false(self):
+        tts = TurnToSend(**self._kwargs())
+        assert tts.no_request is False
+
+    def test_explicit_true_preserved(self):
+        tts = TurnToSend(**self._kwargs(), no_request=True)
+        assert tts.no_request is True
+
+    def test_roundtrip_true_preserved(self):
+        tts = TurnToSend(**self._kwargs(), no_request=True)
+        decoded = msgspec.msgpack.decode(msgspec.msgpack.encode(tts), type=TurnToSend)
+        assert decoded.no_request is True
+
+    def test_roundtrip_false_preserved(self):
+        tts = TurnToSend(**self._kwargs())
+        decoded = msgspec.msgpack.decode(msgspec.msgpack.encode(tts), type=TurnToSend)
+        assert decoded.no_request is False

@@ -452,6 +452,7 @@ class CreditIssuer:
             root_correlation_id=turn.root_correlation_id,
             counts_toward_phase_target=turn.counts_toward_phase_target,
             has_forks=turn.has_forks,
+            no_request=turn.no_request,
             branch_mode=turn.branch_mode,
             cache_bust_marker=turn.cache_bust_marker,
             cache_bust_target=turn.cache_bust_target,
@@ -545,12 +546,15 @@ class CreditIssuer:
             carried one, breaking per-session cache-bust uniqueness for
             multi-turn parents under DAG joins.
 
-        Stop-condition interaction: when ``can_send_any_turn()`` returns
-        False, ``issue_credit`` returns False without issuing and the
-        orchestrator increments ``BranchStats.joins_suppressed``.
+        Stop-condition interaction: when the stop check refuses, the credit is
+        NOT issued and the orchestrator increments ``BranchStats.joins_suppressed``.
 
         Returns:
-            True if the credit was issued, False if suppressed.
+            True IFF the credit was actually issued. Unlike ``issue_credit``
+            (whose False conflates "refused, not issued" with "issued, was the
+            phase's final credit"), this inlines the issuance so an issued-but-
+            final join is reported as resumed, not suppressed -- mirroring
+            ``dispatch_child_turn``.
         """
         assert pending.gated_turn_index is not None, (
             "dispatch_join_turn called without a gated_turn_index"
@@ -569,11 +573,42 @@ class CreditIssuer:
             # the sampled root plan and counts.
             counts_toward_phase_target=pending.parent_agent_depth == 0,
             has_forks=pending.parent_has_forks_on_gated_turn,
+            no_request=pending.parent_no_request_on_gated_turn,
             branch_mode=pending.parent_branch_mode,
             cache_bust_marker=pending.parent_cache_bust_marker,
             cache_bust_target=pending.parent_cache_bust_target,
         )
-        return await self.issue_credit(turn)
+        gate = getattr(self, "replay_gate", ReplayIssueGate(None))
+        return await gate.submit(turn, lambda: self._dispatch_join_turn_ready(turn))
+
+    async def _dispatch_join_turn_ready(self, turn: TurnToSend) -> bool:
+        """Issue a parent's gated (join) turn once its frontier is complete.
+
+        Returns True IFF the credit was actually issued. A join turn is a parent
+        continuation (``turn_index > 0``): it inherits the root's session slot
+        (no session-slot acquisition) and only needs a prefill slot. The
+        final-credit bookkeeping (freeze counts + done event) still runs inside
+        ``_issue_credit_internal``; we simply do not let its "can-send-more"
+        False leak out as a spurious suppression.
+        """
+        if self._issuing_stopped:
+            return False
+        # Nested (agent_depth > 0) join is reactive DAG work that must progress
+        # past the root-sampler-done signal; a top-level join is a normal
+        # continuation. Mirrors _issue_credit_ready's check selection.
+        can_proceed_fn = (
+            self._stop_checker.can_send_child_turn
+            if turn.agent_depth > 0
+            else self._stop_checker.can_send_any_turn
+        )
+        if not can_proceed_fn():
+            return False
+        if not await self._concurrency_manager.acquire_prefill_slot(
+            self._phase_key, can_proceed_fn
+        ):
+            return False
+        await self._issue_credit_internal(turn)
+        return True
 
     async def abort_session(self, x_correlation_id: str) -> None:
         """Abort an in-flight session (FORK/SPAWN parent or orphan).
