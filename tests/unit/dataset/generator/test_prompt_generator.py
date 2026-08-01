@@ -966,3 +966,22 @@ class TestPromptGeneratorRandomCorpus:
         assert 1 not in allowed
         assert 2 not in allowed
         assert len(generator._allowed_tokens) == 98
+
+    def test_random_corpus_sglang_uses_full_vocab(self, mock_tokenizer_cls):
+        """SGLANG style uses all_token_ids (full vocab_size range, no special-token exclusion)."""
+        from aiperf.common.enums import RandomCorpusStyle
+
+        tok = mock_tokenizer_cls.from_pretrained("gpt2")
+        tok._tokenizer.vocab_size = 100
+        tok._tokenizer.all_special_ids = [1, 2]
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=None,
+            tokenizer=tok,
+            corpus=PromptCorpus.RANDOM,
+            corpus_style=RandomCorpusStyle.SGLANG,
+        )
+
+        # SGLANG does not exclude special tokens — full range(vocab_size)
+        assert len(generator._allowed_tokens) == 100

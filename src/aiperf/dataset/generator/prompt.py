@@ -156,10 +156,13 @@ class PromptGenerator(BaseGenerator):
         """Build the list of token IDs for random vocab sampling.
 
         Token pool composition is controlled by corpus_style:
-        - VLLM / SGLANG: exclude special tokens, matching both tools' behavior
-        - Future styles may opt into all_token_ids when required.
+        - VLLM: exclude special tokens via valid_token_ids, matching vLLM's
+          ``all_special_ids`` exclusion in RandomDataset.
+        - SGLANG: use all_token_ids (full vocab range without special-token
+          filtering), matching SGLang's ``% vocab_size`` arithmetic which uses
+          the raw vocab_size as modulus and does not exclude special tokens.
         """
-        if self._corpus_style in (RandomCorpusStyle.VLLM, RandomCorpusStyle.SGLANG):
+        if self._corpus_style == RandomCorpusStyle.VLLM:
             self._allowed_tokens = self.tokenizer.valid_token_ids
         else:
             self._allowed_tokens = self.tokenizer.all_token_ids
