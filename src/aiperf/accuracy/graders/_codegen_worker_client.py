@@ -267,16 +267,21 @@ class CodegenGradingWorker:
             return  # already handled; _handle_fault is idempotent
         if count_start_failure and not self._worker_proven:
             self._start_failures += 1
-        for fut in list(self._pending.values()):
-            if not fut.done():
-                fut.set_exception(CodegenWorkerError("grading worker fault"))
-        self._pending.clear()
+        # Kill and drain stderr before setting futures' exceptions. This ensures
+        # the debug log (which includes the stderr tail) is written before callers
+        # are unblocked — otherwise the event loop may schedule waiting coroutines
+        # between set_exception() and the log, causing the tail to appear empty in
+        # tests and diagnostics.
         tail = await self._kill()
         _log.debug(
             lambda: f"codegen worker fault (proven={self._worker_proven}, "
             f"start_failures={self._start_failures}); killed + respawning next grade"
             + (f"; stderr tail:\n{chr(10).join(tail)}" if tail else "")
         )
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.set_exception(CodegenWorkerError("grading worker fault"))
+        self._pending.clear()
 
     def _close_death_pipe(self) -> None:
         if self._death_w is not None:
