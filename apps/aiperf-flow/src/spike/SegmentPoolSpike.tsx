@@ -1,0 +1,275 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! SPIKE — a Dynamo trace lowering into a segment pool, live.
+//!
+//! Three columns, left to right in the order the data moves: the recorded sessions, the intern
+//! decision for the message currently being lowered, and the dense arena filling up. The arena is
+//! append-only, so a hit adds nothing at all — which is the saving, drawn.
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createSegmentSim,
+  stepSegments,
+  prefixChain,
+  type SegmentSimState,
+} from "./segmentSim.js";
+
+const ROLE_COLOR = {
+  system: "var(--color-category-gray)",
+  user: "var(--color-category-blue)",
+  assistant: "var(--color-category-purple)",
+} as const;
+
+const SPEEDS = [2, 1, 0.5, 0.25] as const;
+const CELL = 46;
+const CELL_GAP = 5;
+
+export function SegmentPoolSpike(): React.JSX.Element {
+  const [seed, setSeed] = useState(1);
+  const [running, setRunning] = useState(true);
+  const [speed, setSpeed] = useState(1);
+  const [, force] = useState(0);
+
+  const simRef = useRef<SegmentSimState>(createSegmentSim(seed, 9));
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+
+  useEffect(() => {
+    let handle = 0;
+    let last = performance.now();
+    const frame = (t: number) => {
+      const dt = Math.min(64, t - last);
+      last = t;
+      if (runningRef.current && !simRef.current.done) {
+        simRef.current = stepSegments(simRef.current, dt * speedRef.current);
+        force((n) => n + 1);
+      }
+      handle = requestAnimationFrame(frame);
+    };
+    handle = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(handle);
+  }, []);
+
+  const sim = simRef.current;
+  const restart = (s: number) => {
+    simRef.current = createSegmentSim(s, 9);
+    force((n) => n + 1);
+  };
+
+  const latest = sim.events[sim.events.length - 1];
+  const chain = useMemo(
+    () => prefixChain(sim.arena, latest?.handle ?? null).slice(0, 6),
+    [sim.arena, latest?.handle],
+  );
+  const dedup = sim.interned > 0 ? sim.hits / sim.interned : 0;
+  const saved = sim.bytesNaive > 0 ? 1 - sim.bytesStored / sim.bytesNaive : 0;
+
+  return (
+    <div className="min-h-screen bg-surface-page px-8 py-6 text-ink-primary">
+      <div className="mb-1 flex items-baseline gap-3">
+        <span className="text-xs font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
+        <h1 className="text-2xl font-extrabold">A Dynamo trace becoming a segment pool</h1>
+      </div>
+      <p className="mb-4 max-w-4xl text-sm text-ink-secondary">
+        Every message is hashed together with <em>its prefix parent's id</em>, then looked up. A miss
+        appends one entry to a dense arena and the handle is its index; a hit returns the existing
+        handle and appends nothing. That is why a session which continues an earlier one costs
+        almost nothing to store — and why the same text under a different parent is deliberately a
+        different segment.
+      </p>
+
+      <div className="mb-4 rounded-lg border border-white/10 bg-surface-elevated px-4 py-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={() => setRunning((r) => !r)}
+              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold">
+              {running ? "Pause" : "Run"}
+            </button>
+            <button type="button"
+              onClick={() => { simRef.current = stepSegments(simRef.current, 260); setRunning(false); force((n) => n + 1); }}
+              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary">
+              Step
+            </button>
+            <button type="button" onClick={() => restart(seed)}
+              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary">
+              Restart
+            </button>
+            <button type="button" onClick={() => { const n = seed + 1; setSeed(n); restart(n); }}
+              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary tabular-nums">
+              seed {seed}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="mr-1 text-sm text-ink-tertiary">speed</span>
+            {SPEEDS.map((s) => (
+              <button key={s} type="button" onClick={() => setSpeed(s)}
+                className={`rounded border px-2.5 py-1 text-xs font-semibold tabular-nums ${
+                  speed === s ? "border-transparent bg-accent-primary text-black"
+                    : "border-white/15 bg-surface-panel text-ink-secondary"}`}>
+                {s}×
+              </button>
+            ))}
+          </div>
+
+          <div className="ml-auto flex items-center gap-5 text-sm tabular-nums">
+            <span><span className="text-ink-tertiary">interned</span> <strong>{sim.interned}</strong></span>
+            <span><span className="text-ink-tertiary">segments</span> <strong>{sim.arena.length}</strong></span>
+            <span><span className="text-ink-tertiary">dedup</span>{" "}
+              <strong style={{ color: "var(--color-category-green)" }}>{Math.round(dedup * 100)}%</strong></span>
+            <span><span className="text-ink-tertiary">wire saved</span>{" "}
+              <strong style={{ color: "var(--color-category-orange)" }}>{Math.round(saved * 100)}%</strong></span>
+            {sim.done && <span className="text-ink-quaternary">trace complete</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[300px_320px_1fr] gap-4">
+        {/* 1 — the recorded trace */}
+        <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
+          <h2 className="mb-2 text-[11px] font-bold tracking-widest text-ink-secondary">
+            DYNAMO TRACE
+          </h2>
+          <div className="flex flex-col gap-1.5">
+            {sim.sessions.map((s, si) => {
+              const state = si < sim.cursor.session ? "done" : si === sim.cursor.session ? "live" : "todo";
+              return (
+                <div key={s.id}
+                  className="flex items-center gap-2 rounded px-1.5 py-1"
+                  style={{ background: state === "live" ? "rgba(255,255,255,0.05)" : undefined,
+                           opacity: state === "todo" ? 0.35 : 1 }}>
+                  <span className="w-7 text-xs font-semibold text-ink-tertiary">{s.id}</span>
+                  <div className="flex flex-wrap gap-[3px]">
+                    {s.messages.map((m, mi) => {
+                      const passed = state === "done" || (state === "live" && mi < sim.cursor.message);
+                      const now = state === "live" && mi === sim.cursor.message;
+                      return (
+                        <span key={mi} title={`${m.role}: ${m.text}`}
+                          style={{
+                            width: 10, height: 14, borderRadius: 2,
+                            background: ROLE_COLOR[m.role],
+                            opacity: now ? 1 : passed ? 0.55 : 0.16,
+                            outline: now ? "2px solid var(--color-category-red)" : undefined,
+                          }} />
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] leading-snug text-ink-quaternary">
+            Each cell is one message. Sessions that continue an earlier one replay its turns first.
+          </p>
+        </section>
+
+        {/* 2 — the intern decision */}
+        <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
+          <h2 className="mb-2 text-[11px] font-bold tracking-widest text-ink-secondary">
+            INTERN — hash, then look up
+          </h2>
+          {latest === undefined ? (
+            <p className="text-sm text-ink-quaternary">Waiting for the first message…</p>
+          ) : (
+            <div className="flex flex-col gap-2 text-xs">
+              <Row label="parent id" value={latest.parent === null ? "none (root)" : sim.arena[latest.parent]?.id ?? "?"} />
+              <Row label="role" value={sim.arena[latest.handle]?.role ?? "?"} />
+              <Row label="tokens" value={String(sim.arena[latest.handle]?.tokens ?? 0)} />
+              <div className="my-1 text-center text-ink-quaternary">↓ blake3(parent ‖ role ‖ tokens ‖ wire)</div>
+              <Row label="segment id" value={latest.id} mono />
+              <div className={`mt-1 rounded px-2 py-2 text-center text-sm font-bold ${
+                latest.hit ? "text-black" : "text-black"}`}
+                style={{ background: latest.hit ? "var(--color-category-green)" : "var(--color-category-orange)" }}>
+                {latest.hit ? `HIT → reuse handle ${latest.handle}` : `MISS → append handle ${latest.handle}`}
+              </div>
+              <p className="text-[11px] leading-snug text-ink-quaternary">
+                {latest.hit
+                  ? "The id was already registered, so nothing is appended and no wire bytes are stored again."
+                  : "A fresh id: one entry is pushed onto the arena and its index becomes the handle."}
+              </p>
+              {chain.length > 1 && (
+                <div className="mt-1">
+                  <div className="mb-1 text-[10px] font-semibold tracking-widest text-ink-tertiary">
+                    PREFIX CHAIN
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {chain.map((h, i) => (
+                      <span key={h} className="flex items-center gap-1">
+                        {i > 0 && <span className="text-ink-quaternary">←</span>}
+                        <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+                          style={{ background: ROLE_COLOR[sim.arena[h]!.role], color: "#000" }}>
+                          {h}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* 3 — the arena */}
+        <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
+          <h2 className="mb-2 text-[11px] font-bold tracking-widest text-ink-secondary">
+            SEGMENT POOL — dense arena, append only
+          </h2>
+          <div className="flex flex-wrap" style={{ gap: CELL_GAP }}>
+            {sim.arena.map((seg) => {
+              const isCurrent = latest?.handle === seg.handle;
+              const inChain = chain.includes(seg.handle);
+              return (
+                <div key={seg.handle}
+                  title={`handle ${seg.handle} · ${seg.role} · ${seg.tokens} tok · ${seg.refs} refs\n${seg.text}`}
+                  className="flex flex-col items-center justify-center rounded"
+                  style={{
+                    width: CELL, height: CELL,
+                    background: ROLE_COLOR[seg.role],
+                    opacity: isCurrent ? 1 : inChain ? 0.82 : 0.34,
+                    outline: isCurrent
+                      ? `2px solid ${latest?.hit ? "var(--color-category-green)" : "var(--color-category-orange)"}`
+                      : inChain ? "1px solid rgba(255,255,255,0.35)" : undefined,
+                  }}>
+                  <span className="text-[11px] font-bold tabular-nums text-black">{seg.handle}</span>
+                  <span className="text-[8px] tabular-nums text-black/70">{seg.id}</span>
+                  {seg.refs > 1 && (
+                    <span className="text-[8px] font-bold text-black/80">×{seg.refs}</span>
+                  )}
+                </div>
+              );
+            })}
+            {sim.arena.length === 0 && (
+              <p className="text-sm text-ink-quaternary">Empty. The first message will land at handle 0.</p>
+            )}
+          </div>
+          <p className="mt-3 text-[11px] leading-snug text-ink-quaternary">
+            Handle = arena index, assigned on append and never reused. A cell marked ×n was
+            resolved n times — every one after the first cost nothing. Highlighted cells are the
+            current message's prefix chain back to its root.
+          </p>
+        </section>
+      </div>
+
+      <p className="mt-3 text-[11px] text-ink-quaternary">
+        Modelled on <code>rust/runtime/src/dataset/segment.rs</code>: <code>SegmentPool</code>'s
+        arena plus id map, and <code>payload_id</code> folding the parent id into the hash. The
+        digest here is a short stand-in; the structure — prefix-dependence, dense handles,
+        append-or-reuse — is the real one. Sessions are generated, not a captured trace.
+      </p>
+    </div>
+  );
+}
+
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-ink-tertiary">{label}</span>
+      <span className={mono === true ? "font-mono text-ink-primary" : "text-ink-primary"}>{value}</span>
+    </div>
+  );
+}
