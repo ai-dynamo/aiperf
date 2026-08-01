@@ -14,7 +14,6 @@
 import {
   createAgentSim,
   stepAgents,
-  laneOrder,
   type AgentSimConfig,
 } from "./agentSim.js";
 import type { Gap, Req } from "../decks/weka-timing-transforms-interactive/logic.js";
