@@ -1199,7 +1199,7 @@ async def test_all_error_rate_sla_window_evaluates_without_successes(tmp_path) -
         metric_tag="error_rate",
         stat="avg",
         op="le",
-        threshold=1.0,
+        threshold=100.0,
     )
     strategy = _strategy(tmp_path, adaptive_sla_filters=[error_sla])
     strategy._window_errors = 2
@@ -1215,7 +1215,7 @@ async def test_all_error_rate_sla_window_evaluates_without_successes(tmp_path) -
     window = next(event for event in events if event["event"] == "adaptive_window")
     assert window["reason"] == "SLA window evaluated"
     assert window["sla_passed"] is True
-    assert window["sla_values"] == {"error_rate:avg:le:1": 1.0}
+    assert window["sla_values"] == {"error_rate:avg:le:100": 100.0}
     assert events[-1]["event"] == "adaptive_decision"
 
 
@@ -1859,7 +1859,7 @@ def test_sla_evaluator_rate_metric_aliases_and_failures() -> None:
     assert evaluator.value(
         SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=1),
         stats,
-    ) == pytest.approx(0.25)
+    ) == pytest.approx(100.0 / 3.0)
     assert evaluator.value(
         SLAFilter(
             metric_tag="request_cancellation_rate", stat="max", op="le", threshold=1
@@ -1908,11 +1908,38 @@ def test_sla_evaluator_supports_ttft_error_and_cancellation_rate() -> None:
     assert evaluator.value(
         SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=0.5),
         stats,
-    ) == pytest.approx(0.25)
+    ) == pytest.approx(100.0 / 3.0)
     assert evaluator.value(
         SLAFilter(metric_tag="cancellation_rate", stat="avg", op="le", threshold=0.5),
         stats,
     ) == pytest.approx(0.25)
+
+
+def test_error_rate_sla_matches_exported_metric_unit_and_denominator() -> None:
+    """request_error_rate must be percentage points over completed requests.
+
+    The exported metric is ``100 * errors / (request_count + errors)``; the
+    adaptive-scale evaluator previously returned ``errors / total`` (a 0-1
+    ratio whose denominator also included cancelled requests), so
+    ``request_error_rate:avg:le:1`` allowed a 100% error rate instead of 1%.
+    """
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+    from aiperf.timing.strategies.adaptive_scale_types import WindowStats
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+    stats = WindowStats(
+        samples=[100_000_000, 200_000_000],
+        errors=1,
+        cancelled=1,
+        elapsed_sec=2.0,
+    )
+
+    sla = SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=1)
+    value = evaluator.value(sla, stats)
+
+    # 100 * 1 / (2 successes + 1 error); the cancellation is excluded.
+    assert value == pytest.approx(100.0 / 3.0)
+    assert not evaluator.passes([sla], {evaluator.key(sla): value})
 
 
 def test_missing_ttft_sample_fails_lower_is_better_sla() -> None:

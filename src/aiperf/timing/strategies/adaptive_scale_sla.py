@@ -222,11 +222,19 @@ class AdaptiveScaleSLAEvaluator:
 
     @staticmethod
     def error_rate_value(stats: WindowStats, stat: str) -> float:
+        """Window error rate in percentage points, matching the exported metric.
+
+        The exported ``request_error_rate`` metric is ``100 * errors /
+        (successes + errors)``, so the adaptive-scale evaluator uses the same
+        unit and denominator: a threshold of ``1`` means 1%, and cancelled
+        requests are excluded from the denominator.
+        """
         match stat:
             case "avg" | "min" | "max":
-                if stats.total == 0:
+                completed = len(stats.samples) + stats.errors
+                if completed == 0:
                     return 0.0
-                return stats.errors / stats.total
+                return 100.0 * stats.errors / completed
         raise ValueError(f"Unsupported error_rate SLA stat: {stat}")
 
     @staticmethod
