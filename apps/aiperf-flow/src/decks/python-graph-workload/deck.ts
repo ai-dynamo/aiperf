@@ -157,46 +157,8 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-c", "anc", "mid1", "me1", "b-t", "prev", "me2", "bug"],
   },
   {
-    id: "frontier",
-    eyebrow: "05 · DERIVING EDGES",
-    title: "One binding predecessor carries the delay",
-    lede:
-      "Candidates reduce to a maximal frontier. The latest-ending member binds and carries the whole warped delay; every other frontier edge is an AND-join at zero.",
-    narration:
-      "Timing edges come from interval order. A request can follow anything that finished before it started, which is far too many edges, so the candidate set is transitively reduced to a frontier. Then one member binds: the one that ends latest. It carries the entire warped delay. Every other frontier edge is still emitted, as an and-join at zero delay, so the node genuinely waits for all of them. If the frontier is empty the node roots at start instead.",
-    caption:
-      "segment_ir/interval_order.py:49 build_interval_edges — frontier is the transitive reduction; binding predecessor is max(frontier, key=.end); empty frontier roots at START with min_start_delay_us.",
-    nodes: [
-      band("b-c", "CANDIDATES", { col: 0, row: 0.2 }),
-      card("a", "req A", "ends earliest", "muted", { col: 0, row: -0.5 }),
-      card("b", "req B", "covered by C", "muted", { col: 0, row: 0.5 }),
-      card("c", "req C", "ends latest", "done", { col: 0, row: 1.5 }),
-
-      chip("red", "transitive reduction", { col: 1.25, row: 0.5 }),
-
-      band("b-f", "FRONTIER", { col: 2.4, row: -0.5 }),
-      card("fa", "req A", "AND-join, delay 0", "control", { col: 2.4, row: -0.5 }),
-      card("fc", "req C", "binding - carries delay", "done", { col: 2.4, row: 1.5 }),
-      card("node", "the node", "waits on both", "data", { col: 3.6, row: 0.5 }),
-      note(
-        "root",
-        "Empty frontier roots at START",
-        "With nothing before it, the node hangs off START with min_start_delay_us set from its recorded start.",
-        { col: 1.1, row: 2.6 },
-      ),
-    ],
-    edges: [
-      ...fanIn(["a", "b", "c"], "red", "muted"),
-      link("red", "fa", "control"),
-      link("red", "fc", "done"),
-      link("fa", "node", "control"),
-      link("fc", "node", "done"),
-    ],
-    revealOrder: ["b-c", "a", "b", "c", "red", "b-f", "fa", "fc", "node", "root"],
-  },
-  {
     id: "warp",
-    eyebrow: "06 · IDLE WARP",
+    eyebrow: "05 · IDLE WARP",
     title: "Cap the dead air, never the request",
     lede:
       "The warp collapses gaps between the running-max end and the next start. Capping start-to-start would eat into a long request's own service time.",
@@ -231,8 +193,194 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-n", "n1", "n2", "n3", "b-w", "w1", "w2", "w3", "inv"],
   },
   {
+    id: "clocks",
+    eyebrow: "06 · INTERVAL ORDER",
+    title: "Two clocks, two jobs",
+    lede:
+      "raw_start and raw_end decide who depends on whom. The warped start and end decide how long to wait. Every rule reads one for shape and the other for numbers.",
+    narration:
+      "Edge derivation runs on two clocks at once, and keeping them straight is the whole trick. The raw interval is what was actually recorded, and it decides structure — who finished before whom. The warped interval is the clock the runtime replays, and it decides delay. Every rule that follows reads raw for the shape of the graph, and warped for the numbers written on it. Conflating them is precisely the bug this module is built to avoid.",
+    caption:
+      "interval_order.py:5-15 documents the duck-typed surface: raw_start/raw_end are 'the RAW recorded who-finished-before-whom interval'; start/end are 'the idle-gap-warped clock the runtime replays'.",
+    nodes: [
+      band("b-r", "RAW CLOCK · DECIDES STRUCTURE", { col: 0, row: 0.2 }),
+      card("raw", "raw_start / raw_end", "as recorded", "data", { col: 0, row: 0.2 }),
+      card("cand", "candidate rule", "finished-before", "data", { col: 1.25, row: -0.3 }),
+      card("front", "frontier", "who covers whom", "data", { col: 1.25, row: 0.7 }),
+
+      band("b-w", "WARPED CLOCK · DECIDES DELAY", { col: 0, row: 2 }),
+      card("warp", "start / end", "what the runtime replays", "time", { col: 0, row: 2 }),
+      card("bind", "binding delay", "end-to-start gap", "time", { col: 1.25, row: 1.5 }),
+      card("root", "START offset", "min_start_delay_us", "time", { col: 1.25, row: 2.5 }),
+
+      note(
+        "mix",
+        "Never cross the streams",
+        "Structure from raw, timing from warped. Deriving structure on the warped clock would let idle-gap capping invent and destroy dependencies.",
+        { col: 2.5, row: 1.1 },
+      ),
+    ],
+    edges: [
+      ...fanOut("raw", ["cand", "front"], "data"),
+      ...fanOut("warp", ["bind", "root"], "time"),
+    ],
+    revealOrder: ["b-r", "raw", "cand", "front", "b-w", "warp", "bind", "root", "mix"],
+  },
+  {
+    id: "candidates",
+    eyebrow: "07 · INTERVAL ORDER",
+    title: "Three conjuncts, then async exclusion",
+    lede:
+      "A is a candidate for B when A ranks earlier, A finished before B started on the raw clock, and A is not inside a fire-and-forget subtree that B sits outside of.",
+    narration:
+      "A candidate predecessor has to satisfy three things at once. It must rank earlier. It must have finished before the target started, on the raw clock. And it must survive async exclusion. That last rule says a fire-and-forget subtree never and-joins the scope that launched it: if a candidate sits under an async boundary the target does not share, it is dropped outright. Note where this happens — exclusion runs before the frontier filter, not after it.",
+    caption:
+      "interval_order.py:79-86 the three conjuncts; :38 _excluded_async is `not cand.async_ancestors <= target.async_ancestors`. Rank comes from :26 compute_ranks, a linear extension so the rule stays a strict partial order and its reduction is always a DAG.",
+    nodes: [
+      band("b-p", "EVERY EARLIER NODE", { col: 0, row: 0.8 }),
+      card("pool", "all nodes", "the starting pool", "muted", { col: 0, row: 0.8 }),
+
+      card("g1", "rank earlier", "conjunct 1", "control", { col: 1.2, row: -0.3 }),
+      card("g2", "raw_end <= raw_start", "conjunct 2", "data", { col: 1.2, row: 0.8 }),
+      card("g3", "not async-excluded", "conjunct 3", "time", { col: 1.2, row: 1.9 }),
+
+      chip("and", "all three", { col: 2.45, row: 0.8 }),
+      card("cands", "candidate set", "before reduction", "done", { col: 3.05, row: 0.8 }),
+      card("drop", "fire-and-forget child", "dropped here", "failure", { col: 3.05, row: 2.2 }),
+
+      note(
+        "why",
+        "Why rank at all",
+        "The finished-before test alone could admit a cycle if the warp ever reordered. Requiring rank(A) < rank(B) keeps the relation a strict partial order.",
+        { col: 0, row: 2.6 },
+      ),
+    ],
+    edges: [
+      ...fanOut("pool", ["g1", "g2", "g3"], "muted"),
+      ...fanIn(["g1", "g2", "g3"], "and", "control"),
+      link("and", "cands", "done"),
+      link("g3", "drop", "failure", "slow"),
+    ],
+    revealOrder: ["b-p", "pool", "g1", "g2", "g3", "and", "cands", "drop", "why"],
+  },
+  {
+    id: "frontier",
+    eyebrow: "08 · INTERVAL ORDER",
+    title: "Keep only the maximal predecessors",
+    lede:
+      "Drop c when a later candidate d covers it — but only when the covering edge c to d actually exists.",
+    narration:
+      "The candidate set is far too large, so it is transitively reduced to a frontier: keep only the maximal finished-before candidates, dropping any that a later one already covers. The subtlety is in what counts as covering. The covering edge has to actually exist, which means the later candidate must not itself async-exclude the one being dropped. Without that check a main-chain node outside the async subtree would drop a candidate while carrying no edge to it, and the recorded ordering inside that subtree would silently vanish.",
+    caption:
+      "interval_order.py:100-107; the guard is `not _excluded_async(c, d)` at :104, with the rationale at :62-64. The scan is `cands[i + 1:]`, sound only because cands was built from the rank-sorted by_rank at :76.",
+    nodes: [
+      band("b-c", "CANDIDATES", { col: 0, row: 0.2 }),
+      card("c1", "c1", "covered by c3", "muted", { col: 0, row: -0.6 }),
+      card("c2", "c2", "covered by c3", "muted", { col: 0, row: 0.4 }),
+      card("c3", "c3", "maximal", "done", { col: 0, row: 1.4 }),
+      card("c4", "c4 (async subtree)", "d carries no edge to it", "failure", { col: 0, row: 2.4 }),
+
+      chip("red", "transitive reduction", { col: 1.3, row: 0.9 }),
+
+      band("b-f", "FRONTIER", { col: 2.5, row: 0.9 }),
+      card("f1", "c3", "kept", "done", { col: 2.5, row: 0.9 }),
+      card("f2", "c4", "kept - not truly covered", "time", { col: 2.5, row: 2.1 }),
+
+      note(
+        "sub",
+        "Covered is not enough",
+        "A later candidate only covers c if it would itself carry the c edge. A main-chain node outside c's async subtree cannot, so c survives the filter.",
+        { col: 3.7, row: 1.2 },
+      ),
+    ],
+    edges: [
+      ...fanIn(["c1", "c2", "c3"], "red", "muted"),
+      link("c4", "red", "failure", "slow"),
+      link("red", "f1", "done"),
+      link("red", "f2", "time"),
+    ],
+    revealOrder: ["b-c", "c1", "c2", "c3", "c4", "red", "b-f", "f1", "f2", "sub"],
+  },
+  {
+    id: "binding",
+    eyebrow: "09 · INTERVAL ORDER",
+    title: "One edge carries the delay, the rest wait at zero",
+    lede:
+      "The latest-ending frontier member carries the warped gap. Every other frontier edge is an AND-join at delay zero. An empty frontier roots the node at START instead.",
+    narration:
+      "Now the delays. Exactly one frontier member binds — the one that ends latest on the warped clock — and it carries the entire end-to-start gap, clamped at zero. Every other frontier edge is emitted with a delay of zero. Those are not decorative: the node genuinely waits on all of them, they simply contribute no time. And if the frontier came back empty, the node has no predecessor at all, so it roots at start with a minimum start delay taken from its own warped arrival.",
+    caption:
+      "interval_order.py:108 `binding = max(frontier, key=lambda c: c.end)`; :113-117 the delay is `max(0.0, node.start - c.end)` on the warped clock for the binding edge and 0.0 for every other; :87-95 the empty-frontier case uses min_start_delay_us from START.",
+    nodes: [
+      band("b-f", "FRONTIER", { col: 0, row: 0.3 }),
+      card("b1", "ends latest", "BINDING", "done", { col: 0, row: 0.3 }),
+      card("b2", "frontier sibling", "AND-join", "control", { col: 0, row: 1.3 }),
+      card("b3", "frontier sibling", "AND-join", "control", { col: 0, row: 2.3 }),
+
+      chip("d1", "warped gap", { col: 1.25, row: 0.3 }),
+      chip("d2", "delay 0.0", { col: 1.25, row: 1.3 }),
+      chip("d3", "delay 0.0", { col: 1.25, row: 2.3 }),
+      card("node", "the node", "waits on all three", "data", { col: 2.1, row: 1.3 }),
+
+      band("b-e", "EMPTY FRONTIER", { col: 0, row: 3.5 }),
+      card("start", "START", "min_start_delay_us", "time", { col: 0, row: 3.5 }),
+      card("orphan", "no predecessor", "roots at its own arrival", "time", { col: 1.4, row: 3.5 }),
+
+      note(
+        "zero",
+        "Zero-delay edges still gate",
+        "They contribute no time but the node genuinely waits on them, so a slow sibling still holds the fan-in.",
+        { col: 3.2, row: 1 },
+      ),
+    ],
+    edges: [
+      link("b1", "d1", "done"),
+      link("b2", "d2", "control"),
+      link("b3", "d3", "control"),
+      ...fanIn(["d1", "d2", "d3"], "node", "data"),
+      link("start", "orphan", "time"),
+    ],
+    revealOrder: ["b-f", "b1", "b2", "b3", "d1", "d2", "d3", "node", "b-e", "start", "orphan", "zero"],
+  },
+  {
+    id: "anchors",
+    eyebrow: "10 · INTERVAL ORDER",
+    title: "A mid-flight child replaces its whole edge set",
+    lede:
+      "When a child's recorded start falls inside its causal parent's interval, every interval-order edge is discarded and replaced by one start-anchored edge.",
+    narration:
+      "Finally, an override that discards everything derived so far. If a node names a causal parent in the set, and its recorded start falls strictly inside that parent's recorded interval, then the child was running mid-flight. Its entire incoming edge set is replaced by a single edge anchored to the parent's dispatch, carrying the start-to-start gap. The runtime then schedules it when the parent dispatches rather than when it finishes. And if the parent streamed, and the child began at or after the first token, the edge carries a first-token offset too, so the runtime can re-anchor onto the token it actually observes and fall back to dispatch if none arrives.",
+    caption:
+      "interval_order.py:158 the containment test `parent.raw_start <= node.raw_start < parent.raw_end`; :165 assigns rather than appends, so the interval-order edges are discarded; :161-164 adds delay_after_predecessor_first_token_us only when the parent streamed and the child started at or after ttft.",
+    nodes: [
+      band("b-t", "THE TEST", { col: 0, row: 0.6 }),
+      card("test", "started mid-flight?", "parent.raw_start <= start < parent.raw_end", "control", { col: 0, row: 0.6 }),
+
+      card("no", "parent already finished", "keeps interval-order edges", "muted", { col: 1.35, row: -0.3 }),
+      card("yes", "replace all in-edges", "one start-anchored edge", "done", { col: 1.35, row: 1.5 }),
+
+      band("b-a", "WHICH ANCHOR", { col: 2.7, row: 0.9 }),
+      card("a1", "dispatch anchor", "start-to-start gap", "time", { col: 2.7, row: 0.9 }),
+      card("a2", "plus first-token", "only if parent streamed", "data", { col: 2.7, row: 2 }),
+
+      note(
+        "why",
+        "Causal, not wall-clock",
+        "Recorded mid-flight concurrency - subagent spawns, aux tool calls - tracks the parent causally instead of freezing to the recorded wall clock.",
+        { col: 0, row: 2.8 },
+      ),
+    ],
+    edges: [
+      link("test", "no", "muted"),
+      link("test", "yes", "done"),
+      link("yes", "a1", "time"),
+      link("a1", "a2", "data", "slow"),
+    ],
+    revealOrder: ["b-t", "test", "no", "yes", "b-a", "a1", "a2", "why"],
+  },
+  {
     id: "firing",
-    eyebrow: "07 · THE EXECUTOR",
+    eyebrow: "11 · THE EXECUTOR",
     title: "One task per node, four ways out",
     lede:
       "Every node is an asyncio Task in a TaskGroup. Awaiting inputs, then the firing gate, then dispatch — and four distinct exits, only one of them normal.",
@@ -264,7 +412,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "dualfan",
-    eyebrow: "08 · DUAL FAN-OUT",
+    eyebrow: "12 · DUAL FAN-OUT",
     title: "A node fans out twice, at different moments",
     lede:
       "Start-anchored children launch at the parent's dispatch and run alongside it. Completion children launch after. Two separate adjacency maps keep them apart.",
@@ -297,7 +445,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "lanes",
-    eyebrow: "09 · CONCURRENCY",
+    eyebrow: "13 · CONCURRENCY",
     title: "Lanes with a feedback loop, not a queue",
     lede:
       "A fixed pool of lanes each loop: draw a template, run it, release, draw again. Two terminal conditions, and a bare run must not recycle forever.",
@@ -332,7 +480,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "demux",
-    eyebrow: "10 · RETURNS",
+    eyebrow: "14 · RETURNS",
     title: "One observer, de-multiplexed to a parked Future",
     lede:
       "No queue. A return routes observer to adapter to the Future parked for one correlation id and turn, while first tokens travel a parallel track to an Event.",
