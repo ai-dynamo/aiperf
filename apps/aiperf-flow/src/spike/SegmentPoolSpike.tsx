@@ -14,23 +14,19 @@ import {
   createSegmentSim,
   stepSegments,
   prefixChain,
+  colorForId,
   type SegmentSimState,
 } from "./segmentSim.js";
 
-const ROLE_COLOR = {
-  system: "var(--color-category-gray)",
-  user: "var(--color-category-blue)",
-  assistant: "var(--color-category-purple)",
-} as const;
-
-const SPEEDS = [2, 1, 0.5, 0.25] as const;
+const SPEEDS = [1, 0.5, 0.25, 0.1] as const;
 const CELL = 46;
 const CELL_GAP = 5;
 
 export function SegmentPoolSpike(): React.JSX.Element {
   const [seed, setSeed] = useState(1);
   const [running, setRunning] = useState(true);
-  const [speed, setSpeed] = useState(1);
+  // One message per 260ms tick at 1x is quicker than the intern panel can be read.
+  const [speed, setSpeed] = useState(0.25);
   const [, force] = useState(0);
 
   const simRef = useRef<SegmentSimState>(createSegmentSim(seed, 9));
@@ -66,6 +62,9 @@ export function SegmentPoolSpike(): React.JSX.Element {
     () => prefixChain(sim.arena, latest?.handle ?? null).slice(0, 6),
     [sim.arena, latest?.handle],
   );
+  const currentWire =
+    sim.sessions[sim.cursor.session]?.messages[sim.cursor.message]?.wire ??
+    (latest === undefined ? undefined : sim.arena[latest.handle]?.text);
   const dedup = sim.interned > 0 ? sim.hits / sim.interned : 0;
   const saved = sim.bytesNaive > 0 ? 1 - sim.bytesStored / sim.bytesNaive : 0;
 
@@ -129,6 +128,22 @@ export function SegmentPoolSpike(): React.JSX.Element {
         </div>
       </div>
 
+      {/* The exact bytes that are hashed and stored. `intern_message` serializes the dialect
+          message and folds these very bytes into the identity, so this is the unit of work. */}
+      <div className="mb-3 rounded-lg border border-white/10 bg-surface-panel px-4 py-2.5">
+        <div className="mb-1 text-[10px] font-bold tracking-widest text-ink-tertiary">
+          WIRE — the serialized message being interned
+        </div>
+        <code className="block overflow-x-auto whitespace-pre font-mono text-[12px] text-ink-primary">
+          {currentWire ?? "\u2014"}
+        </code>
+        <div className="mt-1 text-[10px] text-ink-quaternary">
+          {currentWire === undefined
+            ? "Waiting for the first message."
+            : `${currentWire.length} bytes \u00b7 hashed together with the parent id, role and token ids`}
+        </div>
+      </div>
+
       <div className="grid grid-cols-[300px_320px_1fr] gap-4">
         {/* 1 — the recorded trace */}
         <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
@@ -146,14 +161,18 @@ export function SegmentPoolSpike(): React.JSX.Element {
                   <span className="w-7 text-xs font-semibold text-ink-tertiary">{s.id}</span>
                   <div className="flex flex-wrap gap-[3px]">
                     {s.messages.map((m, mi) => {
-                      const passed = state === "done" || (state === "live" && mi < sim.cursor.message);
+                      const handle = sim.resolved.get(`${si}:${mi}`);
                       const now = state === "live" && mi === sim.cursor.message;
+                      // Coloured by the segment it became, so two cells matching in different
+                      // sessions *is* the dedup — visible without reading a number.
+                      const bg = handle === undefined
+                        ? "var(--color-stroke-secondary)"
+                        : colorForId(sim.arena[handle]!.id);
                       return (
                         <span key={mi} title={`${m.role}: ${m.text}`}
                           style={{
-                            width: 10, height: 14, borderRadius: 2,
-                            background: ROLE_COLOR[m.role],
-                            opacity: now ? 1 : passed ? 0.55 : 0.16,
+                            width: 10, height: 14, borderRadius: 2, background: bg,
+                            opacity: handle === undefined ? 0.35 : 1,
                             outline: now ? "2px solid var(--color-category-red)" : undefined,
                           }} />
                       );
@@ -202,7 +221,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
                       <span key={h} className="flex items-center gap-1">
                         {i > 0 && <span className="text-ink-quaternary">←</span>}
                         <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
-                          style={{ background: ROLE_COLOR[sim.arena[h]!.role], color: "#000" }}>
+                          style={{ background: colorForId(sim.arena[h]!.id), color: "#000" }}>
                           {h}
                         </span>
                       </span>
@@ -229,7 +248,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
                   className="flex flex-col items-center justify-center rounded"
                   style={{
                     width: CELL, height: CELL,
-                    background: ROLE_COLOR[seg.role],
+                    background: colorForId(seg.id),
                     opacity: isCurrent ? 1 : inChain ? 0.82 : 0.34,
                     outline: isCurrent
                       ? `2px solid ${latest?.hit ? "var(--color-category-green)" : "var(--color-category-orange)"}`

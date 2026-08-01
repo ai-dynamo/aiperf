@@ -27,7 +27,14 @@ export type TraceMessage = {
   text: string;
   /** Token count; the real identity folds in the token IDs themselves. */
   tokens: number;
+  /** The serialized message. `intern_message` hashes and stores exactly these bytes. */
+  wire: string;
 };
+
+/** The JSON one message serializes to, matching the dialect shape the real path interns. */
+export function messageWire(role: Role, text: string): string {
+  return JSON.stringify({ role, content: text });
+}
 
 /** One recorded session. Sessions that share an opening are what make the pool dedup. */
 export type TraceSession = {
@@ -77,6 +84,8 @@ export type SegmentSimState = {
   /** Wire bytes that would have been stored without dedup. */
   bytesNaive: number;
   bytesStored: number;
+  /** `"session:message"` to the handle it resolved to, so the trace can be coloured by outcome. */
+  resolved: Map<string, number>;
   done: boolean;
 };
 
@@ -116,6 +125,19 @@ export function segmentId(
   return h.toString(16).padStart(8, "0").slice(0, 6);
 }
 
+/**
+ * A stable colour per content id.
+ *
+ * Colouring by role gave three hues over dozens of cells, so two cells matching meant nothing.
+ * Keyed on the id instead, matching colours mean matching segments — dedup becomes visible
+ * directly, without reading a single number.
+ */
+export function colorForId(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(h, 31) + id.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360} 62% 58%)`;
+}
+
 const TOPICS = [
   "summarise the incident report",
   "find the failing test",
@@ -136,7 +158,7 @@ export function buildSessions(seed: number, count: number): TraceSession[] {
   const sessions: TraceSession[] = [];
   for (let s = 0; s < count; s++) {
     const messages: TraceMessage[] = [
-      { role: "system", text: SYSTEM, tokens: 12 },
+      { role: "system", text: SYSTEM, tokens: 12, wire: messageWire("system", SYSTEM) },
     ];
     // Continuing an earlier session replays its turns verbatim before adding new ones — which is
     // exactly the case a prefix-keyed pool collapses to nothing.
@@ -149,11 +171,18 @@ export function buildSessions(seed: number, count: number): TraceSession[] {
     const turns = 1 + Math.floor(rand(seed, s, 4) * 3);
     for (let t = 0; t < turns; t++) {
       const topic = TOPICS[Math.floor(rand(seed, s * 7 + t, 5) * TOPICS.length)]!;
-      messages.push({ role: "user", text: topic, tokens: 8 + Math.floor(rand(seed, s * 7 + t, 6) * 20) });
+      messages.push({
+        role: "user",
+        text: topic,
+        tokens: 8 + Math.floor(rand(seed, s * 7 + t, 6) * 20),
+        wire: messageWire("user", topic),
+      });
+      const reply = `re: ${topic}`;
       messages.push({
         role: "assistant",
-        text: `re: ${topic}`,
+        text: reply,
         tokens: 20 + Math.floor(rand(seed, s * 7 + t, 7) * 60),
+        wire: messageWire("assistant", reply),
       });
     }
     sessions.push({ id: `s${s}`, messages });
@@ -176,17 +205,18 @@ export function createSegmentSim(seed = 1, sessionCount = 8): SegmentSimState {
     hits: 0,
     bytesNaive: 0,
     bytesStored: 0,
+    resolved: new Map(),
     done: false,
   };
 }
 
-/** Wire size a message would occupy, from its role and text. */
+/** Wire size a message occupies: the serialized bytes themselves. */
 function wireBytes(m: TraceMessage): number {
-  return 24 + m.role.length + m.text.length;
+  return m.wire.length;
 }
 
 /** Intern exactly one message: the arena-append-or-dedup decision, drawn one step at a time. */
-function tick(state: SegmentSimState): SegmentSimState {
+export function tick(state: SegmentSimState): SegmentSimState {
   if (state.done) return state;
   const session = state.sessions[state.cursor.session];
   if (session === undefined) return { ...state, done: true };
@@ -204,7 +234,7 @@ function tick(state: SegmentSimState): SegmentSimState {
   }
 
   const parentId = state.parent === null ? null : state.arena[state.parent]!.id;
-  const id = segmentId(parentId, message.role, message.text, message.tokens);
+  const id = segmentId(parentId, message.role, message.wire, message.tokens);
   const bytes = wireBytes(message);
 
   const existing = state.ids.get(id);
@@ -239,10 +269,14 @@ function tick(state: SegmentSimState): SegmentSimState {
     { sessionId: session.id, messageIndex: state.cursor.message, handle, hit, id, parent: state.parent },
   ].slice(-40);
 
+  const resolved = new Map(state.resolved);
+  resolved.set(`${state.cursor.session}:${state.cursor.message}`, handle);
+
   return {
     ...state,
     arena,
     ids,
+    resolved,
     events,
     parent: handle,
     cursor: { ...state.cursor, message: state.cursor.message + 1 },
@@ -263,6 +297,27 @@ export function stepSegments(state: SegmentSimState, dtMs: number): SegmentSimSt
     acc -= TICK_MS;
   }
   return { ...out, pending: acc };
+}
+
+/** Total messages the trace will intern, for mapping a narration fraction onto progress. */
+export function totalMessages(state: SegmentSimState): number {
+  return state.sessions.reduce((n, s) => n + s.messages.length, 0);
+}
+
+/**
+ * Intern forward until `target` messages have been consumed.
+ *
+ * Lets narration drive the pool by message count rather than elapsed time, so the picture is
+ * exactly where the voice says it is. Session boundaries consume a tick without interning, which
+ * is why this counts `interned` rather than ticks.
+ */
+export function internUpTo(state: SegmentSimState, target: number): SegmentSimState {
+  let out = state;
+  let guard = 4000;
+  while (out.interned < target && !out.done && guard-- > 0) {
+    out = tick({ ...out, now: out.now + TICK_MS });
+  }
+  return out;
 }
 
 /** Chain of handles from a segment back to its root, nearest first. */

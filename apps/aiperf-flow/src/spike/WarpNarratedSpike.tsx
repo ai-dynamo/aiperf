@@ -10,14 +10,14 @@
 //! a beat comes from the spoken word position, so the picture and the voice cannot drift apart
 //! however fast the chosen voice speaks.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { PresentationShell } from "../shell/PresentationShell.js";
 import { useNarratedDeck } from "../audio/index.js";
-import { splitWords } from "../audio/narration.js";
 import type { SlideDefinition } from "../deck/types.js";
 import { buildTrace, buildWarpMap, rawTimeFor } from "./warpTrace.js";
 import { WarpTracks, warpSummary } from "./WarpTracks.js";
 import { idleGaps } from "../decks/weka-timing-transforms-interactive/logic.js";
+import { useBeatClock } from "./useBeatClock.js";
 
 const SEED = 3;
 const TRACE_MS = 75_000;
@@ -96,61 +96,12 @@ export function WarpNarratedSpike(): React.JSX.Element {
     storagePrefix: "spike:warp-narrated",
   });
 
-  // Virtual time only ever moves forward. `activeWordIndex` does not: `speakNarration` drives
-  // word events from estimated timers and onboundary at once, so a voice slower than the estimate
-  // reports a lower index than an already-fired timer. Left unclamped, the playhead would rewind.
-  const highWater = useRef(0);
-  const shownRef = useRef(0);
-  const lastBeatRef = useRef(0);
-  /** False from a beat change until the word index has actually reset for the new narration. */
-  const wordIndexValidRef = useRef(true);
-  const [, force] = useState(0);
-
-  useEffect(() => {
-    let handle = 0;
-    let last = performance.now();
-    const frame = (t: number) => {
-      const dt = Math.min(64, t - last);
-      last = t;
-      const k = 1 - Math.exp(-dt / 160);
-      const next = shownRef.current + (highWater.current - shownRef.current) * k;
-      if (Math.abs(next - shownRef.current) > 1e-4) {
-        shownRef.current = next;
-        force((n) => n + 1);
-      }
-      handle = requestAnimationFrame(frame);
-    };
-    handle = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(handle);
-  }, []);
-
-  const beat = BEATS[narrated.index] ?? BEATS[0]!;
-  const from = (BEATS[narrated.index - 1]?.endAt ?? 0) * warpSpan;
-  const to = beat.endAt * warpSpan;
-  const words = splitWords(beat.narration).length;
-  // On the render where the beat advances, `activeWordIndex` is still the *previous* narration's
-  // position while the range is already the new beat's. Reading them together produced a target
-  // most of the way through the new beat, which the monotonic clamp then latched — the playhead
-  // lurched forward and then sat frozen until the real target climbed back to it. Ignore the word
-  // index until it has demonstrably reset for this narration.
-  if (lastBeatRef.current !== narrated.index) {
-    lastBeatRef.current = narrated.index;
-    wordIndexValidRef.current = false;
-    highWater.current = narrated.index === 0 ? 0 : from;
-  }
-  if (!wordIndexValidRef.current && narrated.activeWordIndex <= 1) {
-    wordIndexValidRef.current = true;
-  }
-
-  const within =
-    !wordIndexValidRef.current || narrated.activeWordIndex < 0
-      ? 0
-      : Math.min(1, narrated.activeWordIndex / Math.max(1, words - 1));
-  const target = from + (to - from) * within;
-
-  if (target > highWater.current) highWater.current = target;
-  // Narration sets the target; the frame loop above is what the viewer actually sees.
-  const warpedNow = shownRef.current;
+  const { position: warpedNow } = useBeatClock(
+    BEATS,
+    narrated.index,
+    narrated.activeWordIndex,
+    warpSpan,
+  );
   const rawNow = rawTimeFor(warpedNow, warpMap);
 
   return (
