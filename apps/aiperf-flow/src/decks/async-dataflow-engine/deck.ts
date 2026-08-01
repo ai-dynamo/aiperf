@@ -95,22 +95,25 @@ const SLIDES: readonly SlideDefinition[] = [
     caption:
       "graph/scheduler.rs:24 Scheduler is per-graph adjacency with no per-trace state. The real gate is executor.rs:465 prepare_node_inputs -> channel_store.rs:197 await_inputs.",
     nodes: [
-      band("b-s", "TOPOLOGY PROPOSES", { col: 0, row: 0.5 }),
-      card("pred", "predecessor done", "completion", "control", { col: 0, row: 0.5 }),
-      card("spawn", "spawn_local", "task exists - not ready", "control", { col: 1, row: 0.5 }),
+      // The scheduler band sits directly above the gate so its hop drops straight in.
+      // Running it in from the left made a long horizontal line that passed behind the
+      // producer cards and read as though it were joining them.
+      band("b-s", "TOPOLOGY PROPOSES", { col: 1.15, row: -1.7 }),
+      card("pred", "predecessor done", "completion", "control", { col: 0, row: -1.7 }),
+      card("spawn", "spawn_local", "task exists - not ready", "control", { col: 1.15, row: -1.7 }),
 
-      band("b-p", "CHANNELS DECIDE", { col: 2.3, row: -0.4 }),
-      card("pA", "producer A", "wrote - arrived", "done", { col: 2.3, row: -0.4 }),
-      card("pB", "producer B", "wrote - arrived", "done", { col: 2.3, row: 0.6 }),
-      card("pC", "producer C", "still running", "muted", { col: 2.3, row: 1.6 }),
-      chip("gate", "count: all", { col: 3.45, row: 0.6 }),
-      card("fires", "node fires", "only now", "done", { col: 4.1, row: 0.6 }),
+      band("b-p", "CHANNELS DECIDE", { col: 0, row: -0.3 }),
+      card("pA", "producer A", "wrote - arrived", "done", { col: 0, row: -0.3 }),
+      card("pB", "producer B", "wrote - arrived", "done", { col: 0, row: 0.7 }),
+      card("pC", "producer C", "still running", "muted", { col: 0, row: 1.7 }),
+      chip("gate", "count: all", { col: 1.15, row: 0.7 }),
+      card("fires", "node fires", "only now", "done", { col: 1.9, row: 0.7 }),
 
       note(
         "note",
         "Spawned is not ready",
         "An AND fan-in node is scheduled by whichever predecessor finishes first, then parks until the rest arrive. Two of three producers is not enough.",
-        { col: 0, row: 2.2 },
+        { col: 2.9, row: 0.2 },
       ),
     ],
     edges: [

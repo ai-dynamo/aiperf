@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { CardNode } from "./Card.js";
 import { NODE_ANCHORS, autoRouteEdges, chooseAnchors } from "./anchors.js";
 
-/** Square nodes, so the 2:1 midpoint-vs-corner threshold is easy to reason about. */
+/** Square nodes, so the dominant axis between two of them is easy to reason about. */
 function node(id: string, x: number, y: number): Node {
   return { id, position: { x, y }, width: 100, height: 100, data: {} };
 }
@@ -17,32 +17,21 @@ function node(id: string, x: number, y: number): Node {
 const edge = (source: string, target: string): Edge => ({ id: `${source}-${target}`, source, target });
 
 describe("chooseAnchors", () => {
-  it("uses facing midpoints for runs along one axis", () => {
+  it("uses the facing pair on whichever axis dominates", () => {
     expect(chooseAnchors({ x: 0, y: 0 }, { x: 300, y: 0 })).toEqual({ source: "e", target: "w" });
     expect(chooseAnchors({ x: 300, y: 0 }, { x: 0, y: 0 })).toEqual({ source: "w", target: "e" });
     expect(chooseAnchors({ x: 0, y: 0 }, { x: 0, y: 300 })).toEqual({ source: "s", target: "n" });
     expect(chooseAnchors({ x: 0, y: 300 }, { x: 0, y: 0 })).toEqual({ source: "n", target: "s" });
   });
 
-  it("uses facing corners for a genuinely diagonal run", () => {
-    expect(chooseAnchors({ x: 0, y: 0 }, { x: 200, y: 200 })).toEqual({
-      source: "se",
-      target: "nw",
-    });
-    expect(chooseAnchors({ x: 0, y: 200 }, { x: 200, y: 0 })).toEqual({
-      source: "ne",
-      target: "sw",
-    });
+  it("resolves a diagonal onto its dominant axis rather than a corner", () => {
+    // Wider than tall stays horizontal; taller than wide flips to vertical.
+    expect(chooseAnchors({ x: 0, y: 0 }, { x: 200, y: 199 })).toEqual({ source: "e", target: "w" });
+    expect(chooseAnchors({ x: 0, y: 0 }, { x: 199, y: 200 })).toEqual({ source: "s", target: "n" });
   });
 
-  it("treats a shallow diagonal as horizontal at the 2:1 threshold", () => {
-    // dx is exactly twice dy — still a mostly-horizontal run, so midpoints win.
-    expect(chooseAnchors({ x: 0, y: 0 }, { x: 200, y: 100 })).toEqual({ source: "e", target: "w" });
-    // Past the threshold it becomes a corner hop.
-    expect(chooseAnchors({ x: 0, y: 0 }, { x: 200, y: 101 })).toEqual({
-      source: "se",
-      target: "nw",
-    });
+  it("ties a perfect diagonal to the horizontal, matching reading order", () => {
+    expect(chooseAnchors({ x: 0, y: 0 }, { x: 200, y: 200 })).toEqual({ source: "e", target: "w" });
   });
 });
 

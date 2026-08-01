@@ -3,33 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Eight connection anchors per node — four edge midpoints and four corners — so an
-//! edge can leave and enter wherever the geometry actually wants, instead of always
-//! exiting right and entering left.
+//! Four connection anchors per node, one per edge midpoint, so an edge can leave and
+//! enter whichever side the geometry actually wants instead of always exiting right and
+//! entering left.
+//!
+//! Corner anchors were tried and removed: a connector leaving a corner reads as though it
+//! is escaping the box rather than departing a face, and the diagonal it produces is
+//! harder to follow than the same hop resolved onto its dominant axis.
 
 import { Handle, Position, type Edge, type Node } from "@xyflow/react";
 import { Fragment, type CSSProperties } from "react";
 
 /** Compass anchor ids. Used as React Flow `sourceHandle` / `targetHandle` values. */
-export type NodeAnchor = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+export type NodeAnchor = "n" | "e" | "s" | "w";
 
 /**
- * Where each anchor sits on the node box, and which way an edge should leave it.
+ * Where each anchor sits on the node box, and which way an edge leaves it.
  *
  * `position` drives React Flow's bezier control point, not placement — placement is the
- * explicit `style`. Corners take a horizontal `position` because these decks read
- * left-to-right, so a corner edge that departs sideways parallels the reading order
- * instead of cutting vertically across neighbouring rows.
+ * explicit `style`.
  */
 const ANCHOR_LAYOUT: Record<NodeAnchor, { position: Position; style: CSSProperties }> = {
   n: { position: Position.Top, style: { left: "50%", top: 0 } },
-  ne: { position: Position.Right, style: { left: "100%", top: 0 } },
   e: { position: Position.Right, style: { left: "100%", top: "50%" } },
-  se: { position: Position.Right, style: { left: "100%", top: "100%" } },
   s: { position: Position.Bottom, style: { left: "50%", top: "100%" } },
-  sw: { position: Position.Left, style: { left: 0, top: "100%" } },
   w: { position: Position.Left, style: { left: 0, top: "50%" } },
-  nw: { position: Position.Left, style: { left: 0, top: 0 } },
 };
 
 export const NODE_ANCHORS = Object.keys(ANCHOR_LAYOUT) as readonly NodeAnchor[];
@@ -89,12 +87,11 @@ function centerOf(node: Node): { x: number; y: number } {
 }
 
 /**
- * Pick the anchor pair whose geometry best matches the direction between two nodes.
+ * Pick the facing pair of anchors for the direction between two nodes.
  *
- * A run that is mostly horizontal or mostly vertical uses the facing edge midpoints; a
- * genuinely diagonal run uses the facing corners. The 2:1 ratio is the threshold between
- * "mostly along one axis" and "diagonal" — below it, a midpoint anchor would leave the
- * edge doubling back on itself to reach the far side of the node.
+ * Resolved onto whichever axis dominates: a wider-than-tall run leaves east and enters
+ * west, a taller-than-wide run leaves south and enters north. A perfect diagonal ties to
+ * the horizontal, matching the left-to-right reading order these decks are built around.
  */
 export function chooseAnchors(
   from: { x: number; y: number },
@@ -103,16 +100,10 @@ export function chooseAnchors(
   const dx = to.x - from.x;
   const dy = to.y - from.y;
 
-  if (Math.abs(dx) >= 2 * Math.abs(dy)) {
+  if (Math.abs(dx) >= Math.abs(dy)) {
     return dx >= 0 ? { source: "e", target: "w" } : { source: "w", target: "e" };
   }
-  if (Math.abs(dy) >= 2 * Math.abs(dx)) {
-    return dy >= 0 ? { source: "s", target: "n" } : { source: "n", target: "s" };
-  }
-  if (dx >= 0) {
-    return dy >= 0 ? { source: "se", target: "nw" } : { source: "ne", target: "sw" };
-  }
-  return dy >= 0 ? { source: "sw", target: "ne" } : { source: "nw", target: "se" };
+  return dy >= 0 ? { source: "s", target: "n" } : { source: "n", target: "s" };
 }
 
 /**
