@@ -94,10 +94,19 @@ export function FlowEdge({
         path={edgePath}
         markerEnd={markerEnd ?? `url(#${markerId})`}
         className="flow-edge__path"
-        stroke={color}
-        strokeWidth={2}
-        strokeDasharray="7 7"
-        style={{ "--flow-edge-duration": duration } as React.CSSProperties}
+        // Stroke has to be inline style, not SVG presentation attributes: React Flow's
+        // stylesheet sets `.react-flow__edge-path { stroke; stroke-width }`, and any CSS
+        // rule outranks a presentation attribute. Passing them as attributes leaves the
+        // edge rendering in React Flow's default gray at its default width, while the
+        // attribute still reads back as the requested color.
+        style={
+          {
+            "--flow-edge-duration": duration,
+            stroke: color,
+            strokeWidth: 2,
+            strokeDasharray: "7 7",
+          } as React.CSSProperties
+        }
       />
     </>
   );

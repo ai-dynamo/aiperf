@@ -40,8 +40,8 @@ describe("FlowEdge", () => {
 
   it("sets a dashed strokeDasharray on the path", () => {
     const { container } = renderEdge();
-    const path = container.querySelector("path.flow-edge__path");
-    expect(path?.getAttribute("stroke-dasharray")).toBeTruthy();
+    const path = container.querySelector("path.flow-edge__path") as HTMLElement;
+    expect(path.style.strokeDasharray).toBeTruthy();
   });
 
   it("carries a distinctive animation marker class that CSS animates via stroke-dashoffset", () => {
@@ -51,16 +51,25 @@ describe("FlowEdge", () => {
     expect(container.querySelector("style")).not.toBeNull();
   });
 
+  // These assert inline style, not the SVG `stroke` attribute. React Flow's stylesheet
+  // styles `.react-flow__edge-path`, and a CSS rule outranks a presentation attribute —
+  // so an attribute-based assertion passes while the edge renders in default gray.
   it("defaults stroke color to the accent-primary CSS variable", () => {
     const { container } = renderEdge();
-    const path = container.querySelector("path.flow-edge__path");
-    expect(path?.getAttribute("stroke")).toBe("var(--color-accent-primary)");
+    const path = container.querySelector("path.flow-edge__path") as HTMLElement;
+    expect(path.style.stroke).toBe("var(--color-accent-primary)");
   });
 
   it("uses a caller-supplied color from data", () => {
     const { container } = renderEdge({ data: { color: "var(--color-category-blue)" } });
-    const path = container.querySelector("path.flow-edge__path");
-    expect(path?.getAttribute("stroke")).toBe("var(--color-category-blue)");
+    const path = container.querySelector("path.flow-edge__path") as HTMLElement;
+    expect(path.style.stroke).toBe("var(--color-category-blue)");
+  });
+
+  it("carries stroke width as style so the stylesheet cannot override it", () => {
+    const { container } = renderEdge();
+    const path = container.querySelector("path.flow-edge__path") as HTMLElement;
+    expect(path.style.strokeWidth).toBe("2");
   });
 
   it("maps speed to a distinct animation-duration custom property", () => {

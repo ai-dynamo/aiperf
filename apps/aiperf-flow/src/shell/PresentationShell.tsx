@@ -5,7 +5,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
-import { inkClassName, strokeClassName } from "../theme/tokens.js";
+import { inkClassName, strokeClassName, surfaceClassName } from "../theme/tokens.js";
+import { TopBar } from "./TopBar.js";
 import type { SlideDefinition } from "../deck/types.js";
 import type { NarratedDeck } from "../audio/index.js";
 import { formatDeckDuration, formatStepDuration } from "../audio/index.js";
@@ -56,10 +57,15 @@ export function PresentationShell({
     // The keyboard handler needs a focusable host; `relative` anchors the start gate.
     <div
       ref={shellRef}
-      className="relative flex h-screen flex-col focus:outline-none"
+      className={clsx(
+        "relative flex h-screen flex-col focus:outline-none",
+        surfaceClassName("chrome"),
+      )}
       tabIndex={narrated ? 0 : undefined}
       onKeyDown={narrated?.onKeyDown}
     >
+      {/* The only route back to the deck index — without it a deck is a dead end. */}
+      <TopBar section={title ?? "Deck"} />
       {narrated && !narrated.started && (
         <StartGate
           title={title ?? "This walkthrough"}
@@ -77,7 +83,9 @@ export function PresentationShell({
           <button
             key={s.id}
             type="button"
-            aria-label={`Go to slide ${index + 1}`}
+            aria-label={`Go to slide ${index + 1}: ${s.title}`}
+            // Colour alone carried "which slide am I on"; aria-current says it too.
+            aria-current={index === slideIndex ? "step" : undefined}
             onClick={() => onSlideIndexChange(index)}
             className={clsx(
               "h-[3px] flex-1 rounded-full transition-colors",
@@ -104,7 +112,10 @@ export function PresentationShell({
       )}
 
       {showNotes && (
-        <div className={clsx("border-t px-4 py-2", strokeClassName("secondary"))}>
+        <div
+          id="deck-speaker-notes"
+          className={clsx("border-t px-4 py-2", strokeClassName("secondary"))}
+        >
           <div className={clsx("text-xs font-semibold", inkClassName("tertiary"))}>
             Speaker notes
           </div>
@@ -155,6 +166,8 @@ export function PresentationShell({
         <div className="flex gap-2">
           <button
             type="button"
+            aria-expanded={showNotes}
+            aria-controls="deck-speaker-notes"
             onClick={() => setShowNotes((value) => !value)}
             className={clsx(
               "px-3 py-1 text-xs font-medium uppercase tracking-wide transition-colors hover:text-ink-primary",
