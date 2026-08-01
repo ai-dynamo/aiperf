@@ -401,15 +401,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 and bool(self._control_hooks.profiler_start_urls)
             )
 
-            # For seamless non-final phases, set callback before run() so a
-            # fast drain cannot fire the wrong (cleanup-only) callback.
-            if profiler_will_defer_stop:
+            # For seamless non-final phases, set callbacks before run() so a
+            # fast drain cannot fire the wrong (cleanup-only) callback. The
+            # error callback is set for every seamless non-final runner: the
+            # post-loop barrier only inspects runners still in _active_runners,
+            # and the complete-callback removes the runner from that list, so a
+            # drained phase can only surface a fatal error through this callback.
+            if is_seamless_non_final:
                 runner.set_phase_complete_callback(
                     self._phase_runner_cleanup_and_stop_profiler_callback(runner)
-                )
-            elif is_seamless_non_final:
-                runner.set_phase_complete_callback(
-                    self._phase_runner_cleanup_callback(runner)
+                    if profiler_will_defer_stop
+                    else self._phase_runner_cleanup_callback(runner)
                 )
                 runner.set_phase_error_callback(self._on_seamless_phase_error)
 
