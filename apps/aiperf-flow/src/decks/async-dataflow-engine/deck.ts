@@ -12,21 +12,35 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { DeckDefinition, SlideDefinition } from "../../deck/types.js";
 
-/** Left-to-right row of cards at a fixed vertical band. */
+const COLUMN_X = 300;
+
+/**
+ * Left-to-right row of cards at a fixed vertical band.
+ *
+ * `startColumn` indents the row. Cards use left/right handles, so an edge into a row
+ * that starts further left than its source has to hook back around; indenting the
+ * lower band so the target sits under its source keeps that hop a short vertical curve.
+ */
 function row(
   y: number,
   cards: readonly { id: string; title: string; subtitle?: string }[],
+  startColumn = 0,
 ): Node[] {
   return cards.map((card, index) => ({
     id: card.id,
     type: "card",
-    position: { x: index * 300, y },
+    position: { x: (startColumn + index) * COLUMN_X, y },
     data: { title: card.title, subtitle: card.subtitle },
   }));
 }
 
-function band(id: string, title: string, y: number): Node {
-  return { id, type: "header", position: { x: 0, y }, data: { title } };
+function band(id: string, title: string, y: number, startColumn = 0): Node {
+  return {
+    id,
+    type: "header",
+    position: { x: startColumn * COLUMN_X, y },
+    data: { title },
+  };
 }
 
 /**
@@ -84,12 +98,17 @@ const SLIDES: readonly SlideDefinition[] = [
         { id: "nodes", title: "nodes", subtitle: "id -> LlmNode" },
         { id: "edges", title: "edges", subtitle: "StaticEdge list" },
       ]),
-      band("b-node", "ONE NODE", 190),
-      ...row(230, [
-        { id: "inputs", title: "inputs", subtitle: "ChannelRequirement" },
-        { id: "items", title: "items", subtitle: "prompt program" },
-        { id: "output", title: "output", subtitle: "exactly one channel" },
-      ]),
+      // Indented so `inputs` sits directly under its source, `nodes`.
+      band("b-node", "ONE NODE", 190, 1),
+      ...row(
+        230,
+        [
+          { id: "inputs", title: "inputs", subtitle: "ChannelRequirement" },
+          { id: "items", title: "items", subtitle: "prompt program" },
+          { id: "output", title: "output", subtitle: "exactly one channel" },
+        ],
+        1,
+      ),
     ],
     edges: [
       link("nodes", "inputs", "control", "slow"),
@@ -114,18 +133,18 @@ const SLIDES: readonly SlideDefinition[] = [
         { id: "lower", title: "lower_catalog", subtitle: "one graph per root" },
         { id: "plans", title: "GraphTracePlan", subtitle: "unit of placement" },
       ]),
-      band("b-v", "VALIDATE", 190),
-      ...row(230, [
-        { id: "v1", title: "edges resolve", subtitle: "check 1" },
-        { id: "v2", title: "channels declared", subtitle: "check 2" },
-        { id: "v3", title: "reachable", subtitle: "check 3" },
-      ]),
-      {
-        id: "v4",
-        type: "card",
-        position: { x: 900, y: 230 },
-        data: { title: "fireability fixpoint", subtitle: "check 4 · deadlock-free" },
-      },
+      // Indented so the first check sits under `plans`, which feeds it.
+      band("b-v", "VALIDATE", 190, 2),
+      ...row(
+        230,
+        [
+          { id: "v1", title: "edges resolve", subtitle: "check 1" },
+          { id: "v2", title: "channels declared", subtitle: "check 2" },
+          { id: "v3", title: "reachable", subtitle: "check 3" },
+          { id: "v4", title: "fireability fixpoint", subtitle: "check 4 · deadlock-free" },
+        ],
+        2,
+      ),
     ],
     edges: [
       link("authored", "lower", "data"),
