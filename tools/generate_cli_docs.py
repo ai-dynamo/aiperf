@@ -338,7 +338,7 @@ def _escape_mdx_prose(text: str) -> str:
     )
 
 
-def _format_param(param: Param) -> list[str]:
+def _format_param(param: Param, heading_level: int) -> list[str]:
     """Format a parameter as markdown."""
     # Header
     opts = []
@@ -355,7 +355,7 @@ def _format_param(param: Param) -> list[str]:
 
     type_str = f" `{param.type_suffix.strip()}`" if param.type_suffix else ""
     req = " _(Required)_" if param.required else ""
-    lines = [f"#### {', '.join(opts)}{type_str}{req}", ""]
+    lines = [f"{'#' * heading_level} {', '.join(opts)}{type_str}{req}", ""]
 
     # Body
     lines.append(f"{_escape_mdx_prose(normalize_text(param.description).rstrip('.'))}.")
@@ -499,7 +499,9 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
             if not skip_header:
                 lines.extend([f"### {group_name}", ""])
             for param in params:
-                lines.extend(_format_param(param))
+                lines.extend(
+                    _format_param(param, heading_level=3 if skip_header else 4)
+                )
 
     return "\n".join(line.rstrip() for line in lines)
 
