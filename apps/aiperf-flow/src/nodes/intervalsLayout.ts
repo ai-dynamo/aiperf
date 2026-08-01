@@ -52,8 +52,9 @@ const TOP = 12;
 /** Matches the `px-4 py-3.5` chrome `Card`/`Panel` use. */
 const PAD_X = 16;
 const PAD_Y = 14;
-/** Title `<div>`: `text-sm` line-height (20px) plus its `mb-1.5` gap (6px). */
-const TITLE_H = 26;
+/** Title `<div>`: its pinned `leading-[24px]` line box plus the `mb-1.5 (6px)` gap below it.
+ * The component pins that leading so this stays a contract rather than a font-metric guess. */
+const TITLE_H = 30;
 /** The 1px `border` on each side of the node chrome. */
 const BORDER = 2;
 

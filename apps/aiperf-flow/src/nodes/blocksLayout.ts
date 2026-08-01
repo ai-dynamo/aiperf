@@ -21,15 +21,19 @@ export const CELL_GAP = 2;
 
 const PAD_X = 16;
 const PAD_Y = 14;
-/** Title `<div>`: `text-sm` line-height (20px) plus its `mb-2` gap (8px). */
-const TITLE_H = 28;
+/** Title `<div>`: its pinned `leading-[24px]` line box plus the `mb-2 (8px)` gap below it.
+ * The component pins that leading so this stays a contract rather than a font-metric guess. */
+const TITLE_H = 32;
+/** Strip caption: pinned `leading-[16px]`. */
 const STRIP_LABEL_H = 16;
 const STRIP_GAP = 10;
 const LABEL_GAP = 4;
 /** The 1px `border` on each side of the node chrome. */
 const BORDER = 2;
-/** Roughly two lines of the 12px detail text, plus its top margin. */
-const DETAIL_H = 40;
+/** Three pinned 16px lines, which `BlocksNode` clamps the detail text to. */
+export const DETAIL_TEXT_H = 48;
+/** The clamped text box plus its `mt-2` (8px). */
+const DETAIL_H = DETAIL_TEXT_H + 8;
 
 export type BlocksLayoutInput = {
   strips: readonly BlockStrip[];

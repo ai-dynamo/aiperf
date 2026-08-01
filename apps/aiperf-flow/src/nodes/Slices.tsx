@@ -52,7 +52,7 @@ export function SlicesNode({ data }: NodeProps<SlicesNodeType>): React.JSX.Eleme
       )}
     >
       {title !== undefined && (
-        <div className={`mb-1.5 text-sm font-semibold tracking-tight ${inkClassName("primary")}`}>
+        <div className={`mb-1.5 text-sm font-semibold leading-[24px] tracking-tight ${inkClassName("primary")}`}>
           {title}
         </div>
       )}

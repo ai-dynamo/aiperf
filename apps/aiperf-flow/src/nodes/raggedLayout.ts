@@ -60,13 +60,14 @@ const CELL_W = 34;
 const CELL_H = 26;
 const CELL_GAP = 3;
 const ROW_LABEL_W = 96;
-const ROW_GAP = 8;
+const ROW_GAP = 4;
 const SECTION_GAP = 14;
 const SECTION_LABEL_H = 20;
 const PAD_X = 16;
 const PAD_Y = 14;
-/** Title `<div>`: `text-sm` line-height (20px) plus its `mb-1.5` gap (6px). */
-const TITLE_H = 26;
+/** Title `<div>`: its pinned `leading-[24px]` line box plus the `mb-1.5 (6px)` gap below it.
+ * The component pins that leading so this stays a contract rather than a font-metric guess. */
+const TITLE_H = 30;
 /** The 1px `border` on each side of the node chrome. */
 const BORDER = 2;
 
@@ -93,10 +94,11 @@ export function raggedNodeSize({
   const cells = showFlat ? Math.max(total, longest) : longest;
   const gridWidth = Math.max(0, cells * (CELL_W + CELL_GAP) - CELL_GAP);
 
-  const perRecordHeight =
-    SECTION_LABEL_H + lists.length * CELL_H + Math.max(0, lists.length - 1) * ROW_GAP;
+  // One gap per row, not per row-pair: the section label is itself a flex child, so N rows sit
+  // below it behind N gaps.
+  const perRecordHeight = SECTION_LABEL_H + lists.length * (CELL_H + ROW_GAP);
   // Flat values, owner indices, and the offsets table.
-  const flatHeight = showFlat ? SECTION_GAP + SECTION_LABEL_H + 3 * CELL_H + 2 * ROW_GAP : 0;
+  const flatHeight = showFlat ? SECTION_GAP + SECTION_LABEL_H + 3 * (CELL_H + ROW_GAP) : 0;
 
   return {
     width: ROW_LABEL_W + gridWidth + 2 * PAD_X + BORDER,
@@ -104,4 +106,11 @@ export function raggedNodeSize({
   };
 }
 
-export const RAGGED_CELL = { width: CELL_W, height: CELL_H, gap: CELL_GAP, labelWidth: ROW_LABEL_W };
+/** Shared with `RaggedNode` so the rendered flex gaps cannot drift from the sizing formula. */
+export const RAGGED_CELL = {
+  width: CELL_W,
+  height: CELL_H,
+  gap: CELL_GAP,
+  rowGap: ROW_GAP,
+  labelWidth: ROW_LABEL_W,
+};

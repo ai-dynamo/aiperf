@@ -59,7 +59,10 @@ function RowLabel({ text, role }: { text: string; role?: CategoryRole }): React.
 }
 
 function SectionLabel({ text }: { text: string }): React.JSX.Element {
-  return <span className={`text-xs font-semibold ${inkClassName("primary")}`}>{text}</span>;
+  return (
+    // Line box pinned so `SECTION_LABEL_H` is enforced rather than inferred from font metrics.
+    <span className={`text-xs font-semibold leading-[20px] ${inkClassName("primary")}`}>{text}</span>
+  );
 }
 
 /**
@@ -90,18 +93,25 @@ export function RaggedNode({ data }: NodeProps<RaggedNodeType>): React.JSX.Eleme
       )}
     >
       {title !== undefined && (
-        <div className={`mb-1.5 text-sm font-semibold tracking-tight ${inkClassName("primary")}`}>
+        <div className={`mb-1.5 text-sm font-semibold leading-[24px] tracking-tight ${inkClassName("primary")}`}>
           {title}
         </div>
       )}
 
-      <div className="flex flex-col" style={{ gap: 4 }}>
+      <div className="flex flex-col" style={{ gap: RAGGED_CELL.rowGap }}>
         <SectionLabel text={data.raggedLabel ?? "per-record lists (ragged)"} />
         {lists.map((list, record) => (
           <div key={`r-${record}`} className="flex items-center" style={{ gap: RAGGED_CELL.gap }}>
             <RowLabel text={`r${record}`} role={recordRole(record)} />
             {list.length === 0 ? (
-              <span className={`text-xs italic ${inkClassName("quaternary")}`}>empty</span>
+              <span
+                className={`inline-flex items-center text-xs italic ${inkClassName("quaternary")}`}
+                // A record with nothing in it still occupies a full row, so an absent run does not
+                // silently shorten the node below its declared height.
+                style={{ height: RAGGED_CELL.height }}
+              >
+                empty
+              </span>
             ) : (
               list.map((v, i) => (
                 <Cell key={i} value={v} role={recordRole(record)} filled={isLit(record)} />
@@ -112,7 +122,7 @@ export function RaggedNode({ data }: NodeProps<RaggedNodeType>): React.JSX.Eleme
       </div>
 
       {showFlat && (
-        <div className="mt-3.5 flex flex-col" style={{ gap: 4 }}>
+        <div className="mt-3.5 flex flex-col" style={{ gap: RAGGED_CELL.rowGap }}>
           <SectionLabel text={data.flatLabel ?? "flat arrays"} />
           <div className="flex items-center" style={{ gap: RAGGED_CELL.gap }}>
             <RowLabel text="values" />

@@ -38,7 +38,7 @@ export function IntervalsNode({ data }: NodeProps<IntervalsNodeType>): React.JSX
       )}
     >
       {title !== undefined && (
-        <div className={`mb-1.5 text-sm font-semibold tracking-tight ${inkClassName("primary")}`}>
+        <div className={`mb-1.5 text-sm font-semibold leading-[24px] tracking-tight ${inkClassName("primary")}`}>
           {title}
         </div>
       )}

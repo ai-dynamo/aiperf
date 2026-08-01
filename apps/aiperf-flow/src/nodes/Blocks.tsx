@@ -7,7 +7,7 @@ import type { NodeProps, Node } from "@xyflow/react";
 import clsx from "clsx";
 import { surfaceClassName, inkClassName, categoryBgClassName } from "../theme/tokens.js";
 import { NodeAnchorHandles } from "./anchors.js";
-import { CELL_H, CELL_W, CELL_GAP } from "./blocksLayout.js";
+import { CELL_H, CELL_W, CELL_GAP, DETAIL_TEXT_H } from "./blocksLayout.js";
 import type { BlocksNodeData } from "./types.js";
 
 export type BlocksNodeType = Node<BlocksNodeData, "blocks">;
@@ -32,14 +32,14 @@ export function BlocksNode({ data }: NodeProps<BlocksNodeType>): React.JSX.Eleme
       )}
     >
       {title !== undefined && (
-        <div className={`mb-2 text-sm font-semibold tracking-tight ${inkClassName("primary")}`}>
+        <div className={`mb-2 text-sm font-semibold leading-[24px] tracking-tight ${inkClassName("primary")}`}>
           {title}
         </div>
       )}
       <div className="flex flex-col gap-2.5">
         {strips.map((strip) => (
           <div key={strip.label} className="flex flex-col gap-1">
-            <span className={`text-xs ${inkClassName("tertiary")}`}>{strip.label}</span>
+            <span className={`text-xs leading-[16px] ${inkClassName("tertiary")}`}>{strip.label}</span>
             <div className="flex" style={{ gap: CELL_GAP }}>
               {strip.cells.map((role, i) => (
                 <span
@@ -61,7 +61,15 @@ export function BlocksNode({ data }: NodeProps<BlocksNodeType>): React.JSX.Eleme
         ))}
       </div>
       {data.detail !== undefined && (
-        <div className={`mt-2 max-w-[420px] text-xs ${inkClassName("secondary")}`}>
+        <div
+          // Free text cannot be measured ahead of time, so the box is fixed and the text clamped
+          // to it: `DETAIL_TEXT_H` is a contract the DOM keeps, not a guess about string length.
+          className={clsx(
+            "mt-2 line-clamp-3 max-w-[420px] overflow-hidden text-xs leading-[16px]",
+            inkClassName("secondary"),
+          )}
+          style={{ height: DETAIL_TEXT_H }}
+        >
           {data.detail}
         </div>
       )}
