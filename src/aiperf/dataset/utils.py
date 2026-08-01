@@ -133,7 +133,8 @@ def open_video(filename: str) -> tuple[bytes, VideoFormat]:
         filename: The file path to open.
 
     Returns:
-        A tuple of (video_bytes, format) where format is VideoFormat.MP4.
+        A tuple of (video_bytes, format) where format is VideoFormat.MP4 or
+        VideoFormat.WEBM.
 
     Raises:
         FileNotFoundError: If the file does not exist.

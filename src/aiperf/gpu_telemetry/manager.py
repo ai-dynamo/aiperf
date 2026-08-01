@@ -44,15 +44,17 @@ class _CollectorCandidate:
 
 
 class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
-    """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
+    """Coordinates GPU telemetry collectors for GPU telemetry collection.
 
-    The GPUTelemetryManager coordinates multiple TelemetryDataCollector instances
-    to collect GPU telemetry from multiple DCGM endpoints and send unified
+    The GPUTelemetryManager coordinates the configured
+    GPUTelemetryCollectorProtocol implementations (DCGMTelemetryCollector,
+    PyNVMLTelemetryCollector, AMDSMITelemetryCollector) and sends unified
     TelemetryRecordsMessage to RecordsManager.
 
     This service:
-    - Manages lifecycle of TelemetryDataCollector instances
-    - Collects telemetry from multiple DCGM endpoints
+    - Manages lifecycle of the collector instances
+    - Collects telemetry from multiple DCGM endpoints (remote collectors) or the
+      local device (pynvml/amdsmi collectors)
     - Sends TelemetryRecordsMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
     - Follows centralized architecture patterns

@@ -25,9 +25,10 @@ turn). Streams whose first request is at/after t* (``next_turn_index == 0``)
 have nothing to warm. By default the priming
 requests are SPREAD -- aligned globally on t* so every trajectory's t* lands
 at the warmup end (see ``_execute_warmup``); ``--burst-phase-starts`` fires
-them all at once instead. The phase exits via the standard
-``SendingCompleteStopCondition`` plus ``grace_period_sec=inf`` semantics
-already in CreditPhaseConfig (count-driven: every turn-n-1 must return).
+them all at once instead. The phase exits via the standard sending-complete
+path -- ``RequestCountStopCondition`` over the warmup's
+``total_expected_requests`` plus ``grace_period_sec=inf`` semantics already in
+CreditPhaseConfig (count-driven: every turn-n-1 must return).
 
 Warmup-failure accumulation: terminal failures (``credit_return.error`` or
 ``credit_return.cancelled``) on a WARMUP credit's final turn are routed by
@@ -1273,7 +1274,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """Dispatch next turn or recycle on session completion.
 
         WARMUP returns are no-ops at the strategy level; phase termination is
-        handled by ``SendingCompleteStopCondition`` + grace period. Terminal
+        handled by ``RequestCountStopCondition`` + grace period. Terminal
         WARMUP failures are routed by ``CreditCallbackHandler`` directly into
         ``record_warmup_failure`` and surfaced at WARMUP teardown.
 

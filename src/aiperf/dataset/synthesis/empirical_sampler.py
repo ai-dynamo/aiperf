@@ -18,7 +18,8 @@ class EmpiricalSamplerStats:
         min: Minimum value in original data.
         max: Maximum value in original data.
         mean: Mean of original data.
-        median: Median of original data.
+        median: Unweighted median of the unique values (not of the original
+            data, which would weight by observed frequency).
         num_unique: Number of unique values in distribution.
     """
 

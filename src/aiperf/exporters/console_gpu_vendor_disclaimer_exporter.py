@@ -15,7 +15,8 @@ class ConsoleGpuVendorDisclaimerExporter(AIPerfLoggerMixin):
     Rendered ahead of every GPU section (power efficiency and per-GPU telemetry)
     so it's clear that all following metrics are platform-specific and not
     directly comparable across vendors. Shown only when GPU telemetry is enabled
-    and at least one GPU reported.
+    and telemetry results were produced for the run; the platform line reads
+    "unknown" if those results carry no GPU summaries.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:

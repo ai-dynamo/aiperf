@@ -365,7 +365,7 @@ def _promote_cli_dataset_magic_lists(
     as a scalar placeholder so AIPerfConfig validation passes; each sweep
     variation overrides per-cell at expand time. The dataset converter is
     responsible for unwrapping the list at base-build time (see
-    ``_build_synthetic_prompts_block``).
+    ``_converter_dataset._build_prompts``).
     """
     additions: dict[str, list[Any]] = {}
     for attr, path in _CLI_DATASET_MAGIC_LIST_PATHS:
@@ -594,7 +594,8 @@ def _apply_parameter_sweep_meta_to_sweep(
     Schema-2.0 moved these from ``MultiRunConfig`` to the per-sweep config
     (``GridSweep.iteration_order`` / ``GridSweep.same_seed`` /
     ``GridSweep.cooldown_seconds``). They are CLI-set on
-    ``CLIConfig.sweeping``; lift them onto whatever sweep block
+    set as flat ``CLIConfig.parameter_sweep_*`` fields; lift them onto
+    whatever sweep block
     ``_assemble_optional`` / ``_promote_magic_lists_to_sweep_block``
     already produced. No-op when no sweep is in flight.
 

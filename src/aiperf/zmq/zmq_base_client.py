@@ -90,7 +90,6 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         - Create the zmq socket
         - Bind or connect the socket to the address
         - Set the socket options
-        - Run the AIPerfHook.ON_INIT hooks
         """
         try:
             self.scheduler = LoopScheduler()

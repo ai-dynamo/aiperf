@@ -193,7 +193,9 @@ class AccuracySummary(AIPerfBaseModel):
         description="Total responses that needed a regex fallback across all tasks",
     )
     grader_name: str | None = Field(
-        default=None, description="Grader that scored these responses, if uniform"
+        default=None,
+        description="Grader that scored these responses, taken from the first "
+        "record in scope",
     )
     per_task: dict[str, TaskAccuracyStats] = Field(
         default_factory=dict, description="Per-task accuracy rollups keyed by task name"

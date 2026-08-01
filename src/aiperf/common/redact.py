@@ -104,8 +104,8 @@ def redact_header_tuples(
 ) -> list[tuple[str, str]]:
     """Return a copy of header tuples with sensitive values replaced by REDACTED_VALUE.
 
-    Same logic as redact_headers but for (name, value) tuple format
-    used by InputConfig.headers.
+    Same logic as redact_headers but for the (name, value) tuple format
+    used by ``EndpointInfo.headers``.
     """
     return [
         (name, REDACTED_VALUE if name.lower() in _SENSITIVE_HEADER_NAMES else value)
@@ -154,7 +154,7 @@ _URL_FLAG_PATTERN = re.compile(
 
 # Safety net for stray scheme-prefixed URLs carrying userinfo — required because
 # URL-typed flags like ``--url`` use ``consume_multiple=True`` (see
-# ``endpoint_config.py``), so 2nd+ values are not captured by the per-flag
+# ``aiperf/config/flags/cli_config.py``), so 2nd+ values are not captured by the per-flag
 # matcher. The userinfo segment is bounded by /, ?, #, whitespace, quote, @ so
 # a path ``@`` like ``http://host/users@example.com`` never matches, and
 # non-URL args with ``@`` (e.g. ``--model foo@bar``) are untouched.

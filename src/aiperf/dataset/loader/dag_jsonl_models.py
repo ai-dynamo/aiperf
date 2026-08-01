@@ -63,10 +63,9 @@ class DagFork(AIPerfBaseModel):
 class DagSpawn(AIPerfBaseModel):
     """Delayed-join SPAWN entry. Object-form alternative to a plain string id.
 
-    Asymmetric note: ``forks`` entries are ALWAYS bare strings (no equivalent
-    ``DagFork`` class). Only ``spawns`` has an object-form because only SPAWN
-    branches support delayed-join — FORK terminates the parent so there is no
-    later turn to join on.
+    Asymmetric note: ``forks`` also has an object form (:class:`DagFork`), but
+    only ``spawns`` supports delayed-join — a foreground FORK terminates the
+    parent so there is no later turn to join on.
 
     Use this when the parent should continue running turns while the spawned
     children execute in parallel. ``join_at`` (default: this turn's index +
@@ -97,8 +96,7 @@ class DagTurn(AIPerfBaseModel):
     Top-level fields are limited to AIPerf-native Turn concepts plus DAG
     scheduling keys. Any other OpenAI or vendor-specific parameter goes in
     ``extra``, where keys are merged into the top level of the wire body
-    at dispatch time (matching AIPerf's CLI ``--extra-inputs`` convention and
-    AIPerf's CLI ``--extra-inputs`` convention).
+    at dispatch time (matching AIPerf's CLI ``--extra-inputs`` convention).
 
     Unknown top-level keys are rejected.
     """

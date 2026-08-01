@@ -487,9 +487,9 @@ class SessionSynthesizer:
 
         Restart probability decreases linearly from restart_initial_probability
         to 0 over the first 75% of sessions. Session B's (restart continuations)
-        are scattered randomly into the back portion of the queue, starting after
-        25% of primary sessions to ensure they never overlap with their Session A
-        in the concurrency window.
+        are scattered randomly into the back portion of the queue, at a position
+        at least 25% of num_sessions after their Session A so the two are kept
+        far apart in the concurrency window.
         """
         if self._config.turns is not None:
             return [
@@ -518,8 +518,8 @@ class SessionSynthesizer:
             return primary
 
         # Scatter deferred sessions into the back portion of the queue.
-        # min_offset ensures Session B never shares a concurrency window
-        # with its Session A (restarts only fire in first 75%).
+        # min_offset keeps at least 25% of the dataset between Session B and
+        # its Session A (restarts only fire in the first 75%).
         min_offset = max(1, int(num_sessions * 0.25))
         for session_b, origin_index in deferred:
             low = min(origin_index + min_offset, len(primary))

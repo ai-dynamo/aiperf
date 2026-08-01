@@ -12,9 +12,9 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
     """Exports confidence aggregate results to CSV format.
 
     Creates a simple CSV with:
-    - Metadata section (key-value pairs)
-    - Blank line separator
     - Metrics table (statistics as columns)
+    - Blank line separator
+    - Metadata section (key-value pairs)
 
     Uses similar formatting approach as MetricsCsvExporter for consistency.
     """

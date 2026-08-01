@@ -13,9 +13,11 @@ This module runs before any service processes are spawned and has two jobs:
    download model files into the HF disk cache. These run in a
    ``ProcessPoolExecutor`` so the parent process never imports the
    Rust-backed tokenizer internals that create threads and other state
-   incompatible with ``fork()``. Once the cache is warm, child service
-   processes set ``HF_HUB_OFFLINE=1`` (see ``bootstrap.py``) and load
-   from disk with zero network traffic, eliminating the thundering-herd
+   incompatible with ``fork()``. Once the cache is warm, tokenizer worker
+   processes set ``HF_HUB_OFFLINE=1`` in their own initializer (see
+   ``aiperf.dataset.generator.parallel_decode`` and the parallel-convert
+   loaders) and load from disk with zero network traffic, eliminating the
+   thundering-herd
    problem that occurs when N record processors all hit the Hub concurrently.
 """
 
@@ -46,7 +48,7 @@ def _init_worker(log_level: str) -> None:
     import logging
 
     # basicConfig is a no-op when handlers already exist; force the level so
-    # _cache_tokenizer's logger.info calls are visible at the expected level.
+    # log records emitted inside the worker are visible at the expected level.
     logging.basicConfig(level=log_level)
     logging.root.setLevel(log_level)
 

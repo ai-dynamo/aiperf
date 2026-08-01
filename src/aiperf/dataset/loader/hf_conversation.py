@@ -23,8 +23,8 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
     :class:`~aiperf.dataset.loader.sharegpt.ShareGPTLoader` semantics for HF
     conversation columns.
 
-    Optionally attaches an image per row when image_column is configured (same
-    image on every turn in multi-turn mode, matching single-turn behavior).
+    Optionally attaches an image per row when image_column is configured (in
+    multi-turn mode the image rides on the first turn only).
 
     Normalises two common dataset quirks automatically:
     - List-of-lists wrapping (VisionArena): each turn is wrapped in its own list

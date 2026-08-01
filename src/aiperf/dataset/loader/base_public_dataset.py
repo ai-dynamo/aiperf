@@ -36,12 +36,13 @@ class BasePublicDatasetLoader(BaseLoader):
         ...     url = "https://example.com/dataset.json"
         ...     filename = "my_dataset.json"
         ...
-        ...     async def load_dataset(self) -> list[Conversation]:
+        ...     async def load_dataset(self) -> dict[str, Any]:
         ...         # Custom dataset loading logic here
         ...         return dataset
 
         >>> loader = MyDatasetLoader()
-        >>> conversations = await loader.load_dataset()
+        >>> dataset = await loader.load_dataset()
+        >>> conversations = await loader.convert_to_conversations(dataset)
         >>> print(f"Loaded {len(conversations)} conversations")
     """
 

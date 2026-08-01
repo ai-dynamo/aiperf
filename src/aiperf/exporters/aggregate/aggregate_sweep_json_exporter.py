@@ -36,7 +36,8 @@ class AggregateSweepJsonExporter(AggregateBaseExporter):
 
         The result contains:
         - result.metadata: Contains sweep metadata + best_configurations, pareto_optimal
-        - result.metrics: Contains per_combination_metrics (the actual metrics dict)
+        - result.metrics: Contains per_combination_metrics -- a LIST of
+          ``{"parameters": ..., "metrics": ...}`` entries in input order
 
         Output structure:
         {
@@ -45,7 +46,7 @@ class AggregateSweepJsonExporter(AggregateBaseExporter):
             "num_successful_runs": 15,
             "failed_runs": [],
             "metadata": {...},
-            "per_combination_metrics": {...},
+            "per_combination_metrics": [{"parameters": {...}, "metrics": {...}}, ...],
             "best_configurations": {...},
             "pareto_optimal": [...]
         }

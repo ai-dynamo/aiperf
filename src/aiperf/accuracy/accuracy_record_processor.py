@@ -187,7 +187,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         ``model_output`` is the answer channel (``TextResponseData.text``,
         ``ReasoningResponseData.content``, or ``ToolCallResponseData`` content +
         ``tool_call_text``); ``model_thinking`` is the concatenated
-        ``reasoning_content`` from any ``ReasoningResponseData`` chunks, or None
+        ``ReasoningResponseData.reasoning`` from any reasoning chunks, or None
         when the model emitted no separate reasoning channel. For reasoning models
         this splits the two channels: grading scores only ``model_output``
         (the final answer content) so that CoT preamble does not poison

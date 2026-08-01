@@ -277,7 +277,8 @@ def _layout_groups(sessions: dict[str, list[dict]]) -> list[_LaneGroup]:
     each subagent session is greedy-packed into child rows underneath, reusing
     a row once the previous subagent on it retired. Subagents whose root is
     absent from the export nest under a zero-row phantom root keyed by their
-    shared ``parent_correlation_id`` (one lane per concurrency lane). Lane
+    shared ``root_correlation_id`` (or, on legacy exports lacking it,
+    ``parent_correlation_id``). Lane
     groups are then slot-packed exactly like plain sessions, ordered by group
     start time.
     """
@@ -941,8 +942,8 @@ def _session_new_isls(turns: list[dict]) -> list[float]:
 
     The cached prefix is the server-reported cache-read count when the endpoint
     exposes it (``usage_prompt_cache_read_tokens``), else it falls back to the
-    previous turn's ISL. The first turn (no predecessor) and any turn missing
-    ISL contribute their full ISL. ``turns`` must be turn_index-ordered.
+    previous turn's ISL. The first turn (no predecessor) contributes its full
+    ISL; a turn missing ISL contributes 0 and does not update the carried prefix. ``turns`` must be turn_index-ordered.
     Values are clamped at 0 -- "new" tokens are never negative.
     """
     out: list[float] = []

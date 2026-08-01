@@ -366,9 +366,9 @@ def _redirect_stdio_to_devnull() -> None:
     # process is in a broken state and should crash rather than continue
     # with corrupted FDs.
     #
-    # Runs inside the event loop as one of the first operations, but
-    # os.open on /dev/null hits a kernel fast path (no disk I/O), so
-    # the blocking calls are safe here.
+    # Runs before the event loop is created, as one of the first operations
+    # in the child process; os.open on /dev/null hits a kernel fast path
+    # (no disk I/O), so the blocking calls are cheap.
     devnull_fd = os.open(os.devnull, os.O_RDWR)
     os.dup2(devnull_fd, 0)
     os.dup2(devnull_fd, 1)

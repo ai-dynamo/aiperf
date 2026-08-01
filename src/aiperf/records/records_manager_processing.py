@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pure helpers for ``RecordsManager``: plugin loaders, realtime metrics filtering,
-and summarize-output bucketing.
+"""Pure helpers for ``RecordsManager``: plugin loaders, record-type routing, and
+realtime metrics generation/filtering.
 
 Splits the records-manager plumbing into testable pure functions so the
 service body stays focused on lifecycle / message dispatch. Loaders here
-honour the ``accumulator`` / ``stream_exporter`` plugin
+honour the ``accumulator`` / ``stream_exporter`` / ``analyzer`` plugin
 categories.
 """
 

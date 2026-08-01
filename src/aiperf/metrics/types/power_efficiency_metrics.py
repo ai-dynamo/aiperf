@@ -16,7 +16,9 @@ Each metric exists in an NVIDIA variant (``nvidia_`` prefix,
 prefix, ``GPU_POWER_EFFICIENCY_AMD`` console group). The analyzer emits only
 the variants whose vendor actually reported data during the run.
 
-See design doc ``0005-energy-efficiency-metrics.md``.
+See ``docs/metrics-reference.md`` ("GPU Power Efficiency Metrics") for the
+per-tag formulas and ``docs/reference/gpu-telemetry-metrics-dataflow.md`` for
+the collector-to-console dataflow.
 """
 
 from typing import NoReturn

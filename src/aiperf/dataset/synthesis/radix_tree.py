@@ -73,8 +73,10 @@ class RadixNode:
 class RadixTree:
     """A radix tree for compactly representing prefix patterns.
 
-    The radix tree compresses unary chains (nodes with single child)
-    into edges with larger labels, representing token counts.
+    Nodes are keyed by edge label (a hash ID); ``add_path`` inserts one node
+    per label without compressing. Unary-chain compression into edges with
+    summed labels is a separate, opt-in step
+    (``graph_utils.merge_unary_chains``).
     """
 
     def __init__(self) -> None:

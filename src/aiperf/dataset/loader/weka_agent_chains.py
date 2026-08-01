@@ -253,8 +253,7 @@ def worker_group_assignment(
 
     A parallel sub-agent fan-out is a set of persistent workers that share a deep
     spawned context AND run CONCURRENTLY. We require BOTH, the way the corpus
-    analysis and the graph adapter's sibling-clustering prescribe (overlapping
-    intervals AND a shared prefix):
+    analysis prescribes (overlapping intervals AND a shared prefix):
 
     1. **Shared-context scope**: bucket workers that forked from shared context
        (``fork.depth > 0``) by their fork point

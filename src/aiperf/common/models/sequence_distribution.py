@@ -337,7 +337,7 @@ class DistributionParser:
         Parse distribution string in various supported formats.
 
         Supported formats:
-        - Semicolon: "256,128:40;512,256:60" (percentages) or "256,128:0.4;512,256:0.6" (fractions)
+        - Semicolon: "256,128:40;512,256:60" (probabilities are percentages that must sum to 100)
         - With stddev: "256|10,128|5:40;512|20,256|10:60" (mean|stddev format)
         - Bracket: "[(256,128):40,(512,256):60]" or "[(256|10,128|5):40,(512|20,256|10):60]"
         - JSON: '{"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 40}, ...]}'

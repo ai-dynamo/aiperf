@@ -35,7 +35,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
     Features:
     - Bidirectional streaming with automatic routing by peer identity
-    - Message-based peer lifecycle tracking (ready/shutdown messages)
+    - Ready/shutdown messages forwarded to the receiver (peer tracking is the caller's)
     - Works with both TCP and IPC transports
 
     ASCII Diagram:
@@ -57,13 +57,12 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     - ROUTER receives messages from DEALER clients (identity included in envelope)
     - No request-response pairing - pure streaming
     - Supports concurrent message processing
-    - Automatic peer tracking via worker ready and shutdown messages
+    - Ready/shutdown messages are forwarded to the registered receiver; peer
+      tracking is the caller's responsibility
 
     Example:
     ```python
-        from aiperf.common.structs import (
-            Credit, WorkerReady, WorkerShutdown, CreditReturn
-        )
+        from aiperf.credit.messages import CreditReturn, WorkerReady, WorkerShutdown
 
         # Create via comms (recommended - handles lifecycle management)
         router = comms.create_streaming_router_client(
@@ -77,8 +76,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     await register_worker(identity)
                 case WorkerShutdown():
                     await unregister_worker(identity)
-                case CreditReturn(credit_id=id, cancelled=c, error=e):
-                    await handle_credit_return(identity, id, c, e)
+                case CreditReturn(credit=credit, cancelled=c, error=e):
+                    await handle_credit_return(identity, credit.id, c, e)
 
         router.register_receiver(handle_message)
 
@@ -130,7 +129,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         Register handler for incoming messages from DEALER clients.
 
         The handler will be called for each message received, with the DEALER's
-        identity and the decoded message (WorkerReady | WorkerShutdown | CreditReturn).
+        identity and the decoded message
+        (WorkerReady | WorkerShutdown | CreditReturn | FirstToken).
 
         Args:
             handler: Async function that takes (identity: str, message: WorkerToRouterMessage)
@@ -197,7 +197,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
         Args:
             identity: The DEALER client's identity (routing key)
-            struct: The msgspec Struct to send (Credit or CancelCredits)
+            struct: The msgspec Struct to send (Credit, CancelCredits, or GraphTraceEnd)
 
         Raises:
             NotInitializedError: If socket not initialized
@@ -222,7 +222,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         Background task for receiving messages from DEALER clients.
 
         Runs continuously until stop is requested. Decodes messages as
-        WorkerToRouterMessage (WorkerReady | WorkerShutdown | CreditReturn) using msgpack.
+        WorkerToRouterMessage (WorkerReady | WorkerShutdown | CreditReturn |
+        FirstToken) using msgpack.
         """
         self.debug("Streaming ROUTER receiver task started")
 

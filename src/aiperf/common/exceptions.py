@@ -15,7 +15,7 @@ class AIPerfError(Exception):
         return super().__str__()
 
     def __str__(self) -> str:
-        """Return the string representation of the exception with the class name."""
+        """Return the string representation of the exception message."""
         return super().__str__()
 
 

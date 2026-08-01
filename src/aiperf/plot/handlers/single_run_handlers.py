@@ -600,7 +600,8 @@ class TimeSliceHandler(BaseSingleRunHandler):
             data, metric_name, endpoint_filter, labels_filter
         )
 
-        # Determine y column based on stat (default to "value")
+        # Server metrics rows carry the sample in a fixed "value" column, so
+        # y_metric.stat does not select a column here.
         y_col = "value"
 
         default_y_label = f"{metric_name} ({unit})" if unit else metric_name
@@ -692,7 +693,6 @@ class TimeSliceHandler(BaseSingleRunHandler):
                 )
             )
 
-        # Apply NVIDIA styling
         default_y_label = f"{metric_name} ({unit})" if unit else metric_name
         y_label = spec.y_label or default_y_label
 

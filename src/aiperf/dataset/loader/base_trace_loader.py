@@ -73,7 +73,7 @@ class BaseTraceDatasetLoader(
 
     Provides common infrastructure for loading trace-format datasets
     (Mooncake, Bailian, etc.) including shared initialization, timestamp
-    filtering, 3-phase prompt generation with parallel decode, and
+    filtering, two-phase prompt generation with parallel decode, and
     synthesis integration.
 
     Subclasses must implement:
@@ -319,7 +319,7 @@ class BaseTraceDatasetLoader(
         return data
 
     # ------------------------------------------------------------------
-    # convert_to_conversations — 3-phase prompt generation
+    # convert_to_conversations — two-phase prompt generation
     # ------------------------------------------------------------------
 
     def _get_text_input(self, trace: TraceT) -> str | None:

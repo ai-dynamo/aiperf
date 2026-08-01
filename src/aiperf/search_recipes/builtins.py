@@ -460,7 +460,8 @@ class DecodeITLCurve(SearchRecipe):
     Sweeps ``phases.profiling.concurrency`` (6 log-spaced points in [1, 200])
     against ``datasets.main.prompts.osl`` (4 log-spaced
     points in [64, 1024]); ``itl_surface_fit`` post-process emits
-    ``decode_itl_surface.json`` with raw points and a bilinear-grid surface.
+    ``decode_itl_surface.json`` with raw points and the as-measured grid
+    (unmeasured cells are ``null``; the handler interpolates nothing).
 
     The dataset key is the CLI recipe default dataset name (see
     ``_DEFAULT_DATASET_NAME``); recipe grids target the body-rooted path
@@ -476,7 +477,7 @@ class DecodeITLCurve(SearchRecipe):
 
     name: ClassVar[str] = "decode-itl-curve"
     description: ClassVar[str] = (
-        "Sweep concurrency x OSL grid; fit ITL surface (bilinear) and emit "
+        "Sweep concurrency x OSL grid; emit the as-measured ITL surface and "
         "decode_itl_surface.json with raw points."
     )
     auto_plot_default: ClassVar[bool] = True

@@ -504,7 +504,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def _inject_context_prompts(self, conversations: list[Conversation]) -> None:
         """Inject shared system and user context prompts into conversations.
 
-        Sets the system_message and context_message fields on Conversation objects,
+        Sets the system_message and user_context_message fields on Conversation objects,
         which endpoint formatters will prepend to the first turn when creating payloads.
 
         Args:

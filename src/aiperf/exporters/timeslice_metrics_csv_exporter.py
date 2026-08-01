@@ -67,7 +67,7 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
 
         # Slices are stored in chronological order. Position == slice index.
         for timeslice_index, ts in enumerate(self._results.timeslices):
-            # Convert to display units and filter exportable metrics
+            # Filter to exportable metrics (values already in display units)
             prepared_metrics = self._prepare_metrics(ts.metric_results.values())
 
             # Write rows for each metric

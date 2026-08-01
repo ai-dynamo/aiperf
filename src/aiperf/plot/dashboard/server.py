@@ -34,14 +34,19 @@ class DashboardServer:
 
     Args:
         runs: List of RunData objects to visualize
+        run_dirs: Artifact directories backing each run, in the same order
         mode: Visualization mode (single-run or multi-run)
         theme: Plot theme (light or dark)
         plot_config: Plot configuration object
+        loader: DataLoader used by callbacks for lazy/on-demand data loading
+        host: Interface to bind the server to
         port: Port number for the server
 
     Example:
-        >>> server = DashboardServer(runs=runs, mode=VisualizationMode.MULTI_RUN,
-        ...                          theme=PlotTheme.DARK, plot_config=config, host="127.0.0.1", port=8050)
+        >>> server = DashboardServer(runs=runs, run_dirs=run_dirs,
+        ...                          mode=VisualizationMode.MULTI_RUN,
+        ...                          theme=PlotTheme.DARK, plot_config=config,
+        ...                          loader=loader, host="127.0.0.1", port=8050)
         >>> server.run()
     """
 

@@ -27,11 +27,11 @@ def is_tty() -> bool:
 async def call_all_functions_self(
     self_: object, funcs: list[Callable], *args, **kwargs
 ) -> None:
-    """Call all functions in the list with the given name.
+    """Call all functions in the list, passing ``self_`` as the first argument.
 
     Args:
-        obj: The object to call the functions on.
-        func_names: The names of the functions to call.
+        self_: The object passed as the first positional argument to each function.
+        funcs: The functions to call.
         *args: The arguments to pass to the functions.
         **kwargs: The keyword arguments to pass to the functions.
 
@@ -57,11 +57,10 @@ async def call_all_functions_self(
 
 
 async def call_all_functions(funcs: list[Callable], *args, **kwargs) -> None:
-    """Call all functions in the list with the given name.
+    """Call all functions in the list.
 
     Args:
-        obj: The object to call the functions on.
-        func_names: The names of the functions to call.
+        funcs: The functions to call.
         *args: The arguments to pass to the functions.
         **kwargs: The keyword arguments to pass to the functions.
 

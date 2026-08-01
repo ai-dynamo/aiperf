@@ -1,11 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Matplotlib-based PNG export for code-gen reporting.
+"""Matplotlib-based PNG export for uncertainty plots.
 
-The Matplotlib renderer is a standalone function called directly by code-gen
-reporting, not through the Plotly handler path. This module provides the
-integration entry point that constructs the data contract and delegates to
-the renderer.
+The Matplotlib renderer is a standalone function invoked directly rather than
+through the Plotly handler/plugin path. This module provides the entry point
+that delegates to the renderer and writes the figure to disk.
 """
 
 from pathlib import Path
@@ -25,9 +24,8 @@ def export_uncertainty_matplotlib(
 ) -> Path:
     """Export uncertainty plot as PNG using the Matplotlib renderer.
 
-    This is the code-gen reporting entry point for uncertainty plots.
-    It renders the figure via Matplotlib (not Plotly/Kaleido) and writes
-    directly to disk.
+    Renders the figure via Matplotlib (not Plotly/Kaleido) and writes
+    directly to disk, creating parent directories as needed.
 
     Args:
         data: Validated data contract with benchmark points and metadata.

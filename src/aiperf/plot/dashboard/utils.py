@@ -73,7 +73,7 @@ def create_plot_container_component(
         figure: Plotly figure object
         theme: Plot theme
         resizable: Whether to show resize handle
-        size: Minimum height for plot container in pixels
+        size: Base height in pixels; doubled when size_class is "full"
         size_class: Grid size class ("half" for 50%, "full" for 100%)
         visible: Whether the plot should be visible (False = display: none)
 
@@ -319,7 +319,8 @@ def runs_to_dataframe(
 
     Returns:
         Dict with keys:
-            - df: DataFrame with columns: x_metric, y_metric, model, concurrency, run_idx, run_name
+            - df: DataFrame with columns: x_metric, y_metric, model, concurrency,
+              run_idx, run_name, experiment_type, experiment_group
             - x_stat_actual: Stat used for x-axis (same as x_stat)
             - y_stat_actual: Stat used for y-axis (same as y_stat)
             - warnings: List of warning messages

@@ -97,12 +97,12 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
           class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
 
         speed_bench_coding:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeCategoryLoader
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
           metadata:
             category: coding
 
         speed_bench_throughput_1k_mixed:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KCategoryLoader
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KLoader
           metadata:
             category: mixed
     """

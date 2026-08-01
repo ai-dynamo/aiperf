@@ -47,7 +47,8 @@ class ServerMetricsTimeSeries:
     This separation enables:
     - Accurate fetch latency statistics (endpoint reliability monitoring)
     - Accurate update interval statistics (server metric update frequency)
-    - Storage optimization (don't duplicate unchanged metric values)
+    - Consistent timeslice boundaries (samples are stored for every fetch,
+      duplicate or not; only the update-timeline counters skip duplicates)
 
     Example:
         >>> ts = ServerMetricsTimeSeries()
@@ -55,7 +56,7 @@ class ServerMetricsTimeSeries:
         >>> record1 = ServerMetricsRecord(timestamp_ns=1000, metrics={...})
         >>> ts.append_snapshot(record1)
         >>> # Add duplicate (same metrics)
-        >>> record2 = ServerMetricsRecord(timestamp_ns=2000, is_duplicate=True)
+        >>> record2 = ServerMetricsRecord(timestamp_ns=2000, metrics={...}, is_duplicate=True)
         >>> ts.append_snapshot(record2)
         >>> ts._total_fetch_count  # 2 fetches
         2
@@ -113,10 +114,10 @@ class ServerMetricsTimeSeries:
         stores them in the appropriate time series. Handles both unique updates
         (metrics changed) and duplicate records (same metric values as previous).
 
-        For duplicate records (where metrics haven't changed), only fetch
-        timestamps and latencies are tracked - metric data is not duplicated.
-        This optimizes storage while maintaining accurate fetch statistics for
-        monitoring endpoint reliability.
+        Samples are appended to the time series for every record, including
+        duplicates, so timeslice boundaries stay consistent. Duplicate records
+        are excluded only from the unique-update timeline (first/last update
+        timestamps and interval statistics).
 
         Duplicate detection is performed by the data collector via response hash
         comparison before parsing, making this a lightweight operation.

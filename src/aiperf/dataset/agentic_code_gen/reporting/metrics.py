@@ -164,8 +164,9 @@ def extract_cache_metrics(
 
         # Prefix = the leading run of this turn's blocks already cached from
         # PRIOR requests (``global_seen`` holds every earlier turn's blocks;
-        # this turn's are added below). Causal first-unseen scan, so the first
-        # turn of any session has prefix 0. The old symmetric repeated-position
+        # this turn's are added below). Causal first-unseen scan, so only the
+        # very first turn processed has prefix 0; a later session's turn 0 still
+        # matches the globally shared L1/L1.5 blocks. The old repeated-position
         # count credited a turn for blocks that only reappear in LATER turns,
         # reporting the first turn as up to 100% prefix reuse and biasing the
         # prefix/unique distributions.

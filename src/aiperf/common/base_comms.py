@@ -162,7 +162,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         bind: bool = False,
         socket_ops: dict | None = None,
     ) -> StreamingDealerClientProtocol:
-        # Identity must be passed through client_kwargs since it's specific to DEALER
+        # Identity must be passed through create_client's **kwargs since it's specific to DEALER
         return cast(
             StreamingDealerClientProtocol,
             self.create_client(

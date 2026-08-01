@@ -320,7 +320,8 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         """Public alias for one-shot scrape.
 
         ``GPUTelemetryManager`` calls this name during baseline and final-state
-        capture (``manager.py`` :func:`_handle_profile_complete_command`).
+        capture (``manager.py`` :func:`_capture_collector_baseline` and
+        :func:`_handle_profile_complete_command`).
         """
         await self._collect_and_process_metrics()
 

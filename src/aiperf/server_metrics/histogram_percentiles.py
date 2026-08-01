@@ -688,9 +688,10 @@ def _estimate_bucket_sums(
 
     Example:
         >>> per_bucket = {"0.1": 20, "1.0": 60}
+        >>> # estimated_mean is derived from recorded single-bucket intervals
         >>> stats = {
-        ...     "0.1": BucketStatistics(bucket_le="0.1", estimated_mean=0.05),  # Learned mean
-        ...     "1.0": BucketStatistics(bucket_le="1.0", estimated_mean=0.3)    # Learned mean
+        ...     "0.1": BucketStatistics(bucket_le="0.1"),  # after record(mean=0.05, count=...)
+        ...     "1.0": BucketStatistics(bucket_le="1.0"),  # after record(mean=0.3, count=...)
         ... }
         >>> _estimate_bucket_sums(per_bucket, stats)
         {"0.1": 1.0, "1.0": 18.0}  # 20×0.05 + 60×0.3

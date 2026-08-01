@@ -27,11 +27,11 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         3. Asyncio event loop serializes all operations
 
     Key Methods:
-        - increment_processed(): Atomically increment the processed count
-        - increment_errors(): Atomically increment the errors count
-        - create_stats(): Create a new immutable RecordsPhaseStats object for the phase (for use in messages).
-        - mark_started(): Mark the phase as started (set the start_ns).
-        - mark_processing_complete(): Mark the phase as processing complete (set the processing_end_ns).
+        - increment_success_records(): Atomically increment the success count
+        - increment_error_records(): Atomically increment the error count
+        - create_stats(): Create a new immutable PhaseRecordsStats object for the phase (for use in messages).
+        - update_from_credit_phase_stats(): Adopt the phase timestamps/final counts from the credit phase.
+        - check_and_set_all_records_received(): Mark the phase's record processing complete (set records_end_ns).
     """
 
     def __init__(self, phase: CreditPhase, **kwargs) -> None:
@@ -82,7 +82,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
 
     @property
     def total_records(self) -> int:
-        """The total number of records processed, errored, or filtered out."""
+        """The total number of records seen for the phase (successes + errors)."""
         return self._success_records + self._error_records
 
     @property
@@ -91,7 +91,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         return self._start_ns is not None and self._records_end_ns is None
 
     def create_stats(self) -> PhaseRecordsStats:
-        """Create a new immutable RecordsPhaseStats object for the phase (for use in messages)."""
+        """Create a new immutable PhaseRecordsStats object for the phase (for use in messages)."""
         return PhaseRecordsStats(
             phase=self._phase,
             phase_index=self._phase_index,
@@ -180,9 +180,10 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
 class RecordsTracker:
     """Records Tracker. This is used to track the progress of the records phases.
 
-    Fields:
-        phase: The type of credit phase
-        total_expected_requests: The total number of expected requests to process. If None, the phase is not request count based.
+    Owns one :class:`CreditPhaseRecordsTracker` per concrete phase instance,
+    keyed by ``(phase, phase_index)``. A ``phase_index`` of ``None`` is an
+    orphan instance (stats arrived before the phase index was known); lookups
+    that omit an index fall back to the latest index seen for that phase kind.
     """
 
     def __init__(self) -> None:

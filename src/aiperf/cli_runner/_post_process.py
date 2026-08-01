@@ -5,9 +5,8 @@
 
 Two public entry points:
 
-- :func:`export_sweep_aggregate` -- builds the AggregateResult, writes the
-  JSON + CSV pair, and returns the AggregateResult so the caller can summarize
-  it.
+- :func:`export_sweep_aggregate` -- takes the caller-assembled AggregateResult
+  and writes the JSON + CSV pair.
 - :func:`run_post_process_hook` -- looks up the recipe-supplied handler and
   writes its derived artifact under ``sweep_aggregate/``. Quarantines handler
   failures via a ``post_process_errors.json`` sidecar so a buggy handler

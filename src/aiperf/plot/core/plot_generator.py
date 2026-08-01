@@ -1252,7 +1252,8 @@ class PlotGenerator:
 
         Designed specifically for timeslice data with low data-to-ink ratio:
         - Scatter points instead of bars
-        - Seaborn deep palette colors for normal points
+        - Theme palette colors for normal points (seaborn deep in light theme,
+          NVIDIA brand + seaborn bright in dark theme)
         - Red highlighting for bad outliers outside the run average ± std band
         - Minimal grid and axes styling
         - Error bars and average line overlay preserved
@@ -1268,9 +1269,9 @@ class PlotGenerator:
             y_label: Y-axis label (auto-generated if None)
             slice_duration: Duration of each slice in seconds (for time-based x-axis)
             warning_text: Optional warning text to display at bottom of plot
-            average_value: Run average value (center of gold band) for outlier detection
+            average_value: Run average value (center of the std band) for outlier detection
             average_label: Optional label for the average line
-            average_std: Run standard deviation (width of gold band) for outlier detection
+            average_std: Run standard deviation (half-width of the std band) for outlier detection
             unit: Unit of measurement for the metric (e.g., "ms", "tokens/s")
 
         Returns:
@@ -1830,7 +1831,8 @@ class PlotGenerator:
         Create request timeline with prefill and decode phases.
 
         Each request is shown as a horizontal line at its Y-metric value,
-        split into two colored phases: prefill (green) and decode (blue).
+        split into two colored phases: prefill (NVIDIA green) and decode
+        (the second color of the active theme palette).
 
         Args:
             df: DataFrame with [request_id, y_value, start_s, ttft_end_s, end_s]

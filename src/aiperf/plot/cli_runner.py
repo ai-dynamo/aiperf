@@ -134,7 +134,9 @@ def run_plot_controller(
         output: Directory to save generated plots. Defaults to <first_path>/plots if not specified.
         mode: Output mode for plots. Defaults to PNG.
         theme: Plot theme to use (LIGHT or DARK). Defaults to LIGHT.
-        config: Path to custom plot configuration YAML file. If not specified, uses default config.
+        config: Path to custom plot configuration YAML file. If not specified, PlotConfig
+            falls back to a per-run `<path>/.aiperf-plot-config.yaml`, then
+            `~/.aiperf/plot_config.yaml`, then the shipped default config.
         verbose: Show detailed error tracebacks in console.
         dashboard: Launch interactive dashboard server instead of generating static PNGs.
         host: Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
