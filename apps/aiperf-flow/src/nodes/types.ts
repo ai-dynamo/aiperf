@@ -13,7 +13,6 @@ type BaseNodeData = {
 export type HeaderNodeData = BaseNodeData & {
   title: string;
   caption?: string;
-  surfaceRole?: SurfaceRole;
 };
 
 export type PanelNodeData = BaseNodeData & {

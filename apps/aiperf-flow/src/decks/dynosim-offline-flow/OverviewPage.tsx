@@ -78,13 +78,13 @@ function nodes(maint: boolean): Node[] {
       id: "clock-seam",
       type: "panel",
       position: { x: 0, y: 420 },
-      data: { title: "SEAM · Clock", surfaceRole: "chrome" },
+      data: { title: "SEAM · Clock" },
     },
     {
       id: "sink-seam",
       type: "panel",
       position: { x: 300, y: 420 },
-      data: { title: "SEAM · RequestSink<HttpRequest>", surfaceRole: "chrome" },
+      data: { title: "SEAM · RequestSink<HttpRequest>" },
     },
 
     {

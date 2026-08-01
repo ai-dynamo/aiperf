@@ -20,6 +20,15 @@ export type FlowEdgeType = Edge<FlowEdgeData, "flow">;
 
 const DEFAULT_COLOR = "var(--color-accent-primary)";
 
+/**
+ * Dash geometry. The animation must travel exactly one dash period per iteration —
+ * animating any other distance leaves the pattern out of phase at the loop point, and
+ * the snap back to offset 0 reads as a stutter rather than continuous travel.
+ */
+const DASH_LENGTH = 7;
+const DASH_GAP = 7;
+const DASH_PERIOD = DASH_LENGTH + DASH_GAP;
+
 const SPEED_DURATIONS: Record<FlowEdgeSpeed, string> = {
   slow: "2.4s",
   normal: "1.2s",
@@ -64,7 +73,7 @@ export function FlowEdge({
         {`
           @keyframes flow-edge-dash {
             to {
-              stroke-dashoffset: -16;
+              stroke-dashoffset: -${DASH_PERIOD};
             }
           }
           .flow-edge__path {
@@ -78,15 +87,21 @@ export function FlowEdge({
         `}
       </style>
       <defs>
+        {/*
+          `markerUnits="userSpaceOnUse"` pins the arrowhead to these dimensions. The SVG
+          default is `strokeWidth`, which multiplies every number here by the 2px stroke
+          and renders an arrowhead twice the intended size.
+        */}
         <marker
           id={markerId}
-          markerWidth={12}
-          markerHeight={12}
-          refX={9}
-          refY={6}
+          markerUnits="userSpaceOnUse"
+          markerWidth={9}
+          markerHeight={9}
+          refX={8}
+          refY={4.5}
           orient="auto-start-reverse"
         >
-          <path d="M0,0 L12,6 L0,12 Z" fill={color} />
+          <path d="M0,0.75 L9,4.5 L0,8.25 Z" fill={color} />
         </marker>
       </defs>
       <BaseEdge
@@ -104,7 +119,7 @@ export function FlowEdge({
             "--flow-edge-duration": duration,
             stroke: color,
             strokeWidth: 2,
-            strokeDasharray: "7 7",
+            strokeDasharray: `${DASH_LENGTH} ${DASH_GAP}`,
           } as React.CSSProperties
         }
       />

@@ -48,6 +48,29 @@ describe("HeaderNode", () => {
     );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-header-class");
-    expect(root.className).toMatch(/rounded-(md|lg|xl)/);
+    // Merged onto, not replacing, the component's own classes.
+    expect(root.className).toMatch(/min-w-/);
+  });
+
+  it("stays transparent to pointer events so it cannot swallow canvas clicks", () => {
+    // A band label sits over the canvas between rows; it must not intercept a drag or
+    // click meant for the diagram beneath it.
+    const { container } = render(
+      <HeaderNode
+        id="header"
+        type="header"
+        data={{ title: "T" }}
+        selected={false}
+        zIndex={0}
+        isConnectable={false}
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        dragging={false}
+        draggable={false}
+        selectable={false}
+        deletable={false}
+      />,
+    );
+    expect((container.firstElementChild as HTMLElement).className).toContain("pointer-events-none");
   });
 });

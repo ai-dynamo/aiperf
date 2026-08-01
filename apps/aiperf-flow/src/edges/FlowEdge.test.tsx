@@ -66,6 +66,23 @@ describe("FlowEdge", () => {
     expect(path.style.stroke).toBe("var(--color-category-blue)");
   });
 
+  it("travels exactly one dash period per iteration so the loop does not stutter", () => {
+    // Animating any distance other than dash+gap leaves the pattern out of phase when the
+    // iteration restarts, and the snap back to offset 0 is visible as a jitter.
+    const { container } = renderEdge();
+    const path = container.querySelector("path.flow-edge__path") as HTMLElement;
+    const [dash, gap] = path.style.strokeDasharray.split(/[\s,]+/).map(Number);
+    const keyframes = container.querySelector("style")?.textContent ?? "";
+
+    const travelled = Number(/stroke-dashoffset:\s*-([\d.]+)/.exec(keyframes)?.[1]);
+    expect(travelled).toBe(dash + gap);
+  });
+
+  it("pins the arrowhead to user-space units so stroke width cannot scale it", () => {
+    const { container } = renderEdge();
+    expect(container.querySelector("marker")?.getAttribute("markerUnits")).toBe("userSpaceOnUse");
+  });
+
   it("carries stroke width as style so the stylesheet cannot override it", () => {
     const { container } = renderEdge();
     const path = container.querySelector("path.flow-edge__path") as HTMLElement;
