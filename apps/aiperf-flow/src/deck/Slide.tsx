@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -71,18 +71,25 @@ export function Slide({ slide }: { slide: SlideDefinition }): React.JSX.Element 
   const revealOrder = slide.revealOrder ?? slide.nodes.map((node) => node.id);
   const revealed = useReveal(revealOrder);
 
-  const nodes = slide.nodes.map((node) => ({
-    ...node,
-    hidden: !revealed.has(node.id),
-  }));
+  // Memoized on the reveal set, not rebuilt per render. The shell re-renders on every
+  // spoken subtitle word; fresh node/edge identities each time made React Flow re-render
+  // its edges, restarting the CSS dash animation from zero several times a second.
+  const nodes = useMemo(
+    () => slide.nodes.map((node) => ({ ...node, hidden: !revealed.has(node.id) })),
+    [slide.nodes, revealed],
+  );
   // Routed from the authored positions, so an edge leaves and enters by whichever of the
   // eight anchors the geometry calls for rather than always right-to-left.
-  const edges = autoRouteEdges(
-    slide.nodes,
-    slide.edges.map((edge) => ({
-      ...edge,
-      hidden: !revealed.has(edge.source) || !revealed.has(edge.target),
-    })),
+  const edges = useMemo(
+    () =>
+      autoRouteEdges(
+        slide.nodes,
+        slide.edges.map((edge) => ({
+          ...edge,
+          hidden: !revealed.has(edge.source) || !revealed.has(edge.target),
+        })),
+      ),
+    [slide.nodes, slide.edges, revealed],
   );
 
   return (

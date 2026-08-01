@@ -88,3 +88,24 @@ body {
   stroke: var(--color-stroke-primary);
   stroke-width: 1.5px;
 }
+
+/* Travelling dashes for `FlowEdge`. Defined once here rather than in a per-edge
+   `<style>` element: a remounted style element restarts the animation from zero, so
+   every edge on screen visibly jumped whenever its component re-rendered.
+   `--flow-edge-travel` is set inline by the component and must equal exactly one dash
+   period, or the pattern lands out of phase at the loop point and reads as a stutter. */
+@keyframes flow-edge-dash {
+  to {
+    stroke-dashoffset: var(--flow-edge-travel, -14px);
+  }
+}
+
+.flow-edge__path {
+  animation: flow-edge-dash var(--flow-edge-duration, 2.2s) linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-edge__path {
+    animation: none;
+  }
+}

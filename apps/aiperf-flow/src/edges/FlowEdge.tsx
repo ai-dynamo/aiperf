@@ -29,10 +29,11 @@ const DASH_LENGTH = 7;
 const DASH_GAP = 7;
 const DASH_PERIOD = DASH_LENGTH + DASH_GAP;
 
+/** One dash period per iteration, so these read as travel speed along the edge. */
 const SPEED_DURATIONS: Record<FlowEdgeSpeed, string> = {
-  slow: "2.4s",
-  normal: "1.2s",
-  fast: "0.6s",
+  slow: "4.5s",
+  normal: "2.8s",
+  fast: "1.6s",
 };
 
 /**
@@ -69,23 +70,6 @@ export function FlowEdge({
 
   return (
     <>
-      <style>
-        {`
-          @keyframes flow-edge-dash {
-            to {
-              stroke-dashoffset: -${DASH_PERIOD};
-            }
-          }
-          .flow-edge__path {
-            animation: flow-edge-dash var(--flow-edge-duration, 1.2s) linear infinite;
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .flow-edge__path {
-              animation: none;
-            }
-          }
-        `}
-      </style>
       <defs>
         {/*
           `markerUnits="userSpaceOnUse"` pins the arrowhead to these dimensions. The SVG
@@ -95,13 +79,13 @@ export function FlowEdge({
         <marker
           id={markerId}
           markerUnits="userSpaceOnUse"
-          markerWidth={9}
-          markerHeight={9}
-          refX={8}
-          refY={4.5}
+          markerWidth={11}
+          markerHeight={11}
+          refX={10}
+          refY={5.5}
           orient="auto-start-reverse"
         >
-          <path d="M0,0.75 L9,4.5 L0,8.25 Z" fill={color} />
+          <path d="M0,1 L11,5.5 L0,10 Z" fill={color} />
         </marker>
       </defs>
       <BaseEdge
@@ -117,6 +101,8 @@ export function FlowEdge({
         style={
           {
             "--flow-edge-duration": duration,
+            // Consumed by the `flow-edge-dash` keyframe in `index.css`; one dash period.
+            "--flow-edge-travel": `-${DASH_PERIOD}px`,
             stroke: color,
             strokeWidth: 2,
             strokeDasharray: `${DASH_LENGTH} ${DASH_GAP}`,

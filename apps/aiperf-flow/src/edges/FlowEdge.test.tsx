@@ -44,11 +44,12 @@ describe("FlowEdge", () => {
     expect(path.style.strokeDasharray).toBeTruthy();
   });
 
-  it("carries a distinctive animation marker class that CSS animates via stroke-dashoffset", () => {
+  it("animates via a class defined in the global stylesheet, not a per-edge style tag", () => {
+    // A per-edge <style> remounts with the component and restarts the animation from
+    // zero, so every edge jumped whenever the deck re-rendered.
     const { container } = renderEdge();
-    const path = container.querySelector("path.flow-edge__path");
-    expect(path?.classList.contains("flow-edge__path")).toBe(true);
-    expect(container.querySelector("style")).not.toBeNull();
+    expect(container.querySelector("path.flow-edge__path")).not.toBeNull();
+    expect(container.querySelector("style")).toBeNull();
   });
 
   // These assert inline style, not the SVG `stroke` attribute. React Flow's stylesheet
@@ -72,9 +73,10 @@ describe("FlowEdge", () => {
     const { container } = renderEdge();
     const path = container.querySelector("path.flow-edge__path") as HTMLElement;
     const [dash, gap] = path.style.strokeDasharray.split(/[\s,]+/).map(Number);
-    const keyframes = container.querySelector("style")?.textContent ?? "";
-
-    const travelled = Number(/stroke-dashoffset:\s*-([\d.]+)/.exec(keyframes)?.[1]);
+    // The keyframe in index.css consumes this; jsdom does not load that stylesheet.
+    const travelled = Number(
+      /-([\d.]+)px/.exec(path.style.getPropertyValue("--flow-edge-travel"))?.[1],
+    );
     expect(travelled).toBe(dash + gap);
   });
 
