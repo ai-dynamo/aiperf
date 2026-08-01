@@ -58,9 +58,10 @@ export function AgentSwimlaneSpike(): React.JSX.Element {
   const [config, setConfig] = useState<AgentSimConfig>(DEFAULT_AGENT_CONFIG);
   const [running, setRunning] = useState(true);
   const [timeScale, setTimeScale] = useState(0.5);
+  const [seed, setSeed] = useState(1);
   const [, forceRender] = useState(0);
 
-  const simRef = useRef<AgentSimState>(createAgentSim());
+  const simRef = useRef<AgentSimState>(createAgentSim(1));
   const configRef = useRef(config);
   configRef.current = config;
   const runningRef = useRef(running);
@@ -151,9 +152,16 @@ export function AgentSwimlaneSpike(): React.JSX.Element {
               Step
             </button>
             <button type="button"
-              onClick={() => { simRef.current = createAgentSim(); laneYRef.current.clear(); }}
+              onClick={() => { simRef.current = createAgentSim(seed); laneYRef.current.clear(); }}
               className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary">
               Restart
+            </button>
+            <button type="button"
+              onClick={() => { const n = seed + 1; setSeed(n);
+                simRef.current = createAgentSim(n); laneYRef.current.clear(); }}
+              title="A different session, equally reproducible"
+              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary tabular-nums">
+              seed {seed}
             </button>
           </div>
 

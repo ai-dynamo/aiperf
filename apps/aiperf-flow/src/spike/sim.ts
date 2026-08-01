@@ -47,6 +47,10 @@ export type SimConfig = {
 };
 
 export type SimState = {
+  /** Fixes every random draw. */
+  seed: number;
+  /** Sim ms accumulated but not yet advanced, carried between frames. */
+  pending: number;
   now: number;
   requests: Request[];
   nextId: number;
@@ -64,8 +68,16 @@ export const DEFAULT_CONFIG: SimConfig = { rate: 3, concurrency: 4, serviceScale
 /** How long the live curve remembers, ms. */
 export const HISTORY_MS = 12_000;
 
-export function createSim(now: number): SimState {
+/**
+ * The sim advances only in whole ticks of this size, so the trajectory does not depend on how
+ * elapsed time was chopped into frames. See `agentSim.ts` for why this matters.
+ */
+export const TICK_MS = 20;
+
+export function createSim(now: number, seed = 1): SimState {
   return {
+    seed,
+    pending: 0,
     now,
     requests: [],
     nextId: 1,
@@ -76,22 +88,22 @@ export function createSim(now: number): SimState {
   };
 }
 
-/** Deterministic-ish jitter so the rig has texture without needing a seeded RNG. */
-function jitter(id: number, salt: number): number {
-  const x = Math.sin(id * 12.9898 + salt * 78.233) * 43758.5453;
+/** Deterministic jitter, seeded so a run is reproducible but a new seed gives a new session. */
+function jitter(seed: number, id: number, salt: number): number {
+  const x = Math.sin(id * 12.9898 + salt * 78.233 + seed * 51.17) * 43758.5453;
   return x - Math.floor(x);
 }
 
-function spawn(id: number, now: number, scale: number): Request {
+function spawn(seed: number, id: number, now: number, scale: number): Request {
   return {
     id,
     stage: "queued",
     enteredAt: now,
     bornAt: now,
-    connectMs: (60 + jitter(id, 1) * 90) * scale,
-    ttftMs: (260 + jitter(id, 2) * 420) * scale,
-    itlMs: (28 + jitter(id, 3) * 34) * scale,
-    tokens: Math.round(18 + jitter(id, 4) * 44),
+    connectMs: (60 + jitter(seed, id, 1) * 90) * scale,
+    ttftMs: (260 + jitter(seed, id, 2) * 420) * scale,
+    itlMs: (28 + jitter(seed, id, 3) * 34) * scale,
+    tokens: Math.round(18 + jitter(seed, id, 4) * 44),
     emitted: 0,
     lastTokenAt: 0,
     doneAt: 0,
@@ -115,6 +127,19 @@ export function queued(requests: readonly Request[]): number {
  * being able to watch it.
  */
 export function step(state: SimState, dtMs: number, config: SimConfig): SimState {
+  let acc = state.pending + Math.max(0, dtMs);
+  let out = state;
+  let budget = 400;
+  while (acc >= TICK_MS && budget-- > 0) {
+    out = tick({ ...out, pending: 0 }, config);
+    acc -= TICK_MS;
+  }
+  return { ...out, pending: acc };
+}
+
+/** One fixed quantum of simulation. Pure: same input, same output, every time. */
+function tick(state: SimState, config: SimConfig): SimState {
+  const dtMs = TICK_MS;
   const now = state.now + dtMs;
   const scale = config.serviceScale;
 
@@ -126,7 +151,7 @@ export function step(state: SimState, dtMs: number, config: SimConfig): SimState
   spawnCredit += (config.rate * dtMs) / 1000;
   while (spawnCredit >= 1) {
     spawnCredit -= 1;
-    requests.push(spawn(nextId, now, scale));
+    requests.push(spawn(state.seed, nextId, now, scale));
     nextId += 1;
   }
 
@@ -172,5 +197,5 @@ export function step(state: SimState, dtMs: number, config: SimConfig): SimState
     { t: now, inFlight: inFlight(requests), queued: queued(requests) },
   ].filter((h) => now - h.t <= HISTORY_MS);
 
-  return { now, requests, nextId, spawnCredit, history, completed, tokensOut };
+  return { seed: state.seed, pending: 0, now, requests, nextId, spawnCredit, history, completed, tokensOut };
 }

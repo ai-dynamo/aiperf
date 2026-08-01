@@ -61,6 +61,10 @@ export type AgentSimConfig = {
 };
 
 export type AgentSimState = {
+  /** Fixes every random draw. Same seed plus same sim time gives the same session, always. */
+  seed: number;
+  /** Sim ms accumulated but not yet advanced, carried between frames. */
+  pending: number;
   now: number;
   agents: Agent[];
   turns: Turn[];
@@ -81,16 +85,29 @@ export const DEFAULT_AGENT_CONFIG: AgentSimConfig = {
 /** How much history the view keeps, in sim ms. */
 export const WINDOW_MS = 14_000;
 
+/**
+ * The sim advances only in whole ticks of this size.
+ *
+ * With a variable timestep the session was not reproducible: a slow frame shifted a turn's
+ * completion, which shifted the live population, which changed a spawn decision, and the whole
+ * run diverged. Measured — the same config gave 6 lanes on one run and 4 on another at the same
+ * elapsed time. Quantising makes state a pure function of (seed, ticks elapsed), which is what
+ * narrating over it later requires.
+ */
+export const TICK_MS = 20;
+
 const SUB_NAMES = ["explore", "research", "code", "review", "search", "verify", "plan", "test"];
 
-/** Deterministic pseudo-random in [0,1) from two integers. No global RNG state to reset. */
-export function rand(a: number, b: number): number {
-  const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+/** Deterministic pseudo-random in [0,1) from a seed and two integers. No global RNG state. */
+export function rand(seed: number, a: number, b: number): number {
+  const x = Math.sin(a * 127.1 + b * 311.7 + seed * 51.17) * 43758.5453;
   return x - Math.floor(x);
 }
 
-export function createAgentSim(): AgentSimState {
+export function createAgentSim(seed = 1): AgentSimState {
   return {
+    seed,
+    pending: 0,
     now: 0,
     agents: [
       {
@@ -122,9 +139,9 @@ function startTurn(state: AgentSimState, agent: Agent, config: AgentSimConfig): 
     startAt: state.now,
     endAt: null,
     firstTokenAt: null,
-    ttftMs: (240 + rand(id, 1) * 380) * s,
-    itlMs: (30 + rand(id, 2) * 30) * s,
-    tokens: Math.round(14 + rand(id, 3) * 30),
+    ttftMs: (240 + rand(state.seed, id, 1) * 380) * s,
+    itlMs: (30 + rand(state.seed, id, 2) * 30) * s,
+    tokens: Math.round(14 + rand(state.seed, id, 3) * 30),
     emitted: 0,
     canSpawn,
     spawnCount: 0,
@@ -143,12 +160,13 @@ export function spawnCountFor(
   depth: number,
   activeCount: number,
   config: AgentSimConfig,
+  seed: number,
 ): number {
   if (!turn.canSpawn) return 0;
   const headroom = Math.max(0, 1 - activeCount / Math.max(1, config.maxActive));
   const chance = config.spawnChance * Math.pow(0.5, depth) * headroom;
-  if (rand(turn.id, 4) >= chance) return 0;
-  return 1 + (rand(turn.id, 5) < 0.35 ? 1 : 0);
+  if (rand(seed, turn.id, 4) >= chance) return 0;
+  return 1 + (rand(seed, turn.id, 5) < 0.35 ? 1 : 0);
 }
 
 /**
@@ -209,12 +227,32 @@ export function laneOrder(agents: readonly Agent[]): Agent[] {
   return out;
 }
 
-/** Advance the session by `dtMs`. */
+/**
+ * Advance the session by `dtMs`, in whole `TICK_MS` quanta.
+ *
+ * Leftover time is carried in `state.pending` rather than applied, so the trajectory does not
+ * depend on how the elapsed time was chopped into frames. Advancing 1000ms in one call and in
+ * fifty calls of 20ms produce identical state.
+ */
 export function stepAgents(
   state: AgentSimState,
   dtMs: number,
   config: AgentSimConfig,
 ): AgentSimState {
+  let acc = state.pending + Math.max(0, dtMs);
+  let out = state;
+  // Bounded so a backgrounded tab returning with a huge delta cannot lock the frame.
+  let budget = 400;
+  while (acc >= TICK_MS && budget-- > 0) {
+    out = tickAgents({ ...out, pending: 0 }, config);
+    acc -= TICK_MS;
+  }
+  return { ...out, pending: acc };
+}
+
+/** One fixed quantum of simulation. Pure: same input, same output, every time. */
+function tickAgents(state: AgentSimState, config: AgentSimConfig): AgentSimState {
+  const dtMs = TICK_MS;
   const now = state.now + dtMs;
   const next: AgentSimState = { ...state, now };
 
@@ -251,10 +289,10 @@ export function stepAgents(
     const agent = agents.find((a) => a.id === turn.agentId);
     if (agent === undefined) continue;
     agent.turnsLeft -= 1;
-    agent.nextTurnAt = now + config.thinkMs * (0.6 + rand(turn.id, 6) * 1.2);
+    agent.nextTurnAt = now + config.thinkMs * (0.6 + rand(state.seed, turn.id, 6) * 1.2);
 
     const activeNow = agents.filter((a) => a.retiredAt === null).length;
-    turn.spawnCount = spawnCountFor(turn, agent.depth, activeNow, config);
+    turn.spawnCount = spawnCountFor(turn, agent.depth, activeNow, config, state.seed);
     for (let i = 0; i < turn.spawnCount; i++) {
       const id = nextAgentId++;
       const name = SUB_NAMES[id % SUB_NAMES.length]!;
@@ -266,8 +304,8 @@ export function stepAgents(
         bornAt: now,
         retiredAt: null,
         // Staggered so siblings do not start in lockstep, which reads as one event not two.
-        nextTurnAt: now + 120 + rand(id, 7) * 420,
-        turnsLeft: 2 + Math.floor(rand(id, 8) * 3),
+        nextTurnAt: now + 120 + rand(state.seed, id, 7) * 420,
+        turnsLeft: 2 + Math.floor(rand(state.seed, id, 8) * 3),
       });
       spawns.push({ parentTurnId: turn.id, childAgentId: id, at: now });
       spawnedTotal += 1;
