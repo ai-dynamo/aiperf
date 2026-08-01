@@ -41,6 +41,8 @@ import { WekaTimingTransformsDeck } from "./decks/weka-timing-transforms/WekaTim
 import { WekaTimingTransformsInteractiveDeck } from "./decks/weka-timing-transforms-interactive/WekaTimingTransformsInteractiveDeck.js";
 import { WekaTrieBuildDeck } from "./decks/weka-trie-build/WekaTrieBuildDeck.js";
 import { Home } from "./routes/Home.js";
+import { LifecycleSpike } from "./spike/LifecycleSpike.js";
+import { AgentSwimlaneSpike } from "./spike/AgentSwimlaneSpike.js";
 
 // Module scope, so the duplicate-id guard in `registerDeck` still means something:
 // this runs once per module load, not once per render. Declarative decks are served
@@ -55,6 +57,8 @@ export function App(): React.JSX.Element {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/spike-lifecycle" element={<LifecycleSpike />} />
+        <Route path="/spike-agents" element={<AgentSwimlaneSpike />} />
         <Route path="/segment-pools" element={<SegmentPoolsDeck />} />
         <Route path="/aiperf-graph-engine" element={<AiperfGraphEngineDeck />} />
         <Route path="/aiperf-metrics-accumulator" element={<AiperfMetricsAccumulatorDeck />} />
