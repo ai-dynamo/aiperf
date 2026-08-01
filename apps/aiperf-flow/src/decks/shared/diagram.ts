@@ -11,6 +11,7 @@
 //! a left-to-right chain.
 
 import type { Edge, Node } from "@xyflow/react";
+import { timelineNodeSize, type TimelineBar, type TimelineGap } from "../../nodes/timelineLayout.js";
 
 /** Grid step. One column clears a card's max width; one row clears its height. */
 export const COL = 300;
@@ -94,6 +95,56 @@ export function band(id: string, title: string, { col, row }: Placed): Node {
     position: { x: col * COL, y: row * ROW - 34 },
     data: { title },
   };
+}
+
+/**
+ * Time-scaled swimlane Gantt — request overlap and clock warp on a shared axis.
+ *
+ * Far wider and taller than a card, so it is sized explicitly rather than left for React Flow to
+ * measure: `Slide` re-fits the view on every reveal tick, and a node whose box arrives late makes
+ * the whole diagram reframe mid-cascade.
+ */
+export function timeline(
+  id: string,
+  opts: {
+    title?: string;
+    lanes: string[];
+    bars: TimelineBar[];
+    gaps?: TimelineGap[];
+    showWarp?: boolean;
+    rawLabel?: string;
+    warpLabel?: string;
+    width?: number;
+  },
+  { col, row }: Placed,
+): Node {
+  const showWarp = opts.showWarp ?? true;
+  const size = timelineNodeSize({
+    lanes: opts.lanes,
+    bars: opts.bars,
+    showWarp,
+    hasTitle: opts.title !== undefined,
+    width: opts.width,
+  });
+  return {
+    id,
+    type: "timeline",
+    position: { x: col * COL, y: row * ROW },
+    style: size,
+    data: { ...opts, showWarp },
+  };
+}
+
+/** Columns a `timeline` of this size spans, for placing neighbours clear of it. */
+export function timelineCols(opts: Parameters<typeof timeline>[1]): number {
+  const { width } = timelineNodeSize({
+    lanes: opts.lanes,
+    bars: opts.bars,
+    showWarp: opts.showWarp ?? true,
+    hasTitle: opts.title !== undefined,
+    width: opts.width,
+  });
+  return Math.ceil(width / COL);
 }
 
 /** Directed connector. Ids derive from the pair; no slide connects a pair twice. */

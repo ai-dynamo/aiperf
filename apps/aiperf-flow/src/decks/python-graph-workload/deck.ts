@@ -10,7 +10,7 @@
 //! `ajc/dynamo-graph-ir` worktree; captions carry file and symbol.
 
 import type { DeckDefinition, SlideDefinition } from "../../deck/types.js";
-import { band, card, chip, fanIn, fanOut, link, note } from "../shared/diagram.js";
+import { band, card, chip, fanIn, fanOut, link, note, timeline } from "../shared/diagram.js";
 
 const SLIDES: readonly SlideDefinition[] = [
   {
@@ -382,8 +382,57 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-n", "n1", "n2", "n3", "b-w", "w1", "w2", "w3", "inv"],
   },
   {
+    id: "warp-timeline",
+    eyebrow: "11 · IDLE WARP",
+    title: "The same trace, on both clocks",
+    lede:
+      "Two 87-second and 10-second dead-air stretches collapse to the 5-second cap. Every bar keeps its width, and sub-A and sub-B still overlap exactly as recorded.",
+    narration:
+      "Here is the warp applied to a real shape rather than described in the abstract. The top block is the recorded clock: one request, then eighty-seven seconds of nothing, then a burst where two subagents run at the same time. The bottom block is what the runtime replays. The two dead-air stretches have collapsed to the five-second cap, so the trace finishes in thirty-five seconds instead of a hundred and twenty-two. Look at what did not change. Every bar is exactly as wide as it was — service time is never compressed. And sub-A and sub-B still overlap, by the same amount, because the warp shifts whole intervals rather than rescaling the axis.",
+    caption:
+      "trie_content.py:193-212 ActiveIdleWarp; cuts built by the running-max-end sweep with cap=5s. Bars are that algorithm's output, not illustrative: m1 90->8, a0 94->12, m2 120->33.",
+    nodes: [
+      timeline(
+        "tl",
+        {
+          title: "Overlapping subagents past a long idle · cap 5s",
+          lanes: ["main", "sub-A", "sub-B"],
+          bars: [
+            { id: "m0", lane: "main", rawStart: 0, rawEnd: 3, warpStart: 0, warpEnd: 3 },
+            { id: "m1", lane: "main", rawStart: 90, rawEnd: 93, warpStart: 8, warpEnd: 11 },
+            { id: "a0", lane: "sub-A", rawStart: 94, rawEnd: 102, warpStart: 12, warpEnd: 20 },
+            { id: "b0", lane: "sub-B", rawStart: 96, rawEnd: 106, warpStart: 14, warpEnd: 24 },
+            { id: "a1", lane: "sub-A", rawStart: 102, rawEnd: 107, warpStart: 20, warpEnd: 25 },
+            { id: "b1", lane: "sub-B", rawStart: 106, rawEnd: 110, warpStart: 24, warpEnd: 28 },
+            { id: "m2", lane: "main", rawStart: 120, rawEnd: 122, warpStart: 33, warpEnd: 35 },
+          ],
+          gaps: [
+            { start: 3, end: 90, idle: 87, capped: true },
+            { start: 93, end: 94, idle: 1, capped: false },
+            { start: 110, end: 120, idle: 10, capped: true },
+          ],
+        },
+        { col: 0, row: 0 },
+      ),
+      note(
+        "keep",
+        "What the warp preserves",
+        "Bar widths (service time) and the overlap between sub-A and sub-B. Whole intervals shift left by a cumulative amount; the axis is never rescaled.",
+        { col: 0, row: 3.1 },
+      ),
+      note(
+        "cut",
+        "What the warp removes",
+        "Only true dead air, measured running-max-end to next start. The 1-second gap sits under the cap and is left alone; the 87 and 10 second gaps are cut to 5.",
+        { col: 1.1, row: 3.1 },
+      ),
+    ],
+    edges: [],
+    revealOrder: ["tl", "keep", "cut"],
+  },
+  {
     id: "clocks",
-    eyebrow: "11 · INTERVAL ORDER",
+    eyebrow: "12 · INTERVAL ORDER",
     title: "Two clocks, two jobs",
     lede:
       "raw_start and raw_end decide who depends on whom. The warped start and end decide how long to wait. Every rule reads one for shape and the other for numbers.",
@@ -417,7 +466,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "candidates",
-    eyebrow: "12 · INTERVAL ORDER",
+    eyebrow: "13 · INTERVAL ORDER",
     title: "Three conjuncts, then async exclusion",
     lede:
       "A is a candidate for B when A ranks earlier, A finished before B started on the raw clock, and A is not inside a fire-and-forget subtree that B sits outside of.",
@@ -454,7 +503,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "frontier",
-    eyebrow: "13 · INTERVAL ORDER",
+    eyebrow: "14 · INTERVAL ORDER",
     title: "Keep only the maximal predecessors",
     lede:
       "Drop c when a later candidate d covers it — but only when the covering edge c to d actually exists.",
@@ -492,7 +541,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "binding",
-    eyebrow: "14 · INTERVAL ORDER",
+    eyebrow: "15 · INTERVAL ORDER",
     title: "One edge carries the delay, the rest wait at zero",
     lede:
       "The latest-ending frontier member carries the warped gap. Every other frontier edge is an AND-join at delay zero. An empty frontier roots the node at START instead.",
@@ -533,7 +582,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "anchors",
-    eyebrow: "15 · INTERVAL ORDER",
+    eyebrow: "16 · INTERVAL ORDER",
     title: "A mid-flight child replaces its whole edge set",
     lede:
       "When a child's recorded start falls inside its causal parent's interval, every interval-order edge is discarded and replaced by one start-anchored edge.",
@@ -569,7 +618,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "addressing",
-    eyebrow: "16 · SEGMENT STORE",
+    eyebrow: "17 · SEGMENT STORE",
     title: "Identity folds in the parent, and the domain",
     lede:
       "Three id functions over blake2b. parent_id is hashed first in all three, so an id encodes its whole ancestor chain. Domain tags keep the three from ever aliasing.",
@@ -605,7 +654,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "layout",
-    eyebrow: "17 · SEGMENT STORE",
+    eyebrow: "18 · SEGMENT STORE",
     title: "Four files, two different index shapes",
     lede:
       "Content is dense and index-addressed: a packed array of offset and size pairs where the handle is the array index. Nodes are sparse and string-keyed, so their index is JSON.",
@@ -643,7 +692,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "reader",
-    eyebrow: "18 · SEGMENT STORE",
+    eyebrow: "19 · SEGMENT STORE",
     title: "Assemble the body straight from mapped pages",
     lede:
       "Each stored segment is already valid JSON, so a request body is built by concatenating memoryview slices — no per-segment parse, no re-encode.",
@@ -680,7 +729,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "builder",
-    eyebrow: "19 · SEGMENT STORE",
+    eyebrow: "20 · SEGMENT STORE",
     title: "Two drains, one store shape, one abort",
     lede:
       "A dynamo trace without max_isl streams through a worker pool; everything else parses eagerly. Both converge on the same store, and both are wrapped in the same cleanup.",
@@ -718,7 +767,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "envelope",
-    eyebrow: "20 · SEGMENT STORE",
+    eyebrow: "21 · SEGMENT STORE",
     title: "What the worker actually reads",
     lede:
       "An envelope is handles plus dispatch overrides plus a stream flag. Optional keys are omitted entirely when unset, so envelopes stay byte-identical across corpora.",
@@ -754,7 +803,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "firing",
-    eyebrow: "21 · THE EXECUTOR",
+    eyebrow: "22 · THE EXECUTOR",
     title: "One task per node, four ways out",
     lede:
       "Every node is an asyncio Task in a TaskGroup. Awaiting inputs, then the firing gate, then dispatch — and four distinct exits, only one of them normal.",
@@ -786,7 +835,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "dualfan",
-    eyebrow: "22 · DUAL FAN-OUT",
+    eyebrow: "23 · DUAL FAN-OUT",
     title: "A node fans out twice, at different moments",
     lede:
       "Start-anchored children launch at the parent's dispatch and run alongside it. Completion children launch after. Two separate adjacency maps keep them apart.",
@@ -819,7 +868,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "lanes",
-    eyebrow: "23 · CONCURRENCY",
+    eyebrow: "24 · CONCURRENCY",
     title: "Lanes with a feedback loop, not a queue",
     lede:
       "A fixed pool of lanes each loop: draw a template, run it, release, draw again. Two terminal conditions, and a bare run must not recycle forever.",
@@ -854,7 +903,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "demux",
-    eyebrow: "24 · RETURNS",
+    eyebrow: "25 · RETURNS",
     title: "One observer, de-multiplexed to a parked Future",
     lede:
       "No queue. A return routes observer to adapter to the Future parked for one correlation id and turn, while first tokens travel a parallel track to an Event.",
