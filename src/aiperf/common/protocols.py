@@ -13,13 +13,14 @@ if TYPE_CHECKING:
     from typing import Any
 
     from aiperf.common.enums import LifecycleState
-    from aiperf.common.models import (
+    from aiperf.common.types import (
+        CommAddressType,
         MessageCallbackMapT,
         MessageOutputT,
         MessageT,
         MessageTypeT,
+        ServiceTypeT,
     )
-    from aiperf.common.types import CommAddressType, ServiceTypeT
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.plugin.enums import CommClientType
 
@@ -259,7 +260,7 @@ class SubClientProtocol(CommunicationClientProtocol, Protocol):
 @runtime_checkable
 class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for the base communication layer.
-    see :class:`aiperf.common.comms.base_comms.BaseCommunication` for more details.
+    see :class:`aiperf.common.base_comms.BaseCommunication` for more details.
     """
 
     def get_address(self, address_type: CommAddressType) -> str: ...

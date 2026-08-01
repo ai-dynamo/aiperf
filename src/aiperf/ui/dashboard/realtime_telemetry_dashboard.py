@@ -302,10 +302,17 @@ class RealtimeTelemetryDashboard(Container, MaximizableWidget):
             status_widget = self.query_one("#telemetry-status")
             status_widget.update(message)
             status_widget.remove_class("hidden")
-            self.all_nodes_view.add_class("hidden")
+            if self.all_nodes_view is not None:
+                self.all_nodes_view.add_class("hidden")
 
     def on_realtime_telemetry_metrics(self, metrics: list[MetricResult]) -> None:
         """Handle GPU telemetry metrics updates."""
+
+        if self.all_nodes_view is None:
+            # Metrics can arrive before compose() runs (or after teardown); the
+            # view is created in compose, so there is nothing to update yet.
+            self.metrics = metrics
+            return
 
         if not self.metrics:
             with suppress(Exception):

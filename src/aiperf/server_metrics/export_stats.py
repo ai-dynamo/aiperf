@@ -139,7 +139,8 @@ def _compute_timeslice_boundaries(
         Tuple of (starts, ends, is_complete) numpy arrays where:
         - starts[i] and ends[i] define the i-th timeslice boundaries
         - is_complete[i] is True if the slice covers the full duration, False for partial
-        Returns None if slice_duration > range duration (no slices fit).
+        Returns None if the range is empty (range_start_ns >= range_end_ns). A
+        slice_duration larger than the range yields a single partial slice.
 
     Example:
         >>> # 10 second range with 3 second slices
@@ -309,7 +310,7 @@ def _compute_counter_stats(
                         are not computed.
 
     Returns:
-        CounterSeriesStats with counter statistics, or None if no data in range
+        CounterSeries with counter statistics, or None if no data in range
     """
     reference_idx = time_series.get_reference_idx(time_filter)
     time_mask = time_series.get_time_mask(time_filter)
@@ -521,7 +522,7 @@ def _compute_gauge_stats(
                         are not computed.
 
     Returns:
-        GaugeSeriesStats with gauge statistics, or None if no data in range
+        GaugeSeries with gauge statistics, or None if no data in range
     """
     time_mask = time_series.get_time_mask(time_filter)
     filtered_values = time_series.values[time_mask]
@@ -635,9 +636,16 @@ def _compute_histogram_timeslices(
         )
         boundary_end_idx = np.searchsorted(timestamps, timeslice_end, side="right") - 1
 
-        # Clip to valid range
-        boundary_start_idx = max(0, min(boundary_start_idx, len(timestamps) - 1))
-        boundary_end_idx = max(0, min(boundary_end_idx, len(timestamps) - 1))
+        # why: a slice starting before the first sample has no baseline snapshot to
+        # subtract. Clipping the start index to 0 would collapse it onto the same
+        # (or a later) sample as the end index and report a delta measured from the
+        # wrong baseline — usually a fabricated zero — for a period with no data.
+        # Skip such slices; this also covers slices entirely before the first sample.
+        if boundary_start_idx < 0:
+            continue
+
+        boundary_start_idx = min(boundary_start_idx, len(timestamps) - 1)
+        boundary_end_idx = min(boundary_end_idx, len(timestamps) - 1)
 
         # Compute deltas
         sum_delta = sums[boundary_end_idx] - sums[boundary_start_idx]
@@ -706,7 +714,7 @@ def _compute_histogram_stats(
                         are not computed.
 
     Returns:
-        HistogramSeriesStats with histogram statistics, or None if no data in range
+        HistogramSeries with histogram statistics, or None if no data in range
     """
     # Return None if time series is empty
     if len(time_series) == 0:

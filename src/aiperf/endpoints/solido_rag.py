@@ -88,14 +88,15 @@ class SolidoEndpoint(BaseEndpoint):
 
     def _extract_solido_response_data(
         self, json_obj: JsonObject
-    ) -> tuple[TextResponseData, RAGSources | None]:
+    ) -> tuple[TextResponseData | None, RAGSources | None]:
         """Extract content from SOLIDO JSON response.
 
         Args:
             json_obj: Deserialized SOLIDO response
 
         Returns:
-            Extracted response data or None if no content
+            ``(data, sources)``; ``data`` is None when the response carries no
+            content, in which case ``sources`` is None as well.
         """
         # SOLIDO responses contain a "content" field with the generated text
         content = json_obj.get("content")

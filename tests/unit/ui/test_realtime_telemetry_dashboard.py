@@ -648,3 +648,16 @@ class TestRealtimeTelemetryDashboard:
 
         assert dashboard.metrics == metrics
         mock_all_nodes.update.assert_called_once_with(metrics)
+
+
+class TestRealtimeTelemetryDashboardBeforeMount:
+    """Metrics can arrive before compose() creates the node view."""
+
+    def test_on_realtime_telemetry_metrics_before_compose_does_not_raise(self):
+        """A metrics message before mount is a no-op rather than an AttributeError."""
+        dashboard = RealtimeTelemetryDashboard(run=Mock())
+        assert dashboard.all_nodes_view is None
+
+        dashboard.on_realtime_telemetry_metrics([])
+
+        assert dashboard.metrics == []

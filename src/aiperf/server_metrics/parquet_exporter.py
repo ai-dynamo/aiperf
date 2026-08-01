@@ -141,7 +141,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             FileExportInfo with export type and file path
 
         Raises:
-            ImportError: If pyarrow is not installed (handled gracefully with warning)
+            RuntimeError: If the file was not created or fails post-write validation
         """
         self.debug("Discovering label keys...")
         all_label_keys = self._discover_all_label_keys()
@@ -483,59 +483,6 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                     )
                     yield from rows
 
-    def _collect_all_rows(
-        self,
-        label_keys: set[str],
-    ) -> list[dict]:
-        """Collect all rows from all endpoints and metrics with delta calculations.
-
-        Uses normalized schema where histogram buckets are separate rows rather than
-        separate columns. This produces smaller files and better SQL ergonomics.
-
-        Uses self._time_filter for time range filtering.
-
-        Args:
-            label_keys: Set of all label keys for column population
-
-        Returns:
-            List of row dictionaries ready for PyArrow table creation
-        """
-        rows = []
-        hierarchy = self._accumulator.get_hierarchy_for_export()
-        for (
-            endpoint_url,
-            time_series_collection,
-        ) in hierarchy.endpoints.items():
-            for metric_key, metric_entry in time_series_collection.metrics.items():
-                metric_type = metric_entry.metric_type
-                labels_dict = metric_key.labels_dict
-
-                if metric_type in (
-                    PrometheusMetricType.GAUGE,
-                    PrometheusMetricType.COUNTER,
-                    PrometheusMetricType.UNKNOWN,
-                ):
-                    rows.extend(
-                        self._collect_scalar_rows(
-                            endpoint_url,
-                            metric_key.name,
-                            metric_entry,
-                            labels_dict,
-                            label_keys,
-                        )
-                    )
-                elif metric_type == PrometheusMetricType.HISTOGRAM:
-                    rows.extend(
-                        self._collect_histogram_rows(
-                            endpoint_url,
-                            metric_key.name,
-                            metric_entry,
-                            labels_dict,
-                            label_keys,
-                        )
-                    )
-        return rows
-
     def _collect_scalar_rows(
         self,
         endpoint: str,
@@ -683,10 +630,18 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             )
             if final_idx is None:
                 return []
-            # Find first index in filter range
-            first_idx = np.searchsorted(
-                time_series.timestamps, self._time_filter.start_ns, side="left"
-            )
+            # Find first index in filter range. A None start bound means "from the
+            # beginning of collection", matching ScalarTimeSeries.get_time_mask.
+            if self._time_filter.start_ns is None:
+                first_idx = 0
+            else:
+                first_idx = int(
+                    np.searchsorted(
+                        time_series.timestamps,
+                        self._time_filter.start_ns,
+                        side="left",
+                    )
+                )
         else:
             reference_idx = None
             first_idx = 0

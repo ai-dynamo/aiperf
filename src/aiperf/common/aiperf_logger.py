@@ -21,6 +21,17 @@ logging.addLevelName(_TRACE, "TRACE")
 logging.addLevelName(_NOTICE, "NOTICE")
 logging.addLevelName(_SUCCESS, "SUCCESS")
 
+_LEVEL_NAME_TO_NUMBER: dict[str, int] = {
+    "TRACE": _TRACE,
+    "DEBUG": _DEBUG,
+    "INFO": _INFO,
+    "NOTICE": _NOTICE,
+    "WARNING": _WARNING,
+    "SUCCESS": _SUCCESS,
+    "ERROR": _ERROR,
+    "CRITICAL": _CRITICAL,
+}
+
 
 class AIPerfLogger:
     """Logger for AIPerf messages with lazy evaluation support for f-strings.
@@ -89,33 +100,25 @@ class AIPerfLogger:
     def is_valid_level(cls, level: int | str) -> bool:
         """Check if the given level is a valid level."""
         if isinstance(level, str):
-            return level in [
-                "TRACE",
-                "DEBUG",
-                "INFO",
-                "NOTICE",
-                "WARNING",
-                "SUCCESS",
-                "ERROR",
-                "CRITICAL",
-            ]
+            return level in _LEVEL_NAME_TO_NUMBER
         else:
-            return level in [
-                _TRACE,
-                _DEBUG,
-                _INFO,
-                _NOTICE,
-                _WARNING,
-                _SUCCESS,
-                _ERROR,
-                _CRITICAL,
-            ]
+            return level in _LEVEL_NAME_TO_NUMBER.values()
 
     @classmethod
     def get_level_number(cls, level: int | str) -> int:
-        """Get the numeric level for the given level."""
+        """Get the numeric level for the given level.
+
+        Raises:
+            ValueError: If the level is a string that is not a known level name.
+        """
         if isinstance(level, str):
-            return getattr(cls, level.upper())
+            try:
+                return _LEVEL_NAME_TO_NUMBER[level.upper()]
+            except KeyError:
+                raise ValueError(
+                    f"Unknown log level name '{level}'. Valid levels: "
+                    f"{', '.join(_LEVEL_NAME_TO_NUMBER)}"
+                ) from None
         else:
             return level
 

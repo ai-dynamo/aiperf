@@ -494,3 +494,25 @@ class TestSampleAndErrorCallbacks:
         error = ErrorDetails.from_exception(ConnectionRefusedError("refused"))
         # Must not raise.
         await manager._on_network_latency_error(error, "localhost:8000")
+
+
+class TestNetworkLatencyManagerDelayedShutdown:
+    """The delayed-shutdown grace period must be owned by this subsystem."""
+
+    @pytest.mark.asyncio
+    async def test_delayed_shutdown_uses_network_latency_shutdown_delay(
+        self, cfg_automatic: CLIConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`_delayed_shutdown` must sleep on AIPERF_NETWORK_LATENCY_SHUTDOWN_DELAY,
+        not on the unrelated server-metrics knob."""
+        monkeypatch.setattr(Environment.NETWORK_LATENCY, "SHUTDOWN_DELAY", 1.5)
+        monkeypatch.setattr(Environment.SERVER_METRICS, "SHUTDOWN_DELAY", 42.0)
+
+        manager = _make_manager(cfg_automatic)
+        manager.stop = AsyncMock()
+
+        sleep_mock = AsyncMock()
+        with patch("aiperf.network_latency.manager.asyncio.sleep", sleep_mock):
+            await manager._delayed_shutdown()
+
+        sleep_mock.assert_awaited_once_with(1.5)

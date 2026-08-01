@@ -1446,3 +1446,32 @@ class TestHistogramWindowGuards:
         )
 
         assert rows == []
+
+
+class TestCollectHistogramRowsOpenStartFilter:
+    """Histogram row collection must tolerate a filter with only ``end_ns`` set,
+    matching the scalar ``get_time_mask`` path's None-bound semantics."""
+
+    def test_collect_histogram_rows_open_start_filter_includes_all_rows_up_to_end(
+        self, mock_cfg: BenchmarkRun
+    ) -> None:
+        hist_ts = build_histogram_time_series(
+            timestamps_ns=[1_000_000_000, 2_000_000_000, 3_000_000_000],
+            sums=[10.0, 20.0, 30.0],
+            counts=[1.0, 2.0, 3.0],
+            bucket_les=("1.0", "+Inf"),
+            bucket_counts=[[1.0, 1.0], [1.0, 2.0], [2.0, 3.0]],
+        )
+        entry = build_metric_entry(PrometheusMetricType.HISTOGRAM, hist_ts)
+        hierarchy = build_hierarchy({"http://test": [("latency", None, entry)]})
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
+
+        time_filter = TimeRangeFilter(start_ns=None, end_ns=2_000_000_000)
+        exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
+
+        rows = exporter._collect_histogram_rows(
+            "http://test", "latency", entry, {}, set()
+        )
+
+        timestamps = sorted({row["timestamp_ns"] for row in rows})
+        assert timestamps == [1_000_000_000, 2_000_000_000]

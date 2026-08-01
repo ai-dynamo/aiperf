@@ -561,3 +561,33 @@ class TestExplicitCustomDatasetType:
             run=make_run(cli_config), tokenizer=mock_tokenizer
         )
         assert composer._explicit_format() is None
+
+
+class TestInferDatasetTypeEmptyFile:
+    """Blank/empty input files must fail with a clear error, not return None."""
+
+    def test_infer_dataset_type_blank_only_file_raises_value_error(
+        self, custom_config, mock_tokenizer, tmp_path
+    ):
+        """A file containing only blank lines has no inferable dataset type."""
+        blank_file = tmp_path / "blank.jsonl"
+        blank_file.write_text("\n   \n\n")
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+
+        with pytest.raises(ValueError, match="no non-empty lines"):
+            composer._infer_dataset_type(str(blank_file))
+
+    def test_infer_dataset_type_empty_file_raises_value_error(
+        self, custom_config, mock_tokenizer, tmp_path
+    ):
+        """A zero-byte file has no inferable dataset type."""
+        empty_file = tmp_path / "empty.jsonl"
+        empty_file.write_text("")
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+
+        with pytest.raises(ValueError, match="no non-empty lines"):
+            composer._infer_dataset_type(str(empty_file))

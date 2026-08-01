@@ -602,7 +602,8 @@ class GpuTelemetryData(AIPerfBaseModel):
         """Add telemetry record as a grouped snapshot.
 
         Args:
-            record: New telemetry data point from DCGM collector
+            record: New telemetry data point from a GPU telemetry collector
+                (DCGM, PyNVML, or AMDSMI)
 
         Note: Groups all metric values from the record into a single snapshot
         """
@@ -686,6 +687,8 @@ class TelemetryHierarchy(AIPerfBaseModel):
                     gpu_index=record.gpu_index,
                     gpu_uuid=record.gpu_uuid,
                     gpu_model_name=record.gpu_model_name,
+                    pci_bus_id=record.pci_bus_id,
+                    device=record.device,
                     hostname=record.hostname,
                     namespace=record.namespace,
                     pod_name=record.pod_name,
@@ -703,7 +706,7 @@ class ProcessTelemetryResult(AIPerfBaseModel):
     maintaining complete separation while following the same architectural patterns.
 
     Note: Uses TelemetryExportData (wire-safe, pre-computed stats) rather than
-    TelemetryResults (internal, contains non-serializable GpuMetricTimeSeries).
+    TelemetryHierarchy (internal, contains non-serializable GpuMetricTimeSeries).
     """
 
     results: TelemetryExportData | None = Field(

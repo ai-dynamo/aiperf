@@ -35,8 +35,8 @@ def _configure_multiprocessing_start_method(using_dashboard: bool) -> None:
     Env override takes precedence for all platforms.
     """
     import multiprocessing
-    import platform
 
+    from aiperf.common.constants import IS_MACOS
     from aiperf.common.environment import Environment
 
     configured_start_method = getattr(
@@ -47,7 +47,7 @@ def _configure_multiprocessing_start_method(using_dashboard: bool) -> None:
             multiprocessing.set_start_method(configured_start_method, force=True)
         return
 
-    if platform.system() == "Darwin" and using_dashboard:
+    if IS_MACOS and using_dashboard:
         with contextlib.suppress(RuntimeError):
             multiprocessing.set_start_method("spawn", force=True)
 
@@ -61,7 +61,7 @@ def _setup_ui_queues(
     Dashboard UI is running on macOS, FD_CLOEXEC is set on terminal
     descriptors to prevent child processes corrupting the parent terminal.
     """
-    import platform
+    from aiperf.common.constants import IS_MACOS
 
     if not using_dashboard:
         from aiperf.common.logging import setup_rich_logging
@@ -73,7 +73,7 @@ def _setup_ui_queues(
 
     log_queue = get_global_log_queue()
 
-    if platform.system() == "Darwin":
+    if IS_MACOS:
         _set_fd_cloexec_on_terminal(logger)
     return log_queue
 

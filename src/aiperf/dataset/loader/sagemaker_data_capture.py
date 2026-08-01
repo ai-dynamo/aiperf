@@ -44,8 +44,8 @@ def _decode_payload(
 
     Handles JSON (raw) and BASE64 encoded payloads. Returns None for
     CSV or unknown encodings. A malformed base64 or inner-JSON payload is
-    re-raised as DatasetLoaderError so one bad record does not abort the
-    whole load (matching the per-record attribution in _parse_trace).
+    re-raised as DatasetLoaderError naming the offending record, aborting the
+    load (matching the per-record attribution in _parse_trace).
     """
     data = capture_entry.get("data")
     if data is None:
@@ -284,6 +284,13 @@ class SageMakerDataCaptureLoader(
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        # This override replaces BaseTraceDatasetLoader.load_dataset (directory
+        # globbing instead of a single JSONL), so it must reset the same
+        # per-load state the base does: delay-cap counters (otherwise a prior
+        # load's counts leak into this load's summary) and the per-file hash_id
+        # scope (reseeds the corpus RNG and clears the prompt block cache).
+        self._delay_cap_tracker.reset()
+        self._init_trace_scope()
 
         if self.inline_records is not None:
             raw_items: list[SageMakerDataCaptureTrace] = []
