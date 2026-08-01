@@ -101,6 +101,9 @@ export function WarpNarratedSpike(): React.JSX.Element {
   // reports a lower index than an already-fired timer. Left unclamped, the playhead would rewind.
   const highWater = useRef(0);
   const shownRef = useRef(0);
+  const lastBeatRef = useRef(0);
+  /** False from a beat change until the word index has actually reset for the new narration. */
+  const wordIndexValidRef = useRef(true);
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -125,15 +128,27 @@ export function WarpNarratedSpike(): React.JSX.Element {
   const from = (BEATS[narrated.index - 1]?.endAt ?? 0) * warpSpan;
   const to = beat.endAt * warpSpan;
   const words = splitWords(beat.narration).length;
-  const within = narrated.activeWordIndex < 0 ? 0 : Math.min(1, narrated.activeWordIndex / Math.max(1, words - 1));
+  // On the render where the beat advances, `activeWordIndex` is still the *previous* narration's
+  // position while the range is already the new beat's. Reading them together produced a target
+  // most of the way through the new beat, which the monotonic clamp then latched — the playhead
+  // lurched forward and then sat frozen until the real target climbed back to it. Ignore the word
+  // index until it has demonstrably reset for this narration.
+  if (lastBeatRef.current !== narrated.index) {
+    lastBeatRef.current = narrated.index;
+    wordIndexValidRef.current = false;
+    highWater.current = narrated.index === 0 ? 0 : from;
+  }
+  if (!wordIndexValidRef.current && narrated.activeWordIndex <= 1) {
+    wordIndexValidRef.current = true;
+  }
+
+  const within =
+    !wordIndexValidRef.current || narrated.activeWordIndex < 0
+      ? 0
+      : Math.min(1, narrated.activeWordIndex / Math.max(1, words - 1));
   const target = from + (to - from) * within;
 
-  if (target > highWater.current) {
-    highWater.current = target;
-  } else if (narrated.index === 0 && narrated.activeWordIndex <= 0) {
-    // A genuine restart, as opposed to a backwards word correction.
-    highWater.current = 0;
-  }
+  if (target > highWater.current) highWater.current = target;
   // Narration sets the target; the frame loop above is what the viewer actually sees.
   const warpedNow = shownRef.current;
   const rawNow = rawTimeFor(warpedNow, warpMap);
