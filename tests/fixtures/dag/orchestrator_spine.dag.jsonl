@@ -1,0 +1,3 @@
+{"session_id":"start","orchestrator":true,"rounds":2,"spawns":["branch-a","branch-b"]}
+{"session_id":"branch-a","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"a-sys"},{"role":"user","content":"a-u0"}],"max_tokens":20},{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"a-u1"}],"max_tokens":20}]}
+{"session_id":"branch-b","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"b-sys"},{"role":"user","content":"b-u0"}],"max_tokens":20}]}

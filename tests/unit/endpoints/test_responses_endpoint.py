@@ -471,16 +471,20 @@ class TestResponsesEndpoint:
         assert len(text_parts) == 2
         assert len(image_parts) == 1
 
-    def test_format_payload_single_text_empty_contents_produces_empty_list(
+    def test_format_payload_single_text_empty_contents_produces_empty_string(
         self, endpoint, model_endpoint
     ):
-        """Single text with empty contents list falls through to multimodal branch."""
+        """Empty contents degrade to ``""``, never ``[]``.
+
+        Servers reject ``content: []`` ("message content parts cannot be
+        empty"), so the multimodal branch falls back to the empty string.
+        """
         turn = Turn(texts=[Text(contents=[])], model="test-model")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert payload["input"][0]["content"] == []
+        assert payload["input"][0]["content"] == ""
 
     def test_format_payload_explicit_role(self, endpoint, model_endpoint):
         """Explicit turn role is used instead of default 'user'."""

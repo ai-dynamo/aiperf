@@ -137,6 +137,8 @@ class TestBranchStatsExport:
             "joins_suppressed": 0,
             "children_truncated": 0,
             "children_delayed": 0,
+            "graphs_admitted": 0,
+            "graphs_completed_to_end": 0,
         }
 
     def test_branch_stats_dict_helper(self):
@@ -157,6 +159,8 @@ class TestBranchStatsExport:
             "joins_suppressed": 0,
             "children_truncated": 0,
             "children_delayed": 0,
+            "graphs_admitted": 0,
+            "graphs_completed_to_end": 0,
         }
 
     def test_branch_stats_roundtrip_through_profile_results(self):
