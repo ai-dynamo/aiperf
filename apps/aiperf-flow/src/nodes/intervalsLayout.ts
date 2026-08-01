@@ -89,7 +89,9 @@ export function layoutIntervals({
   const x = (t: number) => LEFT + t * px;
 
   const gridBottom = TOP + rows.length * (ROW_H + ROW_GAP);
-  const svgWidth = x(maxEnd) + 16;
+  // Ceil: `maxEnd` carries a half-second of headroom, so an integer `px` still lands the raw
+  // width on a half pixel, and that fraction would reach `style.width` through the helper.
+  const svgWidth = Math.ceil(x(maxEnd) + 16);
   const svgHeight = gridBottom + 26;
 
   const gridMax = Math.ceil(maxEnd);

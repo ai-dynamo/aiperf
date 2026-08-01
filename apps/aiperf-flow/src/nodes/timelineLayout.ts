@@ -121,7 +121,8 @@ export function layoutTimeline({
   const warpTop = warpTitleY + 10;
   const axisY = (showWarp ? warpTop + blockHeight : rawBottom) + 14;
 
-  const svgWidth = x(maxEnd) + 24;
+  // Ceil so a trace ending on a fractional second cannot put `style.width` on a half pixel.
+  const svgWidth = Math.ceil(x(maxEnd) + 24);
   const svgHeight = axisY + 22;
 
   const tickStep = maxEnd > 45 ? 15 : maxEnd > 20 ? 10 : 5;

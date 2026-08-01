@@ -65,3 +65,13 @@ describe("layoutIntervals", () => {
     expect(Number.isFinite(height)).toBe(true);
   });
 });
+
+describe("whole-pixel boxes", () => {
+  it("keeps width integral even when a trace ends on a fractional second", () => {
+    const { width } = intervalsNodeSize({
+      rows: [{ id: "P1", label: "resume", start: 7.5, end: 8, role: "blue" }],
+      hasTitle: true,
+    });
+    expect(Number.isInteger(width)).toBe(true);
+  });
+});
