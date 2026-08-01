@@ -17,9 +17,9 @@ const COLUMN_X = 300;
 /**
  * Left-to-right row of cards at a fixed vertical band.
  *
- * `startColumn` indents the row. Cards use left/right handles, so an edge into a row
- * that starts further left than its source has to hook back around; indenting the
- * lower band so the target sits under its source keeps that hop a short vertical curve.
+ * `startColumn` indents the row, so a band sits under whichever card feeds it. Edge
+ * anchors are chosen from these positions (`autoRouteEdges`), so alignment decides
+ * routing: a target directly beneath its source gets a clean vertical hop.
  */
 function row(
   y: number,

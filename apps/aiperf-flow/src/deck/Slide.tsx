@@ -16,6 +16,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../nodes/nodeTypes.js";
 import { edgeTypes } from "../edges/edgeTypes.js";
+import { autoRouteEdges } from "../nodes/anchors.js";
 import { useReveal } from "../reveal/useReveal.js";
 import clsx from "clsx";
 import { Eyebrow } from "../prose/Eyebrow.js";
@@ -74,10 +75,15 @@ export function Slide({ slide }: { slide: SlideDefinition }): React.JSX.Element 
     ...node,
     hidden: !revealed.has(node.id),
   }));
-  const edges = slide.edges.map((edge) => ({
-    ...edge,
-    hidden: !revealed.has(edge.source) || !revealed.has(edge.target),
-  }));
+  // Routed from the authored positions, so an edge leaves and enters by whichever of the
+  // eight anchors the geometry calls for rather than always right-to-left.
+  const edges = autoRouteEdges(
+    slide.nodes,
+    slide.edges.map((edge) => ({
+      ...edge,
+      hidden: !revealed.has(edge.source) || !revealed.has(edge.target),
+    })),
+  );
 
   return (
     <div className="flex h-full flex-col">

@@ -13,10 +13,12 @@
 //! nodes' authored `position` hints (the app-wide fix for smooshed boxes / doubled-back edges).
 //! Omit it (`"off"`) to keep the legacy manual-position behavior unchanged.
 
+import { useMemo } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { Background, BackgroundVariant, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../nodes/nodeTypes.js";
+import { autoRouteEdges } from "../nodes/anchors.js";
 import { edgeTypes } from "../edges/edgeTypes.js";
 import { useElkLayout } from "../layout/graph/index.js";
 import type { ElkOptions } from "../layout/graph/index.js";
@@ -62,12 +64,14 @@ function AutoLaidCanvas({
   fitViewPadding: number;
 }): React.JSX.Element {
   const { nodes, laidOut } = useElkLayout(inputNodes, edges, layout);
+  // See `AutoLayoutFlow`: anchors are chosen from post-layout coordinates.
+  const routedEdges = useMemo(() => autoRouteEdges(nodes, edges), [nodes, edges]);
   return (
     <ReactFlow
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       nodes={nodes}
-      edges={edges}
+      edges={routedEdges}
       fitView
       fitViewOptions={{ padding: fitViewPadding, maxZoom: 1 }}
       minZoom={0.5}
@@ -108,7 +112,7 @@ export function PipelineCanvas({
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             nodes={nodes}
-            edges={edges}
+            edges={autoRouteEdges(nodes, edges)}
             fitView
             fitViewOptions={{ padding: fitViewPadding }}
             nodesDraggable={false}

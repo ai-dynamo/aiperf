@@ -11,8 +11,10 @@
 
 import { Background, BackgroundVariant, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { useMemo } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
+import { autoRouteEdges } from "../../nodes/anchors.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
 import { useElkLayout } from "./useElkLayout.js";
 import type { ElkOptions } from "./elkEngine.js";
@@ -38,12 +40,15 @@ function AutoLayoutInner({
   children,
 }: Pick<AutoLayoutFlowProps, "nodes" | "edges" | "layout" | "onNodeClick" | "children">): React.JSX.Element {
   const { nodes, laidOut } = useElkLayout(inputNodes, edges, layout ?? {});
+  // Routed against post-layout coordinates: ELK decides where nodes land, so which side
+  // of a node an edge should leave by is only knowable after it has run.
+  const routedEdges = useMemo(() => autoRouteEdges(nodes, edges), [nodes, edges]);
   return (
     <ReactFlow
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       nodes={nodes}
-      edges={edges}
+      edges={routedEdges}
       fitView
       fitViewOptions={{ padding: 0.16, maxZoom: 1 }}
       minZoom={0.5}

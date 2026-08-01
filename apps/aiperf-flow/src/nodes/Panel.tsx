@@ -4,14 +4,12 @@
  */
 
 import type { NodeProps, Node } from "@xyflow/react";
-import { Handle, Position } from "@xyflow/react";
 import clsx from "clsx";
 import { surfaceClassName, inkClassName } from "../theme/tokens.js";
+import { NodeAnchorHandles } from "./anchors.js";
 import type { PanelNodeData } from "./types.js";
 
 export type PanelNodeType = Node<PanelNodeData, "panel">;
-
-const HANDLE_CLASS_NAME = "!rounded-full !border-stroke-primary !bg-accent-primary !h-2 !w-2";
 
 const ACCENT = "var(--accent, var(--color-accent-primary))";
 
@@ -28,7 +26,6 @@ export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element
         data.className,
       )}
     >
-      <Handle type="target" position={Position.Left} className={HANDLE_CLASS_NAME} />
       <div className="flex items-center gap-2.5">
         <span
           className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
@@ -43,7 +40,7 @@ export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element
       {data.detail !== undefined && (
         <div className={`mt-1.5 text-xs break-words ${inkClassName("secondary")}`}>{data.detail}</div>
       )}
-      <Handle type="source" position={Position.Right} className={HANDLE_CLASS_NAME} />
+      <NodeAnchorHandles />
     </div>
   );
 }
