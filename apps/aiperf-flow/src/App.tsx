@@ -44,6 +44,7 @@ import { Home } from "./routes/Home.js";
 import { LifecycleSpike } from "./spike/LifecycleSpike.js";
 import { AgentSwimlaneSpike } from "./spike/AgentSwimlaneSpike.js";
 import { WarpSpike } from "./spike/WarpSpike.js";
+import { WarpNarratedSpike } from "./spike/WarpNarratedSpike.js";
 
 // Module scope, so the duplicate-id guard in `registerDeck` still means something:
 // this runs once per module load, not once per render. Declarative decks are served
@@ -61,6 +62,7 @@ export function App(): React.JSX.Element {
         <Route path="/spike-lifecycle" element={<LifecycleSpike />} />
         <Route path="/spike-agents" element={<AgentSwimlaneSpike />} />
         <Route path="/spike-warp" element={<WarpSpike />} />
+        <Route path="/spike-warp-narrated" element={<WarpNarratedSpike />} />
         <Route path="/segment-pools" element={<SegmentPoolsDeck />} />
         <Route path="/aiperf-graph-engine" element={<AiperfGraphEngineDeck />} />
         <Route path="/aiperf-metrics-accumulator" element={<AiperfMetricsAccumulatorDeck />} />
