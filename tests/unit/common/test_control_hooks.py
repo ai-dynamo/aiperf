@@ -345,11 +345,14 @@ async def test_start_server_profiler_cancellation_stops_started_then_reraises() 
         if url == "http://b:8000/start_profile":
             raise asyncio.CancelledError
 
-    with patch(
-        "aiperf.common.control_hooks.control_plane_post",
-        new_callable=AsyncMock,
-        side_effect=post_side_effect,
-    ) as post, pytest.raises(asyncio.CancelledError):
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=post_side_effect,
+        ) as post,
+        pytest.raises(asyncio.CancelledError),
+    ):
         await start_server_profiler(hooks, headers)
 
     # The one successful start must still be rolled back despite cancellation.
@@ -378,11 +381,14 @@ async def test_stop_server_profiler_cancellation_still_stops_remaining_origins()
         if url == "http://a:8000/stop_profile":
             raise asyncio.CancelledError
 
-    with patch(
-        "aiperf.common.control_hooks.control_plane_post",
-        new_callable=AsyncMock,
-        side_effect=post_side_effect,
-    ) as post, pytest.raises(asyncio.CancelledError):
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=post_side_effect,
+        ) as post,
+        pytest.raises(asyncio.CancelledError),
+    ):
         await stop_server_profiler(hooks, headers)
 
     assert [c.kwargs["url"] for c in post.await_args_list] == [
