@@ -71,7 +71,7 @@ A snapshot of the adaptive-search configuration fields that the v1 writer persis
       {"metric": "time_to_first_token", "stat": "p99", "direction": "MINIMIZE", "threshold": 250.0}
     ],
     "outcome_constraints": [
-      {"metric": "request_error_rate", "op": "<=", "bound": 0.01}
+      {"metric": "request_error_rate", "op": "<=", "bound": 1.0}
     ],
     "max_iterations": 30,
     "n_initial_points": 5,
@@ -102,7 +102,7 @@ A snapshot of the adaptive-search configuration fields that the v1 writer persis
 | `outcome_constraints` | array&lt;object&gt; | yes | Feasibility gates on metrics the optimizer is **not** optimizing. Empty list = no constraints. Distinct from `objectives[].threshold` (Pareto reference point) and from `sla_filters` (post-hoc benchmark eligibility): outcome constraints down-weight infeasible candidates inside BoTorch's acquisition function. |
 | `outcome_constraints[].metric` | string | yes | Metric tag to constrain. |
 | `outcome_constraints[].op` | string | yes | Comparison operator. One of `"<="`, `">="`, `"=="`. **Distinct from `sla_filters[].op`**, which uses the lowercase mnemonics `lt`/`le`/`gt`/`ge` — outcome constraints feed BoTorch's acquisition mask, SLA filters feed post-hoc feasibility ranking. |
-| `outcome_constraints[].bound` | float | yes | Threshold value. |
+| `outcome_constraints[].bound` | float | yes | Threshold in the constrained metric's native unit. For `request_error_rate`, `1.0` means 1%. |
 | `max_iterations` | int | yes | Iteration budget. The loop also stops earlier on convergence. |
 | `n_initial_points` | int | yes | Sobol-random points before BoTorch fits the GP. Validator enforces `n_initial_points < max_iterations` for `bayesian` and `optuna` planners only; `monotonic_sla` / `smooth_isotonic` planners drive their own probe sequence and ignore this field. |
 | `random_seed` | int \| null | yes | Reproducibility seed passed to the planner backend. `null` when the run was unseeded. |
