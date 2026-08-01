@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -467,6 +467,7 @@ class TestWarmupSystemMessage:
             Worker._system_message_for_phase(
                 system_message="existing system",
                 phase=CreditPhase.PROFILING,
+                cache_bust_target=None,
             )
             == "existing system"
         )
@@ -476,6 +477,7 @@ class TestWarmupSystemMessage:
             Worker._system_message_for_phase(
                 system_message=None,
                 phase=CreditPhase.WARMUP,
+                cache_bust_target=None,
             )
             == "warmup"
         )
@@ -485,8 +487,64 @@ class TestWarmupSystemMessage:
             Worker._system_message_for_phase(
                 system_message="existing system",
                 phase=CreditPhase.WARMUP,
+                cache_bust_target=None,
             )
             == "warmup\nexisting system"
+        )
+
+    def test_warmup_prefixes_when_cache_bust_target_none_enum(self):
+        """``CacheBustTarget.NONE`` is cache-bust-disabled, so the prefix applies."""
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.WARMUP,
+                cache_bust_target=CacheBustTarget.NONE,
+            )
+            == "warmup\nexisting system"
+        )
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            param(CacheBustTarget.SYSTEM_PREFIX, id="system_prefix"),
+            param(CacheBustTarget.SYSTEM_SUFFIX, id="system_suffix"),
+            param(CacheBustTarget.FIRST_TURN_PREFIX, id="first_turn_prefix"),
+            param(CacheBustTarget.FIRST_TURN_SUFFIX, id="first_turn_suffix"),
+        ],
+    )  # fmt: skip
+    def test_warmup_skips_prefix_when_cache_bust_active(self, target):
+        """Cache-bust markers are warmup-coherent: warmup primes the prefix
+        profiling hits, so prefixing in front of the shared marker would break
+        the prime. Every non-NONE target already isolates per trajectory tree.
+        """
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.WARMUP,
+                cache_bust_target=target,
+            )
+            == "existing system"
+        )
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            param(CacheBustTarget.SYSTEM_PREFIX, id="system_prefix"),
+            param(CacheBustTarget.FIRST_TURN_PREFIX, id="first_turn_prefix"),
+        ],
+    )  # fmt: skip
+    def test_warmup_leaves_system_message_none_when_cache_bust_active(self, target):
+        """No synthetic system message is invented under cache-bust — a
+        warmup-only ``system`` role would diverge the message array from
+        profiling's even before content is compared.
+        """
+        assert (
+            Worker._system_message_for_phase(
+                system_message=None,
+                phase=CreditPhase.WARMUP,
+                cache_bust_target=target,
+            )
+            is None
         )
 
 
@@ -1066,3 +1124,40 @@ class TestMakeFirstTokenCallback:
         assert sent.credit_id == sample_credit_context.credit.id
         assert sent.phase_index == sample_credit_context.credit.phase_index
         assert sent.ttft_ns == 50_000_000
+
+
+# --- no_request (orchestrator) Credit Tests ---
+
+
+@pytest.mark.asyncio
+class TestNoRequestCredit:
+    """Worker short-circuits no_request credits without an HTTP POST."""
+
+    async def test_no_request_credit_skips_send_request_but_returns_credit(
+        self, mock_worker
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=42,
+                phase=CreditPhase.PROFILING,
+                conversation_id="orch-conv",
+                x_correlation_id="orch-corr",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=1000000,
+                no_request=True,
+            ),
+            drop_perf_ns=2000000,
+        )
+        mock_worker.inference_client.send_request = AsyncMock()
+        mock_worker.credit_return_push_client.send = AsyncMock()
+
+        await mock_worker._on_credit_drop_message_task(credit_context)
+
+        mock_worker.inference_client.send_request.assert_not_called()
+        mock_worker.credit_return_push_client.send.assert_awaited_once()
+        credit_return = mock_worker.credit_return_push_client.send.call_args.args[0]
+        assert credit_return.cancelled is False
+        assert credit_return.error is None
+        assert credit_return.first_token_sent is False
+        assert credit_return.credit.id == 42

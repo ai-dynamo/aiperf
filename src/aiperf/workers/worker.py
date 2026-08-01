@@ -250,6 +250,45 @@ def _inject_marker_into_first_user_turn(
             return
 
 
+def _find_effective_raw_system(turn_list: list[Turn]) -> list[dict] | None:
+    """Return the ``raw_system`` block list the endpoint will actually send.
+
+    Mirrors ``base_endpoint._latest_turn_attr``: walks ``turn_list`` from the
+    end and returns the first non-None ``raw_system``. Only ``MessagesEndpoint``
+    reads this field, and there it OUTRANKS both the conversation-level
+    ``system_message`` string and any system-role ``raw_messages`` entry — so a
+    ``SYSTEM_*`` marker written to either of those would be silently dropped
+    from the wire whenever a turn carries ``raw_system``.
+    """
+    for turn in reversed(turn_list):
+        if turn.raw_system is not None:
+            return turn.raw_system
+    return None
+
+
+def _inject_marker_into_raw_system(
+    raw_system: list[dict], marker: str, *, is_prefix: bool
+) -> None:
+    """Insert the marker as a text block at the edge of a ``raw_system`` list.
+
+    ``raw_system`` is a list of vendor content blocks (not role/content
+    messages), so the marker becomes its own ``{"type": "text", ...}`` block
+    rather than being spliced into an existing block's text — that leaves any
+    neighbouring block's ``cache_control`` breakpoint attached to the same
+    bytes it was authored against. Idempotent via
+    :func:`_content_has_marker_at_edge`.
+    """
+    if not marker:
+        return
+    if _content_has_marker_at_edge(raw_system, marker, is_prefix=is_prefix):
+        return
+    marker_block = {"type": "text", "text": marker.strip()}
+    if is_prefix:
+        raw_system.insert(0, marker_block)
+    else:
+        raw_system.append(marker_block)
+
+
 def _find_first_system_message(turn_list: list[Turn]) -> list[dict] | None:
     """Return the raw_messages list whose first dict has ``role == "system"``, or None.
 
@@ -399,6 +438,7 @@ def _apply_cache_bust(
     if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
         return _apply_system_target_cache_bust(
             prefix_turns,
+            all_turns=session.turn_list,
             system_message=system_message,
             marker=marker,
             target=target,
@@ -416,6 +456,7 @@ def _apply_cache_bust(
 def _apply_system_target_cache_bust(
     prefix_turns: list[Turn],
     *,
+    all_turns: list[Turn],
     system_message: str | None,
     marker: str,
     target: CacheBustTarget,
@@ -424,20 +465,30 @@ def _apply_system_target_cache_bust(
     """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` marker for one credit.
 
     ``prefix_turns`` is the effective wire prefix slice (see
-    :func:`_effective_prefix_turns`). Three sub-paths:
-      1. Conversation-level ``system_message`` present: marker applied every
+    :func:`_effective_prefix_turns`). Four sub-paths, ordered to match how the
+    endpoint resolves the system field on the wire — marking a lower-precedence
+    carrier would leave the bytes that actually ship unchanged:
+      1. ``raw_system`` present on any turn: it outranks both ``system_message``
+         and system-role ``raw_messages`` in ``MessagesEndpoint``, so the marker
+         goes there. Resolved over ``all_turns`` (not the prefix slice) because
+         ``_latest_turn_attr`` ignores ``reset_context``.
+      2. Conversation-level ``system_message`` present: marker applied every
          turn (string mutation re-applied per credit). Unaffected by
          ``reset_context`` — the ``system_message`` rides on ``RequestInfo`` and
          is re-emitted every turn independent of ``build_messages``' reset.
-      2. ``raw_messages`` first dict has ``role=="system"``: marker injected
+      3. ``raw_messages`` first dict has ``role=="system"``: marker injected
          into the first system message of the prefix slice.
-      3. No system in the slice -> first-user-turn fallback: marker injected
+      4. No system anywhere -> first-user-turn fallback: marker injected
          into the first user turn every credit (idempotent), matching
          ``FIRST_TURN_*`` semantics so a seeded mid-trajectory resume still
          marks the prefix.
 
     Returns the (possibly modified) ``system_message``.
     """
+    raw_system_blocks = _find_effective_raw_system(all_turns)
+    if raw_system_blocks is not None:
+        _inject_marker_into_raw_system(raw_system_blocks, marker, is_prefix=is_prefix)
+        return system_message
     if system_message is not None:
         return _apply_cache_bust_to_system_message(system_message, marker, target)
     raw_system = _find_first_system_message(prefix_turns)
@@ -461,7 +512,7 @@ def _effective_prefix_turns(session: UserSession) -> list[Turn]:
     """
     turns = session.turn_list
     for i in range(len(turns) - 1, -1, -1):
-        if turns[i].reset_context and turns[i].raw_messages:
+        if turns[i].reset_context and turns[i].raw_messages is not None:
             return turns[i:]
     return turns
 
@@ -816,6 +867,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         try:
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
+            # Defensive: no_request credits are normally short-circuited at the
+            # router and never reach a worker; this guarantees no HTTP even if one
+            # ever arrives here. The finally block emits a normal CreditReturn.
+            if credit_context.credit.no_request:
+                return
             await self._process_credit(credit_context)
         except Exception as e:
             self.exception(
@@ -836,7 +892,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # done callback would return the credit as completed anyway (no
             # record emitted) -- the exact lockstep break this guards against.
             # Contain the failure and always proceed to return the credit.
-            if not credit_context.cancelled and not credit_context.record_emitted:
+            #
+            # A no_request virtual orchestrator credit legitimately produces no
+            # record (it sends no HTTP request) and is excluded from the billable
+            # request count, so — like a cancelled credit — it must be exempt from
+            # the lockstep failure-record emit, else it returns with a spurious
+            # error and the records barrier waits for a record that never comes.
+            if (
+                not credit_context.cancelled
+                and not credit_context.record_emitted
+                and not credit_context.credit.no_request
+            ):
                 try:
                     await self._emit_credit_failure_record(credit_context)
                 except Exception as e:
@@ -1034,6 +1100,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self._system_message_for_phase(
                 system_message=session.conversation.system_message,
                 phase=credit.phase,
+                cache_bust_target=credit.cache_bust_target
+                if credit.cache_bust_marker is not None
+                else None,
             ),
         )
         self._maybe_warn_cache_bust_silent_drop(session, credit)
@@ -1337,9 +1406,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @staticmethod
     def _system_message_for_phase(
-        *, system_message: str | None, phase: CreditPhase
+        *,
+        system_message: str | None,
+        phase: CreditPhase,
+        cache_bust_target: CacheBustTarget | None,
     ) -> str | None:
+        """Prefix warmup system messages so warmup cannot reuse profiling's
+        prefix cache — unless cache-bust already owns prefix isolation.
+
+        Cache-bust is deliberately warmup-coherent: ``build_cache_bust_marker``
+        keeps the phase out of its digest and the marker ledger survives the
+        WARMUP -> PROFILING boundary, so a trajectory's warmup turn ``k_i`` and
+        its first profiling turn ``k_i+1`` share one marker and warmup PRIMES
+        the cache profiling then hits. Injecting this prefix in front of that
+        shared marker diverges the two prefixes at token 0, so warmup primes an
+        entry profiling never touches — the round-trip is spent for nothing.
+
+        Any non-NONE target already guarantees warmup cannot collide with
+        another trajectory's prefix (the marker digests per trajectory tree), so
+        standing down here costs no isolation.
+        """
         if phase != CreditPhase.WARMUP:
+            return system_message
+        if cache_bust_target not in (None, CacheBustTarget.NONE):
             return system_message
         if not system_message:
             return WARMUP_SYSTEM_MESSAGE_PREFIX

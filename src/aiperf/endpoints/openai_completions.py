@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -39,7 +39,13 @@ class CompletionsEndpoint(BaseEndpoint):
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
-        if request_info.credit_phase == CreditPhase.WARMUP:
+        # Skipped when cache-bust owns prefix isolation: its markers are
+        # warmup-coherent by design (warmup primes the prefix profiling hits),
+        # and prefixing in front of the shared marker would break that prime.
+        # See ``Worker._system_message_for_phase``.
+        if request_info.credit_phase == CreditPhase.WARMUP and (
+            request_info.cache_bust_target in (None, CacheBustTarget.NONE)
+        ):
             prompts = [
                 f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{prompt}" for prompt in prompts
             ]

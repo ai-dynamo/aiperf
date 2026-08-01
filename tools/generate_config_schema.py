@@ -33,8 +33,9 @@ Output:
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
+
+import orjson
 
 from tools._core import (
     GeneratedFile,
@@ -278,7 +279,7 @@ class ConfigSchemaGenerator(Generator):
             )
 
         # Serialize with proper formatting
-        content = json.dumps(enhanced_schema, indent=2, ensure_ascii=False) + "\n"
+        content = orjson.dumps(enhanced_schema).decode("utf-8") + "\n"
 
         if self.verbose:
             print_step(f"Schema size: {len(content):,} bytes")
@@ -1340,6 +1341,12 @@ class ConfigSchemaGenerator(Generator):
                 },
             ],
         )
+
+        # Endpoint control hooks accept `false | true | {object}` via
+        # parse_enabled_or_config(); Pydantic only emits the object|null forms.
+        endpoint_props = defs.get("EndpointConfig", {}).get("properties", {})
+        for hook_field in ("resetKvCache", "serverProfiler"):
+            self._extend_any_of(endpoint_props.get(hook_field), [{"type": "boolean"}])
 
         video_audio_props = defs.get("VideoAudioConfig", {}).get("properties", {})
         depth_schema = video_audio_props.get("depth")

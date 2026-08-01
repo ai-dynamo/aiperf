@@ -147,6 +147,8 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Adaptive Scale](docs/tutorials/adaptive-scale.md) - Single-run SLA boundary discovery and sustain
 - [Gradual Ramping](docs/tutorials/ramping.md) - Smooth ramp-up of concurrency and request rate
 - [Warmup Phase](docs/tutorials/warmup.md) - Eliminate cold-start effects
+- [Benchmark Control Hooks](docs/tutorials/benchmark-control-hooks.md) - KV-cache reset and server profiler around profiling phases
+- [Control Hooks by Server](docs/tutorials/control-hooks-by-server.md) - vLLM, SGLang, and TensorRT-LLM path mappings
 - [User-Centric Timing](docs/tutorials/user-centric-timing.md) - Per-user rate limiting for KV cache benchmarking
 - [Request Cancellation](docs/tutorials/request-cancellation.md) - Timeout and resilience testing
 - [Multi-URL Load Balancing](docs/tutorials/multi-url-load-balancing.md) - Distribute across servers
