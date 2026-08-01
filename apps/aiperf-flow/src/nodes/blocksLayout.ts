@@ -21,10 +21,12 @@ export const CELL_GAP = 2;
 
 const PAD_X = 16;
 const PAD_Y = 14;
+/** Title `<div>`: `text-sm` line-height (20px) plus its `mb-2` gap (8px). */
 const TITLE_H = 28;
 const STRIP_LABEL_H = 16;
 const STRIP_GAP = 10;
 const LABEL_GAP = 4;
+/** The 1px `border` on each side of the node chrome. */
 const BORDER = 2;
 /** Roughly two lines of the 12px detail text, plus its top margin. */
 const DETAIL_H = 40;

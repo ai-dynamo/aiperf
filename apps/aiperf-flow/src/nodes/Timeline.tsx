@@ -106,7 +106,10 @@ export function TimelineNode({ data }: NodeProps<TimelineNodeType>): React.JSX.E
           {title}
         </div>
       )}
+      {/* `block` drops the inline baseline strut: an inline <svg> reserves descender space
+          below it, making the rendered box ~3px taller than the declared *NodeSize() height. */}
       <svg
+        className="block"
         width={layout.svgWidth}
         height={layout.svgHeight}
         role="img"

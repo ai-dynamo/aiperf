@@ -14,7 +14,9 @@ const AXIS_GAP = 6;
 const AXIS_LABEL_H = 40;
 const PAD_X = 16;
 const PAD_Y = 14;
+/** Title `<div>`: `text-sm` line-height (20px) plus its `mb-1.5` gap (6px). */
 const TITLE_H = 26;
+/** The 1px `border` on each side of the node chrome. */
 const BORDER = 2;
 
 export const DEFAULT_SLICES_WIDTH = 760;

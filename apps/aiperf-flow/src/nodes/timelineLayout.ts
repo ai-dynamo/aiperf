@@ -57,7 +57,9 @@ const LANE_GAP = 6;
 /** Matches the `px-4 py-3.5` chrome `Card`/`Panel` use, so a timeline sits flush beside them. */
 const PAD_X = 16;
 const PAD_Y = 14;
+/** Title `<div>`: `text-sm` line-height (20px) plus its `mb-1.5` gap (6px). */
 const TITLE_H = 26;
+/** The 1px `border` on each side of the node chrome. */
 const BORDER = 2;
 
 /** Default drawing width before the per-second scale is clamped. */
