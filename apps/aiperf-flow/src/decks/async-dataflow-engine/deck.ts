@@ -151,8 +151,8 @@ const SLIDES: readonly SlideDefinition[] = [
 
       band("b-c", "THREE LEVELS DEEP", { col: 0, row: 3.1 }),
       card("g1", "root output", "splice 1", "done", { col: 0, row: 3.1 }),
-      card("g2", "child output", "splice 2", "done", { col: 1.15, row: 3.1 }),
-      card("g3", "grandchild items", "both, ancestor order", "data", { col: 2.4, row: 3.1 }),
+      card("g2", "child output", "splice 2", "done", { col: 0, row: 4.1 }),
+      card("g3", "grandchild items", "both, ancestor order", "data", { col: 1.5, row: 3.6 }),
 
       note(
         "bg",
@@ -180,8 +180,8 @@ const SLIDES: readonly SlideDefinition[] = [
     caption:
       "lowering.rs:658-684 SpawnJoin arm; :723-727 hardcodes Count::N(1); terminal channel from :422. Doc at :12 — 'the channel store owns fan-in and cannot satisfy early'.",
     nodes: [
-      band("b-au", "AUTHORED", { col: 0, row: 1 }),
-      card("auth", "spawns", "children: [a, b, c], join_at: 2", "muted", { col: 0, row: 1 }),
+      band("b-au", "AUTHORED", { col: 2.35, row: -1.2 }),
+      card("auth", "spawns", "children: [a, b, c], join_at: 2", "muted", { col: 2.35, row: -1.2 }),
 
       band("b-t", "CHILD TERMINAL CHANNELS", { col: 1.3, row: 0 }),
       card("ca", "child a terminal", "reply_0000000a", "done", { col: 1.3, row: 0 }),
