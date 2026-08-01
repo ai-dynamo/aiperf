@@ -30,8 +30,8 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.control_hooks import (
     ResetKvCacheConfig,
     ServerProfilerConfig,
-    _require_relative_path,
     parse_enabled_or_config,
+    require_relative_path,
 )
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
@@ -596,14 +596,14 @@ class EndpointConfig(BaseConfig):
     @model_validator(mode="after")
     def _validate_control_hook_paths(self) -> Self:
         if self.reset_kv_cache is not None:
-            self.reset_kv_cache.path = _require_relative_path(
+            self.reset_kv_cache.path = require_relative_path(
                 self.reset_kv_cache.path, "endpoint.reset_kv_cache.path"
             )
         if self.server_profiler is not None:
-            self.server_profiler.start_path = _require_relative_path(
+            self.server_profiler.start_path = require_relative_path(
                 self.server_profiler.start_path, "endpoint.server_profiler.start_path"
             )
-            self.server_profiler.stop_path = _require_relative_path(
+            self.server_profiler.stop_path = require_relative_path(
                 self.server_profiler.stop_path, "endpoint.server_profiler.stop_path"
             )
         return self

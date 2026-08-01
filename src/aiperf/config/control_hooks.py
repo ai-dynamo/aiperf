@@ -68,7 +68,12 @@ class ServerProfilerConfig(BaseConfig):
     ] = None
 
 
-def _require_relative_path(path: str | None, field_name: str) -> str | None:
+def require_relative_path(path: str | None, field_name: str) -> str | None:
+    """Validate a control-hook path is relative and leading-slash, or None.
+
+    Absolute URLs are rejected so hook paths always resolve against the
+    endpoint's own origin rather than redirecting control traffic elsewhere.
+    """
     if path is None:
         return None
     if "://" in path or not path.startswith("/"):
