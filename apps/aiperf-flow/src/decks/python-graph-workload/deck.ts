@@ -123,8 +123,197 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-s", "s1", "s2", "s3", "s4", "splice", "gate", "why"],
   },
   {
+    id: "automaton",
+    eyebrow: "04 · TRIE GENERATION",
+    title: "One pass, two annotations per state",
+    lede:
+      "A flat-int-state prefix automaton. Each state records a terminal owner, overwritten always, and a passer owner, set once — opposite tie-breaks on purpose.",
+    narration:
+      "Finding each request's content parent could be a quadratic scan over every earlier request. Instead it is one linear pass through a prefix automaton built from flat integer states. Every state carries two annotations. The terminal owner is overwritten every time, so a full-prefix tie goes to the most recent node — a genuine continuation, nearest in time and most likely still cached. The passer owner is set once, so a partial-overlap tie goes to the earliest node, the one that established the branch point. Opposite rules, and both deliberate.",
+    caption:
+      "trie_content.py:558 resolve_content_parents; the walk at :613-630 latches best_full and best_partial independently. terminal overwrites at :700, passer is set-once at :698. Complexity claim at :569-576 — linear in total hash length, against a naive O(n squared times m).",
+    nodes: [
+      band("b-a", "ONE AUTOMATON", { col: 0, row: 0.9 }),
+      card("s0", "state 0", "root", "muted", { col: 0, row: 0.9 }),
+      card("s1", "state 1", "hash a", "control", { col: 1.1, row: 0.9 }),
+      card("s2", "state 2", "hash b", "control", { col: 2.2, row: 0.3 }),
+      card("s3", "state 3", "hash c", "control", { col: 2.2, row: 1.6 }),
+
+      band("b-t", "TWO ANNOTATIONS PER STATE", { col: 3.4, row: 0 }),
+      card("term", "terminal", "overwrite always - most recent wins", "done", { col: 3.4, row: 0 }),
+      card("pass", "passer", "set once - earliest wins", "time", { col: 3.4, row: 1.1 }),
+
+      card("full", "best_full", "a continuation", "done", { col: 3.4, row: 2.4 }),
+      card("part", "best_partial", "a branch point", "time", { col: 3.4, row: 3.4 }),
+      note(
+        "why",
+        "Why the tie-breaks differ",
+        "Most-recent for a continuation keeps the parent nearest in time. Earliest for a branch point keeps every sibling of a fork on the same stable ancestor instead of on whichever sibling ran last.",
+        { col: 0, row: 2.7 },
+      ),
+    ],
+    edges: [
+      link("s0", "s1", "control"),
+      ...fanOut("s1", ["s2", "s3"], "control"),
+      link("term", "full", "done"),
+      link("pass", "part", "time"),
+    ],
+    revealOrder: ["b-a", "s0", "s1", "s2", "s3", "b-t", "term", "pass", "full", "part", "why"],
+  },
+  {
+    id: "geometry",
+    eyebrow: "05 · TRIE GENERATION",
+    title: "Whole blocks only, and the tail is popped",
+    lede:
+      "Every frozen field is a whole-block count on the block-aligned grid. The partial tail is excluded, and a trailing partial hash is dropped outright.",
+    narration:
+      "Block geometry is the single source every later stage reads. The key rule: all of it is whole blocks. The partial tail — the remainder of tokens past the last full block — is deliberately excluded from every frozen field and synthesized separately at assembly time. Upstream, a trailing partial hash is popped entirely, because engines cache and share full blocks only, so a partial block can never be a prefix-cache hit. And a turn with no recorded hashes gets a chain of virtual negative ids, so consecutive turns of a session still share a prefix.",
+    caption:
+      "trie_content.py:101-126 compute_turn_block_geometry, 'the SINGLE geometry source'; the partial-tail exclusion at :87-92. The pop is trie_lowering.py:172-175 with three reasons at :145-151. Virtual chain at :179-190; trace_reader.py:135-148 rejects negative recorded hashes because they collide with that namespace.",
+    nodes: [
+      band("b-g", "THE BLOCK GRID", { col: 0, row: 0.5 }),
+      card("b1", "block 0", "full - hashed", "done", { col: 0, row: 0.5 }),
+      card("b2", "block 1", "full - hashed", "done", { col: 1.05, row: 0.5 }),
+      card("b3", "block 2", "full - hashed", "done", { col: 2.1, row: 0.5 }),
+      card("tail", "partial tail", "popped - never a cache hit", "failure", { col: 3.15, row: 0.5 }),
+
+      band("b-f", "FROZEN FIELDS", { col: 0, row: 1.9 }),
+      card("f1", "m_covered", "whole blocks", "data", { col: 0, row: 1.9 }),
+      card("f2", "lcp", "whole blocks", "data", { col: 1.05, row: 1.9 }),
+      card("f3", "new_blocks_count", "whole blocks", "data", { col: 2.1, row: 1.9 }),
+      chip("synth", "tail synthesized later", { col: 3.15, row: 1.9 }),
+
+      note(
+        "virt",
+        "No recorded hashes? Virtual ids",
+        "A turn with no replay gets negative ids counting down per session, so consecutive turns still share a prefix. Recorded negatives are rejected — they would collide with that namespace.",
+        { col: 0, row: 2.9 },
+      ),
+    ],
+    edges: [
+      link("b1", "b2", "done"),
+      link("b2", "b3", "done"),
+      link("b3", "tail", "failure"),
+      link("tail", "synth", "time", "slow"),
+      ...fanIn(["f1", "f2", "f3"], "synth", "data", "slow"),
+    ],
+    revealOrder: ["b-g", "b1", "b2", "b3", "tail", "b-f", "f1", "f2", "f3", "synth", "virt"],
+  },
+  {
+    id: "tags",
+    eyebrow: "06 · TRIE GENERATION",
+    title: "Tags freeze at first materialization",
+    lede:
+      "A block tag is a role plus a starts-new-message flag, assigned by the node that first covers that block and then never re-tagged.",
+    narration:
+      "Every covered block gets a tag: a role, and whether it opens a new message. The node that first materializes a block position assigns that tag, and it is then frozen forever. This is what makes prefix sharing real. Two requests sharing a block prefix read the identical tags on it, which produces identical message grouping, which produces the identical segment id chain — and only then is it genuinely the same cache prefix. Re-tagging a shared block on a later turn would silently break that identity, which is exactly why the tags freeze.",
+    caption:
+      "trie_content.py:757 _assign_block_tags_and_inheritance; the freezing rationale at :829-836. The trailing-user flip is block_role_split:177-180 — a node whose new region is all assistant flips its own last block to user. compute_asst_caps:706 caps an ancestor for the degenerate pull-back case.",
+    nodes: [
+      band("b-p", "PARENT · TAGS FROZEN", { col: 0, row: 0.4 }),
+      card("p1", "block 0", "user", "data", { col: 0, row: 0.4 }),
+      card("p2", "block 1", "assistant", "control", { col: 1.05, row: 0.4 }),
+      card("p3", "block 2", "user - flipped", "time", { col: 2.1, row: 0.4 }),
+
+      band("b-c", "CHILD · INHERITS VERBATIM", { col: 0, row: 1.8 }),
+      card("c1", "block 0", "same tag, copied", "data", { col: 0, row: 1.8 }),
+      card("c2", "block 1", "same tag, copied", "control", { col: 1.05, row: 1.8 }),
+      card("c3", "new region", "its own tags", "done", { col: 2.1, row: 1.8 }),
+
+      chip("same", "same sid chain", { col: 3.2, row: 1.1 }),
+      note(
+        "flip",
+        "The trailing-user flip",
+        "A node whose whole new region is assistant flips its own last new block to user, so a turn boundary always lands on a user block and framing stays cache-safe.",
+        { col: 0, row: 2.9 },
+      ),
+    ],
+    edges: [
+      link("p1", "c1", "data"),
+      link("p2", "c2", "control"),
+      link("p3", "c3", "time", "slow"),
+      ...fanIn(["c1", "c2"], "same", "done", "slow"),
+    ],
+    revealOrder: ["b-p", "p1", "p2", "p3", "b-c", "c1", "c2", "c3", "same", "flip"],
+  },
+  {
+    id: "splice",
+    eyebrow: "07 · TRIE GENERATION",
+    title: "Reuse every whole message inside the boundary",
+    lede:
+      "A bisect over the parent's message end-blocks splits reused from fresh. Only the straddling message and the new region are decoded and hashed again.",
+    narration:
+      "Here is where the build avoids going quadratic. The child knows how many blocks it inherits, so a bisect over the parent's message end-blocks finds how many whole parent messages fit entirely inside that boundary. Those segment ids are spliced in directly — not re-decoded, not re-hashed. Only the message straddling the boundary, plus the genuinely new region, are emitted fresh, chained onto the spliced tip. And because the child's inherited tags are the parent's copied verbatim, a re-emitted prefix would have produced the identical ids anyway, so the output is byte-identical.",
+    caption:
+      "trie_content.py:1134 bisect_right over rec.msg_end_blocks; _EmissionRecord:537 carries msg_end_blocks, cum_token_counts and the shared prompt_path list. The reuse boundary must come from geometric inherited, not the tags — :1117-1120 warns tags can coincide past the lcp while hash ids differ.",
+    nodes: [
+      band("b-p", "PARENT PROMPT PATH", { col: 0, row: 0.4 }),
+      card("m1", "message 0", "sid reused", "done", { col: 0, row: 0.4 }),
+      card("m2", "message 1", "sid reused", "done", { col: 1.05, row: 0.4 }),
+      card("m3", "message 2", "straddles boundary", "time", { col: 2.1, row: 0.4 }),
+
+      chip("bisect", "bisect_right(inherited)", { col: 1.6, row: 1.4 }),
+
+      band("b-c", "CHILD PROMPT PATH", { col: 0, row: 2.4 }),
+      card("s1", "spliced", "zero decode", "done", { col: 0, row: 2.4 }),
+      card("f1", "fresh fragment", "decoded + hashed", "time", { col: 1.15, row: 2.4 }),
+      card("f2", "new region", "decoded + hashed", "data", { col: 2.3, row: 2.4 }),
+
+      note(
+        "eq",
+        "Byte-identical either way",
+        "The inherited tags are the parent's copied verbatim, so re-emitting the prefix would derive the same ids and a spliced add would have been a dedup no-op. The splice only removes the quadratic re-decode.",
+        { col: 3.4, row: 1.4 },
+      ),
+    ],
+    edges: [
+      ...fanIn(["m1", "m2", "m3"], "bisect", "muted"),
+      link("bisect", "s1", "done"),
+      link("bisect", "f1", "time"),
+      link("s1", "f1", "done", "slow"),
+      link("f1", "f2", "data"),
+    ],
+    revealOrder: ["b-p", "m1", "m2", "m3", "bisect", "b-c", "s1", "f1", "f2", "eq"],
+  },
+  {
+    id: "determinism",
+    eyebrow: "08 · TRIE GENERATION",
+    title: "The gate counts what was actually assembled",
+    lede:
+      "assert_covered_isl checks reused plus fresh tokens against the covered-block target — not a value re-derived from the tags, which would be tautological.",
+    narration:
+      "Two guards keep the build honest. The ISL gate compares the tokens actually assembled — reused plus fresh — against the covered-block target. Deliberately not a count re-derived from the tags, because that would be tautological and prove nothing. And the target is the covered count, not blocks-times-size, because a legitimate recording may store fewer hash blocks than its declared input length would imply. Underneath sits a determinism contract: the same hash id must decode to the same tokens for every call in one build. The reuse path decodes each shared block exactly once, so a drifting callback would no longer be re-caught downstream.",
+    caption:
+      "trie_content.py:996 assert_covered_isl, target is min(len(hash_ids), input_length // bs) * bs with the rationale at :1001-1006; called at :1166 with reused plus fresh. ReconCallbacks determinism contract at :298-311. Module header :8 — 'Any behavior change here breaks recorded-trace byte-exactness'.",
+    nodes: [
+      band("b-l", "TOKEN LEDGER", { col: 0, row: 0.6 }),
+      card("re", "reused tokens", "from the parent record", "done", { col: 0, row: 0.2 }),
+      card("fr", "fresh tokens", "decoded this node", "time", { col: 0, row: 1.2 }),
+      chip("sum", "sum", { col: 1.2, row: 0.7 }),
+      card("gate", "covered-block target", "min(hashes, in // bs) * bs", "control", { col: 1.9, row: 0.7 }),
+      card("ok", "build proceeds", "or TrieISLMismatchError", "data", { col: 3.1, row: 0.7 }),
+
+      band("b-d", "DETERMINISM CONTRACT", { col: 0, row: 2.4 }),
+      card("d1", "same hash id", "same tokens, every call", "muted", { col: 0, row: 2.4 }),
+      card("d2", "shared block decoded once", "reuse path", "done", { col: 1.3, row: 2.4 }),
+      note(
+        "drift",
+        "A drifting callback is not re-caught",
+        "Because the shared prefix is decoded once and spliced, a callback that returned different tokens at the child would no longer trip the ISL gate there.",
+        { col: 2.6, row: 2.4 },
+      ),
+    ],
+    edges: [
+      ...fanIn(["re", "fr"], "sum", "done"),
+      link("sum", "gate", "control"),
+      link("gate", "ok", "data"),
+      link("d1", "d2", "muted"),
+    ],
+    revealOrder: ["b-l", "re", "fr", "sum", "gate", "ok", "b-d", "d1", "d2", "drift"],
+  },
+  {
     id: "parents",
-    eyebrow: "04 · CONTENT vs TIMING",
+    eyebrow: "09 · CONTENT vs TIMING",
     title: "The content parent is not the timing parent",
     lede:
       "Prefix sharing can reach arbitrarily far back. Using that same link for the firing delay would accumulate the whole distance — the aggregate-timestamp bug.",
@@ -158,7 +347,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "warp",
-    eyebrow: "05 · IDLE WARP",
+    eyebrow: "10 · IDLE WARP",
     title: "Cap the dead air, never the request",
     lede:
       "The warp collapses gaps between the running-max end and the next start. Capping start-to-start would eat into a long request's own service time.",
@@ -194,7 +383,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "clocks",
-    eyebrow: "06 · INTERVAL ORDER",
+    eyebrow: "11 · INTERVAL ORDER",
     title: "Two clocks, two jobs",
     lede:
       "raw_start and raw_end decide who depends on whom. The warped start and end decide how long to wait. Every rule reads one for shape and the other for numbers.",
@@ -228,7 +417,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "candidates",
-    eyebrow: "07 · INTERVAL ORDER",
+    eyebrow: "12 · INTERVAL ORDER",
     title: "Three conjuncts, then async exclusion",
     lede:
       "A is a candidate for B when A ranks earlier, A finished before B started on the raw clock, and A is not inside a fire-and-forget subtree that B sits outside of.",
@@ -265,7 +454,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "frontier",
-    eyebrow: "08 · INTERVAL ORDER",
+    eyebrow: "13 · INTERVAL ORDER",
     title: "Keep only the maximal predecessors",
     lede:
       "Drop c when a later candidate d covers it — but only when the covering edge c to d actually exists.",
@@ -303,7 +492,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "binding",
-    eyebrow: "09 · INTERVAL ORDER",
+    eyebrow: "14 · INTERVAL ORDER",
     title: "One edge carries the delay, the rest wait at zero",
     lede:
       "The latest-ending frontier member carries the warped gap. Every other frontier edge is an AND-join at delay zero. An empty frontier roots the node at START instead.",
@@ -344,7 +533,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "anchors",
-    eyebrow: "10 · INTERVAL ORDER",
+    eyebrow: "15 · INTERVAL ORDER",
     title: "A mid-flight child replaces its whole edge set",
     lede:
       "When a child's recorded start falls inside its causal parent's interval, every interval-order edge is discarded and replaced by one start-anchored edge.",
@@ -379,8 +568,193 @@ const SLIDES: readonly SlideDefinition[] = [
     revealOrder: ["b-t", "test", "no", "yes", "b-a", "a1", "a2", "why"],
   },
   {
+    id: "addressing",
+    eyebrow: "16 · SEGMENT STORE",
+    title: "Identity folds in the parent, and the domain",
+    lede:
+      "Three id functions over blake2b. parent_id is hashed first in all three, so an id encodes its whole ancestor chain. Domain tags keep the three from ever aliasing.",
+    narration:
+      "Segment identity is content addressing with two twists. First, the parent id is the very first field hashed, in all three functions — so an id transitively encodes its entire ancestor chain. Identical role and tokens under a different conversation prefix hash differently. That is what makes segment identity the same thing as cache-prefix identity. Second, domain separation: the text and raw variants carry distinct tag bytes, so a text-derived id can never alias a token-derived one. That matters more than it looks, because insertion is insert-if-absent — a collision would silently discard the second segment and ship the wrong message.",
+    caption:
+      "segment_ir/pool.py:37 segment_id, :62 text_segment_id with tag text, :81 raw_segment_id with tag raw. Bulk token encoding rationale at :44-49 — a per-token encode cost roughly 44 million calls on a corpus-scale trace. Insert-if-absent at :116, :130, :147.",
+    nodes: [
+      band("b-c", "TWO CONVERSATIONS", { col: 0, row: 0.6 }),
+      card("r1", "shared prefix", "same parent chain", "done", { col: 0, row: 0.6 }),
+      card("a1", "conversation A tail", "diverges", "data", { col: 1.3, row: 0 }),
+      card("b1", "conversation B tail", "diverges", "time", { col: 1.3, row: 1.2 }),
+      chip("dedup", "one stored span", { col: 2.5, row: 0.6 }),
+
+      band("b-d", "THREE DOMAINS, NEVER ALIASING", { col: 0, row: 2.2 }),
+      card("d1", "tokens", "untagged domain", "control", { col: 0, row: 2.2 }),
+      card("d2", "text", "tag: text", "data", { col: 1.15, row: 2.2 }),
+      card("d3", "raw", "tag: raw - verbatim wire", "muted", { col: 2.3, row: 2.2 }),
+
+      note(
+        "collide",
+        "A collision would be silent",
+        "Insertion is insert-if-absent, so an aliased id discards the second segment and materializes the first in its place. Wrong bytes on the wire, no error anywhere.",
+        { col: 3.5, row: 1.4 },
+      ),
+    ],
+    edges: [
+      link("r1", "a1", "data"),
+      link("r1", "b1", "time"),
+      link("r1", "dedup", "done", "slow"),
+    ],
+    revealOrder: ["b-c", "r1", "a1", "b1", "dedup", "b-d", "d1", "d2", "d3", "collide"],
+  },
+  {
+    id: "layout",
+    eyebrow: "17 · SEGMENT STORE",
+    title: "Four files, two different index shapes",
+    lede:
+      "Content is dense and index-addressed: a packed array of offset and size pairs where the handle is the array index. Nodes are sparse and string-keyed, so their index is JSON.",
+    narration:
+      "The store is four files, and the asymmetry between them is the interesting part. Content is one long blob with a packed binary index — alternating offset and size words, where a handle is literally the array index into it. Segment ids never appear on disk at all. Node envelopes are the opposite: sparse and string-keyed, so their index is a two-level JSON map from trace, to ordinal and phase variant, to a span. Dense and integer-addressed on one side, sparse and string-keyed on the other, because that is what each actually is.",
+    caption:
+      "graph_segment_unified_store.py:139-142 the four paths; content.idx is a packed array of unsigned long long built at :345-349, handle h spanning words 2h and 2h+1. nodes.idx is orjson at :351. Inner key is _encode_inner_key:35, called on both the write and read sides so the format is never duplicated.",
+    nodes: [
+      band("b-c", "CONTENT · DENSE", { col: 0, row: 0.3 }),
+      card("cb", "content.blob", "every unique segment", "data", { col: 0, row: 0.3 }),
+      card("ci", "content.idx", "packed offset/size words", "data", { col: 1.3, row: 0.3 }),
+      chip("h", "handle = array index", { col: 2.6, row: 0.3 }),
+
+      band("b-n", "NODES · SPARSE", { col: 0, row: 1.9 }),
+      card("nb", "nodes.blob", "per-node envelopes", "control", { col: 0, row: 1.9 }),
+      card("ni", "nodes.idx", "JSON two-level map", "control", { col: 1.3, row: 1.9 }),
+      chip("k", "trace -> ord:variant", { col: 2.6, row: 1.9 }),
+
+      card("client", "one client", "resolves both", "done", { col: 3.7, row: 1.1 }),
+      note(
+        "spill",
+        "Only content spills incrementally",
+        "The blob streams through a single open writer as it is built. The manifest region stays in RAM — it fills below the parse peak, so a second write handle would buy no peak-memory win.",
+        { col: 0, row: 2.9 },
+      ),
+    ],
+    edges: [
+      link("cb", "ci", "data"),
+      link("ci", "h", "data"),
+      link("nb", "ni", "control"),
+      link("ni", "k", "control"),
+      ...fanIn(["h", "k"], "client", "done", "slow"),
+    ],
+    revealOrder: ["b-c", "cb", "ci", "h", "b-n", "nb", "ni", "k", "client", "spill"],
+  },
+  {
+    id: "reader",
+    eyebrow: "18 · SEGMENT STORE",
+    title: "Assemble the body straight from mapped pages",
+    lede:
+      "Each stored segment is already valid JSON, so a request body is built by concatenating memoryview slices — no per-segment parse, no re-encode.",
+    narration:
+      "The read side is where the layout pays off. Both blobs are memory-mapped read-only, and the file descriptor is closed immediately — the mapping keeps the pages alive without holding it. Then the trick: every stored segment is already a valid JSON object, so building a request body is byte concatenation. Open bracket, a mapped span, a comma, another mapped span, close. No per-segment parse and no re-encode of the array, just one join at the end. Spans are validated at open rather than at read, because Python slice clamping would otherwise return quietly truncated bytes from a stale store.",
+    caption:
+      "graph_segment_unified_store.py:433-441 _map_blob closes the fd after mmap; :510-526 build_request_body_handles interleaves raw memoryview slices with the literal head at :26. _validate_content_spans:443-453 fails loud at open — otherwise slice clamping ships short prompts silently.",
+    nodes: [
+      band("b-m", "MAPPED ONCE", { col: 0, row: 1 }),
+      card("mmap", "mmap ACCESS_READ", "fd closed straight after", "muted", { col: 0, row: 1 }),
+
+      band("b-b", "BODY ASSEMBLY", { col: 1.3, row: -0.2 }),
+      card("head", "head bytes", "messages open bracket", "muted", { col: 1.3, row: -0.2 }),
+      card("s1", "span", "mapped page slice", "data", { col: 1.3, row: 0.7 }),
+      card("s2", "span", "mapped page slice", "data", { col: 1.3, row: 1.6 }),
+      card("tail", "tail bytes", "close bracket", "muted", { col: 1.3, row: 2.5 }),
+      chip("join", "one join", { col: 2.6, row: 1.15 }),
+      card("body", "request body", "one copy, total", "done", { col: 3.2, row: 1.15 }),
+
+      note(
+        "guard",
+        "Spans validated at open",
+        "Slice clamping would return silently truncated bytes from a stale or partial store, so the client fails loud at open instead of shipping a short prompt.",
+        { col: 0, row: 2.6 },
+      ),
+    ],
+    edges: [
+      link("mmap", "s1", "muted", "slow"),
+      link("mmap", "s2", "muted", "slow"),
+      ...fanIn(["head", "s1", "s2", "tail"], "join", "data"),
+      link("join", "body", "done"),
+    ],
+    revealOrder: ["b-m", "mmap", "b-b", "head", "s1", "s2", "tail", "join", "body", "guard"],
+  },
+  {
+    id: "builder",
+    eyebrow: "19 · SEGMENT STORE",
+    title: "Two drains, one store shape, one abort",
+    lede:
+      "A dynamo trace without max_isl streams through a worker pool; everything else parses eagerly. Both converge on the same store, and both are wrapped in the same cleanup.",
+    narration:
+      "The builder has two routes. A Dynamo trace with no max-isl override streams through a worker pool, building the store incrementally. Everything else — native formats, and Dynamo when max-isl is set, because that option changes lowering semantics — parses once off the loop and interns the whole pool at the end. Both routes converge on an identical store shape. Both are wrapped in the same failure handler: abort the store, unlink its files, remove the directory, re-raise. And abort is guarded, so a store that already finalized is never deleted by a later failure.",
+    caption:
+      "store_build.py:185-301 the two drains; the max_isl carve-out is stated at :266-267. Abort at graph_segment_unified_store.py:298, guarded by the finalized flag at :316 so a finalized store survives. Ordinals come from flat_trie_ordinals, the same function the dispatch-time catalog calls — store_builder.py:32-39.",
+    nodes: [
+      band("b-in", "ONE INPUT", { col: 0, row: 1.1 }),
+      card("src", "workload source", "format + options", "muted", { col: 0, row: 1.1 }),
+      chip("fork", "dynamo && no max_isl?", { col: 1.2, row: 1.1 }),
+
+      card("stream", "streaming drain", "worker pool, incremental", "control", { col: 2, row: 0.2 }),
+      card("eager", "eager drain", "parse once, intern pool", "data", { col: 2, row: 2 }),
+      card("store", "one store shape", "identical either way", "done", { col: 3.3, row: 1.1 }),
+
+      band("b-x", "FAILURE", { col: 0, row: 2.7 }),
+      card("abort", "abort + rmtree", "then re-raise", "failure", { col: 0, row: 2.7 }),
+      chip("fin", "unless finalized", { col: 1.3, row: 2.7 }),
+      note(
+        "ord",
+        "One ordinal function, both planes",
+        "Build-time manifest ordinals and dispatch-time catalog ordinals come from the same call, which is what makes the worker read the right envelope.",
+        { col: 2.3, row: 2.9 },
+      ),
+    ],
+    edges: [
+      link("src", "fork", "muted"),
+      link("fork", "stream", "control"),
+      link("fork", "eager", "data"),
+      ...fanIn(["stream", "eager"], "store", "done"),
+      link("abort", "fin", "failure"),
+    ],
+    revealOrder: ["b-in", "src", "fork", "stream", "eager", "store", "b-x", "abort", "fin", "ord"],
+  },
+  {
+    id: "envelope",
+    eyebrow: "20 · SEGMENT STORE",
+    title: "What the worker actually reads",
+    lede:
+      "An envelope is handles plus dispatch overrides plus a stream flag. Optional keys are omitted entirely when unset, so envelopes stay byte-identical across corpora.",
+    narration:
+      "Finally, the envelope — the per-node record the worker reads at dispatch. It carries segment handles, dispatch overrides, and a stream flag, plus a few optional keys. Those optional keys are omitted rather than written as null, deliberately, so that a corpus with no headers produces byte-identical envelopes to one that never had the field. The worker looks up by trace, ordinal and phase variant, and rebuilds the request. Note the split: extra headers go to the request headers, never the body, and a hand-authored extra-body entry always wins over a folded-in default.",
+    caption:
+      "store_builder.py:152 _trie_envelope; the fold-only-if-absent rule at :174-180 and the byte-identity invariant stated twice, at :170-172 and store :244-246. Worker rebuild is worker_materialize.py:62 read_node_envelope, then the bytes fast path at :251.",
+    nodes: [
+      band("b-e", "ENVELOPE", { col: 0, row: 0.6 }),
+      card("h", "handles", "into content.blob", "data", { col: 0, row: 0.2 }),
+      card("ov", "dispatch_overrides", "model, max tokens, tools", "control", { col: 0, row: 1.2 }),
+      card("st", "stream", "bool", "muted", { col: 0, row: 2.2 }),
+
+      chip("key", "trace / ordinal / variant", { col: 1.3, row: 1.2 }),
+      card("wk", "worker", "rebuilds the request", "done", { col: 2.1, row: 1.2 }),
+      card("body", "body", "from handles", "data", { col: 3.3, row: 0.5 }),
+      card("hdr", "headers", "never the body", "time", { col: 3.3, row: 1.9 }),
+
+      note(
+        "omit",
+        "Omitted, not null",
+        "Optional keys are left out entirely when unset, so a header-less corpus produces envelopes byte-identical to one that never carried the field.",
+        { col: 0, row: 3.1 },
+      ),
+    ],
+    edges: [
+      ...fanIn(["h", "ov", "st"], "key", "data"),
+      link("key", "wk", "control"),
+      link("wk", "body", "data"),
+      link("wk", "hdr", "time"),
+    ],
+    revealOrder: ["b-e", "h", "ov", "st", "key", "wk", "body", "hdr", "omit"],
+  },
+  {
     id: "firing",
-    eyebrow: "11 · THE EXECUTOR",
+    eyebrow: "21 · THE EXECUTOR",
     title: "One task per node, four ways out",
     lede:
       "Every node is an asyncio Task in a TaskGroup. Awaiting inputs, then the firing gate, then dispatch — and four distinct exits, only one of them normal.",
@@ -412,7 +786,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "dualfan",
-    eyebrow: "12 · DUAL FAN-OUT",
+    eyebrow: "22 · DUAL FAN-OUT",
     title: "A node fans out twice, at different moments",
     lede:
       "Start-anchored children launch at the parent's dispatch and run alongside it. Completion children launch after. Two separate adjacency maps keep them apart.",
@@ -445,7 +819,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "lanes",
-    eyebrow: "13 · CONCURRENCY",
+    eyebrow: "23 · CONCURRENCY",
     title: "Lanes with a feedback loop, not a queue",
     lede:
       "A fixed pool of lanes each loop: draw a template, run it, release, draw again. Two terminal conditions, and a bare run must not recycle forever.",
@@ -480,7 +854,7 @@ const SLIDES: readonly SlideDefinition[] = [
   },
   {
     id: "demux",
-    eyebrow: "14 · RETURNS",
+    eyebrow: "24 · RETURNS",
     title: "One observer, de-multiplexed to a parked Future",
     lede:
       "No queue. A return routes observer to adapter to the Future parked for one correlation id and turn, while first tokens travel a parallel track to an Event.",
