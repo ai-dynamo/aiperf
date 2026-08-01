@@ -887,3 +887,37 @@ class TestMaxOslCapApplied:
         osls = [t.output_length for traces in data.values() for t in traces]
         assert osls == [30]
         assert loader._capped_max_osl == 0
+
+
+class TestLoadDatasetResetsPerLoadState:
+    """The load_dataset override must reset per-load state like the base class."""
+
+    def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
+        capture_file = tmp_path / "capture.jsonl"
+        capture_file.write_text(_make_capture_record() + "\n")
+        config = CLIConfig(model_names=["test-model"])
+        return SageMakerDataCaptureLoader(
+            filename=str(capture_file),
+            run=make_run_from_cli(config),
+            prompt_generator=MagicMock(),
+        )
+
+    def test_load_dataset_resets_delay_cap_tracker(self, tmp_path: Path) -> None:
+        """Stale delay-cap counters from a prior load must not leak forward."""
+        loader = self._make_loader(tmp_path)
+        loader._delay_cap_tracker.capped_count = 7
+        loader._delay_cap_tracker.max_observed_ms = 12345.0
+
+        loader.load_dataset()
+
+        assert loader._delay_cap_tracker.capped_count == 0
+        assert loader._delay_cap_tracker.max_observed_ms == 0.0
+
+    def test_load_dataset_initializes_trace_scope(self, tmp_path: Path) -> None:
+        """The per-file trace_id scope must be established on every load."""
+        loader = self._make_loader(tmp_path)
+
+        loader.load_dataset()
+
+        assert loader._trace_id is not None
+        loader.prompt_generator._cache.clear.assert_called_once()

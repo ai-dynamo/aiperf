@@ -1,9 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import sys
+from typing import get_type_hints
+
 import pytest
 
-from aiperf.common.models import Text, Turn
+from aiperf.common.models import RAGSources, Text, Turn
 from aiperf.common.models.record_models import (
     TextResponseData,
 )
@@ -294,6 +297,22 @@ class TestSolidoEndpointParseResponse:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is None
+
+    def test_extract_solido_response_data_missing_content_returns_none_pair(
+        self, endpoint
+    ):
+        """The extractor's documented no-content path yields ``(None, None)``,
+        which the declared return type must admit."""
+        data, sources = endpoint._extract_solido_response_data({"message": "nope"})
+
+        assert data is None
+        assert sources is None
+
+        hints = get_type_hints(
+            type(endpoint)._extract_solido_response_data,
+            vars(sys.modules[type(endpoint).__module__]),
+        )
+        assert hints["return"] == tuple[TextResponseData | None, RAGSources | None]
 
     @pytest.mark.parametrize(
         "content",

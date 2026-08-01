@@ -193,6 +193,21 @@ class TestZMQSubClientMessageHandling:
         assert received_messages[0].message_type == sample_message.message_type
 
     @pytest.mark.asyncio
+    async def test_handle_message_empty_payload_is_dropped(
+        self, mock_zmq_context, sample_message, create_callback_tracker
+    ):
+        """A topic-only SUB frame is dropped, not fed to the JSON decoder."""
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+
+        callback, _, received_messages = create_callback_tracker()
+        client._subscribers[sample_message.message_type] = [callback]
+        topic_bytes = f"{sample_message.message_type}{TOPIC_END}".encode()
+
+        await client._handle_message(topic_bytes, b"")
+
+        assert received_messages == []
+
+    @pytest.mark.asyncio
     async def test_handle_message_with_targeted_topic(self, mock_zmq_context):
         """Test handling messages with targeted topics (service_id/type)."""
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)

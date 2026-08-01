@@ -1297,17 +1297,49 @@ def get_search_planner_metadata(name: str) -> SearchPlannerMetadata:
     return get_entry("search_planner", name).get_typed_metadata(SearchPlannerMetadata)
 
 
-# Mapping of categories to their metadata classes (for categories with typed metadata)
-_CATEGORY_METADATA_CLASSES: dict[str, type] = {
-    "endpoint": EndpointMetadata,
-    "transport": TransportMetadata,
-    "plot": PlotMetadata,
-    "service": ServiceMetadata,
-    "custom_dataset_loader": CustomDatasetLoaderMetadata,
-    "convergence_criterion": ConvergenceCriterionMetadata,
-    "search_planner": SearchPlannerMetadata,
-    "gpu_telemetry_collector": GPUTelemetryCollectorMetadata,
-}
+# Resolved metadata classes, keyed by normalized category. Populated lazily from
+# the `metadata_class` field in categories.yaml — never hand-maintained, since a
+# hand-written duplicate of that mapping silently drifts as categories are added.
+_CATEGORY_METADATA_CLASSES: dict[str, type] = {}
+
+
+def _get_category_metadata_class(category: str) -> type | None:
+    """Resolve the metadata class declared by a category in categories.yaml.
+
+    Args:
+        category: Normalized category name.
+
+    Returns:
+        The imported metadata class, or None when the category declares no
+        `metadata_class` (or its class path cannot be imported).
+    """
+    if (cached := _CATEGORY_METADATA_CLASSES.get(category)) is not None:
+        return cached
+
+    category_metadata = get_category_metadata(category) or {}
+    class_path = category_metadata.get("metadata_class")
+    if not class_path:
+        return None
+
+    module_path, _, class_name = str(class_path).rpartition(":")
+    if not module_path or not class_name:
+        _logger.warning(
+            f"Invalid metadata_class for category '{category}': {class_path!r} "
+            "(expected 'module.path:ClassName')"
+        )
+        return None
+
+    try:
+        metadata_cls = getattr(importlib.import_module(module_path), class_name)
+    except (ImportError, AttributeError) as e:
+        _logger.warning(
+            f"Failed to import metadata_class '{class_path}' for category "
+            f"'{category}': {e!r}"
+        )
+        return None
+
+    _CATEGORY_METADATA_CLASSES[category] = metadata_cls
+    return metadata_cls
 
 
 def get_typed_metadata(category: CategoryT, name: str) -> Any:
@@ -1333,7 +1365,7 @@ def get_typed_metadata(category: CategoryT, name: str) -> Any:
     """
     category = _normalize_category(category)
     entry = get_entry(category, name)
-    if metadata_cls := _CATEGORY_METADATA_CLASSES.get(category):
+    if metadata_cls := _get_category_metadata_class(category):
         return entry.get_typed_metadata(metadata_cls)
 
     # Fall back to raw metadata dict

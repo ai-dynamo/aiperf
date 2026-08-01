@@ -228,7 +228,7 @@ def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
             f"In-process parameter sweep ({len(plan.configs)} variations across "
             f"{swept_params or '<unknown>'}) is not supported in operator-managed "
             f"runs (AIPERF_OPERATOR_MANAGED=1). Use the AIPerfSweep CRD "
-            f"(cluster-scope) for cross-job sweeps - see docs/kubernetes/sweeps.md "
+            f"(cluster-scope) for cross-job sweeps - see docs/tutorials/sweeps.md "
             f"- or submit one AIPerfJob per variation. To run as a single point "
             f"benchmark, drop the comma in --concurrency / other magic-list flags."
         )
@@ -245,8 +245,9 @@ def _summarize_and_export(
 ) -> int:
     """Log success/failure summary and run confidence + sweep aggregation.
 
-    Returns an exit code (0 on full success, 1 when fewer than 2 runs
-    succeeded). Does not call ``sys.exit`` - the caller is responsible for
+    Returns an exit code (0 once at least 2 runs succeeded - even if others
+    failed - and 1 when fewer than 2 runs succeeded, because confidence
+    statistics need 2 samples). Does not call ``sys.exit`` - the caller is responsible for
     propagating the code so that registered ``on_complete`` callbacks still
     run on whatever per-run artifacts were produced.
     """

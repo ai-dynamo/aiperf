@@ -107,3 +107,39 @@ def test_search_planner_metadata_via_generic_helper():
     md = get_typed_metadata(PluginType.SEARCH_PLANNER, "bayesian")
     assert isinstance(md, SearchPlannerMetadata)
     assert md.compatible_objective_directions == ["maximize", "minimize"]
+
+
+def _categories_declaring_metadata_class() -> list[str]:
+    """Categories whose categories.yaml entry declares a metadata_class.
+
+    Derived from the registry rather than hardcoded so the test covers every
+    declaring category automatically, including ones added later.
+    """
+    return sorted(
+        category
+        for category in plugins.list_categories()
+        if (plugins.get_category_metadata(category) or {}).get("metadata_class")
+    )
+
+
+def test_get_typed_metadata_all_declared_categories_returns_typed_object() -> None:
+    """Every category declaring metadata_class in categories.yaml gets a typed object.
+
+    Guards against the mapping used by `get_typed_metadata` drifting behind
+    categories.yaml, which silently degrades those categories to raw dicts.
+    """
+    declaring = _categories_declaring_metadata_class()
+    assert declaring, "no categories declare metadata_class"
+
+    untyped: list[str] = []
+    for category in declaring:
+        names = [e.name for e in plugins.list_entries(category)]
+        if not names:
+            continue
+        md = get_typed_metadata(category, names[0])
+        if isinstance(md, dict):
+            untyped.append(f"{category}:{names[0]}")
+
+    assert not untyped, (
+        f"categories returned raw dicts instead of typed metadata: {untyped}"
+    )

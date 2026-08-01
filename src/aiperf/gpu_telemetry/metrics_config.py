@@ -227,6 +227,17 @@ class MetricsConfigLoader(AIPerfLoggerMixin):
             else:
                 dcgm_suffix = dcgm_field
             internal_name = f"nvidia_{dcgm_suffix.lower()}"
+
+            # why: distinct DCGM field names can collapse to the same derived
+            # internal_name (e.g. DCGM_FI_DEV_X and DCGM_FI_PROF_X), which would
+            # emit a duplicate metric column downstream.
+            if internal_name in existing_field_names:
+                self.debug(
+                    f"Skipping DCGM field {dcgm_field}: derived internal name "
+                    f"{internal_name} is already in use"
+                )
+                continue
+
             display_name = help_msg.split("(")[0].strip()
 
             if not display_name:

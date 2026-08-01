@@ -12,8 +12,9 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 class HuggingFaceGenerateEndpoint(BaseEndpoint):
     """Hugging Face TGI (Text Generation Inference) endpoint.
 
-    Supports both non-streaming (/ or /generate) and streaming (/generate_stream)
-    endpoints automatically, based on the model endpoint's `streaming` flag.
+    Supports both non-streaming (/generate) and streaming (/generate_stream)
+    endpoints automatically. The request side keys on the effective per-request
+    wire mode; the read side dispatches on the shape of each response.
     """
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
@@ -51,9 +52,17 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
     ) -> ParsedResponse | None:
         """Parse TGI response into ParsedResponse.
 
-        Handles both streaming and non-streaming modes.
+        Dispatches on the shape of the response itself, not the global
+        ``endpoint.streaming`` flag: a graph credit may carry a per-request
+        ``stream_override`` so the wire mode of any single response can differ
+        from the global setting. TGI stream events carry an incremental
+        ``token`` object; full ``/generate`` bodies do not.
         """
-        if self.model_endpoint.endpoint.streaming:
+        json_obj = response.get_json()
+        if not json_obj:
+            return None
+
+        if isinstance(json_obj, dict) and json_obj.get("token") is not None:
             return self._parse_streaming(response)
         return self._parse_non_streaming(response)
 

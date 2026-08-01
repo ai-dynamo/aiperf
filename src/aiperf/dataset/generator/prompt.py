@@ -469,16 +469,20 @@ class PromptGenerator(BaseGenerator):
             raise NotInitializedError("Tokenized corpus is not initialized.")
         if num_tokens > self._corpus_size:
             self.warning(
-                f"Requested prompt length {num_tokens} is longer than the corpus. "
-                f"Returning a prompt of length {self._corpus_size}."
+                f"Requested prompt length {num_tokens} is longer than the corpus "
+                f"({self._corpus_size} tokens). The corpus will wrap around, so "
+                f"the prompt repeats corpus content but still has {num_tokens} tokens."
             )
 
         start_idx = self._corpus_rng.randrange(self._corpus_size)
 
         end_idx = start_idx + num_tokens
         prompt_tokens = self._tokenized_corpus[start_idx:end_idx]
-        if end_idx > self._corpus_size:
-            prompt_tokens += self._tokenized_corpus[: end_idx - self._corpus_size]
+        # Wrap as many times as needed: a single wrap is short whenever
+        # num_tokens exceeds twice the corpus size.
+        while len(prompt_tokens) < num_tokens:
+            remaining = num_tokens - len(prompt_tokens)
+            prompt_tokens += self._tokenized_corpus[:remaining]
 
         self.trace(lambda: f"Sampled {len(prompt_tokens)} tokens from corpus")
         return prompt_tokens
