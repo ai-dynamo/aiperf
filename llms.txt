@@ -435,6 +435,13 @@ Whole system:
   cycle driven by real React Flow node sizes, fixing smooshed boxes and
   doubled-back edges; opt-in via `PipelineCanvas`'s `layout` prop / `AutoLayoutFlow`,
   adopted by `rust-port-flow` first then rolled out to the rest.
+- [`docs/specs/2026-08-01-aiperf-flow-slide-clock.md`](docs/specs/2026-08-01-aiperf-flow-slide-clock.md)
+  — planned continuous virtual-time seam for `apps/aiperf-flow`: a narration-driven
+  `src/clock/` store with word-anchored cue points (robust to voice and speed),
+  delivered to charts via `useSyncExternalStore` rather than `node.data` so React
+  Flow's node array keeps its identity; retrofits `sweep`/`timeline`/`slices` with
+  playheads and self-drawing curves, and makes reduced motion fall out as "the clock
+  pinned to end of span".
 - [`docs/specs/2026-07-25-hf-generic-datasets-design.md`](docs/specs/2026-07-25-hf-generic-datasets-design.md)
   — built generic HuggingFace-dataset-by-ID input: a `--hf-dataset <id>` CLI/YAML
   passthrough that bypasses the hard-coded public catalog, plus a source-agnostic
