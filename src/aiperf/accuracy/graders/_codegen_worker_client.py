@@ -107,14 +107,24 @@ class CodegenGradingWorker:
         if proc is None or proc.stdin is None:
             self._pending.pop(req_id, None)
             raise CodegenWorkerError("grading worker is not running")
+        # Guard drain() with the caller's timeout so a worker that stops consuming
+        # stdin (pipe buffer full) cannot block indefinitely. CancelledError during
+        # drain() is also handled here so the pending future is cleaned up.
         try:
             proc.stdin.write(orjson.dumps(req) + b"\n")
-            await proc.stdin.drain()
+            await asyncio.wait_for(proc.stdin.drain(), timeout)
         except (OSError, ConnectionError) as exc:
             self._pending.pop(req_id, None)
             raise CodegenWorkerError(
                 f"failed to submit grading request: {exc}"
             ) from exc
+        except TimeoutError as exc:
+            self._pending.pop(req_id, None)
+            await self._handle_fault(count_start_failure=False)
+            raise CodegenWorkerError(f"grading worker timed out: {exc!r}") from exc
+        except asyncio.CancelledError:
+            self._pending.pop(req_id, None)
+            raise
         try:
             return await asyncio.wait_for(fut, timeout)
         except TimeoutError as exc:
