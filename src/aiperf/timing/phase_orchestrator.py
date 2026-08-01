@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from aiperf.common.control_hooks import (
     PreparedEndpointControlHooks,
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 
 async def _stop_server_profiler_warn_only(
-    hooks: Any,
+    hooks: PreparedEndpointControlHooks,
     headers: dict[str, str],
     stop_fn: Callable[..., Awaitable[None]],
     warn_fn: Callable[[str], None],
@@ -62,7 +62,7 @@ async def _stop_server_profiler_warn_only(
 async def run_phase_with_server_profiler(
     *,
     phase: CreditPhase,
-    hooks: Any | None,
+    hooks: PreparedEndpointControlHooks | None,
     headers: dict[str, str],
     run_phase: Callable[[], Awaitable[None]],
     start_fn: Callable[..., Awaitable[None]],
@@ -79,7 +79,7 @@ async def run_phase_with_server_profiler(
     enabled = (
         phase == CreditPhase.PROFILING
         and hooks is not None
-        and bool(getattr(hooks, "profiler_start_urls", None))
+        and bool(hooks.profiler_start_urls)
     )
     if not enabled:
         await run_phase()

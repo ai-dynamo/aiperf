@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
@@ -321,3 +322,71 @@ async def test_start_server_profiler_cleanup_failure_is_logged_then_reraises() -
             for c in logger.warning.call_args_list
             if c.args
         )
+
+
+@pytest.mark.asyncio
+async def test_start_server_profiler_cancellation_stops_started_then_reraises() -> None:
+    hooks = _hooks(
+        profiler_start_urls=[
+            "http://a:8000/start_profile",
+            "http://b:8000/start_profile",
+        ],
+        profiler_stop_urls=[
+            "http://a:8000/stop_profile",
+            "http://b:8000/stop_profile",
+        ],
+    )
+    headers = {"Authorization": "Bearer t"}
+
+    async def post_side_effect(
+        *, url: str, headers: dict[str, str], timeout_s: float
+    ) -> None:
+        del headers, timeout_s
+        if url == "http://b:8000/start_profile":
+            raise asyncio.CancelledError
+
+    with patch(
+        "aiperf.common.control_hooks.control_plane_post",
+        new_callable=AsyncMock,
+        side_effect=post_side_effect,
+    ) as post, pytest.raises(asyncio.CancelledError):
+        await start_server_profiler(hooks, headers)
+
+    # The one successful start must still be rolled back despite cancellation.
+    assert post.await_args_list[-1] == call(
+        url="http://a:8000/stop_profile", headers=headers, timeout_s=2.5
+    )
+
+
+@pytest.mark.asyncio
+async def test_stop_server_profiler_cancellation_still_stops_remaining_origins() -> (
+    None
+):
+    hooks = _hooks(
+        profiler_stop_urls=[
+            "http://a:8000/stop_profile",
+            "http://b:8000/stop_profile",
+            "http://c:8000/stop_profile",
+        ]
+    )
+    headers = {"Authorization": "Bearer t"}
+
+    async def post_side_effect(
+        *, url: str, headers: dict[str, str], timeout_s: float
+    ) -> None:
+        del headers, timeout_s
+        if url == "http://a:8000/stop_profile":
+            raise asyncio.CancelledError
+
+    with patch(
+        "aiperf.common.control_hooks.control_plane_post",
+        new_callable=AsyncMock,
+        side_effect=post_side_effect,
+    ) as post, pytest.raises(asyncio.CancelledError):
+        await stop_server_profiler(hooks, headers)
+
+    assert [c.kwargs["url"] for c in post.await_args_list] == [
+        "http://a:8000/stop_profile",
+        "http://b:8000/stop_profile",
+        "http://c:8000/stop_profile",
+    ]

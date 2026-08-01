@@ -31,6 +31,10 @@ async def control_plane_post(
 
     Transport failures (timeouts, connection errors, ``ClientError``) are
     raised as ``ControlPlaneHttpError`` so callers share one error type.
+
+    ``asyncio.CancelledError`` is intentionally not wrapped, preserving task
+    cancellation semantics; callers needing cleanup on cancellation must
+    handle it explicitly.
     """
     safe_url = redact_url(url)
     timeout = aiohttp.ClientTimeout(total=timeout_s)

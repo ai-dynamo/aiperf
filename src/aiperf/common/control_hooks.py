@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
@@ -133,7 +134,9 @@ async def start_server_profiler(
                 url=url, headers=headers, timeout_s=hooks.profiler_timeout_s
             )
             started.append(url)
-    except Exception:
+    except BaseException:
+        # BaseException so task cancellation still triggers cleanup; the
+        # original exception is re-raised unchanged after the stops run.
         # Best-effort reverse-order stop cleanup on partial start failure.
         cleanup_errors: list[str] = []
         for stop_url in reversed(hooks.profiler_stop_urls[: len(started)]):
@@ -162,8 +165,14 @@ async def stop_server_profiler(
     hooks: PreparedEndpointControlHooks,
     headers: dict[str, str],
 ) -> None:
-    """Best-effort stop on every origin; raise one aggregated error if any fail."""
+    """Best-effort stop on every origin; raise one aggregated error if any fail.
+
+    Cancellation does not short-circuit the loop: remaining origins are still
+    attempted, then the ``CancelledError`` is re-raised so the caller's
+    cancellation stays observable.
+    """
     failures: list[str] = []
+    cancelled: asyncio.CancelledError | None = None
     for url in hooks.profiler_stop_urls:
         try:
             await control_plane_post(
@@ -171,6 +180,15 @@ async def stop_server_profiler(
             )
         except ControlPlaneHttpError as error:
             failures.append(str(error))
+        except asyncio.CancelledError as error:
+            cancelled = error
+    if cancelled is not None:
+        if failures:
+            _logger.warning(
+                f"server_profiler stop failed for {len(failures)} origin(s) "
+                f"during cancellation: " + "; ".join(failures)
+            )
+        raise cancelled
     if failures:
         raise ControlPlaneHttpError(
             "server_profiler stop failed for "

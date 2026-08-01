@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiperf.plugin.enums import EndpointType
+
 if TYPE_CHECKING:
     from aiperf.config.endpoint import EndpointConfig
 
@@ -19,8 +21,12 @@ _ANTHROPIC_VERSION = "2023-06-01"
 
 def auth_headers_for_endpoint(cfg: EndpointConfig) -> dict[str, str]:
     """Build auth headers matching the endpoint's scheme (Bearer or Anthropic)."""
+    # Custom endpoint.headers pass through intentionally: they can carry
+    # proprietary auth, gateway routing, or tracing metadata that control-plane
+    # and readiness endpoints need just as much as inference does. Documented in
+    # docs/tutorials/benchmark-control-hooks.md.
     headers = dict(cfg.headers or {})
-    if str(cfg.type) == "messages":
+    if cfg.type == EndpointType.MESSAGES:
         headers.setdefault("anthropic-version", _ANTHROPIC_VERSION)
         if cfg.api_key:
             # Hard-assign so --api-key overrides any preconfigured x-api-key,
