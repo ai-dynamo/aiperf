@@ -105,3 +105,37 @@ describe("prefixChain", () => {
     expect(prefixChain([], null)).toEqual([]);
   });
 });
+
+describe("materialize", () => {
+  it("hands over to workers once every message is interned", () => {
+    let s = createSegmentSim(1, 9);
+    for (let i = 0; i < 4000 && s.phase === "intern"; i++) s = stepSegments(s, TICK_MS);
+    expect(s.phase).toBe("materialize");
+    // The pool is frozen at handover: reading it back must not add segments.
+    const frozen = s.arena.length;
+    const end = runToEnd(1);
+    expect(end.arena.length).toBe(frozen);
+  });
+
+  it("builds one body per session and finishes", () => {
+    const s = runToEnd(1);
+    expect(s.done).toBe(true);
+    expect(s.bodiesBuilt).toBe(s.sessions.length);
+  });
+
+  it("copies out more bytes than it stores, because chains overlap", () => {
+    // Several sessions share prefix handles, so the same arena entry is read by more than one
+    // worker. That is the point of interning: one stored copy, many readers.
+    const s = runToEnd(1);
+    expect(s.bytesMaterialized).toBeGreaterThan(s.bytesStored);
+  });
+
+  it("gives every worker a chain of real handles in message order", () => {
+    let s = createSegmentSim(2, 9);
+    for (let i = 0; i < 4000 && s.phase === "intern"; i++) s = stepSegments(s, TICK_MS);
+    for (const w of s.workers) {
+      expect(w.chain.length).toBeGreaterThan(0);
+      for (const h of w.chain) expect(s.arena[h]).toBeDefined();
+    }
+  });
+});

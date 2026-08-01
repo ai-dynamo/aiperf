@@ -10,11 +10,13 @@
 //! append-only, so a hit adds nothing at all — which is the saving, drawn.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TraceRecordPanel } from "./TraceRecordPanel.js";
 import {
   createSegmentSim,
   stepSegments,
   prefixChain,
   colorForId,
+  messageWire,
   type SegmentSimState,
 } from "./segmentSim.js";
 
@@ -62,9 +64,15 @@ export function SegmentPoolSpike(): React.JSX.Element {
     () => prefixChain(sim.arena, latest?.handle ?? null).slice(0, 6),
     [sim.arena, latest?.handle],
   );
+  // Interning shows the message about to be hashed; materializing shows the stored wire a worker
+  // is copying out right now — the same bytes, read back.
+  const readingHandle = sim.workers.find((w) => w.reading !== null)?.reading ?? null;
   const currentWire =
-    sim.sessions[sim.cursor.session]?.messages[sim.cursor.message]?.wire ??
-    (latest === undefined ? undefined : sim.arena[latest.handle]?.text);
+    sim.phase === "materialize"
+      ? readingHandle === null
+        ? undefined
+        : messageWire(sim.arena[readingHandle]!.role, sim.arena[readingHandle]!.text)
+      : sim.sessions[sim.cursor.session]?.messages[sim.cursor.message]?.wire;
   const dedup = sim.interned > 0 ? sim.hits / sim.interned : 0;
   const saved = sim.bytesNaive > 0 ? 1 - sim.bytesStored / sim.bytesNaive : 0;
 
@@ -123,25 +131,17 @@ export function SegmentPoolSpike(): React.JSX.Element {
               <strong style={{ color: "var(--color-category-green)" }}>{Math.round(dedup * 100)}%</strong></span>
             <span><span className="text-ink-tertiary">wire saved</span>{" "}
               <strong style={{ color: "var(--color-category-orange)" }}>{Math.round(saved * 100)}%</strong></span>
-            {sim.done && <span className="text-ink-quaternary">trace complete</span>}
+            <span className="rounded px-2 py-0.5 text-[11px] font-bold"
+              style={{ background: sim.phase === "intern"
+                ? "var(--color-category-orange)" : "var(--color-category-cyan)", color: "#000" }}>
+              {sim.phase === "intern" ? "INTERNING" : sim.done ? "MATERIALIZED" : "MATERIALIZING"}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* The exact bytes that are hashed and stored. `intern_message` serializes the dialect
-          message and folds these very bytes into the identity, so this is the unit of work. */}
-      <div className="mb-3 rounded-lg border border-white/10 bg-surface-panel px-4 py-2.5">
-        <div className="mb-1 text-[10px] font-bold tracking-widest text-ink-tertiary">
-          WIRE — the serialized message being interned
-        </div>
-        <code className="block overflow-x-auto whitespace-pre font-mono text-[12px] text-ink-primary">
-          {currentWire ?? "\u2014"}
-        </code>
-        <div className="mt-1 text-[10px] text-ink-quaternary">
-          {currentWire === undefined
-            ? "Waiting for the first message."
-            : `${currentWire.length} bytes \u00b7 hashed together with the parent id, role and token ids`}
-        </div>
+      <div className="mb-3">
+        <TraceRecordPanel turn={sim.turn} parentSessionId={null} />
       </div>
 
       <div className="grid grid-cols-[300px_320px_1fr] gap-4">
@@ -190,8 +190,49 @@ export function SegmentPoolSpike(): React.JSX.Element {
         {/* 2 — the intern decision */}
         <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
           <h2 className="mb-2 text-[11px] font-bold tracking-widest text-ink-secondary">
-            INTERN — hash, then look up
+            {sim.phase === "intern" ? "INTERN — hash, then look up" : "MATERIALIZE — workers read it back"}
           </h2>
+          {sim.phase === "materialize" && (
+            <div className="flex flex-col gap-2 text-xs">
+              <p className="text-[11px] leading-snug text-ink-quaternary">
+                The pool is frozen. Each worker walks a chain of handles, clones the stored wire for
+                each, and appends a pre-serialized override tail. Nothing is decoded and nothing is
+                re-validated — the wires are well-formed by construction.
+              </p>
+              {sim.workers.map((w) => (
+                <div key={w.id} className="rounded border border-white/10 bg-surface-panel p-2">
+                  <div className="mb-1 flex items-baseline justify-between">
+                    <span className="font-semibold text-ink-primary">worker {w.id}</span>
+                    <span className="text-[10px] tabular-nums text-ink-tertiary">
+                      {w.done ? "idle" : `${w.sessionId} · ${w.cursor}/${w.chain.length}`}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-[3px]">
+                    {w.chain.map((h, i) => (
+                      <span key={i} style={{
+                        width: 9, height: 12, borderRadius: 2,
+                        background: colorForId(sim.arena[h]?.id ?? ""),
+                        opacity: i < w.cursor ? 1 : 0.22,
+                        outline: i === w.cursor && !w.done ? "2px solid var(--color-category-cyan)" : undefined,
+                      }} />
+                    ))}
+                  </div>
+                  <div className="mt-1 text-[10px] tabular-nums text-ink-quaternary">
+                    {w.bytes} bytes concatenated{w.cursor >= w.chain.length && !w.done ? " · body complete" : ""}
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-baseline justify-between text-[11px]">
+                <span className="text-ink-tertiary">bodies built</span>
+                <strong className="text-ink-primary tabular-nums">{sim.bodiesBuilt}/{sim.sessions.length}</strong>
+              </div>
+              <div className="flex items-baseline justify-between text-[11px]">
+                <span className="text-ink-tertiary">bytes copied out</span>
+                <strong className="text-ink-primary tabular-nums">{sim.bytesMaterialized}</strong>
+              </div>
+            </div>
+          )}
+          {sim.phase === "intern" && (<>
           {latest === undefined ? (
             <p className="text-sm text-ink-quaternary">Waiting for the first message…</p>
           ) : (
@@ -230,7 +271,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
                 </div>
               )}
             </div>
-          )}
+          )}</>)}
         </section>
 
         {/* 3 — the arena */}
@@ -251,7 +292,13 @@ export function SegmentPoolSpike(): React.JSX.Element {
                     background: colorForId(seg.id),
                     opacity: isCurrent ? 1 : inChain ? 0.82 : 0.34,
                     outline: isCurrent
-                      ? `2px solid ${latest?.hit ? "var(--color-category-green)" : "var(--color-category-orange)"}`
+                      ? `3px solid ${
+                          sim.phase === "materialize"
+                            ? "var(--color-category-cyan)"
+                            : latest?.hit
+                              ? "var(--color-category-green)"
+                              : "var(--color-category-orange)"
+                        }`
                       : inChain ? "1px solid rgba(255,255,255,0.35)" : undefined,
                   }}>
                   <span className="text-[11px] font-bold tabular-nums text-black">{seg.handle}</span>
@@ -272,6 +319,22 @@ export function SegmentPoolSpike(): React.JSX.Element {
             current message's prefix chain back to its root.
           </p>
         </section>
+      </div>
+
+      {/* Below the pool, because this is what a segment *stores*: the exact bytes that are hashed and stored. `intern_message` serializes the dialect
+          message and folds these very bytes into the identity, so this is the unit of work. */}
+      <div className="mb-3 rounded-lg border border-white/10 bg-surface-panel px-4 py-2.5">
+        <div className="mb-1 text-[10px] font-bold tracking-widest text-ink-tertiary">
+          WIRE — the serialized message being interned
+        </div>
+        <code className="block overflow-x-auto whitespace-pre font-mono text-[12px] text-ink-primary">
+          {currentWire ?? "\u2014"}
+        </code>
+        <div className="mt-1 text-[10px] text-ink-quaternary">
+          {currentWire === undefined
+            ? "Waiting for the first message."
+            : `${currentWire.length} bytes \u00b7 hashed together with the parent id, role and token ids`}
+        </div>
       </div>
 
       <p className="mt-3 text-[11px] text-ink-quaternary">
