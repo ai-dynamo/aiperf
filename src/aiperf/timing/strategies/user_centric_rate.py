@@ -11,10 +11,41 @@ artificially warm, while gaps that are too long allow cache entries to be evicte
 
 By default the turn gap is the deterministic constant `num_users / request_rate` seconds.
 With `--user-centric-gap-distribution lognormal|weibull`, each turn gap is instead drawn
-per turn from the named distribution whose mean stays pinned to `num_users / request_rate`
-(preserving aggregate load) and whose median is user-supplied to control skew. Each user
-draws from an independent, deterministically seeded stream, so gap sequences are
-reproducible under `--random-seed`. New-user spawn scheduling keeps using the mean gap.
+per turn from the named distribution whose mean is pinned to `num_users / request_rate`
+and whose median is user-supplied to control skew. Each user draws from an independent,
+deterministically seeded stream, so gap sequences are reproducible under `--random-seed`.
+New-user spawn scheduling keeps using the mean gap.
+
+Sampled Gaps Do Not Preserve The Realized Request Rate
+------------------------------------------------------
+Pinning the mean pins the *distribution* mean, not the realized aggregate request rate.
+The next send time is `max(now, next_send_time + gap)` (see `handle_credit_return`), so
+the clamp only ever pushes a send later: a gap shorter than the in-flight service time is
+truncated away, while a longer-than-mean gap is applied in full. The realized inter-send
+interval is `max(service_time, gap)`, whose expectation is at least the pinned mean and
+strictly above it whenever a response can outlast its gap - which is why the shortfall
+exists with fixed gaps too. Because `max(service_time, ...)` is convex, swapping a fixed
+gap for a random one of the same mean raises that expectation further, and heavier skew
+raises it more: more of the distribution's mass falls below the service time and is
+clamped away. Do not read `--request-rate` as a guaranteed realized rate in this mode -
+measure the achieved rate from the run's own output.
+
+Heavy Skew Produces Near-Zero Gaps
+----------------------------------
+Neither params model is constructed with `min`/`max` rejection bounds here, so nothing
+floors a sampled gap. For `weibull`, the shape solved from mean/median drops below 1 once
+`mean / median > 1 / ln(2) ~= 1.443`; below shape 1 the density is unbounded at zero and a
+non-trivial share of draws are effectively back-to-back turns. Measured with this repo's
+own solver and sampler (`aiperf.common.distributions`), 2,000,000 draws per row:
+
+  mean / median      | mean/median | weibull shape | draws under 1 ms
+  2.000 s / 0.500 s  | 4.000       | 0.5079        | 2.93%
+  1.667 s / 1.200 s  | 1.389       | 1.0514        | 0.041%
+  1.667 s / 1.300 s  | 1.282       | 1.1907        | 0.014%
+
+Lognormal is far less exposed: 0.0089% of draws under 1 ms at the same 2.0 s / 0.5 s
+setting. Keep `mean / median` below about 1.44 if near-zero gaps would distort the
+workload under test.
 
 Virtual History & Start Order
 -----------------------------
@@ -302,26 +333,44 @@ class UserCentricStrategy(AIPerfLoggerMixin):
 
     def _recompute_turn_gap(self, num_users: int) -> None:
         # num_users firing once per turn_gap gives: qps = num_users / turn_gap.
-        self._turn_gap = num_users / self._request_rate
-        self._gap_params = self._solve_gap_params()
+        turn_gap = num_users / self._request_rate
+        # Solve first: a rejected gap must leave the previous turn gap and its
+        # params still describing the same distribution.
+        self._gap_params = self._solve_gap_params(turn_gap)
+        self._turn_gap = turn_gap
 
-    def _solve_gap_params(self) -> LognormalParams | WeibullParams | None:
-        """Solve the sampled gap distribution with its mean pinned to the fixed
-        turn gap, so the aggregate request rate is preserved."""
+    def _solve_gap_params(
+        self, turn_gap: float
+    ) -> LognormalParams | WeibullParams | None:
+        """Solve the sampled gap distribution with its mean pinned to *turn_gap*.
+
+        Takes the gap as an argument rather than reading `self._turn_gap` so it can
+        never observe half-updated state.
+
+        Pinning the mean pins the distribution mean only; the realized aggregate
+        request rate is lower and degrades with skew (see the module docstring).
+
+        Neither params model is given `min`/`max` bounds here, so heavy skew is
+        unfloored. For weibull, a mean/median ratio above `1 / ln(2) ~= 1.443` drives
+        the solved shape below 1 and yields near-zero gaps: at mean 2.0 s /
+        median 0.5 s the shape is 0.5079 and 2.93% of draws land under 1 ms
+        (2,000,000-draw sample); at mean 1.667 s / median 1.2 s the shape is 1.0514
+        and 0.041% land under 1 ms.
+        """
         if self._gap_distribution == UserCentricGapDistribution.FIXED:
             return None
-        if self._gap_median is None or self._gap_median >= self._turn_gap:
+        if self._gap_median is None or self._gap_median >= turn_gap:
             raise ValueError(
                 f"user_centric_gap_median ({self._gap_median}) must be strictly "
                 "less than the mean turn gap of num_users / request_rate = "
-                f"{self._turn_gap} seconds; lognormal and weibull turn-gap "
+                f"{turn_gap} seconds; lognormal and weibull turn-gap "
                 "sampling supports right-skewed gaps only (median < mean)"
             )
         if self._gap_distribution == UserCentricGapDistribution.WEIBULL:
             return WeibullParams(
-                distribution="weibull", mean=self._turn_gap, median=self._gap_median
+                distribution="weibull", mean=turn_gap, median=self._gap_median
             )
-        return LognormalParams(mean=self._turn_gap, median=self._gap_median)
+        return LognormalParams(mean=turn_gap, median=self._gap_median)
 
     def _next_turn_gap(self, user: User) -> float:
         """Return the gap in seconds to apply before this user's next turn."""
@@ -416,7 +465,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # Then, over the benchmark duration, as a new user popped off the queue and spawned,
         # a new user will be added to the queue based on target completion time of spawned user.
         #
-        # This maintains a steady spawn rate and QPS.
+        # This maintains a steady spawn rate.
         # Note that this is still an "open-loop" strategy because the replacement
         # spawn user will spawn at the specified time regardless of whether the previous
         # spawn user completed on time. The only exception is if `--concurrency` is set.
@@ -435,8 +484,8 @@ class UserCentricStrategy(AIPerfLoggerMixin):
                 self._credit_issuer.issue_credit(user.build_first_turn()),
             )
             # Derive next spawn time based on estimated time to completion.
-            # Always uses the mean turn gap: sampled per-turn gaps average out
-            # to the same mean, so the spawn cadence (and QPS) is unchanged.
+            # Always uses the mean turn gap, keeping the spawn cadence an absolute
+            # schedule that per-turn draws do not perturb.
             next_spawn_sec = user.next_send_time + (user.max_turns * self._turn_gap)
             heapq.heappush(spawn_queue, next_spawn_sec)
 

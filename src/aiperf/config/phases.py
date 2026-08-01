@@ -341,6 +341,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         Field(
             default=None,
             ge=0.0,
+            allow_inf_nan=False,
             description="AGENTIC_REPLAY only: maximum time in seconds the "
             "replay may remain globally idle while future requests are "
             "scheduled. When no requests are in flight or ready, all pending "
@@ -635,9 +636,15 @@ class UserCentricPhase(RatePhaseConfig):
             default=UserCentricGapDistribution.FIXED,
             description="Distribution of the per-user gap between turns. "
             "fixed: deterministic constant gap of users / rate seconds. "
-            "lognormal / weibull: draw each turn gap from the named distribution "
-            "whose mean is pinned to users / rate seconds (preserving aggregate "
-            "load); gap_median controls skew.",
+            "lognormal / weibull: draw each turn gap from the named "
+            "distribution, with the sampled distribution's mean pinned to "
+            "users / rate seconds; gap_median controls skew. Pinning the "
+            "sampled distribution's mean does NOT preserve the realized "
+            "aggregate request rate: the scheduler advances each user to "
+            "max(now, previous_send + gap), which can only lengthen an "
+            "inter-send interval, so realized throughput falls as skew "
+            "increases (measured up to -52% relative to fixed). That drop is "
+            "scheduler behavior, not a server regression.",
         ),
     ]
 
@@ -648,8 +655,13 @@ class UserCentricPhase(RatePhaseConfig):
             gt=0,
             description="Median of the sampled per-user turn gap in seconds. "
             "Required for lognormal/weibull gap distributions and rejected for "
-            "fixed. Must be strictly less than the mean gap of "
-            "users / rate seconds (both distributions are right-skewed).",
+            "fixed. Must be strictly less than the smallest mean turn gap the "
+            "run reaches (both distributions are right-skewed): "
+            "users / rate seconds normally, or "
+            "adaptive_scale.control.min / rate when adaptive scaling of "
+            "'users' is active, since the run starts at control.min. The "
+            "further the median sits below the mean, the stronger the skew "
+            "and the lower the realized aggregate request rate.",
         ),
     ]
 
@@ -693,16 +705,36 @@ class UserCentricPhase(RatePhaseConfig):
                 "(median of the sampled turn gap in seconds)."
             )
 
-        mean_gap = self.users / self.rate
+        mean_gap, bound_expr, bound_note = self._smallest_mean_turn_gap()
         if self.gap_median >= mean_gap:
             raise ValueError(
                 f"Phase '{self.name}': --user-centric-gap-median "
                 f"({self.gap_median}) must be less than the mean turn gap of "
-                f"--num-users / --user-centric-rate = {mean_gap} seconds. "
+                f"{bound_expr} = {mean_gap} seconds.{bound_note} "
                 "Lognormal and weibull turn-gap sampling keeps the mean pinned "
                 "to that value and supports right-skewed gaps only "
                 "(median < mean)."
             )
+
+    def _smallest_mean_turn_gap(self) -> tuple[float, str, str]:
+        """Return the smallest reachable mean turn gap, plus how it was derived.
+
+        ``users`` is the *maximum* user count: with adaptive ``users`` scaling
+        the run starts at ``adaptive_scale.control.min`` and ramps up, and the
+        mean turn gap is ``num_users / rate``, so the starting user count yields
+        the smallest gap. Bounding ``gap_median`` by that smallest gap is what
+        keeps a config that validates from dying at phase start in
+        ``UserCentricStrategy._solve_gap_params``.
+        """
+        floor = self.adaptive_users_control_floor()
+        if floor is None or floor >= self.users:
+            return self.users / self.rate, "--num-users / --user-centric-rate", ""
+        return (
+            floor / self.rate,
+            f"adaptive_scale.control.min ({floor:g}) / --user-centric-rate",
+            " Adaptive scaling of 'users' starts the run at control.min, so "
+            "that is the smallest mean turn gap the run reaches.",
+        )
 
 
 class FixedSchedulePhase(BasePhaseConfig):

@@ -326,8 +326,10 @@ class CreditPhaseConfig(AIPerfBaseModel):
         description="Distribution of the per-user gap between turns in user-centric "
         "rate mode. fixed uses the deterministic constant gap of "
         "num_users / request_rate seconds; lognormal/weibull draw each turn gap "
-        "from the named distribution whose mean is pinned to "
-        "num_users / request_rate seconds.",
+        "from the named distribution, with the sampled distribution's mean "
+        "pinned to num_users / request_rate seconds. Pinning that mean does "
+        "not preserve the realized aggregate request rate, which falls as skew "
+        "increases.",
     )
     user_centric_gap_median: float | None = Field(
         default=None,

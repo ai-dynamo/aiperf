@@ -440,6 +440,22 @@ class TestGapDistributionSampling:
         with pytest.raises(ValueError, match=r"0\.2"):
             strategy.set_target_users(2)
 
+    def test_failed_rescale_retains_consistent_turn_gap_and_params(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.WEIBULL, median=0.3
+        )
+        old_gap = strategy._turn_gap
+        old_params = strategy._gap_params
+
+        with pytest.raises(ValueError):
+            strategy.set_target_users(2)
+
+        # A rejected rescale must not leave _turn_gap and _gap_params describing
+        # different distributions (params pinned to the old mean, gap to the new).
+        assert strategy._turn_gap == old_gap
+        assert strategy._gap_params is old_params
+        assert strategy._gap_params.mean == strategy._turn_gap
+
     def test_adaptive_rescale_repins_sampled_mean(self) -> None:
         strategy = _make_gap_strategy(
             distribution=UserCentricGapDistribution.LOGNORMAL, median=0.2
