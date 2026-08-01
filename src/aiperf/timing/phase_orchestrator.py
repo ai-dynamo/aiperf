@@ -297,6 +297,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # Active phase runners (for cancellation) - multiple possible with seamless mode
         self._active_runners: list[PhaseRunner] = []
         self._server_profiler_owners: set[PhaseRunner] = set()
+        # In-flight deferred profiler stops spawned from phase-complete
+        # callbacks; awaited by _execute_phases before the run reports success.
+        self._deferred_profiler_stops: set[asyncio.Task] = set()
         # First fatal failure surfaced by a seamless phase's detached return-wait
         # task; re-raised by _execute_phases so the run fails (not reports success).
         self._seamless_phase_error: BaseException | None = None
@@ -465,6 +468,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # This guarantees a late fatal control-node failure has been surfaced
         # before the run is allowed to report success.
         await self._await_outstanding_seamless_waits()
+        await self._drain_deferred_profiler_stops()
         if self._seamless_phase_error is not None:
             error = self._seamless_phase_error
             self.error(f"Fatal control-node failure in a seamless phase: {error!r}")
@@ -491,6 +495,26 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             fatal = runner.control_fatal_error
             if fatal is not None and self._seamless_phase_error is None:
                 self._seamless_phase_error = fatal
+
+    async def _drain_deferred_profiler_stops(self) -> None:
+        """Ensure every deferred profiler stop has completed before returning.
+
+        Two paths must be covered. A runner whose phase-complete callback has
+        already fired left a task in ``_deferred_profiler_stops``; await it. A
+        runner whose return-wait finished but whose done-callback has not run
+        yet (done-callbacks are scheduled via ``call_soon``, so awaiting the
+        return-wait task does not guarantee it fired) still holds ownership;
+        stop it directly. ``_stop_server_profiler_for_runner`` is a no-op for a
+        runner that no longer owns the profiler, so the two paths cannot issue
+        a duplicate stop.
+        """
+        while True:
+            pending = [t for t in self._deferred_profiler_stops if not t.done()]
+            if not pending:
+                break
+            await asyncio.gather(*pending, return_exceptions=True)
+        for runner in list(self._server_profiler_owners):
+            await self._stop_server_profiler_for_runner_warn_only(runner)
 
     async def _start_server_profiler_for_runner(
         self,
@@ -549,7 +573,14 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
         def cleanup_and_stop() -> None:
             cleanup()
-            self.execute_async(self._stop_server_profiler_for_runner_warn_only(runner))
+            # Fired from a done-callback, so the stop cannot be awaited here.
+            # Track the task so _execute_phases can await it before returning
+            # rather than letting the run finish with a stop still in flight.
+            task = self.execute_async(
+                self._stop_server_profiler_for_runner_warn_only(runner)
+            )
+            self._deferred_profiler_stops.add(task)
+            task.add_done_callback(self._deferred_profiler_stops.discard)
 
         return cleanup_and_stop
 
