@@ -17,6 +17,7 @@ import type { SceneIrLike } from "./scene-types.js";
 import {
   DEFAULT_SCENE_FONT_SIZE,
   SCENE_FONT,
+  SCENE_LINE_HEIGHT_RATIO,
   SCENE_TEXT_SCALE,
   estimateTextWidth,
   stepperChipWidth,
@@ -333,6 +334,17 @@ describe("SceneRenderer SDK foundations", () => {
       <SceneRenderer scene={scene} playing={false} restartKey={0} />,
     );
 
+    // Chrome copy wraps to the part's box width, so a <text> may hold several
+    // <tspan> lines; `textContent` would concatenate them without the break's
+    // space. Compare the rejoined copy so the assertion tracks what is painted
+    // rather than how many lines it happened to need.
+    const renderedCopy = (node: Element): string =>
+      [...node.childNodes]
+        .map((child) => child.textContent ?? "")
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
     for (const copy of [
       "Header copy",
       "Panel copy",
@@ -344,7 +356,7 @@ describe("SceneRenderer SDK foundations", () => {
     ]) {
       expect(
         [...container.querySelectorAll("text")].filter(
-          (node) => node.textContent === copy,
+          (node) => renderedCopy(node) === copy,
         ),
         copy,
       ).toHaveLength(1);
@@ -695,6 +707,60 @@ describe("SceneRenderer SDK foundations", () => {
     // An authored `fontSize` still wins over the chrome ladder.
     expect(textByContent("Authored")?.getAttribute("font-size")).toBe("18");
     expect(textByContent("Authored")?.style.fontSize).toBe("18px");
+  });
+
+  it("wraps semantic chrome copy to its box instead of overflowing", () => {
+    const detail =
+      "batching and KV cache and prefix caching and chunked prefill and routing and disagg handoff";
+    const { container } = render(
+      <SceneRenderer
+        scene={{
+          roots: [
+            {
+              id: "panel",
+              kind: "group",
+              capabilityId: "core.panel",
+              geometry: { x: 0, y: 0, width: 320, height: 240 },
+              style: {},
+              props: { title: "Unchanged inside the seam", detail },
+              children: [],
+            },
+          ],
+          timeline: [],
+        }}
+        playing={false}
+        restartKey={0}
+      />,
+    );
+
+    const detailText = [...container.querySelectorAll("text")].find((node) =>
+      (node.textContent ?? "").startsWith("batching"),
+    );
+    const lines = [...(detailText?.querySelectorAll("tspan") ?? [])];
+
+    // SVG <text> does not wrap, so long copy used to run straight off the box.
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.map((line) => line.textContent).join(" ")).toBe(detail);
+
+    // Every line has to fit the box it is painted into. The authored 320 is not
+    // the bound to check: `layout.ts` auto-grows a panel to fit its copy, so the
+    // invariant is against the box as actually resolved.
+    const fontSize = SCENE_FONT.detail * SCENE_TEXT_SCALE;
+    const chromeRect = container.querySelector("rect[data-flow-semantic-chrome]");
+    const boxWidth = Number(chromeRect?.getAttribute("width"));
+    expect(boxWidth).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(
+        estimateTextWidth(line.textContent ?? "", fontSize),
+      ).toBeLessThanOrEqual(boxWidth);
+    }
+
+    // A centered block centers on its full stacked height, so the first line
+    // sits above the midpoint rather than on it.
+    expect(Number(detailText?.getAttribute("y"))).toBeLessThan(
+      Number(detailText?.getAttribute("y")) +
+        ((lines.length - 1) * fontSize * SCENE_LINE_HEIGHT_RATIO) / 2,
+    );
   });
 
   it("renders intrinsically sized semantic stepper labels", () => {

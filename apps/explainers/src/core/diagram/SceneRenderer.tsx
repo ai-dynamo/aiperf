@@ -51,7 +51,11 @@ import type {
   SceneTimelineCueLike,
   SceneViewportLike,
 } from "./scene-types.js";
-import { scaledSceneFontSize, wrapTextToWidth } from "./text-metrics.js";
+import {
+  SCENE_LINE_HEIGHT_RATIO,
+  scaledSceneFontSize,
+  wrapTextToWidth,
+} from "./text-metrics.js";
 
 export type {
   SceneCameraKeyframeLike,
@@ -3170,22 +3174,44 @@ function renderNode(
             part.tone === "secondary"
               ? theme.text.secondary
               : theme.text.primary;
+          // SVG <text> never wraps, so a chrome title/detail/quote wider than its
+          // box used to run straight off the edge. Wrap to the part's own width,
+          // mirroring the authored-text branch below: wrap with the ALREADY-scaled
+          // font size and stack at `fontSize * SCENE_LINE_HEIGHT_RATIO`, so measure
+          // and paint stay in agreement. `whiteSpace: "pre"` (code blocks) and
+          // manual newlines are author-authoritative and never re-wrapped.
+          const partFontSize = scaledSceneFontSize(part.fontSize);
+          const partText = part.text ?? "";
+          const partWeight = part.fontWeight === "bold" ? "bold" : "normal";
+          const partLines =
+            partText.includes("\n") || part.whiteSpace === "pre"
+              ? partText.split("\n")
+              : part.whiteSpace === "nowrap" || !(part.geometry.width > 0)
+                ? [partText]
+                : wrapTextToWidth(
+                    partText,
+                    part.geometry.width,
+                    partFontSize,
+                    partWeight,
+                  );
+          const partLineHeight = partFontSize * SCENE_LINE_HEIGHT_RATIO;
+          const partTextX = centered
+            ? part.geometry.x + part.geometry.width / 2
+            : anchor === "end"
+              ? part.geometry.x + part.geometry.width
+              : part.geometry.x;
+          // A centered block centers on its full stacked height, not its first line.
+          const partTextY = centered
+            ? part.geometry.y +
+              part.geometry.height / 2 -
+              ((partLines.length - 1) * partLineHeight) / 2
+            : part.geometry.y;
           return (
             <text
               key={`generated-text-${part.id}`}
               id={part.id}
-              x={
-                centered
-                  ? part.geometry.x + part.geometry.width / 2
-                  : anchor === "end"
-                    ? part.geometry.x + part.geometry.width
-                    : part.geometry.x
-              }
-              y={
-                centered
-                  ? part.geometry.y + part.geometry.height / 2
-                  : part.geometry.y
-              }
+              x={partTextX}
+              y={partTextY}
               dominantBaseline={centered ? "middle" : "hanging"}
               textAnchor={anchor}
               fill={
@@ -3193,7 +3219,7 @@ function renderNode(
                   ? resolveThemePaint(part.inkRole, theme, inkFallback)
                   : inkFallback
               }
-              fontSize={scaledSceneFontSize(part.fontSize)}
+              fontSize={partFontSize}
               fontWeight={part.fontWeight}
               fontFamily={part.fontFamily}
               fontStyle={part.fontStyle}
@@ -3206,7 +3232,17 @@ function renderNode(
               aria-hidden="true"
               data-flow-semantic-text={capability}
             >
-              {part.text ?? ""}
+              {partLines.length <= 1
+                ? partText
+                : partLines.map((line, lineIndex) => (
+                    <tspan
+                      key={`${part.id}-line-${lineIndex}`}
+                      x={partTextX}
+                      dy={lineIndex === 0 ? 0 : partLineHeight}
+                    >
+                      {line}
+                    </tspan>
+                  ))}
             </text>
           );
         })}
