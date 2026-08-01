@@ -12,7 +12,7 @@ PRM800K evaluation utilities. The grader pipeline is:
 1. ``_extract_with_flag`` extracts the model's answer from the response
    (last ``\\boxed{...}`` first, then "the answer is X" / last-number
    fallbacks) — same as before.
-2. ``_strip_string`` (ported in ``_math_strip``) normalizes the
+2. ``strip_string`` (ported in ``_math_strip``) normalizes the
    prediction and the gold using the recipe's exact pipeline.
 3. ``_math_equal`` compares them: lowercase string equality, then
    numerical equality with a small tolerance, then symbolic equality

@@ -181,7 +181,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
     """Run discrete-event simulation over synthesized sessions.
 
     Cache hit rate is computed from actual block hits: for each turn, blocks
-    already in the global cache (blockRefCount) are hits; the rest are misses
+    already in the global cache (block_refcount) are hits; the rest are misses
     that need prefill. This replaces the old flat cache_hit_rate input.
     """
     config.validate()

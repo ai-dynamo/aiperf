@@ -110,7 +110,7 @@ _PROMPT_TEMPLATE = (
 def _seeded_shuffle_indices(key: str, n: int) -> list[int]:
     """Return a deterministic permutation of ``range(n)`` seeded by ``key``.
 
-    Uses the leading 32 bits of SHA-256(key) as the seed for Python's
+    Uses SHA-256(key) reduced modulo 2**32 as the seed for Python's
     ``random.Random``. This gives a stable, locale-independent,
     Python-version-independent permutation: regenerating prompts on a
     new machine produces identical letter orderings.

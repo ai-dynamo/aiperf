@@ -30,7 +30,8 @@ AIPerf has TWO sweep paths and they target different scales:
 
 The two paths are mutually exclusive at runtime: when
 ``AIPERF_OPERATOR_MANAGED=1`` is set in the controller pod, the
-in-process gate (``cli_runner._reject_in_process_sweep_under_operator``)
+in-process gate
+(``cli_runner._multi_run._reject_in_process_sweep_under_operator``)
 hard-fails on ``plan.is_sweep`` to keep both layers from sweeping at once.
 Use the CRD path whenever you need horizontal scale or restart durability;
 otherwise the in-process path is simpler.

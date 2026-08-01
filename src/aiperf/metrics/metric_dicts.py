@@ -199,8 +199,10 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     of all metrics that have been computed for an entire run.
 
     This will include:
-    - All ``BaseRecordMetric`` values as a run-level metric series implementing
-      ``MetricSeriesProtocol`` (numpy column, ragged CSR, growable array, etc.).
+    - Each ``BaseRecordMetric`` as the run-level SUM of its per-record values
+      (a single float). The per-record distribution stays in the accumulator's
+      columnar store; only the scalar reaches this dict, which is why
+      ``DerivedSumMetric`` can return the looked-up value unchanged.
     - The most recent value of each ``BaseAggregateMetric``.
     - The value of any ``BaseDerivedMetric`` that has already been computed.
     """

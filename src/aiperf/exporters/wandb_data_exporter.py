@@ -129,8 +129,9 @@ class WandbDataExporter(AIPerfLoggerMixin):
         return f"aiperf-{int(time.time())}"
 
     def _build_metric_table_rows(self) -> list[list[Any]]:
-        """One row per metric, mirroring the console Real-Time Metrics table:
-        same visibility rules, display order, short labels, and stat columns.
+        """One row per metric, mirroring the end-of-run ConsoleMetricsExporter
+        table: same visibility rules (its ``exclude_flags`` / ``console_groups``),
+        display order, short labels, and ``STAT_COLUMN_KEYS`` stat columns.
         """
 
         def label(record: Any, cls: Any) -> str:

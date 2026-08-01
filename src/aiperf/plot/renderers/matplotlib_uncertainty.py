@@ -34,7 +34,8 @@ def _ellipse_params_from_covariance(
 
     No chi-square scaling is applied because the input half-widths are already
     confidence-scaled (t_crit * SE) by the handler. This matches the Plotly
-    renderer's _build_ellipse_trace and _ellipse_params_axis_aligned.
+    path in PlotGenerator._build_ellipse_trace (aiperf.plot.core.plot_generator),
+    which likewise applies no chi-square scaling.
 
     Args:
         point_cov_xy: Sample covariance between x and y metrics.

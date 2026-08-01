@@ -58,7 +58,6 @@ class CsvMetricInfo(NamedTuple):
         description: Metric description from HELP text
         unit: Inferred unit string (e.g., "seconds", "bytes") or None
         stats: Type-specific statistics (Gauge, Counter, or Histogram series)
-        is_derived: Whether this is a derived metric
     """
 
     endpoint: str

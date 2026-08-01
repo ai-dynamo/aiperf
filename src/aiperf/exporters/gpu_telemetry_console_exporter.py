@@ -64,7 +64,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         Generates formatted output with:
         - Summary header showing endpoint reachability status
         - Per-GPU tables with metrics (power, utilization, temperature, etc.)
-        - Statistical summaries (avg, min, max, p99, p90, p75, std) for each metric
+        - Statistical summaries (avg, min, max, p99, p90, p50, std) for each metric
         - Error summary if no data was collected
 
         Returns:

@@ -130,13 +130,13 @@ class SocketDefaults:
 
 @dataclass(frozen=True)
 class AioHttpDefaults:
-    """Default values for aiohttp.ClientSession."""
+    """Default values for the aiohttp.TCPConnector used by AioHttpClient."""
 
     LIMIT = (
         Environment.HTTP.CONNECTION_LIMIT
     )  # Maximum number of concurrent connections
     LIMIT_PER_HOST = (
-        0  # Maximum number of concurrent connections per host (0 will set to LIMIT)
+        0  # Per-host connection cap (0 = uncapped, so LIMIT is the only bound)
     )
     TTL_DNS_CACHE = Environment.HTTP.TTL_DNS_CACHE  # Time to live for DNS cache
     USE_DNS_CACHE = Environment.HTTP.USE_DNS_CACHE  # Enable DNS cache
@@ -154,7 +154,7 @@ class AioHttpDefaults:
 
     @classmethod
     def get_default_kwargs(cls) -> dict[str, Any]:
-        """Get the default keyword arguments for aiohttp.ClientSession."""
+        """Get the default keyword arguments for aiohttp.TCPConnector."""
         return {
             "limit": cls.LIMIT,
             "limit_per_host": cls.LIMIT_PER_HOST,

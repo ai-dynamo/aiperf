@@ -11,7 +11,7 @@ When the envelope ships a ``plot:`` section, the callback materializes the
 resolved ``PlotEnvelopeConfig`` to ``<artifact_dir>/.aiperf-plot-config.yaml``
 and passes that path to ``run_plot_controller`` via its ``config=`` arg. The
 materialized file becomes a run artifact: re-running ``aiperf plot <run>``
-later picks it up via the existing ``--config`` priority chain, making the
+later auto-detects it (``PlotConfig`` priority 1.5, no ``--config`` needed), making the
 run's plots reproducible without the original envelope or the user's
 ``~/.aiperf/plot_config.yaml``.
 """
@@ -59,7 +59,8 @@ def build_auto_plot_callback(
             it is materialized to ``<artifact_dir>/.aiperf-plot-config.yaml``
             and passed to ``run_plot_controller`` via ``config=``. When None,
             ``run_plot_controller`` falls back to its existing chain
-            (CLI ``--config`` -> ``~/.aiperf/plot_config.yaml`` -> shipped default).
+            (CLI ``--config`` -> per-run ``.aiperf-plot-config.yaml`` ->
+            ``~/.aiperf/plot_config.yaml`` -> shipped default).
     """
 
     def _callback(run: CompletedRun) -> None:

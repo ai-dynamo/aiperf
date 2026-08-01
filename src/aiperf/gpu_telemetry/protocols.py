@@ -85,11 +85,11 @@ class GPUTelemetryAccumulatorProtocol(Protocol):
     def total_power_watts(
         self, start_ns: int | None, end_ns: int | None, platform: str | None = None
     ) -> tuple[float, int]:
-        """Per-vendor total of avg(power) over ``[start_ns, end_ns)``."""
+        """Per-vendor total of avg(power) over ``[start_ns, end_ns]``."""
         ...
 
     def total_energy_joules(
         self, start_ns: int | None, end_ns: int | None, platform: str | None = None
     ) -> tuple[float, int]:
-        """Per-vendor total energy (J) over ``[start_ns, end_ns)``."""
+        """Per-vendor total energy (J) over ``[start_ns, end_ns]``."""
         ...

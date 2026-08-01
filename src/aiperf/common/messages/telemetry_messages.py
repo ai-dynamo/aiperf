@@ -53,7 +53,7 @@ class ProcessTelemetryResultMessage(BaseServiceMessage):
 
 
 class TelemetryStatusMessage(BaseServiceMessage):
-    """Message from TelemetryManager to SystemController indicating telemetry availability."""
+    """Message from GPUTelemetryManager to SystemController indicating telemetry availability."""
 
     message_type: MessageTypeT = MessageType.TELEMETRY_STATUS
 

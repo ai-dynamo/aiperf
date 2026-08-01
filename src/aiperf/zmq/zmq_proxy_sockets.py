@@ -152,7 +152,7 @@ ASCII Diagram:
 └───────────┘                                           └───────────┘
 
 The XSUB frontend socket receives messages from PUB clients and forwards them
-through the proxy to XPUB services. The ZMQ proxy handles the message
+through the proxy to SUB services. The ZMQ proxy handles the message
 routing automatically.
 
 The XPUB backend socket forwards messages from the proxy to SUB services.
@@ -218,7 +218,7 @@ ASCII Diagram:
 └───────────┘                                               └───────────┘
 
 The PULL frontend socket receives messages from PUSH clients and forwards them
-through the proxy to PUSH services. The ZMQ proxy handles the message
+through the proxy to PULL services. The ZMQ proxy handles the message
 routing automatically.
 
 The PUSH backend socket forwards messages from the proxy to PULL services.

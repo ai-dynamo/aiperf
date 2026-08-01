@@ -83,7 +83,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     Optional timeslice analysis:
     - When slice_duration configured, computes windowed statistics
     - Enables analysis of metric variation over time (e.g., rate spikes)
-    - All timeslices have identical duration for fair comparison
+    - Slices share one duration except a final partial slice, which is flagged
+      is_complete=False and excluded from aggregate rate statistics
 
     Args:
         run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
@@ -292,13 +293,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         Time filtering is applied per-endpoint to handle cases where different
         endpoints have different collection start/end times. The filter uses:
         - profiling_start_ns to exclude warmup metrics
-        - max(profiling_end_ns, last_update_ns) to include final collection
+        - max(profiling_end_ns, last_update_ns) when include_final_collection is
+          set, otherwise profiling_end_ns unchanged
 
         Args:
             profiling_start_ns: Profiling phase start time (excludes warmup period)
             profiling_end_ns: Profiling phase end time (benchmark completion time)
             slice_duration: Duration of each timeslice window in seconds for time-sliced stats.
                            If None, timeslice analysis is skipped (saves computation).
+            include_final_collection: Extend each endpoint's window to its last
+                           update so a post-benchmark scrape is included.
 
         Returns:
             Dict mapping endpoint display names (e.g., "localhost:8081") to

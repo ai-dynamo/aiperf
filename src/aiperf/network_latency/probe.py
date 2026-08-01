@@ -27,8 +27,8 @@ class NetworkLatencyProbeCollector(AIPerfLifecycleMixin):
     port is performed (no TLS) so ``rtt_ns`` is one uniform network round-trip
     across http/https.
 
-    The host is resolved once at construction time (cached resolved address)
-    so probes time pure TCP connect, not DNS resolution.
+    The host is resolved once by ``resolve()`` before probing starts (cached
+    resolved address) so probes time pure TCP connect, not DNS resolution.
 
     Probe failures (timeout/refused) are recorded as a failed sample
     (``success=False``, ``rtt_ns=None``, ``error=...``) and never crash the run:

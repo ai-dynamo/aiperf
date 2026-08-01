@@ -31,8 +31,10 @@ class MultipleChoiceGrader(BaseGrader):
     splitting on "\\n" and taking only the first line.
 
     When the first-line result is not a bare A-D letter (e.g. "The answer is B."),
-    a regex fallback extracts the first lone A-D letter. Responses that required
-    the fallback are flagged as unparsed in GradingResult.
+    the shared extraction cascade and a first-line lone-letter regex are tried in
+    the order documented on ``_extract_with_flag``. Responses that needed anything
+    past the clean first-line letter or an explicit "answer is (X)" statement are
+    flagged as unparsed in GradingResult.
 
     Matching:
     - Gold: choices[gold_index] e.g. " A" -> stripped to "A"

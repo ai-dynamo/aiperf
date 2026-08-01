@@ -77,7 +77,7 @@ class TraceDataExport(AIPerfBaseModel):
         "and must match the trace_type of the corresponding trace data model.",
     )
 
-    # Enable computed fields in serialization
+    # Use attribute docstrings as field descriptions
     model_config = ConfigDict(use_attribute_docstrings=True)
 
     # Request Send Phase (matches BaseTraceData field names)

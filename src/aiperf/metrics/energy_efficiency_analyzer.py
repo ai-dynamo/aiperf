@@ -6,7 +6,8 @@ Joins GPU-telemetry energy/power (a live query on the ``GPUTelemetryAccumulator`
 over the profiling window) with inference token/throughput/latency totals (read
 off the ``MetricsAccumulator`` summary) to emit the energy-efficiency metric
 family. Runs at summarize time via the SummaryContext; skipped by RecordsManager
-when GPU telemetry is not collected. See design doc ``0005-energy-efficiency-metrics.md``.
+when GPU telemetry is not collected. See ``docs/metrics-reference.md``
+("GPU Power Efficiency Metrics") for the per-tag formulas.
 
 Energy source: prefers the DCGM ``energy_consumption`` counter delta; falls back
 to power-integration (``fleet_power * duration``) when only the power gauge is

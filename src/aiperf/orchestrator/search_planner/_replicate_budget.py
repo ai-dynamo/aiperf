@@ -43,7 +43,8 @@ def replicate_count(sigma_margin: float, threshold: float, override: int = 0) ->
     expressed as ``observed >= 0``).
 
     ``override > 0`` short-circuits the formula and returns the override
-    directly — wires the user-facing ``--sla-replicates N`` flag. ``0`` (the
+    directly — wires the user-facing ``sweep.sla_replicates`` YAML field
+    (there is no equivalent CLI flag). ``0`` (the
     default) means "auto" and runs the formula.
     """
     if override > 0:

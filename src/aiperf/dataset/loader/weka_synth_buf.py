@@ -476,12 +476,10 @@ class ConversationReconstructor:
         The returned list is a fresh list of fresh dicts — callers may mutate
         without affecting the reconstructor's internal state.
 
-        Used by ``WekaTraceLoader`` (and the parallel-convert worker path) to
-        fill ``Turn.raw_messages`` so AIPerf can replay the byte-exact prompt
-        seen by the original recording. The list represents the FULL chat
-        prefix at this turn (NOT just the latest appended user message); the
-        orchestrator concatenates them with the serving stack's chat template
-        at request time.
+        The list represents the FULL chat prefix at this turn (NOT just the
+        latest appended user message), unlike the delta emitted by
+        :meth:`turn_delta`, which is what the loader writes to
+        ``Turn.raw_messages``.
         """
         return [{"role": s.role, "content": s.content} for s in self._segments]
 

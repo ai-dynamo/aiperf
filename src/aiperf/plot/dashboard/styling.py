@@ -21,15 +21,17 @@ from aiperf.plot.constants import (
 
 def get_dropdown_css(theme: PlotTheme) -> str:
     """
-    Generate CSS specifically for dropdown components.
+    Generate CSS for dropdown and modal components.
 
-    This is used for dynamic theme updates via callback.
+    Emits CSS custom properties for both themes under .theme-dark/.theme-light
+    plus rules that consume them, so the `theme` argument does not affect the
+    output. Not currently referenced by any caller.
 
     Args:
-        theme: PlotTheme.LIGHT or PlotTheme.DARK
+        theme: Unused; retained for call-site symmetry with the other helpers
 
     Returns:
-        CSS string for dropdown styling
+        CSS string for dropdown and modal styling
     """
     # Get colors for both themes for CSS variables
     dark_colors = get_theme_colors(PlotTheme.DARK)
@@ -224,7 +226,9 @@ def get_scoped_theme_css(theme: PlotTheme) -> str:
     """
     Generate theme-scoped CSS for a specific theme.
 
-    All selectors are scoped under .theme-light or .theme-dark class.
+    Most selectors are scoped under the .theme-light or .theme-dark class, but
+    the plot-container, plot button, resize-handle, context-menu and checkbox
+    rules below are emitted unscoped and therefore apply to both themes.
 
     Args:
         theme: PlotTheme.LIGHT or PlotTheme.DARK
@@ -369,7 +373,7 @@ def get_scoped_theme_css(theme: PlotTheme) -> str:
             grid-column: span 2;  /* 2 of 2 = 100% */
         }}
 
-        /* Settings button (⚙) - green by default in light theme, shown on hover */
+        /* Settings button (⚙) - green tint, shown on hover (unscoped: both themes) */
         .plot-settings-btn {{
             position: absolute;
             top: 40px;
@@ -592,7 +596,8 @@ def get_all_themes_css() -> str:
             grid-column: span 2;  /* 2 of 2 = 100% */
         }}
 
-        /* Settings button (⚙) - white in dark theme, shown on hover */
+        /* Settings button (⚙) - white tint; superseded by the green variant
+           that get_scoped_theme_css appends after this global block */
         .plot-settings-btn {{
             position: absolute;
             top: 40px;

@@ -108,7 +108,8 @@ class UserSession(AIPerfBaseModel):
           When jumping ahead past untraversed turns (e.g. agentic_replay's
           mid-trajectory resume at ``k_i > 0``), prior turns 0..turn_index-1
           are seeded first so the endpoint accumulator reproduces the full
-          chat prefix from the trace's delta-encoded turns.
+          chat prefix from the trace's delta-encoded turns -- under
+          ``DELTAS_WITH_RESPONSES`` only.
 
         Args:
             turn_index: The index of the turn to advance to.
@@ -330,7 +331,8 @@ class UserSessionManager:
         already evicted — the FORK-pin refcount usually keeps the parent
         resident, but late-arriving children may race past eviction. The
         request still goes out, just without seed context, matching the
-        pre-existing ``pin_for_fork_child`` "evicted parent" branch.
+        caller-side ``KeyError`` handling around ``pin_for_fork_child`` in
+        ``Worker._pin_parent_if_fork_child``.
         """
         parent = self._cache.get(parent_x_correlation_id)
         child = self._cache.get(child_x_correlation_id)

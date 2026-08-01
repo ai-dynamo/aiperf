@@ -56,7 +56,11 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format request payload from RequestInfo.
 
-        Uses request_info.turns[0] as the turn data (currently hardcoded to first turn).
+        Message-array endpoints flatten every entry of ``request_info.turns``
+        (conversation history) via ``build_messages``; per-request overrides
+        (``max_tokens``, ``extra_body``, ``model``) come from the DISPATCH turn
+        ``turns[-1]``. Single-shot endpoints (completions, embeddings,
+        rankings, image/video generation) read ``turns[-1]`` only.
         """
 
     @abstractmethod

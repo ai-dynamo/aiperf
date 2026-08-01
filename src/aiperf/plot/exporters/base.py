@@ -4,8 +4,8 @@
 """
 Base exporter class for all visualization formats.
 
-Provides shared functionality for metric labeling and plot generation
-across PNG, HTML, and Dash exporters.
+Provides shared functionality for metric labeling and plot generation.
+The only subclass today is the PNG exporter family (BasePNGExporter).
 """
 
 from abc import ABC, abstractmethod
@@ -20,7 +20,7 @@ from aiperf.plot.metric_names import get_metric_display_name
 
 class BaseExporter(AIPerfLoggerMixin, ABC):
     """
-    Base class for all plot exporters (PNG, HTML, Dash).
+    Base class for all plot exporters.
 
     Provides shared functionality like metric labeling and plot generation.
     Subclasses implement format-specific export logic.

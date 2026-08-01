@@ -36,7 +36,7 @@ class ReplyClientMixin(CommunicationMixin, ABC):
 
     @on_init
     async def _setup_request_handler_hooks(self) -> None:
-        """Configure the reply client to handle requests for all @request_handler hook decorators."""
+        """Configure the reply client to handle requests for all @on_request hook decorators."""
 
         def _register_request_handler(hook: Hook, message_type: MessageTypeT) -> None:
             self.debug(

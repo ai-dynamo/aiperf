@@ -14,7 +14,7 @@ def merge_unary_chains(tree: RadixTree) -> None:
     """Merge unary chains (nodes with single children) into compressed edges.
 
     Modifies the tree in-place, combining edge labels when a node has
-    only one child and that child has only one parent.
+    exactly one child and that child itself has exactly one child.
 
     Args:
         tree: RadixTree to compress.

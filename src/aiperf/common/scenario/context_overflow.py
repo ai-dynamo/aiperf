@@ -27,10 +27,10 @@ def is_context_overflow_response(
        vLLM's ``{"detail": "..."}`` shape — which is still caught by the
        raw-body match in step 1).
 
-    Callers are expected to pre-filter to error responses (the
-    ``InferenceResultParser`` only invokes this on records with
-    ``has_error=True``); status-code gating lives at the call site so this
-    function stays a pure body-based classifier.
+    Callers are expected to pre-filter to error responses (the credit
+    callback handler only invokes this when ``credit_return.error`` is
+    non-None); status-code gating lives at the call site so this function
+    stays a pure body-based classifier.
 
     Args:
         body: The raw response body. ``str`` or ``bytes``; ``None`` returns

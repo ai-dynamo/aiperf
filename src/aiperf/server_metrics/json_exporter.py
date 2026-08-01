@@ -85,8 +85,8 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
 
         The hybrid format provides:
         - O(1) metric lookup by name (metrics keyed by name)
-        - Type-specific stats within each series (Gauge/Counter/HistogramSeriesStats)
-        - Unit parsed from metric name suffix
+        - Type-specific stats within each series (Gauge/Counter/HistogramSeries)
+        - Unit inferred from metric name suffix and HELP description
         - Both normalized endpoint and full endpoint_url
 
         Returns:

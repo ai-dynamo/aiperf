@@ -27,15 +27,10 @@ class SingleRunPNGExporter(BasePNGExporter):
     """
     PNG exporter for single-run time series plots.
 
-    Generates static PNG images for analyzing a single profiling run:
-    1. TTFT over time (scatter)
-    2. ITL over time (scatter)
-    3. Latency over time (area)
-    4. Timeslice plots (histograms) - if timeslice data available:
-       - TTFT across time slices
-       - ITL across time slices
-       - Throughput across time slices
-       - Latency across time slices
+    Which plots are generated is driven entirely by the ``plot_specs`` passed
+    to ``export()``, which come from ``visualization.single_run_defaults`` in
+    the plot config. Specs whose declared data sources (requests, timeslices,
+    gpu_telemetry) are missing or empty on the run are skipped.
     """
 
     def export(

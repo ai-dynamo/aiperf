@@ -451,7 +451,9 @@ class AioHttpClient(AIPerfLoggerMixin):
     ) -> RequestRecord:
         """Send a GET request to the specified URL with the given headers.
 
-        The response will be parsed into a TextResponse object.
+        The response is parsed into a BinaryResponse for video/image/audio/
+        octet-stream content types, and a TextResponse otherwise. SSE parsing is
+        POST-only, so a GET never yields incremental SSE messages.
         """
         return await self._request("GET", url, headers, **kwargs)
 

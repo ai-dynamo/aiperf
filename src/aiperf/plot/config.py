@@ -167,14 +167,14 @@ class PlotConfig:
             `<artifact_dir>/.aiperf-plot-config.yaml`, scanned in order
             across `self.artifact_dirs`. Lets `aiperf plot <run>` reproduce
             the original run's plots without the source AIPerf YAML.
-        2. ~/.aiperf/plot_config.yaml (auto-created from default on first run)
-        3. System default (fallback only, indicates package issue)
+        2. ~/.aiperf/plot_config.yaml (auto-created by copying the shipped
+            default on first run; a missing shipped default raises, since that
+            indicates a package installation issue)
 
         Console messages:
-        - Shows "Using config: <path>" when using customized config
+        - Shows "Using config: <path>" when an existing config file is used
             (Priority 1, 1.5, or 2)
         - Shows creation message when auto-creating config on first run
-        - Silent when using system defaults
 
         Returns:
             Path to the configuration file to use
@@ -524,7 +524,8 @@ class PlotConfig:
 
         Server metrics typically follow Prometheus naming conventions:
         - Contains colon separator (e.g., "vllm:metric_name", "triton:metric")
-        - Common prefixes: vllm, triton, http, dynamo, nvidia, nv
+        - Common prefixes: vllm_, sglang_, trtllm_, nv_ (Triton), http_, https_,
+          dynamo_, nvidia_, dcgm_, gpu_, process_, node_, container_
         - May include endpoint/label filters: metric[endpoint], metric{labels}
 
         Note: If you have custom Prometheus metrics that don't match these patterns,

@@ -48,7 +48,7 @@ class AnalysisStats(AIPerfBaseModel):
         le=1.0,
         description="Ratio of reused prefixes to total prefixes (0.0 to 1.0)",
     )
-    # Extended statistics matching prefix_data_generator output
+    # Extended per-metric distribution statistics
     isl_stats: MetricStats | None = Field(
         default=None, description="Full statistics for input sequence length"
     )

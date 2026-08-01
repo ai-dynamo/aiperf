@@ -338,21 +338,19 @@ def _format_server_metric_name(metric_name: str) -> str:
         metric_name: Raw metric name (e.g., "vllm:kv_cache_usage_perc")
 
     Returns:
-        Formatted display name (e.g., "vLLM: KV Cache Usage")
+        Formatted display name (e.g., "vLLM: Kv Cache Usage")
 
     Examples:
         >>> _format_server_metric_name("vllm:kv_cache_usage_perc")
-        'vLLM: KV Cache Usage'
+        'vLLM: Kv Cache Usage'
         >>> _format_server_metric_name("sglang:time_to_first_token_seconds")
-        'SGLang: Time to First Token'
+        'SGLang: Time To First Token'
         >>> _format_server_metric_name("nv_inference_request_duration_us")
-        'Triton: Inference Request Duration'
+        'Triton: Request Duration'
         >>> _format_server_metric_name("nv_gpu_utilization")
         'Triton GPU: Utilization'
         >>> _format_server_metric_name("dynamo_frontend_requests_total")
         'Dynamo: Frontend Requests'
-        >>> _format_server_metric_name("dynamo_component_requests{component='prefill'}")
-        'Dynamo: Component Requests'
         >>> _format_server_metric_name("http_requests_total")
         'HTTP: Requests'
     """

@@ -591,7 +591,8 @@ def register_single_run_callbacks(
     Note: Individual plot callbacks (TTFT, ITL, latency, throughput) have been
     removed as they are now handled by the unified caching architecture:
     - Initial rendering: _render_single_run_plots() in grid callback
-    - Theme switching: update_figures_on_theme_change() callback
+    - Theme switching: theme-store is an Input of the same grid callback
+      (register_dynamic_grid_callback), which re-renders from the dual-theme cache
     """
     # No individual plot callbacks needed - handled by caching architecture
     pass
@@ -626,9 +627,9 @@ def register_version_check_callback(
     """
     Check localStorage version and auto-migrate if config changed.
 
-    This callback runs on first load to detect if the config.yaml has changed
-    since the last session. If changed, it merges localStorage custom plots
-    with new config defaults.
+    This callback runs on first load to detect if the plot config YAML has changed
+    since the last session. If changed, localStorage state is replaced with pure
+    config defaults, discarding custom plots.
 
     Args:
         app: Dash application instance
@@ -810,7 +811,6 @@ def register_config_modal_callback(
     Handles:
     - Click on plot point → open modal with run config
     - Close button → close modal
-    - Hover tooltip with run summary (via customdata in plots)
 
     Args:
         app: Dash application instance
@@ -1311,7 +1311,7 @@ def register_export_png_callback(
     else:
         plot_specs = plot_config.get_single_run_plot_specs()
 
-    # Build available_metrics dict (reuse existing function at line 3848)
+    # Build available_metrics dict (reuse _build_available_metrics_dict)
     available_metrics = _build_available_metrics_dict(plot_specs)
 
     def _scale_figure_fonts(fig: go.Figure, scale: float) -> go.Figure:
@@ -1395,7 +1395,7 @@ def register_export_png_callback(
             _logger.warning(f"No spec found for plot '{plot_id}'")
             return None
 
-        # Use handler factory (same as PNG exporter line 121)
+        # Use handler factory (same as aiperf/plot/exporters/png/single_run.py)
         try:
             HandlerClass = plugins.get_class(PluginType.PLOT, spec.plot_type)
             handler = HandlerClass(plot_generator=plot_gen, logger=None)
@@ -2008,7 +2008,6 @@ def register_layout_control_callbacks(
 
     Handles:
     - Reset layout to defaults
-    - Clear saved layout from localStorage
 
     Args:
         app: Dash application instance
@@ -5313,10 +5312,9 @@ def register_dynamic_grid_callback(
 
         return children, all_warnings
 
-    # NOTE: Server-side theme callback removed - replaced by clientside callback
-    # in register_theme_callback(). The clientside callback uses Plotly.relayout()
-    # to update themes instantly without server roundtrip, avoiding JSON
-    # serialization, network transfer, and full re-render of all figures.
+    # NOTE: The dedicated server-side theme callback was removed. Theme changes are
+    # handled by this same grid callback (theme-store is one of its Inputs), which
+    # serves figures out of the dual-theme cache populated above.
 
 
 def register_sidebar_sync_callback(app: dash.Dash, theme: PlotTheme):

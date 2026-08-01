@@ -147,7 +147,8 @@ class SweepTableLogger:
     parameter identity actually lives — ``plan.sweep`` may be ``None``,
     a grid/zip/scenario sweep, or an adaptive-search sweep, none of
     which expose a uniform ``parameter_names`` field). Mirrors the
-    derivation used by ``cli_runner._reject_in_process_sweep_under_operator``.
+    derivation used by
+    ``cli_runner._multi_run._reject_in_process_sweep_under_operator``.
     """
 
     def __init__(

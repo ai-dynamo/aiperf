@@ -274,8 +274,9 @@ def throughput_sweep_line_icl(
 ) -> tuple[FloatArray, FloatArray]:
     """Compute ICL-aware instantaneous throughput at every chunk boundary.
 
-    Uses per-request rescaled rates: each ICL interval carries
-    ``output_tokens / n_icl_intervals`` tokens instead of exactly 1.
+    Uses per-request rescaled rates: each NON-ZERO ICL interval carries
+    ``(output_tokens - 1) / n_nonzero_icl_intervals`` tokens instead of exactly
+    1 (the first token is delivered instantaneously at ``gen_start_ns``).
     This preserves the accurate temporal shape from SSE message boundaries
     while matching the known total token count per request.
 
@@ -288,7 +289,8 @@ def throughput_sweep_line_icl(
 
     Returns:
         Tuple of (sorted_timestamps, throughput_values) in tokens/ns.
-        Has 2M events (one +rate and one -rate per chunk interval).
+        Has 2 events (one +rate, one -rate) per VALID non-zero ICL interval,
+        so at most 2M and possibly 0.
     """
     if len(icl_values) == 0:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)

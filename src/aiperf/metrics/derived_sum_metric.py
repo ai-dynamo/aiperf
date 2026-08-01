@@ -22,7 +22,7 @@ class DerivedSumMetric(
 
     Examples:
     ```python
-    class TotalReasoningTokensMetric(DerivedSumMetric[ReasoningTokenCountMetric, int]):
+    class TotalReasoningTokensMetric(DerivedSumMetric[int, ReasoningTokenCountMetric]):
         # ... Metric attributes ...
     ```
     """

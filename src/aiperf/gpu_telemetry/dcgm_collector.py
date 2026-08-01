@@ -42,7 +42,7 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         - Async HTTP collection with aiohttp
         - DCGM Prometheus format parsing
         - GPU metadata extraction (UUID, model, hostname)
-        - Automatic unit scaling (e.g., milliwatts to watts)
+        - Automatic unit scaling (e.g., millijoules to megajoules)
         - Callback-based record delivery
 
     Args:
@@ -106,7 +106,7 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         1. Parses metric families using prometheus_client parser
         2. Extracts GPU metadata (UUID, model name, hostname, etc.) from labels
         3. Maps DCGM metric names to TelemetryRecord field names
-        4. Applies scaling factors to convert units (e.g., milliwatts to watts)
+        4. Applies scaling factors to convert units (e.g., millijoules to megajoules)
         5. Aggregates metrics by GPU index into TelemetryRecord objects
 
         Skips non-finite values (NaN, inf) and metrics without valid GPU index.
@@ -193,6 +193,9 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         - Energy: millijoules -> megajoules
         - Memory: MiB -> GB
         - SM utilization: ratio (0-1) -> percentage (0-100)
+        - Power violation: nanoseconds -> microseconds
+
+        Power is left unscaled: DCGM already reports DCGM_FI_DEV_POWER_USAGE in watts.
 
         Only applies scaling to metrics present in the input dict. None values are preserved.
 

@@ -23,13 +23,12 @@ class PlotController:
     """Controller for generating plots from AIPerf profiling data.
 
     Orchestrates the plot generation pipeline: mode detection, data loading,
-    and export. Designed to support multiple output modes (PNG)
-    in the future.
+    and export.
 
     Args:
         paths: List of paths to profiling run directories
         output_dir: Directory to save generated plots
-        mode: Output mode (currently only PNG supported)
+        mode: Output mode (PNG or DASHBOARD). Defaults to PNG.
         theme: Plot theme (LIGHT or DARK). Defaults to LIGHT.
         config_path: Optional path to custom plot configuration YAML file
         verbose: Show detailed error tracebacks in console

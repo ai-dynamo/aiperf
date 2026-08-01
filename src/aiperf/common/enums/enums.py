@@ -58,7 +58,8 @@ class CommAddress(CaseInsensitiveStrEnum):
     """Address for bidirectional ROUTER-DEALER credit routing (all timing modes)."""
 
     RECORDS = "records"
-    """Address to send parsed records from InferenceParser to RecordManager."""
+    """Address to send parsed records from the RecordProcessor (and the telemetry,
+    server-metrics, and network-latency managers) to the RecordsManager."""
 
     DATASET_MANAGER_PROXY_FRONTEND = "dataset_manager_proxy_frontend"
     """Frontend address for sending requests to the DatasetManager."""
@@ -67,10 +68,10 @@ class CommAddress(CaseInsensitiveStrEnum):
     """Backend address for the DatasetManager to receive requests from clients."""
 
     RAW_INFERENCE_PROXY_FRONTEND = "raw_inference_proxy_frontend"
-    """Frontend address for sending raw inference messages to the InferenceParser from Workers."""
+    """Frontend address for sending raw inference messages to the RecordProcessor from Workers."""
 
     RAW_INFERENCE_PROXY_BACKEND = "raw_inference_proxy_backend"
-    """Backend address for the InferenceParser to receive raw inference messages from Workers."""
+    """Backend address for the RecordProcessor to receive raw inference messages from Workers."""
 
     # Referenced by aiperf.config.comm.*.
     CREDIT_RETURN_ROUTER = "credit_return_router"
@@ -215,8 +216,8 @@ class TurnInputKind(CaseInsensitiveStrEnum):
 class SubagentType(CaseInsensitiveStrEnum):
     """Optional sub-agent classification carried on DAG Conversation nodes.
 
-    Used for DAG-benchmark bucket metrics and future routing policies. Unused
-    by core aiperf today; present so externally-authored manifests can
+    Reserved for DAG-benchmark bucket metrics and future routing policies. Not
+    consumed by core aiperf today; present so externally-authored manifests can
     round-trip through aiperf models without validation errors.
     """
 
@@ -224,7 +225,7 @@ class SubagentType(CaseInsensitiveStrEnum):
     """Exploratory agent branch (e.g. breadth-first search child)."""
 
     GENERAL = "general"
-    """General-purpose agent branch (default when unspecified)."""
+    """General-purpose agent branch."""
 
     PLAN = "plan"
     """Planning/decomposition agent branch."""

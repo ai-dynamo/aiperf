@@ -225,7 +225,10 @@ class MetricsJsonExporter(MetricsBaseExporter):
     ) -> dict[str, JsonMetricResult]:
         """Prepare and convert metrics to JsonMetricResult objects.
 
-        Applies unit conversion, filtering, and conversion to JSON format.
+        Drops INTERNAL / EXPERIMENTAL metrics, then converts each surviving
+        MetricResult to its JSON shape. Values are already in display units
+        (the accumulator's summarize converts them), so no unit conversion
+        happens here.
 
         Args:
             metric_results: Raw metric results to prepare

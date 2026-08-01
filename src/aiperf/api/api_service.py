@@ -3,8 +3,7 @@
 
 """FastAPI-based AIPerf API Service.
 
-Provides HTTP endpoints for metrics and status, plus WebSocket streaming
-for real-time ZMQ message forwarding.
+Provides HTTP endpoints for metrics, progress, results, and status.
 """
 
 from __future__ import annotations
@@ -35,7 +34,7 @@ if TYPE_CHECKING:
 
 
 def get_service(conn: HTTPConnection) -> FastAPIService:
-    """Get FastAPIService from app state. Works for both HTTP and WebSocket."""
+    """Get FastAPIService from app state."""
     service = getattr(conn.app.state, "service", None)
     if service is None:
         raise RuntimeError("Service not initialized in app.state")
@@ -48,8 +47,7 @@ ServiceDep = Annotated["FastAPIService", Depends(get_service)]
 class FastAPIService(BaseComponentService):
     """FastAPI-based API Service.
 
-    Provides HTTP endpoints for metrics and status, plus WebSocket streaming
-    for real-time ZMQ message forwarding.
+    Provides HTTP endpoints for metrics, progress, results, and status.
     """
 
     def __init__(
@@ -102,7 +100,7 @@ class FastAPIService(BaseComponentService):
 
         app = FastAPI(
             title="AIPerf API",
-            description="Real-time benchmark metrics and WebSocket streaming",
+            description="Real-time benchmark metrics",
             version=aiperf_version,
             lifespan=lifespan,
         )

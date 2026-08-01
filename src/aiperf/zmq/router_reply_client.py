@@ -107,7 +107,6 @@ class ZMQRouterReplyClient(BaseZMQClient):
         """Handle a request.
 
         This method will:
-        - Parse the request JSON to create a Message object
         - Call the handler for the message type
         - Set the response future
         """

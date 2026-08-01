@@ -148,7 +148,7 @@ def _build_multi_run_plot_types() -> list[dict]:
     ]
 
 
-# Multi-run plot types (all are comparison plots, no section headers needed)
+# Multi-run plot types, presented as a flat list (no section headers)
 # Lazy-loaded to avoid import-time plugin access
 MULTI_RUN_PLOT_TYPES: list[dict] | None = None
 
@@ -679,7 +679,7 @@ class DashboardBuilder:
                 }
 
         # Generate version based on timestamp - forces reset on every restart
-        # This ensures dashboard always loads from YAML, ignoring localStorage
+        # This ensures dashboard always loads from YAML, ignoring sessionStorage
         config_version = int(time.time())
 
         # Get slice_duration for single-run mode
@@ -1744,10 +1744,10 @@ class DashboardBuilder:
             )
             y_metric_options.extend(gpu_metrics)
 
-        # Stat options for histogram (kept for backward compatibility)
+        # Stat options for the timeslice statistic dropdown
         stat_options = self._get_stat_options_ordered()
 
-        # Y-axis stat options (default to Average only)
+        # Y-axis stat options (Average is the only offered choice)
         y_stat_options = [{"label": "Average", "value": "avg"}]
 
         return dbc.Modal(
@@ -2051,10 +2051,10 @@ class DashboardBuilder:
             )
             y_metric_options.extend(gpu_metrics)
 
-        # Stat options for histogram (kept for backward compatibility)
+        # Stat options for the timeslice statistic dropdown
         stat_options = self._get_stat_options_ordered()
 
-        # Y-axis stat options (default to Average only)
+        # Y-axis stat options (Average is the only offered choice)
         y_stat_options = [{"label": "Average", "value": "avg"}]
 
         return dbc.Modal(

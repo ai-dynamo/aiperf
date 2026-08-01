@@ -27,12 +27,9 @@ class MultiRunPNGExporter(BasePNGExporter):
     """
     PNG exporter for multi-run comparison plots.
 
-    Generates static PNG images comparing multiple profiling runs:
-    1. Pareto curve (latency vs throughput)
-    2. TTFT vs Throughput
-    3. Throughput per User vs Concurrency
-    4. Token Throughput per GPU vs Latency (conditional on telemetry)
-    5. Token Throughput per GPU vs Interactivity (conditional on telemetry)
+    Which plots are generated is driven entirely by the ``plot_specs`` passed
+    to ``export()``, which come from ``visualization.multi_run_defaults`` in the
+    plot config. Specs whose required metric columns are absent are skipped.
     """
 
     def export(

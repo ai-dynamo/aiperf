@@ -34,9 +34,9 @@ class PhaseProgressTracker:
     - Stats creation (combines counter + lifecycle)
 
     Used by:
-    - CreditIssuer: increment_sent, freeze_sent_counts, set all_credits_sent_event
+    - CreditIssuer: increment_sent, set all_credits_sent_event
     - CreditCallbackHandler: increment_returned, increment_prefill_released, set all_credits_returned_event
-    - PhaseRunner: create_stats, wait on events
+    - PhaseRunner: create_stats, wait on events, freeze_sent_counts/freeze_completed_counts
 
     CRITICAL: increment_sent and increment_returned are atomic (no await between
     read and write). This is enforced by CreditCounter.

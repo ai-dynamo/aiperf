@@ -503,7 +503,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     def total_power_watts(
         self, start_ns: int | None, end_ns: int | None, platform: str | None = None
     ) -> tuple[float, int]:
-        """Per-vendor total of avg(power) over ``[start_ns, end_ns)``.
+        """Per-vendor total of avg(power) over ``[start_ns, end_ns]``.
 
         Query surface for cross-accumulator analyzers (e.g. energy efficiency).
         ``platform`` selects the vendor (``"nvidia"`` or ``"amd"``); when
@@ -525,7 +525,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     def total_energy_joules(
         self, start_ns: int | None, end_ns: int | None, platform: str | None = None
     ) -> tuple[float, int]:
-        """Per-vendor total energy (J) over ``[start_ns, end_ns)``.
+        """Per-vendor total energy (J) over ``[start_ns, end_ns]``.
 
         Query surface for cross-accumulator analyzers. ``platform`` selects the
         vendor (``"nvidia"`` or ``"amd"``); when ``None``, only NVIDIA GPUs are

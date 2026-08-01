@@ -385,10 +385,11 @@ def _render_realtime_block(
 
 @dataclass
 class ErrorTrackingState:
-    """State container for tracking errors with counts and thread-safe access.
+    """State container mapping ErrorDetails to occurrence counts.
 
-    Provides common error tracking functionality for all metrics subsystems
-    (telemetry, server metrics, regular metrics).
+    Shared shape for the per-subsystem error tallies (telemetry, server
+    metrics, network latency). Carries no lock: it is only mutated from the
+    single-threaded asyncio event loop.
     """
 
     error_counts: dict[ErrorDetails, int] = field(

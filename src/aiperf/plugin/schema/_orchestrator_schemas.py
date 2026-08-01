@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Metadata schemas for orchestrator plugin categories.
 
-Re-exported from schemas.py so plugins.yaml references like
+Re-exported from schemas.py so categories.yaml references like
 ``metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata``
 keep resolving - `aiperf.plugin.schema.schemas.ConvergenceCriterionMetadata`
 is still importable via the re-export.
