@@ -924,6 +924,149 @@ def test_cache_warmup_handoff_preserves_pending_replay_barrier_turns() -> None:
     issuer.replay_gate.pending_turns_by_root.assert_called_once_with()
 
 
+def test_cache_warmup_handoff_restores_one_flattened_tree_timeline() -> None:
+    """Pending starts and continuations keep their original cross-stream order."""
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=20_000.0),
+                    TurnMetadata(timestamp_ms=220_000.0),
+                ],
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::fa:000",
+                turns=[
+                    TurnMetadata(timestamp_ms=110_000.0),
+                    TurnMetadata(timestamp_ms=160_000.0),
+                ],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::fa:001",
+                turns=[TurnMetadata(timestamp_ms=140_000.0)],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=1,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=10_000.0,
+            states=(
+                ConversationState(
+                    conversation_id="trace_0",
+                    x_correlation_id="root",
+                    root_correlation_id="root",
+                    next_turn_index=1,
+                ),
+            ),
+        ),
+    )
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        dataset=dataset,
+        cache_warmup_requests_per_lane=1,
+    )
+    strategy._root_to_lane["root"] = 0
+    strategy._replay_origin_ms_by_root["root"] = 10_000.0
+    strategy._handoff_credits = {
+        "root": _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id="root",
+            turn_index=1,
+            num_turns=3,
+            phase=CreditPhase.WARMUP,
+            root_correlation_id="root",
+        ),
+        "child-a": _make_credit(
+            conversation_id="trace_0::fa:000",
+            x_correlation_id="child-a",
+            turn_index=0,
+            num_turns=2,
+            phase=CreditPhase.WARMUP,
+            agent_depth=1,
+            parent_correlation_id="root",
+            root_correlation_id="root",
+            branch_mode=ConversationBranchMode.SPAWN,
+        ),
+    }
+    issuer.replay_gate.pending_turns_by_root.return_value = {
+        "root": (
+            TurnToSend(
+                conversation_id="trace_0::fa:001",
+                x_correlation_id="child-b",
+                turn_index=0,
+                num_turns=1,
+                agent_depth=1,
+                parent_correlation_id="root",
+                root_correlation_id="root",
+                branch_mode=ConversationBranchMode.SPAWN,
+            ),
+        )
+    }
+
+    states = strategy._build_handoff_states()[0]
+    by_correlation = {state.x_correlation_id: state for state in states}
+
+    # All offsets are measured from the same sampled t*=10s.  In particular,
+    # child-b turn 0 is not reconstructed as a zero-delay request.
+    assert {
+        correlation_id: state.next_dispatch_offset_ms
+        for correlation_id, state in by_correlation.items()
+    } == {
+        "child-b": pytest.approx(130_000.0),
+        "child-a": pytest.approx(150_000.0),
+        "root": pytest.approx(210_000.0),
+    }
+    assert [
+        state.x_correlation_id
+        for state in sorted(states, key=lambda item: item.next_dispatch_offset_ms)
+    ] == ["child-b", "child-a", "root"]
+
+
+@pytest.mark.asyncio
+async def test_recycled_warmup_root_gets_a_fresh_flattened_timeline_origin() -> None:
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=50_000.0),
+                    TurnMetadata(timestamp_ms=95_000.0),
+                ],
+            )
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
+        dataset=dataset,
+        cache_warmup_requests_per_lane=1,
+    )
+    strategy.stop_checker.can_start_new_session.return_value = True
+
+    await strategy._dispatch_recycled_on_lane(0)
+
+    turn = issuer.issue_credit.await_args.args[0]
+    assert strategy._replay_origin_ms_by_root[
+        turn.effective_root_correlation_id
+    ] == pytest.approx(50_000.0)
+    assert strategy._handoff_replay_offset_ms(
+        turn.effective_root_correlation_id, "trace_0", 1
+    ) == pytest.approx(45_000.0)
+
+
 @pytest.mark.asyncio
 async def test_warmup_dispatch_uses_start_turn_index():
     trajectories = [

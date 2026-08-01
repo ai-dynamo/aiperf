@@ -200,6 +200,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._accelerated_warmup_started = False
         self._handoff_credits: dict[str, Credit] = {}
         self._root_to_lane: dict[str, int] = {}
+        # Accelerated warmup removes idle delays. Keep each tree's sampled t*
+        # so handoff can restore every stream to one flattened dataset clock;
+        # otherwise pending child turn-0 requests all look due at offset zero.
+        self._replay_origin_ms_by_root: dict[str, float] = {}
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
@@ -376,6 +380,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         lane = self._correlation_to_lane.pop(root_corr, None)
         self._session_marker.pop(root_corr, None)
         self._root_to_lane.pop(root_corr, None)
+        self._replay_origin_ms_by_root.pop(root_corr, None)
         if lane is None:
             self.warning(
                 lambda: (
@@ -671,6 +676,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 continue
 
             t_star_ms = trajectory.snapshot.t_star_ms
+            root_correlation_id = self._lane_root_corr(trajectory.snapshot)
+            if root_correlation_id is not None:
+                self._replay_origin_ms_by_root[root_correlation_id] = t_star_ms
             for state in trajectory.snapshot.states:
                 warm_index = state.warmup_turn_index
                 if warm_index is None:
@@ -830,6 +838,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
 
         snapshot = trajectory.snapshot
+        root_correlation_id = self._lane_root_corr(snapshot)
+        if root_correlation_id is not None:
+            self._replay_origin_ms_by_root[root_correlation_id] = snapshot.t_star_ms
         for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
             self._root_to_lane[state.root_correlation_id or state.x_correlation_id] = (
@@ -1037,8 +1048,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             conversation_id=credit.conversation_id,
             x_correlation_id=credit.x_correlation_id,
             next_turn_index=credit.turn_index + 1,
-            next_dispatch_offset_ms=self._handoff_delay_ms(
-                credit.conversation_id, credit.turn_index + 1
+            next_dispatch_offset_ms=self._handoff_replay_offset_ms(
+                credit.effective_root_correlation_id,
+                credit.conversation_id,
+                credit.turn_index + 1,
             ),
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
@@ -1118,8 +1131,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             conversation_id=turn.conversation_id,
             x_correlation_id=turn.x_correlation_id,
             next_turn_index=turn.turn_index,
-            next_dispatch_offset_ms=self._handoff_delay_ms(
-                turn.conversation_id, turn.turn_index
+            next_dispatch_offset_ms=self._handoff_replay_offset_ms(
+                turn.effective_root_correlation_id,
+                turn.conversation_id,
+                turn.turn_index,
             ),
             agent_depth=turn.agent_depth,
             parent_correlation_id=turn.parent_correlation_id,
@@ -1172,6 +1187,39 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         previous_api_ms = _as_timestamp_ms(getattr(previous_meta, "api_time_ms", None))
         previous_duration_ms = max(0.0, previous_api_ms or 0.0)
         return max(0.0, next_ts_ms - previous_ts_ms - previous_duration_ms)
+
+    def _handoff_replay_offset_ms(
+        self,
+        root_correlation_id: str,
+        conversation_id: str,
+        next_turn_index: int,
+    ) -> float:
+        """Place a surviving stream back on its tree's shared replay clock.
+
+        Accelerated warmup compresses runtime waits, so elapsed wall time is
+        not a usable profiling deadline.  Timestamped AgentX datasets already
+        provide a common clock for every stream in a tree.  Subtracting the
+        tree's sampled replay origin preserves the original flattened order
+        and spacing across roots, children, sidecars, and gated joins.  The
+        profiling phase later subtracts one phase-wide minimum so the earliest
+        request starts immediately without turning the rest into a burst.
+
+        Timestamp-less datasets have no shared clock, so retain the legacy
+        per-stream end-to-start delay as the best available fallback.
+        """
+        replay_origin_ms = self._replay_origin_ms_by_root.get(root_correlation_id)
+        if replay_origin_ms is not None:
+            try:
+                metadata = self.conversation_source.get_metadata(conversation_id)
+            except KeyError:
+                metadata = None
+            if metadata is not None and 0 <= next_turn_index < len(metadata.turns):
+                next_timestamp_ms = _as_timestamp_ms(
+                    getattr(metadata.turns[next_turn_index], "timestamp_ms", None)
+                )
+                if next_timestamp_ms is not None:
+                    return max(0.0, next_timestamp_ms - replay_origin_ms)
+        return self._handoff_delay_ms(conversation_id, next_turn_index)
 
     def _build_handoff_replay_boundaries(
         self, states: list[ConversationState]
@@ -1546,6 +1594,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # Prune so every early-return path leaves dicts clean.
         self._session_marker.pop(finished_correlation_id, None)
         self._root_to_lane.pop(finished_correlation_id, None)
+        self._replay_origin_ms_by_root.pop(finished_correlation_id, None)
         lane = self._release_lane_for(finished_correlation_id, finished_trace_id)
         await self._dispatch_recycled_on_lane(lane)
 
@@ -1573,6 +1622,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         self._correlation_to_lane[session.x_correlation_id] = lane
         self._root_to_lane[session.effective_root_correlation_id] = lane
+        if self.config.phase == CreditPhase.WARMUP:
+            first_timestamp_ms = _as_timestamp_ms(
+                getattr(session.metadata.turns[0], "timestamp_ms", None)
+            )
+            if first_timestamp_ms is not None:
+                self._replay_origin_ms_by_root[
+                    session.effective_root_correlation_id
+                ] = first_timestamp_ms
         self._mint_marker_for_session(
             session.effective_root_correlation_id, next_trace_id, lane
         )
