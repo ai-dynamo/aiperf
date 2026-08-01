@@ -18,6 +18,7 @@ from aiperf_mock_server.config import (
     public_config_dump,
     server_config,
 )
+from aiperf_mock_server.control_state import control_state
 from aiperf_mock_server.dcgm_faker import DCGMFaker
 from aiperf_mock_server.metrics import (
     AIPERF_MOCK_REGISTRY,
@@ -356,6 +357,7 @@ async def chat_completions(
     request: Request,
 ) -> ORJSONResponse | StreamingResponse:
     """Chat completion endpoint."""
+    control_state.record("inference")
     endpoint = "/v1/chat/completions"
     init_model_config(req.model)
     ctx = make_ctx(req, endpoint, request.state.start_time)
@@ -1381,6 +1383,38 @@ async def solido_rag(req: SolidoRAGRequest, request: Request) -> ORJSONResponse:
     with track_llm_request(ctx, req.inference_model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         return ORJSONResponse(_build_solido_rag_response_data(ctx, req))
+
+
+# ============================================================================
+# Control-plane admin routes (benchmark hooks; not inference)
+# ============================================================================
+
+
+@app.post("/reset_prefix_cache")
+async def reset_prefix_cache() -> Response:
+    control_state.reset_count += 1
+    control_state.record("reset")
+    return Response(status_code=200)
+
+
+@app.post("/flush_cache")
+async def flush_cache() -> Response:
+    """SGLang-compatible radix/prefix-cache flush (alias of reset_prefix_cache)."""
+    control_state.reset_count += 1
+    control_state.record("reset")
+    return Response(status_code=200)
+
+
+@app.post("/start_profile")
+async def start_profile() -> Response:
+    control_state.profiler_starts += 1
+    return Response(status_code=200)
+
+
+@app.post("/stop_profile")
+async def stop_profile() -> Response:
+    control_state.profiler_stops += 1
+    return Response(status_code=200)
 
 
 # ============================================================================
