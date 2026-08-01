@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../nodes/nodeTypes.js";
+import { edgeTypes } from "../edges/edgeTypes.js";
 import { useReveal } from "../reveal/useReveal.js";
 import { inkClassName } from "../theme/tokens.js";
 import type { SlideDefinition } from "./types.js";
@@ -27,7 +28,15 @@ function SlideCanvas({ nodes, edges }: { nodes: Node[]; edges: Edge[] }): React.
     void fitView({ duration: 220, padding: 0.15 });
   }, [visibleCount, fitView]);
 
-  return <ReactFlow nodeTypes={nodeTypes} nodes={nodes} edges={edges} fitView />;
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={nodes}
+      edges={edges}
+      fitView
+    />
+  );
 }
 
 export function Slide({ slide }: { slide: SlideDefinition }): React.JSX.Element {

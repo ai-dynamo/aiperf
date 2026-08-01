@@ -29,9 +29,42 @@ function band(id: string, title: string, y: number): Node {
   return { id, type: "header", position: { x: 0, y }, data: { title } };
 }
 
-/** Plain forward edge; React Flow needs unique ids, so they are derived from the pair. */
-function link(source: string, target: string, label?: string): Edge {
-  return { id: `${source}->${target}`, source, target, label, animated: true };
+/**
+ * Edge tones. Colour carries meaning here rather than decoration: a viewer should be
+ * able to tell a control-flow hop from a data hand-off without reading the labels.
+ */
+const TONE = {
+  /** Control flow: scheduling, ordering, the default hop. */
+  control: "var(--color-accent-primary)",
+  /** Data movement: content and channel values. */
+  data: "var(--color-category-purple)",
+  /** Time: firing gates and delay anchors. */
+  time: "var(--color-category-yellow)",
+  /** Failure and abort paths. */
+  failure: "var(--color-category-red)",
+  /** Successful completion. */
+  done: "var(--color-category-green)",
+} as const;
+
+type Tone = keyof typeof TONE;
+
+/**
+ * Animated flow connector. Ids are derived from the pair, which React Flow requires
+ * to be unique — no slide connects the same pair twice.
+ */
+function link(
+  source: string,
+  target: string,
+  tone: Tone = "control",
+  speed: "slow" | "normal" | "fast" = "normal",
+): Edge {
+  return {
+    id: `${source}->${target}`,
+    source,
+    target,
+    type: "flow",
+    data: { color: TONE[tone], speed },
+  };
 }
 
 const SLIDES: readonly SlideDefinition[] = [
@@ -58,7 +91,11 @@ const SLIDES: readonly SlideDefinition[] = [
         { id: "output", title: "output", subtitle: "exactly one channel" },
       ]),
     ],
-    edges: [link("nodes", "inputs"), link("inputs", "items"), link("items", "output")],
+    edges: [
+      link("nodes", "inputs", "control", "slow"),
+      link("inputs", "items", "data"),
+      link("items", "output", "data"),
+    ],
     revealOrder: ["b-ir", "state", "nodes", "edges", "b-node", "inputs", "items", "output"],
   },
   {
@@ -91,9 +128,9 @@ const SLIDES: readonly SlideDefinition[] = [
       },
     ],
     edges: [
-      link("authored", "lower"),
-      link("lower", "plans"),
-      link("plans", "v1"),
+      link("authored", "lower", "data"),
+      link("lower", "plans", "data"),
+      link("plans", "v1", "control", "slow"),
       link("v1", "v2"),
       link("v2", "v3"),
       link("v3", "v4"),
@@ -130,7 +167,11 @@ const SLIDES: readonly SlideDefinition[] = [
         },
       },
     ],
-    edges: [link("pred", "spawn"), link("spawn", "await"), link("await", "ready")],
+    edges: [
+      link("pred", "spawn"),
+      link("spawn", "await", "control", "slow"),
+      link("await", "ready", "done"),
+    ],
     revealOrder: ["b-s", "pred", "spawn", "b-r", "await", "ready", "note"],
   },
   {
@@ -169,7 +210,11 @@ const SLIDES: readonly SlideDefinition[] = [
         },
       },
     ],
-    edges: [link("check", "clone"), link("clone", "park"), link("park", "recheck")],
+    edges: [
+      link("check", "clone"),
+      link("clone", "park", "time"),
+      link("park", "recheck", "time", "slow"),
+    ],
     revealOrder: ["b-p", "check", "clone", "park", "recheck", "why", "orphan"],
   },
   {
@@ -197,7 +242,11 @@ const SLIDES: readonly SlideDefinition[] = [
         { id: "d4", title: "min start delay", subtitle: "node-level" },
       ]),
     ],
-    edges: [link("g1", "g2"), link("g2", "g3"), link("g3", "g4")],
+    edges: [
+      link("g1", "g2", "done"),
+      link("g2", "g3", "time"),
+      link("g3", "g4", "data"),
+    ],
     revealOrder: ["b-g", "g1", "g2", "g3", "g4", "b-d", "d1", "d2", "d3", "d4"],
   },
   {
@@ -224,10 +273,10 @@ const SLIDES: readonly SlideDefinition[] = [
       ]),
     ],
     edges: [
-      link("pool", "freeze"),
-      link("freeze", "handle"),
-      link("reply", "chan"),
-      link("chan", "splice"),
+      link("pool", "freeze", "data"),
+      link("freeze", "handle", "data"),
+      link("reply", "chan", "data"),
+      link("chan", "splice", "data", "fast"),
     ],
     revealOrder: ["b-seg", "pool", "freeze", "handle", "b-flow", "reply", "chan", "splice"],
   },
@@ -258,7 +307,11 @@ const SLIDES: readonly SlideDefinition[] = [
         },
       },
     ],
-    edges: [link("admit", "disp"), link("disp", "ttft"), link("ttft", "term")],
+    edges: [
+      link("admit", "disp"),
+      link("disp", "ttft", "time"),
+      link("ttft", "term", "done", "fast"),
+    ],
     revealOrder: ["b-t", "admit", "disp", "ttft", "term", "cancel"],
   },
   {
@@ -287,10 +340,10 @@ const SLIDES: readonly SlideDefinition[] = [
     ],
     edges: [
       link("f1", "f2"),
-      link("f2", "f3"),
-      link("f3", "f4"),
-      link("e1", "e2"),
-      link("e1", "e3"),
+      link("f2", "f3", "done"),
+      link("f3", "f4", "done"),
+      link("e1", "e2", "failure"),
+      link("e1", "e3", "failure", "slow"),
     ],
     revealOrder: ["b-f", "f1", "f2", "f3", "f4", "b-e", "e1", "e2", "e3"],
   },
@@ -329,7 +382,7 @@ const SLIDES: readonly SlideDefinition[] = [
         },
       },
     ],
-    edges: [link("plan", "tpc"), link("plan", "local")],
+    edges: [link("plan", "tpc", "control"), link("plan", "local", "time", "slow")],
     revealOrder: ["b-pl", "plan", "tpc", "local", "trap", "park2"],
   },
 ];
