@@ -6,8 +6,40 @@
 //! Deterministic, scale-aware text metrics for scene layout and rendering.
 
 export const SCENE_TEXT_SCALE = 0.9;
+
+/**
+ * Factor the scene world was scaled by when the canvas moved from the pre-4K
+ * 700x400 baseline to 1920x1080. Deck-authored `fontSize=` values were migrated
+ * by `scripts/rescale-decks-to-16x9.mjs` (same constant), and the spacing
+ * constants below were migrated by hand — but the renderer-owned chrome font
+ * sizes in `capabilities/chrome.ts` were missed, so titles rendered at the old
+ * 14px baseline inside boxes padded for the new world. `SCENE_FONT` exists so
+ * renderer-owned sizes live beside the geometry they have to stay in scale with.
+ */
+export const SCENE_WORLD_SCALE = 2.7;
+
 /** 2.7x the pre-4K baseline (700x400 -> 1920x1080); keep in sync with SceneRenderer's VIEWPORT_WIDTH/HEIGHT. */
 export const DEFAULT_SCENE_FONT_SIZE = 37.8;
+
+/**
+ * Renderer-owned chrome font sizes, in scene-world units (pre-`SCENE_TEXT_SCALE`).
+ * Each is its pre-4K baseline times `SCENE_WORLD_SCALE`, so the ladder stays
+ * proportional to `INSET` / `TITLE_HEIGHT` / `DETAIL_HEIGHT` below.
+ */
+export const SCENE_FONT = {
+  /** 14 — panel/card titles, and the fallback for un-sized text parts. */
+  title: 37.8,
+  /** 13 — `core.header` and `diagram.*` titles. */
+  titleCompact: 35.1,
+  /** 12 — `diagram.boundary` titles, quote/code blocks, icon labels. */
+  body: 32.4,
+  /** 11.5 — panel/card detail lines. */
+  detail: 31.05,
+  /** 11 — `core.chip` labels and stepper step labels. */
+  chip: 29.7,
+  /** 10 — subtitles and `diagram.*` detail lines. */
+  caption: 27,
+} as const;
 export const CHAR_WIDTH = 6.2;
 export const BOLD_CHAR_WIDTH = 6.2;
 export const INSET = 21.6;

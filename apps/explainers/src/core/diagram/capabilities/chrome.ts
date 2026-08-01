@@ -12,6 +12,7 @@ import type {
 import {
   DETAIL_HEIGHT,
   INSET,
+  SCENE_FONT,
   STEPPER_CHIP_HEIGHT,
   SUBTITLE_HEIGHT,
   TITLE_HEIGHT,
@@ -189,7 +190,7 @@ export function resolveSemanticChrome(
           y: geometry.y + 10,
           width: Math.max(geometry.width - 24, 0),
           height: Math.max(geometry.height - 20, 0),
-          fontSize: 12,
+          fontSize: SCENE_FONT.body,
           fontFamily: presentation === "code-block" ? "monospace" : undefined,
           fontStyle: presentation === "quote" ? "italic" : undefined,
           whiteSpace: presentation === "code-block" ? "pre" : undefined,
@@ -232,7 +233,7 @@ export function resolveSemanticChrome(
           y: geometry.y + 8,
           width: Math.max(geometry.width - 48, 0),
           height: Math.max(geometry.height - 16, 0),
-          fontSize: 12,
+          fontSize: SCENE_FONT.body,
           anchor: "start",
           ...(inkRole !== undefined ? { inkRole } : {}),
         },
@@ -276,7 +277,7 @@ export function resolveSemanticChrome(
         y: geometry.y,
         width,
         height: STEPPER_CHIP_HEIGHT,
-        fontSize: 11,
+        fontSize: SCENE_FONT.chip,
         fontWeight: "bold",
         anchor: "middle",
         ...(inkRole !== undefined ? { inkRole } : {}),
@@ -343,14 +344,14 @@ export function resolveSemanticChrome(
       height: capability === "core.chip" ? geometry.height : TITLE_HEIGHT,
       fontSize:
         capability === "core.header"
-          ? 13
+          ? SCENE_FONT.titleCompact
           : capability === "core.chip"
-            ? 11
+            ? SCENE_FONT.chip
             : isDiagramBoundary
-              ? 12
+              ? SCENE_FONT.body
               : isDiagram
-                ? 13
-                : 14,
+                ? SCENE_FONT.titleCompact
+                : SCENE_FONT.title,
       fontWeight: "bold",
       anchor: centered ? "middle" : "start",
       ...(inkRole !== undefined ? { inkRole } : {}),
@@ -369,7 +370,7 @@ export function resolveSemanticChrome(
         : geometry.y + INSET + TITLE_HEIGHT + 4,
       width: Math.max(geometry.width - detailInsetX - detailInsetXEnd, 0),
       height: DETAIL_HEIGHT,
-      fontSize: isDiagram ? 10 : 11.5,
+      fontSize: isDiagram ? SCENE_FONT.caption : SCENE_FONT.detail,
       anchor: capability === "core.panel" ? "middle" : "start",
       tone: "secondary",
       ...(inkRole !== undefined ? { inkRole } : {}),
@@ -384,7 +385,7 @@ export function resolveSemanticChrome(
       y: geometry.y + INSET + TITLE_HEIGHT + DETAIL_HEIGHT + 6,
       width: Math.max(geometry.width - chromeInsetX - chromeInsetXEnd, 0),
       height: SUBTITLE_HEIGHT,
-      fontSize: 10,
+      fontSize: SCENE_FONT.caption,
       anchor: "middle",
       tone: "secondary",
       ...(inkRole !== undefined ? { inkRole } : {}),

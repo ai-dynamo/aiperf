@@ -14,7 +14,13 @@ import {
 } from "./SceneRenderer";
 import { resolveScene } from "./resolution/resolve-scene.js";
 import type { SceneIrLike } from "./scene-types.js";
-import { estimateTextWidth, stepperChipWidth } from "./text-metrics.js";
+import {
+  DEFAULT_SCENE_FONT_SIZE,
+  SCENE_FONT,
+  SCENE_TEXT_SCALE,
+  estimateTextWidth,
+  stepperChipWidth,
+} from "./text-metrics.js";
 
 afterEach(cleanup);
 
@@ -673,13 +679,22 @@ describe("SceneRenderer SDK foundations", () => {
         (node) => node.textContent === content,
       );
 
-    expect(textByContent("Profile")?.getAttribute("font-size")).toBe("12.6");
-    expect(textByContent("source")?.getAttribute("font-size")).toBe("10.35");
+    // A renderer-owned panel title and an unstyled `core.text` must land on the
+    // same baseline: both are scene-world text the author never sized. They
+    // diverged (12.6 vs 34.02) while `chrome.ts` still held pre-4K-rescale font
+    // sizes, which is what left titles tiny inside 2.7x-padded boxes.
+    expect(textByContent("Profile")?.getAttribute("font-size")).toBe(
+      String(DEFAULT_SCENE_FONT_SIZE * SCENE_TEXT_SCALE),
+    );
+    expect(textByContent("Default")?.getAttribute("font-size")).toBe(
+      String(DEFAULT_SCENE_FONT_SIZE * SCENE_TEXT_SCALE),
+    );
+    expect(textByContent("source")?.getAttribute("font-size")).toBe(
+      String(SCENE_FONT.detail * SCENE_TEXT_SCALE),
+    );
+    // An authored `fontSize` still wins over the chrome ladder.
     expect(textByContent("Authored")?.getAttribute("font-size")).toBe("18");
     expect(textByContent("Authored")?.style.fontSize).toBe("18px");
-    expect(textByContent("Default")?.getAttribute("font-size")).toBe(
-      "34.019999999999996",
-    );
   });
 
   it("renders intrinsically sized semantic stepper labels", () => {

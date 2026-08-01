@@ -3193,7 +3193,7 @@ function renderNode(
                   ? resolveThemePaint(part.inkRole, theme, inkFallback)
                   : inkFallback
               }
-              fontSize={scaledSceneFontSize(part.fontSize ?? 14)}
+              fontSize={scaledSceneFontSize(part.fontSize)}
               fontWeight={part.fontWeight}
               fontFamily={part.fontFamily}
               fontStyle={part.fontStyle}
