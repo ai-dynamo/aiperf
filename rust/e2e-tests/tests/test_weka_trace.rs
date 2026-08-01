@@ -213,7 +213,10 @@ async fn test_flattened_subagents_share_the_parent_hash_scope() {
 
     let mut by_turn: HashMap<u64, Vec<&Value>> = HashMap::new();
     for rec in &raw {
-        by_turn.entry(meta_u64(rec, "turn_index")).or_default().push(rec);
+        by_turn
+            .entry(meta_u64(rec, "turn_index"))
+            .or_default()
+            .push(rec);
     }
 
     let turn0 = by_turn.get(&0).expect("no turn_index 0 records");
@@ -245,7 +248,10 @@ async fn test_flattened_subagents_share_the_parent_hash_scope() {
     );
 
     // Flattening, not parent/child linkage: one correlation id, no parent pointer.
-    let corr: HashSet<String> = raw.iter().map(|r| meta_str(r, "x_correlation_id")).collect();
+    let corr: HashSet<String> = raw
+        .iter()
+        .map(|r| meta_str(r, "x_correlation_id"))
+        .collect();
     assert_eq!(
         corr.len(),
         1,
@@ -267,10 +273,7 @@ async fn test_replay_input_lengths_are_identical_across_reruns() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/fixtures/weka_traces_small"
     );
-    assert!(
-        Path::new(FIXTURE).exists(),
-        "fixture missing: {FIXTURE}"
-    );
+    assert!(Path::new(FIXTURE).exists(), "fixture missing: {FIXTURE}");
 
     /// `(x_correlation_id, turn_index) -> input_sequence_length` for one run.
     fn isl_by_turn(h: &AIPerfHarness) -> HashMap<(String, u64), u64> {
@@ -294,7 +297,10 @@ async fn test_replay_input_lengths_are_identical_across_reruns() {
                         panic!("metrics.input_sequence_length missing: {}", rec["metrics"])
                     });
                 (
-                    (meta_str(rec, "x_correlation_id"), meta_u64(rec, "turn_index")),
+                    (
+                        meta_str(rec, "x_correlation_id"),
+                        meta_u64(rec, "turn_index"),
+                    ),
                     isl as u64,
                 )
             })

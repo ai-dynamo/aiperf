@@ -54,8 +54,15 @@ async fn test_grid_sweep_runs_the_cartesian_product_of_axes() {
     );
 
     // Each cell must actually have applied its own ISL, not just be named for it.
-    for (dir, isl) in [("mean_8__concurrency_2", 8.0), ("mean_16__concurrency_4", 16.0)] {
-        let export = read_json(&h.artifact_path().join(dir).join("profile_export_aiperf.json"));
+    for (dir, isl) in [
+        ("mean_8__concurrency_2", 8.0),
+        ("mean_16__concurrency_4", 16.0),
+    ] {
+        let export = read_json(
+            &h.artifact_path()
+                .join(dir)
+                .join("profile_export_aiperf.json"),
+        );
         assert_eq!(
             export["input_sequence_length"]["avg"].as_f64(),
             Some(isl),
@@ -142,15 +149,25 @@ async fn test_adaptive_search_records_its_probe_trajectory() {
     // One artifact directory per probe, and nothing else: the loop must not fall
     // back to enumerating a static grid.
     let iters = dirs_with_prefix(h.artifact_path(), "search_iter_");
-    assert_eq!(iters.len(), 4, "expected one directory per probe, got {iters:?}");
+    assert_eq!(
+        iters.len(),
+        4,
+        "expected one directory per probe, got {iters:?}"
+    );
     assert_eq!(iters.first().map(String::as_str), Some("search_iter_0000"));
 
     let history = read_json(&h.artifact_path().join("search_history.json"));
-    assert_eq!(history["recipe"].as_str(), Some("max-concurrency-under-sla"));
+    assert_eq!(
+        history["recipe"].as_str(),
+        Some("max-concurrency-under-sla")
+    );
     assert_eq!(history["config"]["planner"].as_str(), Some("monotonic_sla"));
     let space = &history["config"]["search_space"][0];
     assert_eq!(space["path"].as_str(), Some("phases.profiling.concurrency"));
-    assert_eq!((space["lo"].as_i64(), space["hi"].as_i64()), (Some(1), Some(16)));
+    assert_eq!(
+        (space["lo"].as_i64(), space["hi"].as_i64()),
+        (Some(1), Some(16))
+    );
     // The SLA that defined feasibility must be echoed, or the verdicts are unattributable.
     assert_eq!(
         history["config"]["sla_filters"][0]["metric_tag"].as_str(),
@@ -158,7 +175,11 @@ async fn test_adaptive_search_records_its_probe_trajectory() {
     );
 
     let iterations = history["iterations"].as_array().expect("iterations array");
-    assert_eq!(iterations.len(), iters.len(), "every probe must be recorded");
+    assert_eq!(
+        iterations.len(),
+        iters.len(),
+        "every probe must be recorded"
+    );
     let mut probes = Vec::new();
     for (idx, it) in iterations.iter().enumerate() {
         assert_eq!(it["iteration_idx"].as_u64(), Some(idx as u64));
@@ -172,7 +193,9 @@ async fn test_adaptive_search_records_its_probe_trajectory() {
         // A probe that ran must have produced an objective; a bare `null` here
         // would mean the report was never read back.
         assert!(
-            it["objective_values"][0].as_f64().is_some_and(f64::is_finite),
+            it["objective_values"][0]
+                .as_f64()
+                .is_some_and(f64::is_finite),
             "iteration {idx} recorded no finite objective: {it}"
         );
         assert_eq!(
@@ -258,7 +281,9 @@ fn combination_parameters(aggregate: &serde_json::Value) -> BTreeSet<String> {
         .unwrap_or_default()
         .iter()
         .map(|entry| {
-            let params = entry["parameters"].as_object().expect("combination parameters");
+            let params = entry["parameters"]
+                .as_object()
+                .expect("combination parameters");
             let mut parts: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
             // Serialized order is the sweep's own; sort so the assertion does not
             // depend on it (the ordering contract is covered by the dir names).
@@ -269,8 +294,8 @@ fn combination_parameters(aggregate: &serde_json::Value) -> BTreeSet<String> {
 }
 
 fn read_json(path: &Path) -> serde_json::Value {
-    let bytes = std::fs::read(path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let bytes =
+        std::fs::read(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     serde_json::from_slice(&bytes)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }

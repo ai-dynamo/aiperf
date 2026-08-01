@@ -213,11 +213,17 @@ async fn test_otlp_export_posts_genai_histograms_with_populated_buckets() {
              fallback leaves them at zero): {point:?}"
         );
         let attrs = flatten(&point.attributes);
-        assert_eq!(attrs.get("gen_ai.operation.name").map(String::as_str), Some("chat"));
+        assert_eq!(
+            attrs.get("gen_ai.operation.name").map(String::as_str),
+            Some("chat")
+        );
     }
 
     let resource = collector.resource_attributes();
-    assert_eq!(resource.get("service.name").map(String::as_str), Some("aiperf"));
+    assert_eq!(
+        resource.get("service.name").map(String::as_str),
+        Some("aiperf")
+    );
     assert_eq!(
         resource.get("aiperf.endpoint.type").map(String::as_str),
         Some("chat")
@@ -344,7 +350,12 @@ async fn test_profile_exports_otlp_mlflow_and_wandb_to_mock_server() {
     assert!(r.success(), "run failed: {}", r.stderr);
 
     let otlp = h.mock.state.observability.otlp_metrics();
-    assert_eq!(otlp.len(), 1, "expected one OTLP export, stderr: {}", r.stderr);
+    assert_eq!(
+        otlp.len(),
+        1,
+        "expected one OTLP export, stderr: {}",
+        r.stderr
+    );
     let request =
         ExportMetricsServiceRequest::decode(otlp[0].as_slice()).expect("decode captured OTLP");
     let metrics: Vec<_> = request
@@ -361,7 +372,11 @@ async fn test_profile_exports_otlp_mlflow_and_wandb_to_mock_server() {
         panic!("duration metric is not a histogram");
     };
     assert_eq!(
-        histogram.data_points.iter().map(|point| point.count).sum::<u64>(),
+        histogram
+            .data_points
+            .iter()
+            .map(|point| point.count)
+            .sum::<u64>(),
         u64::from(REQUESTS)
     );
 

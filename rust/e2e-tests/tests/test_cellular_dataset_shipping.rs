@@ -68,8 +68,10 @@ fn run_file_dataset(
     // child line under target `aiperf` (`cli/src/execute.rs`), and only the parent owns
     // `logs/aiperf.log`. So `aiperf=info` is required for the observable to reach the file
     // at all — raising `aiperf_cellular_artifact` alone filters the forwarded line out.
-    let mut env: Vec<(&str, &str)> =
-        vec![("AIPERF_LOG", "warn,aiperf=info,aiperf_cellular_artifact=info")];
+    let mut env: Vec<(&str, &str)> = vec![(
+        "AIPERF_LOG",
+        "warn,aiperf=info,aiperf_cellular_artifact=info",
+    )];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
     }

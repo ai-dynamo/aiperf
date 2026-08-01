@@ -109,4 +109,3 @@ fn timeout_probe_args(h: &AIPerfHarness, extra: &str) -> String {
         h.mock.url
     )
 }
-

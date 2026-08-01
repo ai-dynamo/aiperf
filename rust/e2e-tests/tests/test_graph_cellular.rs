@@ -151,7 +151,10 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         &[
             // `aiperf=info` is required: the serve event fires in the `--execute` child and the
             // parent re-emits forwarded child lines under target `aiperf` into `logs/aiperf.log`.
-            ("AIPERF_LOG", "warn,aiperf=info,aiperf_cellular_artifact=info"),
+            (
+                "AIPERF_LOG",
+                "warn,aiperf=info,aiperf_cellular_artifact=info",
+            ),
             ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
         ],
     );
