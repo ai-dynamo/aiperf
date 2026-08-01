@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
 import { inkClassName, strokeClassName } from "../theme/tokens.js";
 import type { SlideDefinition } from "../deck/types.js";
@@ -34,6 +34,16 @@ export function PresentationShell({
   children: ReactNode;
 }): React.JSX.Element {
   const [showNotes, setShowNotes] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const started = narrated?.started ?? false;
+
+  // Dismissing the start gate unmounts the button that had focus, which drops
+  // focus back to <body> — where the shell's keydown handler never sees it. Without
+  // this, arrow and space keys silently do nothing until the viewer clicks the deck.
+  useEffect(() => {
+    if (started) shellRef.current?.focus();
+  }, [started]);
+
   const slide = slides[slideIndex];
   if (slide === undefined) {
     throw new Error(`slideIndex ${slideIndex} out of range for ${slides.length} slides.`);
@@ -45,6 +55,7 @@ export function PresentationShell({
   return (
     // The keyboard handler needs a focusable host; `relative` anchors the start gate.
     <div
+      ref={shellRef}
       className="relative flex h-screen flex-col focus:outline-none"
       tabIndex={narrated ? 0 : undefined}
       onKeyDown={narrated?.onKeyDown}
