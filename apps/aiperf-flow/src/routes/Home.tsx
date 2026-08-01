@@ -30,6 +30,12 @@ export const DECKS: readonly DeckListing[] = [
       "Narrated autoplay walkthrough of the native Graph Workload engine: why scheduling and readiness are different mechanisms, the check-then-park pattern that makes it race-free, version-frozen reads, and why simulation cannot run thread-per-core. Press play and it narrates itself.",
   },
   {
+    path: "/metrics-plane",
+    title: "The Metrics Plane",
+    description:
+      "Narrated walkthrough of the three data-shape decisions behind the metrics accumulator: the sweep line that turns intervals into exact curves without scanning time, the flat ragged layout that holds variable-length list metrics, and the uniform slice grid whose trailing bucket is clipped rather than diluted.",
+  },
+  {
     path: "/segment-pools",
     title: "Segment Pools",
     description:

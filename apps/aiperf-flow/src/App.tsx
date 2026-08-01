@@ -8,6 +8,7 @@ import { DeckRoute } from "./deck/DeckRoute.js";
 import { registerDeck } from "./deck/registry.js";
 import { ASYNC_DATAFLOW_ENGINE_DECK } from "./decks/async-dataflow-engine/deck.js";
 import { PYTHON_GRAPH_WORKLOAD_DECK } from "./decks/python-graph-workload/deck.js";
+import { METRICS_PLANE_DECK } from "./decks/metrics-plane/deck.js";
 import { AiperfGraphEngineDeck } from "./decks/aiperf-graph-engine/AiperfGraphEngineDeck.js";
 import { AiperfMetricsAccumulatorDeck } from "./decks/aiperf-metrics-accumulator/AiperfMetricsAccumulatorDeck.js";
 import { CanvasRepoLayoutDeck } from "./decks/canvas-repo-layout/CanvasRepoLayoutDeck.js";
@@ -45,6 +46,7 @@ import { Home } from "./routes/Home.js";
 // by the generic `DeckRoute` catch-all rather than a dedicated component route.
 registerDeck(ASYNC_DATAFLOW_ENGINE_DECK);
 registerDeck(PYTHON_GRAPH_WORKLOAD_DECK);
+registerDeck(METRICS_PLANE_DECK);
 
 export function App(): React.JSX.Element {
   return (
