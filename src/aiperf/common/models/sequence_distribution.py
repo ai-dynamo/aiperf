@@ -567,7 +567,7 @@ _MODE_CONFIG: dict[RandomCorpusStyle, _ModeConfig] = {
         ratio_max=1.0,
         ratio_max_exclusive=False,
         input_floor=1,
-        adjust_mean=lambda mean, n: max(1, mean - n),
+        adjust_mean=lambda mean, n: mean,
         compute_low=lambda mean, r: int(mean * r),
         compute_high=lambda mean, r: mean,
     ),

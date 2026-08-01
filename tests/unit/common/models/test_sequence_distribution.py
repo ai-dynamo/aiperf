@@ -1053,17 +1053,26 @@ class TestRangeRatioDistributionSglangMode:
                 mode=RandomCorpusStyle.SGLANG,
             )
 
-    def test_num_special_tokens_sglang_clamps_adjusted_mean_to_one(self):
-        """sglang adjust_mean: max(1, isl_mean - n) — floors at 1."""
-        dist = RangeRatioDistribution(
-            isl_mean=1,
+    def test_num_special_tokens_sglang_does_not_adjust_mean(self):
+        """sglang adjust_mean is a no-op — SGLang uses raw input_len without BOS subtraction."""
+        dist_zero = RangeRatioDistribution(
+            isl_mean=128,
             osl_mean=128,
-            input_ratio=0.0,
-            output_ratio=0.0,
+            input_ratio=0.3,
+            output_ratio=0.3,
+            num_special_tokens=0,
+            mode=RandomCorpusStyle.SGLANG,
+        )
+        dist_with = RangeRatioDistribution(
+            isl_mean=128,
+            osl_mean=128,
+            input_ratio=0.3,
+            output_ratio=0.3,
             num_special_tokens=5,
             mode=RandomCorpusStyle.SGLANG,
         )
-        assert dist.input_bounds == (1, 1)
+        # SGLANG does not subtract num_special_tokens from the mean
+        assert dist_with.input_bounds == dist_zero.input_bounds
 
 
 class TestParseRandomRangeRatio:
