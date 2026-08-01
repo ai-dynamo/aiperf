@@ -26,6 +26,12 @@ class TestRequestErrorRateMetric:
         value = RequestErrorRateMetric().derive_value(results)
         assert value == approx(0.0)
 
+    def test_error_rate_missing_error_count_treated_as_zero(self):
+        results = MetricResultsDict()
+        results[RequestCountMetric.tag] = 100
+        value = RequestErrorRateMetric().derive_value(results)
+        assert value == approx(0.0)
+
     def test_error_rate_none_error_value_treated_as_zero(self):
         """``.get(..., 0) or 0`` defends against an explicit None value."""
         results = MetricResultsDict()
@@ -57,5 +63,5 @@ class TestRequestErrorRateMetric:
 
     def test_error_rate_required_metrics_declared(self):
         assert RequestErrorRateMetric.required_metrics == frozenset(
-            {RequestCountMetric.tag, ErrorRequestCountMetric.tag}
+            {RequestCountMetric.tag}
         )

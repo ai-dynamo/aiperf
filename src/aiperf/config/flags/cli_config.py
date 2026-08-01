@@ -3530,10 +3530,12 @@ class CLIConfig(BaseConfig):
                 "SLA filter to attach to the adaptive-search or grid path. "
                 "Format: 'metric_tag:stat:op:threshold'. Stat in "
                 "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
-                "op in {lt, le, gt, ge}; threshold is "
-                "a float. Repeatable. Example: --search-sla "
+                "op in {lt, le, gt, ge}; threshold is a float in the metric's "
+                "native unit. For request_error_rate, 1 means 1% (percentage "
+                "points), unlike --error-rate-sla, which accepts a fraction. "
+                "Repeatable. Example: --search-sla "
                 "'time_to_first_token:p95:lt:200' --search-sla "
-                "'request_error_rate:p99:lt:0.05'. Composes with recipe-named "
+                "'request_error_rate:avg:lt:1'. Composes with recipe-named "
                 "SLA flags (--ttft-sla-ms etc.); the final filter list is "
                 "recipe filters first, then --search-sla filters in CLI order."
             ),
@@ -3680,7 +3682,8 @@ class CLIConfig(BaseConfig):
             description=(
                 "Maximum acceptable request error rate as a fraction in (0, 1) "
                 "(e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag "
-                "(p99). Consumed by the max-concurrency-under-sla recipe; ignored "
+                "(avg), converting the fraction to the metric's percentage-point "
+                "scale. Consumed by the max-concurrency-under-sla recipe; ignored "
                 "otherwise. Available without streaming."
             ),
         ),
