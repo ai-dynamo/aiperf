@@ -12,6 +12,8 @@
 
 import type { Edge, Node } from "@xyflow/react";
 import { timelineNodeSize, type TimelineBar, type TimelineGap } from "../../nodes/timelineLayout.js";
+import { intervalsNodeSize, type IntervalRow } from "../../nodes/intervalsLayout.js";
+import { blocksNodeSize, type BlockStrip } from "../../nodes/blocksLayout.js";
 
 /** Grid step. One column clears a card's max width; one row clears its height. */
 export const COL = 300;
@@ -145,6 +147,52 @@ export function timelineCols(opts: Parameters<typeof timeline>[1]): number {
     width: opts.width,
   });
   return Math.ceil(width / COL);
+}
+
+/**
+ * Intervals on one clock with a rank badge on each end — what interval-order derivation reads.
+ *
+ * Sized explicitly, for the same reason as `timeline`.
+ */
+export function intervals(
+  id: string,
+  opts: { title?: string; rows: IntervalRow[]; width?: number; ariaLabel?: string },
+  { col, row }: Placed,
+): Node {
+  return {
+    id,
+    type: "intervals",
+    position: { x: col * COL, y: row * ROW },
+    style: intervalsNodeSize({
+      rows: opts.rows,
+      hasTitle: opts.title !== undefined,
+      width: opts.width,
+    }),
+    data: { ...opts },
+  };
+}
+
+/**
+ * Stacked per-block tag strips, for comparing two paths over a shared prefix.
+ *
+ * `detail` is allotted a fixed two-line block in the node's height, so keep it short.
+ */
+export function blocks(
+  id: string,
+  opts: { title?: string; strips: BlockStrip[]; highlight?: number; detail?: string },
+  { col, row }: Placed,
+): Node {
+  return {
+    id,
+    type: "blocks",
+    position: { x: col * COL, y: row * ROW },
+    style: blocksNodeSize({
+      strips: opts.strips,
+      hasTitle: opts.title !== undefined,
+      hasDetail: opts.detail !== undefined,
+    }),
+    data: { ...opts },
+  };
 }
 
 /** Directed connector. Ids derive from the pair; no slide connects a pair twice. */
