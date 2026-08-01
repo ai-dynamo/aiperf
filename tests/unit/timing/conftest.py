@@ -88,6 +88,9 @@ class MockCreditRouter:
     ) -> None:
         self._first_token_cb = cb
 
+    def set_fatal_error_callback(self, cb: Callable[[BaseException], None]) -> None:
+        self._fatal_error_cb = cb
+
     async def return_credit(
         self, credit: Credit, cancelled: bool = False, first_token_sent: bool = True
     ) -> None:

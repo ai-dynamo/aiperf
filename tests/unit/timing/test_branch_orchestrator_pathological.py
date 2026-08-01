@@ -527,6 +527,8 @@ async def test_non_fail_fast_error_on_sole_child_fires_all_gates_once(
 
     assert orch.stats.children_errored == 1
     # Active gate fired once; the future gates were popped (satisfied early).
+    # Normal DAG gates carry no think-time, so early-satisfied future gates
+    # breeze through rather than being retained for a pre-join wait.
     assert issuer.dispatch_join_turn.await_count == 1
     assert "corr-root" not in orch._active_joins
     assert orch._future_joins.get("corr-root", {}) == {}
