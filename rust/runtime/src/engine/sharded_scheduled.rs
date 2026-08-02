@@ -100,32 +100,35 @@ pub(crate) fn two_level_partition(
 
 /// Partition a phase across the cell's worker threads.
 ///
-/// Admission caps are floored to one. `fixed_schedule` is partitioned by
-/// conversation in [`NativeDatasetConversationSource`](crate::multiturn).
+/// `fixed_schedule` is partitioned by conversation in
+/// [`NativeDatasetConversationSource`](crate::multiturn).
 ///
-/// `requests` and `prefill_concurrency` are ALWAYS sliced into this thread's
-/// `1/workers` share, in every dispatch mode: `GlobalAdmission` (built from
-/// these same phase specs) is a `concurrency`/`rate` admission gate only, with
-/// no shared total-dispatched-request counter or shared prefill gate, so the
-/// total work budget and prefill admission must still be statically
-/// partitioned or a `Global`-dispatch run would attempt `workers` DUPLICATE
-/// copies of the full request budget (`workers`x over-dispatch) instead of
-/// the authored total. This is a deliberate narrowing of the literal
-/// "leaves requests ... unsliced" framing to what `GlobalAdmission`'s two
-/// gates actually cover; a request-count-sharing gate is future work.
+/// The split follows one rule: **work budgets are partitioned, admission caps are
+/// gated**.
 ///
-/// `concurrency` and `rate` (the two fields `GlobalAdmission` DOES provide a
-/// shared gate for) slice under [`DispatchMode::Sharded`] exactly as before.
-/// Under [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`], on the
-/// request-rate phase shapes (`Concurrency`/`Poisson`/`Constant`/`Gamma`)
-/// only, they are left at the cell-local (unsliced-by-thread) value: each
-/// thread instead admits concurrency from the shared per-cell
-/// `GlobalAdmission` gate (`ShardedShared::global_admission`). `UserCentric`
-/// and `FixedSchedule` are unaffected by dispatch mode: `UserCentric` builds
-/// its own internal session pool independent of the shared
-/// `NativeScheduledResources`/`GlobalAdmission` seam this change wires, and
-/// `FixedSchedule` has no concurrency/rate concept at all — both are called
-/// out as follow-up scope.
+/// `requests` and `sessions` are work budgets, and are ALWAYS sliced into this
+/// thread's `1/workers` share in every dispatch mode. `GlobalAdmission` carries
+/// no shared total-dispatched-request counter, so leaving them unsliced would
+/// make a `Global` run attempt `workers` DUPLICATE copies of the full budget
+/// (`workers`x over-dispatch) instead of the authored total. Slicing them costs
+/// nothing: `owned_positions` tiles exactly, and because concurrency is gated
+/// rather than partitioned, a thread that exhausts its own budget early simply
+/// stops asking while any thread still holding budget can occupy the whole
+/// shared pool — an uneven budget never becomes idle capacity.
+///
+/// `concurrency` and `prefill_concurrency` are admission caps, and under
+/// [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`] both are left at the
+/// cell-local (unsliced-by-thread) value so every thread admits against the
+/// shared per-cell `GlobalAdmission` gate. Partitioning a cap is what strands
+/// capacity — the share a finished thread still owns cannot be lent to a busy
+/// one — and `owned_cap`'s floor of one over-subscribes whenever the cap is
+/// below the thread count. Both slice under [`DispatchMode::Sharded`] exactly
+/// as before.
+///
+/// Caps are gated only on the request-rate phase shapes
+/// (`Concurrency`/`Poisson`/`Constant`/`Gamma`). `UserCentric` builds its own
+/// internal session pool independent of this seam, and `FixedSchedule` has no
+/// concurrency or rate concept at all; both are unaffected by dispatch mode.
 pub(crate) fn slice_phase_for_thread(
     phase: &PhaseSpec,
     thread_id: usize,
