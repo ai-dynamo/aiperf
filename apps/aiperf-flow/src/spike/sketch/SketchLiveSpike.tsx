@@ -216,7 +216,7 @@ export function SketchLiveSpike(): React.JSX.Element {
 
       {showSummary && (
         <SummarizePhase state={state} percentile={percentile} pending={pendingAtSummarize}
-          midRun delta={delta} />
+          delta={delta} />
       )}
 
       <SourceNote>
@@ -385,7 +385,6 @@ function SummarizePhase({
   state,
   percentile,
   pending,
-  midRun,
   delta,
 }: {
   state: IngestState;
@@ -394,8 +393,6 @@ function SummarizePhase({
   delta: number;
   /** Centroids sitting in unsorted tails when the report was asked for. */
   pending: number;
-  /** True when the user asked mid-run rather than at the end. */
-  midRun: boolean;
 }): React.JSX.Element {
   // The sort happens here, at summarize — not during the run.
   const sorted = useMemo(() => sortedAtSummarize(state), [state]);
@@ -440,43 +437,42 @@ function SummarizePhase({
 
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-center gap-4 rounded-lg border px-5 py-3 text-base"
+      <div className="mb-3 rounded-lg border px-5 py-3 text-base"
         style={{ borderColor: GREEN, background: "rgba(0,255,128,0.04)" }}>
-        <strong style={{ color: GREEN }}>Now summarize.</strong>
-        <span>
-          Both are asked for p{percentile} over the {state.arrived.length} values that have arrived
-          so far. The left <strong>sorts</strong> them — its first and only expensive step — then
-          reads two. The right has no values left to sort, so it folds its cells and walks the
-          result.
-        </span>
-        <span className="ml-auto flex items-center gap-1.5">
-          <Toggle active onClick={() => setPlaying((p) => !p)}>{playing ? "Pause" : "Replay"}</Toggle>
-          <Toggle onClick={() => { setPlaying(false); setStage((s) => Math.min(lastStage, s + 1)); }}>
-            Step
-          </Toggle>
-          <Toggle onClick={() => { setStage(0); setPlaying(true); }}>Restart</Toggle>
-        </span>
-      </div>
-
-      {midRun && (
-        <div className="mb-3 rounded-lg border px-5 py-3 text-[15px] leading-relaxed"
-          style={{ borderColor: ORANGE, background: "rgba(255,140,0,0.05)" }}>
-          <strong style={{ color: ORANGE }}>Asked mid-run.</strong>{" "}
-          A report can be requested at any point, and neither structure was ready for it.{" "}
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <strong style={{ color: GREEN }}>Summarizing {state.arrived.length.toLocaleString()}{" "}
+            values, mid-run.</strong>
+          <span className="ml-auto flex items-center gap-1.5">
+            <Toggle active onClick={() => setPlaying((p) => !p)}>
+              {playing ? "Pause" : "Replay"}
+            </Toggle>
+            <Toggle onClick={() => { setPlaying(false); setStage((s) => Math.min(lastStage, s + 1)); }}>
+              Step
+            </Toggle>
+            <Toggle onClick={() => { setStage(0); setPlaying(true); }}>Restart</Toggle>
+          </span>
+        </div>
+        <p className="mt-1.5 leading-relaxed">
+          The stream has no end, so a report is always asked for part-way through — and neither
+          structure is ever ready for it. The left <strong>sorts</strong> what it has kept, its
+          first and only expensive step, then reads two of them.{" "}
           {pending > 0 ? (
             <>
-              {pending} centroid{pending === 1 ? "" : "s"} were still sitting in unsorted tails; the
-              fold sorts and clusters them before it can answer, because <code>clustered</code>{" "}
-              sorts by mean first. That flush is work the run had been deferring, and asking early
-              is what pays for it.
+              The right has {pending} centroid{pending === 1 ? "" : "s"} still sitting in unsorted
+              tails, so the fold has to sort and cluster them before it can answer —{" "}
+              <code>clustered</code> sorts by mean first. That flush is work the run had been
+              deferring, and asking is what pays for it.
             </>
           ) : (
-            <>Every cell happened to be freshly compressed, so nothing had to be flushed first.</>
+            <>
+              The right happens to have every cell freshly compressed, so nothing needs flushing
+              before the fold — ask again a value or two later and it will.
+            </>
           )}{" "}
-          Keep going and ask again. Early on the answer swings about; it steadies once the digest
-          has enough to work with, at whatever accuracy δ allows.
-        </div>
-      )}
+          Keep feeding it and ask again: early on the answer swings about, and it steadies once the
+          digest has enough to work with, at whatever accuracy δ allows.
+        </p>
+      </div>
 
       <div className="grid grid-cols-[1fr_1.3fr] gap-4">
         <Panel label="EXACT — sort, then interpolate" hint="sorts once, then reads two values">
