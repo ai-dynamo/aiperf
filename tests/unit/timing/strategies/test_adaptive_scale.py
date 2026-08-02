@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from pathlib import Path
@@ -2052,3 +2053,52 @@ def test_build_backend_rejects_invalid_bounds_and_unknown_variable(tmp_path) -> 
             concurrency_manager=MagicMock(),
             config=config,
         )
+
+
+def test_error_rate_sla_threshold_out_of_percentage_range_is_rejected() -> None:
+    """error_rate thresholds are percentage points, so [0, 100] is the domain."""
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+
+    for threshold in (-1.0, 101.0):
+        with pytest.raises(ValueError, match="percentage points"):
+            evaluator.validate_single_filter(
+                SLAFilter(
+                    metric_tag="error_rate",
+                    stat="avg",
+                    op="le",
+                    threshold=threshold,
+                )
+            )
+
+    for threshold in (0.0, 100.0):
+        evaluator.validate_single_filter(
+            SLAFilter(
+                metric_tag="request_error_rate",
+                stat="avg",
+                op="le",
+                threshold=threshold,
+            )
+        )
+
+
+def test_error_rate_sla_fraction_style_threshold_warns(caplog) -> None:
+    """A pre-change fraction threshold such as 0.05 is accepted but flagged."""
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+
+    with caplog.at_level(logging.WARNING):
+        evaluator.validate_single_filter(
+            SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=0.05)
+        )
+
+    assert "percentage points" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        evaluator.validate_single_filter(
+            SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=5.0)
+        )
+    assert caplog.text == ""
