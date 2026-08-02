@@ -212,10 +212,16 @@ export const SIMULATIONS: readonly DeckListing[] = [
       "Every stage of the metrics plane on one dataset: columnar storage with NaN sentinels, the ragged CSR for inter-chunk latency, events becoming a curve, the collision tie-break that keeps touching intervals from double-counting, ICL-aware token arrivals, and then steady-state detection by threshold, CUSUM, MSER-5, consensus and a stationarity test that can veto the answer.",
   },
   {
+    path: "/spike-prefix-identity",
+    title: "Same bytes, different segment",
+    description:
+      "A segment's identity is a hash of its content and its parent's identity, so the same turn is a different segment at a different point in a conversation. Three conversations share a prefix, fork, and never rejoin — with the hash input shown field by field.",
+  },
+  {
     path: "/spike-two-clocks",
     title: "Two clocks, one workload",
     description:
-      "The same tasks on RealClock and SimClock side by side. One waits out the gaps between events because real timers must; the other parks sleepers in a heap ordered by (at_ns, seq_no) and jumps straight to the next deadline. The right pane finishes while the left is still on its first sleep — and the event logs come out identical.",
+      "The same tasks on RealClock and SimClock side by side. One waits out the gaps between events because real timers must; the other parks sleepers in a heap ordered by (at_ns, seq_no) and jumps straight to the next deadline. The right pane finishes while the left is still on its first sleep, and both report the same requests, tokens and latencies.",
   },
   {
     path: "/spike-check-then-park",
