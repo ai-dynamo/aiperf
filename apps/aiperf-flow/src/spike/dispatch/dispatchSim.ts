@@ -120,6 +120,20 @@ export function ownedCap(total: number, workerId: number, workers: number): numb
 }
 
 /**
+ * Per-worker prefill caps.
+ *
+ * Gated exactly like `concurrency` when the mode provides a shared gate; otherwise partitioned
+ * `1/workers` with the same floor of one, which is what over-subscribes a small cap.
+ */
+export function prefillCapsFor(mode: Mode, config: Config, workers: number): number[] {
+  const gated = mode !== "sharded" && config.gatePrefill;
+  if (gated) return Array.from({ length: workers }, () => config.prefillConcurrency);
+  return Array.from({ length: workers }, (_, t) =>
+    ownedCap(config.prefillConcurrency, t, workers),
+  );
+}
+
+/**
  * Per-worker caps under a mode.
  *
  * Only `sharded` has per-worker caps at all. `global` admits from one shared pool; `global-hop`
@@ -143,6 +157,8 @@ export type Request = {
   startedAt: number;
   /** Ticks of service. Uneven by design — that is the condition sharding loses under. */
   duration: number;
+  /** Tick at which this request leaves prefill and frees its prefill slot. */
+  prefillUntil: number;
   /** The conversation this turn belongs to. Routing policies key on it. */
   correlation: string;
 };
@@ -163,6 +179,25 @@ export type Config = {
   slowEvery: number;
   /** Distinct conversations the requests belong to. */
   sessions: number;
+  /**
+   * Authored `prefill_concurrency`: how many requests may be in their prefill stage at once.
+   *
+   * A second admission cap, independent of `concurrency`. A request needs a slot in BOTH to
+   * start, and releases the prefill slot once prefill finishes while keeping the concurrency slot
+   * for the rest of its life.
+   */
+  prefillConcurrency: number;
+  /** Ticks a request spends in prefill before it starts generating. */
+  prefillTicks: number;
+  /**
+   * Whether the shared pool covers prefill as well as concurrency.
+   *
+   * `GlobalAdmission` originally held two gates, concurrency and rate, so `prefill_concurrency`
+   * was statically partitioned per thread under *every* mode — leaving `global` able to strand
+   * prefill capacity by exactly the mechanism its shared concurrency gate exists to prevent.
+   * Turning this off reproduces that.
+   */
+  gatePrefill: boolean;
   /**
    * Ticks of extra service charged to a `global-hop` request for the cross-thread trip.
    *
@@ -202,6 +237,12 @@ export const DEFAULT_CONFIG: Config = {
   longTicks: 17,
   slowEvery: 4,
   sessions: 6,
+  // Equal to `concurrency`, so prefill is never independently the binding constraint and the
+  // page keeps saying what it said before. Partitioning it is what makes it bind: 8 across 4
+  // workers is 2 each, and a worker wanting more than 2 in prefill blocks while others sit idle.
+  prefillConcurrency: 8,
+  prefillTicks: 4,
+  gatePrefill: true,
   hopCostTicks: 1,
 };
 
@@ -219,6 +260,8 @@ export type WorkerState = {
   queue: number[];
   inFlight: Request[];
   completed: number;
+  /** This worker's own prefill cap. Equal to the authored value when the gate covers it. */
+  prefillCap: number;
   /** Distinct workers this worker's sessions have also been served by. Populated by the hop. */
 };
 
@@ -228,6 +271,8 @@ export type RunState = {
   workers: WorkerState[];
   /** Shared pool occupancy under `global`; unused under `sharded`. */
   globalHeld: number;
+  /** Shared prefill occupancy, when the mode gates prefill. */
+  globalPrefillHeld: number;
   /** Ids the single coordinator has yet to issue. Only `global-hop` uses it. */
   coordinatorQueue: number[];
   routing: HopRouting;
@@ -249,6 +294,7 @@ export function createRun(
   routing: HopRouting = "round-robin",
 ): RunState {
   const caps = capsFor(mode, config.concurrency, config.workers);
+  const prefillCaps = prefillCapsFor(mode, config, config.workers);
   const hop = mode === "global-hop";
   return {
     mode,
@@ -265,8 +311,10 @@ export function createRun(
             (_, k) => id + k * config.workers),
       inFlight: [],
       completed: 0,
+      prefillCap: prefillCaps[id]!,
     })),
     globalHeld: 0,
+    globalPrefillHeld: 0,
     coordinatorQueue: hop ? Array.from({ length: config.requests }, (_, i) => i) : [],
     routing,
     pick: createPickState(),
@@ -278,8 +326,50 @@ export function createRun(
   };
 }
 
+/**
+ * Whether the prefill gate lets this worker start one more request.
+ *
+ * The whole point of the distinction: when the mode gates prefill there is one counter for the
+ * cell, so any worker can use any free slot. When it does not, each worker is confined to its own
+ * partitioned share and a free slot elsewhere is unreachable.
+ */
+function prefillAdmits(state: RunState, worker: WorkerState, config: Config): boolean {
+  const gated = state.mode !== "sharded" && config.gatePrefill;
+  if (gated) return prefillHeld(state) < config.prefillConcurrency;
+  return prefillHeldBy(worker, state.tick) < worker.prefillCap;
+}
+
 export function inFlightTotal(state: RunState): number {
   return state.workers.reduce((sum, w) => sum + w.inFlight.length, 0);
+}
+
+/** Requests currently in their prefill stage on this worker. */
+export function prefillHeldBy(worker: WorkerState, tick: number): number {
+  return worker.inFlight.filter((r) => r.prefillUntil > tick).length;
+}
+
+/** Requests in prefill across the whole cell. */
+export function prefillHeld(state: RunState): number {
+  return state.workers.reduce((sum, w) => sum + prefillHeldBy(w, state.tick), 0);
+}
+
+/**
+ * Prefill slots that exist, are free, and cannot be reached by a worker that needs one.
+ *
+ * Zero whenever the mode gates prefill — there is one pool, so a free slot is free to everyone.
+ * Non-zero exactly when the cap is partitioned and some worker has run dry while another is
+ * blocked, which is the shape the concurrency gate already fixed and prefill did not have.
+ */
+export function strandedPrefill(state: RunState, config: Config): number {
+  const gated = state.mode !== "sharded" && config.gatePrefill;
+  if (gated) return 0;
+  const blocked = state.workers.some(
+    (w) => w.queue.length > 0 && prefillHeldBy(w, state.tick) >= w.prefillCap,
+  );
+  if (!blocked) return 0;
+  return state.workers
+    .filter((w) => w.queue.length === 0 || prefillHeldBy(w, state.tick) < w.prefillCap)
+    .reduce((sum, w) => sum + Math.max(0, w.prefillCap - prefillHeldBy(w, state.tick)), 0);
 }
 
 /** Requests not yet dispatched, wherever they are queued. */
@@ -336,12 +426,16 @@ export function step(state: RunState, config: Config = DEFAULT_CONFIG): RunState
       const correlation = correlationOf(id, config);
       const target = pickWorker(next.routing, config.workers, correlation, inflight, next.pick);
       const worker = next.workers[target]!;
+      // A request needs a slot in BOTH gates to start. Prefill is checked against whichever pool
+      // the mode gives this worker — shared, or its own partitioned share.
+      if (!prefillAdmits(next, worker, config)) break;
       worker.inFlight.push({
         id,
         worker: target,
         startedAt: next.tick,
         // The hop is a bounded mpsc plus a oneshot reply, charged per request.
         duration: durationFor(id, config) + config.hopCostTicks,
+        prefillUntil: next.tick + config.prefillTicks,
         correlation,
       });
       inflight[target] = (inflight[target] ?? 0) + 1;
@@ -356,7 +450,7 @@ export function step(state: RunState, config: Config = DEFAULT_CONFIG): RunState
           next.mode === "global"
             ? next.globalHeld < config.concurrency
             : worker.inFlight.length < worker.cap;
-        if (!admitted) break;
+        if (!admitted || !prefillAdmits(next, worker, config)) break;
         const id = worker.queue.shift()!;
         const correlation = correlationOf(id, config);
         worker.inFlight.push({
@@ -364,6 +458,7 @@ export function step(state: RunState, config: Config = DEFAULT_CONFIG): RunState
           worker: worker.id,
           startedAt: next.tick,
           duration: durationFor(id, config),
+          prefillUntil: next.tick + config.prefillTicks,
           correlation,
         });
         if (next.mode === "global") next.globalHeld += 1;

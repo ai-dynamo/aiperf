@@ -17,7 +17,9 @@ import {
   DEFAULT_CONFIG,
   durationFor,
   fragmentation,
+  prefillHeld,
   runToEnd,
+  strandedPrefill,
   step,
   strandedSlots,
   summarize,
@@ -72,10 +74,19 @@ export function DispatchModesSpike(): React.JSX.Element {
   const [workers, setWorkers] = useState(DEFAULT_CONFIG.workers);
   const [concurrency, setConcurrency] = useState(DEFAULT_CONFIG.concurrency);
   const [running, setRunning] = useState(false);
+  const [gatePrefill, setGatePrefill] = useState(true);
 
   const config: Config = useMemo(
-    () => ({ ...DEFAULT_CONFIG, workers, concurrency }),
-    [workers, concurrency],
+    // Prefill tracks the concurrency target so it is never independently the binding cap; what
+    // makes it bind is partitioning it, which is exactly what the toggle turns back on.
+    () => ({
+      ...DEFAULT_CONFIG,
+      workers,
+      concurrency,
+      prefillConcurrency: concurrency,
+      gatePrefill,
+    }),
+    [workers, concurrency, gatePrefill],
   );
 
   const [routing, setRouting] = useState<HopRouting>("round-robin");
@@ -145,6 +156,18 @@ export function DispatchModesSpike(): React.JSX.Element {
         </div>
 
         <div className="flex items-center gap-1.5">
+          <span className="mr-1 text-base text-ink-tertiary">prefill cap</span>
+          <Toggle active={gatePrefill} onClick={() => setGatePrefill(true)}
+            title="What the shared pool covers today">
+            shared
+          </Toggle>
+          <Toggle active={!gatePrefill} onClick={() => setGatePrefill(false)}
+            title="What it did before prefill was added to the gate">
+            split per thread
+          </Toggle>
+        </div>
+
+        <div className="flex items-center gap-1.5">
           <span className="mr-1 text-base text-ink-tertiary">hop routing</span>
           {ROUTINGS.map((r) => (
             <Toggle key={r} active={routing === r} onClick={() => setRouting(r)}
@@ -160,6 +183,17 @@ export function DispatchModesSpike(): React.JSX.Element {
           <Readout label="sessions" value={config.sessions} />
         </div>
       </ControlBar>
+
+      {!gatePrefill && (
+        <div className="mb-4 rounded-lg border px-5 py-4 text-base leading-relaxed"
+          style={{ borderColor: RED, background: "rgba(255,0,0,0.05)" }}>
+          <strong style={{ color: RED }}>Prefill is partitioned now.</strong>{" "}
+          Concurrency is still shared, so the headline number still looks right — but a second cap
+          sits underneath it, split <code>1/workers</code> the way concurrency used to be. Watch
+          the prefill row: a worker blocked on its own share cannot borrow a free slot from one
+          that has finished. <strong>A shared gate only protects what it covers.</strong>
+        </div>
+      )}
 
       {overSubscribed && (
         <div className="mb-4 rounded-lg border px-5 py-4 text-base leading-relaxed"
@@ -242,10 +276,10 @@ WHAT EACH ONE BOUGHT, AND PAID
         two gates, so <code>slice_common</code> still splits three fields per thread under{" "}
         <code>global</code> as well as <code>sharded</code>: <code>requests</code> and{" "}
         <code>sessions</code>, which are work budgets that would otherwise be dispatched once per
-        thread, and <code>prefill_concurrency</code>, which is an admission cap — meaning{" "}
-        <code>global</code> can strand <em>prefill</em> slots by exactly the mechanism shown here
-        for concurrency. The runtime says so itself: no shared prefill gate, and a
-        request-count-sharing gate is future work. <code>global-hop</code> escapes all of it by
+        thread. <code>prefill_concurrency</code> is an admission cap, not a budget, and is now gated
+        alongside concurrency — the <em>prefill cap</em> toggle above reproduces what it did before
+        that landed, when it was split per thread and <code>global</code> could strand it by
+        exactly the mechanism shown here for concurrency. <code>global-hop</code> escapes all of it by
         slicing thread 0 of 1, a no-op, so the single coordinator holds every full cap; it needs no
         shared gate because one loop holding the full cap <em>is</em> the global cap. A target
         smaller than the thread count over-subscribes rather than under-shooting, since each share
@@ -359,6 +393,8 @@ function ModePane({
       )}
       {state.mode === "global" && <SharedPool state={state} config={config} accent={accent} />}
       {state.mode === "global-hop" && <HopLanes state={state} config={config} accent={accent} />}
+
+      <PrefillRow state={state} config={config} accent={accent} />
 
       <Curve state={state} config={config} accent={accent} finishedTicks={finished.ticks} />
     </Panel>
@@ -592,6 +628,52 @@ function HopLanes({
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The second admission cap, drawn beside the first.
+ *
+ * Prefill is invisible while the shared gate covers it — one pool, nothing reserved, nothing
+ * stranded. Split it per thread and it behaves exactly as concurrency did before its own gate
+ * existed, which is the point of showing them together.
+ */
+function PrefillRow({
+  state,
+  config,
+  accent,
+}: {
+  state: RunState;
+  config: Config;
+  accent: string;
+}): React.JSX.Element {
+  const gated = state.mode !== "sharded" && config.gatePrefill;
+  const held = prefillHeld(state);
+  const stranded = strandedPrefill(state, config);
+  return (
+    <div className="mb-3 border-t border-white/5 pt-2">
+      <div className="flex items-center gap-3">
+        <span className="w-24 shrink-0 font-mono text-[13px] text-ink-tertiary">prefill</span>
+        <span className="flex flex-wrap items-center gap-[3px]">
+          {Array.from({ length: config.prefillConcurrency }, (_, slot) => (
+            <span key={slot} className="h-3.5 w-3.5 rounded-[2px]"
+              style={{
+                background: slot < held ? accent : "transparent",
+                opacity: slot < held ? 0.75 : 1,
+                outline:
+                  slot < held
+                    ? "none"
+                    : `1px dashed ${stranded > 0 ? RED : "rgba(255,255,255,0.16)"}`,
+                outlineOffset: -1,
+              }} />
+          ))}
+        </span>
+        <span className="ml-auto font-mono text-[13px] tabular-nums"
+          style={{ color: stranded > 0 ? RED : DIM }}>
+          {gated ? "one shared pool" : `${stranded} unreachable`}
+        </span>
+      </div>
     </div>
   );
 }

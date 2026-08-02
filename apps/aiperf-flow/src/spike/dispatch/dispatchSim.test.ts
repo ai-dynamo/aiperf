@@ -12,6 +12,8 @@ import {
   fnv1a64,
   fragmentation,
   pickWorker,
+  prefillCapsFor,
+  strandedPrefill,
   DEFAULT_CONFIG,
   inFlightTotal,
   ownedCap,
@@ -238,5 +240,46 @@ describe("global-hop", () => {
     const sticky = fragmentation(runToEnd("global-hop", DEFAULT_CONFIG, "sticky"));
     expect(sticky.worst).toBe(1);
     expect(rr.mean).toBeGreaterThan(sticky.mean);
+  });
+});
+
+describe("the second gate", () => {
+  const partitioned: Config = { ...DEFAULT_CONFIG, gatePrefill: false };
+
+  it("never strands prefill while the shared gate covers it", () => {
+    let state = createRun("global", DEFAULT_CONFIG);
+    for (let i = 0; i < 400 && !state.done; i++) {
+      state = step(state, DEFAULT_CONFIG);
+      expect(strandedPrefill(state, DEFAULT_CONFIG)).toBe(0);
+    }
+  });
+
+  it("strands prefill once the cap is partitioned instead", () => {
+    // The bug the shared prefill gate fixes: a worker blocked on its own prefill share cannot
+    // borrow a free slot from a worker that has finished, exactly as concurrency used to behave.
+    let state = createRun("global", partitioned);
+    let worst = 0;
+    for (let i = 0; i < 400 && !state.done; i++) {
+      state = step(state, partitioned);
+      worst = Math.max(worst, strandedPrefill(state, partitioned));
+    }
+    expect(worst).toBeGreaterThan(0);
+  });
+
+  it("over-subscribes a prefill cap smaller than the worker count", () => {
+    // Same `.max(1)` floor as concurrency: four workers under an authored 3 admit 4.
+    const small: Config = { ...partitioned, prefillConcurrency: 3, workers: 4 };
+    const caps = prefillCapsFor("global", small, 4);
+    expect(caps).toEqual([1, 1, 1, 1]);
+    expect(caps.reduce((a, b) => a + b, 0)).toBe(4);
+    expect(prefillCapsFor("global", { ...small, gatePrefill: true }, 4)).toEqual([3, 3, 3, 3]);
+  });
+
+  it("leaves the concurrency story unchanged when it is not the binding cap", () => {
+    // Prefill defaults to the concurrency target, so adding the gate must not move the headline.
+    expect(summarize(runToEnd("global")).utilisation).toBeGreaterThan(
+      summarize(runToEnd("sharded")).utilisation,
+    );
+    expect(summarize(runToEnd("global")).completed).toBe(DEFAULT_CONFIG.requests);
   });
 });
