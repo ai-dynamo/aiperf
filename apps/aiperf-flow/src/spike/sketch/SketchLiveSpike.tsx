@@ -17,6 +17,7 @@ import {
   traceExact,
   traceFold,
   traceSketch,
+  type ExactTrace,
   type IngestState,
 } from "./ingest.js";
 import { latencySamples } from "./sketchSim.js";
@@ -241,7 +242,17 @@ function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
   );
 }
 
-/** Both answers to the same question, each showing what it read to get there. */
+/**
+ * The summarize phase, staged so each operation is watchable.
+ *
+ * Stages: pool the cells' centroids, compress them, then walk the result one centroid at a time
+ * until the running centre quantile passes the target. The walk is the part worth animating —
+ * where it stops is not obvious until you see the centres go by.
+ */
+const STAGE_CONCAT = 0;
+const STAGE_COMPRESS = 1;
+const STAGE_WALK = 2;
+
 function SummarizePhase({
   state,
   percentile,
@@ -252,109 +263,325 @@ function SummarizePhase({
   const exact = traceExact(state.sorted, percentile);
   const fold = useMemo(() => traceFold(state.cells, COMPRESSION), [state.cells]);
   const sketch = traceSketch(fold.folded, percentile / 100);
+
+  const walkLength = sketch?.steps.length ?? 0;
+  const lastStage = STAGE_WALK + walkLength;
+  const [stage, setStage] = useState(0);
+  const [playing, setPlaying] = useState(true);
+
+  // Restart whenever the question changes, so the walk is always watched from the beginning.
+  useEffect(() => {
+    setStage(0);
+    setPlaying(true);
+  }, [percentile]);
+
+  useEffect(() => {
+    if (!playing) return undefined;
+    const handle = window.setInterval(() => {
+      setStage((s) => {
+        if (s >= lastStage) {
+          setPlaying(false);
+          return s;
+        }
+        return s + 1;
+      });
+    }, 550);
+    return () => window.clearInterval(handle);
+  }, [playing, lastStage]);
+
   if (exact === null || sketch === null) return <></>;
 
+  const visited = Math.max(0, Math.min(walkLength, stage - STAGE_WALK + 1));
+  const done = stage >= lastStage;
   const errorPct = ((sketch.result - exact.result) / exact.result) * 100;
 
   return (
     <>
-      <div className="mb-3 rounded-lg border px-5 py-3 text-base"
+      <div className="mb-3 flex flex-wrap items-center gap-4 rounded-lg border px-5 py-3 text-base"
         style={{ borderColor: GREEN, background: "rgba(0,255,128,0.04)" }}>
-        <strong style={{ color: GREEN }}>Now summarize.</strong>{" "}
-        Both are asked for p{percentile}. The left reads two of the values it kept. The right has
-        no values left to read, so it folds its cells and walks the result.
+        <strong style={{ color: GREEN }}>Now summarize.</strong>
+        <span>
+          Both are asked for p{percentile}. The left reads two of the values it kept; the right has
+          none left, so it folds its cells and walks the result.
+        </span>
+        <span className="ml-auto flex items-center gap-1.5">
+          <Toggle active onClick={() => setPlaying((p) => !p)}>{playing ? "Pause" : "Replay"}</Toggle>
+          <Toggle onClick={() => { setPlaying(false); setStage((s) => Math.min(lastStage, s + 1)); }}>
+            Step
+          </Toggle>
+          <Toggle onClick={() => { setStage(0); setPlaying(true); }}>Restart</Toggle>
+        </span>
       </div>
 
-      <div className="grid grid-cols-[1fr_1.25fr] gap-4">
+      <div className="grid grid-cols-[1fr_1.3fr] gap-4">
         <Panel label="EXACT — type-7 interpolation" hint="reads two retained values">
-          <div className="flex flex-col gap-1.5 font-mono text-[14px]">
-            <Line label="virtual index" value={`${percentile}/100 × (${exact.count} − 1) = ${exact.virtualIndex.toFixed(3)}`} />
-            <Line label="brackets" value={`sorted[${exact.lo}] and sorted[${exact.hi}]`} />
-            <Line label="values" value={`${exact.loValue.toFixed(2)} and ${exact.hiValue.toFixed(2)}`} />
-            <Line label="fraction" value={exact.frac.toFixed(3)} />
-          </div>
-          <div className="mt-3 flex items-baseline gap-2 border-t border-white/10 pt-2.5">
-            <span className="text-[13px] font-bold tracking-widest text-ink-secondary">RESULT</span>
-            <span className="font-mono text-[21px] font-bold">{exact.result.toFixed(2)} ms</span>
-          </div>
-          <p className="mt-2 text-[14px] leading-relaxed text-ink-quaternary">
-            Two array reads and a blend. Exact because both endpoints are values that genuinely
-            occurred.
-          </p>
+          <ExactStrip trace={exact} sorted={state.sorted} reveal={done} />
         </Panel>
 
         <Panel label="SKETCH — fold, then walk" hint="no values left; only centroids">
-          <div className="mb-3">
-            <div className="mb-1 text-[13px] text-ink-tertiary">
-              1 · concatenate every cell&apos;s centroids —{" "}
-              <strong>{fold.concatenated.length}</strong> of them
+          <FoldStages fold={fold} stage={stage} />
+          {stage >= STAGE_WALK && (
+            <WalkChain trace={sketch} visited={visited} percentile={percentile} />
+          )}
+          {done && (
+            <div className="mt-3 flex flex-wrap items-baseline gap-x-3 border-t border-white/10 pt-2.5">
+              <span className="text-[13px] font-bold tracking-widest text-ink-secondary">RESULT</span>
+              <span className="font-mono text-[21px] font-bold" style={{ color: CYAN }}>
+                {sketch.result.toFixed(2)} ms
+              </span>
+              <span className="ml-auto font-mono text-[16px]"
+                style={{ color: Math.abs(errorPct) > 1 ? ORANGE : DIM }}>
+                {errorPct >= 0 ? "+" : ""}{errorPct.toFixed(3)}% vs exact
+              </span>
             </div>
-            <div className="flex flex-wrap gap-[3px]">
-              {fold.contributed.map((c) =>
-                c.centroids.map((centroid, i) => (
-                  <span key={`${c.cell}-${i}`} className="h-3.5 rounded-[2px]"
-                    style={{ width: 10, background: CELL_COLOR[c.cell], opacity: 0.7 }}
-                    title={`cell ${c.cell}: mean ${centroid.mean.toFixed(1)}, weight ${centroid.weight}`} />
-                )),
-              )}
-            </div>
-            <div className="mb-1 mt-2 text-[13px] text-ink-tertiary">
-              2 · compress — <strong>{fold.folded.centroids.length}</strong> remain
-            </div>
-            <div className="flex flex-wrap gap-[3px]">
-              {fold.folded.centroids.map((c, i) => (
-                <span key={i} className="h-3.5 rounded-[2px]"
-                  style={{ width: 10, background: GREEN, opacity: 0.75 }}
-                  title={`mean ${c.mean.toFixed(1)}, weight ${c.weight}`} />
-              ))}
-            </div>
-          </div>
-
-          <div className="mb-1 text-[13px] text-ink-tertiary">
-            3 · walk until the running centre passes q = {(percentile / 100).toFixed(2)}
-          </div>
-          <div className="font-mono text-[13px] leading-[1.75]">
-            {sketch.steps.map((s, i) => (
-              <div key={i} className="flex items-baseline gap-4 whitespace-nowrap"
-                style={{ color: s.stopped ? GREEN : DIM, fontWeight: s.stopped ? 700 : 400 }}>
-                <span className="w-7">#{i}</span>
-                <span className="w-32">mean {s.centroid.mean.toFixed(1)}</span>
-                <span className="w-14">w {s.centroid.weight}</span>
-                <span className="w-36">centre q {s.centerQ.toFixed(4)}</span>
-                <span>{s.stopped ? "◄ passed q — stop here" : ""}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-white/10 pt-2.5">
-            <span className="text-[13px] font-bold tracking-widest text-ink-secondary">RESULT</span>
-            <span className="font-mono text-[21px] font-bold" style={{ color: CYAN }}>
-              {sketch.result.toFixed(2)} ms
-            </span>
-            <span className="font-mono text-[14px]" style={{ color: DIM }}>
-              interpolated between ({sketch.fromQ.toFixed(4)}, {sketch.fromValue.toFixed(1)}) and (
-              {sketch.toQ.toFixed(4)}, {sketch.toValue.toFixed(1)})
-            </span>
-            <span className="ml-auto font-mono text-[16px]"
-              style={{ color: Math.abs(errorPct) > 1 ? ORANGE : DIM }}>
-              {errorPct >= 0 ? "+" : ""}{errorPct.toFixed(3)}% vs exact
-            </span>
-          </div>
+          )}
           <p className="mt-2 text-[14px] leading-relaxed text-ink-quaternary">
-            Neither endpoint is a value that occurred — both are cluster means. That is the whole
-            difference: the exact path interpolates between two measurements, and this one
-            interpolates between two summaries.
+            Neither endpoint of that blend is a value that occurred — both are cluster means. That
+            is the whole difference: the exact path interpolates between two measurements, and this
+            one interpolates between two summaries.
           </p>
           <p className="mt-2 text-[14px] leading-relaxed" style={{ color: ORANGE }}>
             Do not read that percentage as how wrong a sketch is. {TOTAL} values across {CELLS}{" "}
             cells at δ&nbsp;={" "}{COMPRESSION} is a deliberately tiny configuration chosen so the
-            structures fit on screen, and it is the worst case for accuracy: a handful of centroids
-            each standing for several values. At production scale — thousands of records, δ&nbsp;=
-            100 — the same code lands well under a percent, which the companion page measures.
+            structures fit on screen, and it is the worst case for accuracy. At production scale —
+            thousands of records, δ&nbsp;= 100 — the same code lands well under a percent, which
+            the companion page measures.
           </p>
         </Panel>
       </div>
     </>
+  );
+}
+
+/**
+ * A window of the sorted values around the virtual index.
+ *
+ * Drawing all sixty positions puts the two brackets a few pixels apart with their labels on top of
+ * each other — the first version did exactly that and was unreadable. The computation only ever
+ * touches two neighbours, so the strip zooms to a handful either side: enough context to see it is
+ * a sorted array, wide enough to label the pair it actually reads.
+ */
+function ExactStrip({
+  trace,
+  sorted,
+  reveal,
+}: {
+  trace: ExactTrace;
+  sorted: readonly number[];
+  reveal: boolean;
+}): React.JSX.Element {
+  const width = 620;
+  const height = 168;
+  const pad = 14;
+  const context = 4;
+  const from = Math.max(0, trace.lo - context);
+  const to = Math.min(sorted.length - 1, trace.hi + context);
+  const shown = to - from + 1;
+  const step = (width - pad * 2) / shown;
+  const max = Math.max(...sorted.slice(from, to + 1)) * 1.25;
+  const x = (i: number) => pad + (i - from) * step;
+  const barH = (v: number) => Math.max(3, (v / max) * (height - 74));
+  const markerX = pad + (trace.virtualIndex - from + 0.5) * step;
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
+        role="img" aria-label="sorted values around the virtual index">
+        {Array.from({ length: shown }, (_, n) => {
+          const i = from + n;
+          const value = sorted[i]!;
+          const bracket = i === trace.lo || i === trace.hi;
+          return (
+            <g key={i}>
+              <rect x={x(i) + 1} y={height - 40 - barH(value)} width={Math.max(4, step - 3)}
+                height={barH(value)} rx={2}
+                fill={bracket ? GREEN : "rgba(255,255,255,0.14)"} opacity={bracket ? 0.9 : 1} />
+              {bracket && (
+                <text x={x(i) + step / 2} y={height - 46 - barH(value)} fontSize={13}
+                  textAnchor="middle" fill={GREEN} fontFamily="var(--font-mono, monospace)">
+                  {value.toFixed(2)}
+                </text>
+              )}
+              <text x={x(i) + step / 2} y={height - 24} fontSize={11} textAnchor="middle"
+                fill={bracket ? GREEN : DIM} fontFamily="var(--font-mono, monospace)">
+                {i}
+              </text>
+            </g>
+          );
+        })}
+
+        <line x1={pad} x2={width - pad} y1={height - 38} y2={height - 38}
+          stroke="rgba(255,255,255,0.12)" />
+
+        <line x1={markerX} x2={markerX} y1={20} y2={height - 34} stroke={ORANGE} strokeWidth={2}
+          style={{ transition: "all 450ms ease-out" }} />
+        <polygon points={`${markerX - 5},20 ${markerX + 5},20 ${markerX},27`} fill={ORANGE} />
+        <text x={markerX} y={15} fontSize={12} textAnchor="middle" fill={ORANGE}
+          fontFamily="var(--font-mono, monospace)">
+          index {trace.virtualIndex.toFixed(2)}
+        </text>
+
+        <text x={width / 2} y={height - 6} fontSize={11} textAnchor="middle" fill={DIM}>
+          {shown} of {trace.count} retained values · bar height is the value
+        </text>
+      </svg>
+
+      <div className="mt-1 flex flex-col gap-1 font-mono text-[14px]">
+        <Line label="virtual index"
+          value={`${trace.percentile}/100 × (${trace.count} − 1) = ${trace.virtualIndex.toFixed(3)}`} />
+        <Line label="brackets"
+          value={`sorted[${trace.lo}] = ${trace.loValue.toFixed(2)} · sorted[${trace.hi}] = ${trace.hiValue.toFixed(2)}`} />
+        <Line label="blend" value={`${trace.frac.toFixed(3)} of the way between them`} />
+      </div>
+      {reveal && (
+        <div className="mt-3 flex flex-wrap items-baseline gap-2 border-t border-white/10 pt-2.5">
+          <span className="text-[13px] font-bold tracking-widest text-ink-secondary">RESULT</span>
+          <span className="font-mono text-[21px] font-bold">{trace.result.toFixed(2)} ms</span>
+          <span className="text-[14px] text-ink-quaternary">
+            — exact, because both endpoints genuinely occurred
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The fold, as its two operations: pool the centroids, then cluster them. */
+function FoldStages({
+  fold,
+  stage,
+}: {
+  fold: ReturnType<typeof traceFold>;
+  stage: number;
+}): React.JSX.Element {
+  const compressed = stage >= STAGE_COMPRESS;
+  return (
+    <div className="mb-3">
+      <div className="mb-1 text-[13px]" style={{ color: stage === STAGE_CONCAT ? GREEN : DIM }}>
+        1 · pool every cell&apos;s centroids — <strong>{fold.concatenated.length}</strong> of them
+      </div>
+      <div className="flex flex-wrap gap-[3px]">
+        {fold.contributed.map((c) =>
+          c.centroids.map((centroid, i) => (
+            <span key={`${c.cell}-${i}`} className="h-4 rounded-[2px]"
+              style={{
+                width: 12,
+                background: CELL_COLOR[c.cell],
+                opacity: compressed ? 0.2 : 0.85,
+                transition: "opacity 400ms ease-out",
+              }}
+              title={`cell ${c.cell}: mean ${centroid.mean.toFixed(1)}, weight ${centroid.weight}`} />
+          )),
+        )}
+      </div>
+      <div className="mb-1 mt-2 text-[13px]" style={{ color: stage === STAGE_COMPRESS ? GREEN : DIM }}>
+        2 · compress — <strong>{compressed ? fold.folded.centroids.length : "…"}</strong>{" "}
+        {compressed ? "remain" : "pending"}
+      </div>
+      <div className="flex flex-wrap gap-[3px]" style={{ minHeight: 16 }}>
+        {compressed &&
+          fold.folded.centroids.map((c, i) => (
+            <span key={i} className="h-4 rounded-[2px]"
+              style={{ width: 12, background: GREEN, opacity: 0.8 }}
+              title={`mean ${c.mean.toFixed(1)}, weight ${c.weight}`} />
+          ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The walk, drawn on the quantile axis.
+ *
+ * Every centroid is a block whose width is its share of the total weight, so the strip spans
+ * exactly q0 to q1 and each block's midpoint is the centre quantile the walk compares against.
+ * The target line is where it is heading; the walk stops on the first centre past it, and the
+ * answer is a blend of the two centres either side. Seeing the centres go by is what makes the
+ * stopping rule obvious.
+ */
+function WalkChain({
+  trace,
+  visited,
+  percentile,
+}: {
+  trace: NonNullable<ReturnType<typeof traceSketch>>;
+  visited: number;
+  percentile: number;
+}): React.JSX.Element {
+  const width = 760;
+  const height = 128;
+  const pad = 10;
+  const inner = width - pad * 2;
+  const total = trace.totalWeight;
+  const x = (q: number) => pad + q * inner;
+  const targetX = x(trace.quantile);
+  const active = trace.steps[Math.max(0, visited - 1)];
+
+  return (
+    <div>
+      <div className="mb-1 text-[13px]" style={{ color: GREEN }}>
+        3 · walk until a centroid&apos;s centre passes q = {(percentile / 100).toFixed(2)}
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
+        role="img" aria-label="centroid chain along the quantile axis with the walk marker">
+        {trace.steps.map((step, i) => {
+          const q0 = step.cumulativeBefore / total;
+          const q1 = (step.cumulativeBefore + step.centroid.weight) / total;
+          const seen = i < visited;
+          const isStop = step.stopped && seen;
+          return (
+            <g key={i}>
+              <rect x={x(q0) + 0.5} y={44} width={Math.max(2, x(q1) - x(q0) - 1)} height={30} rx={2}
+                fill={isStop ? GREEN : seen ? CYAN : "rgba(255,255,255,0.07)"}
+                opacity={isStop ? 0.85 : seen ? 0.55 : 1}
+                style={{ transition: "fill 300ms ease-out, opacity 300ms ease-out" }} />
+              {seen && (
+                <line x1={x(step.centerQ)} x2={x(step.centerQ)} y1={40} y2={78}
+                  stroke={isStop ? GREEN : "var(--color-ink-secondary)"} strokeWidth={1.5} />
+              )}
+              {seen && x(q1) - x(q0) > 26 && (
+                <text x={(x(q0) + x(q1)) / 2} y={64} fontSize={11} textAnchor="middle"
+                  fill="black" fontFamily="var(--font-mono, monospace)">
+                  {step.centroid.weight}
+                </text>
+              )}
+            </g>
+          );
+        })}
+
+        <line x1={targetX} x2={targetX} y1={16} y2={94} stroke={ORANGE} strokeWidth={2} />
+        <polygon points={`${targetX - 5},16 ${targetX + 5},16 ${targetX},23`} fill={ORANGE} />
+        <text x={targetX} y={12} fontSize={12} textAnchor="middle" fill={ORANGE}
+          fontFamily="var(--font-mono, monospace)">
+          p{percentile}
+        </text>
+
+        {active !== undefined && (
+          <text x={x(active.centerQ)} y={92} fontSize={12} textAnchor="middle"
+            fill={active.stopped ? GREEN : "var(--color-ink-secondary)"}
+            fontFamily="var(--font-mono, monospace)">
+            centre {active.centerQ.toFixed(4)}
+          </text>
+        )}
+
+        <text x={pad} y={height - 6} fontSize={11} fill={DIM}>q0</text>
+        <text x={width - pad} y={height - 6} fontSize={11} textAnchor="end" fill={DIM}>q1</text>
+        <text x={width / 2} y={height - 6} fontSize={11} textAnchor="middle" fill={DIM}>
+          block width = share of the run · tick = its centre quantile
+        </text>
+
+        {visited >= trace.steps.length && !trace.anchored && (
+          <line x1={x(trace.fromQ)} x2={x(trace.toQ)} y1={36} y2={36}
+            stroke={CYAN} strokeWidth={2.5} strokeLinecap="round" />
+        )}
+      </svg>
+      {visited >= trace.steps.length && !trace.anchored && (
+        <div className="font-mono text-[13px]" style={{ color: DIM }}>
+          blend between ({trace.fromQ.toFixed(4)}, {trace.fromValue.toFixed(1)} ms) and (
+          {trace.toQ.toFixed(4)}, {trace.toValue.toFixed(1)} ms)
+        </div>
+      )}
+    </div>
   );
 }
 
