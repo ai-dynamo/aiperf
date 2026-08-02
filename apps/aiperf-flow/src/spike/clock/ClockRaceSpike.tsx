@@ -94,8 +94,11 @@ export function ClockRaceSpike(): React.JSX.Element {
         clock is a number it can move rather than a wall it has to wait for.
       </p>
       <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
-        Press Run and watch the right pane finish before the left has its first token. Then compare
-        the two result tables: <strong>same requests, same tokens, same latencies</strong>. That is
+        Press Run. In both panes the hollow circles are wakeups that have not happened yet, each
+        sitting at the moment it is due. The left pane&apos;s marker walks to them one millisecond
+        at a time; the right pane&apos;s jumps straight to the next one, because nothing in the gap
+        is worth visiting. Then compare the two result tables:{" "}
+        <strong>same requests, same tokens, same latencies</strong>. That is
         what replaying a recorded trace under simulation buys — an afternoon-long benchmark
         answered in the time it takes to blink, with the same conclusions.
       </p>
@@ -170,6 +173,150 @@ export function ClockRaceSpike(): React.JSX.Element {
   );
 }
 
+/** One colour per request, so a lane, its parked circle, and its log line all match. */
+const REQ_COLORS = [
+  "var(--color-category-blue)",
+  "var(--color-category-green)",
+  "var(--color-category-purple)",
+  "var(--color-category-orange)",
+  "var(--color-category-cyan)",
+  "var(--color-category-yellow)",
+  "var(--color-category-red)",
+  "var(--color-category-gray)",
+];
+
+/** `req 3` → 2. The lane index is the request's own number, so lanes never reshuffle. */
+function laneOf(taskId: string): number {
+  const n = Number.parseInt(taskId.replace(/\D+/g, ""), 10);
+  return Number.isFinite(n) ? n - 1 : 0;
+}
+
+const LANE_H = 30;
+const PAD_L = 62;
+const PAD_R = 14;
+const VIEW_W = 760;
+
+/**
+ * The run, drawn on its own clock.
+ *
+ * One lane per request; x is time. Everything left of the playhead has happened and is solid.
+ * Everything right of it is still parked — a hollow circle sitting at the deadline it is waiting
+ * for. That is the heap, drawn where its entries actually point rather than as a list of numbers.
+ *
+ * The two panes differ only in how the playhead gets across: the real one slides, and the
+ * simulated one jumps to the next hollow circle, because there is nothing in between worth
+ * visiting.
+ */
+function ClockTrack({ state, accent }: { state: ClockState; accent: string }): React.JSX.Element {
+  const lanes = TASKS.length;
+  const height = lanes * LANE_H + 26;
+  const innerW = VIEW_W - PAD_L - PAD_R;
+  const x = (ns: number) => PAD_L + (Math.min(ns, SPAN) / Math.max(1, SPAN)) * innerW;
+  const y = (lane: number) => 20 + lane * LANE_H + LANE_H / 2;
+
+  // Per lane: where it was sent, where its first token landed, and its most recent event. Those
+  // three points are the whole shape of a request — wait, then stream.
+  const sent = new Map<number, number>();
+  const first = new Map<number, number>();
+  const last = new Map<number, number>();
+  const tokens = new Map<number, number[]>();
+  for (const e of state.events) {
+    const lane = laneOf(e.taskId);
+    if (e.label === "sent") sent.set(lane, e.atNs);
+    else {
+      if (e.label === "first token") first.set(lane, e.atNs);
+      else {
+        const list = tokens.get(lane);
+        if (list === undefined) tokens.set(lane, [e.atNs]);
+        else list.push(e.atNs);
+      }
+      last.set(lane, e.atNs);
+    }
+  }
+
+  const nowX = x(state.nowNs);
+  const nextAt = state.heap[0]?.atNs;
+
+  return (
+    <svg viewBox={`0 0 ${VIEW_W} ${height}`} width="100%" height={height}
+      role="img" aria-label="requests over time, with parked wakeups ahead of the playhead">
+      {/* The span the whole run occupies, so both panes share one frame of reference. */}
+      {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+        <g key={f}>
+          <line x1={x(f * SPAN)} x2={x(f * SPAN)} y1={14} y2={height - 6}
+            stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
+          <text x={x(f * SPAN)} y={10} fontSize={10} textAnchor="middle" fill="var(--color-ink-quaternary)">
+            {((f * SPAN) / NS_PER_MS).toFixed(0)}ms
+          </text>
+        </g>
+      ))}
+
+      {TASKS.map((task, lane) => {
+        const color = REQ_COLORS[lane % REQ_COLORS.length]!;
+        const sentAt = sent.get(lane);
+        const firstAt = first.get(lane);
+        const lastAt = last.get(lane);
+        const parked = state.heap.find((s) => laneOf(s.taskId) === lane);
+        const isNext = parked !== undefined && parked.atNs === nextAt;
+        const cy = y(lane);
+        return (
+          <g key={task.id}>
+            <text x={PAD_L - 8} y={cy + 4} fontSize={12} textAnchor="end"
+              fill={sentAt === undefined ? "var(--color-ink-quaternary)" : color}
+              fontFamily="var(--font-mono, monospace)">
+              {task.id}
+            </text>
+            <line x1={PAD_L} x2={VIEW_W - PAD_R} y1={cy} y2={cy}
+              stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
+
+            {/* Waiting for the first token: the request exists and nothing has come back yet. */}
+            {sentAt !== undefined && (
+              <line x1={x(sentAt)} x2={x(firstAt ?? Math.min(state.nowNs, SPAN))} y1={cy} y2={cy}
+                stroke={color} strokeWidth={3} strokeDasharray="3 3" opacity={0.5} />
+            )}
+            {/* Streaming: solid, because tokens are arriving. */}
+            {firstAt !== undefined && lastAt !== undefined && (
+              <line x1={x(firstAt)} x2={x(lastAt)} y1={cy} y2={cy}
+                stroke={color} strokeWidth={5} strokeLinecap="round" opacity={0.85} />
+            )}
+            {sentAt !== undefined && (
+              <rect x={x(sentAt) - 2.5} y={cy - 5} width={5} height={10} fill={color} />
+            )}
+            {(tokens.get(lane) ?? []).map((t, i) => (
+              <circle key={i} cx={x(t)} cy={cy} r={2.5} fill="var(--color-surface-page)"
+                stroke={color} strokeWidth={1.5} />
+            ))}
+            {firstAt !== undefined && <circle cx={x(firstAt)} cy={cy} r={4.5} fill={color} />}
+
+            {/* The parked wakeup: a hollow circle sitting at the deadline it is waiting on. */}
+            {parked !== undefined && (
+              <g>
+                <line x1={nowX} x2={x(parked.atNs)} y1={cy} y2={cy}
+                  stroke={color} strokeWidth={1} strokeDasharray="2 4" opacity={0.35} />
+                <circle cx={x(parked.atNs)} cy={cy} r={isNext ? 8 : 6}
+                  fill="none" stroke={color} strokeWidth={isNext ? 2.5 : 1.5}
+                  strokeDasharray={isNext ? undefined : "3 2"} opacity={isNext ? 1 : 0.6}>
+                  {isNext && (
+                    <animate attributeName="r" values="8;10;8" dur="1.1s" repeatCount="indefinite" />
+                  )}
+                </circle>
+                <text x={x(parked.atNs)} y={cy - 12} fontSize={9} textAnchor="middle"
+                  fill={color} opacity={isNext ? 0.95 : 0.5}>
+                  seq {parked.seqNo}
+                </text>
+              </g>
+            )}
+          </g>
+        );
+      })}
+
+      {/* Now. The whole difference between the two panes is how this line travels. */}
+      <line x1={nowX} x2={nowX} y1={12} y2={height - 4} stroke={accent} strokeWidth={2} />
+      <polygon points={`${nowX - 5},12 ${nowX + 5},12 ${nowX},19`} fill={accent} />
+    </svg>
+  );
+}
+
 function Metric({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div className="flex items-baseline justify-between">
@@ -225,25 +372,19 @@ function ClockPane({
       </div>
 
       <div className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
-        WAITING ON <span className="font-normal text-ink-quaternary">— the mechanism: a heap ordered by (deadline, registration)</span>
+        THE RUN
       </div>
-      <div className="mb-3 flex min-h-[68px] flex-col gap-1">
-        {state.heap.length === 0 && (
-          <span className="text-[15px]" style={{ color: DIM }}>
-            {state.done ? "empty — nothing left to wake" : "—"}
-          </span>
-        )}
-        {state.heap.slice(0, 5).map((s, i) => (
-          <div key={`${s.taskId}-${s.seqNo}`} className="flex items-center gap-3 font-mono text-[14px]">
-            <span className="w-4 text-right" style={{ color: DIM }}>{i}</span>
-            <span className="w-24" style={{ color: i === 0 ? accent : undefined }}>{s.taskId}</span>
-            <span className="w-28 tabular-nums" style={{ color: DIM }}>
-              at {(s.atNs / NS_PER_MS).toFixed(0)}ms
-            </span>
-            <span className="tabular-nums" style={{ color: DIM }}>seq {s.seqNo}</span>
-            {i === 0 && <span style={{ color: accent }}>◄ next</span>}
-          </div>
-        ))}
+      <div className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-quaternary">
+        <span><span className="text-ink-secondary">▮</span> sent</span>
+        <span><span className="text-ink-secondary">●</span> first token</span>
+        <span><span className="text-ink-secondary">◦</span> each token</span>
+        <span>┈ waiting</span>
+        <span><span className="text-ink-secondary">━</span> streaming</span>
+        <span><span className="text-ink-secondary">◯</span> parked — hasn&apos;t happened yet</span>
+        <span style={{ color: accent }}>▎ now</span>
+      </div>
+      <div className="mb-3">
+        <ClockTrack state={state} accent={accent} />
       </div>
 
       <div className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
