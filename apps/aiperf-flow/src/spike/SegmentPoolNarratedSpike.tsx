@@ -153,12 +153,12 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
 
         <div className="grid min-h-0 flex-1 grid-cols-[240px_290px_1fr] gap-3">
           <section className="overflow-hidden rounded-lg border border-white/10 bg-surface-elevated p-2.5">
-            <h2 className="mb-1.5 text-[10px] font-bold tracking-widest text-ink-secondary">DYNAMO TRACE</h2>
+            <h2 className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">DYNAMO TRACE</h2>
             <div className="flex flex-col gap-1">
               {sim.sessions.map((s, si) => (
                 <div key={s.id} className="flex items-center gap-1.5"
                   style={{ opacity: si > sim.cursor.session ? 0.3 : 1 }}>
-                  <span className="w-6 text-[10px] font-semibold text-ink-tertiary">{s.id}</span>
+                  <span className="w-6 text-[13px] font-semibold text-ink-tertiary">{s.id}</span>
                   <div className="flex flex-wrap gap-[2px]">
                     {s.messages.map((m, mi) => {
                       const handle = sim.resolved.get(`${si}:${mi}`);
@@ -183,7 +183,7 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
           </section>
 
           <section className="rounded-lg border border-white/10 bg-surface-elevated p-2.5 text-xs">
-            <h2 className="mb-1.5 text-[10px] font-bold tracking-widest text-ink-secondary">
+            <h2 className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
               {sim.phase === "intern" ? "INTERN — hash, then look up" : "MATERIALIZE — workers read it back"}
             </h2>
             {sim.phase === "materialize" ? (
@@ -191,8 +191,8 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
                 {sim.workers.map((w) => (
                   <div key={w.id} className="rounded border border-white/10 bg-surface-panel p-1.5">
                     <div className="flex items-baseline justify-between">
-                      <span className="text-[11px] font-semibold text-ink-primary">worker {w.id}</span>
-                      <span className="text-[9px] tabular-nums text-ink-tertiary">
+                      <span className="text-[13px] font-semibold text-ink-primary">worker {w.id}</span>
+                      <span className="text-[12px] tabular-nums text-ink-tertiary">
                         {w.done ? "idle" : `${w.sessionId} · ${w.cursor}/${w.chain.length}`}
                       </span>
                     </div>
@@ -206,16 +206,16 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
                         }} />
                       ))}
                     </div>
-                    <div className="mt-0.5 text-[9px] tabular-nums text-ink-quaternary">
+                    <div className="mt-0.5 text-[12px] tabular-nums text-ink-quaternary">
                       {w.bytes} bytes concatenated
                     </div>
                   </div>
                 ))}
-                <div className="flex items-baseline justify-between text-[10px]">
+                <div className="flex items-baseline justify-between text-[13px]">
                   <span className="text-ink-tertiary">bodies built</span>
                   <strong className="tabular-nums text-ink-primary">{sim.bodiesBuilt}/{sim.sessions.length}</strong>
                 </div>
-                <p className="text-[10px] leading-snug text-ink-quaternary">
+                <p className="text-[13px] leading-snug text-ink-quaternary">
                   Clone each handle's stored wire, concatenate, append a pre-serialized override
                   tail. Nothing decoded, nothing re-validated.
                 </p>
@@ -227,7 +227,7 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
                 <Row label="parent id" value={latest.parent === null ? "none (root)" : sim.arena[latest.parent]?.id ?? "?"} />
                 <Row label="role" value={sim.arena[latest.handle]?.role ?? "?"} />
                 <Row label="tokens" value={String(sim.arena[latest.handle]?.tokens ?? 0)} />
-                <div className="text-center text-[10px] text-ink-quaternary">
+                <div className="text-center text-[13px] text-ink-quaternary">
                   ↓ blake3(parent ‖ role ‖ tokens ‖ wire)
                 </div>
                 <Row label="segment id" value={latest.id} mono />
@@ -237,12 +237,12 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
                 </div>
                 {chain.length > 1 && (
                   <div className="mt-0.5">
-                    <div className="mb-1 text-[9px] font-semibold tracking-widest text-ink-tertiary">PREFIX CHAIN</div>
+                    <div className="mb-1 text-[12px] font-semibold tracking-widest text-ink-tertiary">PREFIX CHAIN</div>
                     <div className="flex flex-wrap items-center gap-1">
                       {chain.map((h, i) => (
                         <span key={h} className="flex items-center gap-1">
                           {i > 0 && <span className="text-ink-quaternary">←</span>}
-                          <span className="rounded px-1 py-0.5 text-[9px] font-semibold tabular-nums"
+                          <span className="rounded px-1 py-0.5 text-[12px] font-semibold tabular-nums"
                             style={{ background: colorForId(sim.arena[h]!.id), color: "#000" }}>{h}</span>
                         </span>
                       ))}
@@ -254,7 +254,7 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
           </section>
 
           <section className="overflow-hidden rounded-lg border border-white/10 bg-surface-elevated p-2.5">
-            <h2 className="mb-1.5 text-[10px] font-bold tracking-widest text-ink-secondary">
+            <h2 className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
               SEGMENT POOL — dense arena, append only
             </h2>
             <div className="flex flex-wrap gap-1">
@@ -274,7 +274,7 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
                             : latest?.hit ? "var(--color-category-green)" : "var(--color-category-orange)"}`
                         : inChain ? "1px solid rgba(255,255,255,0.35)" : undefined,
                     }}>
-                    <span className="text-[10px] font-bold tabular-nums text-black">{seg.handle}</span>
+                    <span className="text-[13px] font-bold tabular-nums text-black">{seg.handle}</span>
                     {seg.refs > 1 && <span className="text-[8px] font-bold text-black/80">×{seg.refs}</span>}
                   </div>
                 );
@@ -287,10 +287,10 @@ export function SegmentPoolNarratedSpike(): React.JSX.Element {
         </div>
 
         <div className="mt-2 mb-2 rounded border border-white/10 bg-surface-panel px-3 py-2">
-          <div className="mb-0.5 text-[9px] font-bold tracking-widest text-ink-tertiary">
+          <div className="mb-0.5 text-[12px] font-bold tracking-widest text-ink-tertiary">
             WIRE — the serialized message being interned, and the bytes a segment stores
           </div>
-          <code className="block overflow-x-auto whitespace-pre font-mono text-[11px] text-ink-primary">
+          <code className="block overflow-x-auto whitespace-pre font-mono text-[13px] text-ink-primary">
             {currentWire ?? "\u2014"}
           </code>
         </div>

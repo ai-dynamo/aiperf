@@ -42,22 +42,22 @@ export function TraceRecordPanel({
   return (
     <div className="rounded-lg border border-white/10 bg-surface-panel px-4 py-2.5">
       <div className="mb-1.5 flex items-baseline gap-3">
-        <span className="text-[10px] font-bold tracking-widest text-ink-tertiary">
+        <span className="text-[12px] font-bold tracking-widest text-ink-tertiary">
           DYNAMO TRACE RECORD — built as the turn accumulates
         </span>
         {total > 0 && (
-          <span className="text-[10px] tabular-nums text-ink-quaternary">
+          <span className="text-[13px] tabular-nums text-ink-quaternary">
             {hit}/{total} blocks already cached · {turn?.cachedTokens ?? 0} cached tokens
           </span>
         )}
       </div>
 
       {turn === null ? (
-        <code className="block font-mono text-[11px] text-ink-quaternary">
+        <code className="block font-mono text-[13px] text-ink-quaternary">
           Waiting for the first request_end record…
         </code>
       ) : (
-        <code className="block overflow-x-auto font-mono text-[11px] leading-[1.5] text-ink-secondary">
+        <code className="block overflow-x-auto font-mono text-[13px] leading-[1.5] text-ink-secondary">
           <div>{"{"} <K k="schema" />: <S v="dynamo.request.trace.v1" />,</div>
           <div className="pl-3">
             <K k="event_type" />: <S v="request_end" />, <K k="event_source" />: <S v="dynamo" />,
@@ -99,7 +99,7 @@ export function TraceRecordPanel({
               <span
                 key={h.index}
                 title={`block ${h.index} · tokens ${h.index * BLOCK_SIZE}–${(h.index + 1) * BLOCK_SIZE}\n${h.reused ? "already cached (prefix hit)" : "new block"}`}
-                className="rounded px-1.5 py-[3px] text-[10px] font-semibold tabular-nums"
+                className="rounded px-1.5 py-[3px] text-[13px] font-semibold tabular-nums"
                 style={{
                   // Lit as the turn reaches it: green means this exact block was already
                   // known, so its tokens land in `cached_tokens` and never get recomputed.
@@ -116,7 +116,7 @@ export function TraceRecordPanel({
         </code>
       )}
 
-      <div className="mt-1 flex items-center gap-4 text-[10px] text-ink-quaternary">
+      <div className="mt-1 flex items-center gap-4 text-[13px] text-ink-quaternary">
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "var(--color-category-green)" }} />
           reused — prefix already cached

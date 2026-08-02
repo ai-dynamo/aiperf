@@ -113,9 +113,9 @@ function Station({ x, label, hint }: { x: number; label: string; hint: string })
     <g>
       <line x1={x} y1={RIG_TOP + 16} x2={x} y2={RIG_TOP + LANE_H - 34}
         stroke="var(--color-stroke-tertiary)" strokeWidth={1} strokeDasharray="3 5" />
-      <text x={x} y={RIG_TOP + 6} textAnchor="middle" fontSize={11} fontWeight={700}
+      <text x={x} y={RIG_TOP + 6} textAnchor="middle" fontSize={13} fontWeight={700}
         fill="var(--color-ink-secondary)" letterSpacing={1.2}>{label}</text>
-      <text x={x} y={RIG_TOP + LANE_H - 18} textAnchor="middle" fontSize={10}
+      <text x={x} y={RIG_TOP + LANE_H - 18} textAnchor="middle" fontSize={12}
         fill="var(--color-ink-quaternary)">{hint}</text>
     </g>
   );
@@ -204,10 +204,10 @@ export function LifecycleSpike(): React.JSX.Element {
   return (
     <div className="min-h-screen bg-surface-page px-8 py-6 text-ink-primary">
       <div className="mb-1 flex items-baseline gap-3">
-        <span className="text-xs font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
-        <h1 className="text-2xl font-extrabold">Request lifecycle — live</h1>
+        <span className="text-sm font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
+        <h1 className="text-3xl font-extrabold">Request lifecycle — live</h1>
       </div>
-      <p className="mb-4 max-w-3xl text-sm text-ink-secondary">
+      <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
         Nothing here is a recording. Requests are born, contend for the admission gate, stream
         tokens, and die. Drag <strong>concurrency</strong> down and watch the queue grow; drag{" "}
         <strong>rate</strong> up and watch it grow faster. The curve at the bottom is drawn from the
@@ -344,25 +344,25 @@ export function LifecycleSpike(): React.JSX.Element {
                 <line x1={x} y1={TRACK_Y - 11} x2={x} y2={TRACK_Y - 11 - row * 11}
                   stroke="var(--color-ink-quaternary)" strokeWidth={0.75} opacity={0.5} />
               )}
-              <text x={x} y={TRACK_Y - 13 - row * 11} textAnchor="middle" fontSize={9}
+              <text x={x} y={TRACK_Y - 13 - row * 11} textAnchor="middle" fontSize={13}
                 fill="var(--color-ink-tertiary)">{r.id}</text>
               {r.stage === "decode" && (
-                <text x={x} y={TRACK_Y + 30 + row * 11} textAnchor="middle" fontSize={9}
+                <text x={x} y={TRACK_Y + 30 + row * 11} textAnchor="middle" fontSize={13}
                   fill="var(--color-ink-quaternary)">{r.emitted}/{r.tokens}</text>
               )}
             </g>
           );
         })}
 
-        <text x={40} y={CURVE_TOP - 14} fontSize={11} fontWeight={700}
+        <text x={40} y={CURVE_TOP - 14} fontSize={13} fontWeight={700}
           fill="var(--color-ink-secondary)">CONCURRENCY, LIVE</text>
-        <text x={210} y={CURVE_TOP - 14} fontSize={10} fill="var(--color-ink-quaternary)">
+        <text x={210} y={CURVE_TOP - 14} fontSize={12} fill="var(--color-ink-quaternary)">
           last {HISTORY_MS / 1000}s · blue = in flight · orange = queued
         </text>
 
         <line x1={60} y1={cy(config.concurrency)} x2={W - 60} y2={cy(config.concurrency)}
           stroke="var(--color-category-red)" strokeDasharray="4 4" strokeWidth={1} opacity={0.7} />
-        <text x={W - 56} y={cy(config.concurrency) - 4} fontSize={9}
+        <text x={W - 56} y={cy(config.concurrency) - 4} fontSize={13}
           fill="var(--color-category-red)">limit {config.concurrency}</text>
 
         <line x1={60} y1={CURVE_TOP + CURVE_H} x2={W - 60} y2={CURVE_TOP + CURVE_H}

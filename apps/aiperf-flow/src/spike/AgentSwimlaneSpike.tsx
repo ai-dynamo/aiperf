@@ -129,10 +129,10 @@ export function AgentSwimlaneSpike(): React.JSX.Element {
   return (
     <div className="min-h-screen bg-surface-page px-8 py-6 text-ink-primary">
       <div className="mb-1 flex items-baseline gap-3">
-        <span className="text-xs font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
-        <h1 className="text-2xl font-extrabold">Agent session — lanes appear as they spawn</h1>
+        <span className="text-sm font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
+        <h1 className="text-3xl font-extrabold">Agent session — lanes appear as they spawn</h1>
       </div>
-      <p className="mb-4 max-w-3xl text-sm text-ink-secondary">
+      <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
         A lane does not exist until something spawns it. Watch <strong>main</strong> take a turn,
         fan out subagents on completion, then sit idle while they work. Bars with no right edge are
         still streaming — the axis scrolls, so the right edge is <em>now</em>. The dashed stretches
@@ -223,13 +223,13 @@ export function AgentSwimlaneSpike(): React.JSX.Element {
           <g key={t}>
             <line x1={x(t)} y1={TOP - 18} x2={x(t)} y2={H - AXIS_H} stroke="var(--color-stroke-tertiary)"
               strokeWidth={1} opacity={0.45} />
-            <text x={x(t)} y={H - AXIS_H + 16} textAnchor="middle" fontSize={10}
+            <text x={x(t)} y={H - AXIS_H + 16} textAnchor="middle" fontSize={12}
               fill="var(--color-ink-quaternary)">
               {t >= now - 250 ? "now" : `${Math.round((t - now) / 1000)}s`}
             </text>
           </g>
         ))}
-        <text x={W - 24} y={TOP - 26} textAnchor="end" fontSize={10} fontWeight={700}
+        <text x={W - 24} y={TOP - 26} textAnchor="end" fontSize={12} fontWeight={700}
           fill="var(--color-category-red)">now</text>
         <line x1={x(now)} y1={TOP - 20} x2={x(now)} y2={H - AXIS_H}
           stroke="var(--color-category-red)" strokeWidth={1} opacity={0.55} />
@@ -312,7 +312,7 @@ export function AgentSwimlaneSpike(): React.JSX.Element {
                         fill={c} opacity={0.9} />
                     )}
                     {x1 - x0 > 30 && BAR_H >= 13 && (
-                      <text x={x0 + 5} y={y + BAR_H - 5} fontSize={9}
+                      <text x={x0 + 5} y={y + BAR_H - 5} fontSize={13}
                         fill="var(--color-ink-secondary)">{t.emitted}/{t.tokens}</text>
                     )}
                   </g>

@@ -79,10 +79,10 @@ export function SegmentPoolSpike(): React.JSX.Element {
   return (
     <div className="min-h-screen bg-surface-page px-8 py-6 text-ink-primary">
       <div className="mb-1 flex items-baseline gap-3">
-        <span className="text-xs font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
-        <h1 className="text-2xl font-extrabold">A Dynamo trace becoming a segment pool</h1>
+        <span className="text-sm font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
+        <h1 className="text-3xl font-extrabold">A Dynamo trace becoming a segment pool</h1>
       </div>
-      <p className="mb-4 max-w-4xl text-sm text-ink-secondary">
+      <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
         Every message is hashed together with <em>its prefix parent's id</em>, then looked up. A miss
         appends one entry to a dense arena and the handle is its index; a hit returns the existing
         handle and appends nothing. That is why a session which continues an earlier one costs
@@ -131,7 +131,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
               <strong style={{ color: "var(--color-category-green)" }}>{Math.round(dedup * 100)}%</strong></span>
             <span><span className="text-ink-tertiary">wire saved</span>{" "}
               <strong style={{ color: "var(--color-category-orange)" }}>{Math.round(saved * 100)}%</strong></span>
-            <span className="rounded px-2 py-0.5 text-[11px] font-bold"
+            <span className="rounded px-2 py-0.5 text-[13px] font-bold"
               style={{ background: sim.phase === "intern"
                 ? "var(--color-category-orange)" : "var(--color-category-cyan)", color: "#000" }}>
               {sim.phase === "intern" ? "INTERNING" : sim.done ? "MATERIALIZED" : "MATERIALIZING"}
@@ -147,7 +147,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
       <div className="grid grid-cols-[300px_320px_1fr] gap-4">
         {/* 1 — the recorded trace */}
         <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
-          <h2 className="mb-2 text-[11px] font-bold tracking-widest text-ink-secondary">
+          <h2 className="mb-2 text-[12px] font-bold tracking-widest text-ink-secondary">
             DYNAMO TRACE
           </h2>
           <div className="flex flex-col gap-1.5">
@@ -182,19 +182,19 @@ export function SegmentPoolSpike(): React.JSX.Element {
               );
             })}
           </div>
-          <p className="mt-2 text-[11px] leading-snug text-ink-quaternary">
+          <p className="mt-2 text-[13px] leading-snug text-ink-quaternary">
             Each cell is one message. Sessions that continue an earlier one replay its turns first.
           </p>
         </section>
 
         {/* 2 — the intern decision */}
         <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
-          <h2 className="mb-2 text-[11px] font-bold tracking-widest text-ink-secondary">
+          <h2 className="mb-2 text-[12px] font-bold tracking-widest text-ink-secondary">
             {sim.phase === "intern" ? "INTERN — hash, then look up" : "MATERIALIZE — workers read it back"}
           </h2>
           {sim.phase === "materialize" && (
             <div className="flex flex-col gap-2 text-xs">
-              <p className="text-[11px] leading-snug text-ink-quaternary">
+              <p className="text-[13px] leading-snug text-ink-quaternary">
                 The pool is frozen. Each worker walks a chain of handles, clones the stored wire for
                 each, and appends a pre-serialized override tail. Nothing is decoded and nothing is
                 re-validated — the wires are well-formed by construction.
@@ -203,7 +203,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
                 <div key={w.id} className="rounded border border-white/10 bg-surface-panel p-2">
                   <div className="mb-1 flex items-baseline justify-between">
                     <span className="font-semibold text-ink-primary">worker {w.id}</span>
-                    <span className="text-[10px] tabular-nums text-ink-tertiary">
+                    <span className="text-[13px] tabular-nums text-ink-tertiary">
                       {w.done ? "idle" : `${w.sessionId} · ${w.cursor}/${w.chain.length}`}
                     </span>
                   </div>
@@ -217,16 +217,16 @@ export function SegmentPoolSpike(): React.JSX.Element {
                       }} />
                     ))}
                   </div>
-                  <div className="mt-1 text-[10px] tabular-nums text-ink-quaternary">
+                  <div className="mt-1 text-[13px] tabular-nums text-ink-quaternary">
                     {w.bytes} bytes concatenated{w.cursor >= w.chain.length && !w.done ? " · body complete" : ""}
                   </div>
                 </div>
               ))}
-              <div className="flex items-baseline justify-between text-[11px]">
+              <div className="flex items-baseline justify-between text-[13px]">
                 <span className="text-ink-tertiary">bodies built</span>
                 <strong className="text-ink-primary tabular-nums">{sim.bodiesBuilt}/{sim.sessions.length}</strong>
               </div>
-              <div className="flex items-baseline justify-between text-[11px]">
+              <div className="flex items-baseline justify-between text-[13px]">
                 <span className="text-ink-tertiary">bytes copied out</span>
                 <strong className="text-ink-primary tabular-nums">{sim.bytesMaterialized}</strong>
               </div>
@@ -247,21 +247,21 @@ export function SegmentPoolSpike(): React.JSX.Element {
                 style={{ background: latest.hit ? "var(--color-category-green)" : "var(--color-category-orange)" }}>
                 {latest.hit ? `HIT → reuse handle ${latest.handle}` : `MISS → append handle ${latest.handle}`}
               </div>
-              <p className="text-[11px] leading-snug text-ink-quaternary">
+              <p className="text-[13px] leading-snug text-ink-quaternary">
                 {latest.hit
                   ? "The id was already registered, so nothing is appended and no wire bytes are stored again."
                   : "A fresh id: one entry is pushed onto the arena and its index becomes the handle."}
               </p>
               {chain.length > 1 && (
                 <div className="mt-1">
-                  <div className="mb-1 text-[10px] font-semibold tracking-widest text-ink-tertiary">
+                  <div className="mb-1 text-[13px] font-semibold tracking-widest text-ink-tertiary">
                     PREFIX CHAIN
                   </div>
                   <div className="flex flex-wrap items-center gap-1">
                     {chain.map((h, i) => (
                       <span key={h} className="flex items-center gap-1">
                         {i > 0 && <span className="text-ink-quaternary">←</span>}
-                        <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+                        <span className="rounded px-1.5 py-0.5 text-[13px] font-semibold tabular-nums"
                           style={{ background: colorForId(sim.arena[h]!.id), color: "#000" }}>
                           {h}
                         </span>
@@ -276,7 +276,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
 
         {/* 3 — the arena */}
         <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
-          <h2 className="mb-2 text-[11px] font-bold tracking-widest text-ink-secondary">
+          <h2 className="mb-2 text-[12px] font-bold tracking-widest text-ink-secondary">
             SEGMENT POOL — dense arena, append only
           </h2>
           <div className="flex flex-wrap" style={{ gap: CELL_GAP }}>
@@ -301,7 +301,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
                         }`
                       : inChain ? "1px solid rgba(255,255,255,0.35)" : undefined,
                   }}>
-                  <span className="text-[11px] font-bold tabular-nums text-black">{seg.handle}</span>
+                  <span className="text-[13px] font-bold tabular-nums text-black">{seg.handle}</span>
                   <span className="text-[8px] tabular-nums text-black/70">{seg.id}</span>
                   {seg.refs > 1 && (
                     <span className="text-[8px] font-bold text-black/80">×{seg.refs}</span>
@@ -313,7 +313,7 @@ export function SegmentPoolSpike(): React.JSX.Element {
               <p className="text-sm text-ink-quaternary">Empty. The first message will land at handle 0.</p>
             )}
           </div>
-          <p className="mt-3 text-[11px] leading-snug text-ink-quaternary">
+          <p className="mt-3 text-[13px] leading-snug text-ink-quaternary">
             Handle = arena index, assigned on append and never reused. A cell marked ×n was
             resolved n times — every one after the first cost nothing. Highlighted cells are the
             current message's prefix chain back to its root.
@@ -324,20 +324,20 @@ export function SegmentPoolSpike(): React.JSX.Element {
       {/* Below the pool, because this is what a segment *stores*: the exact bytes that are hashed and stored. `intern_message` serializes the dialect
           message and folds these very bytes into the identity, so this is the unit of work. */}
       <div className="mb-3 rounded-lg border border-white/10 bg-surface-panel px-4 py-2.5">
-        <div className="mb-1 text-[10px] font-bold tracking-widest text-ink-tertiary">
+        <div className="mb-1 text-[12px] font-bold tracking-widest text-ink-tertiary">
           WIRE — the serialized message being interned
         </div>
         <code className="block overflow-x-auto whitespace-pre font-mono text-[12px] text-ink-primary">
           {currentWire ?? "\u2014"}
         </code>
-        <div className="mt-1 text-[10px] text-ink-quaternary">
+        <div className="mt-1 text-[13px] text-ink-quaternary">
           {currentWire === undefined
             ? "Waiting for the first message."
             : `${currentWire.length} bytes \u00b7 hashed together with the parent id, role and token ids`}
         </div>
       </div>
 
-      <p className="mt-3 text-[11px] text-ink-quaternary">
+      <p className="mt-3 text-[13px] text-ink-quaternary">
         Modelled on <code>rust/runtime/src/dataset/segment.rs</code>: <code>SegmentPool</code>'s
         arena plus id map, and <code>payload_id</code> folding the parent id into the hash. The
         digest here is a short stand-in; the structure — prefix-dependence, dense handles,
