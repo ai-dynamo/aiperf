@@ -212,6 +212,12 @@ export const SIMULATIONS: readonly DeckListing[] = [
       "Every stage of the metrics plane on one dataset: columnar storage with NaN sentinels, the ragged CSR for inter-chunk latency, events becoming a curve, the collision tie-break that keeps touching intervals from double-counting, ICL-aware token arrivals, and then steady-state detection by threshold, CUSUM, MSER-5, consensus and a stationarity test that can veto the answer.",
   },
   {
+    path: "/spike-check-then-park",
+    title: "Check-then-park, and the race it ignores",
+    description:
+      "A reader checks its arrival count and parks on a notify that only wakes readers already waiting — the classic lost-wakeup setup, safe only because the engine is current-thread. Switch to a hypothetical multi-threaded runtime, open the window between the check and the park, and watch a reader park into a silence no later write will break.",
+  },
+  {
     path: "/spike-segments-narrated",
     title: "Dynamo trace → segment pool (narrated)",
     description:
