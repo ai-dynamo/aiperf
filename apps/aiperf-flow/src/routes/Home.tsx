@@ -212,6 +212,12 @@ export const SIMULATIONS: readonly DeckListing[] = [
       "Every stage of the metrics plane on one dataset: columnar storage with NaN sentinels, the ragged CSR for inter-chunk latency, events becoming a curve, the collision tie-break that keeps touching intervals from double-counting, ICL-aware token arrivals, and then steady-state detection by threshold, CUSUM, MSER-5, consensus and a stationarity test that can veto the answer.",
   },
   {
+    path: "/spike-exact-vs-sketch",
+    title: "What survives being summarized",
+    description:
+      "A cellular run folds each cell's t-digest instead of pooling records. Counts, sums and extrema come back exactly right; percentiles come back close. Shows where the digest spends its resolution — finest at the tail, coarsest at the median — and the one distribution shape it handles badly.",
+  },
+  {
     path: "/spike-dispatch-modes",
     title: "The shortfall that only exists in the sum",
     description:

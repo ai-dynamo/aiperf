@@ -391,6 +391,171 @@ mod tests {
         }
     }
 
+    /// Emit, or verify, the cross-language golden fixture for the TypeScript port.
+    ///
+    /// `apps/aiperf-flow` carries a hand-written port of this digest so an explainer page can show
+    /// real numbers rather than illustrative ones. A port with no pin against the original is a
+    /// liability: it can drift silently and then teach something false with total confidence.
+    ///
+    /// This test owns the Rust side of that pin. It replays the inputs recorded in the committed
+    /// fixture and asserts this implementation still produces the recorded outputs, so changing
+    /// the algorithm fails here until the fixture is regenerated with `UPDATE_SKETCH_GOLDEN=1`.
+    /// The TypeScript test performs the identical replay, which is what makes the two comparable.
+    ///
+    /// Only outputs are compared, never the input arrays: whether a 5000-element `f64` array
+    /// round-trips through JSON byte-for-byte is a serde question, not a t-digest one.
+    #[test]
+    fn tdigest_golden_fixture_matches_this_implementation() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/parity/sketch_golden/tdigest.json");
+
+        let quantile_band = [0.0, 0.5, 0.9, 0.95, 0.99, 1.0];
+
+        // Inputs come from the fixture when it exists so both languages replay the same values;
+        // the generator seeds them the first time.
+        let generate = std::env::var("UPDATE_SKETCH_GOLDEN").is_ok();
+        let (broad, cells, tiny) = if generate {
+            (
+                samples(5_000, 1_000.0, 7),
+                (0..3)
+                    .map(|cell| samples(1_500, 1_000.0, 100 + cell as u64))
+                    .collect::<Vec<Vec<f64>>>(),
+                vec![1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0],
+            )
+        } else {
+            let committed: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(&path)
+                    .expect("sketch golden fixture missing — run with UPDATE_SKETCH_GOLDEN=1"),
+            )
+            .expect("fixture parses");
+            let floats = |value: &serde_json::Value| -> Vec<f64> {
+                value
+                    .as_array()
+                    .expect("array")
+                    .iter()
+                    .map(|v| v.as_f64().expect("f64"))
+                    .collect()
+            };
+            (
+                floats(&committed["cases"]["broad"]["input"]),
+                committed["cases"]["folded"]["cells"]
+                    .as_array()
+                    .expect("cells")
+                    .iter()
+                    .map(floats)
+                    .collect(),
+                floats(&committed["cases"]["tiny"]["input"]),
+            )
+        };
+
+        let digest_of = |values: &[f64]| {
+            let mut digest = TDigest::new();
+            digest.extend_from(values.iter().copied());
+            digest.compress();
+            digest
+        };
+
+        let broad_digest = digest_of(&broad);
+        let mut folded = TDigest::new();
+        for slice in &cells {
+            folded.merge(&digest_of(slice));
+        }
+        let tiny_digest = digest_of(&tiny);
+
+        let describe = |digest: &TDigest| {
+            serde_json::json!({
+                "count": digest.count(),
+                "min": digest.min(),
+                "max": digest.max(),
+                "centroid_count": digest.centroids.len(),
+                "centroid_means": digest.centroids.iter().map(|c| c.mean).collect::<Vec<_>>(),
+                "centroid_weights": digest.centroids.iter().map(|c| c.weight).collect::<Vec<_>>(),
+                "quantiles": quantile_band
+                    .iter()
+                    .map(|&q| digest.quantile(q))
+                    .collect::<Vec<_>>(),
+            })
+        };
+
+        if generate {
+            let fixture = serde_json::json!({
+                "compression": DEFAULT_COMPRESSION,
+                "quantile_band": quantile_band,
+                "cases": {
+                    "broad": { "input": broad, "digest": describe(&broad_digest) },
+                    "folded": { "cells": cells, "digest": describe(&folded) },
+                    "tiny": { "input": tiny, "digest": describe(&tiny_digest) },
+                },
+            });
+            std::fs::create_dir_all(path.parent().expect("fixture dir")).expect("create dir");
+            std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&fixture).expect("serialize"),
+            )
+            .expect("write fixture");
+            return;
+        }
+
+        let committed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+
+        // Numeric comparison rather than `Value` equality: the inputs are replayed through JSON,
+        // and whether a 5000-element f64 array survives that byte-for-byte is a serde property,
+        // not a t-digest one. A 1e-9 relative tolerance is far tighter than any behaviour change
+        // this test exists to catch, and is the same bound the TypeScript side uses.
+        fn close(a: f64, b: f64) -> bool {
+            // Finiteness first: a relative bound against a non-finite value degenerates, since
+            // `1e-9 * INFINITY` is `INFINITY` and `INFINITY <= INFINITY` holds. A digest that
+            // lost its min would otherwise compare equal to one that kept it.
+            if !a.is_finite() || !b.is_finite() {
+                return a == b;
+            }
+            (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0)
+        }
+        fn assert_field(expected: &serde_json::Value, actual: &serde_json::Value, what: &str) {
+            match (expected, actual) {
+                (serde_json::Value::Array(want), serde_json::Value::Array(got)) => {
+                    assert_eq!(want.len(), got.len(), "{what}: length");
+                    for (i, (w, g)) in want.iter().zip(got).enumerate() {
+                        assert_field(w, g, &format!("{what}[{i}]"));
+                    }
+                }
+                (serde_json::Value::Null, serde_json::Value::Null) => {}
+                _ => {
+                    let want = expected
+                        .as_f64()
+                        .unwrap_or_else(|| panic!("{what}: not a number"));
+                    let got = actual
+                        .as_f64()
+                        .unwrap_or_else(|| panic!("{what}: not a number"));
+                    assert!(close(want, got), "{what}: expected {want}, got {got}");
+                }
+            }
+        }
+
+        for (case, digest) in [
+            ("broad", &broad_digest),
+            ("folded", &folded),
+            ("tiny", &tiny_digest),
+        ] {
+            let want = &committed["cases"][case]["digest"];
+            let got = describe(digest);
+            for field in [
+                "count",
+                "min",
+                "max",
+                "centroid_count",
+                "centroid_means",
+                "centroid_weights",
+                "quantiles",
+            ] {
+                assert_field(&want[field], &got[field], &format!("{case}.{field}"));
+            }
+        }
+    }
+
     #[test]
     fn centroid_count_stays_bounded_by_compression() {
         let mut digest = TDigest::with_compression(100.0);

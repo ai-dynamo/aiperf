@@ -49,6 +49,7 @@ import { SegmentPoolSpike } from "./spike/SegmentPoolSpike.js";
 import { SegmentPoolNarratedSpike } from "./spike/SegmentPoolNarratedSpike.js";
 import { SweepLineDesk } from "./spike/sweep/SweepLineDesk.js";
 import { CheckThenParkSpike } from "./spike/park/CheckThenParkSpike.js";
+import { SketchFoldSpike } from "./spike/sketch/SketchFoldSpike.js";
 import { DispatchModesSpike } from "./spike/dispatch/DispatchModesSpike.js";
 import { PrefixTrieSpike } from "./spike/prefix/PrefixTrieSpike.js";
 import { ClockRaceSpike } from "./spike/clock/ClockRaceSpike.js";
@@ -77,6 +78,7 @@ export function App(): React.JSX.Element {
         <Route path="/spike-two-clocks" element={<ClockRaceSpike />} />
         <Route path="/spike-prefix-identity" element={<PrefixTrieSpike />} />
         <Route path="/spike-dispatch-modes" element={<DispatchModesSpike />} />
+        <Route path="/spike-exact-vs-sketch" element={<SketchFoldSpike />} />
         <Route path="/segment-pools" element={<SegmentPoolsDeck />} />
         <Route path="/aiperf-graph-engine" element={<AiperfGraphEngineDeck />} />
         <Route path="/aiperf-metrics-accumulator" element={<AiperfMetricsAccumulatorDeck />} />
