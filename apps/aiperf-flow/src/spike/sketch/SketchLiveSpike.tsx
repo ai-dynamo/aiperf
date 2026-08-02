@@ -295,9 +295,10 @@ function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
  * until the running centre quantile passes the target. The walk is the part worth animating —
  * where it stops is not obvious until you see the centres go by.
  */
-const STAGE_CONCAT = 0;
-const STAGE_COMPRESS = 1;
-const STAGE_WALK = 2;
+const STAGE_SORT = 0;
+const STAGE_CONCAT = 1;
+const STAGE_COMPRESS = 2;
+const STAGE_WALK = 3;
 
 function SummarizePhase({
   state,
@@ -333,9 +334,9 @@ function SummarizePhase({
         }
         return s + 1;
       });
-    }, 550);
+    }, stage === STAGE_SORT ? 1100 : 550);
     return () => window.clearInterval(handle);
-  }, [playing, lastStage]);
+  }, [playing, lastStage, stage]);
 
   if (exact === null || sketch === null) return <></>;
 
@@ -364,7 +365,10 @@ function SummarizePhase({
 
       <div className="grid grid-cols-[1fr_1.3fr] gap-4">
         <Panel label="EXACT — sort, then interpolate" hint="sorts once, then reads two values">
-          <ExactStrip trace={exact} sorted={sorted} reveal={done} />
+          <SortAnimation arrived={state.arrived} sortedYet={stage > STAGE_SORT} />
+          {stage > STAGE_SORT && (
+            <ExactStrip trace={exact} sorted={sorted} reveal={done} />
+          )}
         </Panel>
 
         <Panel label="SKETCH — fold, then walk" hint="no values left; only centroids">
@@ -399,6 +403,69 @@ function SummarizePhase({
         </Panel>
       </div>
     </>
+  );
+}
+
+/**
+ * The sort, animated.
+ *
+ * Every retained value is a bar. It starts where it arrived and slides to where it belongs, which
+ * is the exact path's one expensive operation made visible — nothing maintained this order during
+ * the run, and `kernel.rs:117` does it in a single pass when a percentile is finally asked for.
+ *
+ * Position is animated through a `transform` on each bar's group rather than the `x` attribute,
+ * because transform transitions are reliable across engines where geometry-attribute transitions
+ * are not.
+ */
+function SortAnimation({
+  arrived,
+  sortedYet,
+}: {
+  arrived: readonly number[];
+  sortedYet: boolean;
+}): React.JSX.Element {
+  const width = 620;
+  const height = 96;
+  const pad = 6;
+  const step = (width - pad * 2) / Math.max(1, arrived.length);
+  const max = Math.max(...arrived, 1);
+
+  // Destination slot for each arrival. Duplicate values are resolved by consuming ranks in order,
+  // so no two bars are ever assigned the same slot.
+  const destination = useMemo(() => {
+    const order = arrived.map((value, index) => ({ value, index }));
+    order.sort((a, b) => a.value - b.value || a.index - b.index);
+    const slots = new Array<number>(arrived.length);
+    order.forEach((entry, rank) => {
+      slots[entry.index] = rank;
+    });
+    return slots;
+  }, [arrived]);
+
+  return (
+    <div className="mb-3">
+      <div className="mb-1 text-[13px]" style={{ color: sortedYet ? DIM : GREEN }}>
+        0 · sort the {arrived.length} retained values —{" "}
+        {sortedYet ? "done, once" : "in arrival order, as they were kept"}
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
+        role="img" aria-label="retained values sorting into order">
+        {arrived.map((value, i) => {
+          const slot = sortedYet ? (destination[i] ?? i) : i;
+          const barH = Math.max(2, (value / max) * (height - 20));
+          return (
+            <g key={i} style={{ transition: "transform 900ms cubic-bezier(0.4, 0, 0.2, 1)" }}
+              transform={`translate(${pad + slot * step}, 0)`}>
+              <rect x={0.5} y={height - 12 - barH} width={Math.max(1.5, step - 1)} height={barH}
+                rx={1} fill={sortedYet ? "rgba(255,255,255,0.28)" : GREEN} opacity={0.85}
+                style={{ transition: "fill 900ms ease-out" }} />
+            </g>
+          );
+        })}
+        <line x1={pad} x2={width - pad} y1={height - 10} y2={height - 10}
+          stroke="rgba(255,255,255,0.12)" />
+      </svg>
+    </div>
   );
 }
 
@@ -495,7 +562,14 @@ function ExactStrip({
   );
 }
 
-/** The fold, as its two operations: pool the centroids, then cluster them. */
+/**
+ * The fold, as its two operations: pool the centroids, then cluster them.
+ *
+ * Blocks are sized by weight, not drawn uniformly. A pooled buffer is mostly light centroids with
+ * a few heavy ones, and rendering them all the same width says the opposite — that the fold is
+ * combining equal things. It is combining summaries of wildly different populations, and the
+ * compressed row is visibly made of fewer, fatter blocks covering the same total.
+ */
 function FoldStages({
   fold,
   stage,
@@ -503,36 +577,52 @@ function FoldStages({
   fold: ReturnType<typeof traceFold>;
   stage: number;
 }): React.JSX.Element {
+  const pooled = stage >= STAGE_CONCAT;
   const compressed = stage >= STAGE_COMPRESS;
+  const pooledTotal = fold.concatenated.reduce((n, c) => n + c.weight, 0) || 1;
+  const foldedTotal = fold.folded.centroids.reduce((n, c) => n + c.weight, 0) || 1;
+
   return (
     <div className="mb-3">
       <div className="mb-1 text-[13px]" style={{ color: stage === STAGE_CONCAT ? GREEN : DIM }}>
-        1 · pool every cell&apos;s centroids — <strong>{fold.concatenated.length}</strong> of them
+        1 · pool every cell&apos;s centroids — <strong>{fold.concatenated.length}</strong> of them,
+        width is the weight each carries
       </div>
-      <div className="flex flex-wrap gap-[3px]">
+      <div className="flex h-5 w-full gap-[2px]">
         {fold.contributed.map((c) =>
           c.centroids.map((centroid, i) => (
-            <span key={`${c.cell}-${i}`} className="h-4 rounded-[2px]"
+            <span key={`${c.cell}-${i}`} className="h-5 rounded-[2px]"
               style={{
-                width: 12,
+                flexGrow: centroid.weight,
+                flexBasis: 0,
+                minWidth: 2,
                 background: CELL_COLOR[c.cell],
-                opacity: compressed ? 0.2 : 0.85,
+                opacity: !pooled ? 0.15 : compressed ? 0.22 : 0.85,
                 transition: "opacity 400ms ease-out",
               }}
-              title={`cell ${c.cell}: mean ${centroid.mean.toFixed(1)}, weight ${centroid.weight}`} />
+              title={`cell ${c.cell}: mean ${centroid.mean.toFixed(1)}, weight ${centroid.weight} of ${pooledTotal}`} />
           )),
         )}
       </div>
+
       <div className="mb-1 mt-2 text-[13px]" style={{ color: stage === STAGE_COMPRESS ? GREEN : DIM }}>
         2 · compress — <strong>{compressed ? fold.folded.centroids.length : "…"}</strong>{" "}
-        {compressed ? "remain" : "pending"}
+        {compressed ? "remain, same total weight" : "pending"}
       </div>
-      <div className="flex flex-wrap gap-[3px]" style={{ minHeight: 16 }}>
+      <div className="flex h-5 w-full gap-[2px]">
         {compressed &&
           fold.folded.centroids.map((c, i) => (
-            <span key={i} className="h-4 rounded-[2px]"
-              style={{ width: 12, background: GREEN, opacity: 0.8 }}
-              title={`mean ${c.mean.toFixed(1)}, weight ${c.weight}`} />
+            <span key={i} className="flex h-5 items-center justify-center rounded-[2px]"
+              style={{
+                flexGrow: c.weight,
+                flexBasis: 0,
+                minWidth: 2,
+                background: GREEN,
+                opacity: 0.8,
+              }}
+              title={`mean ${c.mean.toFixed(1)}, weight ${c.weight} of ${foldedTotal}`}>
+              <span className="font-mono text-[10px] text-black">{c.weight}</span>
+            </span>
           ))}
       </div>
     </div>
