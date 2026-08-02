@@ -4,29 +4,61 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { arrivals, createIngest, ingestOne, traceExact, traceFold, traceSketch } from "./ingest.js";
+import {
+  arrivals,
+  createIngest,
+  ingestOne,
+  sortedAtSummarize,
+  traceExact,
+  traceFold,
+  traceSketch,
+} from "./ingest.js";
 import { exactPercentile, latencySamples, quantile } from "./sketchSim.js";
 
-const run = (values: readonly number[], cells: number, compression: number) => {
-  let state = createIngest(cells, compression);
+const run = (values: readonly number[], cells: number, compression: number, threshold = 8) => {
+  let state = createIngest(cells, compression, threshold);
   for (const arrival of arrivals(values, cells)) state = ingestOne(state, arrival);
   return state;
 };
 
 describe("stepping values in", () => {
-  it("keeps the exact path sorted and complete", () => {
+  it("keeps the exact path in arrival order, unsorted, during the run", () => {
+    // The runtime appends and sorts once at summarize; nothing maintains order as values land.
     const values = latencySamples(400, 3);
     const state = run(values, 3, 20);
     expect(state.arrived).toEqual([...values]);
-    expect(state.sorted).toEqual([...values].sort((a, b) => a - b));
+    expect(sortedAtSummarize(state)).toEqual([...values].sort((a, b) => a - b));
   });
 
-  it("reports where each value landed in the sorted array", () => {
-    let state = createIngest(1, 20);
+  it("only sorts when summarize asks for it", () => {
+    let state = createIngest(1, 20, 8);
     for (const arrival of arrivals([50, 10, 30], 1)) state = ingestOne(state, arrival);
-    // 30 belongs between 10 and 50.
-    expect(state.lastSortedIndex).toBe(1);
-    expect(state.sorted).toEqual([10, 30, 50]);
+    expect(state.arrived).toEqual([50, 10, 30]);
+    expect(sortedAtSummarize(state)).toEqual([10, 30, 50]);
+  });
+
+  it("leaves the new centroid in an unsorted pending tail until the threshold", () => {
+    // Below the threshold nothing clusters, so the tail holds raw weight-1 centroids in the order
+    // they arrived — the transient state the Rust's struct doc calls out.
+    let state = createIngest(1, 20, 8);
+    for (const arrival of arrivals([90, 10, 50], 1)) state = ingestOne(state, arrival);
+    expect(state.settled[0]).toBe(0);
+    expect(state.cells[0]!.centroids.map((c) => c.mean)).toEqual([90, 10, 50]);
+    expect(state.cells[0]!.centroids.every((c) => c.weight === 1)).toBe(true);
+  });
+
+  it("compresses the whole buffer at once when the threshold is exceeded", () => {
+    let state = createIngest(1, 20, 4);
+    const seen: number[] = [];
+    for (const arrival of arrivals(latencySamples(20, 9), 1)) {
+      state = ingestOne(state, arrival);
+      if (state.compressedCells.length > 0) seen.push(state.collapsedFrom!);
+    }
+    // A compress fires only once the count exceeds the threshold, never before. It is not always
+    // threshold+1: when clustering cannot merge anything the count stays above the threshold and
+    // the next append trips it again from a higher starting point.
+    expect(seen.length).toBeGreaterThan(0);
+    for (const from of seen) expect(from).toBeGreaterThan(4);
   });
 
   it("routes each value to exactly one cell and leaves the others untouched", () => {
@@ -34,23 +66,19 @@ describe("stepping values in", () => {
     expect(state.cells.map((c) => c.totalWeight)).toEqual([30, 30, 30]);
   });
 
-  it("notes when the new centroid was absorbed rather than added", () => {
-    // With a low compression the digest clusters aggressively, so absorption must be observable —
-    // it is the event the page exists to show.
-    let state = createIngest(1, 5);
-    let absorbed = 0;
-    for (const arrival of arrivals(latencySamples(200, 7), 1)) {
-      state = ingestOne(state, arrival);
-      absorbed += state.compressedCells.length;
-    }
-    expect(absorbed).toBeGreaterThan(0);
+  it("keeps the settled prefix sorted after a compress", () => {
+    let state = createIngest(1, 20, 6);
+    for (const arrival of arrivals(latencySamples(60, 7), 1)) state = ingestOne(state, arrival);
+    const settled = state.cells[0]!.centroids.slice(0, state.settled[0]);
+    const means = settled.map((c) => c.mean);
+    expect(means).toEqual([...means].sort((a, b) => a - b));
   });
 
   it("reaches the same digest as the pinned path", () => {
     // Stepping compresses per value where the runtime batches. Clustering sorts first, so both
     // arrive at the same place — asserting that here is what makes the visual trustworthy.
     const values = latencySamples(500, 11);
-    const stepped = run(values, 1, 50).cells[0]!;
+    const stepped = run(values, 1, 50, 40).cells[0]!;
     const { folded } = traceFold([stepped], 50);
     for (const q of [0.5, 0.9, 0.99]) {
       expect(quantile(folded, q)).toBeCloseTo(quantile(stepped, q)!, 9);

@@ -16,6 +16,7 @@ import {
   ingestOne,
   traceExact,
   traceFold,
+  sortedAtSummarize,
   traceSketch,
   type ExactTrace,
   type IngestState,
@@ -38,6 +39,15 @@ const CELLS = 3;
  * identical; only the budget is smaller.
  */
 const COMPRESSION = 12;
+/**
+ * The compress threshold, turned right down.
+ *
+ * The Rust derives it as `max(64, δ × 10)` — 1000 at production's δ=100 — so a real digest sits
+ * on a thousand raw unsorted centroids before doing anything. That is the true cost profile and
+ * it is unwatchable, so the page uses 8. The rule is unchanged: append until the count is
+ * exceeded, then sort and cluster the whole buffer at once.
+ */
+const THRESHOLD = 8;
 const TOTAL = 60;
 const SPEEDS = [700, 350, 120] as const;
 const CELL_COLOR = [CYAN, PURPLE, ORANGE];
@@ -52,7 +62,7 @@ export function SketchLiveSpike(): React.JSX.Element {
   const feed = useMemo(() => arrivals(values, CELLS), [values]);
 
   const state = useMemo(() => {
-    let s = createIngest(CELLS, COMPRESSION);
+    let s = createIngest(CELLS, COMPRESSION, THRESHOLD);
     for (let i = 0; i < step; i++) s = ingestOne(s, feed[i]!);
     return s;
   }, [feed, step]);
@@ -134,8 +144,8 @@ export function SketchLiveSpike(): React.JSX.Element {
       </div>
 
       <div className="mb-4 grid grid-cols-[1fr_1fr] gap-4">
-        <Panel label="EXACT" hint={`${state.sorted.length} values retained, sorted`}>
-          <SortedStrip state={state} />
+        <Panel label="EXACT" hint={`${state.arrived.length} values retained, in arrival order`}>
+          <ArrivalStrip state={state} />
         </Panel>
         <Panel label="SKETCH" hint={`${CELLS} cells, each summarizing its own slice`}>
           <CellDigests state={state} />
@@ -147,29 +157,43 @@ export function SketchLiveSpike(): React.JSX.Element {
       )}
 
       <SourceNote>
-        Both structures here are the pinned port of{" "}
+        Both structures are the pinned port of{" "}
         <code>rust/runtime/src/cellular/sketch.rs</code>, verified against the Rust through a
-        golden fixture. Two presentational departures, stated because they matter: δ is{" "}
-        {COMPRESSION} rather than production&apos;s 100, so a digest settles at a handful of
-        centroids you can follow instead of about fifty; and the digest is compressed on every
-        arrival where the runtime batches until a threshold. Clustering sorts first, so both reach
-        the same digest — a test asserts exactly that — but compressing per value shows the
-        absorption happening rather than hiding it inside one bulk step.
+        golden fixture, and both ingest the way the runtime does. Adding a value is an append on
+        either side: the exact path pushes onto an unsorted vector, and the digest pushes a
+        weight-1 centroid onto the end of its own. Neither sorts as values land.{" "}
+        <code>kernel.rs:117</code> sorts the retained values once, at summarize; the digest sorts
+        and clusters only when its buffer exceeds <code>compress_threshold</code>, and its
+        centroids are — in the words of the struct&apos;s own doc — &ldquo;sorted by mean after
+        every compress&rdquo; while holding &ldquo;transient unsorted weight-1 centroids between
+        compressions&rdquo;.
+        <br />
+        <span className="text-ink-quaternary">
+          Two knobs are turned down so the structures fit on screen, and nothing else differs. δ is{" "}
+          {COMPRESSION} rather than production&apos;s 100, so a digest settles at a handful of
+          centroids instead of about fifty. The compress threshold is {THRESHOLD} rather than the{" "}
+          <code>max(64, δ × 10)</code> the Rust derives — 1000 at δ=100, which would mean a
+          thousand raw centroids accumulating before anything happened.
+        </span>
       </SourceNote>
     </div>
   );
 }
 
-/** The retained values, in sorted order, with the newest arrival highlighted where it landed. */
-function SortedStrip({ state }: { state: IngestState }): React.JSX.Element {
+/**
+ * The retained values in arrival order — unsorted, because nothing sorts them yet.
+ *
+ * `kernel.rs:117` sorts once at summarize time. During the run this is a plain append-only
+ * vector, which is why keeping every value is cheap per record and expensive only in memory.
+ */
+function ArrivalStrip({ state }: { state: IngestState }): React.JSX.Element {
   return (
     <div>
       <div className="flex flex-wrap gap-1">
-        {state.sorted.map((value, i) => {
-          const fresh = i === state.lastSortedIndex;
+        {state.arrived.map((value, i) => {
+          const fresh = i === state.arrived.length - 1;
           return (
-            <span key={`${i}-${value}`}
-              className="rounded px-1.5 py-0.5 font-mono text-[12px] tabular-nums"
+            <span key={i} className="rounded px-1.5 py-0.5 font-mono text-[12px] tabular-nums"
               style={{
                 background: fresh ? GREEN : "rgba(255,255,255,0.06)",
                 color: fresh ? "black" : "var(--color-ink-secondary)",
@@ -179,64 +203,86 @@ function SortedStrip({ state }: { state: IngestState }): React.JSX.Element {
             </span>
           );
         })}
-        {state.sorted.length === 0 && (
+        {state.arrived.length === 0 && (
           <span className="text-[15px] text-ink-quaternary">Empty. Play, or step one value in.</span>
         )}
       </div>
       <p className="mt-3 text-[14px] leading-relaxed text-ink-quaternary">
-        Every arrival is inserted at its sorted position and kept forever. The structure grows
-        exactly as fast as the run does — which is what makes any percentile answerable later, and
-        what makes it impossible to merge from another machine without shipping all of it.
+        Appended, not inserted — these are in the order they arrived and nothing has sorted them.
+        Per record the exact path costs one push. Its expense is memory, and one sort at the end.
       </p>
     </div>
   );
 }
 
-/** Per-cell centroids, sized by weight, with an absorption called out when it happens. */
+/**
+ * Per-cell centroids: the settled, clustered prefix and the raw appended tail behind it.
+ *
+ * The tail is the part an earlier version of this page hid. Values land there as weight-1
+ * centroids in arrival order, unsorted against anything, and stay that way until the count crosses
+ * the threshold — at which point the whole buffer is sorted and clustered in one go.
+ */
 function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2.5">
       {state.cells.map((cell, index) => {
-        const absorbed = state.compressedCells.includes(index);
+        const justCompressed = state.compressedCells.includes(index);
+        const settled = state.settled[index] ?? 0;
         const centroids = cell.centroids;
+        const pending = centroids.length - settled;
         const maxWeight = Math.max(1, ...centroids.map((c) => c.weight));
+        const headroom = cell.compressThreshold - centroids.length + 1;
         return (
           <div key={index} className="flex items-center gap-3">
             <span className="w-14 shrink-0 font-mono text-[13px]" style={{ color: CELL_COLOR[index] }}>
               cell {index}
             </span>
             <span className="flex flex-wrap items-end gap-[3px]">
-              {centroids.map((c, i) => (
-                <span key={i} className="flex flex-col items-center justify-end"
-                  title={`mean ${c.mean.toFixed(1)} ms, weight ${c.weight}`}>
-                  <span className="rounded-t-[2px]"
-                    style={{
-                      width: 16,
-                      height: 6 + (c.weight / maxWeight) * 26,
-                      background: CELL_COLOR[index],
-                      opacity: 0.35 + 0.5 * (c.weight / maxWeight),
-                    }} />
-                  <span className="font-mono text-[10px]" style={{ color: DIM }}>{c.weight}</span>
-                </span>
-              ))}
+              {centroids.map((c, i) => {
+                const isPending = i >= settled;
+                return (
+                  <span key={i} className="flex flex-col items-center justify-end"
+                    title={`${isPending ? "pending — " : ""}mean ${c.mean.toFixed(1)}, weight ${c.weight}`}>
+                    <span className="rounded-t-[2px]"
+                      style={{
+                        width: 15,
+                        height: 6 + (c.weight / maxWeight) * 24,
+                        background: isPending ? "transparent" : CELL_COLOR[index],
+                        outline: isPending ? `1px dashed ${CELL_COLOR[index]}` : "none",
+                        outlineOffset: -1,
+                        opacity: isPending ? 0.7 : 0.4 + 0.5 * (c.weight / maxWeight),
+                        transition: "height 250ms ease-out",
+                      }} />
+                    <span className="font-mono text-[10px]" style={{ color: DIM }}>{c.weight}</span>
+                  </span>
+                );
+              })}
               {centroids.length === 0 && (
                 <span className="text-[14px]" style={{ color: DIM }}>empty</span>
               )}
             </span>
-            <span className="ml-auto shrink-0 text-right font-mono text-[13px] tabular-nums"
-              style={{ color: absorbed ? GREEN : DIM }}>
-              {absorbed ? "absorbed — no new centroid" : `${centroids.length} centroids`}
-              <span className="block text-[12px]" style={{ color: DIM }}>
-                {cell.totalWeight} values
+            <span className="ml-auto shrink-0 text-right font-mono text-[13px] tabular-nums">
+              {justCompressed ? (
+                <span style={{ color: GREEN, fontWeight: 700 }}>
+                  compressed {state.collapsedFrom} → {centroids.length}
+                </span>
+              ) : (
+                <span style={{ color: DIM }}>
+                  {settled} settled · {pending} pending
+                </span>
+              )}
+              <span className="block text-[12px]" style={{ color: pending > 0 ? ORANGE : DIM }}>
+                {headroom} more before compress
               </span>
             </span>
           </div>
         );
       })}
       <p className="mt-1 text-[14px] leading-relaxed text-ink-quaternary">
-        Bar height is a centroid&apos;s weight — how many values it stands for. A new arrival enters
-        as weight 1; when the K1 rule allows, it is folded into its neighbour and the two become one
-        mean. From then on the individual value cannot be recovered.
+        Solid bars are settled centroids — sorted and clustered by the last compress, height is the
+        weight they carry. Dashed bars are the pending tail: raw weight-1 arrivals, in arrival
+        order, unsorted. Nothing clusters until the buffer exceeds{" "}
+        <strong>{THRESHOLD}</strong>, and then the whole thing collapses at once.
       </p>
     </div>
   );
@@ -260,7 +306,9 @@ function SummarizePhase({
   state: IngestState;
   percentile: number;
 }): React.JSX.Element {
-  const exact = traceExact(state.sorted, percentile);
+  // The sort happens here, at summarize — not during the run.
+  const sorted = useMemo(() => sortedAtSummarize(state), [state]);
+  const exact = traceExact(sorted, percentile);
   const fold = useMemo(() => traceFold(state.cells, COMPRESSION), [state.cells]);
   const sketch = traceSketch(fold.folded, percentile / 100);
 
@@ -301,8 +349,9 @@ function SummarizePhase({
         style={{ borderColor: GREEN, background: "rgba(0,255,128,0.04)" }}>
         <strong style={{ color: GREEN }}>Now summarize.</strong>
         <span>
-          Both are asked for p{percentile}. The left reads two of the values it kept; the right has
-          none left, so it folds its cells and walks the result.
+          Both are asked for p{percentile}. The left <strong>sorts</strong> its {state.arrived.length}{" "}
+          retained values — its first and only expensive step — then reads two of them. The right
+          has no values left to sort, so it folds its cells and walks the result.
         </span>
         <span className="ml-auto flex items-center gap-1.5">
           <Toggle active onClick={() => setPlaying((p) => !p)}>{playing ? "Pause" : "Replay"}</Toggle>
@@ -314,8 +363,8 @@ function SummarizePhase({
       </div>
 
       <div className="grid grid-cols-[1fr_1.3fr] gap-4">
-        <Panel label="EXACT — type-7 interpolation" hint="reads two retained values">
-          <ExactStrip trace={exact} sorted={state.sorted} reveal={done} />
+        <Panel label="EXACT — sort, then interpolate" hint="sorts once, then reads two values">
+          <ExactStrip trace={exact} sorted={sorted} reveal={done} />
         </Panel>
 
         <Panel label="SKETCH — fold, then walk" hint="no values left; only centroids">

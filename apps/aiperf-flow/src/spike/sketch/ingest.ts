@@ -24,80 +24,106 @@ import {
 export type Arrival = { index: number; value: number; cell: number };
 
 export type IngestState = {
-  /** Every value that has arrived, in arrival order. The exact path keeps all of them. */
+  /**
+   * Every value that has arrived, in arrival order and unsorted.
+   *
+   * This is what exact mode actually holds: an append-only `Vec`. Nothing keeps it ordered during
+   * the run — `kernel.rs` sorts once, at summarize time, when a percentile is finally asked for.
+   */
   arrived: number[];
-  /** Values sorted — what the exact percentile actually reads. */
-  sorted: number[];
   /** One digest per cell. Each summarizes only its own slice. */
   cells: TDigest[];
+  /**
+   * Per cell, how many leading centroids are settled — sorted and clustered by the last compress.
+   *
+   * Everything after this index is the raw appended tail: weight-1 centroids in arrival order,
+   * not yet sorted against anything. The Rust says so directly — centroids are "sorted by mean
+   * after every compress" and "may hold transient unsorted weight-1 centroids between
+   * compressions".
+   */
+  settled: number[];
   /** Which cell took the most recent value, for highlighting. */
   lastCell: number | null;
   /** The most recent value, for highlighting. */
   lastValue: number | null;
-  /** Index in `sorted` the last value landed at. */
-  lastSortedIndex: number | null;
-  /** Cells whose centroid count fell on the most recent step — a compression fired there. */
+  /** Cells that crossed their threshold on this step and ran a bulk compress. */
   compressedCells: number[];
+  /** Centroid count immediately before the most recent compress, for showing what it collapsed. */
+  collapsedFrom: number | null;
 };
 
-export function createIngest(cells: number, compression: number): IngestState {
+/**
+ * Build the ingest state.
+ *
+ * `threshold` overrides the digest's own `compress_threshold`, which the Rust derives as
+ * `max(64, δ × 10)` — 1000 at production's δ=100. A thousand raw centroids accumulating before
+ * anything happens is the real behaviour and completely unwatchable, so the page turns the same
+ * knob down. Nothing else about the rule changes: the same append happens, and the same bulk
+ * cluster fires when the count is exceeded.
+ */
+export function createIngest(cells: number, compression: number, threshold: number): IngestState {
   return {
     arrived: [],
-    sorted: [],
-    cells: Array.from({ length: cells }, () => createDigest(compression)),
+    cells: Array.from({ length: cells }, () => {
+      const digest = createDigest(compression);
+      digest.compressThreshold = threshold;
+      return digest;
+    }),
+    settled: Array.from({ length: cells }, () => 0),
     lastCell: null,
     lastValue: null,
-    lastSortedIndex: null,
     compressedCells: [],
+    collapsedFrom: null,
   };
-}
-
-/** Insert into a sorted array, returning the index it landed at. */
-function insertSorted(sorted: number[], value: number): number {
-  let lo = 0;
-  let hi = sorted.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid]! < value) lo = mid + 1;
-    else hi = mid;
-  }
-  sorted.splice(lo, 0, value);
-  return lo;
 }
 
 /**
  * Take one arrival into both structures.
  *
- * The digest is compressed eagerly on every step rather than at the runtime's threshold. The
- * runtime batches — it lets weight-1 centroids accumulate to `compress_threshold` and clusters in
- * one pass, which is faster and reaches the same place because clustering sorts first. Compressing
- * per value shows the clustering happening instead of hiding it inside one bulk step; the
- * resulting digest is the same either way.
+ * Both are appends. The exact path pushes onto an unsorted vector; the digest pushes a weight-1
+ * centroid onto the end of its own. Neither sorts, neither compares. Only when a digest exceeds
+ * its threshold does anything expensive happen, and then it happens to the whole buffer at once:
+ * sort by mean, then greedily cluster. That rhythm — nothing, nothing, nothing, collapse — is the
+ * real cost profile, and an earlier version of this page hid it by compressing on every value.
  */
 export function ingestOne(state: IngestState, arrival: Arrival): IngestState {
   const cells = state.cells.map((c) => ({ ...c, centroids: c.centroids.map((x) => ({ ...x })) }));
+  const settled = [...state.settled];
   const target = cells[arrival.cell]!;
-  const before = target.centroids.length;
 
   target.centroids.push({ mean: arrival.value, weight: 1 });
   target.totalWeight += 1;
   if (arrival.value < target.min) target.min = arrival.value;
   if (arrival.value > target.max) target.max = arrival.value;
-  target.centroids = clustered(target);
 
-  const sorted = [...state.sorted];
-  const at = insertSorted(sorted, arrival.value);
+  let compressed = false;
+  let collapsedFrom: number | null = null;
+  if (target.centroids.length > target.compressThreshold) {
+    collapsedFrom = target.centroids.length;
+    target.centroids = clustered(target);
+    settled[arrival.cell] = target.centroids.length;
+    compressed = true;
+  }
 
   return {
     arrived: [...state.arrived, arrival.value],
-    sorted,
     cells,
+    settled,
     lastCell: arrival.cell,
     lastValue: arrival.value,
-    lastSortedIndex: at,
-    // A cluster absorbed the new centroid when the count did not grow.
-    compressedCells: target.centroids.length <= before ? [arrival.cell] : [],
+    compressedCells: compressed ? [arrival.cell] : [],
+    collapsedFrom,
   };
+}
+
+/**
+ * The sorted values, produced the way the runtime produces them: once, on demand.
+ *
+ * `kernel.rs:117` sorts the retained vector at summarize time. Calling this is the moment the
+ * exact path does its only expensive piece of work.
+ */
+export function sortedAtSummarize(state: IngestState): number[] {
+  return [...state.arrived].sort((a, b) => a - b);
 }
 
 /** How the exact percentile is computed — every intermediate the formula uses. */
