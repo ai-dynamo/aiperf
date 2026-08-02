@@ -13,16 +13,12 @@ import {
   centroidSpans,
   clustered,
   compare,
-  count,
-  exactPercentile,
   foldCells,
   latencySamples,
-  quantile,
   splitAcrossCells,
   DEFAULT_COMPRESSION,
   PERCENTILES,
   type Shape,
-  type TDigest,
 } from "./sketchSim.js";
 import { ControlBar, Legend, LegendItem, Panel, Readout, SourceNote, SpikeHeader, Toggle } from "../ui.js";
 
@@ -174,15 +170,15 @@ export function SketchFoldSpike(): React.JSX.Element {
         </table>
       </Panel>
 
-      <Panel label="WHERE THE RESOLUTION GOES" hint="one box per centroid, placed at the quantiles it covers"
+      <Panel label="WHERE THE RESOLUTION GOES" hint="one bar per centroid — height is how much of the run it answers for"
         className="mb-4">
         <Legend>
-          <LegendItem mark="▭" color={CYAN}>a centroid — width is the quantile band it summarizes</LegendItem>
+          <LegendItem mark="▮" color={CYAN}>a centroid — taller means it summarizes more of the distribution</LegendItem>
           <LegendItem mark="│" color={ORANGE}>a reported percentile</LegendItem>
         </Legend>
-        <CentroidBands spans={spans} digest={folded} values={values} />
+        <CentroidBands spans={spans} />
         <p className="mt-2 max-w-5xl text-[14px] leading-relaxed text-ink-quaternary">
-          The boxes are narrow at both ends and wide in the middle, and that is deliberate. A
+          The bars are short at both ends and tall through the middle, and that is deliberate. A
           cluster may span one unit of <code>k(q) = δ·asin(2q−1)/2π</code>, and{" "}
           <code>asin</code> steepens towards the edges — so one unit of budget buys a{" "}
           <em>narrow</em> band of quantiles at the tail and a wide one through the body. The digest
@@ -227,70 +223,85 @@ function fmt(value: number): string {
   return value.toFixed(2);
 }
 
-const BAND_W = 900;
-const BAND_H = 132;
+const BAND_W = 1400;
+const BAND_H = 210;
 
 /**
- * Centroids laid out along the quantile axis.
+ * Centroid band width against quantile.
  *
- * Quantile is the x axis rather than value, because the claim being made is about where the
- * digest spends resolution — which is a statement about quantile space, not about milliseconds.
+ * An earlier version plotted centroid *value* against quantile, which buried the point: a
+ * lognormal CDF is nearly flat until its tail, so every centroid piled onto one line and the
+ * claim about resolution was invisible. The claim is about how much of the distribution each
+ * centroid is responsible for, so that is what this plots — an arch, tall through the body and
+ * short at both ends, which is the K1 scale drawn.
  */
 function CentroidBands({
   spans,
-  digest,
-  values,
 }: {
   spans: ReturnType<typeof centroidSpans>;
-  digest: TDigest;
-  values: readonly number[];
 }): React.JSX.Element {
-  const pad = 44;
-  const inner = BAND_W - pad - 16;
-  const x = (q: number) => pad + q * inner;
-  const sorted = useMemo(() => [...values].sort((a, b) => a - b), [values]);
-
-  const lo = digest.min;
-  const hi = digest.max;
-  const y = (v: number) => BAND_H - 30 - ((v - lo) / Math.max(1e-9, hi - lo)) * (BAND_H - 52);
+  const padL = 116;
+  const padB = 30;
+  const inner = BAND_W - padL - 20;
+  const widths = spans.map((s) => s.q1 - s.q0);
+  const widest = Math.max(...widths, 1e-9);
+  const narrowest = Math.min(...widths);
+  const x = (q: number) => padL + q * inner;
+  const y = (w: number) => BAND_H - padB - (w / widest) * (BAND_H - padB - 26);
 
   return (
-    <svg viewBox={`0 0 ${BAND_W} ${BAND_H}`} width="100%" height={BAND_H}
-      role="img" aria-label="centroids across the quantile axis">
-      {[0, 0.25, 0.5, 0.75, 1].map((q) => (
-        <text key={q} x={x(q)} y={BAND_H - 6} fontSize={12} textAnchor="middle" fill={DIM}>
-          {q === 0 ? "q0" : q === 1 ? "q1" : `p${q * 100}`}
+    <div>
+      <svg viewBox={`0 0 ${BAND_W} ${BAND_H}`} width="100%" height={BAND_H}
+        role="img" aria-label="quantile span of each centroid, across the quantile axis">
+        {[0, 0.25, 0.5, 0.75, 1].map((q) => (
+          <text key={q} x={x(q)} y={BAND_H - 8} fontSize={12} textAnchor="middle" fill={DIM}>
+            {q === 0 ? "q0" : q === 1 ? "q1" : `p${q * 100}`}
+          </text>
+        ))}
+
+        {spans.map((span, i) => {
+          const w = span.q1 - span.q0;
+          return (
+            <rect key={i} x={x(span.q0) + 0.4} y={y(w)}
+              width={Math.max(1.2, x(span.q1) - x(span.q0) - 0.8)}
+              height={BAND_H - padB - y(w)} rx={1}
+              fill={CYAN} opacity={0.6} />
+          );
+        })}
+
+        {PERCENTILES.map((p) => (
+          <g key={p}>
+            <line x1={x(p / 100)} x2={x(p / 100)} y1={20} y2={BAND_H - padB}
+              stroke={ORANGE} strokeWidth={1} opacity={0.6} />
+            <text x={x(p / 100)} y={16} fontSize={12} textAnchor="middle" fill={ORANGE}>p{p}</text>
+          </g>
+        ))}
+
+        <line x1={padL} x2={BAND_W - 20} y1={BAND_H - padB} y2={BAND_H - padB}
+          stroke="rgba(255,255,255,0.12)" />
+        <text x={padL - 8} y={y(widest) + 4} fontSize={12} textAnchor="end" fill={DIM}>
+          {(widest * 100).toFixed(1)}%
         </text>
-      ))}
+        <text x={padL - 8} y={BAND_H - padB + 4} fontSize={12} textAnchor="end" fill={DIM}>0</text>
+        <text x={padL - 8} y={y(widest) - 12} fontSize={11} textAnchor="end" fill={DIM}>
+          share of the run
+        </text>
+      </svg>
 
-      {spans.map((span, i) => (
-        <rect key={i} x={x(span.q0)} y={y(span.centroid.mean) - 4}
-          width={Math.max(0.7, x(span.q1) - x(span.q0))} height={8} rx={1.5}
-          fill={CYAN} opacity={0.55} />
-      ))}
-
-      {/* The exact distribution behind them, so the fit is visible rather than asserted. */}
-      <path
-        d={Array.from({ length: 120 }, (_, i) => {
-          const q = i / 119;
-          return `${i === 0 ? "M" : "L"} ${x(q)} ${y(exactPercentile(sorted, q * 100))}`;
-        }).join(" ")}
-        fill="none" stroke="var(--color-ink-secondary)" strokeWidth={1.25} opacity={0.75} />
-
-      {PERCENTILES.map((p) => (
-        <g key={p}>
-          <line x1={x(p / 100)} x2={x(p / 100)} y1={10} y2={BAND_H - 26}
-            stroke={ORANGE} strokeWidth={1} opacity={0.55} />
-          <text x={x(p / 100)} y={8} fontSize={11} textAnchor="middle" fill={ORANGE}>p{p}</text>
-        </g>
-      ))}
-
-      <text x={4} y={y(hi) + 4} fontSize={11} fill={DIM}>{hi.toFixed(0)}</text>
-      <text x={4} y={y(lo) + 4} fontSize={11} fill={DIM}>{lo.toFixed(0)}</text>
-      <text x={4} y={BAND_H - 6} fontSize={11} fill={DIM}>ms</text>
-      {quantile(digest, 0.5) !== null && count(digest) > 0 && (
-        <title>{`${count(digest)} values in ${spans.length} centroids`}</title>
-      )}
-    </svg>
+      <div className="mt-1 flex gap-8 text-[15px] tabular-nums">
+        <span>
+          <span className="text-ink-tertiary">widest centroid covers</span>{" "}
+          <strong style={{ color: CYAN }}>{(widest * 100).toFixed(2)}%</strong>
+          <span className="text-ink-quaternary"> of the distribution</span>
+        </span>
+        <span>
+          <span className="text-ink-tertiary">narrowest covers</span>{" "}
+          <strong style={{ color: CYAN }}>{(narrowest * 100).toFixed(3)}%</strong>
+          <span className="text-ink-quaternary">
+            {" "}— {(widest / Math.max(narrowest, 1e-12)).toFixed(0)}× finer
+          </span>
+        </span>
+      </div>
+    </div>
   );
 }
