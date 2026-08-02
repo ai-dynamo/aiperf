@@ -41,11 +41,27 @@ const MODE_ACCENT: Record<Mode, string> = {
   "global-hop": "var(--color-category-purple)",
 };
 const MODE_SUBTITLE: Record<Mode, string> = {
-  sharded: "a fixed 1/workers share each, fixed before the run starts",
-  global: "one shared pool, reallocated on every completion",
-  "global-hop": "one coordinator loop holding the full cap, hopping each request to a thread",
+  sharded: "runtime.dispatch: sharded",
+  global: "runtime.dispatch: global",
+  "global-hop": "runtime.dispatch: global-hop",
 };
 const ROUTINGS: readonly HopRouting[] = ["round-robin", "sticky", "least-loaded"];
+
+/** The one-line answer for each mode, so the panes can be compared before they are read. */
+const VERDICT: Record<Mode, { what: string; cost: string }> = {
+  sharded: {
+    what: "Split it up front.",
+    cost: "No coordination at all — but a thread cannot lend a slot it is not using.",
+  },
+  global: {
+    what: "Share one pool.",
+    cost: "Always holds the target. Threads still race, so order varies run to run.",
+  },
+  "global-hop": {
+    what: "One loop decides everything.",
+    cost: "Exact, reproducible order — paid for with a cross-thread trip per request.",
+  },
+};
 
 const WORKER_CHOICES = [2, 4, 8] as const;
 const CONCURRENCY_CHOICES = [3, 8, 12] as const;
@@ -93,21 +109,11 @@ export function DispatchModesSpike(): React.JSX.Element {
 
   return (
     <div className="min-h-screen bg-surface-page px-8 py-7 text-ink-primary">
-      <SpikeHeader title="The shortfall that only exists in the sum">
+      <SpikeHeader title="Who gets to hold a slot?">
         <p>
-          With more than one worker thread, something has to decide who may have a slot. There are
-          three answers. <code>sharded</code> hands each thread a fixed <code>1/workers</code>{" "}
-          share, fixed before the run starts. <code>global</code> — the default — gives every
-          thread one shared pool. <code>global-hop</code> goes further: <em>one</em> coordinator
-          loop issues every request in exact global order and hops each to a thread. All three run
-          the same requests on the same threads against the same target below.
-        </p>
-        <p>
-          Watch the sharded lanes: <strong>every one is obeying its cap correctly.</strong> Nothing
-          is broken at the level anyone would look. Only the aggregate curve shows it — a thread
-          that finishes its own queue keeps slots it cannot lend, so the run holds less concurrency
-          than you asked for and takes longer. Then notice what the fix costs: global-hop buys
-          exact ordering with a cross-thread trip per request, and pays for it in wall time.
+          You ask for a concurrency of {concurrency}. There are {workers} worker threads. Something
+          has to decide which thread may hold which slot, and AIPerf has three answers — running
+          side by side below on identical work.
         </p>
       </SpikeHeader>
 
@@ -165,6 +171,22 @@ export function DispatchModesSpike(): React.JSX.Element {
         </div>
       )}
 
+      <div className="mb-2 grid grid-cols-3 gap-4">
+        {MODES.map((mode) => (
+          <div key={mode} className="text-[15px] leading-snug text-ink-secondary">
+            <span className="font-bold" style={{ color: MODE_ACCENT[mode] }}>{VERDICT[mode].what}</span>{" "}
+            {VERDICT[mode].cost}
+          </div>
+        ))}
+      </div>
+
+      <Legend>
+        <LegendItem mark="▰">a request in flight</LegendItem>
+        <LegendItem mark="▰" color={RED}>a slow one</LegendItem>
+        <LegendItem mark="▱">a free slot</LegendItem>
+        <LegendItem mark="▱" color={RED}>free, and unreachable by the thread that needs it</LegendItem>
+      </Legend>
+
       <div className="grid grid-cols-3 gap-4">
         {runs.map((state, i) => (
           <ModePane key={state.mode} state={state} config={config}
@@ -178,12 +200,12 @@ export function DispatchModesSpike(): React.JSX.Element {
       <div className="mt-4 rounded-lg border px-5 py-4"
         style={{ borderColor: GREEN, background: "rgba(0,255,128,0.03)" }}>
         <div className="mb-3 text-[12px] font-bold tracking-widest" style={{ color: GREEN }}>
-          THE SAME WORK, FINISHED — WHAT EACH MODE BOUGHT AND PAID
+WHAT EACH ONE BOUGHT, AND PAID
         </div>
         <table className="w-full text-base tabular-nums">
           <thead>
             <tr className="text-left text-[14px] text-ink-tertiary">
-              <th className="w-64 font-normal" />
+              <th className="w-[420px] font-normal" />
               {finished.map((f) => (
                 <th key={f.mode} className="pb-1 font-bold" style={{ color: MODE_ACCENT[f.mode] }}>
                   {f.mode}
@@ -192,18 +214,18 @@ export function DispatchModesSpike(): React.JSX.Element {
             </tr>
           </thead>
           <tbody>
-            <Row label="concurrency actually held"
+            <Row label="Concurrency it actually held"
               values={finished.map((f) => `${f.summary.meanInFlight.toFixed(2)} of ${concurrency}`)}
               best={(i) => finished[i]!.summary.utilisation > 0.99} />
-            <Row label="wall ticks for identical work"
-              values={finished.map((f) => `${f.state.curve.length}`)}
+            <Row label="Time to finish identical work"
+              values={finished.map((f) => `${f.state.curve.length} ticks`)}
               best={(i) => finished[i]!.state.curve.length ===
                 Math.min(...finished.map((g) => g.state.curve.length))} />
-            <Row label="workers per session"
-              hint="a session spread across workers opens a connection on each — the pool is worker-local"
+            <Row label="Threads a session is spread over"
+              hint="the connection pool is per-thread — 2 means two connections where one would do"
               values={finished.map((f) => fragmentation(f.state).mean.toFixed(2))}
               best={(i) => fragmentation(finished[i]!.state).worst === 1} />
-            <Row label="exact request-to-thread order"
+            <Row label="Same order every run"
               values={finished.map((f) => (f.mode === "global-hop" ? "yes" : "no"))}
               best={(i) => finished[i]!.mode === "global-hop"} />
           </tbody>
@@ -211,27 +233,24 @@ export function DispatchModesSpike(): React.JSX.Element {
       </div>
 
       <SourceNote>
-        Modelled on <code>rust/runtime/src/</code>: <code>DispatchMode</code> and{" "}
-        <code>HopRouting</code> at <code>config/model/dispatch.rs</code>,{" "}
-        <code>slice_phase_for_thread</code> at <code>engine/sharded_scheduled.rs:128</code>,{" "}
-        <code>owned_positions</code> at <code>engine/cell_launcher.rs:272</code>,{" "}
-        <code>pick_worker</code> and its seed-free <code>fnv1a64</code> at{" "}
-        <code>engine/turn_execution.rs:438</code>, and{" "}
-        <code>engine/global_hop.rs</code> for the single-dispatcher loop. Four details kept
-        faithful because each is easy to assume wrongly: the request <em>budget</em> is sliced
-        under <code>sharded</code> and <code>global</code> — the shared gate covers concurrency and
-        rate only, so an unsliced budget would dispatch one full copy per thread — while{" "}
-        <code>global-hop</code> partitions nothing, one coordinator owning the whole stream;{" "}
-        <code>global-hop</code> takes no shared admission gate at all, because one loop holding the
-        full cap <em>is</em> the global cap; <code>owned_cap</code> floors each share at one, so a
-        target below the worker count over-subscribes rather than under-shoots; and the shared gate
-        applies to the request-rate phase shapes, <code>user_centric</code> and{" "}
-        <code>fixed_schedule</code> being unaffected by the mode entirely. The default is itself
-        cellular-aware: <code>global</code> for a single process, <code>sharded</code> once{" "}
-        <code>cells &gt; 1</code>, because a cellular run has already forfeited byte-exact
-        determinism and the shared gate then buys nothing — measured ~7-8× slower on a c4-144
-        (<code>engine/protocol_v2.rs:255</code>). The hop cost charged here is illustrative; its
-        shape — one bounded mpsc trip and a oneshot reply per request — is not.
+        Four things worth knowing, each easy to assume wrongly. The request <em>budget</em> is
+        split per thread under <code>sharded</code> and <code>global</code> alike — the shared gate
+        covers concurrency and rate only — while <code>global-hop</code> splits nothing.{" "}
+        <code>global-hop</code> needs no shared gate at all: one loop holding the full cap{" "}
+        <em>is</em> the global cap. A target smaller than the thread count over-subscribes rather
+        than under-shooting, because each share is floored at one. And the mode only affects
+        request-rate phases — <code>user_centric</code> and <code>fixed_schedule</code> ignore it.
+        The default already accounts for this: <code>global</code> for one process,{" "}
+        <code>sharded</code> once <code>cells &gt; 1</code>, where the shared gate buys parity that
+        is already gone and costs ~7-8× for it.
+        <br />
+        <span className="text-ink-quaternary">
+          Ported from <code>config/model/dispatch.rs</code>,{" "}
+          <code>engine/sharded_scheduled.rs:128</code>, <code>engine/cell_launcher.rs:272</code>,{" "}
+          <code>engine/turn_execution.rs:438</code>, <code>engine/global_hop.rs</code>, and{" "}
+          <code>engine/protocol_v2.rs:255</code>. The hop cost charged here is illustrative; its
+          shape — one bounded mpsc trip and a oneshot reply per request — is not.
+        </span>
       </SourceNote>
     </div>
   );
@@ -251,12 +270,14 @@ function Row({
 }): React.JSX.Element {
   return (
     <tr className="border-t border-white/5">
-      <td className="py-1.5 pr-6 align-top">
-        <div className="text-[15px] text-ink-secondary">{label}</div>
-        {hint !== undefined && <div className="text-[13px] text-ink-quaternary">{hint}</div>}
+      <td className="w-[420px] py-2 pr-8 align-baseline">
+        <span className="text-[15px] text-ink-secondary">{label}</span>
+        {hint !== undefined && (
+          <span className="ml-2 text-[13px] text-ink-quaternary">{hint}</span>
+        )}
       </td>
       {values.map((value, i) => (
-        <td key={i} className="py-1.5 pr-4 align-top">
+        <td key={i} className="py-2 pr-4 align-baseline">
           <strong className="text-[18px]" style={{ color: best(i) ? GREEN : "inherit" }}>
             {value}
           </strong>
@@ -312,17 +333,6 @@ function ModePane({
         )}
       </div>
 
-      <Legend>
-        <LegendItem mark="▰" color={accent}>in flight</LegendItem>
-        <LegendItem mark="▰" color={RED}>a slow one</LegendItem>
-        <LegendItem mark="▱">free</LegendItem>
-        {state.mode === "sharded" && (
-          <LegendItem mark="▱" color={RED}>free, and unreachable</LegendItem>
-        )}
-        {state.mode === "global-hop" && (
-          <LegendItem mark="→" color={accent}>hopped from the coordinator</LegendItem>
-        )}
-      </Legend>
 
       {state.mode === "sharded" && (
         <ShardedLanes state={state} config={config} accent={accent} caps={caps} />
