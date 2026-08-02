@@ -105,7 +105,11 @@ describe("event ordering", () => {
 
 describe("next_event_time", () => {
   it("is the earliest parked deadline", () => {
-    expect(nextEventTime(createClock("sim"))).toBe(120 * NS_PER_MS);
+    const tasks: Task[] = [
+      { id: "late", sleepsNs: [900 * NS_PER_MS] },
+      { id: "early", sleepsNs: [100 * NS_PER_MS] },
+    ];
+    expect(nextEventTime(createClock("sim", tasks))).toBe(100 * NS_PER_MS);
   });
 
   it("never reports a time in the past", () => {
@@ -121,17 +125,18 @@ describe("next_event_time", () => {
 
 describe("advancement", () => {
   it("jumps straight to the next event on the simulated clock", () => {
-    const state = stepSim(createClock("sim"));
-    // The first arrival is at 120ms; nothing happens before it, so nothing is spent getting there.
-    expect(state.nowNs).toBe(120 * NS_PER_MS);
-    expect(state.events).toHaveLength(1);
+    // The first request is sent at t=0; the second arrives 140ms later with nothing in between, so
+    // one step crosses the whole gap.
+    const first = stepSim(createClock("sim"));
+    expect(first.nowNs).toBe(0);
+    expect(stepSim(first).nowNs).toBe(140 * NS_PER_MS);
   });
 
   it("crawls through the empty space on the real clock", () => {
-    let state = createClock("real");
-    state = stepReal(state, 5 * NS_PER_MS);
+    const tasks: Task[] = [{ id: "a", sleepsNs: [200 * NS_PER_MS] }];
+    const state = stepReal(createClock("real", tasks), 5 * NS_PER_MS, tasks);
     expect(state.nowNs).toBe(5 * NS_PER_MS);
-    // Still nothing has woken: the deadline is 200ms away and must be waited out.
+    // Nothing has woken: the deadline is 200ms away and must be waited out.
     expect(state.events).toEqual([]);
   });
 

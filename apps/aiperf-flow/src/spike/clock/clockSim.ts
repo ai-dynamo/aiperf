@@ -70,7 +70,10 @@ export function requestsToTasks(requests: readonly Request[]): Task[] {
 export function defaultRequests(): Request[] {
   return Array.from({ length: 8 }, (_, i) => ({
     id: `req ${i + 1}`,
-    arrivalNs: (120 + i * 140) * NS_PER_MS,
+    // The first request is sent at t=0. A lead-in before anything happens is dead screen, and it
+    // scales with the stretch factor — at a 3-minute benchmark a 120ms lead-in is 12 seconds of
+    // watching an empty track.
+    arrivalNs: i * 140 * NS_PER_MS,
     ttftNs: (380 + ((i * 37) % 190)) * NS_PER_MS,
     itlNs: (24 + ((i * 11) % 18)) * NS_PER_MS,
     tokens: 6 + (i % 4),
