@@ -100,9 +100,15 @@ export function useNarratedDeck({
   const bumpRestart = () => setRestartKey((key) => key + 1);
 
   // Navigating to another deck must not leave the previous one talking.
+  //
+  // The mount-side call covers arriving somewhere new. The teardown covers *leaving* for a page
+  // that narrates nothing — the home listing, say — where this hook simply unmounts and no
+  // arriving deck is there to silence the old one. Without it the voice reads on over a page the
+  // viewer has already left.
   useEffect(() => {
     stopNarration();
     setPlaying(false);
+    return () => stopNarration();
   }, [location.pathname]);
 
   const advance = () => {
