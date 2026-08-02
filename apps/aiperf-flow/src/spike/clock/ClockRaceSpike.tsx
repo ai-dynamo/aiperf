@@ -10,10 +10,12 @@
 //! time has no obligation to. The comparison an end user cares about is the result table, not the
 //! heap: same requests, same tokens, same latencies, in a fraction of the wall time.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createClock,
   defaultTasks,
+  instantsOf,
+  stretchTasks,
   nextEventTime,
   NS_PER_MS,
   runToEnd,
@@ -22,6 +24,7 @@ import {
   stepSim,
   summarize,
   type ClockState,
+  type Task,
 } from "./clockSim.js";
 
 const GREEN = "var(--color-category-green)";
@@ -30,15 +33,45 @@ const ORANGE = "var(--color-category-orange)";
 const CYAN = "var(--color-category-cyan)";
 const DIM = "var(--color-ink-quaternary)";
 
-const TASKS = defaultTasks();
-const SPAN = spanNs(TASKS);
+const BASE_TASKS = defaultTasks();
 const SPEEDS = [1, 0.5, 0.25] as const;
 
+/**
+ * How far apart to push the events.
+ *
+ * Nothing else about the run changes — same requests, same order, same event count. Only the
+ * emptiness between them grows, which is precisely the thing one clock is billed for and the
+ * other is not.
+ */
+const STRETCHES = [
+  { factor: 1, label: "as recorded" },
+  { factor: 100, label: "3 minutes" },
+  { factor: 2000, label: "1 hour" },
+] as const;
+
+function humanNs(ns: number): string {
+  const ms = ns / NS_PER_MS;
+  if (ms < 1000) return `${ms.toFixed(0)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)} min`;
+  return `${(ms / 3_600_000).toFixed(1)} hours`;
+}
+
 export function ClockRaceSpike(): React.JSX.Element {
-  const [real, setReal] = useState<ClockState>(() => createClock("real", TASKS));
-  const [sim, setSim] = useState<ClockState>(() => createClock("sim", TASKS));
+  const [stretch, setStretch] = useState(1);
+  const tasks = useMemo(() => stretchTasks(BASE_TASKS, stretch), [stretch]);
+  const span = useMemo(() => spanNs(tasks), [tasks]);
+  const finished = useMemo(() => runToEnd("sim", tasks), [tasks]);
+  const allInstants = useMemo(() => instantsOf(finished), [finished]);
+  const instants = allInstants.length;
+
+  const [real, setReal] = useState<ClockState>(() => createClock("real", tasks));
+  const [sim, setSim] = useState<ClockState>(() => createClock("sim", tasks));
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(0.5);
+
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
 
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -53,9 +86,9 @@ export function ClockRaceSpike(): React.JSX.Element {
       last = t;
       if (runningRef.current) {
         // Real time advances only as fast as it actually passes.
-        setReal((s) => (s.done ? s : stepReal(s, dt * speedRef.current * NS_PER_MS, TASKS)));
+        setReal((s) => (s.done ? s : stepReal(s, dt * speedRef.current * NS_PER_MS, tasksRef.current)));
         // Virtual time advances one whole event per tick — the gap costs nothing.
-        setSim((s) => (s.done ? s : stepSim(s, TASKS)));
+        setSim((s) => (s.done ? s : stepSim(s, tasksRef.current)));
       }
       handle = requestAnimationFrame(frame);
     };
@@ -63,13 +96,19 @@ export function ClockRaceSpike(): React.JSX.Element {
     return () => cancelAnimationFrame(handle);
   }, []);
 
-  const reset = () => {
-    setReal(createClock("real", TASKS));
-    setSim(createClock("sim", TASKS));
+  const reset = (next: readonly typeof tasks[number][] = tasks) => {
+    setReal(createClock("real", next));
+    setSim(createClock("sim", next));
     setRunning(false);
   };
 
-  const finished = runToEnd("sim", TASKS);
+  // Changing the stretch is a different workload, so both clocks start over on it.
+  useEffect(() => {
+    setReal(createClock("real", tasks));
+    setSim(createClock("sim", tasks));
+    setRunning(false);
+  }, [tasks]);
+
   // Not a raw event comparison: the real clock's timestamps are rounded up to its tick, and a
   // coarse tick can also batch two wakes that simulation would have visited separately. What must
   // agree is the outcome — every request completed, every token generated, each request's own
@@ -94,6 +133,12 @@ export function ClockRaceSpike(): React.JSX.Element {
         clock is a number it can move rather than a wall it has to wait for.
       </p>
       <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
+        The faint vertical lines are the <em>only</em> moments anything happens — all{" "}
+        <strong>{instants}</strong> of them. Everything between is empty, however long the
+        benchmark is. That is what the two clocks disagree about the price of. Stretch it to
+        an hour and watch which pane&apos;s cost moves.
+      </p>
+      <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
         Press Run. In both panes the hollow circles are wakeups that have not happened yet, each
         sitting at the moment it is due. The left pane&apos;s marker walks to them one millisecond
         at a time; the right pane&apos;s jumps straight to the next one, because nothing in the gap
@@ -110,12 +155,12 @@ export function ClockRaceSpike(): React.JSX.Element {
               className="rounded border border-white/15 bg-surface-panel px-4 py-2 text-base font-semibold">
               {running ? "Pause" : "Run"}
             </button>
-            <button type="button" onClick={reset}
+            <button type="button" onClick={() => reset()}
               className="rounded border border-white/15 bg-surface-panel px-4 py-2 text-base font-semibold text-ink-secondary">
               Reset
             </button>
             <button type="button"
-              onClick={() => { setSim((s) => (s.done ? s : stepSim(s, TASKS))); setRunning(false); }}
+              onClick={() => { setSim((s) => (s.done ? s : stepSim(s, tasks))); setRunning(false); }}
               className="rounded border border-white/15 bg-surface-panel px-4 py-2 text-base font-semibold text-ink-secondary">
               Step sim
             </button>
@@ -131,10 +176,21 @@ export function ClockRaceSpike(): React.JSX.Element {
               </button>
             ))}
           </div>
+          <div className="flex items-center gap-1.5">
+            <span className="mr-1 text-base text-ink-tertiary">benchmark length</span>
+            {STRETCHES.map((o) => (
+              <button key={o.factor} type="button" onClick={() => setStretch(o.factor)}
+                title="Same requests, same events — only the empty time between them changes"
+                className={`rounded border px-3 py-1.5 text-sm font-semibold ${
+                  stretch === o.factor ? "border-transparent bg-accent-primary text-black"
+                    : "border-white/15 bg-surface-panel text-ink-secondary"}`}>
+                {o.label}
+              </button>
+            ))}
+          </div>
           <div className="ml-auto text-base tabular-nums">
-            <span className="text-ink-tertiary">workload spans</span>{" "}
-            <strong>{(SPAN / NS_PER_MS).toFixed(0)} ms</strong>
-            <span className="text-ink-quaternary"> of virtual time · {finished.events.length} events</span>
+            <strong>{humanNs(span)}</strong>
+            <span className="text-ink-quaternary"> of benchmark · always {finished.events.length} events</span>
           </div>
         </div>
       </div>
@@ -155,9 +211,25 @@ export function ClockRaceSpike(): React.JSX.Element {
 
       <div className="grid grid-cols-2 gap-4">
         <ClockPane state={real} label="Real time — you wait" accent={BLUE}
-          hint="RealClock · current-thread tokio, real timers" />
+          hint="RealClock · current-thread tokio, real timers"
+          tasks={tasks} span={span} instants={allInstants}
+          cost={
+            <span>
+              <strong style={{ color: BLUE }}>{humanNs(span)}</strong> of elapsed time — the whole
+              span, empty stretches and all, even though only <strong>{instants}</strong> moments in it
+              contain anything. Cost is O(span), so stretching the benchmark stretches this.
+            </span>
+          } />
         <ClockPane state={sim} label="Simulated time — instant" accent={CYAN}
-          hint="SimClock · advance_to(next_event_time), event by event" />
+          hint="SimClock · advance_to(next_event_time), event by event"
+          tasks={tasks} span={span} instants={allInstants}
+          cost={
+            <span>
+              <strong style={{ color: CYAN }}>{instants} visits</strong> — one per moment, and
+              nothing at all for the space between: <code>advance_to</code> steps over each in a
+              single assignment. Cost is O(events), so this number never moves.
+            </span>
+          } />
       </div>
 
       <p className="mt-4 max-w-6xl text-[13px] leading-relaxed text-ink-quaternary">
@@ -207,11 +279,24 @@ const VIEW_W = 760;
  * simulated one jumps to the next hollow circle, because there is nothing in between worth
  * visiting.
  */
-function ClockTrack({ state, accent }: { state: ClockState; accent: string }): React.JSX.Element {
-  const lanes = TASKS.length;
+function ClockTrack({
+  state,
+  accent,
+  tasks,
+  span,
+  instants,
+}: {
+  state: ClockState;
+  accent: string;
+  tasks: readonly Task[];
+  span: number;
+  /** Every moment in which anything happens. Between them the run is empty. */
+  instants: readonly number[];
+}): React.JSX.Element {
+  const lanes = tasks.length;
   const height = lanes * LANE_H + 26;
   const innerW = VIEW_W - PAD_L - PAD_R;
-  const x = (ns: number) => PAD_L + (Math.min(ns, SPAN) / Math.max(1, SPAN)) * innerW;
+  const x = (ns: number) => PAD_L + (Math.min(ns, span) / Math.max(1, span)) * innerW;
   const y = (lane: number) => 20 + lane * LANE_H + LANE_H / 2;
 
   // Per lane: where it was sent, where its first token landed, and its most recent event. Those
@@ -241,17 +326,27 @@ function ClockTrack({ state, accent }: { state: ClockState; accent: string }): R
     <svg viewBox={`0 0 ${VIEW_W} ${height}`} width="100%" height={height}
       role="img" aria-label="requests over time, with parked wakeups ahead of the playhead">
       {/* The span the whole run occupies, so both panes share one frame of reference. */}
+      {/*
+        The run, in full. Everything not on one of these lines is empty — and since events have no
+        width, that is the entire rest of the span. Drawing the emptiness would be drawing the
+        whole rectangle, which says nothing; drawing the moments says it exactly.
+      */}
+      {instants.map((t, i) => (
+        <line key={i} x1={x(t)} x2={x(t)} y1={14} y2={height - 6}
+          stroke="rgba(255,255,255,0.16)" strokeWidth={1} />
+      ))}
+
       {[0, 0.25, 0.5, 0.75, 1].map((f) => (
         <g key={f}>
-          <line x1={x(f * SPAN)} x2={x(f * SPAN)} y1={14} y2={height - 6}
+          <line x1={x(f * span)} x2={x(f * span)} y1={14} y2={height - 6}
             stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
-          <text x={x(f * SPAN)} y={10} fontSize={10} textAnchor="middle" fill="var(--color-ink-quaternary)">
-            {((f * SPAN) / NS_PER_MS).toFixed(0)}ms
+          <text x={x(f * span)} y={10} fontSize={10} textAnchor="middle" fill="var(--color-ink-quaternary)">
+            {humanNs(f * span)}
           </text>
         </g>
       ))}
 
-      {TASKS.map((task, lane) => {
+      {tasks.map((task, lane) => {
         const color = REQ_COLORS[lane % REQ_COLORS.length]!;
         const sentAt = sent.get(lane);
         const firstAt = first.get(lane);
@@ -271,7 +366,7 @@ function ClockTrack({ state, accent }: { state: ClockState; accent: string }): R
 
             {/* Waiting for the first token: the request exists and nothing has come back yet. */}
             {sentAt !== undefined && (
-              <line x1={x(sentAt)} x2={x(firstAt ?? Math.min(state.nowNs, SPAN))} y1={cy} y2={cy}
+              <line x1={x(sentAt)} x2={x(firstAt ?? Math.min(state.nowNs, span))} y1={cy} y2={cy}
                 stroke={color} strokeWidth={3} strokeDasharray="3 3" opacity={0.5} />
             )}
             {/* Streaming: solid, because tokens are arriving. */}
@@ -331,11 +426,20 @@ function ClockPane({
   label,
   accent,
   hint,
+  tasks,
+  span,
+  instants,
+  cost,
 }: {
   state: ClockState;
   label: string;
   accent: string;
   hint: string;
+  tasks: readonly Task[];
+  span: number;
+  instants: readonly number[];
+  /** What this clock is billed for, in its own currency. */
+  cost: React.ReactNode;
 }): React.JSX.Element {
   const logRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -343,7 +447,7 @@ function ClockPane({
     if (el !== null) el.scrollTop = el.scrollHeight;
   }, [state.events.length]);
 
-  const progress = Math.min(1, state.nowNs / Math.max(1, SPAN));
+  const progress = Math.min(1, state.nowNs / Math.max(1, span));
   return (
     <section className="rounded-lg border border-white/10 bg-surface-elevated p-4">
       <div className="mb-2 flex items-baseline gap-3">
@@ -359,7 +463,7 @@ function ClockPane({
 
       <div className="mb-2 flex items-baseline gap-6 text-lg tabular-nums">
         <span><span className="text-ink-tertiary">benchmark time</span>{" "}
-          <strong>{(state.nowNs / NS_PER_MS).toFixed(0)} ms</strong></span>
+          <strong>{humanNs(state.nowNs)}</strong></span>
         <span title="How long you actually sat there">
           <span className="text-ink-tertiary">you waited</span>{" "}
           <strong style={{ color: accent, fontSize: "1.15em" }}>
@@ -379,12 +483,21 @@ function ClockPane({
         <span><span className="text-ink-secondary">●</span> first token</span>
         <span><span className="text-ink-secondary">◦</span> each token</span>
         <span>┈ waiting</span>
+        <span><span className="text-ink-secondary">│</span> a moment something happens</span>
         <span><span className="text-ink-secondary">━</span> streaming</span>
         <span><span className="text-ink-secondary">◯</span> parked — hasn&apos;t happened yet</span>
         <span style={{ color: accent }}>▎ now</span>
       </div>
       <div className="mb-3">
-        <ClockTrack state={state} accent={accent} />
+        <ClockTrack state={state} accent={accent} tasks={tasks} span={span} instants={instants} />
+      </div>
+
+      <div className="mb-3 rounded border px-3 py-2 text-[15px]"
+        style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.02)" }}>
+        <div className="mb-0.5 text-[12px] font-bold tracking-widest text-ink-secondary">
+          BILLED FOR
+        </div>
+        {cost}
       </div>
 
       <div className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
@@ -393,9 +506,9 @@ function ClockPane({
       <div className="mb-3 grid grid-cols-2 gap-x-6 gap-y-2 text-[16px] tabular-nums">
         <Metric label="requests done" value={`${summarize(state).completed}`} />
         <Metric label="tokens" value={`${summarize(state).tokens}`} />
-        <Metric label="mean TTFT" value={`${summarize(state).meanTtftMs.toFixed(1)} ms`} accent={accent} />
-        <Metric label="mean ITL" value={`${summarize(state).meanItlMs.toFixed(1)} ms`} accent={accent} />
-        <Metric label="slowest request" value={`${summarize(state).p100LatencyMs.toFixed(0)} ms`} />
+        <Metric label="mean TTFT" value={humanNs(summarize(state).meanTtftMs * NS_PER_MS)} accent={accent} />
+        <Metric label="mean ITL" value={humanNs(summarize(state).meanItlMs * NS_PER_MS)} accent={accent} />
+        <Metric label="slowest request" value={humanNs(summarize(state).p100LatencyMs * NS_PER_MS)} />
       </div>
 
       <div className="mb-1 flex items-baseline gap-2">

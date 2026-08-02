@@ -290,3 +290,56 @@ export function summarize(state: ClockState): BenchmarkResult {
     p100LatencyMs: latencies.length === 0 ? 0 : Math.max(...latencies),
   };
 }
+
+/**
+ * Stretch every sleep by `factor`, leaving the event count untouched.
+ *
+ * This is the asymmetry the two clocks are built on, made adjustable. `advance_to` costs one visit
+ * per event regardless of how far apart they are, so simulation is O(events); a real timer must
+ * actually wait out each gap, so reality is O(span). Stretching only the gaps drives those two
+ * costs apart without changing a single thing about the run.
+ */
+export function stretchTasks(tasks: readonly Task[], factor: number): Task[] {
+  return tasks.map((t) => ({ ...t, sleepsNs: t.sleepsNs.map((ns) => ns * factor) }));
+}
+
+/** A stretch of the timeline with no event in it. Real time is billed for these; virtual is not. */
+export type IdleSpan = { fromNs: number; toNs: number };
+
+/**
+ * The gaps between consecutive event times.
+ *
+ * Events sharing a timestamp are one instant, not several, so the spans are built from distinct
+ * times. The leading gap before the first event counts: nothing happens there either.
+ */
+export function idleSpans(state: ClockState): IdleSpan[] {
+  const times = [...new Set(state.events.map((e) => e.atNs))].sort((a, b) => a - b);
+  const spans: IdleSpan[] = [];
+  let cursor = 0;
+  for (const t of times) {
+    if (t > cursor) spans.push({ fromNs: cursor, toNs: t });
+    cursor = t;
+  }
+  return spans;
+}
+
+/**
+ * Total time in which nothing at all happened.
+ *
+ * Events are instants with no width, so for a run that ends on an event this is the entire span —
+ * which is the point, not a rounding artefact. A benchmark is a handful of moments with waiting
+ * in between, and `countInstants` is the honest measure of how few of them there are.
+ */
+export function idleNs(state: ClockState): number {
+  return idleSpans(state).reduce((sum, s) => sum + (s.toNs - s.fromNs), 0);
+}
+
+/** The distinct moments the run consists of. Simulation pays once for each and nothing between. */
+export function instantsOf(state: ClockState): number[] {
+  return [...new Set(state.events.map((e) => e.atNs))].sort((a, b) => a - b);
+}
+
+/** How many distinct moments the run actually consists of. Simulation pays once for each. */
+export function countInstants(state: ClockState): number {
+  return instantsOf(state).length;
+}

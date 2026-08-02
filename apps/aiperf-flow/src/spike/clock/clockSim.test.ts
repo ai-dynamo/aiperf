@@ -10,6 +10,12 @@ import {
   nextEventTime,
   requestsToTasks,
   summarize,
+  stretchTasks,
+  idleSpans,
+  idleNs,
+  countInstants,
+  instantsOf,
+  defaultTasks,
   type Request,
   NS_PER_MS,
   runToEnd,
@@ -191,5 +197,46 @@ describe("what an end user compares", () => {
   it("counts every generated token", () => {
     const one: Request[] = [{ id: "r", arrivalNs: 0, ttftNs: 100 * NS_PER_MS, itlNs: 10 * NS_PER_MS, tokens: 5 }];
     expect(summarize(runToEnd("sim", requestsToTasks(one))).tokens).toBe(5);
+  });
+});
+
+describe("what each clock is billed for", () => {
+  it("stretches the gaps without adding a single event", () => {
+    // The whole asymmetry: simulation costs one visit per event, reality costs the span.
+    const base = defaultTasks();
+    const slow = stretchTasks(base, 1000);
+    const a = runToEnd("sim", base);
+    const b = runToEnd("sim", slow);
+    expect(b.events.length).toBe(a.events.length);
+    expect(b.nowNs).toBe(a.nowNs * 1000);
+    // A thousand times the span, and the simulated run does not get measurably dearer.
+    expect(b.wallMs).toBeCloseTo(a.wallMs, 6);
+  });
+
+  it("counts the emptiness between events", () => {
+    const one = requestsToTasks([
+      { id: "r", arrivalNs: 100 * NS_PER_MS, ttftNs: 400 * NS_PER_MS, itlNs: 10 * NS_PER_MS, tokens: 2 },
+    ]);
+    const state = runToEnd("sim", one);
+    // Events at 100, 500, 510. Idle is 0→100 and 100→500 and 500→510: everything but the instants.
+    expect(idleSpans(state).map((s) => (s.toNs - s.fromNs) / NS_PER_MS)).toEqual([100, 400, 10]);
+    expect(idleNs(state) / NS_PER_MS).toBe(510);
+  });
+
+  it("treats events sharing a timestamp as one instant, not a gap", () => {
+    const tasks: Task[] = [
+      { id: "a", sleepsNs: [100 * NS_PER_MS] },
+      { id: "b", sleepsNs: [100 * NS_PER_MS] },
+    ];
+    expect(idleSpans(runToEnd("sim", tasks))).toHaveLength(1);
+  });
+
+  it("is empty everywhere except a countable handful of instants", () => {
+    // Events have no width, so a run ending on an event is idle for its entire span. That is not a
+    // rounding artefact — it is the claim: a benchmark is N moments with waiting in between.
+    const state = runToEnd("sim");
+    expect(idleNs(state)).toBe(state.nowNs);
+    expect(countInstants(state)).toBeLessThan(state.events.length);
+    expect(instantsOf(state)).toEqual([...instantsOf(state)].sort((a, b) => a - b));
   });
 });
