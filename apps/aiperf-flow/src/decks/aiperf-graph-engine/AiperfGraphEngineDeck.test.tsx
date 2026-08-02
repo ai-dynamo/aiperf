@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "../../test/router.js";
 import { describe, expect, it } from "vitest";
 import { AiperfGraphEngineDeck } from "./AiperfGraphEngineDeck.js";
 

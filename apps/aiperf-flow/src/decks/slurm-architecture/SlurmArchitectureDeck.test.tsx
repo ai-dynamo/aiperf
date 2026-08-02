@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "../../test/router.js";
 import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { SlurmArchitectureDeck } from "./SlurmArchitectureDeck.js";

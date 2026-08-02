@@ -4,6 +4,7 @@
  */
 
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { accentClassName, inkClassName, strokeClassName } from "../theme/tokens.js";
 
 /** Small bar-chart brand mark, matching `apps/explainers`'s wordmark. */
@@ -35,12 +36,14 @@ export function TopBar({
       className={`relative flex items-center justify-between border-b bg-surface-page px-8 py-4 shadow-sm ${strokeClassName("secondary")}`}
     >
       <div className="flex items-center gap-4">
-        <a href="/" className="flex items-center gap-3">
+        {/* A router link, not a bare anchor: a bare one reloads the whole app, which throws away
+            deck state and makes returning home feel like a cold start. */}
+        <Link to="/" className="flex items-center gap-3">
           <BrandMark />
           <span className={`text-base font-extrabold tracking-[0.18em] ${inkClassName("primary")}`}>
             AIPERF
           </span>
-        </a>
+        </Link>
         <span className={`text-sm ${accentClassName("primary")}`}>·</span>
         <span className={`text-sm font-semibold uppercase tracking-[0.1em] ${inkClassName("secondary")}`}>
           {section}

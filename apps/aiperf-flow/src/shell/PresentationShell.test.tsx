@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "../test/router.js";
 import { describe, expect, it, vi } from "vitest";
 import { PresentationShell } from "./PresentationShell.js";
 import type { SlideDefinition } from "../deck/types.js";

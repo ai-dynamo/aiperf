@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "../../test/router.js";
 import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { GraphStepEmitStrategyDeck } from "./GraphStepEmitStrategyDeck.js";
