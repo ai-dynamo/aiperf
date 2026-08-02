@@ -212,6 +212,12 @@ export const SIMULATIONS: readonly DeckListing[] = [
       "Every stage of the metrics plane on one dataset: columnar storage with NaN sentinels, the ragged CSR for inter-chunk latency, events becoming a curve, the collision tie-break that keeps touching intervals from double-counting, ICL-aware token arrivals, and then steady-state detection by threshold, CUSUM, MSER-5, consensus and a stationarity test that can veto the answer.",
   },
   {
+    path: "/spike-sketch-live",
+    title: "One value at a time, into both",
+    description:
+      "Latency values arrive one by one at an exact sorted array and at three cellular t-digests, and you watch each structure update — values kept on one side, absorbed into centroids on the other. Then both answer the same percentile: one reads two retained values, the other folds its cells and walks the centroid chain.",
+  },
+  {
     path: "/spike-exact-vs-sketch",
     title: "What survives being summarized",
     description:
