@@ -57,6 +57,8 @@ export function SketchLiveSpike(): React.JSX.Element {
   const [running, setRunning] = useState(false);
   const [interval, setIntervalMs] = useState<number>(350);
   const [percentile, setPercentile] = useState(90);
+  /** Set when the user asks to summarize, which can be at any point — not only at the end. */
+  const [summarizing, setSummarizing] = useState(false);
 
   const values = useMemo(() => latencySamples(TOTAL, 5), []);
   const feed = useMemo(() => arrivals(values, CELLS), [values]);
@@ -83,6 +85,12 @@ export function SketchLiveSpike(): React.JSX.Element {
 
   const next = step < TOTAL ? feed[step] : undefined;
   const complete = step >= TOTAL;
+  // Reaching the end summarizes on its own; before that it is on request.
+  const showSummary = summarizing || complete;
+  const pendingAtSummarize = state.cells.reduce(
+    (n, cell, i) => n + cell.centroids.length - (state.settled[i] ?? 0),
+    0,
+  );
 
   return (
     <div className="min-h-screen bg-surface-page px-8 py-7 text-ink-primary">
@@ -97,11 +105,26 @@ export function SketchLiveSpike(): React.JSX.Element {
 
       <ControlBar>
         <div className="flex items-center gap-1.5">
-          <Toggle active onClick={() => setRunning((r) => !r)}>{running ? "Pause" : "Play"}</Toggle>
-          <Toggle onClick={() => { setRunning(false); setStep((s) => Math.min(TOTAL, s + 1)); }}>
-            Next value
+          {summarizing ? (
+            <Toggle active onClick={() => setSummarizing(false)}>← back to ingest</Toggle>
+          ) : (
+            <>
+              <Toggle active onClick={() => setRunning((r) => !r)}>
+                {running ? "Pause" : "Play"}
+              </Toggle>
+              <Toggle onClick={() => { setRunning(false); setStep((s) => Math.min(TOTAL, s + 1)); }}>
+                Next value
+              </Toggle>
+            </>
+          )}
+          <Toggle onClick={() => { setRunning(false); setSummarizing(false); setStep(0); }}>
+            Reset
           </Toggle>
-          <Toggle onClick={() => { setRunning(false); setStep(0); }}>Reset</Toggle>
+          <Toggle disabled={step === 0 || showSummary}
+            onClick={() => { setRunning(false); setSummarizing(true); }}
+            title="Summarize whatever has arrived so far — a report can be asked for at any point">
+            Summarize now
+          </Toggle>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="mr-1 text-base text-ink-tertiary">speed</span>
@@ -152,8 +175,9 @@ export function SketchLiveSpike(): React.JSX.Element {
         </Panel>
       </div>
 
-      {complete && (
-        <SummarizePhase state={state} percentile={percentile} />
+      {showSummary && (
+        <SummarizePhase state={state} percentile={percentile} pending={pendingAtSummarize}
+          midRun={!complete} />
       )}
 
       <SourceNote>
@@ -303,9 +327,15 @@ const STAGE_WALK = 3;
 function SummarizePhase({
   state,
   percentile,
+  pending,
+  midRun,
 }: {
   state: IngestState;
   percentile: number;
+  /** Centroids sitting in unsorted tails when the report was asked for. */
+  pending: number;
+  /** True when the user asked mid-run rather than at the end. */
+  midRun: boolean;
 }): React.JSX.Element {
   // The sort happens here, at summarize — not during the run.
   const sorted = useMemo(() => sortedAtSummarize(state), [state]);
@@ -318,11 +348,12 @@ function SummarizePhase({
   const [stage, setStage] = useState(0);
   const [playing, setPlaying] = useState(true);
 
-  // Restart whenever the question changes, so the walk is always watched from the beginning.
+  // Restart whenever the question or the data changes, so the walk is always watched from the
+  // beginning — asking mid-run twice at different points should replay, not resume.
   useEffect(() => {
     setStage(0);
     setPlaying(true);
-  }, [percentile]);
+  }, [percentile, state]);
 
   useEffect(() => {
     if (!playing) return undefined;
@@ -350,9 +381,10 @@ function SummarizePhase({
         style={{ borderColor: GREEN, background: "rgba(0,255,128,0.04)" }}>
         <strong style={{ color: GREEN }}>Now summarize.</strong>
         <span>
-          Both are asked for p{percentile}. The left <strong>sorts</strong> its {state.arrived.length}{" "}
-          retained values — its first and only expensive step — then reads two of them. The right
-          has no values left to sort, so it folds its cells and walks the result.
+          Both are asked for p{percentile} over the {state.arrived.length} values that have arrived
+          so far. The left <strong>sorts</strong> them — its first and only expensive step — then
+          reads two. The right has no values left to sort, so it folds its cells and walks the
+          result.
         </span>
         <span className="ml-auto flex items-center gap-1.5">
           <Toggle active onClick={() => setPlaying((p) => !p)}>{playing ? "Pause" : "Replay"}</Toggle>
@@ -362,6 +394,25 @@ function SummarizePhase({
           <Toggle onClick={() => { setStage(0); setPlaying(true); }}>Restart</Toggle>
         </span>
       </div>
+
+      {midRun && (
+        <div className="mb-3 rounded-lg border px-5 py-3 text-[15px] leading-relaxed"
+          style={{ borderColor: ORANGE, background: "rgba(255,140,0,0.05)" }}>
+          <strong style={{ color: ORANGE }}>Asked mid-run.</strong>{" "}
+          A report can be requested at any point, and neither structure was ready for it.{" "}
+          {pending > 0 ? (
+            <>
+              {pending} centroid{pending === 1 ? "" : "s"} were still sitting in unsorted tails; the
+              fold sorts and clusters them before it can answer, because <code>clustered</code>{" "}
+              sorts by mean first. That flush is work the run had been deferring, and asking early
+              is what pays for it.
+            </>
+          ) : (
+            <>Every cell happened to be freshly compressed, so nothing had to be flushed first.</>
+          )}{" "}
+          Keep going and ask again — the answer moves as the distribution fills in.
+        </div>
+      )}
 
       <div className="grid grid-cols-[1fr_1.3fr] gap-4">
         <Panel label="EXACT — sort, then interpolate" hint="sorts once, then reads two values">
