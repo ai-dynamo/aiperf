@@ -7,7 +7,11 @@ import { describe, expect, it } from "vitest";
 import {
   admissibleTotal,
   capsFor,
+  createPickState,
   createRun,
+  fnv1a64,
+  fragmentation,
+  pickWorker,
   DEFAULT_CONFIG,
   inFlightTotal,
   ownedCap,
@@ -65,8 +69,8 @@ describe("the request budget", () => {
     // leaving the budget unsliced under `global` would dispatch `workers` duplicate copies of it.
     const sharded = createRun("sharded");
     const global = createRun("global");
-    expect(global.workers.map((w) => w.remaining)).toEqual(sharded.workers.map((w) => w.remaining));
-    expect(global.workers.reduce((a, w) => a + w.remaining, 0)).toBe(DEFAULT_CONFIG.requests);
+    expect(global.workers.map((w) => w.queue.length)).toEqual(sharded.workers.map((w) => w.queue.length));
+    expect(global.workers.reduce((a, w) => a + w.queue.length, 0)).toBe(DEFAULT_CONFIG.requests);
   });
 
   it("dispatches every request under both modes", () => {
@@ -150,5 +154,89 @@ describe("stranded capacity", () => {
     // The drain is not a shortfall: there is no work left that the free slots could have taken.
     const state = runToEnd("sharded");
     expect(strandedSlots(state)).toBe(0);
+  });
+});
+
+describe("pick_worker", () => {
+  const inflight = (xs: number[]) => xs;
+
+  it("round-robins in issuance order and advances only on a round-robin pick", () => {
+    const state = createPickState();
+    const picks = Array.from({ length: 6 }, (_, i) =>
+      pickWorker("round-robin", 4, `s${i}`, inflight([0, 0, 0, 0]), state),
+    );
+    expect(picks).toEqual([0, 1, 2, 3, 0, 1]);
+  });
+
+  it("sends every turn of a session to one worker under sticky", () => {
+    const state = createPickState();
+    const first = pickWorker("sticky", 4, "session-3", inflight([0, 0, 0, 0]), state);
+    // Load is irrelevant to a sticky pick; only the correlation id matters.
+    const again = pickWorker("sticky", 4, "session-3", inflight([9, 0, 0, 0]), state);
+    expect(again).toBe(first);
+  });
+
+  it("falls back to round-robin when a sticky turn has no correlation id", () => {
+    const state = createPickState();
+    expect(pickWorker("sticky", 4, null, inflight([0, 0, 0, 0]), state)).toBe(0);
+    expect(pickWorker("sticky", 4, null, inflight([0, 0, 0, 0]), state)).toBe(1);
+  });
+
+  it("picks the shallowest worker, resolving ties to the lowest index", () => {
+    const state = createPickState();
+    expect(pickWorker("least-loaded", 4, null, inflight([2, 1, 5, 1]), state)).toBe(1);
+    expect(pickWorker("least-loaded", 4, null, inflight([0, 0, 0, 0]), createPickState())).toBe(0);
+  });
+
+  it("binds a correlation id on first sight and honours the binding after", () => {
+    const state = createPickState();
+    const first = pickWorker("least-loaded", 4, "s", inflight([9, 0, 9, 9]), state);
+    expect(first).toBe(1);
+    // Even though worker 3 is now shallowest, the binding wins — continuations stay sticky.
+    expect(pickWorker("least-loaded", 4, "s", inflight([0, 9, 0, 0]), state)).toBe(1);
+  });
+
+  it("hashes correlation ids with the runtime's seed-free fnv1a64", () => {
+    // Ported constants, so the mapping is stable across processes and runs. Pinning one value
+    // catches an accidental switch to a seeded hash.
+    expect(fnv1a64("")).toBe(0xcbf2_9ce4_8422_2325n);
+    expect(fnv1a64("session-0")).toBe(fnv1a64("session-0"));
+    expect(fnv1a64("session-0")).not.toBe(fnv1a64("session-1"));
+  });
+});
+
+describe("global-hop", () => {
+  it("issues in exact global order, so turn i lands on worker i % W under round-robin", () => {
+    // The property `global_hop.rs:16` claims. Sharded and global cannot state this at all: their
+    // W loops race, and a request's worker is whichever loop happened to have room.
+    let state = createRun("global-hop", DEFAULT_CONFIG, "round-robin");
+    state = step(state, DEFAULT_CONFIG);
+    const issued = state.workers.flatMap((w) => w.inFlight).sort((a, b) => a.id - b.id);
+    for (const request of issued) {
+      expect(request.worker).toBe(request.id % DEFAULT_CONFIG.workers);
+    }
+  });
+
+  it("holds the full cap from one loop, with no shared gate", () => {
+    // "One loop holding the full cap IS the global cap" — the cap is never sliced here.
+    expect(capsFor("global-hop", 8, 4)).toEqual([8, 8, 8, 8]);
+    expect(summarize(runToEnd("global-hop")).peakInFlight).toBeLessThanOrEqual(
+      DEFAULT_CONFIG.concurrency,
+    );
+  });
+
+  it("charges a cross-thread cost that the other modes do not pay", () => {
+    const hop = runToEnd("global-hop");
+    expect(hop.hopTicksCharged).toBe(DEFAULT_CONFIG.requests * DEFAULT_CONFIG.hopCostTicks);
+    expect(runToEnd("global").hopTicksCharged).toBe(0);
+  });
+
+  it("fragments a session across workers under round-robin and not under sticky", () => {
+    // The concrete cost of the default policy: the sticky connection pool is worker-local, so a
+    // session spread over W workers opens a connection on each.
+    const rr = fragmentation(runToEnd("global-hop", DEFAULT_CONFIG, "round-robin"));
+    const sticky = fragmentation(runToEnd("global-hop", DEFAULT_CONFIG, "sticky"));
+    expect(sticky.worst).toBe(1);
+    expect(rr.mean).toBeGreaterThan(sticky.mean);
   });
 });

@@ -16,11 +16,14 @@ import {
   createRun,
   DEFAULT_CONFIG,
   durationFor,
+  fragmentation,
   runToEnd,
   step,
   strandedSlots,
   summarize,
   type Config,
+  type HopRouting,
+  type Mode,
   type RunState,
 } from "./dispatchSim.js";
 import { ControlBar, Legend, LegendItem, Panel, Readout, SourceNote, SpikeHeader, Toggle } from "../ui.js";
@@ -30,6 +33,19 @@ const ORANGE = "var(--color-category-orange)";
 const RED = "var(--color-category-red)";
 const GREEN = "var(--color-category-green)";
 const DIM = "var(--color-ink-quaternary)";
+
+const MODES: readonly Mode[] = ["sharded", "global", "global-hop"];
+const MODE_ACCENT: Record<Mode, string> = {
+  sharded: ORANGE,
+  global: CYAN,
+  "global-hop": "var(--color-category-purple)",
+};
+const MODE_SUBTITLE: Record<Mode, string> = {
+  sharded: "a fixed 1/workers share each, fixed before the run starts",
+  global: "one shared pool, reallocated on every completion",
+  "global-hop": "one coordinator loop holding the full cap, hopping each request to a thread",
+};
+const ROUTINGS: readonly HopRouting[] = ["round-robin", "sticky", "least-loaded"];
 
 const WORKER_CHOICES = [2, 4, 8] as const;
 const CONCURRENCY_CHOICES = [3, 8, 12] as const;
@@ -44,58 +60,64 @@ export function DispatchModesSpike(): React.JSX.Element {
     [workers, concurrency],
   );
 
-  const [sharded, setSharded] = useState<RunState>(() => createRun("sharded", config));
-  const [global, setGlobal] = useState<RunState>(() => createRun("global", config));
+  const [routing, setRouting] = useState<HopRouting>("round-robin");
+  const [runs, setRuns] = useState<RunState[]>(() => MODES.map((m) => createRun(m, config, routing)));
 
-  // Changing the shape is a different run, so both restart together and stay comparable.
+  // Changing the shape or the routing is a different run, so all three restart together and stay
+  // comparable — the whole page is only meaningful when the three are running the same workload.
   useEffect(() => {
-    setSharded(createRun("sharded", config));
-    setGlobal(createRun("global", config));
+    setRuns(MODES.map((m) => createRun(m, config, routing)));
     setRunning(false);
-  }, [config]);
+  }, [config, routing]);
 
   useEffect(() => {
     if (!running) return undefined;
     const handle = window.setInterval(() => {
-      setSharded((s) => step(s, config));
-      setGlobal((s) => step(s, config));
-    }, 90);
+      setRuns((current) => current.map((r) => step(r, config)));
+    }, 80);
     return () => window.clearInterval(handle);
   }, [running, config]);
 
   useEffect(() => {
-    if (sharded.done && global.done) setRunning(false);
-  }, [sharded.done, global.done]);
+    if (runs.every((r) => r.done)) setRunning(false);
+  }, [runs]);
 
-  const finishedSharded = useMemo(() => summarize(runToEnd("sharded", config), config), [config]);
-  const finishedGlobal = useMemo(() => summarize(runToEnd("global", config), config), [config]);
+  const finished = useMemo(
+    () => MODES.map((m) => {
+      const state = runToEnd(m, config, routing);
+      return { mode: m, summary: summarize(state, config), state };
+    }),
+    [config, routing],
+  );
   const overSubscribed = admissibleTotal("sharded", concurrency, workers) > concurrency;
 
   return (
     <div className="min-h-screen bg-surface-page px-8 py-7 text-ink-primary">
       <SpikeHeader title="The shortfall that only exists in the sum">
         <p>
-          With more than one worker thread, something has to decide who may have a slot.{" "}
-          <code>sharded</code> hands each thread a fixed <code>1/workers</code> share up front.{" "}
-          <code>global</code> — the default — gives every thread one shared pool to admit from. Both
-          panes below run the same requests on the same threads against the same target.
+          With more than one worker thread, something has to decide who may have a slot. There are
+          three answers. <code>sharded</code> hands each thread a fixed <code>1/workers</code>{" "}
+          share, fixed before the run starts. <code>global</code> — the default — gives every
+          thread one shared pool. <code>global-hop</code> goes further: <em>one</em> coordinator
+          loop issues every request in exact global order and hops each to a thread. All three run
+          the same requests on the same threads against the same target below.
         </p>
         <p>
-          Watch the lanes: <strong>every one of them is obeying its cap correctly, in both
-          panes.</strong> Nothing is broken at the level anyone would look. Then watch the two
-          curves. A sharded thread that finishes its own queue keeps its slots and cannot lend them
-          to a thread still working, so the aggregate quietly sits below the number you asked for —
-          and the run takes longer to do identical work.
+          Watch the sharded lanes: <strong>every one is obeying its cap correctly.</strong> Nothing
+          is broken at the level anyone would look. Only the aggregate curve shows it — a thread
+          that finishes its own queue keeps slots it cannot lend, so the run holds less concurrency
+          than you asked for and takes longer. Then notice what the fix costs: global-hop buys
+          exact ordering with a cross-thread trip per request, and pays for it in wall time.
         </p>
       </SpikeHeader>
 
       <ControlBar>
         <div className="flex items-center gap-1.5">
           <Toggle active onClick={() => setRunning((r) => !r)}>{running ? "Pause" : "Run"}</Toggle>
-          <Toggle onClick={() => { setRunning(false); setSharded((s) => step(s, config)); setGlobal((s) => step(s, config)); }}>
+          <Toggle onClick={() => { setRunning(false); setRuns((c) => c.map((r) => step(r, config))); }}>
             Step
           </Toggle>
-          <Toggle onClick={() => { setRunning(false); setSharded(createRun("sharded", config)); setGlobal(createRun("global", config)); }}>
+          <Toggle onClick={() => { setRunning(false); setRuns(MODES.map((m) => createRun(m, config, routing))); }}>
             Reset
           </Toggle>
         </div>
@@ -114,9 +136,20 @@ export function DispatchModesSpike(): React.JSX.Element {
           ))}
         </div>
 
+        <div className="flex items-center gap-1.5">
+          <span className="mr-1 text-base text-ink-tertiary">hop routing</span>
+          {ROUTINGS.map((r) => (
+            <Toggle key={r} active={routing === r} onClick={() => setRouting(r)}
+              title="Only meaningful for global-hop; inert under the other two modes">
+              {r}
+            </Toggle>
+          ))}
+        </div>
+
         <div className="ml-auto flex items-center gap-6">
-          <Readout label="tick" value={sharded.tick} />
+          <Readout label="tick" value={runs[0]?.tick ?? 0} />
           <Readout label="requests" value={config.requests} />
+          <Readout label="sessions" value={config.sessions} />
         </div>
       </ControlBar>
 
@@ -132,72 +165,104 @@ export function DispatchModesSpike(): React.JSX.Element {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <ModePane state={sharded} config={config} accent={ORANGE} title="sharded"
-          subtitle="a fixed 1/workers share each, decided before the run starts"
-          finished={finishedSharded} />
-        <ModePane state={global} config={config} accent={CYAN} title="global  (default)"
-          subtitle="one shared pool, reallocated on every completion"
-          finished={finishedGlobal} />
+      <div className="grid grid-cols-3 gap-4">
+        {runs.map((state, i) => (
+          <ModePane key={state.mode} state={state} config={config}
+            accent={MODE_ACCENT[state.mode]}
+            title={state.mode === "global" ? "global  (default)" : state.mode}
+            subtitle={MODE_SUBTITLE[state.mode]}
+            finished={finished[i]!.summary} />
+        ))}
       </div>
 
       <div className="mt-4 rounded-lg border px-5 py-4"
         style={{ borderColor: GREEN, background: "rgba(0,255,128,0.03)" }}>
-        <div className="mb-2 text-[12px] font-bold tracking-widest" style={{ color: GREEN }}>
-          THE SAME WORK, FINISHED
+        <div className="mb-3 text-[12px] font-bold tracking-widest" style={{ color: GREEN }}>
+          THE SAME WORK, FINISHED — WHAT EACH MODE BOUGHT AND PAID
         </div>
-        <div className="grid grid-cols-3 gap-6 text-base">
-          <Comparison label="mean concurrency held"
-            sharded={`${finishedSharded.meanInFlight.toFixed(2)} of ${concurrency}`}
-            global={`${finishedGlobal.meanInFlight.toFixed(2)} of ${concurrency}`} />
-          <Comparison label="utilisation of the target"
-            sharded={`${(finishedSharded.utilisation * 100).toFixed(1)}%`}
-            global={`${(finishedGlobal.utilisation * 100).toFixed(1)}%`} />
-          <Comparison label="ticks spent dispatching"
-            sharded={`${finishedSharded.ticks}`}
-            global={`${finishedGlobal.ticks}`} />
-        </div>
+        <table className="w-full text-base tabular-nums">
+          <thead>
+            <tr className="text-left text-[14px] text-ink-tertiary">
+              <th className="w-64 font-normal" />
+              {finished.map((f) => (
+                <th key={f.mode} className="pb-1 font-bold" style={{ color: MODE_ACCENT[f.mode] }}>
+                  {f.mode}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <Row label="concurrency actually held"
+              values={finished.map((f) => `${f.summary.meanInFlight.toFixed(2)} of ${concurrency}`)}
+              best={(i) => finished[i]!.summary.utilisation > 0.99} />
+            <Row label="wall ticks for identical work"
+              values={finished.map((f) => `${f.state.curve.length}`)}
+              best={(i) => finished[i]!.state.curve.length ===
+                Math.min(...finished.map((g) => g.state.curve.length))} />
+            <Row label="workers per session"
+              hint="a session spread across workers opens a connection on each — the pool is worker-local"
+              values={finished.map((f) => fragmentation(f.state).mean.toFixed(2))}
+              best={(i) => fragmentation(finished[i]!.state).worst === 1} />
+            <Row label="exact request-to-thread order"
+              values={finished.map((f) => (f.mode === "global-hop" ? "yes" : "no"))}
+              best={(i) => finished[i]!.mode === "global-hop"} />
+          </tbody>
+        </table>
       </div>
 
       <SourceNote>
-        Modelled on <code>rust/runtime/src/engine/</code>:{" "}
-        <code>DispatchMode</code> at <code>protocol.rs:14</code>,{" "}
-        <code>slice_phase_for_thread</code> at <code>sharded_scheduled.rs:128</code>,{" "}
-        <code>owned_positions</code> at <code>cell_launcher.rs:272</code>, and the condition stated
-        by <code>VariableLatencyMock</code> at <code>workers_characterization.rs:1325</code> — that
-        uneven completion times are what make the static partition visibly wrong. Two details the
-        page keeps faithful because they are easy to assume wrongly: the request <em>budget</em> is
-        sliced under <strong>both</strong> modes, since the shared gate covers concurrency and rate
-        only; and the shared gate applies to the request-rate phase shapes,{" "}
-        <code>user_centric</code> and <code>fixed_schedule</code> being unaffected by the mode.
+        Modelled on <code>rust/runtime/src/</code>: <code>DispatchMode</code> and{" "}
+        <code>HopRouting</code> at <code>config/model/dispatch.rs</code>,{" "}
+        <code>slice_phase_for_thread</code> at <code>engine/sharded_scheduled.rs:128</code>,{" "}
+        <code>owned_positions</code> at <code>engine/cell_launcher.rs:272</code>,{" "}
+        <code>pick_worker</code> and its seed-free <code>fnv1a64</code> at{" "}
+        <code>engine/turn_execution.rs:438</code>, and{" "}
+        <code>engine/global_hop.rs</code> for the single-dispatcher loop. Four details kept
+        faithful because each is easy to assume wrongly: the request <em>budget</em> is sliced
+        under <code>sharded</code> and <code>global</code> — the shared gate covers concurrency and
+        rate only, so an unsliced budget would dispatch one full copy per thread — while{" "}
+        <code>global-hop</code> partitions nothing, one coordinator owning the whole stream;{" "}
+        <code>global-hop</code> takes no shared admission gate at all, because one loop holding the
+        full cap <em>is</em> the global cap; <code>owned_cap</code> floors each share at one, so a
+        target below the worker count over-subscribes rather than under-shoots; and the shared gate
+        applies to the request-rate phase shapes, <code>user_centric</code> and{" "}
+        <code>fixed_schedule</code> being unaffected by the mode entirely. The default is itself
+        cellular-aware: <code>global</code> for a single process, <code>sharded</code> once{" "}
+        <code>cells &gt; 1</code>, because a cellular run has already forfeited byte-exact
+        determinism and the shared gate then buys nothing — measured ~7-8× slower on a c4-144
+        (<code>engine/protocol_v2.rs:255</code>). The hop cost charged here is illustrative; its
+        shape — one bounded mpsc trip and a oneshot reply per request — is not.
       </SourceNote>
     </div>
   );
 }
 
-function Comparison({
+/** One metric across the three modes, with the winners marked. */
+function Row({
   label,
-  sharded,
-  global,
+  values,
+  best,
+  hint,
 }: {
   label: string;
-  sharded: string;
-  global: string;
+  values: readonly string[];
+  best: (index: number) => boolean;
+  hint?: string;
 }): React.JSX.Element {
   return (
-    <div>
-      <div className="mb-1 text-[14px] text-ink-tertiary">{label}</div>
-      <div className="flex items-baseline gap-4">
-        <span className="tabular-nums" style={{ color: ORANGE }}>
-          <span className="text-[13px] text-ink-quaternary">sharded </span>
-          <strong className="text-[19px]">{sharded}</strong>
-        </span>
-        <span className="tabular-nums" style={{ color: CYAN }}>
-          <span className="text-[13px] text-ink-quaternary">global </span>
-          <strong className="text-[19px]">{global}</strong>
-        </span>
-      </div>
-    </div>
+    <tr className="border-t border-white/5">
+      <td className="py-1.5 pr-6 align-top">
+        <div className="text-[15px] text-ink-secondary">{label}</div>
+        {hint !== undefined && <div className="text-[13px] text-ink-quaternary">{hint}</div>}
+      </td>
+      {values.map((value, i) => (
+        <td key={i} className="py-1.5 pr-4 align-top">
+          <strong className="text-[18px]" style={{ color: best(i) ? GREEN : "inherit" }}>
+            {value}
+          </strong>
+        </td>
+      ))}
+    </tr>
   );
 }
 
@@ -234,6 +299,13 @@ function ModePane({
             <strong style={{ color: stranded > 0 ? RED : DIM }}>{stranded}</strong>
           </span>
         )}
+        {state.mode === "global-hop" && (
+          <span className="text-lg tabular-nums">
+            <span className="text-ink-tertiary">hops</span>{" "}
+            <strong style={{ color: accent }}>{state.hopTicksCharged}</strong>
+            <span className="text-ink-quaternary"> ticks paid</span>
+          </span>
+        )}
         {state.done && (
           <span className="ml-auto rounded px-2.5 py-0.5 text-[12px] font-bold text-black"
             style={{ background: GREEN }}>DONE</span>
@@ -247,13 +319,16 @@ function ModePane({
         {state.mode === "sharded" && (
           <LegendItem mark="▱" color={RED}>free, and unreachable</LegendItem>
         )}
+        {state.mode === "global-hop" && (
+          <LegendItem mark="→" color={accent}>hopped from the coordinator</LegendItem>
+        )}
       </Legend>
 
-      {state.mode === "global" ? (
-        <SharedPool state={state} config={config} accent={accent} />
-      ) : (
+      {state.mode === "sharded" && (
         <ShardedLanes state={state} config={config} accent={accent} caps={caps} />
       )}
+      {state.mode === "global" && <SharedPool state={state} config={config} accent={accent} />}
+      {state.mode === "global-hop" && <HopLanes state={state} config={config} accent={accent} />}
 
       <Curve state={state} config={config} accent={accent} finishedTicks={finished.ticks} />
     </Panel>
@@ -351,11 +426,11 @@ function ShardedLanes({
   accent: string;
   caps: number[];
 }): React.JSX.Element {
-  const anyoneWaiting = state.workers.some((w) => w.remaining > 0);
+  const anyoneWaiting = state.workers.some((w) => w.queue.length > 0);
   return (
     <div className="mb-3 flex flex-col gap-1.5">
       {state.workers.map((worker) => {
-        const idle = worker.remaining === 0;
+        const idle = worker.queue.length === 0;
         return (
           <div key={worker.id} className="flex items-center gap-3">
             <span className="w-20 shrink-0 font-mono text-[13px] text-ink-tertiary">
@@ -373,7 +448,7 @@ function ShardedLanes({
             </span>
             <span className="font-mono text-[13px] tabular-nums"
               style={{ color: idle && anyoneWaiting ? RED : DIM }}>
-              {idle ? "queue empty" : `${worker.remaining} queued`}
+              {idle ? "queue empty" : `${worker.queue.length} queued`}
             </span>
           </div>
         );
@@ -424,10 +499,69 @@ function SharedPool({
               {worker.inFlight.length} held
             </span>
             {" · "}
-            {worker.remaining === 0 ? "queue empty" : `${worker.remaining} queued`}
+            {worker.queue.length === 0 ? "queue empty" : `${worker.queue.length} queued`}
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Global-hop: the coordinator's queue, then where each request was placed.
+ *
+ * The other two modes have no equivalent of the left-hand queue — their `W` loops each walk their
+ * own partition and race. Here one loop issues in exact global order, so `turn i` reaching
+ * `worker i % W` under round-robin is a guarantee rather than an accident, and that is what makes
+ * jittered arrival statistics reproducible.
+ */
+function HopLanes({
+  state,
+  config,
+  accent,
+}: {
+  state: RunState;
+  config: Config;
+  accent: string;
+}): React.JSX.Element {
+  const upcoming = state.coordinatorQueue.slice(0, 6);
+  return (
+    <div className="mb-3 flex flex-col gap-1.5">
+      <div className="flex items-center gap-3">
+        <span className="w-24 shrink-0 font-mono text-[13px] text-ink-tertiary">coordinator</span>
+        <span className="flex items-center gap-1.5 font-mono text-[13px]">
+          {upcoming.length === 0 && <span style={{ color: DIM }}>issued everything</span>}
+          {upcoming.map((id) => (
+            <span key={id} className="rounded px-1.5 py-0.5"
+              style={{ background: "rgba(255,255,255,0.06)", color: DIM }}>
+              #{id}
+            </span>
+          ))}
+          {state.coordinatorQueue.length > upcoming.length && (
+            <span style={{ color: DIM }}>+{state.coordinatorQueue.length - upcoming.length}</span>
+          )}
+        </span>
+      </div>
+
+      {state.workers.map((worker) => (
+        <div key={worker.id} className="flex items-center gap-3">
+          <span className="w-24 shrink-0 font-mono text-[13px] text-ink-tertiary">
+            → worker {worker.id}
+          </span>
+          <span className="flex flex-wrap items-center gap-[3px]">
+            {worker.inFlight.map((request) => (
+              <Slot key={request.id} accent={accent} filled
+                slow={durationFor(request.id, config) > config.shortTicks} />
+            ))}
+            {worker.inFlight.length === 0 && (
+              <span className="font-mono text-[13px]" style={{ color: DIM }}>idle</span>
+            )}
+          </span>
+          <span className="ml-auto font-mono text-[13px] tabular-nums" style={{ color: DIM }}>
+            {new Set(worker.inFlight.map((r) => r.correlation)).size} sessions
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

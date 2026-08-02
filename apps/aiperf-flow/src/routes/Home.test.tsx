@@ -49,7 +49,9 @@ describe("Home listings", () => {
     expect(new Set(paths).size).toBe(paths.length);
   });
 
-  it("only lists routes the router actually serves", async () => {
+  // Importing App.tsx pulls in every deck and spike module — ~1.6s on its own, and more under
+  // full-suite contention, which intermittently blew the 5s default.
+  it("only lists routes the router actually serves", { timeout: 20_000 }, async () => {
     // A listing that 404s is worse than no listing: the card looks live and leads nowhere.
     //
     // Two ways a path can be served: an explicit <Route> in App.tsx, or a deck registered into
