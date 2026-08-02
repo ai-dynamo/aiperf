@@ -212,6 +212,12 @@ export const SIMULATIONS: readonly DeckListing[] = [
       "Every stage of the metrics plane on one dataset: columnar storage with NaN sentinels, the ragged CSR for inter-chunk latency, events becoming a curve, the collision tie-break that keeps touching intervals from double-counting, ICL-aware token arrivals, and then steady-state detection by threshold, CUSUM, MSER-5, consensus and a stationarity test that can veto the answer.",
   },
   {
+    path: "/spike-dispatch-modes",
+    title: "The shortfall that only exists in the sum",
+    description:
+      "sharded gives each worker thread a fixed 1/workers share of the concurrency target; global gives them one shared pool. Every lane obeys its own cap in both, and only the aggregate curve shows that the sharded run holds less concurrency than it was asked for and takes longer to do identical work.",
+  },
+  {
     path: "/spike-prefix-identity",
     title: "Same bytes, different segment",
     description:
