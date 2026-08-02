@@ -31,8 +31,8 @@ export function Panel({
   return (
     <section className="flex min-h-0 flex-col rounded-lg border border-white/10 bg-surface-elevated p-3">
       <div className="mb-2 flex items-baseline gap-3">
-        <h2 className="text-[10px] font-bold tracking-widest text-ink-secondary">{title}</h2>
-        {hint !== undefined && <span className="text-[10px] text-ink-quaternary">{hint}</span>}
+        <h2 className="text-[12px] font-bold tracking-widest text-ink-secondary">{title}</h2>
+        {hint !== undefined && <span className="text-[13px] text-ink-quaternary">{hint}</span>}
       </div>
       <div className="min-h-0 flex-1">{children}</div>
     </section>
@@ -69,7 +69,7 @@ export function ColumnStorePanel({
         const y = ci * (rowH + gap);
         return (
           <g key={column.name}>
-            <text x={labelW - 8} y={y + rowH - 4} textAnchor="end" fontSize={9} fill={INK}>
+            <text x={labelW - 8} y={y + rowH - 4} textAnchor="end" fontSize={12} fill={INK}>
               {column.name}
             </text>
             {column.values.map((value, row) => {
@@ -91,7 +91,7 @@ export function ColumnStorePanel({
         const y = scenario.store.columns.length * (rowH + gap);
         return (
           <g>
-            <text x={labelW - 8} y={y + rowH - 4} textAnchor="end" fontSize={9} fill={PURPLE}>
+            <text x={labelW - 8} y={y + rowH - 4} textAnchor="end" fontSize={12} fill={PURPLE}>
               icl (ragged)
             </text>
             {scenario.store.icl.lengths.map((length, row) => {
@@ -110,7 +110,7 @@ export function ColumnStorePanel({
         );
       })()}
 
-      <text x={labelW} y={(scenario.store.columns.length + 1) * (rowH + gap) + 12} fontSize={9} fill={DIM}>
+      <text x={labelW} y={(scenario.store.columns.length + 1) * (rowH + gap) + 12} fontSize={12} fill={DIM}>
         request index 0 → {n - 1}   ·   a vertical slice is one record   ·   bar height = ICL values in that row
       </text>
     </svg>
@@ -132,8 +132,8 @@ export function EventSortPanel({
   const slice = scenario.sortedEvents.slice(from, from + 16);
 
   return (
-    <div className="font-mono text-[10px] leading-[1.45]">
-      <div className="mb-1 flex gap-3 text-[9px] tracking-widest" style={{ color: DIM }}>
+    <div className="font-mono text-[13px] leading-[1.5]">
+      <div className="mb-1 flex gap-3 text-[12px] tracking-widest" style={{ color: DIM }}>
         <span className="w-16">t (s)</span>
         <span className="w-10">delta</span>
         <span className="w-8">rec</span>
@@ -183,7 +183,7 @@ export function CumsumPanel({
   const n = Math.max(0, Math.min(scenario.steps.length, Math.round(upTo)));
   const recent = scenario.steps.slice(Math.max(0, n - 9), n);
   return (
-    <div className="font-mono text-[10px] leading-[1.5]">
+    <div className="font-mono text-[13px] leading-[1.55]">
       {recent.length === 0 && <div style={{ color: DIM }}>Waiting for the first event…</div>}
       {recent.map((step, i) => (
         <div key={i} className="flex items-baseline gap-2">
@@ -200,7 +200,7 @@ export function CumsumPanel({
           {step.collided && <span style={{ color: RED }}>tie</span>}
         </div>
       ))}
-      <div className="mt-2 border-t border-white/10 pt-1 text-[9px]" style={{ color: DIM }}>
+      <div className="mt-2 border-t border-white/10 pt-1.5 text-[12px]" style={{ color: DIM }}>
         residuals snapped to zero: <strong style={{ color: INK }}>{scenario.snapped}</strong>
         {"  ·  "}threshold 1e-9 × max
       </div>
@@ -268,7 +268,7 @@ export function CurvePanel({
       {ticks.map((t, i) => (
         <g key={i}>
           <line x1={x(t)} y1={T} x2={x(t)} y2={height - B} stroke={GRID} strokeWidth={1} opacity={0.4} />
-          <text x={x(t)} y={height - 6} textAnchor="middle" fontSize={9} fill={DIM}>
+          <text x={x(t)} y={height - 6} textAnchor="middle" fontSize={12} fill={DIM}>
             {toSeconds(t, scenario.runStartNs).toFixed(0)}s
           </text>
         </g>
@@ -285,7 +285,7 @@ export function CurvePanel({
             opacity={0.14}
           />
           {overlay.band.label !== undefined && (
-            <text x={x(overlay.band.fromNs) + 5} y={T + 11} fontSize={9} fill={overlay.band.color}>
+            <text x={x(overlay.band.fromNs) + 5} y={T + 11} fontSize={12} fill={overlay.band.color}>
               {overlay.band.label}
             </text>
           )}
@@ -303,7 +303,7 @@ export function CurvePanel({
             strokeWidth={1}
             strokeDasharray="4 4"
           />
-          <text x={W - R - 4} y={y(overlay.level.value) - 3} textAnchor="end" fontSize={9} fill={overlay.level.color}>
+          <text x={W - R - 4} y={y(overlay.level.value) - 3} textAnchor="end" fontSize={12} fill={overlay.level.color}>
             {overlay.level.label ?? overlay.level.value}
           </text>
         </>
@@ -321,11 +321,11 @@ export function CurvePanel({
       )}
 
       <line x1={L} y1={height - B} x2={W - R} y2={height - B} stroke={INK} strokeWidth={1} />
-      <text x={4} y={T + 8} fontSize={9} fill={DIM}>
+      <text x={4} y={T + 8} fontSize={12} fill={DIM}>
         {valueLabel ?? ""}
       </text>
-      <text x={4} y={height - B - 2} fontSize={9} fill={DIM}>0</text>
-      <text x={4} y={T + 18} fontSize={9} fill={DIM}>{Math.round(vMax)}</text>
+      <text x={4} y={height - B - 2} fontSize={12} fill={DIM}>0</text>
+      <text x={4} y={T + 18} fontSize={12} fill={DIM}>{Math.round(vMax)}</text>
     </svg>
   );
 }
@@ -351,10 +351,10 @@ export function CusumPanel({ scenario }: { scenario: Scenario }): React.JSX.Elem
         <path d={line(cusum.forward)} fill="none" stroke={CYAN} strokeWidth={1.6} />
         <path d={line(cusum.backward)} fill="none" stroke={PURPLE} strokeWidth={1.4} strokeDasharray="4 3" />
         <line x1={x(cusum.rampUpIndex)} y1={10} x2={x(cusum.rampUpIndex)} y2={H - 22} stroke={CYAN} strokeWidth={1.5} />
-        <text x={x(cusum.rampUpIndex) + 4} y={20} fontSize={9} fill={CYAN}>argmin forward</text>
+        <text x={x(cusum.rampUpIndex) + 4} y={20} fontSize={12} fill={CYAN}>argmin forward</text>
         <line x1={x(cusum.rampDownIndex)} y1={10} x2={x(cusum.rampDownIndex)} y2={H - 22} stroke={PURPLE} strokeWidth={1.5} />
-        <text x={x(cusum.rampDownIndex) + 4} y={32} fontSize={9} fill={PURPLE}>argmin backward</text>
-        <text x={4} y={20} fontSize={9} fill={DIM}>cusum</text>
+        <text x={x(cusum.rampDownIndex) + 4} y={32} fontSize={12} fill={PURPLE}>argmin backward</text>
+        <text x={4} y={20} fontSize={12} fill={DIM}>cusum</text>
       </svg>
       <div className="mt-1 text-[10px]" style={{ color: DIM }}>
         target (time-weighted p95) <strong style={{ color: INK }}>{cusum.target.toFixed(1)}</strong>
@@ -436,12 +436,12 @@ export function ConsensusPanel({ scenario }: { scenario: Scenario }): React.JSX.
           const y = 6 + i * rowH;
           return (
             <g key={row.name}>
-              <text x={104} y={y + 11} textAnchor="end" fontSize={9} fill={row.color}>
+              <text x={104} y={y + 11} textAnchor="end" fontSize={12} fill={row.color}>
                 {row.name}
               </text>
               <line x1={108} y1={y + 8} x2={W - 12} y2={y + 8} stroke={GRID} strokeWidth={1} />
               {row.window === null ? (
-                <text x={112} y={y + 11} fontSize={9} fill={DIM}>
+                <text x={112} y={y + 11} fontSize={12} fill={DIM}>
                   no boundary
                 </text>
               ) : (

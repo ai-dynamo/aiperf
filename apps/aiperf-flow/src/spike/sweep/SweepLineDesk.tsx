@@ -179,8 +179,8 @@ export function SweepLineDesk(): React.JSX.Element {
       narrated={narrated}
       title="The sweep-line desk"
     >
-      <div className="flex h-full min-h-0 flex-col gap-3 px-6 pt-3 pb-2">
-        <div className="flex items-center gap-5 text-[11px] tabular-nums">
+      <div className="flex h-full min-h-0 flex-col justify-center gap-3 px-6 pt-3 pb-2">
+        <div className="flex items-center gap-6 text-[14px] tabular-nums">
           <span><span className="text-ink-tertiary">records</span> <strong>{scenario.records.length}</strong></span>
           <span><span className="text-ink-tertiary">events</span> <strong>{scenario.sortedEvents.length}</strong></span>
           <span><span className="text-ink-tertiary">collisions</span>{" "}
@@ -198,7 +198,7 @@ export function SweepLineDesk(): React.JSX.Element {
         )}
 
         {(beat.stage === "events" || beat.stage === "collision") && (
-          <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr] gap-3">
+          <div className="grid min-h-0 grid-cols-[1fr_1fr] gap-3">
             <Panel title="EVENTS — sorted by (timestamp asc, delta asc)"
               hint={`${scenario.collisions.length} share a timestamp`}>
               <EventSortPanel scenario={scenario} upTo={local * scenario.sortedEvents.length} />
@@ -211,7 +211,7 @@ export function SweepLineDesk(): React.JSX.Element {
         )}
 
         {beat.stage === "cumsum" && (
-          <div className="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-3">
+          <div className="grid min-h-0 grid-cols-[320px_1fr] gap-3">
             <Panel title="RUNNING TOTAL" hint="delta → held value">
               <CumsumPanel scenario={scenario} upTo={local * scenario.steps.length} />
             </Panel>
@@ -250,7 +250,7 @@ export function SweepLineDesk(): React.JSX.Element {
         )}
 
         {beat.stage === "cusum" && (
-          <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr] gap-3">
+          <div className="grid min-h-0 grid-cols-[1fr_1fr] gap-3">
             <Panel title="CUSUM — forward (solid) and backward (dashed)"
               hint="argmin of each is a turning point">
               <CusumPanel scenario={scenario} />
@@ -264,7 +264,7 @@ export function SweepLineDesk(): React.JSX.Element {
         )}
 
         {beat.stage === "mser" && (
-          <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr] gap-3">
+          <div className="grid min-h-0 grid-cols-[1fr_1fr] gap-3">
             <Panel title="MSER-5 — request latency" hint="means above, statistic below">
               <Mser5Panel trace={scenario.mser5Latency} label="latency" />
             </Panel>
@@ -275,7 +275,7 @@ export function SweepLineDesk(): React.JSX.Element {
         )}
 
         {beat.stage === "consensus" && (
-          <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr] gap-3">
+          <div className="grid min-h-0 grid-cols-[1fr_1fr] gap-3">
             <Panel title="CONSENSUS — latest start, earliest end" hint="every signal must agree">
               <ConsensusPanel scenario={scenario} />
             </Panel>
