@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { buildTrace, buildWarpMap, rawTimeFor } from "./warpTrace.js";
 import { idleGaps } from "../decks/weka-timing-transforms-interactive/logic.js";
 import { WarpTracks, warpSummary } from "./WarpTracks.js";
+import { ControlBar, Legend, LegendItem, Readout, SourceNote, SpikeHeader, Toggle } from "./ui.js";
 
 const SPEEDS = [2, 1, 0.5, 0.25] as const;
 /** Seconds of recorded session to freeze. Long enough to contain real dead air. */
@@ -58,73 +59,70 @@ export function WarpSpike(): React.JSX.Element {
 
   return (
     <div className="min-h-screen bg-surface-page px-8 py-6 text-ink-primary">
-      <div className="mb-1 flex items-baseline gap-3">
-        <span className="text-xs font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
-        <h1 className="text-2xl font-extrabold">The warp — two clocks, one session</h1>
-      </div>
-      <p className="mb-4 max-w-3xl text-sm text-ink-secondary">
-        Both tracks are the same recorded session at the same scale. The top one replays it
-        verbatim; the bottom one is what a runtime actually issues, with dead air capped. Watch the
-        two playheads separate — and notice that every bar is exactly as wide on both. Service time
-        is never compressed, only the gaps between requests.
-      </p>
+      <SpikeHeader title="The warp — two clocks, one session">
+        <p>
+          Both tracks are the same recorded session at the same scale. The top one replays it
+          verbatim; the bottom one is what a runtime actually issues, with dead air capped.
+        </p>
+        <p>
+          Watch the two playheads separate — and notice that <strong>every bar is exactly as wide
+          on both</strong>. Service time is never compressed; only the gaps between requests are.
+          That is what makes the warped replay a faithful one rather than merely a faster one.
+        </p>
+      </SpikeHeader>
 
-      <div className="mb-4 rounded-lg border border-white/10 bg-surface-elevated px-4 py-3">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="flex items-center gap-1.5">
-            <button type="button" onClick={() => setRunning((r) => !r)}
-              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold">
-              {running ? "Pause" : "Run"}
-            </button>
-            <button type="button" onClick={() => setWarpedNow(0)}
-              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary">
-              Replay
-            </button>
-            <button type="button" onClick={() => { setSeed((s) => s + 1); setWarpedNow(0); }}
-              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary tabular-nums">
-              seed {seed}
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <span className="mr-1 text-sm text-ink-tertiary">speed</span>
-            {SPEEDS.map((s) => (
-              <button key={s} type="button" onClick={() => setSpeed(s)}
-                className={`rounded border px-2.5 py-1 text-xs font-semibold tabular-nums ${
-                  speed === s ? "border-transparent bg-accent-primary text-black"
-                    : "border-white/15 bg-surface-panel text-ink-secondary"}`}>
-                {s}×
-              </button>
-            ))}
-          </div>
-
-          <div className="ml-auto flex items-center gap-6 text-sm tabular-nums">
-            <span><span className="text-ink-tertiary">raw</span>{" "}
-              <strong>{rawNow.toFixed(1)}s</strong>
-              <span className="text-ink-quaternary"> / {trace.rawSpan.toFixed(1)}</span></span>
-            <span><span className="text-ink-tertiary">warped</span>{" "}
-              <strong style={{ color: "var(--color-category-green)" }}>{warpedNow.toFixed(1)}s</strong>
-              <span className="text-ink-quaternary"> / {warpSpan.toFixed(1)}</span></span>
-            <span><span className="text-ink-tertiary">saved</span>{" "}
-              <strong style={{ color: "var(--color-category-orange)" }}>
-                {saved.toFixed(1)}s ({trace.rawSpan > 0 ? Math.round((saved / trace.rawSpan) * 100) : 0}%)
-              </strong></span>
-          </div>
+      <ControlBar>
+        <div className="flex items-center gap-1.5">
+          <Toggle onClick={() => setRunning((r) => !r)} active>{running ? "Pause" : "Run"}</Toggle>
+          <Toggle onClick={() => setWarpedNow(0)}>Replay</Toggle>
+          <Toggle onClick={() => { setSeed((s) => s + 1); setWarpedNow(0); }}>seed {seed}</Toggle>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-8 gap-y-2 border-t border-white/10 pt-3">
-          <label className="flex items-center gap-3 text-sm">
-            <span className="w-40 text-ink-tertiary">idle cap <strong className="text-ink-secondary">{cap.toFixed(1)}s</strong></span>
-            <input type="range" min={1} max={80} value={cap * 10}
-              onChange={(e) => setCap(Number(e.target.value) / 10)} />
-          </label>
-          <span className="text-xs text-ink-quaternary">
-            {gaps.filter((g) => g.capped).length} of {gaps.length} idle gaps exceed the cap and get collapsed
+        <div className="flex items-center gap-1.5">
+          <span className="mr-1 text-base text-ink-tertiary">speed</span>
+          {SPEEDS.map((v) => (
+            <Toggle key={v} active={speed === v} onClick={() => setSpeed(v)}>{v}×</Toggle>
+          ))}
+        </div>
+
+        <label className="flex items-center gap-3 text-base">
+          <span className="text-ink-tertiary">
+            idle cap <strong className="text-ink-secondary tabular-nums">{cap.toFixed(1)}s</strong>
+          </span>
+          <input type="range" min={1} max={80} value={cap * 10}
+            onChange={(e) => setCap(Number(e.target.value) / 10)} />
+          <span className="text-[13px] text-ink-quaternary">
+            {gaps.filter((g) => g.capped).length} of {gaps.length} gaps exceed it
+          </span>
+        </label>
+
+        <div className="ml-auto flex items-center gap-6">
+          <Readout label="raw" value={`${rawNow.toFixed(1)}s`} />
+          <Readout label="warped" value={`${warpedNow.toFixed(1)}s`} color="var(--color-category-green)" />
+          <span className="text-lg tabular-nums">
+            <span className="text-ink-tertiary">saved</span>{" "}
+            <strong style={{ color: "var(--color-category-orange)" }}>
+              {saved.toFixed(1)}s ({trace.rawSpan > 0 ? Math.round((saved / trace.rawSpan) * 100) : 0}%)
+            </strong>
           </span>
         </div>
-      </div>
+      </ControlBar>
+
+      <Legend>
+        <LegendItem mark="▬" color="var(--color-category-blue)">main agent turn</LegendItem>
+        <LegendItem mark="▬" color="var(--color-category-green)">subagent turn</LegendItem>
+        <LegendItem mark="▧">idle gap over the cap — collapsed on the warped track</LegendItem>
+        <LegendItem mark="▎" color="var(--color-category-orange)">playhead</LegendItem>
+      </Legend>
 
       <WarpTracks trace={trace} cap={cap} rawNow={rawNow} warpedNow={warpedNow} />
+
+      <SourceNote>
+        The bars are turns; the shaded blocks between them are idle gaps that exceed the cap. Only
+        those gaps shrink — a turn keeps the duration it was recorded with, so latency measured off
+        the warped replay is the latency that was actually observed. The saving is entirely
+        recovered dead air.
+      </SourceNote>
     </div>
   );
 }

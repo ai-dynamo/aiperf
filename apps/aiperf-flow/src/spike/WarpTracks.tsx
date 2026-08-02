@@ -90,36 +90,36 @@ export function WarpTracks({
   return (
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="block" role="img"
       aria-label="raw and warped clocks over one recorded session">
-      <text x={LEFT} y={rawTop - 24} fontSize={11} fontWeight={700}
+      <text x={LEFT} y={rawTop - 26} fontSize={13} fontWeight={700}
         fill="var(--color-ink-secondary)" letterSpacing={1.1}>RAW CLOCK — AS RECORDED</text>
 
       {gaps.filter((g) => g.capped).map((g, i) => (
         <g key={`gap-${i}`}>
           <rect x={x(g.start)} y={rawTop - 8} width={Math.max(2, (g.end - g.start) * px)}
             height={lanes.length * LANE_H + 12} fill="var(--color-category-orange)" opacity={0.11} />
-          <text x={(x(g.start) + x(g.end)) / 2} y={rawTop - 12} textAnchor="middle" fontSize={9}
+          <text x={(x(g.start) + x(g.end)) / 2} y={rawTop - 11} textAnchor="middle" fontSize={11}
             fill="var(--color-category-orange)">−{(g.idle - cap).toFixed(1)}s</text>
         </g>
       ))}
 
       {lanes.map((lane) => (
         <text key={`l-raw-${lane}`} x={LEFT - 10} y={laneY(rawTop, lane) + BAR_H - 2}
-          textAnchor="end" fontSize={9.5} fill={colorOf(lane)}>{lane}</text>
+          textAnchor="end" fontSize={12} fill={colorOf(lane)}>{lane}</text>
       ))}
       {block(rawTop, "raw", rawNow)}
 
-      <text x={LEFT} y={warpTop - 24} fontSize={11} fontWeight={700}
+      <text x={LEFT} y={warpTop - 26} fontSize={13} fontWeight={700}
         fill="var(--color-category-green)" letterSpacing={1.1}>
         WARPED CLOCK — WHAT THE RUNTIME ISSUES
       </text>
       <rect x={x(warpSpan)} y={warpTop - 8} width={Math.max(0, (rawSpan - warpSpan) * px)}
         height={lanes.length * LANE_H + 12} fill="var(--color-category-green)" opacity={0.07} />
-      <text x={x(warpSpan) + 8} y={warpTop + lanes.length * LANE_H + 18} fontSize={10}
+      <text x={x(warpSpan) + 8} y={warpTop + lanes.length * LANE_H + 20} fontSize={13}
         fill="var(--color-category-green)">{saved.toFixed(1)}s never replayed</text>
 
       {lanes.map((lane) => (
         <text key={`l-warp-${lane}`} x={LEFT - 10} y={laneY(warpTop, lane) + BAR_H - 2}
-          textAnchor="end" fontSize={9.5} fill={colorOf(lane)}>{lane}</text>
+          textAnchor="end" fontSize={12} fill={colorOf(lane)}>{lane}</text>
       ))}
       {block(warpTop, "warp", warpedNow)}
     </svg>
