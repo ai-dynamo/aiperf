@@ -233,13 +233,20 @@ WHAT EACH ONE BOUGHT, AND PAID
       </div>
 
       <SourceNote>
-        Four things worth knowing, each easy to assume wrongly. The request <em>budget</em> is
-        split per thread under <code>sharded</code> and <code>global</code> alike — the shared gate
-        covers concurrency and rate only — while <code>global-hop</code> splits nothing.{" "}
-        <code>global-hop</code> needs no shared gate at all: one loop holding the full cap{" "}
-        <em>is</em> the global cap. A target smaller than the thread count over-subscribes rather
-        than under-shooting, because each share is floored at one. And the mode only affects
-        request-rate phases — <code>user_centric</code> and <code>fixed_schedule</code> ignore it.
+        Four things worth knowing, each easy to assume wrongly. <strong>The shared pool covers
+        concurrency and rate, and nothing else.</strong> <code>GlobalAdmission</code> holds exactly
+        two gates, so <code>slice_common</code> still splits three fields per thread under{" "}
+        <code>global</code> as well as <code>sharded</code>: <code>requests</code> and{" "}
+        <code>sessions</code>, which are work budgets that would otherwise be dispatched once per
+        thread, and <code>prefill_concurrency</code>, which is an admission cap — meaning{" "}
+        <code>global</code> can strand <em>prefill</em> slots by exactly the mechanism shown here
+        for concurrency. The runtime says so itself: no shared prefill gate, and a
+        request-count-sharing gate is future work. <code>global-hop</code> escapes all of it by
+        slicing thread 0 of 1, a no-op, so the single coordinator holds every full cap; it needs no
+        shared gate because one loop holding the full cap <em>is</em> the global cap. A target
+        smaller than the thread count over-subscribes rather than under-shooting, since each share
+        is floored at one. And the mode only affects request-rate phases —{" "}
+        <code>user_centric</code> and <code>fixed_schedule</code> ignore it.
         The default already accounts for this: <code>global</code> for one process,{" "}
         <code>sharded</code> once <code>cells &gt; 1</code>, where the shared gate buys parity that
         is already gone and costs ~7-8× for it.
@@ -304,6 +311,8 @@ function ModePane({
 }): React.JSX.Element {
   const live = state.workers.reduce((sum, w) => sum + w.inFlight.length, 0);
   const stranded = strandedSlots(state);
+  // `global` cannot strand *these* slots, and the reason is worth stating rather than implying:
+  // nothing here is reserved for anyone.
   const caps = capsFor(state.mode, config.concurrency, config.workers);
 
   return (
@@ -318,6 +327,13 @@ function ModePane({
           <span className="text-lg tabular-nums">
             <span className="text-ink-tertiary">slots stranded</span>{" "}
             <strong style={{ color: stranded > 0 ? RED : DIM }}>{stranded}</strong>
+          </span>
+        )}
+        {state.mode === "global" && (
+          <span className="text-lg tabular-nums">
+            <span className="text-ink-tertiary">slots stranded</span>{" "}
+            <strong style={{ color: DIM }}>0</strong>
+            <span className="text-[13px] text-ink-quaternary"> — nothing is reserved</span>
           </span>
         )}
         {state.mode === "global-hop" && (
@@ -498,7 +514,7 @@ function SharedPool({
           })}
         </span>
         <span className="font-mono text-[13px] tabular-nums" style={{ color: DIM }}>
-          any worker may take any slot
+          any worker may take any slot — even all of them
         </span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-1">
