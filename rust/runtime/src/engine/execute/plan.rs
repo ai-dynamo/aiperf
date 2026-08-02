@@ -94,8 +94,10 @@ pub(crate) fn phase_scheduled_resources(
         });
     };
     let session = Some(Rc::new(SlotPool::new_global(global_pool)));
-    let phase_resources: Rc<dyn ScheduledPhaseResources> =
-        Rc::new(SlotPoolPhaseResources::new(session.clone(), prefill.clone()));
+    let phase_resources: Rc<dyn ScheduledPhaseResources> = Rc::new(SlotPoolPhaseResources::new(
+        session.clone(),
+        prefill.clone(),
+    ));
     Ok(NativeScheduledResources {
         session,
         prefill,
