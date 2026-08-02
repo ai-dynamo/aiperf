@@ -53,6 +53,16 @@ src/aiperf/_build_info.py
 .agents/*
 !.agents/skills/
 
+# Skills installed into the shared skills dir by an external installer rather than
+# authored here. They are not this project's skills and their contents are managed
+# elsewhere, so they stay untracked while `.agents/skills/` itself remains checked in.
+.agents/skills/.rix-skills-version
+.agents/skills/docx/
+.agents/skills/pdf/
+.agents/skills/pdf-reading/
+.agents/skills/pptx/
+.agents/skills/xlsx/
+
 # Claude Code - ignore user settings, keep agents and the skills symlink
 .claude/*
 !.claude/agents/
