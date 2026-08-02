@@ -25,6 +25,15 @@ use super::*;
 pub(crate) struct GlobalAdmission {
     /// One shared concurrency gate per phase that authors a `concurrency` cap.
     pub(crate) concurrency: HashMap<MetricsPhase, Arc<crate::timing::GlobalSlotPool>>,
+    /// One shared prefill gate per phase that authors a `prefill_concurrency` cap.
+    ///
+    /// `prefill_concurrency` is an admission cap exactly as `concurrency` is, so without a shared
+    /// gate it was statically partitioned per thread by `slice_common` — leaving `Global` able to
+    /// strand prefill capacity by the same mechanism the shared concurrency gate exists to
+    /// prevent: a thread that has finished its own work still owns its prefill share, and a thread
+    /// that needs it cannot borrow it. It is also floored at one per thread by `owned_cap`, so a
+    /// prefill cap below the thread count over-subscribed. One shared pool removes both.
+    pub(crate) prefill: HashMap<MetricsPhase, Arc<crate::timing::GlobalSlotPool>>,
     /// One shared rate gate per phase that authors a `rate`.
     ///
     /// Consumed by `phase_scheduled_resources`, which hands the per-phase gate
@@ -40,17 +49,25 @@ impl GlobalAdmission {
     /// Build one gate per phase from the cell-local (unsliced-by-thread) phase specs.
     pub(crate) fn build(phases: &[PhaseSpec]) -> Result<Self> {
         let mut concurrency = HashMap::new();
+        let mut prefill = HashMap::new();
         let mut rate = HashMap::new();
         for phase in phases {
             let phase_key = metrics_phase(phase)?;
             if let Some(cap) = phase.concurrency() {
                 concurrency.insert(phase_key, crate::timing::GlobalSlotPool::new(cap));
             }
+            if let Some(cap) = phase.common().prefill_concurrency {
+                prefill.insert(phase_key, crate::timing::GlobalSlotPool::new(cap));
+            }
             if let Some(r) = phase.rate() {
                 rate.insert(phase_key, crate::timing::GlobalRateGate::new(r));
             }
         }
-        Ok(Self { concurrency, rate })
+        Ok(Self {
+            concurrency,
+            prefill,
+            rate,
+        })
     }
 }
 

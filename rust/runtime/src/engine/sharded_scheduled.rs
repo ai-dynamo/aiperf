@@ -150,7 +150,12 @@ pub(crate) fn slice_phase_for_thread(
             common,
             concurrency,
         } => {
-            slice_common(common, &owned_budget, &owned_cap);
+            slice_common(
+                common,
+                &owned_budget,
+                &owned_cap,
+                global_admits_concurrency_and_rate,
+            );
             if !global_admits_concurrency_and_rate {
                 *concurrency = owned_cap(*concurrency);
             }
@@ -165,7 +170,12 @@ pub(crate) fn slice_phase_for_thread(
             rate,
             concurrency,
         } => {
-            slice_common(common, &owned_budget, &owned_cap);
+            slice_common(
+                common,
+                &owned_budget,
+                &owned_cap,
+                global_admits_concurrency_and_rate,
+            );
             if !global_admits_concurrency_and_rate {
                 *rate = scaled_rate(*rate);
                 if let Some(cap) = concurrency {
@@ -179,7 +189,12 @@ pub(crate) fn slice_phase_for_thread(
             concurrency,
             ..
         } => {
-            slice_common(common, &owned_budget, &owned_cap);
+            slice_common(
+                common,
+                &owned_budget,
+                &owned_cap,
+                global_admits_concurrency_and_rate,
+            );
             if !global_admits_concurrency_and_rate {
                 *rate = scaled_rate(*rate);
                 if let Some(cap) = concurrency {
@@ -196,7 +211,12 @@ pub(crate) fn slice_phase_for_thread(
             users,
             concurrency,
         } => {
-            slice_common(common, &owned_budget, &owned_cap);
+            slice_common(
+                common,
+                &owned_budget,
+                &owned_cap,
+                global_admits_concurrency_and_rate,
+            );
             *rate = scaled_rate(*rate);
             *users = owned_cap(*users);
             if let Some(cap) = concurrency {
@@ -214,6 +234,7 @@ fn slice_common(
     common: &mut crate::engine::protocol::PhaseCommonSpec,
     owned_budget: &impl Fn(u64) -> u64,
     owned_cap: &impl Fn(usize) -> usize,
+    global_admits_prefill: bool,
 ) {
     if let Some(requests) = common.requests {
         common.requests = Some(owned_budget(requests));
@@ -226,7 +247,14 @@ fn slice_common(
     if let Some(sessions) = common.sessions {
         common.sessions = Some(owned_budget(sessions));
     }
-    if let Some(prefill) = common.prefill_concurrency {
+    // `prefill_concurrency` is an admission cap, not a work budget. Under `Global`/`GlobalHop`
+    // the cell builds one shared `GlobalSlotPool` for it, so this thread keeps the full cell-level
+    // value and admits against that gate — the same treatment `concurrency` gets, and for the same
+    // reason: a per-thread share strands prefill capacity a busy thread cannot borrow, and the
+    // `owned_cap` floor over-subscribes when the cap is below the thread count.
+    if let Some(prefill) = common.prefill_concurrency
+        && !global_admits_prefill
+    {
         common.prefill_concurrency = Some(owned_cap(prefill));
     }
 }
@@ -552,6 +580,68 @@ mod tests {
         assert_eq!(sliced.common().requests, Some(12));
         assert_eq!(sliced.rate(), Some(10.0));
         assert_eq!(sliced.concurrency(), Some(2));
+    }
+
+    #[test]
+    fn global_mode_leaves_prefill_concurrency_to_the_shared_gate() {
+        // `prefill_concurrency` is an admission cap, not a work budget, so it gets the same
+        // treatment as `concurrency`: the cell builds one shared gate and this thread keeps the
+        // full cell-level value.
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 100,
+            "concurrency": 8,
+            "prefill_concurrency": 6,
+        }))
+        .unwrap();
+        for mode in [DispatchMode::Global, DispatchMode::GlobalHop] {
+            let sliced = slice_phase_for_thread(&phase, 0, 4, mode);
+            assert_eq!(sliced.common().prefill_concurrency, Some(6), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn sharded_mode_still_slices_prefill_concurrency_per_thread() {
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 100,
+            "concurrency": 8,
+            "prefill_concurrency": 6,
+        }))
+        .unwrap();
+        let sliced = slice_phase_for_thread(&phase, 0, 4, DispatchMode::Sharded);
+        assert_eq!(sliced.common().prefill_concurrency, Some(2));
+    }
+
+    #[test]
+    fn shared_prefill_gate_removes_the_floor_over_subscription() {
+        // Under Sharded, `owned_cap` floors every share at one, so a prefill cap of 3 across 4
+        // threads admits 4 — more than authored. The shared gate cannot do this: there is one
+        // counter, so the sum across threads is the cap itself.
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 100,
+            "concurrency": 8,
+            "prefill_concurrency": 3,
+        }))
+        .unwrap();
+        let sharded_total: usize = (0..4)
+            .map(|t| {
+                slice_phase_for_thread(&phase, t, 4, DispatchMode::Sharded)
+                    .common()
+                    .prefill_concurrency
+                    .unwrap()
+            })
+            .sum();
+        assert_eq!(sharded_total, 4, "sharded over-subscribes the authored 3");
+        let global = slice_phase_for_thread(&phase, 0, 4, DispatchMode::Global);
+        assert_eq!(global.common().prefill_concurrency, Some(3));
     }
 
     #[test]

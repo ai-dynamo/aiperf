@@ -64,22 +64,41 @@ pub(crate) fn phase_scheduled_resources(
             .get(&metrics_phase(phase).ok()?)
             .cloned()
     });
+    // Prefill is an admission cap like concurrency, and is resolved independently: a phase may
+    // author a prefill cap without a concurrency cap, and must still get the shared gate.
+    let global_prefill = shared
+        .global_admission
+        .as_ref()
+        .and_then(|admission| admission.prefill.get(&metrics_phase(phase).ok()?).cloned());
+    let prefill_is_global = global_prefill.is_some();
+    let prefill = match global_prefill {
+        Some(gate) => Some(Rc::new(SlotPool::new_global(gate))),
+        None => shared_resources.prefill.clone(),
+    };
     let Some(global_pool) = global_pool else {
+        // No shared concurrency gate for this phase, but a shared prefill gate may still apply,
+        // in which case the phase resources must be rebuilt around it rather than reused.
+        let phase_resources: Rc<dyn ScheduledPhaseResources> = if prefill_is_global {
+            Rc::new(SlotPoolPhaseResources::new(
+                shared_resources.session.clone(),
+                prefill.clone(),
+            ))
+        } else {
+            shared_resources.phase.clone()
+        };
         return Ok(NativeScheduledResources {
             session: shared_resources.session.clone(),
-            prefill: shared_resources.prefill.clone(),
-            phase: shared_resources.phase.clone(),
+            prefill,
+            phase: phase_resources,
             rate: global_rate,
         });
     };
     let session = Some(Rc::new(SlotPool::new_global(global_pool)));
-    let phase_resources: Rc<dyn ScheduledPhaseResources> = Rc::new(SlotPoolPhaseResources::new(
-        session.clone(),
-        shared_resources.prefill.clone(),
-    ));
+    let phase_resources: Rc<dyn ScheduledPhaseResources> =
+        Rc::new(SlotPoolPhaseResources::new(session.clone(), prefill.clone()));
     Ok(NativeScheduledResources {
         session,
-        prefill: shared_resources.prefill.clone(),
+        prefill,
         phase: phase_resources,
         rate: global_rate,
     })
