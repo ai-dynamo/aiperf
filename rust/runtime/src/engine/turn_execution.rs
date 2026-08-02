@@ -392,9 +392,12 @@ struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     routing: HopRouting,
     /// Round-robin cursor; also the fallback for correlation-less sticky turns.
     next_worker: Cell<usize>,
-    /// Per-worker in-flight command count (`+1` on send, `-1` on reply), read by
-    /// [`HopRouting::LeastLoaded`]. Single-threaded coordinator, so plain `Cell`.
-    inflight: Vec<Cell<usize>>,
+    /// Monotonic send counter stamped into [`WorkerLoad::last_sent`], so the LRU-like tiebreak
+    /// orders by issuance rather than by a clock reading.
+    send_seq: Cell<u64>,
+    /// Per-worker load, read by [`HopRouting::LeastLoaded`]. Single-threaded
+    /// coordinator, so plain `Cell`s.
+    inflight: Vec<WorkerLoad>,
     /// `correlation_id` → bound worker, so [`HopRouting::LeastLoaded`]
     /// continuations stay on the worker their session was first placed on.
     sticky: RefCell<HashMap<String, usize>>,
@@ -428,11 +431,23 @@ impl Drop for InflightGuard<'_> {
 /// round-robin cursor (advanced only when a round-robin pick is made), `inflight`
 /// is the per-worker in-flight snapshot, and `sticky` holds
 /// `correlation_id`→worker bindings for [`HopRouting::LeastLoaded`].
+///
+/// `LeastLoaded` mirrors Python's `StickyCreditRouter`: honour an existing binding, else take the
+/// shallowest worker — ties broken by fewer credits routed so far, then by longest since last
+/// send — and bind the correlation id to the winner.
+///
+/// Two divergences from Python remain, both because the signal is not available here:
+///
+/// - Python also tie-breaks on `active_sessions` (committed multi-turn sessions), which needs an
+///   end-of-session decrement. This site never learns that a session has ended.
+/// - Python evicts a binding on the owning session's final turn and pins DAG children to their
+///   parent's worker via `parent_correlation_id`. Neither `is_final_turn` nor
+///   `parent_correlation_id` reaches this call, so bindings here live for the run.
 pub(crate) fn pick_worker(
     routing: HopRouting,
     workers: usize,
     correlation: Option<&str>,
-    inflight: &[Cell<usize>],
+    inflight: &[WorkerLoad],
     sticky: &mut HashMap<String, usize>,
     rr_cursor: &mut usize,
 ) -> usize {
@@ -449,13 +464,35 @@ pub(crate) fn pick_worker(
             {
                 return bound;
             }
-            let worker = argmin(inflight);
+            let worker = least_loaded(inflight);
             if let Some(id) = correlation {
                 sticky.insert(id.to_owned(), worker);
             }
             worker
         }
     }
+}
+
+/// Per-worker load signals consulted when several workers tie on in-flight depth.
+///
+/// Mirrors the fields Python's `StickyCreditRouter` tie-breaks on, minus
+/// `active_sessions` — that one requires an end-of-session signal to decrement, which does not
+/// reach this pick site (see [`pick_worker`]). `sent` is Python's `virtual_sent_credits` and
+/// `last_sent` its `last_sent_at_ns`, kept as a monotonic sequence rather than a wall-clock
+/// reading so placement stays reproducible run to run and under a `SimClock`.
+///
+/// Python seeds both to non-zero on worker registration to stop a late-joining worker from
+/// attracting a thundering herd. That does not apply here: every worker thread is registered
+/// before the first pick, so all start equal and a zero seed is the faithful choice.
+#[derive(Default)]
+pub(crate) struct WorkerLoad {
+    /// In-flight commands: `+1` on send, `-1` on reply.
+    pub(crate) inflight: Cell<usize>,
+    /// Total credits ever routed here. Python's `virtual_sent_credits`.
+    pub(crate) sent: Cell<u64>,
+    /// Sequence number of this worker's most recent send. Python's `last_sent_at_ns`, as a
+    /// counter — oldest wins, giving the same LRU-like fairness without reading a clock.
+    pub(crate) last_sent: Cell<u64>,
 }
 
 /// Advance and return the round-robin worker index.
@@ -465,12 +502,24 @@ fn round_robin(workers: usize, rr_cursor: &mut usize) -> usize {
     worker
 }
 
-/// Index of the shallowest in-flight worker; ties resolve to the lowest index.
-fn argmin(inflight: &[Cell<usize>]) -> usize {
-    inflight
-        .iter()
+/// Index of the shallowest in-flight worker, ties broken the way Python's router breaks them.
+///
+/// A bare `min_by_key` on depth alone resolves every tie to the lowest index, which at the start
+/// of a run — when every worker is at zero — sends the first burst of sessions all to worker 0.
+/// Python instead prefers the worker with fewer credits routed so far, then the one that has gone
+/// longest without a send. The index is kept as a final deterministic tiebreak so the choice is
+/// still total and reproducible.
+fn least_loaded(load: &[WorkerLoad]) -> usize {
+    load.iter()
         .enumerate()
-        .min_by_key(|(index, cell)| (cell.get(), *index))
+        .min_by_key(|(index, worker)| {
+            (
+                worker.inflight.get(),
+                worker.sent.get(),
+                worker.last_sent.get(),
+                *index,
+            )
+        })
         .map(|(index, _)| index)
         .unwrap_or(0)
 }
@@ -562,7 +611,8 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             threads: RefCell::new(threads),
             routing,
             next_worker: Cell::new(0),
-            inflight: (0..workers).map(|_| Cell::new(0)).collect(),
+            send_seq: Cell::new(0),
+            inflight: (0..workers).map(|_| WorkerLoad::default()).collect(),
             sticky: RefCell::new(HashMap::new()),
             run_origin_ns: Cell::new(None),
             dimension_sink,
@@ -744,7 +794,13 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             // Hold the slot from send through reply; the guard decrements on any
             // return path (completion, cancellation, error) so LeastLoaded depth
             // stays accurate.
-            let guard = InflightGuard::new(&self.inflight[index]);
+            // Record the send before the guard: `sent` and `last_sent` are what break a tie the
+            // next time several workers sit at the same depth.
+            let chosen = &self.inflight[index];
+            chosen.sent.set(chosen.sent.get() + 1);
+            self.send_seq.set(self.send_seq.get() + 1);
+            chosen.last_sent.set(self.send_seq.get());
+            let guard = InflightGuard::new(&chosen.inflight);
             (senders[index].clone(), guard)
         };
         let (first_token_tx, mut first_token_rx) = oneshot::channel();
@@ -1077,8 +1133,90 @@ mod tests {
     use super::*;
 
     #[test]
+    fn least_loaded_spreads_the_opening_burst_instead_of_stacking_worker_zero() {
+        // Every worker starts at depth zero. A bare min-by-depth resolves every tie to index 0 and
+        // sends the whole opening burst there; Python breaks the tie on credits-sent, so the burst
+        // fans out. This is the behaviour that tiebreak exists for.
+        let load: Vec<WorkerLoad> = (0..4).map(|_| WorkerLoad::default()).collect();
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        let mut picks = Vec::new();
+        for i in 0..4 {
+            let id = format!("session-{i}");
+            let worker = pick_worker(
+                HopRouting::LeastLoaded,
+                4,
+                Some(&id),
+                &load,
+                &mut sticky,
+                &mut cursor,
+            );
+            // Stamp the send the way the executor does.
+            load[worker].sent.set(load[worker].sent.get() + 1);
+            load[worker].last_sent.set(i as u64 + 1);
+            picks.push(worker);
+        }
+        picks.sort_unstable();
+        assert_eq!(
+            picks,
+            vec![0, 1, 2, 3],
+            "opening burst stacked on one worker"
+        );
+    }
+
+    #[test]
+    fn least_loaded_prefers_the_worker_idle_longest_when_depth_and_sends_tie() {
+        // Same depth, same credits routed: Python takes the oldest last-send. Worker 2 here.
+        let load: Vec<WorkerLoad> = (0..3).map(|_| WorkerLoad::default()).collect();
+        for worker in &load {
+            worker.sent.set(5);
+        }
+        load[0].last_sent.set(90);
+        load[1].last_sent.set(80);
+        load[2].last_sent.set(10);
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        assert_eq!(
+            pick_worker(
+                HopRouting::LeastLoaded,
+                3,
+                None,
+                &load,
+                &mut sticky,
+                &mut cursor
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn least_loaded_still_puts_depth_first() {
+        // The tiebreaks only apply among workers already tied on in-flight depth: a shallow worker
+        // wins even when it has taken far more credits.
+        let load: Vec<WorkerLoad> = (0..3).map(|_| WorkerLoad::default()).collect();
+        load[0].inflight.set(4);
+        load[1].inflight.set(4);
+        load[2].inflight.set(1);
+        load[2].sent.set(1_000);
+        load[2].last_sent.set(9_999);
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        assert_eq!(
+            pick_worker(
+                HopRouting::LeastLoaded,
+                3,
+                None,
+                &load,
+                &mut sticky,
+                &mut cursor
+            ),
+            2
+        );
+    }
+
+    #[test]
     fn pick_worker_round_robin_cycles_in_issue_order() {
-        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
+        let inflight: Vec<WorkerLoad> = (0..3).map(|_| WorkerLoad::default()).collect();
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         let picks: Vec<usize> = (0..7)
@@ -1099,7 +1237,7 @@ mod tests {
 
     #[test]
     fn pick_worker_sticky_maps_correlation_stably() {
-        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
+        let inflight: Vec<WorkerLoad> = (0..3).map(|_| WorkerLoad::default()).collect();
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         // Pin the concrete FNV-1a placement so a hash change is caught.
@@ -1133,7 +1271,7 @@ mod tests {
 
     #[test]
     fn pick_worker_sticky_falls_back_to_round_robin_without_correlation() {
-        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
+        let inflight: Vec<WorkerLoad> = (0..3).map(|_| WorkerLoad::default()).collect();
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         let picks: Vec<usize> = (0..4)
@@ -1155,22 +1293,27 @@ mod tests {
     fn pick_worker_least_loaded_picks_shallowest_then_binds() {
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
-        // Shallowest queue wins (ties → lowest index).
+        // Shallowest queue wins.
+        let load: Vec<WorkerLoad> = (0..3).map(|_| WorkerLoad::default()).collect();
+        load[0].inflight.set(2);
+        load[2].inflight.set(1);
         let worker = pick_worker(
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
-            &[Cell::new(2), Cell::new(0), Cell::new(1)],
+            &load,
             &mut sticky,
             &mut cursor,
         );
         assert_eq!(worker, 1);
         // Continuations stay bound to worker 1 even after it becomes the deepest.
+        let deeper: Vec<WorkerLoad> = (0..3).map(|_| WorkerLoad::default()).collect();
+        deeper[1].inflight.set(3);
         let worker = pick_worker(
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
-            &[Cell::new(0), Cell::new(3), Cell::new(0)],
+            &deeper,
             &mut sticky,
             &mut cursor,
         );

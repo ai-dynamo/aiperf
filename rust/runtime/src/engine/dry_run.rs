@@ -651,8 +651,9 @@ struct VirtualPlacement {
     routing: HopRouting,
     contention_scope: VirtualContentionScope,
     next_worker: Cell<usize>,
+    send_seq: Cell<u64>,
     assignment_index: Cell<u64>,
-    inflight: Vec<Cell<usize>>,
+    inflight: Vec<crate::engine::turn_execution::WorkerLoad>,
     sticky: RefCell<HashMap<String, usize>>,
     profiles: Vec<(f64, f64)>,
 }
@@ -673,8 +674,11 @@ impl VirtualPlacement {
             routing,
             contention_scope,
             next_worker: Cell::new(0),
+            send_seq: Cell::new(0),
             assignment_index: Cell::new(0),
-            inflight: (0..width).map(|_| Cell::new(0)).collect(),
+            inflight: (0..width)
+                .map(|_| crate::engine::turn_execution::WorkerLoad::default())
+                .collect(),
             sticky: RefCell::new(HashMap::new()),
             profiles: multipliers,
         }
@@ -691,6 +695,11 @@ impl VirtualPlacement {
             &mut cursor,
         );
         self.next_worker.set(cursor);
+        // Mirror the live executor: a send updates the tiebreak signals it will be judged on.
+        let chosen = &self.inflight[worker];
+        chosen.sent.set(chosen.sent.get() + 1);
+        self.send_seq.set(self.send_seq.get() + 1);
+        chosen.last_sent.set(self.send_seq.get());
         let index = self.assignment_index.get();
         self.assignment_index.set(index.wrapping_add(1));
         (worker, index)
@@ -1008,9 +1017,9 @@ impl RequestExecutor for FakeRequestExecutor {
             let (worker, assignment_index) = placement.assign(metadata.correlation_id.as_deref());
             metadata.worker_id = Some(format!("dry-run-{worker}"));
             metadata.worker_assignment_index = Some(assignment_index);
-            let guard = VirtualInflightGuard::new(&placement.inflight[worker]);
+            let guard = VirtualInflightGuard::new(&placement.inflight[worker].inflight);
             let contention = (placement.contention_scope == VirtualContentionScope::WorkerLocal)
-                .then(|| placement.inflight[worker].get());
+                .then(|| placement.inflight[worker].inflight.get());
             (Some(guard), contention, placement.profiles[worker])
         } else {
             (None, None, (1.0, 1.0))
