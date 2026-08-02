@@ -13,6 +13,7 @@ import {
   INSET,
   scaledSceneFontSize,
   SCENE_LINE_HEIGHT_RATIO,
+  SCENE_WORLD_SCALE,
   stepperChipWidth,
   SUBTITLE_HEIGHT,
   TITLE_HEIGHT,
@@ -520,9 +521,12 @@ describe("native Scene capability layout", () => {
       inkRole: "ink.secondary",
     });
     expect(resolveSemanticChrome(avatar, avatar.geometry!).rootBox?.radius).toBe(48);
+    // The icon gutter is a pre-4K-baseline offset, so it scales with the world
+    // like every other chrome inset — a bare 40 would leave the label sitting
+    // against the box edge now that the surrounding padding is 2.7x larger.
     expect(resolveSemanticChrome(iconLabel, iconLabel.geometry!).texts[0]).toMatchObject({
       text: "Ready",
-      x: 40,
+      x: 40 * SCENE_WORLD_SCALE,
     });
   });
 

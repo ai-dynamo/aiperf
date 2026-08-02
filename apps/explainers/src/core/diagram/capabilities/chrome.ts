@@ -13,11 +13,26 @@ import {
   DETAIL_HEIGHT,
   INSET,
   SCENE_FONT,
+  SCENE_WORLD_SCALE,
   STEPPER_CHIP_HEIGHT,
   SUBTITLE_HEIGHT,
   TITLE_HEIGHT,
   stepperChipWidth,
 } from "../text-metrics.js";
+
+/**
+ * Converts a pre-4K-baseline offset into scene-world units.
+ *
+ * The inset and offset literals below were authored against the 700x400 canvas
+ * and, like the font sizes in `SCENE_FONT`, were missed when the world was
+ * scaled by `SCENE_WORLD_SCALE` to 1920x1080 — leaving text pinned a handful of
+ * units from a box edge whose padding had grown 2.7x. Wrapping each literal
+ * keeps the original authored number legible at the call site instead of
+ * burying a pre-multiplied constant nobody can audit.
+ */
+function world(preRescaleOffset: number): number {
+  return preRescaleOffset * SCENE_WORLD_SCALE;
+}
 import { managedLayoutOptions } from "./layout.js";
 
 export type SemanticGeneratedRole =
@@ -186,10 +201,10 @@ export function resolveSemanticChrome(
           id: `${node.id}__text`,
           role: "label",
           text,
-          x: geometry.x + 12,
-          y: geometry.y + 10,
-          width: Math.max(geometry.width - 24, 0),
-          height: Math.max(geometry.height - 20, 0),
+          x: geometry.x + world(12),
+          y: geometry.y + world(10),
+          width: Math.max(geometry.width - world(24), 0),
+          height: Math.max(geometry.height - world(20), 0),
           fontSize: SCENE_FONT.body,
           fontFamily: presentation === "code-block" ? "monospace" : undefined,
           fontStyle: presentation === "quote" ? "italic" : undefined,
@@ -229,10 +244,10 @@ export function resolveSemanticChrome(
           id: `${node.id}__label`,
           role: "label",
           text: label,
-          x: geometry.x + 40,
-          y: geometry.y + 8,
-          width: Math.max(geometry.width - 48, 0),
-          height: Math.max(geometry.height - 16, 0),
+          x: geometry.x + world(40),
+          y: geometry.y + world(8),
+          width: Math.max(geometry.width - world(48), 0),
+          height: Math.max(geometry.height - world(16), 0),
           fontSize: SCENE_FONT.body,
           anchor: "start",
           ...(inkRole !== undefined ? { inkRole } : {}),
@@ -306,17 +321,17 @@ export function resolveSemanticChrome(
     framePadding !== undefined
       ? framePadding
       : isDiagramBoundary
-        ? 12
+        ? world(12)
         : isDiagram
-          ? 46
+          ? world(46)
           : INSET;
   const chromeInsetXEnd =
     framePadding !== undefined
       ? framePadding
       : isDiagramBoundary
-        ? 12
+        ? world(12)
         : isDiagram
-          ? 10
+          ? world(10)
           : INSET;
 
   const texts: SemanticTextPart[] = [];
@@ -334,10 +349,10 @@ export function resolveSemanticChrome(
         capability === "core.chip"
           ? geometry.y
           : isDiagramBoundary
-            ? geometry.y + 8
+            ? geometry.y + world(8)
             : isDiagram
-              ? geometry.y + (detail === undefined ? 20 : 12)
-              : geometry.y + INSET + (centered ? 2 : 0),
+              ? geometry.y + world(detail === undefined ? 20 : 12)
+              : geometry.y + INSET + (centered ? world(2) : 0),
       width: centered
         ? geometry.width
         : Math.max(geometry.width - chromeInsetX - chromeInsetXEnd, 0),
@@ -358,16 +373,16 @@ export function resolveSemanticChrome(
     });
   }
   if (detail !== undefined) {
-    const detailInsetX = isDiagram ? 46 : chromeInsetX;
-    const detailInsetXEnd = isDiagram ? 10 : chromeInsetXEnd;
+    const detailInsetX = isDiagram ? world(46) : chromeInsetX;
+    const detailInsetXEnd = isDiagram ? world(10) : chromeInsetXEnd;
     texts.push({
       id: generatedTextId(node, "detail"),
       role: generatedTextRole(node, "detail"),
       text: detail,
       x: geometry.x + detailInsetX,
       y: isDiagram
-        ? geometry.y + 38
-        : geometry.y + INSET + TITLE_HEIGHT + 4,
+        ? geometry.y + world(38)
+        : geometry.y + INSET + TITLE_HEIGHT + world(4),
       width: Math.max(geometry.width - detailInsetX - detailInsetXEnd, 0),
       height: DETAIL_HEIGHT,
       fontSize: isDiagram ? SCENE_FONT.caption : SCENE_FONT.detail,
@@ -382,7 +397,7 @@ export function resolveSemanticChrome(
       role: generatedTextRole(node, "subtitle"),
       text: subtitle,
       x: geometry.x + chromeInsetX,
-      y: geometry.y + INSET + TITLE_HEIGHT + DETAIL_HEIGHT + 6,
+      y: geometry.y + INSET + TITLE_HEIGHT + DETAIL_HEIGHT + world(6),
       width: Math.max(geometry.width - chromeInsetX - chromeInsetXEnd, 0),
       height: SUBTITLE_HEIGHT,
       fontSize: SCENE_FONT.caption,
