@@ -9,9 +9,9 @@
 //! centroids. Then both are asked the same question, and the page shows each answering it —
 //! reading two retained values, or walking a chain of centroids.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  arrivals,
+  arrivalAt,
   createIngest,
   ingestOne,
   traceExact,
@@ -21,7 +21,6 @@ import {
   type ExactTrace,
   type IngestState,
 } from "./ingest.js";
-import { latencySamples } from "./sketchSim.js";
 import { ControlBar, Panel, Readout, SourceNote, SpikeHeader, Toggle } from "../ui.js";
 
 const CYAN = "var(--color-category-cyan)";
@@ -47,46 +46,55 @@ const COMPRESSION = 12;
  * it is unwatchable, so the page uses 8. The rule is unchanged: append until the count is
  * exceeded, then sort and cluster the whole buffer at once.
  */
-const THRESHOLD = 8;
-const TOTAL = 60;
-const SPEEDS = [700, 350, 120] as const;
+const THRESHOLD = 20;
+/** How many recent values the arrival strip renders. The array behind it keeps growing. */
+const STRIP_WINDOW = 90;
+/** Most bars the sort animation draws. Beyond this it animates an evenly-spaced sample. */
+const SORT_WINDOW = 260;
+/** Interval, and how many values to take per tick. Batching is what makes "flood" unbounded in
+ *  any useful sense — one React render per value caps the rate at about forty a second. */
+const SPEEDS = [
+  { ms: 700, batch: 1, label: "slow" },
+  { ms: 350, batch: 1, label: "medium" },
+  { ms: 120, batch: 1, label: "fast" },
+  { ms: 40, batch: 25, label: "flood" },
+] as const;
 const CELL_COLOR = [CYAN, PURPLE, ORANGE];
 
 export function SketchLiveSpike(): React.JSX.Element {
-  const [step, setStep] = useState(0);
   const [running, setRunning] = useState(false);
-  const [interval, setIntervalMs] = useState<number>(350);
+  const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(SPEEDS[1]);
   const [percentile, setPercentile] = useState(90);
   /** Set when the user asks to summarize, which can be at any point — not only at the end. */
   const [summarizing, setSummarizing] = useState(false);
 
-  const values = useMemo(() => latencySamples(TOTAL, 5), []);
-  const feed = useMemo(() => arrivals(values, CELLS), [values]);
+  // Incremental, not recomputed. Replaying the whole stream on every tick is quadratic, which is
+  // fine for a fixed sixty values and hopeless for a run with no end.
+  const [state, setState] = useState<IngestState>(() => createIngest(CELLS, COMPRESSION, THRESHOLD));
 
-  const state = useMemo(() => {
-    let s = createIngest(CELLS, COMPRESSION, THRESHOLD);
-    for (let i = 0; i < step; i++) s = ingestOne(s, feed[i]!);
-    return s;
-  }, [feed, step]);
+  const advance = useCallback((count: number) => {
+    setState((current) => {
+      let next = current;
+      for (let i = 0; i < count; i++) {
+        next = ingestOne(next, arrivalAt(next.arrived.length, CELLS));
+      }
+      return next;
+    });
+  }, []);
+
+  const reset = useCallback(() => {
+    setState(createIngest(CELLS, COMPRESSION, THRESHOLD));
+  }, []);
 
   useEffect(() => {
     if (!running) return undefined;
-    const handle = window.setInterval(() => {
-      setStep((s) => {
-        if (s >= TOTAL) {
-          setRunning(false);
-          return s;
-        }
-        return s + 1;
-      });
-    }, interval);
+    const handle = window.setInterval(() => advance(speed.batch), speed.ms);
     return () => window.clearInterval(handle);
-  }, [running, interval]);
+  }, [running, speed, advance]);
 
-  const next = step < TOTAL ? feed[step] : undefined;
-  const complete = step >= TOTAL;
-  // Reaching the end summarizes on its own; before that it is on request.
-  const showSummary = summarizing || complete;
+  const next = summarizing ? undefined : arrivalAt(state.arrived.length, CELLS);
+  // There is no end to reach, so a summary only ever happens because it was asked for.
+  const showSummary = summarizing;
   const pendingAtSummarize = state.cells.reduce(
     (n, cell, i) => n + cell.centroids.length - (state.settled[i] ?? 0),
     0,
@@ -112,15 +120,13 @@ export function SketchLiveSpike(): React.JSX.Element {
               <Toggle active onClick={() => setRunning((r) => !r)}>
                 {running ? "Pause" : "Play"}
               </Toggle>
-              <Toggle onClick={() => { setRunning(false); setStep((s) => Math.min(TOTAL, s + 1)); }}>
-                Next value
-              </Toggle>
+              <Toggle onClick={() => { setRunning(false); advance(1); }}>Next value</Toggle>
             </>
           )}
-          <Toggle onClick={() => { setRunning(false); setSummarizing(false); setStep(0); }}>
+          <Toggle onClick={() => { setRunning(false); setSummarizing(false); reset(); }}>
             Reset
           </Toggle>
-          <Toggle disabled={step === 0 || showSummary}
+          <Toggle disabled={state.arrived.length === 0 || showSummary}
             onClick={() => { setRunning(false); setSummarizing(true); }}
             title="Summarize whatever has arrived so far — a report can be asked for at any point">
             Summarize now
@@ -128,9 +134,10 @@ export function SketchLiveSpike(): React.JSX.Element {
         </div>
         <div className="flex items-center gap-1.5">
           <span className="mr-1 text-base text-ink-tertiary">speed</span>
-          {SPEEDS.map((ms, i) => (
-            <Toggle key={ms} active={interval === ms} onClick={() => setIntervalMs(ms)}>
-              {["slow", "medium", "fast"][i]}
+          {SPEEDS.map((option) => (
+            <Toggle key={option.label} active={speed.label === option.label}
+              onClick={() => setSpeed(option)}>
+              {option.label}
             </Toggle>
           ))}
         </div>
@@ -141,7 +148,11 @@ export function SketchLiveSpike(): React.JSX.Element {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-6">
-          <Readout label="arrived" value={`${step} / ${TOTAL}`} />
+          <Readout label="arrived" value={state.arrived.length.toLocaleString()} />
+          <Readout label="kept" value={`${(state.arrived.length * 8 / 1024).toFixed(1)} KB`}
+            color={GREEN} />
+          <Readout label="centroids"
+            value={state.cells.reduce((n, c) => n + c.centroids.length, 0)} color={CYAN} />
           <Readout label="δ" value={COMPRESSION} />
         </div>
       </ControlBar>
@@ -177,7 +188,7 @@ export function SketchLiveSpike(): React.JSX.Element {
 
       {showSummary && (
         <SummarizePhase state={state} percentile={percentile} pending={pendingAtSummarize}
-          midRun={!complete} />
+          midRun />
       )}
 
       <SourceNote>
@@ -213,9 +224,15 @@ export function SketchLiveSpike(): React.JSX.Element {
 function ArrivalStrip({ state }: { state: IngestState }): React.JSX.Element {
   return (
     <div>
+      {state.arrived.length > STRIP_WINDOW && (
+        <div className="mb-1 text-[13px]" style={{ color: DIM }}>
+          + {(state.arrived.length - STRIP_WINDOW).toLocaleString()} earlier values, still held,
+          not drawn
+        </div>
+      )}
       <div className="flex flex-wrap gap-1">
-        {state.arrived.map((value, i) => {
-          const fresh = i === state.arrived.length - 1;
+        {state.arrived.slice(-STRIP_WINDOW).map((value, i, window) => {
+          const fresh = i === window.length - 1;
           return (
             <span key={i} className="rounded px-1.5 py-0.5 font-mono text-[12px] tabular-nums"
               style={{
@@ -296,7 +313,7 @@ function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
                 </span>
               )}
               <span className="block text-[12px]" style={{ color: pending > 0 ? ORANGE : DIM }}>
-                {headroom} more before compress
+                {headroom > 0 ? `${headroom} more before compress` : "at capacity — compressing every value"}
               </span>
             </span>
           </div>
@@ -410,7 +427,8 @@ function SummarizePhase({
           ) : (
             <>Every cell happened to be freshly compressed, so nothing had to be flushed first.</>
           )}{" "}
-          Keep going and ask again — the answer moves as the distribution fills in.
+          Keep going and ask again. Early on the answer swings about; it steadies once the digest
+          has enough to work with, at whatever accuracy δ allows.
         </div>
       )}
 
@@ -445,11 +463,13 @@ function SummarizePhase({
             one interpolates between two summaries.
           </p>
           <p className="mt-2 text-[14px] leading-relaxed" style={{ color: ORANGE }}>
-            Do not read that percentage as how wrong a sketch is. {TOTAL} values across {CELLS}{" "}
-            cells at δ&nbsp;={" "}{COMPRESSION} is a deliberately tiny configuration chosen so the
-            structures fit on screen, and it is the worst case for accuracy. At production scale —
-            thousands of records, δ&nbsp;= 100 — the same code lands well under a percent, which
-            the companion page measures.
+            That percentage is set by δ, not by how much data has arrived. δ is {COMPRESSION} here
+            rather than production&apos;s 100, and more values do not rescue it — measured on this
+            stream at δ&nbsp;={COMPRESSION} the p90 error runs 2.7%, −0.6%, 5.6%, 1.7% at 30, 300,
+            3,000 and 30,000 values, wandering rather than shrinking. At δ&nbsp;=&nbsp;100 the same
+            code gives 4.3%, 0.20%, 0.098%, 0.11% — it settles near a tenth of a percent once a few
+            hundred values are in, and stays there. The budget sets the floor; the sample size only
+            decides how quickly you reach it.
           </p>
         </Panel>
       </div>
@@ -478,30 +498,42 @@ function SortAnimation({
   const width = 620;
   const height = 96;
   const pad = 6;
-  const step = (width - pad * 2) / Math.max(1, arrived.length);
-  const max = Math.max(...arrived, 1);
+  // Beyond a few hundred the bars are thinner than a pixel and the animation says nothing, so an
+  // evenly-spaced sample of arrival order stands in. Sampling by position preserves both the
+  // distribution and the disorder, and the label says it is a sample.
+  const sampled = useMemo(() => {
+    if (arrived.length <= SORT_WINDOW) return [...arrived];
+    const stride = arrived.length / SORT_WINDOW;
+    return Array.from({ length: SORT_WINDOW }, (_, i) => arrived[Math.floor(i * stride)]!);
+  }, [arrived]);
+  const isSample = sampled.length < arrived.length;
+  const step = (width - pad * 2) / Math.max(1, sampled.length);
+  const max = Math.max(...sampled, 1);
 
   // Destination slot for each arrival. Duplicate values are resolved by consuming ranks in order,
   // so no two bars are ever assigned the same slot.
   const destination = useMemo(() => {
-    const order = arrived.map((value, index) => ({ value, index }));
+    const order = sampled.map((value, index) => ({ value, index }));
     order.sort((a, b) => a.value - b.value || a.index - b.index);
-    const slots = new Array<number>(arrived.length);
+    const slots = new Array<number>(sampled.length);
     order.forEach((entry, rank) => {
       slots[entry.index] = rank;
     });
     return slots;
-  }, [arrived]);
+  }, [sampled]);
 
   return (
     <div className="mb-3">
       <div className="mb-1 text-[13px]" style={{ color: sortedYet ? DIM : GREEN }}>
-        0 · sort the {arrived.length} retained values —{" "}
+        0 · sort the {arrived.length.toLocaleString()} retained values —{" "}
         {sortedYet ? "done, once" : "in arrival order, as they were kept"}
+        {isSample && (
+          <span style={{ color: DIM }}> · drawing an evenly-spaced {sampled.length} of them</span>
+        )}
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
         role="img" aria-label="retained values sorting into order">
-        {arrived.map((value, i) => {
+        {sampled.map((value, i) => {
           const slot = sortedYet ? (destination[i] ?? i) : i;
           const barH = Math.max(2, (value / max) * (height - 20));
           return (

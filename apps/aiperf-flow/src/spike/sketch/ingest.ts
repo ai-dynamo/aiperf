@@ -87,6 +87,11 @@ export function createIngest(cells: number, compression: number, threshold: numb
  * real cost profile, and an earlier version of this page hid it by compressing on every value.
  */
 export function ingestOne(state: IngestState, arrival: Arrival): IngestState {
+  // `arrived` is pushed in place and handed back by reference. Copying it per value would make
+  // ingestion quadratic, which matters once the run is unbounded — and it is the array whose
+  // unbounded growth the page exists to show. Re-render is driven by the new state object, not by
+  // this array's identity.
+  state.arrived.push(arrival.value);
   const cells = state.cells.map((c) => ({ ...c, centroids: c.centroids.map((x) => ({ ...x })) }));
   const settled = [...state.settled];
   const target = cells[arrival.cell]!;
@@ -106,7 +111,7 @@ export function ingestOne(state: IngestState, arrival: Arrival): IngestState {
   }
 
   return {
-    arrived: [...state.arrived, arrival.value],
+    arrived: state.arrived,
     cells,
     settled,
     lastCell: arrival.cell,
@@ -300,4 +305,29 @@ export function clusterBudget(q: number, compression: number): number {
 /** Deterministic arrivals: latency values dealt round-robin across cells. */
 export function arrivals(values: readonly number[], cells: number): Arrival[] {
   return values.map((value, index) => ({ index, value, cell: index % cells }));
+}
+
+/**
+ * The latency value at an arrival index, computed rather than stored.
+ *
+ * An unbounded run cannot pre-generate its values, and it must stay reproducible: reset and replay
+ * has to give the same stream. A hash of the index does both — a full avalanche so consecutive
+ * indices are uncorrelated, then Box-Muller into the same lognormal shape `latencySamples` draws.
+ */
+export function latencyAt(index: number): number {
+  const hash = (n: number): number => {
+    let h = (n + 1) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 2246822507) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
+    return ((h ^ (h >>> 16)) >>> 0) / 0x1_0000_0000;
+  };
+  const u1 = Math.max(Number.EPSILON, hash(index * 2));
+  const u2 = hash(index * 2 + 1);
+  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  return Math.exp(Math.log(100) + 0.45 * z);
+}
+
+/** The arrival at an index, for a run with no end. */
+export function arrivalAt(index: number, cells: number): Arrival {
+  return { index, value: latencyAt(index), cell: index % cells };
 }
