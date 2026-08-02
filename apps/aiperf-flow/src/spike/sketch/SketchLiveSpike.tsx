@@ -30,24 +30,30 @@ const PURPLE = "var(--color-category-purple)";
 const DIM = "var(--color-ink-quaternary)";
 
 const CELLS = 3;
+
 /**
- * A far smaller δ than production's 100.
+ * Selectable δ — the t-digest compression parameter, lowercase Greek delta.
  *
- * At δ=100 a digest settles at ~50 centroids, which is too many to follow one at a time. At 12 it
- * settles at a handful, so each absorption is a visible event. The rule being demonstrated is
- * identical; only the budget is smaller.
+ * It is the budget: a cluster may span one unit of the K1 scale `k(q) = δ·asin(2q−1)/2π`, so a
+ * larger δ buys more, finer clusters. Production uses 100, which settles near fifty centroids.
+ * Smaller values are offered because at 12 a digest settles at about ten, few enough to follow
+ * one at a time.
  */
-const COMPRESSION = 12;
+const DELTAS = [12, 25, 50, 100] as const;
+
 /**
- * The compress threshold, turned right down.
+ * The compress threshold for a given δ.
  *
- * The Rust derives it as `max(64, δ × 10)` — 1000 at production's δ=100 — so a real digest sits
- * on a thousand raw unsorted centroids before doing anything. That is the true cost profile and
- * it is unwatchable, so the page uses 8. The rule is unchanged: append until the count is
- * exceeded, then sort and cluster the whole buffer at once.
+ * The Rust derives it as `max(64, δ × 10)` — 1000 at δ=100, so a real digest sits on a thousand
+ * raw centroids before anything happens. That is unwatchable, so the page uses a smaller multiple.
+ * It must stay comfortably above the centroid count δ settles at (roughly δ/2), or the buffer
+ * never gets back under it and the digest compresses on every single arrival, which erases the
+ * batch-then-collapse rhythm entirely — a bug this page shipped with once.
  */
-const THRESHOLD = 20;
-/** How many recent values the arrival strip renders. The array behind it keeps growing. */
+function thresholdFor(delta: number): number {
+  return Math.max(16, Math.round(delta * 1.5));
+}
+
 const STRIP_WINDOW = 90;
 /** Most bars the sort animation draws. Beyond this it animates an evenly-spaced sample. */
 const SORT_WINDOW = 260;
@@ -67,10 +73,22 @@ export function SketchLiveSpike(): React.JSX.Element {
   const [percentile, setPercentile] = useState(90);
   /** Set when the user asks to summarize, which can be at any point — not only at the end. */
   const [summarizing, setSummarizing] = useState(false);
+  const [delta, setDelta] = useState<number>(DELTAS[0]);
+  const threshold = thresholdFor(delta);
 
   // Incremental, not recomputed. Replaying the whole stream on every tick is quadratic, which is
   // fine for a fixed sixty values and hopeless for a run with no end.
-  const [state, setState] = useState<IngestState>(() => createIngest(CELLS, COMPRESSION, THRESHOLD));
+  const [state, setState] = useState<IngestState>(() =>
+    createIngest(CELLS, DELTAS[0], thresholdFor(DELTAS[0])),
+  );
+
+  // A different δ is a different digest, so the run restarts rather than carrying centroids built
+  // under another budget.
+  useEffect(() => {
+    setState(createIngest(CELLS, delta, thresholdFor(delta)));
+    setRunning(false);
+    setSummarizing(false);
+  }, [delta]);
 
   const advance = useCallback((count: number) => {
     setState((current) => {
@@ -83,8 +101,8 @@ export function SketchLiveSpike(): React.JSX.Element {
   }, []);
 
   const reset = useCallback(() => {
-    setState(createIngest(CELLS, COMPRESSION, THRESHOLD));
-  }, []);
+    setState(createIngest(CELLS, delta, thresholdFor(delta)));
+  }, [delta]);
 
   useEffect(() => {
     if (!running) return undefined;
@@ -142,6 +160,17 @@ export function SketchLiveSpike(): React.JSX.Element {
           ))}
         </div>
         <div className="flex items-center gap-1.5">
+          <span className="mr-1 text-base text-ink-tertiary" title="compression — lowercase delta">
+            δ
+          </span>
+          {DELTAS.map((d) => (
+            <Toggle key={d} active={delta === d} onClick={() => setDelta(d)}
+              title={d === 100 ? "what production uses" : "smaller budget, fewer centroids"}>
+              {d}
+            </Toggle>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5">
           <span className="mr-1 text-base text-ink-tertiary">summarize</span>
           {[50, 90, 99].map((p) => (
             <Toggle key={p} active={percentile === p} onClick={() => setPercentile(p)}>p{p}</Toggle>
@@ -153,7 +182,6 @@ export function SketchLiveSpike(): React.JSX.Element {
             color={GREEN} />
           <Readout label="centroids"
             value={state.cells.reduce((n, c) => n + c.centroids.length, 0)} color={CYAN} />
-          <Readout label="δ" value={COMPRESSION} />
         </div>
       </ControlBar>
 
@@ -188,7 +216,7 @@ export function SketchLiveSpike(): React.JSX.Element {
 
       {showSummary && (
         <SummarizePhase state={state} percentile={percentile} pending={pendingAtSummarize}
-          midRun />
+          midRun delta={delta} />
       )}
 
       <SourceNote>
@@ -204,11 +232,11 @@ export function SketchLiveSpike(): React.JSX.Element {
         compressions&rdquo;.
         <br />
         <span className="text-ink-quaternary">
-          Two knobs are turned down so the structures fit on screen, and nothing else differs. δ is{" "}
-          {COMPRESSION} rather than production&apos;s 100, so a digest settles at a handful of
-          centroids instead of about fifty. The compress threshold is {THRESHOLD} rather than the{" "}
+          One knob is turned down so the structures fit on screen, and nothing else differs. The
+          compress threshold is {threshold} at the selected δ of {delta}, rather than the{" "}
           <code>max(64, δ × 10)</code> the Rust derives — 1000 at δ=100, which would mean a
-          thousand raw centroids accumulating before anything happened.
+          thousand raw centroids accumulating before anything happened. δ itself is yours to set;
+          100 is what production uses.
         </span>
       </SourceNote>
     </div>
@@ -272,6 +300,12 @@ function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
         const centroids = cell.centroids;
         const pending = centroids.length - settled;
         const maxWeight = Math.max(1, ...centroids.map((c) => c.weight));
+        // At δ=100 a cell settles near fifty centroids and can hold a hundred more pending. Bars
+        // thin out to keep the row on one line, and past a point the row is truncated rather than
+        // wrapped into an unreadable block.
+        const barWidth = centroids.length > 60 ? 5 : centroids.length > 30 ? 9 : 15;
+        const drawn = centroids.slice(0, 110);
+        const hidden = centroids.length - drawn.length;
         const headroom = cell.compressThreshold - centroids.length + 1;
         return (
           <div key={index} className="flex items-center gap-3">
@@ -279,14 +313,14 @@ function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
               cell {index}
             </span>
             <span className="flex flex-wrap items-end gap-[3px]">
-              {centroids.map((c, i) => {
+              {drawn.map((c, i) => {
                 const isPending = i >= settled;
                 return (
                   <span key={i} className="flex flex-col items-center justify-end"
                     title={`${isPending ? "pending — " : ""}mean ${c.mean.toFixed(1)}, weight ${c.weight}`}>
                     <span className="rounded-t-[2px]"
                       style={{
-                        width: 15,
+                        width: barWidth,
                         height: 6 + (c.weight / maxWeight) * 24,
                         background: isPending ? "transparent" : CELL_COLOR[index],
                         outline: isPending ? `1px dashed ${CELL_COLOR[index]}` : "none",
@@ -294,12 +328,17 @@ function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
                         opacity: isPending ? 0.7 : 0.4 + 0.5 * (c.weight / maxWeight),
                         transition: "height 250ms ease-out",
                       }} />
-                    <span className="font-mono text-[10px]" style={{ color: DIM }}>{c.weight}</span>
+                    {barWidth >= 15 && (
+                      <span className="font-mono text-[10px]" style={{ color: DIM }}>{c.weight}</span>
+                    )}
                   </span>
                 );
               })}
               {centroids.length === 0 && (
                 <span className="text-[14px]" style={{ color: DIM }}>empty</span>
+              )}
+              {hidden > 0 && (
+                <span className="self-center text-[12px]" style={{ color: DIM }}>+{hidden}</span>
               )}
             </span>
             <span className="ml-auto shrink-0 text-right font-mono text-[13px] tabular-nums">
@@ -323,7 +362,8 @@ function CellDigests({ state }: { state: IngestState }): React.JSX.Element {
         Solid bars are settled centroids — sorted and clustered by the last compress, height is the
         weight they carry. Dashed bars are the pending tail: raw weight-1 arrivals, in arrival
         order, unsorted. Nothing clusters until the buffer exceeds{" "}
-        <strong>{THRESHOLD}</strong>, and then the whole thing collapses at once.
+        <strong>{state.cells[0]?.compressThreshold ?? 0}</strong>, and then the whole thing
+        collapses at once.
       </p>
     </div>
   );
@@ -346,9 +386,12 @@ function SummarizePhase({
   percentile,
   pending,
   midRun,
+  delta,
 }: {
   state: IngestState;
   percentile: number;
+  /** The compression the cells were built under. */
+  delta: number;
   /** Centroids sitting in unsorted tails when the report was asked for. */
   pending: number;
   /** True when the user asked mid-run rather than at the end. */
@@ -357,7 +400,7 @@ function SummarizePhase({
   // The sort happens here, at summarize — not during the run.
   const sorted = useMemo(() => sortedAtSummarize(state), [state]);
   const exact = traceExact(sorted, percentile);
-  const fold = useMemo(() => traceFold(state.cells, COMPRESSION), [state.cells]);
+  const fold = useMemo(() => traceFold(state.cells, delta), [state.cells, delta]);
   const sketch = traceSketch(fold.folded, percentile / 100);
 
   const walkLength = sketch?.steps.length ?? 0;
@@ -382,7 +425,10 @@ function SummarizePhase({
         }
         return s + 1;
       });
-    }, stage === STAGE_SORT ? 1100 : 550);
+      // The walk has one stage per centroid, and at δ=100 that is a hundred or more. A fixed beat
+      // would make it run for a minute, so the whole walk is budgeted instead: slower when there
+      // is little to see, quick when there is a lot.
+    }, stage === STAGE_SORT ? 1100 : stage < STAGE_WALK ? 550 : Math.max(45, Math.min(550, 7000 / Math.max(1, walkLength))));
     return () => window.clearInterval(handle);
   }, [playing, lastStage, stage]);
 
@@ -463,13 +509,13 @@ function SummarizePhase({
             one interpolates between two summaries.
           </p>
           <p className="mt-2 text-[14px] leading-relaxed" style={{ color: ORANGE }}>
-            That percentage is set by δ, not by how much data has arrived. δ is {COMPRESSION} here
-            rather than production&apos;s 100, and more values do not rescue it — measured on this
-            stream at δ&nbsp;={COMPRESSION} the p90 error runs 2.7%, −0.6%, 5.6%, 1.7% at 30, 300,
-            3,000 and 30,000 values, wandering rather than shrinking. At δ&nbsp;=&nbsp;100 the same
-            code gives 4.3%, 0.20%, 0.098%, 0.11% — it settles near a tenth of a percent once a few
-            hundred values are in, and stays there. The budget sets the floor; the sample size only
-            decides how quickly you reach it.
+            That percentage is set by δ, not by how much data has arrived — you are running at{" "}
+            {delta}. Measured on this stream, the p90 error at δ&nbsp;=&nbsp;12 runs 2.7%, −0.6%,
+            5.6%, 1.7% across 30, 300, 3,000 and 30,000 values: wandering, not shrinking. At
+            δ&nbsp;=&nbsp;100 the same code gives 4.3%, 0.20%, 0.098%, 0.11% — settling near a
+            tenth of a percent once a few hundred values are in, and staying there. The budget sets
+            the floor; the sample size only decides how quickly you reach it. Raise δ above and ask
+            again.
           </p>
         </Panel>
       </div>
@@ -704,7 +750,11 @@ function FoldStages({
                 opacity: 0.8,
               }}
               title={`mean ${c.mean.toFixed(1)}, weight ${c.weight} of ${foldedTotal}`}>
-              <span className="font-mono text-[10px] text-black">{c.weight}</span>
+              {/* Only label when there is room. At δ=100 the fold leaves sixty-odd blocks a few
+                  pixels wide and the numbers collapse into noise. */}
+              {fold.folded.centroids.length <= 24 && (
+                <span className="font-mono text-[10px] text-black">{c.weight}</span>
+              )}
             </span>
           ))}
       </div>
