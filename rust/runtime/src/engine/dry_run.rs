@@ -684,12 +684,13 @@ impl VirtualPlacement {
         }
     }
 
-    fn assign(&self, correlation_id: Option<&str>) -> (usize, u64) {
+    fn assign(&self, correlation_id: Option<&str>, is_final_turn: bool) -> (usize, u64) {
         let mut cursor = self.next_worker.get();
         let worker = pick_worker(
             self.routing,
             self.width,
             correlation_id,
+            is_final_turn,
             &self.inflight,
             &mut self.sticky.borrow_mut(),
             &mut cursor,
@@ -1014,7 +1015,10 @@ impl RequestExecutor for FakeRequestExecutor {
         let (_worker_guard, contention_override, multipliers) = if let Some(placement) =
             &self.placement
         {
-            let (worker, assignment_index) = placement.assign(metadata.correlation_id.as_deref());
+            let (worker, assignment_index) = placement.assign(
+                metadata.correlation_id.as_deref(),
+                turn.request.is_final_turn,
+            );
             metadata.worker_id = Some(format!("dry-run-{worker}"));
             metadata.worker_assignment_index = Some(assignment_index);
             let guard = VirtualInflightGuard::new(&placement.inflight[worker].inflight);

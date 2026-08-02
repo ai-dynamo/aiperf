@@ -436,17 +436,19 @@ impl Drop for InflightGuard<'_> {
 /// shallowest worker — ties broken by fewer credits routed so far, then by longest since last
 /// send — and bind the correlation id to the winner.
 ///
-/// Two divergences from Python remain, both because the signal is not available here:
+/// Bindings follow Python's lifecycle: created only on a non-final turn (a single-turn session
+/// never binds), and released on the owning session's final turn, decrementing that worker's
+/// `active_sessions`.
 ///
-/// - Python also tie-breaks on `active_sessions` (committed multi-turn sessions), which needs an
-///   end-of-session decrement. This site never learns that a session has ended.
-/// - Python evicts a binding on the owning session's final turn and pins DAG children to their
-///   parent's worker via `parent_correlation_id`. Neither `is_final_turn` nor
-///   `parent_correlation_id` reaches this call, so bindings here live for the run.
+/// One Python behaviour is deliberately absent: pinning DAG children to their parent's worker via
+/// `parent_correlation_id`. Graph and DAG traces are placed by
+/// [`ThreadPerCoreTracePlacement`](crate::graph::placement) and never reach this hop, so there is
+/// no child here to pin.
 pub(crate) fn pick_worker(
     routing: HopRouting,
     workers: usize,
     correlation: Option<&str>,
+    is_final_turn: bool,
     inflight: &[WorkerLoad],
     sticky: &mut HashMap<String, usize>,
     rr_cursor: &mut usize,
@@ -459,14 +461,36 @@ pub(crate) fn pick_worker(
             None => round_robin(workers, rr_cursor),
         },
         HopRouting::LeastLoaded => {
-            if let Some(id) = correlation
-                && let Some(&bound) = sticky.get(id)
+            // An existing binding wins, exactly as Python's sticky lookup does.
+            let bound = correlation.and_then(|id| sticky.get(id).copied());
+            let worker = match bound {
+                Some(worker) => worker,
+                None => {
+                    let worker = least_loaded(inflight);
+                    // Python creates a binding only for a NON-final turn: a single-turn session
+                    // would otherwise be inserted and evicted on the same call, churning the map
+                    // and the `active_sessions` counter for nothing.
+                    if let Some(id) = correlation
+                        && !is_final_turn
+                    {
+                        sticky.insert(id.to_owned(), worker);
+                        let load = &inflight[worker];
+                        load.active_sessions.set(load.active_sessions.get() + 1);
+                    }
+                    worker
+                }
+            };
+            // The session's final turn releases its binding. Without this the map grows for the
+            // lifetime of the run — one entry per session, never reclaimed — and every worker's
+            // `active_sessions` ratchets upward, biasing placement toward whichever worker
+            // happened to take fewest sessions early on.
+            if is_final_turn
+                && let Some(id) = correlation
+                && let Some(released) = sticky.remove(id)
             {
-                return bound;
-            }
-            let worker = least_loaded(inflight);
-            if let Some(id) = correlation {
-                sticky.insert(id.to_owned(), worker);
+                let load = &inflight[released];
+                load.active_sessions
+                    .set(load.active_sessions.get().saturating_sub(1));
             }
             worker
         }
@@ -488,6 +512,9 @@ pub(crate) fn pick_worker(
 pub(crate) struct WorkerLoad {
     /// In-flight commands: `+1` on send, `-1` on reply.
     pub(crate) inflight: Cell<usize>,
+    /// Multi-turn sessions currently bound to this worker. Python's `active_sessions`:
+    /// incremented when a binding is created, decremented when the session's final turn evicts it.
+    pub(crate) active_sessions: Cell<usize>,
     /// Total credits ever routed here. Python's `virtual_sent_credits`.
     pub(crate) sent: Cell<u64>,
     /// Sequence number of this worker's most recent send. Python's `last_sent_at_ns`, as a
@@ -506,15 +533,16 @@ fn round_robin(workers: usize, rr_cursor: &mut usize) -> usize {
 ///
 /// A bare `min_by_key` on depth alone resolves every tie to the lowest index, which at the start
 /// of a run — when every worker is at zero — sends the first burst of sessions all to worker 0.
-/// Python instead prefers the worker with fewer credits routed so far, then the one that has gone
-/// longest without a send. The index is kept as a final deterministic tiebreak so the choice is
-/// still total and reproducible.
+/// Python's order after depth is `active_sessions`, then credits routed so far, then longest
+/// since last send; the index is kept as a final deterministic tiebreak so the choice is still
+/// total and reproducible.
 fn least_loaded(load: &[WorkerLoad]) -> usize {
     load.iter()
         .enumerate()
         .min_by_key(|(index, worker)| {
             (
                 worker.inflight.get(),
+                worker.active_sessions.get(),
                 worker.sent.get(),
                 worker.last_sent.get(),
                 *index,
@@ -786,6 +814,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                 self.routing,
                 senders.len(),
                 context.metadata.correlation_id.as_deref(),
+                turn.request.is_final_turn,
                 &self.inflight,
                 &mut self.sticky.borrow_mut(),
                 &mut rr_cursor,
@@ -1133,6 +1162,113 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_session_releases_its_binding_on_the_final_turn() {
+        // The leak this fixes: without eviction the map keeps one entry per session for the whole
+        // run, and every worker's active_sessions ratchets upward and never comes back down.
+        let load: Vec<WorkerLoad> = (0..2).map(|_| WorkerLoad::default()).collect();
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+
+        let first = pick_worker(
+            HopRouting::LeastLoaded,
+            2,
+            Some("conv"),
+            false,
+            &load,
+            &mut sticky,
+            &mut cursor,
+        );
+        assert_eq!(sticky.len(), 1);
+        assert_eq!(load[first].active_sessions.get(), 1);
+
+        let last = pick_worker(
+            HopRouting::LeastLoaded,
+            2,
+            Some("conv"),
+            true,
+            &load,
+            &mut sticky,
+            &mut cursor,
+        );
+        // The final turn still runs on the bound worker, and only then is the binding released.
+        assert_eq!(last, first);
+        assert!(sticky.is_empty(), "binding outlived its session");
+        assert_eq!(load[first].active_sessions.get(), 0);
+    }
+
+    #[test]
+    fn a_single_turn_session_never_binds_at_all() {
+        // Python creates the entry only for a non-final turn; binding then evicting on the same
+        // call would churn the map and the counter for nothing.
+        let load: Vec<WorkerLoad> = (0..2).map(|_| WorkerLoad::default()).collect();
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        let worker = pick_worker(
+            HopRouting::LeastLoaded,
+            2,
+            Some("one-shot"),
+            true,
+            &load,
+            &mut sticky,
+            &mut cursor,
+        );
+        assert!(sticky.is_empty());
+        assert_eq!(load[worker].active_sessions.get(), 0);
+    }
+
+    #[test]
+    fn the_sticky_map_stays_bounded_across_many_sessions() {
+        // A long multi-session run must not accumulate state. Every session opens and closes, so
+        // the map returns to empty however many pass through.
+        let load: Vec<WorkerLoad> = (0..4).map(|_| WorkerLoad::default()).collect();
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        for session in 0..500 {
+            let id = format!("conv-{session}");
+            for turn in 0..3 {
+                pick_worker(
+                    HopRouting::LeastLoaded,
+                    4,
+                    Some(&id),
+                    turn == 2,
+                    &load,
+                    &mut sticky,
+                    &mut cursor,
+                );
+            }
+        }
+        assert!(sticky.is_empty(), "{} bindings leaked", sticky.len());
+        for worker in &load {
+            assert_eq!(worker.active_sessions.get(), 0);
+        }
+    }
+
+    #[test]
+    fn least_loaded_prefers_fewer_committed_sessions_before_credit_count() {
+        // Python's order after depth is active_sessions, then sent, then last_sent. Worker 1 holds
+        // more credits but fewer sessions, so it wins.
+        let load: Vec<WorkerLoad> = (0..2).map(|_| WorkerLoad::default()).collect();
+        load[0].active_sessions.set(3);
+        load[0].sent.set(1);
+        load[1].active_sessions.set(1);
+        load[1].sent.set(99);
+        let mut sticky = HashMap::new();
+        let mut cursor = 0usize;
+        assert_eq!(
+            pick_worker(
+                HopRouting::LeastLoaded,
+                2,
+                None,
+                false,
+                &load,
+                &mut sticky,
+                &mut cursor
+            ),
+            1
+        );
+    }
+
+    #[test]
     fn least_loaded_spreads_the_opening_burst_instead_of_stacking_worker_zero() {
         // Every worker starts at depth zero. A bare min-by-depth resolves every tie to index 0 and
         // sends the whole opening burst there; Python breaks the tie on credits-sent, so the burst
@@ -1147,6 +1283,7 @@ mod tests {
                 HopRouting::LeastLoaded,
                 4,
                 Some(&id),
+                false,
                 &load,
                 &mut sticky,
                 &mut cursor,
@@ -1181,6 +1318,7 @@ mod tests {
                 HopRouting::LeastLoaded,
                 3,
                 None,
+                false,
                 &load,
                 &mut sticky,
                 &mut cursor
@@ -1206,6 +1344,7 @@ mod tests {
                 HopRouting::LeastLoaded,
                 3,
                 None,
+                false,
                 &load,
                 &mut sticky,
                 &mut cursor
@@ -1225,6 +1364,7 @@ mod tests {
                     HopRouting::RoundRobin,
                     3,
                     Some("ignored-under-round-robin"),
+                    false,
                     &inflight,
                     &mut sticky,
                     &mut cursor,
@@ -1246,6 +1386,7 @@ mod tests {
             HopRouting::Sticky,
             3,
             Some("conv-A"),
+            false,
             &inflight,
             &mut sticky,
             &mut cursor,
@@ -1259,6 +1400,7 @@ mod tests {
                     HopRouting::Sticky,
                     3,
                     Some("conv-A"),
+                    false,
                     &inflight,
                     &mut sticky,
                     &mut cursor,
@@ -1280,6 +1422,7 @@ mod tests {
                     HopRouting::Sticky,
                     3,
                     None,
+                    false,
                     &inflight,
                     &mut sticky,
                     &mut cursor,
@@ -1301,6 +1444,7 @@ mod tests {
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
+            false,
             &load,
             &mut sticky,
             &mut cursor,
@@ -1313,6 +1457,7 @@ mod tests {
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
+            false,
             &deeper,
             &mut sticky,
             &mut cursor,
