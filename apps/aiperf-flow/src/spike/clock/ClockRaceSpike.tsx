@@ -214,20 +214,20 @@ export function ClockRaceSpike(): React.JSX.Element {
           hint="RealClock · current-thread tokio, real timers"
           tasks={tasks} span={span} instants={allInstants}
           cost={
-            <span>
-              <strong style={{ color: BLUE }}>{humanNs(span)}</strong> of elapsed time — the whole
-              span, empty stretches and all, even though only <strong>{instants}</strong> moments in it
-              contain anything. Cost is O(span), so stretching the benchmark stretches this.
+            <span className="text-[15px] text-ink-tertiary">
+              <strong className="text-[19px]" style={{ color: BLUE }}>{humanNs(span)}</strong>{" "}
+              of elapsed time — the whole span, empty or not.{" "}
+              <span className="text-ink-quaternary">O(span)</span>
             </span>
           } />
         <ClockPane state={sim} label="Simulated time — instant" accent={CYAN}
           hint="SimClock · advance_to(next_event_time), event by event"
           tasks={tasks} span={span} instants={allInstants}
           cost={
-            <span>
-              <strong style={{ color: CYAN }}>{instants} visits</strong> — one per moment, and
-              nothing at all for the space between: <code>advance_to</code> steps over each in a
-              single assignment. Cost is O(events), so this number never moves.
+            <span className="text-[15px] text-ink-tertiary">
+              <strong className="text-[19px]" style={{ color: CYAN }}>{instants} visits</strong>{" "}
+              — one per moment, nothing for the space between.{" "}
+              <span className="text-ink-quaternary">O(events) — never moves</span>
             </span>
           } />
       </div>
@@ -263,8 +263,10 @@ function laneOf(taskId: string): number {
   return Number.isFinite(n) ? n - 1 : 0;
 }
 
-const LANE_H = 30;
-const PAD_L = 62;
+const LANE_H = 28;
+const STRIP_Y = 22;
+const TOP = 44;
+const PAD_L = 78;
 const PAD_R = 14;
 const VIEW_W = 760;
 
@@ -294,10 +296,10 @@ function ClockTrack({
   instants: readonly number[];
 }): React.JSX.Element {
   const lanes = tasks.length;
-  const height = lanes * LANE_H + 26;
+  const height = TOP + lanes * LANE_H + 6;
   const innerW = VIEW_W - PAD_L - PAD_R;
   const x = (ns: number) => PAD_L + (Math.min(ns, span) / Math.max(1, span)) * innerW;
-  const y = (lane: number) => 20 + lane * LANE_H + LANE_H / 2;
+  const y = (lane: number) => TOP + lane * LANE_H + LANE_H / 2;
 
   // Per lane: where it was sent, where its first token landed, and its most recent event. Those
   // three points are the whole shape of a request — wait, then stream.
@@ -326,25 +328,30 @@ function ClockTrack({
     <svg viewBox={`0 0 ${VIEW_W} ${height}`} width="100%" height={height}
       role="img" aria-label="requests over time, with parked wakeups ahead of the playhead">
       {/* The span the whole run occupies, so both panes share one frame of reference. */}
-      {/*
-        The run, in full. Everything not on one of these lines is empty — and since events have no
-        width, that is the entire rest of the span. Drawing the emptiness would be drawing the
-        whole rectangle, which says nothing; drawing the moments says it exactly.
-      */}
-      {instants.map((t, i) => (
-        <line key={i} x1={x(t)} x2={x(t)} y1={14} y2={height - 6}
-          stroke="rgba(255,255,255,0.16)" strokeWidth={1} />
+      {[0, 0.5, 1].map((f) => (
+        <text key={f} x={x(f * span)} y={10} fontSize={11}
+          textAnchor={f === 0 ? "start" : f === 1 ? "end" : "middle"}
+          fill="var(--color-ink-quaternary)">
+          {humanNs(f * span)}
+        </text>
       ))}
 
-      {[0, 0.25, 0.5, 0.75, 1].map((f) => (
-        <g key={f}>
-          <line x1={x(f * span)} x2={x(f * span)} y1={14} y2={height - 6}
-            stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
-          <text x={x(f * span)} y={10} fontSize={10} textAnchor="middle" fill="var(--color-ink-quaternary)">
-            {humanNs(f * span)}
-          </text>
-        </g>
+      {/*
+        The run, in full, on one strip. Everything not on a tick is empty — and since events have
+        no width, that is the entire rest of the span. Drawing the emptiness would be drawing the
+        whole rectangle, which says nothing; drawing the moments says it exactly. Kept out of the
+        lanes so it reads as a summary rather than as noise over the requests.
+      */}
+      <rect x={PAD_L} y={STRIP_Y - 6} width={innerW} height={13} rx={2}
+        fill="rgba(255,255,255,0.03)" />
+      {instants.map((t, i) => (
+        <line key={i} x1={x(t)} x2={x(t)} y1={STRIP_Y - 5} y2={STRIP_Y + 6}
+          stroke="rgba(255,255,255,0.5)" strokeWidth={1} />
       ))}
+      <text x={PAD_L - 8} y={STRIP_Y + 4} fontSize={11} textAnchor="end"
+        fill="var(--color-ink-quaternary)">
+        {instants.length} moments
+      </text>
 
       {tasks.map((task, lane) => {
         const color = REQ_COLORS[lane % REQ_COLORS.length]!;
@@ -406,8 +413,8 @@ function ClockTrack({
       })}
 
       {/* Now. The whole difference between the two panes is how this line travels. */}
-      <line x1={nowX} x2={nowX} y1={12} y2={height - 4} stroke={accent} strokeWidth={2} />
-      <polygon points={`${nowX - 5},12 ${nowX + 5},12 ${nowX},19`} fill={accent} />
+      <line x1={nowX} x2={nowX} y1={STRIP_Y - 8} y2={height - 4} stroke={accent} strokeWidth={2} />
+      <polygon points={`${nowX - 5},${STRIP_Y - 8} ${nowX + 5},${STRIP_Y - 8} ${nowX},${STRIP_Y - 1}`} fill={accent} />
     </svg>
   );
 }
@@ -478,25 +485,20 @@ function ClockPane({
       <div className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
         THE RUN
       </div>
-      <div className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-quaternary">
+      <div className="mb-1 flex items-center gap-x-4 text-[12px] text-ink-quaternary">
         <span><span className="text-ink-secondary">▮</span> sent</span>
         <span><span className="text-ink-secondary">●</span> first token</span>
-        <span><span className="text-ink-secondary">◦</span> each token</span>
         <span>┈ waiting</span>
-        <span><span className="text-ink-secondary">│</span> a moment something happens</span>
         <span><span className="text-ink-secondary">━</span> streaming</span>
-        <span><span className="text-ink-secondary">◯</span> parked — hasn&apos;t happened yet</span>
-        <span style={{ color: accent }}>▎ now</span>
+        <span><span className="text-ink-secondary">◯</span> not yet</span>
+        <span className="ml-auto" style={{ color: accent }}>▎ now</span>
       </div>
       <div className="mb-3">
         <ClockTrack state={state} accent={accent} tasks={tasks} span={span} instants={instants} />
       </div>
 
-      <div className="mb-3 rounded border px-3 py-2 text-[15px]"
-        style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.02)" }}>
-        <div className="mb-0.5 text-[12px] font-bold tracking-widest text-ink-secondary">
-          BILLED FOR
-        </div>
+      <div className="mb-3 flex items-baseline gap-3 border-t border-white/10 pt-2.5">
+        <span className="text-[12px] font-bold tracking-widest text-ink-secondary">BILLED FOR</span>
         {cost}
       </div>
 
