@@ -55,7 +55,9 @@ const VERDICT: Record<Mode, { what: string; cost: string }> = {
   },
   global: {
     what: "Share one pool.",
-    cost: "Always holds the target. Threads still race, so order varies run to run.",
+    cost:
+      "Holds the target exactly, at any thread count — the last thread with work can take every " +
+      "slot. Threads still race, so issuance order varies run to run.",
   },
   "global-hop": {
     what: "One loop decides everything.",
@@ -162,12 +164,14 @@ export function DispatchModesSpike(): React.JSX.Element {
       {overSubscribed && (
         <div className="mb-4 rounded-lg border px-5 py-4 text-base leading-relaxed"
           style={{ borderColor: ORANGE, background: "rgba(255,140,0,0.05)" }}>
-          <strong style={{ color: ORANGE }}>Over-subscribed.</strong>{" "}
+          <strong style={{ color: ORANGE }}>Sharded is not running your benchmark.</strong>{" "}
           A target of {concurrency} across {workers} workers gives each a share below one, and{" "}
           <code>owned_cap</code> floors every share at one so no thread is starved. The caps stop
-          tiling and start exceeding: <strong>{admissibleTotal("sharded", concurrency, workers)}</strong>{" "}
-          admissible against a target of <strong>{concurrency}</strong>. The shared pool cannot do
-          this — there is only one counter to check.
+          tiling and start exceeding:{" "}
+          <strong>{admissibleTotal("sharded", concurrency, workers)}</strong> admissible against a
+          target of <strong>{concurrency}</strong>. It will look faster, because it is holding more
+          concurrency than you configured — the numbers it produces answer a different question.
+          The shared pool cannot do this; there is only one counter to check.
         </div>
       )}
 
@@ -333,7 +337,7 @@ function ModePane({
           <span className="text-lg tabular-nums">
             <span className="text-ink-tertiary">slots stranded</span>{" "}
             <strong style={{ color: DIM }}>0</strong>
-            <span className="text-[13px] text-ink-quaternary"> — nothing is reserved</span>
+            <span className="text-[13px] text-ink-quaternary"> — at every worker count</span>
           </span>
         )}
         {state.mode === "global-hop" && (
