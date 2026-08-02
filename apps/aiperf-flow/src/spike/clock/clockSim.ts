@@ -34,7 +34,48 @@ export type Sleeper = {
 export type Task = {
   id: string;
   sleepsNs: number[];
+  /** What each wake means, so the log reads as a benchmark rather than a scheduler dump. */
+  labels?: string[];
 };
+
+/** One benchmarked request: it is sent, waits out its TTFT, then streams tokens. */
+export type Request = {
+  id: string;
+  arrivalNs: number;
+  ttftNs: number;
+  itlNs: number;
+  tokens: number;
+};
+
+/**
+ * Turn requests into the sleep schedule a driver actually walks.
+ *
+ * The point of doing it this way is that the workload is ordinary async code — sleep, wake, do
+ * something — with no knowledge of which clock is underneath it. That is what makes the same run
+ * possible on both.
+ */
+export function requestsToTasks(requests: readonly Request[]): Task[] {
+  return requests.map((r) => {
+    const sleepsNs = [r.arrivalNs, r.ttftNs];
+    const labels = ["sent", "first token"];
+    for (let i = 1; i < r.tokens; i++) {
+      sleepsNs.push(r.itlNs);
+      labels.push(i === r.tokens - 1 ? "done" : `token ${i + 1}`);
+    }
+    return { id: r.id, sleepsNs, labels };
+  });
+}
+
+/** A small benchmark: eight requests, staggered arrivals, realistic TTFT and ITL. */
+export function defaultRequests(): Request[] {
+  return Array.from({ length: 8 }, (_, i) => ({
+    id: `req ${i + 1}`,
+    arrivalNs: (120 + i * 140) * NS_PER_MS,
+    ttftNs: (380 + ((i * 37) % 190)) * NS_PER_MS,
+    itlNs: (24 + ((i * 11) % 18)) * NS_PER_MS,
+    tokens: 6 + (i % 4),
+  }));
+}
 
 export type ClockKind = "real" | "sim";
 
@@ -46,8 +87,8 @@ export type ClockState = {
   wallMs: number;
   seq: number;
   heap: Sleeper[];
-  /** `taskId@step` per wake, in order. The comparable output. */
-  events: string[];
+  /** One entry per wake, in order. This is the run's output — what the two clocks must agree on. */
+  events: ClockEvent[];
   /** Nothing parked and work outstanding: no virtual event can make progress. */
   deadlocked: boolean;
   done: boolean;
@@ -55,16 +96,17 @@ export type ClockState = {
 
 export const NS_PER_MS = 1_000_000;
 
-/** A workload with staggered starts and one deliberate same-deadline collision. */
+/** One thing that happened, and when it happened on this clock. */
+export type ClockEvent = {
+  taskId: string;
+  step: number;
+  label: string;
+  atNs: number;
+};
+
+/** The default workload: the benchmark above, as sleeps. */
 export function defaultTasks(): Task[] {
-  return [
-    { id: "warmup", sleepsNs: [200 * NS_PER_MS, 300 * NS_PER_MS] },
-    { id: "poll", sleepsNs: [500 * NS_PER_MS, 500 * NS_PER_MS, 500 * NS_PER_MS] },
-    // These two land on the same deadline as `poll`'s first wake: 500ms.
-    { id: "tie-a", sleepsNs: [500 * NS_PER_MS, 900 * NS_PER_MS] },
-    { id: "tie-b", sleepsNs: [500 * NS_PER_MS] },
-    { id: "drain", sleepsNs: [1_400 * NS_PER_MS] },
-  ];
+  return requestsToTasks(defaultRequests());
 }
 
 export function createClock(kind: ClockKind, tasks: readonly Task[] = defaultTasks()): ClockState {
@@ -123,8 +165,13 @@ function drainDue(state: ClockState, ns: number, tasks: readonly Task[]): void {
     due.push(state.heap.shift()!);
   }
   for (const sleeper of due) {
-    state.events.push(`${sleeper.taskId}@${sleeper.step}`);
     const task = tasks.find((t) => t.id === sleeper.taskId);
+    state.events.push({
+      taskId: sleeper.taskId,
+      step: sleeper.step,
+      label: task?.labels?.[sleeper.step] ?? `step ${sleeper.step}`,
+      atNs: ns,
+    });
     const next = task?.sleepsNs[sleeper.step + 1];
     if (next !== undefined) schedule(state, sleeper.taskId, next, sleeper.step + 1);
   }
@@ -184,4 +231,62 @@ export function runToEnd(kind: ClockKind, tasks: readonly Task[] = defaultTasks(
 /** Virtual time the workload spans, for scaling a shared axis. */
 export function spanNs(tasks: readonly Task[] = defaultTasks()): number {
   return runToEnd("sim", tasks).nowNs;
+}
+
+/** What a benchmark run actually reports. This is the comparison an end user cares about. */
+export type BenchmarkResult = {
+  completed: number;
+  tokens: number;
+  meanTtftMs: number;
+  meanItlMs: number;
+  /** Longest request, end to end. */
+  p100LatencyMs: number;
+};
+
+/**
+ * Reduce a run's events into the numbers a benchmark exists to produce.
+ *
+ * Derived purely from event timestamps on that clock, which is the whole argument: if the two
+ * clocks emit the same events at the same virtual times, they report the same results — and one
+ * of them got there without waiting.
+ */
+export function summarize(state: ClockState): BenchmarkResult {
+  const sent = new Map<string, number>();
+  const first = new Map<string, number>();
+  const last = new Map<string, number>();
+  let tokens = 0;
+
+  for (const event of state.events) {
+    if (event.label === "sent") sent.set(event.taskId, event.atNs);
+    else {
+      tokens += 1;
+      if (event.label === "first token") first.set(event.taskId, event.atNs);
+      last.set(event.taskId, event.atNs);
+    }
+  }
+
+  const ttfts: number[] = [];
+  const latencies: number[] = [];
+  const itls: number[] = [];
+  for (const [id, sentAt] of sent) {
+    const firstAt = first.get(id);
+    const lastAt = last.get(id);
+    if (firstAt === undefined || lastAt === undefined) continue;
+    ttfts.push((firstAt - sentAt) / NS_PER_MS);
+    latencies.push((lastAt - sentAt) / NS_PER_MS);
+    // Decode span divided by the gaps within it.
+    const decodeEvents = state.events.filter(
+      (e) => e.taskId === id && e.label !== "sent" && e.label !== "first token",
+    ).length;
+    if (decodeEvents > 0) itls.push((lastAt - firstAt) / NS_PER_MS / decodeEvents);
+  }
+
+  const mean = (xs: number[]) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
+  return {
+    completed: latencies.length,
+    tokens,
+    meanTtftMs: mean(ttfts),
+    meanItlMs: mean(itls),
+    p100LatencyMs: latencies.length === 0 ? 0 : Math.max(...latencies),
+  };
 }

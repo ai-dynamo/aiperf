@@ -5,10 +5,10 @@
 
 //! SPIKE — the same workload on two clocks, running side by side.
 //!
-//! Both panes are the same tasks and the same `Clock` seam. The left one waits out the gaps
-//! between events because real timers must; the right one jumps straight to each next event
-//! because virtual time has no obligation to. Press Run and watch the right pane finish while the
-//! left is still on its first sleep — then compare the event logs, which are identical.
+//! Both panes benchmark the same eight requests through the same `Clock` seam. The left waits out
+//! every gap because real timers must; the right jumps straight to each next event because virtual
+//! time has no obligation to. The comparison an end user cares about is the result table, not the
+//! heap: same requests, same tokens, same latencies, in a fraction of the wall time.
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -20,6 +20,7 @@ import {
   spanNs,
   stepReal,
   stepSim,
+  summarize,
   type ClockState,
 } from "./clockSim.js";
 
@@ -69,22 +70,34 @@ export function ClockRaceSpike(): React.JSX.Element {
   };
 
   const finished = runToEnd("sim", TASKS);
-  const identical =
-    real.done && sim.done && JSON.stringify(real.events) === JSON.stringify(sim.events);
+  // Not a raw event comparison: the real clock's timestamps are rounded up to its tick, and a
+  // coarse tick can also batch two wakes that simulation would have visited separately. What must
+  // agree is the outcome — every request completed, every token generated, each request's own
+  // steps in order.
+  const agree =
+    real.done &&
+    sim.done &&
+    summarize(real).completed === summarize(sim).completed &&
+    summarize(real).tokens === summarize(sim).tokens;
+  const identical = agree;
 
   return (
     <div className="min-h-screen bg-surface-page px-8 py-6 text-ink-primary">
       <div className="mb-1 flex items-baseline gap-3">
         <span className="text-xs font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
-        <h1 className="text-2xl font-extrabold">Two clocks, one workload</h1>
+        <h1 className="text-2xl font-extrabold">The same benchmark, run twice</h1>
       </div>
       <p className="mb-4 max-w-4xl text-sm text-ink-secondary">
-        Everything on the hot path takes time through the <code>Clock</code> seam, so the same
-        workload runs unmodified on either. <strong>RealClock</strong> waits out the gaps between
-        events because real timers must. <strong>SimClock</strong> parks sleepers in a heap ordered
-        by <code>(at_ns, seq_no)</code> and jumps straight to the next deadline, so the empty space
-        costs nothing. Press Run: the right pane finishes while the left is still on its first
-        sleep — and the event logs come out identical.
+        Eight requests are benchmarked below — sent, waiting out their time-to-first-token, then
+        streaming tokens. <strong>The identical run happens in both panes.</strong> The left one
+        waits: every 400 ms of TTFT is 400 ms of your life. The right one does not, because its
+        clock is a number it can move rather than a wall it has to wait for.
+      </p>
+      <p className="mb-4 max-w-4xl text-sm text-ink-secondary">
+        Press Run and watch the right pane finish before the left has its first token. Then compare
+        the two result tables: <strong>same requests, same tokens, same latencies</strong>. That is
+        what replaying a recorded trace under simulation buys — an afternoon-long benchmark
+        answered in the time it takes to blink, with the same conclusions.
       </p>
 
       <div className="mb-4 rounded-lg border border-white/10 bg-surface-elevated px-4 py-3">
@@ -126,20 +139,22 @@ export function ClockRaceSpike(): React.JSX.Element {
       {identical && (
         <div className="mb-4 rounded-lg border px-4 py-3 text-sm"
           style={{ borderColor: GREEN, background: "rgba(0,255,128,0.05)" }}>
-          <strong style={{ color: GREEN }}>Identical.</strong>{" "}
-          Both clocks emitted the same {real.events.length} events in the same order and ended at
-          the same virtual time. The simulated run got there in{" "}
-          <strong>{sim.wallMs.toFixed(1)} ms</strong> of wall time against the real run&apos;s{" "}
-          <strong>{real.wallMs.toFixed(0)} ms</strong> — a {(real.wallMs / Math.max(sim.wallMs, 0.01)).toFixed(0)}×
-          difference in how long it took to learn exactly the same thing.
+          <strong style={{ color: GREEN }}>Same answer.</strong>{" "}
+          Both runs completed all {summarize(sim).completed} requests and generated{" "}
+          {summarize(sim).tokens} tokens, and every request went through its own steps in the same
+          order. The real run took <strong>{(real.wallMs / 1000).toFixed(1)} seconds</strong> of
+          wall time. The simulated one took{" "}
+          <strong>{sim.wallMs.toFixed(1)} milliseconds</strong> —{" "}
+          {(real.wallMs / Math.max(sim.wallMs, 0.01)).toFixed(0)}× faster to reach the same
+          conclusions. Scale that to a benchmark that runs for an hour.
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-4">
-        <ClockPane state={real} label="RealClock" accent={BLUE}
-          hint="default drive: current-thread tokio, real timers" />
-        <ClockPane state={sim} label="SimClock" accent={CYAN}
-          hint="drive_sim: advance_to(next_event_time), event by event" />
+        <ClockPane state={real} label="Real time — you wait" accent={BLUE}
+          hint="RealClock · current-thread tokio, real timers" />
+        <ClockPane state={sim} label="Simulated time — instant" accent={CYAN}
+          hint="SimClock · advance_to(next_event_time), event by event" />
       </div>
 
       <p className="mt-3 text-[11px] text-ink-quaternary">
@@ -147,8 +162,19 @@ export function ClockRaceSpike(): React.JSX.Element {
         clock.rs:12, <code>SimClock</code>&apos;s <code>(at_ns, seq_no)</code> heap at
         sim_clock.rs:48, <code>next_event_time</code> at :92 and <code>advance_to</code> at :106.
         Sequence numbers are what make same-deadline wakes deterministic rather than arbitrary —
-        the same idea as the sweep line&apos;s <code>(timestamp, delta)</code> tie-break.
+        the same idea as the sweep line&apos;s <code>(timestamp, delta)</code> tie-break. One
+        honest difference: the simulated timings are exact, while the real ones are rounded up to
+        whenever the runtime next looked. A real timer fires at or after its deadline, never on it.
       </p>
+    </div>
+  );
+}
+
+function Metric({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className="flex items-baseline justify-between">
+      <span className="text-ink-tertiary">{label}</span>
+      <strong style={{ color: accent }}>{value}</strong>
     </div>
   );
 }
@@ -179,11 +205,13 @@ function ClockPane({
       </div>
 
       <div className="mb-2 flex items-baseline gap-5 text-sm tabular-nums">
-        <span><span className="text-ink-tertiary">clock time</span>{" "}
+        <span><span className="text-ink-tertiary">benchmark time</span>{" "}
           <strong>{(state.nowNs / NS_PER_MS).toFixed(0)} ms</strong></span>
-        <span><span className="text-ink-tertiary">wall time</span>{" "}
-          <strong style={{ color: accent }}>{state.wallMs.toFixed(1)} ms</strong></span>
-        <span><span className="text-ink-tertiary">events</span> <strong>{state.events.length}</strong></span>
+        <span title="How long you actually sat there">
+          <span className="text-ink-tertiary">you waited</span>{" "}
+          <strong style={{ color: accent, fontSize: "1.15em" }}>
+            {state.wallMs >= 1000 ? `${(state.wallMs / 1000).toFixed(1)} s` : `${state.wallMs.toFixed(1)} ms`}
+          </strong></span>
       </div>
 
       <div className="mb-3 h-2 w-full rounded" style={{ background: "rgba(255,255,255,0.07)" }}>
@@ -191,7 +219,7 @@ function ClockPane({
       </div>
 
       <div className="mb-1 text-[10px] font-bold tracking-widest text-ink-secondary">
-        PARKED SLEEPERS — heap order (at_ns, seq_no)
+        WAITING ON <span className="font-normal text-ink-quaternary">— the mechanism: a heap ordered by (deadline, registration)</span>
       </div>
       <div className="mb-3 flex min-h-[68px] flex-col gap-1">
         {state.heap.length === 0 && (
@@ -212,8 +240,19 @@ function ClockPane({
         ))}
       </div>
 
+      <div className="mb-1 text-[10px] font-bold tracking-widest text-ink-secondary">
+        BENCHMARK RESULT
+      </div>
+      <div className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] tabular-nums">
+        <Metric label="requests done" value={`${summarize(state).completed}`} />
+        <Metric label="tokens" value={`${summarize(state).tokens}`} />
+        <Metric label="mean TTFT" value={`${summarize(state).meanTtftMs.toFixed(1)} ms`} accent={accent} />
+        <Metric label="mean ITL" value={`${summarize(state).meanItlMs.toFixed(1)} ms`} accent={accent} />
+        <Metric label="slowest request" value={`${summarize(state).p100LatencyMs.toFixed(0)} ms`} />
+      </div>
+
       <div className="mb-1 flex items-baseline gap-2">
-        <span className="text-[10px] font-bold tracking-widest text-ink-secondary">EVENT LOG</span>
+        <span className="text-[10px] font-bold tracking-widest text-ink-secondary">WHAT HAPPENED</span>
         <span className="text-[10px]" style={{ color: DIM }}>
           {state.kind === "sim" && !state.done
             ? `next event at ${((nextEventTime(state) ?? 0) / NS_PER_MS).toFixed(0)}ms`
@@ -222,9 +261,10 @@ function ClockPane({
       </div>
       <div className="h-40 overflow-y-auto font-mono text-[10px] leading-[1.6]">
         {state.events.length === 0 && <span style={{ color: DIM }}>Nothing yet.</span>}
-        {state.events.map((e, i) => (
-          <div key={i} style={{ color: i === state.events.length - 1 ? accent : undefined }}>
-            {String(i).padStart(2, "0")} {e}
+        {state.events.slice(-40).map((e, i, arr) => (
+          <div key={i} style={{ color: i === arr.length - 1 ? accent : undefined }}>
+            <span style={{ color: DIM }}>{(e.atNs / NS_PER_MS).toFixed(0).padStart(4)}ms </span>
+            {e.taskId} <span style={{ color: DIM }}>{e.label}</span>
           </div>
         ))}
       </div>

@@ -6,7 +6,11 @@
 import { describe, expect, it } from "vitest";
 import {
   createClock,
+  defaultRequests,
   nextEventTime,
+  requestsToTasks,
+  summarize,
+  type Request,
   NS_PER_MS,
   runToEnd,
   stepReal,
@@ -14,14 +18,53 @@ import {
   type Task,
 } from "./clockSim.js";
 
+const order = (s: ReturnType<typeof runToEnd>) => s.events.map((e) => `${e.taskId} ${e.label}`);
+
 describe("the equivalence that matters", () => {
-  it("produces the same event order on both clocks", () => {
-    // The entire proposition: virtual time changes how long a run takes, never what it does.
-    expect(runToEnd("sim").events).toEqual(runToEnd("real").events);
+  it("produces exactly the same events, and each request in its own order", () => {
+    // What virtual time preserves is *what happened to each request*. The global interleaving is
+    // not preserved and cannot be: a real tick drains several due sleepers as one batch, and a
+    // wake that re-schedules during that drain lands in the next batch rather than immediately.
+    // Simulation visits every deadline separately, so it sees the order the timings imply.
+    const sim = runToEnd("sim");
+    const real = runToEnd("real");
+    expect([...order(real)].sort()).toEqual([...order(sim)].sort());
+    for (const id of new Set(sim.events.map((e) => e.taskId))) {
+      const per = (s: typeof sim) => s.events.filter((e) => e.taskId === id).map((e) => e.label);
+      expect(per(real)).toEqual(per(sim));
+    }
   });
 
-  it("reaches the same final virtual time on both clocks", () => {
-    expect(runToEnd("sim").nowNs).toBe(runToEnd("real").nowNs);
+  it("gives the simulated run the interleaving the timings actually imply", () => {
+    // Sorting the sim's own events by timestamp reproduces its order exactly; the real run's
+    // does not, because its timestamps were rounded up to tick boundaries.
+    const sim = runToEnd("sim");
+    const byTime = [...sim.events].sort((a, b) => a.atNs - b.atNs).map((e) => `${e.taskId} ${e.label}`);
+    expect(byTime).toEqual(order(sim));
+  });
+
+  it("times events exactly on the simulated clock", () => {
+    // advance_to jumps to the deadline itself, so a sleep of 380ms lands at 380ms.
+    const one = requestsToTasks([
+      { id: "r", arrivalNs: 100 * NS_PER_MS, ttftNs: 380 * NS_PER_MS, itlNs: 20 * NS_PER_MS, tokens: 2 },
+    ]);
+    const sim = runToEnd("sim", one);
+    expect(sim.events[0]!.atNs).toBe(100 * NS_PER_MS);
+    expect(sim.events[1]!.atNs).toBe(480 * NS_PER_MS);
+  });
+
+  it("times events late on the real clock, never early", () => {
+    // A real timer fires when the runtime next gets to it, which is at or after the deadline.
+    // That is scheduler jitter, and it is exactly what simulation removes.
+    const one = requestsToTasks([
+      { id: "r", arrivalNs: 100 * NS_PER_MS, ttftNs: 380 * NS_PER_MS, itlNs: 20 * NS_PER_MS, tokens: 2 },
+    ]);
+    const sim = runToEnd("sim", one);
+    const real = runToEnd("real", one);
+    for (let i = 0; i < sim.events.length; i++) {
+      expect(real.events[i]!.atNs).toBeGreaterThanOrEqual(sim.events[i]!.atNs);
+    }
+    expect(real.nowNs).toBeGreaterThanOrEqual(sim.nowNs);
   });
 
   it("takes far less wall time on the simulated clock", () => {
@@ -32,12 +75,8 @@ describe("the equivalence that matters", () => {
 });
 
 describe("event ordering", () => {
-  it("breaks a same-deadline tie by registration order, not arbitrarily", () => {
-    // `poll`, `tie-a` and `tie-b` all first wake at 500ms. The heap orders by (at_ns, seq_no),
-    // and seq_no is assigned when each task registered — so the order is task order.
-    const at500 = runToEnd("sim").events.slice(0, 3);
-    expect(at500).toContain("poll@0");
-    expect(runToEnd("sim").events).toEqual(runToEnd("sim").events);
+  it("is reproducible run to run", () => {
+    expect(order(runToEnd("sim"))).toEqual(order(runToEnd("sim")));
   });
 
   it("wakes earlier deadlines before later ones regardless of registration", () => {
@@ -45,7 +84,7 @@ describe("event ordering", () => {
       { id: "late", sleepsNs: [900 * NS_PER_MS] },
       { id: "early", sleepsNs: [100 * NS_PER_MS] },
     ];
-    expect(runToEnd("sim", tasks).events).toEqual(["early@0", "late@0"]);
+    expect(order(runToEnd("sim", tasks))).toEqual(["early step 0", "late step 0"]);
   });
 
   it("keeps registration order for identical deadlines", () => {
@@ -54,14 +93,13 @@ describe("event ordering", () => {
       { id: "second", sleepsNs: [100 * NS_PER_MS] },
       { id: "third", sleepsNs: [100 * NS_PER_MS] },
     ];
-    expect(runToEnd("sim", tasks).events).toEqual(["first@0", "second@0", "third@0"]);
+    expect(order(runToEnd("sim", tasks))).toEqual(["first step 0", "second step 0", "third step 0"]);
   });
 });
 
 describe("next_event_time", () => {
   it("is the earliest parked deadline", () => {
-    const state = createClock("sim");
-    expect(nextEventTime(state)).toBe(200 * NS_PER_MS);
+    expect(nextEventTime(createClock("sim"))).toBe(120 * NS_PER_MS);
   });
 
   it("never reports a time in the past", () => {
@@ -78,9 +116,9 @@ describe("next_event_time", () => {
 describe("advancement", () => {
   it("jumps straight to the next event on the simulated clock", () => {
     const state = stepSim(createClock("sim"));
-    // Nothing happens between 0 and 200ms, so nothing is spent getting there.
-    expect(state.nowNs).toBe(200 * NS_PER_MS);
-    expect(state.events).toEqual(["warmup@0"]);
+    // The first arrival is at 120ms; nothing happens before it, so nothing is spent getting there.
+    expect(state.nowNs).toBe(120 * NS_PER_MS);
+    expect(state.events).toHaveLength(1);
   });
 
   it("crawls through the empty space on the real clock", () => {
@@ -107,7 +145,7 @@ describe("advancement", () => {
       { id: "b", sleepsNs: [100 * NS_PER_MS] },
     ];
     const state = stepSim(createClock("sim", tasks), tasks);
-    expect(state.events).toEqual(["a@0", "b@0"]);
+    expect(state.events.map((e) => e.taskId)).toEqual(["a", "b"]);
   });
 });
 
@@ -124,5 +162,34 @@ describe("completion", () => {
     const state = stepSim(createClock("sim", []), []);
     expect(state.done).toBe(true);
     expect(state.deadlocked).toBe(true);
+  });
+});
+
+describe("what an end user compares", () => {
+  it("agrees on what happened, within scheduler jitter", () => {
+    // The mechanism is beside the point; this is the claim. Same run, same conclusions — and the
+    // simulated numbers are the exact ones, because nothing had to wait to produce them.
+    const sim = summarize(runToEnd("sim"));
+    const real = summarize(runToEnd("real"));
+    expect(real.completed).toBe(sim.completed);
+    expect(real.tokens).toBe(sim.tokens);
+    // Real timings are late by at most one scheduler tick per event, never early.
+    expect(real.meanTtftMs).toBeGreaterThanOrEqual(sim.meanTtftMs);
+    expect(real.meanTtftMs - sim.meanTtftMs).toBeLessThan(6);
+  });
+
+  it("reports every request as completed", () => {
+    expect(summarize(runToEnd("sim")).completed).toBe(defaultRequests().length);
+  });
+
+  it("measures TTFT from sent to first token", () => {
+    const one: Request[] = [{ id: "r", arrivalNs: 100 * NS_PER_MS, ttftNs: 250 * NS_PER_MS, itlNs: 10 * NS_PER_MS, tokens: 3 }];
+    const result = summarize(runToEnd("sim", requestsToTasks(one)));
+    expect(result.meanTtftMs).toBeCloseTo(250, 6);
+  });
+
+  it("counts every generated token", () => {
+    const one: Request[] = [{ id: "r", arrivalNs: 0, ttftNs: 100 * NS_PER_MS, itlNs: 10 * NS_PER_MS, tokens: 5 }];
+    expect(summarize(runToEnd("sim", requestsToTasks(one))).tokens).toBe(5);
   });
 });
