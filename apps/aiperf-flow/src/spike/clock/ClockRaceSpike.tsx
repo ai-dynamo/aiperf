@@ -82,18 +82,18 @@ export function ClockRaceSpike(): React.JSX.Element {
   const identical = agree;
 
   return (
-    <div className="min-h-screen bg-surface-page px-8 py-6 text-ink-primary">
+    <div className="min-h-screen bg-surface-page px-8 py-7 text-ink-primary">
       <div className="mb-1 flex items-baseline gap-3">
-        <span className="text-xs font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
-        <h1 className="text-2xl font-extrabold">The same benchmark, run twice</h1>
+        <span className="text-sm font-bold uppercase tracking-[0.2em] text-ink-link">Spike</span>
+        <h1 className="text-3xl font-extrabold">The same benchmark, run twice</h1>
       </div>
-      <p className="mb-4 max-w-4xl text-sm text-ink-secondary">
+      <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
         Eight requests are benchmarked below — sent, waiting out their time-to-first-token, then
         streaming tokens. <strong>The identical run happens in both panes.</strong> The left one
         waits: every 400 ms of TTFT is 400 ms of your life. The right one does not, because its
         clock is a number it can move rather than a wall it has to wait for.
       </p>
-      <p className="mb-4 max-w-4xl text-sm text-ink-secondary">
+      <p className="mb-4 max-w-5xl text-base leading-relaxed text-ink-secondary">
         Press Run and watch the right pane finish before the left has its first token. Then compare
         the two result tables: <strong>same requests, same tokens, same latencies</strong>. That is
         what replaying a recorded trace under simulation buys — an afternoon-long benchmark
@@ -104,31 +104,31 @@ export function ClockRaceSpike(): React.JSX.Element {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={() => setRunning((r) => !r)}
-              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold">
+              className="rounded border border-white/15 bg-surface-panel px-4 py-2 text-base font-semibold">
               {running ? "Pause" : "Run"}
             </button>
             <button type="button" onClick={reset}
-              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary">
+              className="rounded border border-white/15 bg-surface-panel px-4 py-2 text-base font-semibold text-ink-secondary">
               Reset
             </button>
             <button type="button"
               onClick={() => { setSim((s) => (s.done ? s : stepSim(s, TASKS))); setRunning(false); }}
-              className="rounded border border-white/15 bg-surface-panel px-3 py-1.5 text-sm font-semibold text-ink-secondary">
+              className="rounded border border-white/15 bg-surface-panel px-4 py-2 text-base font-semibold text-ink-secondary">
               Step sim
             </button>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="mr-1 text-sm text-ink-tertiary">real-time speed</span>
+            <span className="mr-1 text-base text-ink-tertiary">real-time speed</span>
             {SPEEDS.map((s) => (
               <button key={s} type="button" onClick={() => setSpeed(s)}
-                className={`rounded border px-2.5 py-1 text-xs font-semibold tabular-nums ${
+                className={`rounded border px-3 py-1.5 text-sm font-semibold tabular-nums ${
                   speed === s ? "border-transparent bg-accent-primary text-black"
                     : "border-white/15 bg-surface-panel text-ink-secondary"}`}>
                 {s}×
               </button>
             ))}
           </div>
-          <div className="ml-auto text-sm tabular-nums">
+          <div className="ml-auto text-base tabular-nums">
             <span className="text-ink-tertiary">workload spans</span>{" "}
             <strong>{(SPAN / NS_PER_MS).toFixed(0)} ms</strong>
             <span className="text-ink-quaternary"> of virtual time · {finished.events.length} events</span>
@@ -137,7 +137,7 @@ export function ClockRaceSpike(): React.JSX.Element {
       </div>
 
       {identical && (
-        <div className="mb-4 rounded-lg border px-4 py-3 text-sm"
+        <div className="mb-4 rounded-lg border px-5 py-4 text-base leading-relaxed"
           style={{ borderColor: GREEN, background: "rgba(0,255,128,0.05)" }}>
           <strong style={{ color: GREEN }}>Same answer.</strong>{" "}
           Both runs completed all {summarize(sim).completed} requests and generated{" "}
@@ -157,7 +157,7 @@ export function ClockRaceSpike(): React.JSX.Element {
           hint="SimClock · advance_to(next_event_time), event by event" />
       </div>
 
-      <p className="mt-3 text-[11px] text-ink-quaternary">
+      <p className="mt-4 max-w-6xl text-[13px] leading-relaxed text-ink-quaternary">
         Modelled on <code>rust/runtime/src/clock/</code>: the <code>Clock</code> trait at
         clock.rs:12, <code>SimClock</code>&apos;s <code>(at_ns, seq_no)</code> heap at
         sim_clock.rs:48, <code>next_event_time</code> at :92 and <code>advance_to</code> at :106.
@@ -198,19 +198,19 @@ function ClockPane({
 
   const progress = Math.min(1, state.nowNs / Math.max(1, SPAN));
   return (
-    <section className="rounded-lg border border-white/10 bg-surface-elevated p-3">
+    <section className="rounded-lg border border-white/10 bg-surface-elevated p-4">
       <div className="mb-2 flex items-baseline gap-3">
-        <h2 className="text-sm font-bold" style={{ color: accent }}>{label}</h2>
-        <span className="text-[12px] text-ink-quaternary">{hint}</span>
+        <h2 className="text-lg font-bold" style={{ color: accent }}>{label}</h2>
+        <span className="text-[13px] text-ink-quaternary">{hint}</span>
         {state.done && (
-          <span className="ml-auto rounded px-2 py-0.5 text-[11px] font-bold text-black"
+          <span className="ml-auto rounded px-2.5 py-0.5 text-[12px] font-bold text-black"
             style={{ background: state.deadlocked ? ORANGE : GREEN }}>
             {state.deadlocked ? "DEADLOCKED" : "DONE"}
           </span>
         )}
       </div>
 
-      <div className="mb-2 flex items-baseline gap-5 text-sm tabular-nums">
+      <div className="mb-2 flex items-baseline gap-6 text-lg tabular-nums">
         <span><span className="text-ink-tertiary">benchmark time</span>{" "}
           <strong>{(state.nowNs / NS_PER_MS).toFixed(0)} ms</strong></span>
         <span title="How long you actually sat there">
@@ -224,20 +224,20 @@ function ClockPane({
         <div className="h-2 rounded" style={{ width: `${progress * 100}%`, background: accent }} />
       </div>
 
-      <div className="mb-1.5 text-[11px] font-bold tracking-widest text-ink-secondary">
+      <div className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
         WAITING ON <span className="font-normal text-ink-quaternary">— the mechanism: a heap ordered by (deadline, registration)</span>
       </div>
       <div className="mb-3 flex min-h-[68px] flex-col gap-1">
         {state.heap.length === 0 && (
-          <span className="text-[13px]" style={{ color: DIM }}>
+          <span className="text-[15px]" style={{ color: DIM }}>
             {state.done ? "empty — nothing left to wake" : "—"}
           </span>
         )}
         {state.heap.slice(0, 5).map((s, i) => (
-          <div key={`${s.taskId}-${s.seqNo}`} className="flex items-center gap-2 font-mono text-[12px]">
+          <div key={`${s.taskId}-${s.seqNo}`} className="flex items-center gap-3 font-mono text-[14px]">
             <span className="w-4 text-right" style={{ color: DIM }}>{i}</span>
-            <span className="w-20" style={{ color: i === 0 ? accent : undefined }}>{s.taskId}</span>
-            <span className="w-24 tabular-nums" style={{ color: DIM }}>
+            <span className="w-24" style={{ color: i === 0 ? accent : undefined }}>{s.taskId}</span>
+            <span className="w-28 tabular-nums" style={{ color: DIM }}>
               at {(s.atNs / NS_PER_MS).toFixed(0)}ms
             </span>
             <span className="tabular-nums" style={{ color: DIM }}>seq {s.seqNo}</span>
@@ -246,10 +246,10 @@ function ClockPane({
         ))}
       </div>
 
-      <div className="mb-1.5 text-[11px] font-bold tracking-widest text-ink-secondary">
+      <div className="mb-1.5 text-[12px] font-bold tracking-widest text-ink-secondary">
         BENCHMARK RESULT
       </div>
-      <div className="mb-3 grid grid-cols-2 gap-x-5 gap-y-1.5 text-[14px] tabular-nums">
+      <div className="mb-3 grid grid-cols-2 gap-x-6 gap-y-2 text-[16px] tabular-nums">
         <Metric label="requests done" value={`${summarize(state).completed}`} />
         <Metric label="tokens" value={`${summarize(state).tokens}`} />
         <Metric label="mean TTFT" value={`${summarize(state).meanTtftMs.toFixed(1)} ms`} accent={accent} />
@@ -258,14 +258,14 @@ function ClockPane({
       </div>
 
       <div className="mb-1 flex items-baseline gap-2">
-        <span className="text-[11px] font-bold tracking-widest text-ink-secondary">WHAT HAPPENED</span>
-        <span className="text-[11px]" style={{ color: DIM }}>
+        <span className="text-[12px] font-bold tracking-widest text-ink-secondary">WHAT HAPPENED</span>
+        <span className="text-[12px]" style={{ color: DIM }}>
           {state.kind === "sim" && !state.done
             ? `next event at ${((nextEventTime(state) ?? 0) / NS_PER_MS).toFixed(0)}ms`
             : ""}
         </span>
       </div>
-      <div ref={logRef} className="h-48 overflow-y-auto font-mono text-[13px] leading-[1.7]">
+      <div ref={logRef} className="h-56 overflow-y-auto font-mono text-[15px] leading-[1.75]">
         {state.events.length === 0 && <span style={{ color: DIM }}>Nothing yet.</span>}
         {state.events.slice(-40).map((e, i, arr) => (
           <div key={i} style={{ color: i === arr.length - 1 ? accent : undefined }}>
