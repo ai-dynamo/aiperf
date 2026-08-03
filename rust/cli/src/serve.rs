@@ -81,6 +81,13 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid host:port {}:{}: {e}", opts.host, opts.port))?;
 
+    // Must precede `server::start`: threads inherit the blocking thread's signal
+    // mask, and a server thread that still has SIGINT/SIGTERM unblocked takes the
+    // default action (terminate the process) the moment the signal lands — the
+    // graceful path below would then never run. The `profile --serve` path gets the
+    // same mask from `signals::install`, which runs before its `start_dashboard`.
+    block_shutdown_signals();
+
     // Standalone serve has no live run loop feeding it, so its session index starts
     // empty (every run comes from the disk scan) and its live slot stays `None` (the
     // `/api/live` SSE simply reports idle).
@@ -111,14 +118,32 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Block the calling thread until SIGINT/SIGTERM.
+/// The terminating signals the dashboard treats as "stop serving".
 #[cfg(unix)]
-pub(crate) fn wait_for_shutdown() {
+fn shutdown_signals() -> nix::sys::signal::SigSet {
     use nix::sys::signal::{SigSet, Signal};
     let mut set = SigSet::empty();
     set.add(Signal::SIGINT);
     set.add(Signal::SIGTERM);
-    // Block the signals in this thread so `wait` receives them synchronously.
+    set
+}
+
+/// Block SIGINT/SIGTERM in the calling thread so [`wait_for_shutdown`] receives
+/// them synchronously. Call before spawning any thread the process needs alive
+/// for the graceful path.
+#[cfg(unix)]
+pub(crate) fn block_shutdown_signals() {
+    let _ = shutdown_signals().thread_block();
+}
+
+#[cfg(not(unix))]
+pub(crate) fn block_shutdown_signals() {}
+
+/// Block the calling thread until SIGINT/SIGTERM.
+#[cfg(unix)]
+pub(crate) fn wait_for_shutdown() {
+    let set = shutdown_signals();
+    // Idempotent with `block_shutdown_signals`; also covers a caller that skipped it.
     let _ = set.thread_block();
     let _ = set.wait();
 }
