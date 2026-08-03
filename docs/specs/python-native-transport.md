@@ -164,10 +164,8 @@ pool for that process's lifetime. A per-call client would force a TCP and TLS
 handshake per request.
 
 The client is reactor-bound and does not cross threads. The pyclass holds an mpsc
-`Sender<RequestJob>`, which is `Send`; construction spawns one OS thread that
-builds the client inside its own `current_thread` runtime and services jobs.
-Results return over a oneshot as plain data, and the Python worker's asyncio
-future is resolved through `call_soon_threadsafe`.
+`Sender<Job>`, which is `Send`; construction spawns one OS thread that builds the
+client inside its own `current_thread` runtime and services jobs.
 
 One client per process is the whole concurrency story: Python's `workers > 1` is
 already N OS processes with N event loops, so each process owns exactly one
@@ -175,6 +173,63 @@ client, one thread, one runtime. The crate never needs to shard, and inherits no
 `workers == 1` assertion because it has no multi-worker path to guard.
 
 The GIL is released for the whole request.
+
+### Completions are batched, never resolved on the transport thread
+
+A `Job` carries an integer id, not `Py<PyAny>` handles. The transport thread parks
+finished requests as plain Rust data and schedules **one** drain when none is
+pending; the loop thread — which already holds the GIL — builds every response in
+a single pass and resolves the futures Python owns.
+
+Resolving a future on the transport thread instead is the obvious design and it
+does not work. Building a Python object requires the GIL, so taking it per
+request makes the transport thread and the event loop trade the interpreter at
+its switch interval (5 ms by default). Batching removes that: a burst of
+completions costs one acquisition rather than one each.
+
+### Frames cross as tuples, not as a serialized blob
+
+`NativeResponse` hands back `(perf_ns, [(name, value), ...])` per frame. PyO3
+converts that shape directly, so Python builds its `SSEMessage` objects in one
+pass with nothing to parse.
+
+An earlier design serialized frames to JSON in Rust and parsed them back with
+`orjson` in Python, on the theory that it avoided constructing per-token objects.
+It did not — the objects still had to exist downstream — and it added two full
+passes over every frame on top of the SSE decode that had just produced them.
+Measurement settled it: materializing 260,000 frames costs nothing (479 req/s
+untouched against 491 req/s fully materialized), while removing the JSON round
+trip was worth 502 → 665 req/s on its own.
+
+### Measured behavior
+
+Against `aiperf-mock-server --fast --processes 8`, 40,000 requests, 16 workers,
+ISL and OSL 128, zero errors on every run:
+
+| Concurrency | Transport | req/s | tok/s | TTFT (ms) |
+|---|---|---|---|---|
+| 256 | `native_http` | 8,077 | 982,305 | 1.07 |
+| 256 | `http` | 5,916 | 719,549 | 18.87 |
+| 512 | `native_http` | 10,973 | 1,334,868 | 2.51 |
+| 512 | `http` | 7,612 | 926,132 | 26.88 |
+| 1024 | `native_http` | 11,153 | 1,357,472 | 2.14 |
+| 1024 | `http` | 7,802 | 949,539 | 52.39 |
+
+The throughput margin is 1.37–1.43×. The TTFT margin is 17.6× at 256 and 24.5× at
+1024, and it widens with load because against a server that answers instantly
+TTFT is measuring client-side scheduling delay — the quantity moving the timestamp
+off the event loop removes, and the one that grows as the loop gets busier.
+
+Accuracy is what the crate exists for, and the performance work did not disturb
+it. Against the analytic server (`ttft=100ms`, `itl=10ms`, both jitter
+coefficients zero), through `aiperf profile`: TTFT 100.28 ms, time-to-second-token
+9.956 ms, request latency 290.21 ms against an analytic 290 ms. Output sequence
+length agrees with the aiohttp transport to 0.01 tokens over 20,000 requests.
+
+Benchmark the optimized profile, not a debug build. Debug `serde_json` alone
+accounts for a 3× throughput difference in the per-frame reduction, which is
+enough to invert the comparison against optimized C and read as a regression that
+is not there.
 
 ### The widened transport contract
 
@@ -184,13 +239,13 @@ and neither may be privileged. Returning a `RequestRecord` whose `responses` is 
 N `SSEField` objects through PyO3 is slower than constructing them in Python, so
 the allocation cost would move across the boundary rather than disappear.
 
-`RequestRecord` gains two optional, self-describing fields:
+`RequestRecord` gains one optional, self-describing field — a `ReducedOutcome`.
+The transport returns two things:
 
 - a reduced-outcome struct carrying the four derived values plus TTFT, status,
   and error;
-- a pre-serialized responses blob (`bytes`) for the hop to the record processor,
-  spliced into the outgoing message with `orjson.Fragment` so it is never
-  re-encoded.
+- the response frames as `(perf_ns, [(name, value), ...])` tuples, which PyO3
+  converts directly.
 
 `Worker._populate_response_metrics` branches once per request on the presence of
 the reduced outcome, not per token. Absent it, the existing
