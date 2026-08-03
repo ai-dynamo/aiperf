@@ -108,6 +108,16 @@ rustls-pemfile = "2"
 # interpreter inside the native binary so the search planners can call the exact
 # scipy/optuna numerical primitives. Optional + feature-gated (see `search-pyo3`).
 pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
+# Always-on cross-run dashboard server (`aiperf serve` + `aiperf profile --serve`).
+# axum is already in the workspace graph, and tokio/futures above already carry the
+# features the server needs (`rt-multi-thread`/`net`/`time` for its owned runtime,
+# `futures::stream` for the SSE lane), so this adds one external crate. The server
+# runs on its own thread + owned multi-thread runtime because the orchestrator's
+# main thread is a blocking child-spawn loop.
+axum.workspace = true
+# Embed the dashboard SPA (many files) into the binary so `aiperf serve` is a
+# single self-contained always-on server with no external asset dir or CDN.
+include_dir = "0.7"
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -122,10 +132,9 @@ cc = "1"
 [dev-dependencies]
 tempfile = "3"
 # The relocated `aiperf --execute` stdio integration tests (from the deleted
-# former runner crate) spin up in-process mock servers. hyper/hyper-util/rustls/
-# tokio-rustls/http-body-util are already normal deps above; their `server`/http2
-# features union in for the dev build.
-axum.workspace = true
+# former runner crate) spin up in-process mock servers. axum/hyper/hyper-util/
+# rustls/tokio-rustls/http-body-util are already normal deps above; their
+# `server`/http2 features union in for the dev build.
 http = "1"
 hyper = { version = "1.10", features = ["server", "http1", "http2"] }
 prost.workspace = true

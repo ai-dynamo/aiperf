@@ -39,6 +39,8 @@ pub mod render;
 pub mod results_sidecar;
 pub mod search;
 pub mod search_history;
+pub mod serve;
+pub mod server;
 pub mod signals;
 pub mod slurm;
 pub mod speed_bench;

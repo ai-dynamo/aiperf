@@ -37,7 +37,7 @@ pub struct CellOutcome {
 }
 
 /// Headline metrics shown in the live sweep table (tag, stat, column header).
-const HEADLINE: &[(&str, &str, &str)] = &[
+pub(crate) const HEADLINE: &[(&str, &str, &str)] = &[
     ("output_token_throughput", "avg", "out_tok/s"),
     ("time_to_first_token", "p99", "TTFT p99 (ms)"),
     ("inter_token_latency", "p99", "ITL p99 (ms)"),
@@ -219,11 +219,16 @@ struct CellRow {
     metrics: Vec<Option<f64>>,
 }
 
-fn read_report(o: &CellOutcome) -> Option<Value> {
-    o.report_path
-        .as_ref()
-        .and_then(|p| std::fs::read(p).ok())
+/// Parse a `native-v2.json` report at `path` into a JSON value, or `None` on any
+/// read/parse error. Shared by the sweep aggregate and the cross-run dashboard server.
+pub(crate) fn read_report_path(path: &str) -> Option<Value> {
+    std::fs::read(path)
+        .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+}
+
+fn read_report(o: &CellOutcome) -> Option<Value> {
+    o.report_path.as_deref().and_then(read_report_path)
 }
 
 fn row_for(o: &CellOutcome) -> CellRow {
@@ -240,7 +245,7 @@ fn row_for(o: &CellOutcome) -> CellRow {
 
 /// Extract one metric's stat from a `native-v2.json` report (scalar `value`, or a
 /// distribution `avg` / `percentiles.pNN`).
-fn headline_value(report: &Value, tag: &str, stat: &str) -> Option<f64> {
+pub(crate) fn headline_value(report: &Value, tag: &str, stat: &str) -> Option<f64> {
     let stats = report
         .get("metrics")?
         .get(tag)?
@@ -419,7 +424,7 @@ fn display_names(paths: &[String]) -> std::collections::HashMap<String, String> 
 }
 
 /// Project a native report's `metrics` map into the single-trial stats shape.
-fn project_summary(report: &Value) -> Vec<(String, Map<String, Value>)> {
+pub(crate) fn project_summary(report: &Value) -> Vec<(String, Map<String, Value>)> {
     let Some(metrics) = report.get("metrics").and_then(Value::as_object) else {
         return Vec::new();
     };

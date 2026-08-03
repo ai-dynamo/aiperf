@@ -6,16 +6,141 @@
 //! sweeps through the `aiperf` binary.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::search_history::{HistoryConfig, IterationRecord};
+use crate::server::{self, LiveRun, LiveSlot, ServerConfig, SessionRuns};
 use crate::sweep::artifact_dir::IterationOrder;
 use crate::sweep::{self, run as sweep_run};
 use crate::{exec_bin, execute, flags::ProfileFlags, load, yaml};
+
+/// The default `--serve` dashboard port (matches `aiperf serve`).
+const DEFAULT_SERVE_PORT: u16 = 8090;
+
+/// The heartbeat NDJSON filename a run writes for the live dashboard, under its
+/// artifact dir.
+const HEARTBEAT_FILE: &str = "heartbeat.ndjson";
 
 /// Remove a prior report before the runner's write-once output.
 fn clear_prior_report(artifact_dir: &Path) {
     let _ = std::fs::create_dir_all(artifact_dir);
     let _ = std::fs::remove_file(artifact_dir.join("native-v2.json"));
+}
+
+/// The dashboard's shared state when `--serve` is on: the growing session index +
+/// the live-run slot the run loop updates, plus the running server. `None` (headless)
+/// when `--serve` is off or the bind failed — the dashboard never fails a benchmark.
+struct Dashboard {
+    session: SessionRuns,
+    live: LiveSlot,
+    handle: Option<server::ServerHandle>,
+}
+
+/// When `--serve` is set, start the always-on cross-run dashboard for this
+/// invocation. Returns a headless [`Dashboard`] (session + live slot, no server) on
+/// bind failure so the run loop's calls stay no-ops.
+fn start_dashboard(flags: &ProfileFlags) -> Option<Dashboard> {
+    if !flags.serve.unwrap_or(false) {
+        return None;
+    }
+    let session: SessionRuns = Arc::new(Mutex::new(Vec::new()));
+    let live: LiveSlot = Arc::new(Mutex::new(None));
+    let port = flags.serve_port.unwrap_or(DEFAULT_SERVE_PORT);
+    let bind = match format!("127.0.0.1:{port}").parse() {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("dashboard disabled (bad port {port}: {e})");
+            return Some(Dashboard {
+                session,
+                live,
+                handle: None,
+            });
+        }
+    };
+    let results_root = flags
+        .artifact_dir
+        .clone()
+        .or_else(|| std::env::current_dir().ok());
+    let handle = match server::start(
+        ServerConfig { bind, results_root },
+        session.clone(),
+        live.clone(),
+    ) {
+        Ok(handle) => {
+            tracing::info!("dashboard on http://{}", handle.local_addr());
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::warn!("dashboard disabled ({e})");
+            None
+        }
+    };
+    Some(Dashboard {
+        session,
+        live,
+        handle,
+    })
+}
+
+/// The heartbeat NDJSON path for a run's artifact dir (removed stale so the tail
+/// starts fresh), or `None` when not serving.
+fn heartbeat_path(
+    dashboard: &Option<Dashboard>,
+    artifact_dir: &Path,
+) -> Option<std::path::PathBuf> {
+    dashboard.as_ref()?;
+    let path = artifact_dir.join(HEARTBEAT_FILE);
+    let _ = std::fs::remove_file(&path);
+    Some(path)
+}
+
+/// Mark a run as the in-flight live run so the dashboard streams its heartbeat
+/// (no-op when not serving).
+fn set_live(dashboard: &Option<Dashboard>, label: &str, artifact_dir: &Path, hb: &Path) {
+    if let Some(d) = dashboard {
+        let dir = artifact_dir.display().to_string();
+        *d.live.lock().expect("live mutex") = Some(LiveRun {
+            id: server::index::id_for(&dir),
+            label: label.to_string(),
+            artifact_dir: dir,
+            heartbeat_path: hb.display().to_string(),
+        });
+    }
+}
+
+/// Clear the in-flight live run (call after a child exits).
+fn clear_live(dashboard: &Option<Dashboard>) {
+    if let Some(d) = dashboard {
+        *d.live.lock().expect("live mutex") = None;
+    }
+}
+
+/// Push a completed run into the live session index (no-op when not serving).
+fn record_run(dashboard: &Option<Dashboard>, outcome: &sweep::aggregate::CellOutcome) {
+    if let Some(d) = dashboard {
+        d.session
+            .lock()
+            .expect("dashboard session mutex")
+            .push(server::index::RunEntry::from_cell_outcome(outcome));
+    }
+}
+
+/// After the run(s) finish, keep the dashboard serving the just-completed runs
+/// until SIGINT/SIGTERM (the "always-on at the orchestrator" behaviour), then shut
+/// it down. No-op when not serving.
+fn hold_dashboard(dashboard: Option<Dashboard>) {
+    if let Some(Dashboard {
+        handle: Some(handle),
+        ..
+    }) = dashboard
+    {
+        tracing::info!(
+            "runs complete - dashboard still serving on http://{} (Ctrl-C to stop)",
+            handle.local_addr()
+        );
+        crate::serve::wait_for_shutdown();
+        handle.shutdown();
+    }
 }
 
 /// Authoring-tagged `--execute` wire body.
@@ -52,11 +177,15 @@ fn trial_is_zero(trial: &u32) -> bool {
 /// so the runtime performs the authoritative resolution at `--execute`. `envelope`
 /// supplies the per-cell sweep coordinates (`sweep_id`/`variation`/`trial`) for the
 /// sweep paths; the single-run path passes `None` for a bare `{"authoring": …}` body.
+///
+/// `heartbeat` names the NDJSON the child's heartbeat lane should write for the
+/// live dashboard (`Some` only while `--serve` is on); `None` leaves the lane off.
 fn run_benchmark_child_authoring(
     inputs: &load::Inputs,
     envelope: Option<&crate::model::BenchmarkRun>,
     runner: &Path,
     child_pid: &crate::signals::ChildPid,
+    heartbeat: Option<&Path>,
 ) -> anyhow::Result<crate::execute::Terminal> {
     // A live endpoint control hook (reset_kv_cache / server_profiler) must run before
     // the child launches and needs the resolved endpoint; resolve locally only then.
@@ -73,7 +202,7 @@ fn run_benchmark_child_authoring(
     };
     let payload = serde_json::to_vec(&wire)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
-    execute::run_once(runner, &payload, child_pid)
+    execute::run_once(runner, &payload, child_pid, heartbeat)
 }
 
 /// Ship one adaptive-search probe on the authoring wire.
@@ -113,7 +242,9 @@ fn run_search_probe(
         "values": { "phases.profiling.concurrency": value },
     }));
     envelope.trial = 0;
-    run_benchmark_child_authoring(&inputs, Some(&envelope), runner, child_pid)
+    // The adaptive-search loops do not yet start a dashboard, so a probe child
+    // never gets a heartbeat lane.
+    run_benchmark_child_authoring(&inputs, Some(&envelope), runner, child_pid, None)
 }
 
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
@@ -157,7 +288,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         if trials > 1 {
             return run_config_trials(&flags, inputs, trials);
         }
-        return run_single(inputs);
+        return run_single(&flags, inputs);
     }
 
     // `max-concurrency-under-sla --search-style monotonic` runs a dynamic
@@ -213,7 +344,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let expansion = sweep::expand(&flags, sweep_type)?;
     let trials = flags.num_profile_runs.unwrap_or(1);
     if !expansion.is_sweep && trials <= 1 {
-        return run_single(load::resolve_inputs(&flags)?);
+        return run_single(&flags, load::resolve_inputs(&flags)?);
     }
     run_sweep(&flags, &expansion, trials, iteration_order(&flags)?)
 }
@@ -347,15 +478,34 @@ fn validate_multi_run(flags: &ProfileFlags) -> anyhow::Result<()> {
 ///
 /// The single-run path sends authoring [`load::Inputs`] on the wire; the runtime
 /// resolves them at `--execute`.
-fn run_single(inputs: load::Inputs) -> anyhow::Result<i32> {
+fn run_single(flags: &ProfileFlags, inputs: load::Inputs) -> anyhow::Result<i32> {
     let artifact_dir = inputs.artifact_dir.clone();
     // Bind logging before execution so startup events reach the run artifact.
     crate::logging::set_log_file(&artifact_dir);
     tracing::info!("Starting native AIPerf run");
     let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
-    let terminal = run_benchmark_child_authoring(&inputs, None, &runner, &child_pid)?;
-    if terminal.success {
+    let dashboard = start_dashboard(flags);
+    let hb = heartbeat_path(&dashboard, &artifact_dir);
+    if let Some(path) = &hb {
+        set_live(&dashboard, "run", &artifact_dir, path);
+    }
+    let terminal =
+        run_benchmark_child_authoring(&inputs, None, &runner, &child_pid, hb.as_deref())?;
+    clear_live(&dashboard);
+    record_run(
+        &dashboard,
+        &sweep::aggregate::CellOutcome {
+            label: String::new(),
+            values: None,
+            artifact_dir: artifact_dir.clone(),
+            report_path: terminal.report_path.clone(),
+            success: terminal.success,
+            trial: 0,
+            error: terminal.error.clone(),
+        },
+    );
+    let code = if terminal.success {
         tracing::info!("Native AIPerf run completed");
         if let Some(path) = &terminal.report_path {
             crate::render::print_console_summary(path);
@@ -363,19 +513,21 @@ fn run_single(inputs: load::Inputs) -> anyhow::Result<i32> {
         }
         // Echo the `--dry-run` dataset-analysis report when it was emitted.
         crate::render::print_dataset_analysis(&artifact_dir);
-        Ok(0)
+        0
     } else {
         let detail = terminal
             .error
             .as_deref()
             .unwrap_or("native benchmark failed");
         tracing::error!("Native AIPerf run failed: {detail}");
-        Ok(if terminal.returncode == 0 {
+        if terminal.returncode == 0 {
             1
         } else {
             terminal.returncode
-        })
-    }
+        }
+    };
+    hold_dashboard(dashboard);
+    Ok(code)
 }
 
 /// Execute a YAML `sweep:` block: expand its variations, resolve+stamp each into
@@ -1368,6 +1520,7 @@ fn run_cells(
     }
     tracing::info!("{}", "=".repeat(80));
 
+    let dashboard = start_dashboard(flags);
     let mut outcomes = Vec::new();
     for (n, cell) in cells.iter().enumerate() {
         if let Some(d) = cooldown
@@ -1391,7 +1544,18 @@ fn run_cells(
                 cell.label
             )
         })?;
-        let terminal = run_benchmark_child_authoring(inputs, Some(&cell.run), &runner, &child_pid)?;
+        let hb = heartbeat_path(&dashboard, &cell.run.artifact_dir);
+        if let Some(path) = &hb {
+            set_live(&dashboard, &cell.label, &cell.run.artifact_dir, path);
+        }
+        let terminal = run_benchmark_child_authoring(
+            inputs,
+            Some(&cell.run),
+            &runner,
+            &child_pid,
+            hb.as_deref(),
+        )?;
+        clear_live(&dashboard);
         outcomes.push(sweep::aggregate::CellOutcome {
             label: cell.label.clone(),
             values: cell.run.variation.clone(),
@@ -1401,6 +1565,8 @@ fn run_cells(
             trial: cell.trial,
             error: terminal.error.clone(),
         });
+        // Publish this cell to the live dashboard as soon as it completes.
+        record_run(&dashboard, outcomes.last().expect("just pushed"));
         if !terminal.success {
             tracing::error!(
                 "Run failed ({}): {}",
@@ -1421,6 +1587,7 @@ fn run_cells(
         let failed = total - successful;
         tracing::warn!("{failed}/{total} sweep cells failed");
     }
+    hold_dashboard(dashboard);
     Ok(exit_code)
 }
 

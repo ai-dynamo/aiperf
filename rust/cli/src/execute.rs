@@ -61,6 +61,7 @@ pub fn run_once(
     exec_bin: &Path,
     request_json: &[u8],
     child_pid: &crate::signals::ChildPid,
+    heartbeat_path: Option<&Path>,
 ) -> anyhow::Result<Terminal> {
     let mut command = Command::new(exec_bin);
     command
@@ -70,6 +71,18 @@ pub fn run_once(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Live dashboard: point the child's heartbeat lane
+    // (`aiperf_runtime::engine::heartbeat_lane`) at a file the orchestrator tails,
+    // so `aiperf profile --serve` streams this run's in-flight metrics (TTFT/ITL/
+    // latency percentile sketches + counters, per progress tick) with no extra
+    // child->parent channel — the child already writes this NDJSON when the env
+    // is set.
+    if let Some(path) = heartbeat_path {
+        command.env(
+            aiperf_runtime::engine::heartbeat_lane::HEARTBEAT_LOG_ENV,
+            path,
+        );
+    }
     // The front door blocks SIGINT/SIGTERM in its main-thread mask so the
     // forwarder can `sigwait` them; that blocked mask is inherited across
     // fork+exec, so unblock it in the child or its `tokio::signal` graceful-
@@ -253,8 +266,13 @@ mod tests {
         let runner = fake_runner(
             r#"{"protocol_version":2,"event":"run_terminal","benchmark_id":"b1","success":true,"report_path":"/tmp/x/native-v2.json"}"#,
         );
-        let terminal =
-            run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap();
+        let terminal = run_once(
+            runner.as_ref(),
+            b"{}",
+            &crate::signals::ChildPid::default(),
+            None,
+        )
+        .unwrap();
         assert!(terminal.success);
         assert_eq!(
             terminal.report_path.as_deref(),
@@ -265,8 +283,13 @@ mod tests {
     #[test]
     fn rejects_multiple_stdout_lines() {
         let runner = fake_runner_raw("printf 'first\\nsecond\\n'");
-        let err =
-            run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap_err();
+        let err = run_once(
+            runner.as_ref(),
+            b"{}",
+            &crate::signals::ChildPid::default(),
+            None,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("exactly one terminal JSON line"));
     }
 }

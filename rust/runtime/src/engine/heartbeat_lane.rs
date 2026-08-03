@@ -23,7 +23,10 @@ use crate::timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-const HEARTBEAT_LOG_ENV: &str = "AIPERF_CELLULAR_HEARTBEAT_LOG";
+/// Env var naming the NDJSON path this lane writes. Public so the orchestrator
+/// (`aiperf-cli`) sets the same name on each `--execute` child it wants to stream
+/// live, rather than duplicating the literal.
+pub const HEARTBEAT_LOG_ENV: &str = "AIPERF_CELLULAR_HEARTBEAT_LOG";
 const HEARTBEAT_PROTOCOL_VERSION: u32 = 1;
 
 /// Feeds one completed record's latency facts into a heartbeat accumulator, matching

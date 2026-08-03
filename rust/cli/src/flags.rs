@@ -1344,6 +1344,15 @@ pub struct ProfileFlags {
     /// (`--no-dataset-analysis`).
     #[arg(long = "no-dataset-analysis", num_args = 0..=1, default_missing_value = "true")]
     pub no_dataset_analysis: Option<bool>,
+
+    /// Serve the always-on cross-run dashboard during this run and keep it up
+    /// afterwards (browse the just-finished runs) until Ctrl-C (`--serve`).
+    #[arg(long = "serve", num_args = 0..=1, default_missing_value = "true")]
+    pub serve: Option<bool>,
+    /// Dashboard bind port when `--serve` is set (`--serve-port`; default 8090,
+    /// 0 = OS-assigned).
+    #[arg(long = "serve-port")]
+    pub serve_port: Option<u16>,
 }
 
 impl ProfileFlags {
