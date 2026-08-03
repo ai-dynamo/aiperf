@@ -50,6 +50,78 @@ datasets:
       corpus: coding
 ```
 
+## How each corpus generates content
+
+### sonnet
+
+At startup `PromptGenerator` reads `assets/shakespeare.txt`, strips blank
+lines, and splits the text into fixed 10,000-character chunks (deterministic
+regardless of CPU count). Each chunk is tokenized in parallel and the results
+are concatenated into a single flat token array.
+
+At request time `_sample_tokens` picks a random start position in that array
+via a derived RNG and returns a contiguous window of the requested length,
+wrapping at the end of the corpus.
+
+The BPE fixup loop in `generate_prompt` then validates the window:
+
+1. Decode the token window to text.
+2. Re-encode the text and compare the actual token count to the target.
+3. If too long, trim tokens from the end. If too short, draw additional tokens
+   from the corpus and extend.
+4. Repeat up to 10 times until the re-encoded length matches the target.
+
+A BPE-stable terminator token is probed at init time and appended to segment
+boundaries so that concatenating multiple windows does not cause merge/split
+drift at the join points.
+
+### coding
+
+`CodingContentGenerator` builds a single shuffled `_tool_pool` from roughly
+22 template generators covering Python, Go, Rust, TypeScript, ML
+training/inference code, bash output, JSON payloads, error tracebacks, CUDA
+errors, SQL queries, git diffs, CI/CD logs, config files, markdown docs, test
+output, multi-turn coding conversations, and user prompts. The approximate
+weighted breakdown is: ~28% general code, ~11% ML code, ~20% bash/training
+logs, ~11% JSON, ~9% errors, ~3% SQL, ~10% miscellaneous, ~8% user prompts.
+
+All template blocks are shuffled with a seeded RNG at init time, joined with
+`"\n\n"`, and tokenized once to produce the pool. At request time sampling is
+identical to `sonnet` — a contiguous window with wraparound.
+
+Unlike `sonnet`, the `coding` path does **not** run a BPE fixup loop.
+`generate_prompt` decodes the sampled window and returns it directly. This
+means the actual ISL may differ slightly from the target for corpora with
+high BPE merge/split rates, but keeps latency low for large ISLs.
+
+### random
+
+No text file is loaded. For each token `j` in the request sequence:
+
+```
+token_id = allowed_tokens[(offset + request_index + j) % n]
+```
+
+where `offset` is a per-request value drawn from the RNG, `request_index`
+increments across requests so successive prompts do not overlap, and `n` is
+the size of the allowed token pool. The token IDs are decoded to text and
+then passed through the same BPE fixup loop as `sonnet` (up to 10 retries).
+
+See [## Random corpus](#random-corpus) below for the full explanation of
+corpus style, token pool composition, and RNG alignment.
+
+## Corpus selection resolution
+
+`resolve_prompt_generator` in `dataset/generator/corpus.py` selects the
+generator in this order:
+
+1. Explicit `prompts.corpus` / `--prompt-corpus` value
+2. Loader's `default_prompt_corpus` from the plugin registry
+3. `sonnet` as the global fallback
+
+`coding` returns a `CodingContentGenerator`; `sonnet` and `random` both
+return a `PromptGenerator` with the appropriate `PromptCorpus` enum value.
+
 ## Prefix prompts
 
 ``coding`` uses the same synthetic prefix / shared-system / user-context
