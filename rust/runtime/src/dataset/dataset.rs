@@ -238,8 +238,8 @@ impl Dataset {
         Ok(())
     }
 
-    /// Cache profiling-phase [`BodyPlan`] values for eligible static
-    /// message-array turns against the run's default prepared endpoint.
+    /// Cache profiling-phase [`BodyPlan`] values for eligible turns against the
+    /// run's default prepared endpoint.
     ///
     /// Call after [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint)
     /// and before sharing the dataset. Dispatch clones the cached plan, folds the
@@ -249,14 +249,22 @@ impl Dataset {
     ///
     /// A turn is cached only when every reuse invariant holds:
     /// - the endpoint's body is [`precomputable`](PreparedEndpoint::precomputable_body)
-    ///   (excludes template, raw passthrough, and token-native dialects), and it
-    ///   is a per-turn message-array shape (`chat`/`responses`/`messages`/…),
-    ///   which excludes completions, embeddings, rankings, and media endpoints;
-    /// - the conversation uses a static context mode (`MessageArrayWithResponses`
-    ///   or `DeltasWithResponses`), where the assembled turns do not depend on
-    ///   live replies, and is not a graph/DAG conversation;
+    ///   (excludes template, raw passthrough, and token-native dialects). Every
+    ///   other dialect qualifies, including the non-message-array input-array
+    ///   shapes (embeddings, rankings, image retrieval), whose per-request
+    ///   `format_payload` cost is the largest thing this cache removes;
+    /// - the conversation is not a graph/DAG conversation, and either uses a
+    ///   static context mode (`MessageArrayWithResponses` / `DeltasWithResponses`,
+    ///   where no assembled turn depends on live replies — every turn caches) or a
+    ///   `WithoutResponses` mode, where only turn 0 is response-independent and
+    ///   caches while continuation turns take the live path;
     /// - the turn carries no per-turn `endpoint` override, no complete raw body,
     ///   and no token-native `raw_token_ids`.
+    ///
+    /// An eligible plan is then offered to
+    /// [`prebuilt_if_static`](BodyPlan::prebuilt_if_static), which collapses it to
+    /// a single [`BodyPlan::Prebuilt`] blob when the body carries no per-dispatch
+    /// field, making dispatch a refcount clone instead of a re-splice.
     ///
     /// Only the profiling phase is cached; warmup folds the system prompt into the
     /// first message inside the formatter and always takes the live path. Formatter

@@ -38,9 +38,18 @@ input.
 
 ### Pipeline
 
-- **Loaders** parse each real format: synthetic, single/multi-turn JSONL,
-  random-pool, mooncake/bailian/burst-GPT traces, `dag_jsonl`, raw-payload,
-  sharegpt, Hugging Face public datasets, and accuracy fixtures.
+- **Loaders** parse each real format. Each is paired one-to-one with a
+  format-specific composer in `LoaderRegistry::register_builtin_formats` and
+  resolved either by explicit format name or by ordered structural
+  auto-detection over a probe row. The registered set is `synthetic`,
+  `synthetic_rankings`, `single_turn`, `multi_turn`, `random_pool`,
+  `raw_payload`, `inputs_json`, `exgentic`, `exgentic_v2`, `sharegpt`,
+  `mt_bench`, `mmvu`, `spec_bench`, `speed_bench`, `accuracy`,
+  `sagemaker_data_capture`, the trace formats `mooncake_trace`,
+  `bailian_trace`, `burst_gpt_trace`, and `baseten_trace`, and the Hugging Face
+  formats `hf_asr`, `hf_instruction_response`, `hf_conversation`, and the
+  field-inferring `hf` auto loader. `dag_jsonl` is deliberately *not* in this
+  registry — it takes the graph path below.
 - **Composition** does turn finalization, ISL/OSL sequence-distribution sampling,
   context injection, model selection, and `max_tokens`.
 - **Sampling strategies** (random, sequential, shuffle) operate on ids and are

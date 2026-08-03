@@ -71,7 +71,8 @@ Body construction consumes handles; it never mints content.
 
 ## The body plan
 
-A body plan is one of two shapes:
+A body plan is one of three shapes. An endpoint's `format_payload` returns one of
+the first two; the third is a derived collapse the runtime applies afterwards.
 
 - **Raw plan** — a single handle to a Raw segment: the degenerate whole-body case
   (recorded-payload replay, or a complete prebuilt body). Materialization emits
@@ -79,6 +80,16 @@ A body plan is one of two shapes:
 - **Fields plan** — an **ordered** list of `(field-name, field-value)` pairs
   describing a JSON object. Order is significant and preserved into the wire
   bytes (endpoints and downstream diff tooling depend on stable key order).
+- **Prebuilt plan** — a complete body already serialized into inline bytes.
+  Semantically identical to a Raw plan (materialization emits the bytes, folding
+  in any override tail) and differs only in provenance: it holds its bytes
+  inline rather than by handle, so it can be produced *after* the segment store
+  is frozen. No endpoint constructs one; it is produced only by the static
+  collapse described under [Precompute and caching](#precompute-and-caching),
+  where a Fields plan with no per-dispatch field is materialized once at lowering
+  so dispatch degrades to a refcount clone of those bytes. Because the collapse
+  runs the ordinary materializer, a Prebuilt plan is byte-identical to the Fields
+  plan it replaced.
 
 Each field value is one of four kinds:
 
@@ -168,7 +179,10 @@ endpoint's wire type, and **the endpoint picks neither** (the transport does):
   they are spliced (a malformed segment is a construction error, not a silent bad
   body). The result is **one** buffer — no scatter-gather — honoring transports
   that require a single complete body. A Raw plan takes a shortcut: emit the Raw
-  segment's bytes and splice the override tail into its top-level object.
+  segment's bytes and splice the override tail into its top-level object. A
+  Prebuilt plan takes that same shortcut against its inline bytes, skipping the
+  store lookup entirely — with an empty override set (the scheduled path's normal
+  case) this reduces to handing back the already-built buffer.
 - **Protobuf materializer.** Packs Token-IDs / tensor segments directly into the
   wire message's tensor-contents fields from the plan's structure — no
   intermediate JSON `Value`, no per-element walk. Here segments are *storage the
@@ -185,16 +199,57 @@ profiling-phase dispatches, plans are **precomputed and cached** per
 `(conversation, turn)` when eligible, and dispatch clones the cached plan and
 folds only the override set. Eligibility gates (all required):
 
-- the endpoint's body is declared **precomputable** (a static message-array
-  dialect, not one whose body depends on per-dispatch state);
-- the content is static (no per-request cache-busting, no fork/branch rewrite);
-- it is the **default** endpoint / static context.
+- the endpoint declares its body **precomputable** — that is, static bind-time
+  inputs fully determine it. This is the *default*; a dialect opts out only when
+  its body genuinely cannot be known at bind: a template dialect (its Jinja
+  template may reference per-dispatch identity such as `x_request_id`), raw
+  passthrough (it splices the dispatching turn's own authored payload), and
+  token-native composition (it sends exact per-turn raw token IDs). **Every other
+  dialect qualifies, including the non-message-array input-array shapes** —
+  embeddings, rankings, image retrieval. Those are in fact the biggest
+  beneficiaries: a 32-image batch inlined as data URLs pays its whole
+  `format_payload` serialization cost once at bind instead of once per timed
+  request. Restricting the cache to message-array dialects would be leaving the
+  largest win on the table;
+- the conversation is not a graph/DAG conversation (those dispatch through a
+  separate execution path), and either uses a static context mode — where no
+  assembled turn depends on a live reply, so *every* turn caches — or a
+  without-responses mode, where only turn 0 is response-independent and caches
+  while continuation turns take the live path;
+- the turn carries no per-turn endpoint override, no complete raw body, and no
+  token-native raw token IDs;
+- it is the **profiling** phase against the run's **default** endpoint.
 
-The warmup phase bypasses the cache (its plans may differ); the profiling phase
-reuses the cached plan. A Python port may skip caching initially — it is a
-performance optimization, not a correctness requirement — but the *plan itself
-must be reusable*: materializing the same plan with the same override set twice
-must produce identical bytes, and cloning a plan must not alter the original.
+Formatter failure at precompute is non-fatal: the slot simply stays empty and the
+identical error resurfaces on the live dispatch path. The precompute pass is
+idempotent — it rebuilds the whole cache from the current conversations on each
+call.
+
+### The static collapse
+
+An eligible cached plan is then offered to a second, stronger optimization: if
+its materialization carries **no per-dispatch field at all**, it collapses to a
+**Prebuilt** plan — serialized once, cloned wholesale at dispatch. Two conditions
+gate the collapse, and both exist to keep it byte-exact:
+
+- the plan carries none of the per-dispatch literals (`model`, `stream`,
+  `max_tokens`, `max_completion_tokens`, `max_output_tokens`) — these are exactly
+  the fields the effective-field pass may rewrite per dispatch;
+- the endpoint does not support streaming, since a streaming-capable endpoint's
+  `stream` flag can be toggled per dispatch even when absent from the plan.
+
+The scheduled path that consumes precomputed plans always dispatches with an
+empty override set, so a collapsed body needs no per-dispatch mutation. If the
+collapse's trial materialization fails, the uncollapsed plan is kept and the live
+path surfaces the identical error.
+
+The warmup phase bypasses the cache entirely (it folds the system prompt into the
+first message inside the formatter, so its plans may differ); the profiling phase
+reuses the cached plan. A Python port may skip both caching and the collapse
+initially — they are performance optimizations, not correctness requirements —
+but the *plan itself must be reusable*: materializing the same plan with the same
+override set twice must produce identical bytes, and cloning a plan must not
+alter the original.
 
 ## Invariants (the acceptance contract)
 
@@ -215,15 +270,22 @@ A conforming implementation, in any language, must satisfy all of:
    override key (appended).
 4. **Optional fields are omitted, not nulled** — an absent content handle
    produces no field.
-5. **Raw plans replay verbatim** — a Raw segment's bytes reach the wire
-   unchanged except for the override tail folded into its top-level object.
-6. **Domain safety** — only Message and Raw segments are field-spliceable on the
+5. **Whole-body plans replay verbatim** — a Raw segment's bytes, and a Prebuilt
+   plan's inline bytes, reach the wire unchanged except for the override tail
+   folded into the top-level object.
+6. **The static collapse is byte-neutral** — collapsing an eligible Fields plan
+   to a Prebuilt plan must not change a single byte on the wire. An
+   implementation that collapses must produce, for every collapsed turn, the
+   bytes the uncollapsed plan would have produced; the gates above (no
+   per-dispatch literal, no streaming support) exist precisely to make that
+   guarantee mechanical rather than probabilistic.
+7. **Domain safety** — only Message and Raw segments are field-spliceable on the
    JSON path; splicing a Text-only / Token-IDs / Media segment as a JSON field is
    a construction error. Token/tensor segments reach the wire only through the
    protobuf materializer.
-7. **Single contiguous body** on the JSON path — no scatter-gather — for
+8. **Single contiguous body** on the JSON path — no scatter-gather — for
    transports that send one complete body.
-8. **Numeric boundary discipline** — values are finite or explicitly absent at
+9. **Numeric boundary discipline** — values are finite or explicitly absent at
    the serialization boundary (shared with the rest of the runtime).
 
 ## Testing
@@ -242,6 +304,11 @@ The defining tests assert **byte-identity**, not structural equality:
 - A mixed literal/segment/array plan concatenates in declared order and parses
   back to the expected values.
 - Splicing a non-spliceable segment domain as a JSON field is rejected.
+- The static collapse produces a Prebuilt plan whose bytes equal the source
+  Fields plan's, and **declines** to collapse both a plan carrying a per-dispatch
+  literal and a plan from a streaming-capable endpoint — the negative case
+  matters more than the positive one, since an over-eager collapse would freeze a
+  field that must vary per request.
 
 New endpoint dialects add a test asserting their exact wire bytes against a
 deterministic mock server, per the repository's end-to-end verification
@@ -249,15 +316,18 @@ requirement.
 
 ## Source anchors (current Rust realization)
 
-- `rust/runtime/src/body_plan.rs` — the plan vocabulary (`BodyPlan`,
-  `FieldValue`) and the JSON materializer (`JsonBodyMaterializer`), plus the
-  object bridge, override folding, and precompute helpers.
+- `rust/runtime/src/body_plan.rs` — the plan vocabulary (`BodyPlan::{Raw, Fields,
+  Prebuilt}`, `FieldValue`) and the JSON materializer (`JsonBodyMaterializer`),
+  plus the object bridge (`BodyPlan::from_object`), override folding
+  (`set_literal` / `merge_overrides`), and the static collapse
+  (`prebuilt_if_static`, gated by `PER_DISPATCH_LITERALS`).
 - `rust/runtime/src/dataset/materialize.rs` — the override set (`Overrides`) and
   the shared message-splice primitives the materializer reuses.
 - `rust/runtime/src/dataset/segment.rs` — segment domains, handles, and the frozen
   store (`SegmentStore`, `Payload`).
 - `rust/runtime/src/dataset/dataset.rs` / `dataset/request.rs` — profiling-phase
-  plan precompute/cache and the dispatch-time materialize path.
+  plan precompute/cache (`precompute_body_plans`, `cached_body_plan`) and the
+  dispatch-time materialize path.
 - `rust/runtime/src/endpoints/registry.rs` — the `format_payload → BodyPlan`
   contract and the `precomputable_body` gate.
 - `rust/runtime/src/transport/grpc/codec.rs` — protobuf encode-from-structure (the
