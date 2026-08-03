@@ -14,7 +14,6 @@ from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import SyntheticDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
-from aiperf.dataset.generator.prompt import PromptGenerator
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -106,10 +105,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         # vLLM RNG compatibility: pre-generate ISLs, then OSLs, then offsets
         # from a single numpy Generator so the draw order matches vLLM's
         # get_sampling_params (all ISLs first, all OSLs second, all offsets
-        # third). Active whenever corpus=RANDOM and style=VLLM.
+        # third). The preseed() call is part of CorpusGeneratorProtocol with
+        # a no-op default, so we call it unconditionally — generators that do
+        # not support preseeding silently ignore it.
         if (
-            isinstance(self.prompt_generator, PromptGenerator)
-            and self.prompt_generator._corpus == PromptCorpus.RANDOM
+            self.prompt_generator is not None
+            and getattr(self.prompt_generator, "_corpus", None) == PromptCorpus.RANDOM
             and self._synthetic_prompts is not None
             and self._synthetic_prompts.random_corpus_style == RandomCorpusStyle.VLLM
             and isinstance(self._seq_distribution, RangeRatioDistribution)

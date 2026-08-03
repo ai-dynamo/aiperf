@@ -16,6 +16,47 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
+class CorpusGeneratorProtocol(Protocol):
+    """Protocol for corpus-based prompt generators.
+
+    Both ``PromptGenerator`` (SONNET / RANDOM) and ``CodingContentGenerator``
+    satisfy this protocol structurally. Callers should annotate against
+    ``CorpusGeneratorProtocol`` rather than the concrete union
+    ``PromptGenerator | CodingContentGenerator`` so that new corpus styles
+    (e.g. SGLang-native) can be introduced without touching every call site.
+
+    ``preseed`` is part of the protocol with a no-op default so that callers
+    can always call it — only generators that support upfront vectorised draws
+    (currently ``PromptGenerator`` with ``RandomCorpusStyle.VLLM``) populate
+    the cache; others silently do nothing.
+    """
+
+    def generate(self, mean: int, stddev: int = 0) -> str:
+        """Generate a single prompt of approximately ``mean`` tokens."""
+        ...
+
+    def get_random_prefix_prompt(self) -> str:
+        """Return a randomly sampled prefix from the prefix pool."""
+        ...
+
+    def get_shared_system_prompt(self) -> str | None:
+        """Return the shared system prompt, or ``None`` if not configured."""
+        ...
+
+    def generate_user_context_prompt(self, session_id: str) -> str | None:
+        """Return a per-conversation user-context prompt, or ``None``."""
+        ...
+
+    def preseed(self, n: int, generator: object) -> None:
+        """Pre-generate per-request values from a shared RNG (optional).
+
+        Implementations that do not support preseeding should leave this as a
+        no-op so callers can always invoke it unconditionally.
+        """
+        ...
+
+
+@runtime_checkable
 class CustomDatasetLoaderProtocol(Protocol):
     """Protocol for custom dataset loaders that load dataset from a file and convert it to a list of Conversation objects."""
 

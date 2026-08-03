@@ -14,11 +14,10 @@ from aiperf.common.models.sequence_distribution import SequenceLengthSampler
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import SyntheticDataset
 from aiperf.dataset.generator.audio import AudioGenerator
-from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.corpus import resolve_prompt_generator
 from aiperf.dataset.generator.image import ImageGenerator
-from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.generator.video import VideoGenerator
+from aiperf.dataset.protocols import CorpusGeneratorProtocol
 
 if TYPE_CHECKING:
     from aiperf.config.dataset import VideoConfig
@@ -150,7 +149,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         compensated_prefix_prompts = self._init_isl_compensation(tokenizer)
 
         # Create generators (prompt generator requires a tokenizer)
-        self.prompt_generator: PromptGenerator | CodingContentGenerator | None = (
+        self.prompt_generator: CorpusGeneratorProtocol | None = (
             resolve_prompt_generator(
                 corpus=self.run.cfg.get_prompt_corpus(),
                 default_corpus=None,

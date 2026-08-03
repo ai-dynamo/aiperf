@@ -10,6 +10,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.protocols import CorpusGeneratorProtocol
 
 
 def resolve_prompt_generator(
@@ -19,7 +20,7 @@ def resolve_prompt_generator(
     tokenizer: Tokenizer,
     prompts: PromptConfig | None = None,
     prefix_prompts: PrefixPromptConfig | None = None,
-) -> PromptGenerator | CodingContentGenerator:
+) -> CorpusGeneratorProtocol:
     """Pick sonnet vs coding generator from authored corpus + loader default.
 
     Resolution: explicit ``corpus`` -> ``default_corpus`` -> ``PromptCorpus.SONNET``.

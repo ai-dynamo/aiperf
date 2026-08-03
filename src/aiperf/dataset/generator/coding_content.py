@@ -748,6 +748,9 @@ class CodingContentGenerator(BaseGenerator):
         if shared_system_length is not None:
             self._generate_shared_system_prompt()
 
+    def preseed(self, n: int, generator: object) -> None:
+        """No-op — CodingContentGenerator draws on demand, no preseed needed."""
+
     def generate(
         self,
         mean: int | None = None,
