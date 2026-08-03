@@ -12,14 +12,6 @@ sidebar-title: Command Line Options
 
 Install shell completion for this application.
 
-### [`analyze swim-lane`](#aiperf-analyze-swim-lane)
-
-Render a per-session swim-lane PNG with concurrency curve underneath.
-
-### [`analyze turn-messages`](#aiperf-analyze-turn-messages)
-
-Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
-
 ### [`analyze-trace`](#aiperf-analyze-trace)
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
@@ -87,61 +79,6 @@ Shell type for completion. If not specified, attempts to auto-detect current she
 ### `-o`, `--output` `<str>`
 
 Output path for the completion script. If not specified, uses shell-specific default.
-
-<hr/>
-
-## `aiperf analyze swim-lane`
-
-Render a per-session swim-lane PNG with concurrency curve underneath.
-
-### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
-
-One or more AIPerf run directories.
-
-### `-o`, `--out` `<str>`
-
-Output PNG path. Only valid when a single run directory is given.
-
-### `-c`, `--concurrency` `<int>`
-
-Target concurrency to draw as a reference line in the concurrency panel.
-
-### `--ramp` `<float>`
-
-Ramp duration in seconds for the ramp-done marker; overrides the value read from ``profile_export_aiperf.json`` (useful when only the jsonl was exported).
-
-### `--html`, `--no-html`
-
-Also write an interactive HTML trace viewer (``swim_lane.html``, or the ``--out`` path with an ``.html`` suffix).
-
-<hr/>
-
-## `aiperf analyze turn-messages`
-
-Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
-
-### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
-
-One or more AIPerf run directories.
-
-### `-o`, `--out` `<str>`
-
-Output HTML path. Only valid when a single run directory is given.
-
-### `-n`, `--limit-conversations` `<int>`
-
-Max conversations to render (roots first, then by earliest request time).
-<br/>_Default: `40`_
-
-### `--max-turns` `<int>`
-
-Max turns rendered per conversation; the rest are summarized as a hidden count.
-<br/>_Default: `60`_
-
-### `--content-cap` `<int>`
-
-Max characters kept per unique message body; longer bodies are truncated with a remaining-chars note. Raise for full fidelity.
-<br/>_Default: `8000`_
 
 <hr/>
 
@@ -348,7 +285,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`audio_transcription`, `chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -1910,7 +1847,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`audio_transcription`, `chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`

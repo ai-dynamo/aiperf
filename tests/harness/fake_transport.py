@@ -365,6 +365,8 @@ class FakeTransport(BaseTransport):
                 )
             case EndpointType.IMAGE_RETRIEVAL:
                 return await self._do_image_retrieval(payload)
+            case EndpointType.AUDIO_TRANSCRIPTION:
+                return await self._do_audio_transcription(payload)
             case EndpointType.HUGGINGFACE_GENERATE:
                 return await self._dispatch(
                     payload,
@@ -461,6 +463,27 @@ class FakeTransport(BaseTransport):
             start_perf_ns,
             start_timestamp_ns,
             _build_image_retrieval_response_data(req),
+        )
+
+    async def _do_audio_transcription(self, payload: RequestInputT) -> RequestRecord:
+        """Handle audio transcription requests (bypasses _dispatch; the audio
+        input is multipart, not a tokenized text prompt). Returns a plain-text
+        transcript as ``{"text": ...}``, matching the OpenAI response shape the
+        AudioTranscriptionEndpoint parses."""
+        start_perf_ns = time.perf_counter_ns()
+        start_timestamp_ns = time.time_ns()
+        await _wait_for_processing(self.config.image_retrieval_base_latency, 0.0, 1)
+        return self._make_json_record(
+            start_perf_ns,
+            start_timestamp_ns,
+            {
+                "text": "the quick brown fox",
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 4,
+                    "total_tokens": 4,
+                },
+            },
         )
 
 
