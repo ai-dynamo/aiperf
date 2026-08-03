@@ -101,18 +101,19 @@ class CodegenGradingWorker:
             "generated_code": generated_code,
         }
         loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         self._pending[req_id] = fut
         proc = self._proc
         if proc is None or proc.stdin is None:
             self._pending.pop(req_id, None)
             raise CodegenWorkerError("grading worker is not running")
-        # Guard drain() with the caller's timeout so a worker that stops consuming
+        # Guard drain() with the caller's deadline so a worker that stops consuming
         # stdin (pipe buffer full) cannot block indefinitely. CancelledError during
         # drain() is also handled here so the pending future is cleaned up.
         try:
             proc.stdin.write(orjson.dumps(req) + b"\n")
-            await asyncio.wait_for(proc.stdin.drain(), timeout)
+            await asyncio.wait_for(proc.stdin.drain(), max(0.0, deadline - loop.time()))
         except (OSError, ConnectionError) as exc:
             self._pending.pop(req_id, None)
             raise CodegenWorkerError(
@@ -126,7 +127,7 @@ class CodegenGradingWorker:
             self._pending.pop(req_id, None)
             raise
         try:
-            return await asyncio.wait_for(fut, timeout)
+            return await asyncio.wait_for(fut, max(0.0, deadline - loop.time()))
         except TimeoutError as exc:
             self._pending.pop(req_id, None)
             await self._handle_fault(count_start_failure=False)
