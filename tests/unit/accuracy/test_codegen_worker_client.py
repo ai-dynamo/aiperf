@@ -23,6 +23,35 @@ def _write_worker(tmp_path: Path, body: str) -> list[str]:
     return [sys.executable, str(script)]
 
 
+# Receives a request, signals receipt via a file, then blocks until a "go"
+# file appears before responding.  Used to guarantee fut is unresolved when
+# we cancel, working around a Python 3.11 asyncio.wait_for bug where an
+# already-resolved future silently absorbs the CancelledError.
+_GATED_OK = """
+    import sys, orjson, pathlib, time
+    gate_dir = pathlib.Path(sys.argv[1])
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        req = orjson.loads(line)
+        (gate_dir / f"recv_{req['id']}").touch()
+        while not (gate_dir / "go").exists():
+            time.sleep(0.005)
+        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": 1.0}}
+        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
+def _write_gated_worker(tmp_path: Path) -> tuple[list[str], Path]:
+    gate_dir = tmp_path / "gate"
+    gate_dir.mkdir()
+    script = tmp_path / "gated_worker.py"
+    script.write_text(textwrap.dedent(_GATED_OK))
+    return [sys.executable, str(script), str(gate_dir)], gate_dir
+
+
 # Echoes pass@1=1.0 for every request, correlating id.
 _ECHO_OK = """
     import sys, orjson
@@ -278,20 +307,28 @@ class TestCancellation:
         # not fault the worker because the protocol is not desynced (the late
         # response is dropped as a stale id by _dispatch_response). Concurrent
         # grades continue unaffected.
-        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        #
+        # Uses a gated worker (not _ECHO_OK) so fut is guaranteed unresolved
+        # when grade.cancel() fires.  On Python 3.11, asyncio.wait_for silently
+        # absorbs CancelledError if the inner future already has a result, so
+        # we must ensure the worker has not yet responded at cancel time.
+        worker_cmd, gate_dir = _write_gated_worker(tmp_path)
+        worker = CodegenGradingWorker(worker_cmd=worker_cmd)
         try:
             grade = asyncio.create_task(
                 worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
             )
-            for _ in range(200):  # wait until the worker is up
-                if worker._proc is not None:
+            for _ in range(200):  # wait until the worker received the request
+                if (gate_dir / "recv_1").exists():
                     break
                 await asyncio.sleep(0.01)
+            # Worker holds at the gate — fut is unresolved — cancel is safe.
             grade.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await grade
             assert worker._proc is not None  # worker stays alive after cancel
-            # A subsequent grade still succeeds.
+            # Release the gate so the stale response drains and the next grade works.
+            (gate_dir / "go").touch()
             result = await worker.grade_codegen(
                 [{"input_output": "{}"}], [["x"]], timeout=10
             )
