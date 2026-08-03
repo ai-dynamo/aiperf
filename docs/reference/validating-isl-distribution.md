@@ -93,20 +93,44 @@ print(f"min={s[0]}, p5={s[n//20]}, mean={statistics.mean(isls):.1f}, "
 
 ## Comparing two recordings
 
-The `tools/compare_recordings.py` utility produces an HTML report with
-overlapping ISL and OSL histograms from any two JSONL recording files:
+The `tools/compare_recordings.py` utility produces a self-contained HTML
+report from any two JSONL recording files:
 
 ```bash
 python tools/compare_recordings.py \
   --a /tmp/aiperf_recording.jsonl  --label-a "aiperf" \
   --b /tmp/vllm_recording.jsonl    --label-b "vllm bench serve" \
   --out comparison.html
+open comparison.html
 ```
 
-The report includes per-endpoint stat cards (mean, std, p5/p95, min/max,
-completion rate), overlapping histograms for ISL and OSL, a tokenization-mode
-breakdown table, and — when the companion `.summary.json` files are present —
-a vocabulary token-count diff table.
+### What the report contains
+
+- **Stat cards** for ISL and OSL — mean, std, p5/p95, min/max, and delta
+  between the two runs
+- **Overlapping histograms** for ISL and OSL (2-token bins, blue/red
+  transparent bars so overlapping regions are visually distinct)
+- **Tokenization-mode breakdown table** — count and percentage for each
+  `tokenization_mode` value per run
+- **Vocabulary top-N diff table** — the token IDs with the largest count
+  difference between runs (loaded automatically from the companion
+  `.summary.json` files if present)
+
+### CLI reference
+
+```
+usage: compare_recordings.py --a FILE --b FILE [--label-a LABEL]
+                              [--label-b LABEL] [--out FILE]
+
+  --a FILE        First recording JSONL (A)
+  --b FILE        Second recording JSONL (B)
+  --label-a LABEL Display label for file A  (default: A)
+  --label-b LABEL Display label for file B  (default: B)
+  --out FILE      Output HTML file          (default: comparison.html)
+```
+
+The `.summary.json` companion file is detected automatically at
+`<recording>.summary.json` — no extra flag needed.
 
 ## Validating against vLLM Docker
 
@@ -154,18 +178,69 @@ open comparison.html
 
 ## Capturing raw prompts
 
-To capture the exact prompt text sent by a benchmark client (useful for
-diagnosing content differences between tools), use the lightweight capture
-server in `tools/capture_server.py`. It records every request's `messages`
-array byte-for-byte without tokenizing:
+To capture the exact prompt text sent by a benchmark client — useful for
+diagnosing content differences between tools — use `tools/capture_server.py`.
+It records every request's `messages` array byte-for-byte without tokenizing
+and returns a minimal synthetic streaming response so the client does not
+error out.
 
 ```bash
-python tools/capture_server.py --out /tmp/captured.jsonl --port 18000
+python tools/capture_server.py \
+  --out /tmp/captured.jsonl \
+  --port 18000 \
+  --host 127.0.0.1  # optional, default
 ```
 
-Each line contains `{"i": N, "messages": [...], "stream": ..., ...}`.
-Run your benchmark client against `http://localhost:18000` and the capture
-server returns synthetic streaming responses so the client does not error out.
+Then point your benchmark client at `http://localhost:18000`. Each line in the
+output JSONL contains:
+
+```json
+{
+  "i": 0,
+  "messages": [{"role": "user", "content": "..."}],
+  "model": "mock-model",
+  "max_completion_tokens": 128,
+  "stream": true,
+  "ignore_eos": true
+}
+```
+
+### CLI reference
+
+```
+usage: capture_server.py --out FILE [--port PORT] [--host HOST]
+
+  --out FILE   Output JSONL file — one captured request per line
+  --port PORT  Listen port  (default: 18000)
+  --host HOST  Listen host  (default: 127.0.0.1)
+```
+
+### Diffing captured prompts
+
+After capturing from two tools with the same seed, compare content at the
+Python level:
+
+```python
+import json
+
+a = [json.loads(l)["messages"][0]["content"]
+     for l in open("/tmp/captured_aiperf.jsonl")]
+b = [json.loads(l)["messages"][0]["content"]
+     for l in open("/tmp/captured_vllm.jsonl")]
+
+# Sort both by content since concurrent sends may arrive out of order
+a.sort(); b.sort()
+
+diffs = [(i, ai, bi) for i, (ai, bi) in enumerate(zip(a, b)) if ai != bi]
+print(f"{len(diffs)} / {min(len(a), len(b))} prompts differ")
+for i, ai, bi in diffs[:3]:
+    pos = next((j for j in range(min(len(ai),len(bi))) if ai[j]!=bi[j]), None)
+    print(f"  [{i}] first diff at char {pos}")
+```
+
+Note that with `--max-concurrency > 1` requests arrive at the capture server
+out of order. Sort by content (not by the sequential `"i"` field) before
+comparing, or use `--max-concurrency 1` to force serial delivery.
 
 ## Notes on template-inclusive ISL
 
