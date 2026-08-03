@@ -548,8 +548,9 @@ Inputs, endpoints, and graph:
   seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over
   the `sonnet`, `coding`, and exact-length `random` corpora.
 - [`docs/specs/endpoint-body-construction.md`](docs/specs/endpoint-body-construction.md) —
-  `format_payload → BodyPlan` and the two shared materializers that turn segment
-  handles into wire bytes.
+  `format_payload → BodyPlan` and the splice into wire bytes: content lowered once at
+  load, carried as inline pre-serialized wires so live assistant replies and static
+  content share one path, plus the plan cache and the gRPC round trip still to fix.
 - [`docs/specs/endpoints.md`](docs/specs/endpoints.md) — the `Endpoint` dialect adapter, the
   native dialects, endpoint identity, and the registry consumed by validation and
   execution.

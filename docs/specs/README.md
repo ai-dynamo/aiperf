@@ -72,7 +72,7 @@ read the record for the subsystem you are touching.
 |---|---|
 | [dataset.md](dataset.md) | The input-resolution plane: the content-addressed segment store, opaque raw-payload handling, and the loader→compose→store→sampler→materializer pipeline. |
 | [prompt-corpus.md](prompt-corpus.md) | The shared `prompts.corpus` seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over `sonnet`, `coding`, and exact-length `random`. |
-| [endpoint-body-construction.md](endpoint-body-construction.md) | How an endpoint declares its request shape (`format_payload → BodyPlan`) and how the two shared materializers turn segment handles into wire bytes. |
+| [endpoint-body-construction.md](endpoint-body-construction.md) | How an endpoint declares its request shape (`format_payload → BodyPlan`) and how that shape becomes wire bytes: content lowered once at load and carried as inline pre-serialized wires, so live assistant replies and static content splice through one path. |
 | [endpoints.md](endpoints.md) | The `Endpoint` dialect adapter: the trait, every native dialect, endpoint identity, and the registry consumed by validation and execution. |
 | [content-server.md](content-server.md) | The run-owned HTTP delivery sidecar that serves generated media by URL, its publication seam, and request-correlated media-fetch metrics (`rid`/`mi`/`td` URL tagging, streaming drain into `SidecarMetric` distributions). |
 | [rng.md](rng.md) | The hash-derived randomness substrate: order-independent BLAKE3 stream derivation, generators, and sampling distributions. |
