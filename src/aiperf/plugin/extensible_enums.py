@@ -107,15 +107,32 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}.{self.name}"
 
-    def __eq__(self, other: object) -> bool:
+    def _norm_value(self: Self) -> str:
+        # Lazily cached: members can be created dynamically via register(),
+        # so there is no single construction point to precompute this.
+        norm = self.__dict__.get("_norm_value_cache")
+        if norm is None:
+            norm = _normalize_name(self.value)
+            self._norm_value_cache = norm
+        return norm
+
+    def __eq__(self: Self, other: object) -> bool:
+        if self is other:
+            return True
         if isinstance(other, str):
-            return _normalize_name(self.value) == _normalize_name(other)
+            return str.__eq__(
+                self, other
+            ) is True or self._norm_value() == _normalize_name(other)
         if hasattr(other, "value") and isinstance(other.value, str):
-            return _normalize_name(self.value) == _normalize_name(other.value)
+            return self._norm_value() == _normalize_name(other.value)
         return super().__eq__(other)
 
-    def __hash__(self) -> int:
-        return hash(_normalize_name(self.value))
+    def __hash__(self: Self) -> int:
+        norm_hash = self.__dict__.get("_norm_hash_cache")
+        if norm_hash is None:
+            norm_hash = hash(self._norm_value())
+            self._norm_hash_cache = norm_hash
+        return norm_hash
 
     @property
     def name(self) -> str:

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for ExtensibleStrEnum and related utilities."""
 
+from typing import Self
+
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -24,7 +26,7 @@ class SampleEnum(ExtensibleStrEnum):
 
 
 @pytest.fixture
-def fresh_enum():
+def fresh_enum() -> type[ExtensibleStrEnum]:
     """Create a fresh enum class for tests that mutate state."""
 
     class TestEnum(ExtensibleStrEnum):
@@ -34,7 +36,9 @@ def fresh_enum():
 
 
 @pytest.fixture
-def enum_with_extension(fresh_enum):
+def enum_with_extension(
+    fresh_enum: type[ExtensibleStrEnum],
+) -> type[ExtensibleStrEnum]:
     """Create enum with one registered extension."""
     fresh_enum.register("EXT", "ext")
     return fresh_enum
@@ -218,6 +222,32 @@ class TestExtensibleStrEnum:
         assert isinstance(SampleEnum.ALPHA, str)
         assert SampleEnum.ALPHA.upper() == "ALPHA"
         assert SampleEnum.ALPHA.startswith("al")
+
+    def test_exact_match_fast_path(self: Self) -> None:
+        """An exact string compares equal; normalized-equal still matches."""
+        assert SampleEnum.ALPHA == "alpha"
+        assert SampleEnum.ALPHA == "ALPHA"
+
+    def test_identity_fast_path(self: Self) -> None:
+        """A member is equal to itself via the identity short-circuit."""
+        member = SampleEnum.ALPHA
+        assert member == member
+
+    def test_norm_value_cached_lazily(
+        self: Self, enum_with_extension: type[ExtensibleStrEnum]
+    ) -> None:
+        """Normalized value/hash are cached lazily on first use.
+
+        Extension members are created via str.__new__ and skip __init__, so the
+        cache is populated on the first comparison/hash rather than eagerly.
+        """
+        ext = enum_with_extension.EXT
+        ext.__dict__.pop("_norm_value_cache", None)
+        ext.__dict__.pop("_norm_hash_cache", None)
+        assert ext == "EXT"  # non-exact -> normalization path caches
+        assert ext.__dict__.get("_norm_value_cache") == "ext"
+        assert hash(ext) == hash("ext")
+        assert ext.__dict__.get("_norm_hash_cache") == hash("ext")
 
 
 # =============================================================================
