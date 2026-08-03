@@ -15,6 +15,7 @@ or pass ``--prompt-corpus`` on the CLI.
 |-------|---------|
 | `sonnet` | Shakespeare sonnets (default for synthetic and most loaders) |
 | `coding` | Procedural coding / tool-use content |
+| `random` | Synthetic prompts from random vocabulary token IDs — no text file required. Matches the token-generation algorithm used by `vllm bench serve` and `sglang bench_serving`. Use with `--random-range-ratio` for ISL/OSL variance. |
 
 ## When it applies
 
@@ -54,3 +55,55 @@ datasets:
 ``coding`` uses the same synthetic prefix / shared-system / user-context
 surface as ``sonnet``: those features sample from the selected corpus rather
 than requiring a separate generator type.
+
+``random`` also supports prefix prompt pools and shared system prompts. When
+a prefix pool is configured, prefix prompts are generated using the same
+arithmetic token-ID sequence as body prompts.
+
+## Random corpus
+
+``random`` generates prompts entirely from vocabulary token IDs using the
+formula `(offset + request_index + j) % len(allowed_tokens)` for each token
+`j` in the sequence, then decodes to text and re-encodes to verify the
+round-trip token count (BPE fixup, up to 10 retries). No text file is loaded.
+
+### Corpus style
+
+``random`` is paired with `--random-corpus-style` (or `random_corpus_style`
+in YAML) to select which benchmarking tool's behavior to replicate:
+
+| Style | `--random-corpus-style` | Token pool | BOS adjustment | Range formula |
+|-------|------------------------|-----------|---------------|---------------|
+| vLLM (default) | `vllm` | Non-special tokens only | Subtract BOS from ISL mean | Symmetric: `[floor(mean*(1-r)), ceil(mean*(1+r))]` |
+| SGLang | `sglang` | Full `vocab_size` range | None | Lower-bounded: `[max(1, int(mean*r)), mean]` |
+
+### RNG alignment (vLLM style)
+
+When `--random-corpus-style vllm` and `--random-seed` are set, aiperf
+pre-generates all ISL values, then all OSL values, then all per-request
+offsets from a single `numpy.random.default_rng(seed)` — matching vLLM's
+`get_sampling_params` draw order. This ensures identical token sequences for
+the same seed when comparing aiperf against `vllm bench serve`.
+
+### Example
+
+```yaml
+datasets:
+  - type: synthetic
+    prompts:
+      isl: 128
+      osl: 128
+      corpus: random
+      random_range_ratio: "0.3"
+      random_corpus_style: vllm
+```
+
+```bash
+aiperf profile \
+  --prompt-corpus random \
+  --random-range-ratio 0.3 \
+  --random-corpus-style vllm \
+  --prompt-input-tokens-mean 128 \
+  --prompt-output-tokens-mean 128 \
+  --random-seed 0
+```
