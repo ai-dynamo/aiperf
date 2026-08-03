@@ -816,9 +816,8 @@ are treated as a 0% rate. So a handful of overflows on a large run won't invalid
 that's systematically too small will.
 
 ### Q: Do generic request errors (HTTP 500s, timeouts) invalidate the run?
-No — and this surprises people. The only three things that flip `submission_valid` to `false` are an
-unsafe override, a >1% context-overflow rate, and a cancelled run; a generic-error rate is not among
-them. A run with substantial 500s still reports `submission_valid: true` — error responses even land
+Not by themselves. A generic-error rate is not a direct submission-validity input. A run with
+substantial 500s can still report `submission_valid: true` — error responses even land
 in the *denominator* of the overflow-rate computation, so heavy generic errors make overflow
 invalidation *less* likely, not more. Errors are counted in the `error_request_count` metric and are
 excluded from the latency distributions (an errored request contributes no TTFT/ITL samples). So
@@ -833,6 +832,13 @@ generic errors to be fatal, set `--failed-request-threshold`: once the profiling
 it, the run cancels, which then invalidates it with reason `run_cancelled`. The exit error reports
 the failed and total request counts, observed failure percentage, configured limit, and directs the
 operator to the inference-server logs.
+
+For profiling phases that meet the AgentX scenario's minimum valid duration, the scenario also
+requires TTFT and inter-token-latency observations to extend through at least 98% of the phase. This
+catches a server that stops returning responses while AIPerf still has requests in flight: the run
+exits non-zero, the JSON artifact is retained with `submission_valid: false` and reason
+`insufficient_profile_metric_coverage`, and the error directs the operator to the server logs.
+Warmup observations and intentionally short `--unsafe-override` smoke runs do not count.
 
 ### Q: My server has a ~256k context window and the run keeps overflowing — what's the right fix?
 Switch to a `_256k` corpus (see [§3](#3-how-realistic-are-the-prompts-and-token-counts)) — sizing the

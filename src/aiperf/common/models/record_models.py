@@ -416,6 +416,36 @@ class PhaseProfileResults(AIPerfBaseModel):
     )
 
 
+class ProfileMetricDurationCoverage(AIPerfBaseModel):
+    """Observed profiling-metric coverage relative to a configured phase duration."""
+
+    phase_name: str = Field(description="Name of the profiling phase checked.")
+    expected_duration_seconds: float = Field(
+        gt=0.0, description="Configured profiling duration in seconds."
+    )
+    required_ratio: float = Field(
+        gt=0.0, le=1.0, description="Minimum required metric coverage ratio."
+    )
+    ttft_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the phase covered by TTFT observations.",
+    )
+    inter_token_latency_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the phase covered by inter-token-latency observations.",
+    )
+
+    @property
+    def passed(self) -> bool:
+        """Return whether every required latency signal met the threshold."""
+        return (
+            self.ttft_ratio >= self.required_ratio
+            and self.inter_token_latency_ratio >= self.required_ratio
+        )
+
+
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
@@ -479,6 +509,14 @@ class ProfileResults(AIPerfBaseModel):
         "normal metric accumulation and stream export, retained only for "
         "aggregate runtime submission validation.",
     )
+    metric_duration_coverage: list[ProfileMetricDurationCoverage] = Field(
+        default_factory=list,
+        description="Post-run TTFT and ITL duration-coverage checks, when enabled.",
+    )
+    runtime_submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Runtime reason tags that invalidate a scenario submission.",
+    )
     phase_records: list[PhaseProfileResults] | None = Field(
         default=None,
         description="Internal per-phase metric summaries used for phase artifacts.",
@@ -510,6 +548,10 @@ class ProcessRecordsResult(AIPerfBaseModel):
     errors: list[ErrorDetails] = Field(
         default_factory=list,
         description="Any error that occurred while processing the profile results",
+    )
+    fatal_errors: list[ErrorDetails] = Field(
+        default_factory=list,
+        description="Post-processing validation errors that require a non-zero exit.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:

@@ -13,9 +13,14 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.messages import ProfileCancelCommand
+from aiperf.common.messages import ProcessRecordsResultMessage, ProfileCancelCommand
 from aiperf.common.messages.command_messages import CommandErrorResponse
-from aiperf.common.models import ErrorDetails, ExitErrorInfo
+from aiperf.common.models import (
+    ErrorDetails,
+    ExitErrorInfo,
+    ProcessRecordsResult,
+    ProfileResults,
+)
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import AccuracyBenchmarkType
 from tests.unit.controller.conftest import MockTestException
@@ -80,6 +85,37 @@ class TestSystemController:
 
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""
+
+    @pytest.mark.asyncio
+    async def test_fatal_profile_result_validation_records_exit_error(
+        self, system_controller: SystemController
+    ) -> None:
+        """A post-run coverage failure makes the final process exit non-zero."""
+        fatal_error = ErrorDetails(
+            type="ProfileMetricCoverageError",
+            message="Profiling metric coverage below the required 98.0%.",
+        )
+        message = ProcessRecordsResultMessage(
+            service_id="records_manager",
+            results=ProcessRecordsResult(
+                results=ProfileResults(
+                    records=[],
+                    completed=0,
+                    start_ns=1,
+                    end_ns=2,
+                ),
+                fatal_errors=[fatal_error],
+            ),
+        )
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+
+        await system_controller._on_process_records_result_message(message)
+
+        assert any(
+            item.error_details == fatal_error
+            and item.operation == "profile_results_validation"
+            for item in system_controller._exit_errors
+        )
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_configure_error_response(

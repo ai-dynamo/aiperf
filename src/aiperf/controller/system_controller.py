@@ -677,6 +677,18 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.error(
                 f"Received process records result message with errors: {message.results.errors}"
             )
+        for fatal_error in message.results.fatal_errors:
+            self.error(
+                "Received fatal profile-results validation error: "
+                f"{fatal_error.message}"
+            )
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=fatal_error,
+                    operation="profile_results_validation",
+                    service_id=message.service_id,
+                )
+            )
 
         self.debug(
             lambda: (

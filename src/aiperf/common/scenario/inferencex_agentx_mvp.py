@@ -37,4 +37,5 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
     forbid_trace_idle_gap_cap=True,
     forbid_inter_turn_delay_cap=True,
     require_cache_bust=CacheBustTarget.FIRST_TURN_PREFIX,
+    minimum_profile_metric_coverage_ratio=0.98,
 )

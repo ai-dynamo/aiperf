@@ -138,6 +138,17 @@ class ScenarioSpec(AIPerfBaseModel):
             "(which stamps submission_valid=false)."
         ),
     )
+    minimum_profile_metric_coverage_ratio: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Minimum fraction of each duration-based profiling phase that must "
+            "contain both TTFT and inter-token-latency observations. A run that "
+            "falls below the threshold exits non-zero and is not a valid scenario "
+            "submission. None disables the post-run check."
+        ),
+    )
 
 
 class ScenarioViolation(AIPerfBaseModel):
