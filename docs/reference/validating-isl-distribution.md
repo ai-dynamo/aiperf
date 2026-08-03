@@ -10,6 +10,10 @@ Use this to verify that aiperf is generating prompts at the ISL and OSL you
 configured — and to compare distributions against other benchmarking tools such
 as `vllm bench serve` or `sglang bench_serving`.
 
+See [ISL Distribution Examples](isl-distribution-examples.html) for rendered
+histograms showing a correctly-matched GPT-2 run and a Llama 3.1 8B Instruct
+run side-by-side.
+
 ## Quick start
 
 ```bash
