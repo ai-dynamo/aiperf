@@ -18,6 +18,7 @@ from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.models import (
     ErrorDetails,
     ExitErrorInfo,
+    MetricResult,
     ProcessRecordsResult,
     ProfileResults,
 )
@@ -116,6 +117,44 @@ class TestSystemControllerExitScenarios:
             and item.operation == "profile_results_validation"
             for item in system_controller._exit_errors
         )
+
+    @pytest.mark.asyncio
+    async def test_fatal_validation_exports_partial_results_before_error_report(
+        self, system_controller: SystemController
+    ) -> None:
+        """A fatal post-run verdict retains aggregate artifacts for diagnosis."""
+        system_controller._profile_results = ProcessRecordsResult(
+            results=ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="request_count",
+                        header="Request Count",
+                        unit="requests",
+                        avg=1.0,
+                    )
+                ],
+                completed=1,
+                start_ns=1,
+                end_ns=2,
+            )
+        )
+        system_controller._exit_errors = [
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    type="ProfileMetricCoverageError",
+                    message="coverage failed",
+                ),
+                operation="profile_results_validation",
+                service_id="records_manager",
+            )
+        ]
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock()
+        system_controller._print_exit_errors_and_log_file = MagicMock()
+
+        await system_controller._report_post_shutdown_results_and_errors()
+
+        system_controller._print_post_benchmark_info_and_metrics.assert_awaited_once()
+        system_controller._print_exit_errors_and_log_file.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_configure_error_response(
