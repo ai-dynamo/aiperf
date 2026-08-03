@@ -10,9 +10,16 @@ Use this to verify that aiperf is generating prompts at the ISL and OSL you
 configured — and to compare distributions against other benchmarking tools such
 as `vllm bench serve` or `sglang bench_serving`.
 
-See [ISL Distribution Examples](isl-distribution-examples.html) for rendered
-histograms showing a correctly-matched GPT-2 run and a Llama 3.1 8B Instruct
-run side-by-side.
+The histograms below show what a correctly-matched comparison looks like — aiperf
+and vLLM Docker producing identical ISL distributions for the same seed and
+parameters.  Blue = aiperf, red = vLLM Docker; overlapping bars appear purple.
+
+![GPT-2 ISL distribution — aiperf vs vLLM Docker](isl-example-gpt2.svg)
+
+![Llama 3.1 8B Instruct ISL distribution — aiperf vs vLLM Docker](isl-example-llama.svg)
+
+An interactive version with additional tokenizer comparisons is available in
+[isl-distribution-examples.html](isl-distribution-examples.html).
 
 ## Quick start
 
