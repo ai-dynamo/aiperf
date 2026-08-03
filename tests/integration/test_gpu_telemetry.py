@@ -245,6 +245,12 @@ class TestAMDSMITelemetry:
                 assert len(gpu_data.metrics) > 0
                 amd_metrics = {k for k in gpu_data.metrics if k.startswith("amd_")}
                 assert amd_metrics, "No amd_* metrics collected"
+                # amd_mm_activity returns 'N/A' on Instinct GPUs — the collector
+                # must drop it rather than surfacing it as 0.0 or None.
+                assert "amd_mm_activity" not in gpu_data.metrics, (
+                    "amd_mm_activity should be absent: mock returns 'N/A' for "
+                    "Instinct GPUs and the collector must filter it out"
+                )
                 for metric_name, metric_value in gpu_data.metrics.items():
                     assert metric_value.avg is not None
                     assert metric_value.unit is not None
