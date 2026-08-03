@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import PromptCorpus, RandomCorpusStyle
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.common.models.sequence_distribution import RangeRatioDistribution
 from aiperf.common.session_id_generator import SessionIDGenerator
@@ -102,22 +100,22 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "setting the mean to a positive value."
             )
 
-        # vLLM RNG compatibility: pre-generate ISLs, then OSLs, then offsets
-        # from a single numpy Generator so the draw order matches vLLM's
-        # get_sampling_params (all ISLs first, all OSLs second, all offsets
-        # third). The preseed() call is part of CorpusGeneratorProtocol with
-        # a no-op default, so we call it unconditionally — generators that do
-        # not support preseeding silently ignore it.
+        # RNG-aligned preseed: pre-generate ISLs, OSLs, and offsets upfront so
+        # the draw order matches the target tool's benchmark implementation.
+        # Each RangeRatioDistribution subclass owns its own RNG algorithm:
+        # - RangeRatioDistribution (VLLM): numpy.random.default_rng (PCG64)
+        # - SGLangRangeRatioDistribution (SGLANG): numpy.random (MT19937)
+        # The preseed() call stores _preseed_rng for PromptGenerator to continue
+        # from the same stream for offset draws. No style branching needed here.
         if (
             self.prompt_generator is not None
             and getattr(self.prompt_generator, "_corpus", None) == PromptCorpus.RANDOM
-            and self._synthetic_prompts is not None
-            and self._synthetic_prompts.random_corpus_style == RandomCorpusStyle.VLLM
             and isinstance(self._seq_distribution, RangeRatioDistribution)
         ):
-            g = np.random.default_rng(run.random_seed)
-            self._seq_distribution.preseed(self._num_entries, g)
-            self.prompt_generator.preseed(self._num_entries, g)
+            self._seq_distribution.preseed(self._num_entries, run.random_seed)
+            self.prompt_generator.preseed(
+                self._num_entries, self._seq_distribution._preseed_rng
+            )
 
     def create_dataset(self) -> list[Conversation]:
         """Create a synthetic conversation dataset from the given configuration.

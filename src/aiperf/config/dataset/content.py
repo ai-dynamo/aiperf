@@ -315,8 +315,10 @@ class PromptConfig(BaseConfig):
             return SequenceLengthDistribution(pairs)
 
         if self.random_range_ratio is not None:
+            from aiperf.common.enums import RandomCorpusStyle
             from aiperf.common.models.sequence_distribution import (
                 RangeRatioDistribution,
+                SGLangRangeRatioDistribution,
             )
 
             input_ratio, output_ratio = RangeRatioDistribution.parse_cli_value(
@@ -334,7 +336,12 @@ class PromptConfig(BaseConfig):
                 )
             isl_mean = int(self.isl.expected_value)
             osl_mean = int(self.osl.expected_value)
-            return RangeRatioDistribution(
+            DistClass = (
+                SGLangRangeRatioDistribution
+                if self.random_corpus_style == RandomCorpusStyle.SGLANG
+                else RangeRatioDistribution
+            )
+            return DistClass(
                 isl_mean=isl_mean,
                 osl_mean=osl_mean,
                 input_ratio=input_ratio,

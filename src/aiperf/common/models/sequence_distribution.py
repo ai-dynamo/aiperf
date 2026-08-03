@@ -639,24 +639,28 @@ class RangeRatioDistribution:
             floor, cfg.compute_high(mean, ratio)
         )
 
-    def preseed(self, n: int, generator: np.random.Generator) -> None:
-        """Pre-generate all ISL then all OSL values using vLLM's draw order.
+    def preseed(self, n: int, seed: int | None) -> None:
+        """Pre-generate all ISL then all OSL values using vLLM's PCG64 draw order.
 
-        Calling this makes subsequent :meth:`sample` calls read from the
-        pre-generated cache instead of drawing from the internal RNG, matching
-        the vectorised upfront draw that vLLM's ``get_sampling_params`` uses:
-        all ISLs first, then all OSLs, both from the same generator stream.
+        Creates ``numpy.random.default_rng(seed)`` internally so the RNG
+        algorithm and seeding are encapsulated here rather than in the caller.
+        Stores the generator after ISL/OSL draws as ``_preseed_rng`` so that
+        :meth:`PromptGenerator.preseed` can continue drawing offsets from the
+        same stream without the caller needing to manage generator state.
 
-        ``generator`` is advanced in-place so the caller can pass it to
-        :meth:`PromptGenerator.preseed` immediately after for offset draws.
+        Subclasses override this method to use a different RNG algorithm
+        (e.g. :class:`SGLangRangeRatioDistribution` uses MT19937 to match
+        SGLang's ``benchmark_serving.py``).
         """
-        self._isl_cache = generator.integers(
+        g = np.random.default_rng(seed)
+        self._isl_cache = g.integers(
             self._input_low, self._input_high + 1, size=n
         ).tolist()
-        self._osl_cache = generator.integers(
+        self._osl_cache = g.integers(
             self._output_low, self._output_high + 1, size=n
         ).tolist()
         self._cache_idx = 0
+        self._preseed_rng: object = g
 
     def sample(self) -> tuple[int, int]:
         """Sample a single (ISL, OSL) pair with independent uniform integers."""
@@ -741,3 +745,53 @@ class RangeRatioDistribution:
         cfg.validate_ratio("--random-range-ratio output", output_ratio)
 
         return input_ratio, output_ratio
+
+
+class _LegacyRNG:
+    """Thin wrapper over ``numpy.random`` (MT19937 global state) exposing the
+    same ``.integers()`` interface as ``numpy.random.Generator`` (PCG64).
+
+    Used by :class:`SGLangRangeRatioDistribution` so that preseed callers
+    (including :meth:`PromptGenerator.preseed`) can treat both RNG backends
+    identically without branching on algorithm.
+    """
+
+    def integers(
+        self,
+        low: int,
+        high: int | None = None,
+        size: int | None = None,
+    ) -> np.ndarray:
+        if high is None:
+            return np.random.randint(0, low, size=size)
+        return np.random.randint(low, high, size=size)
+
+
+class SGLangRangeRatioDistribution(RangeRatioDistribution):
+    """RangeRatioDistribution with SGLang-compatible MT19937 preseed.
+
+    Overrides :meth:`preseed` to use ``numpy.random`` (MT19937 global state)
+    instead of ``numpy.random.default_rng`` (PCG64), matching the draw order
+    in SGLang's ``benchmark_serving.py``::
+
+        input_lens  = np.random.randint(lower, upper + 1, size=n)
+        output_lens = np.random.randint(lower, upper + 1, size=n)
+        offsets     = np.random.randint(0, vocab_size, size=n)
+
+    When ``seed`` is provided, ``numpy.random.seed(seed)`` is called before
+    the draws so that aiperf runs are reproducible even though SGLang itself
+    never seeds the global RNG before sampling.
+    """
+
+    def preseed(self, n: int, seed: int | None) -> None:
+        if seed is not None:
+            np.random.seed(seed)
+        g = _LegacyRNG()
+        self._isl_cache = g.integers(
+            self._input_low, self._input_high + 1, size=n
+        ).tolist()
+        self._osl_cache = g.integers(
+            self._output_low, self._output_high + 1, size=n
+        ).tolist()
+        self._cache_idx = 0
+        self._preseed_rng: object = g
