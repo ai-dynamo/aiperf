@@ -64,6 +64,8 @@ depends on it):
     survives); not directly spliceable as a body field.
   - **Token IDs** — an integer token array, for endpoints that send token IDs.
   - **Media** — an image/audio/video reference.
+  - **Trace-hash-IDs** — authored source-trace block identities; carried for
+    prefix accounting and never spliceable into a body.
 - The store is **frozen** before dispatch: no new content is added on the hot
   path, so segment lookup is a pure read.
 
