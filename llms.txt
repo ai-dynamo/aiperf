@@ -504,13 +504,14 @@ Transports:
   protoc-free codec, and the worker-local sink.
 - [`docs/specs/python-native-transport.md`](docs/specs/python-native-transport.md) — planned
   abi3 PyO3 transport for the Python product, timestamping sub-millisecond ITL at
-  the socket instead of behind an event-loop hop. A vendored lightweight crate,
-  not a dependency on `aiperf-runtime`: the portability census puts
-  `transport/core/{trace.rs,sse.rs}` at 421 verbatim lines (one external crate
-  between them) and `reduce`, `measure`, and the 8.5k-line hyper stack at
-  reimplement, dropping the `Clock` seam, endpoint registry, and
-  `ExecutionSinkBuilder`/`WorkerSink`/`RequestObserver` abstractions the product
-  has no use for. Also the widened `RequestRecord` contract (reduced outcome plus
+  the socket instead of behind an event-loop hop. A vendored copy of the wire
+  path, with no build edge to `aiperf-runtime`: the census shows foreign coupling
+  concentrated entirely in the worker-sink binding (`transport/core/dispatch.rs`
+  plus `transport/http/sink*`, ~2,450 lines the PyO3 layer replaces), leaving
+  ~20,500 lines — the `Clock` seam intact with `SimClock`, `endpoints/`,
+  `body_plan` and its dataset substrate, and the hyper client — to vendor
+  verbatim and stay diffable against this tree. Also the widened
+  `RequestRecord` contract (reduced outcome plus
   pre-serialized responses blob) that keeps `AioHttpTransport` an equal
   conforming implementation of the existing plugin seam, and the
   `cp311-abi3-<platform>` wheel retag it forces.

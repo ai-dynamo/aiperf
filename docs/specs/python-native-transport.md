@@ -82,20 +82,31 @@ observer events; `transport::measure::{WorkerMeasurement, measure_dispatch}` is
 the shared measurement loop. Together these produce the same four values the
 Python worker derives.
 
-Portability of that reference code to a standalone crate divides sharply along
-whether a file depends on rewrite-only abstractions:
+Coupling to rewrite-only abstractions is not spread through the transport; it is
+concentrated in the layer that binds a transport to the worker pool. Measured per
+subdirectory rather than per module:
 
-| Reference file | Lines | Non-`std` dependencies | Disposition |
+| Reference component | Lines | Foreign imports | Disposition |
 |---|---|---|---|
-| `transport/core/trace.rs` | 243 | none | vendor verbatim |
-| `transport/core/sse.rs` | 178 | `smallvec` | vendor verbatim |
-| `transport/reduce.rs` | 276 | `dispatch::sink`, `endpoints`, `scheduled` | reimplement |
-| `transport/measure.rs` | 138 | `clock`, `dispatch`, `metrics`, `metrics_core` | reimplement |
-| `transport/http/` | 8,497 | `Clock`, endpoint registry, dispatch seam | reimplement |
+| `clock/` | 603 | `graph::runtime::RunOutcome` | vendor verbatim |
+| `transport/core/` minus `dispatch.rs` | 1,072 | none | vendor verbatim |
+| `transport/http/{client,config,models,sse}` | 3,777 | none | vendor verbatim |
+| `transport/http/transport/` | 2,612 | `endpoints` (1 site) | vendor verbatim |
+| `endpoints/` | 10,465 | `body_plan` (1) | vendor verbatim |
+| `body_plan.rs` | 627 | `dataset::{segment,materialize,error}` | vendor verbatim |
+| `dataset/{segment,materialize,error}.rs` | 1,401 | `dataset::model::MediaKind` | vendor verbatim |
+| `transport/core/dispatch.rs` | 369 | `dispatch`, `metrics*`, `multiturn`, `scheduled` | replaced |
+| `transport/http/sink.rs` + `sink/` | 2,090 | same | replaced |
 
-`TraceData` and the SSE framer are the whole of what transfers unchanged: 421
-lines carrying one external crate between them. `TraceData` is a struct plus
-`diff` arithmetic and derived k6/HAR duration methods with no imports at all.
+Roughly 20,500 lines vendor unchanged; about 2,450 are replaced by the PyO3
+layer. Every dependency chain terminates: `clock`'s single foreign symbol is a
+one-field struct (`RunOutcome { deadlocked: bool }`), `endpoints`' is `BodyPlan`,
+and the dataset substrate under it bottoms out at one `MediaKind` enum.
+
+The two replaced files are precisely the worker-sink binding — the role Python's
+own worker plays. `transport/core/dispatch.rs` and `transport/http/sink*` are
+where `dispatch::sink`, `metrics_core`, `multiturn`, and `scheduled` enter; the
+wire path beneath them imports none of it.
 
 `TraceData` is also a superset of Python's `BaseTraceData` + `AioHttpTraceData`,
 adding a TLS span split out from TCP connect and the response status code and
@@ -105,10 +116,9 @@ The reference sink is `!Send` by construction — `WorkerSink` is
 `#[async_trait(?Send)]`, `Clock` is `Rc<dyn Clock>`, and `RequestObserver` carries
 no `Send`/`Sync` supertrait — and `ExecutionSinkBuilder` (`Send + Sync + 'static`)
 exists to construct it inside a target thread's reactor
-([execution-model.md](execution-model.md)). The lightweight crate inherits the
-constraint that a reactor-bound client stays on its thread, but not the
-abstractions: it has one transport, one clock, and no registry to dispatch
-through.
+([execution-model.md](execution-model.md)). The vendored crate inherits the
+constraint that a reactor-bound client stays on its thread. It does not vendor the
+builder, because it has one caller and no pool to place sinks into.
 
 ### A drift in the Python seam
 
@@ -122,22 +132,30 @@ signatures, the divergence is not detected at runtime.
 
 ### Crate shape
 
-Five modules, no dependency on `aiperf-runtime`:
+The crate mirrors the reference tree so vendored files keep their paths and stay
+diffable against it: `clock/`, `transport/core/`, `transport/http/`, `endpoints/`,
+`body_plan.rs`, and the three `dataset/` files. Vendored files are copies, not
+adaptations — a file that needs editing to compile is a file to reconsider
+vendoring.
 
-- `trace.rs` — vendored verbatim.
-- `sse.rs` — vendored verbatim.
-- `client.rs` — a hyper client that timestamps at read-return and populates
-  `TraceData`.
-- `reduce.rs` — a minimal reducer over the SSE dialects the crate claims, not the
-  registry-coupled reference.
-- `lib.rs` — the `#[pyclass]`, the job and result types, and the thread shim.
+"Lightweight" describes the **new-code surface**, not the line count. The crate is
+large because copying is cheaper than rewriting an 8,500-line hyper stack, and
+because a verbatim copy can be re-diffed against the reference when the rewrite
+moves. What is actually written is the ~2,450-line replacement for the worker-sink
+binding: a `lib.rs` holding the `#[pyclass]`, the job and result types, and the
+thread shim.
 
-The crate omits what the Python product has no use for. There is no `Clock` seam:
-the product has no `SimClock` and no deterministic-replay requirement, so time
-reads go to a monotonic clock directly. There is no endpoint registry, no
-`ExecutionSinkBuilder`/`WorkerSink` pair, no `RequestObserver`, and no dispatch
-seam — one transport with one caller needs none of them. Reproducing them would
-import the rewrite's extensibility cost without its extensibility requirement.
+The `Clock` seam is vendored intact, `SimClock` included. The Python product has
+no immediate use for virtual time, but stripping the seam would edit
+`Clock::now_ns()` call sites throughout the wire path and permanently fork every
+file it touches from its reference. Keeping it costs 603 lines and preserves the
+diff.
+
+`body_plan.rs` and the `dataset/` substrate under it exist only to satisfy
+`format_payload` on the `PreparedEndpoint` trait, which this path never calls —
+`InferenceClient` canonicalizes the payload to bytes before dispatch. They are
+vendored rather than stubbed for the same reason: a stub would fork
+`endpoints/`'s 10,465 lines from the reference to save 2,028.
 
 ### One abi3 extension, one long-lived client object
 
@@ -204,17 +222,18 @@ bounds, `request_headers_sent`, `request_send_end`, `response_headers_received`,
 
 ### Fail-closed envelope
 
-The envelope is set by the lightweight reducer, not by the reference
-`HttpEndpointBinding`. The crate claims a named set of SSE dialects — the
-OpenAI-shaped chat and completions families first — and refuses selection for any
-endpoint outside it, for multipart endpoints, and for polled submit→poll→download
-endpoints. Refusal is at selection time, not per request, and the run proceeds on
-`AioHttpTransport`.
+Vendoring `endpoints/` whole means the envelope is the reference registry's, not a
+reduced subset: the dialects `HttpEndpointBinding` binds are the dialects
+available. Refusal is at selection time, not per request, and a refused run
+proceeds on `AioHttpTransport`.
 
-Widening the envelope is adding a dialect to the reducer. Deliberately, it is not
-porting the endpoint registry: the registry earns its cost in a runtime that must
-dispatch arbitrary registered endpoints, and the Python product already has that
-dispatch in Python.
+The Python product consequently holds two endpoint implementations —
+`src/aiperf/endpoints/` and the vendored `endpoints/`. On this path they split by
+direction rather than overlap: Python owns request construction (it formats and
+canonicalizes the payload to bytes before dispatch), and the vendored side is
+reached only for response decoding. The duplication is real and is the price of
+keeping the wire path verbatim; the alternative is a hand-written reducer that
+diverges from the reference silently.
 
 Connection tracing is not a refusal condition — the vendored trace is the richer
 of the two.
@@ -247,12 +266,17 @@ by the supported interpreter count.
 - `tools/wheel_repack.py` (`platform_tag_for`, `glibc_versions`,
   `manylinux_tag`, `rewrite_wheel_tag`).
 
-Reference implementations in this repository. The lightweight crate copies the
-first two and reimplements against the rest; no build edge connects them.
+Reference implementations in this repository. The vendored crate copies these; no
+build edge connects the two trees.
 
-- `rust/runtime/src/transport/core/{trace.rs,sse.rs}` (vendored verbatim).
-- `rust/runtime/src/transport/{reduce.rs,measure.rs}` (reimplemented).
-- `rust/runtime/src/transport/http/` (reimplemented).
+- `rust/runtime/src/clock/` (the seam, vendored intact including `SimClock`).
+- `rust/runtime/src/transport/core/` except `dispatch.rs`.
+- `rust/runtime/src/transport/http/` except `sink.rs` and `sink/`.
+- `rust/runtime/src/endpoints/`; `rust/runtime/src/body_plan.rs`;
+  `rust/runtime/src/dataset/{segment.rs,materialize.rs,error.rs}`.
+- `rust/runtime/src/transport/core/dispatch.rs` and
+  `rust/runtime/src/transport/http/sink*` — the worker-sink binding the PyO3
+  layer replaces, and where every foreign import in the wire path originates.
 - `rust/runtime/src/engine/turn_execution.rs` (`WorkerSink`,
   `ExecutionSinkBuilder`, `build_native`) — the threading constraint the crate
-  inherits, without the abstractions.
+  inherits, without the pool abstractions.
