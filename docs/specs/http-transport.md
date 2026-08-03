@@ -31,6 +31,33 @@ token counts, reconciling them when present and keeping absent usage fields
 absent. It feeds the shared reduction and measurement seams
 (`transport::reduce` / `transport::measure`).
 
+### Connection tracing
+
+`transport::core::trace::TraceData` is the capture surface, populated across the
+client stack: `client/pool.rs` (pool wait, socket 4-tuple), `client/resolver.rs`
+(DNS cache hit/miss, lookup span), `client/connection.rs` (TCP and TLS spans),
+and `transport/polling.rs` (`merge_trace` folds poll cycles into one trace). It
+holds absolute `Clock::now_ns()` timestamps for pool wait, DNS lookup, TCP
+connect, TLS connect, connection reuse, request send/headers-sent/send-end,
+response receive-start/headers-received/receive-end, and error; the socket
+`local`/`remote` ip and port; response status code and reason; and opt-in
+per-chunk `(timestamp_ns, size)` vectors with byte and chunk counters for both
+directions. Splitting TLS from TCP is a distinct span, not a combined connect.
+
+Derived durations are k6/HAR math: `sending`, `waiting`, `time_to_first_header`,
+`receiving`, `duration`, `blocked`, `dns_lookup`, `tcp_connect`, `tls_handshake`,
+and `connecting`. `to_export` converts to wall clock from a caller-supplied
+`TraceReference { clock_ns, wall_ns }` pair; the module reads no wall clock
+itself.
+
+The metrics plane consumes a narrower projection. `http_trace` in
+`sink/endpoint_dispatch.rs` collapses `TraceData` into
+`metrics_core::ingest::RequestTrace`: eight derived durations, four byte/chunk
+counters, a `connection_reused` bool, and `stream_setup_ns` computed from the
+record's `recv_start_ns - start_ns`. Absolute timestamps, per-chunk vectors, the
+socket 4-tuple, and status/reason stay on `TraceData` and do not reach metric
+ingestion.
+
 ### Endpoint binding
 
 The object-safe `HttpEndpointBinding` seam owns URL construction (including
@@ -52,12 +79,14 @@ connection-reuse strategies are supported: `Pooled`, `Never`, and
 
 - Full HTTP/2 connection-reuse and multiplexing semantics are narrower than the
   general design.
-- The connection-trace field set (DNS/TCP/TLS/pool-wait sub-events) is narrower
-  than a complete aiohttp-style trace.
 
 ## Source anchors
 
 - `rust/runtime/src/transport/http/` (`client`, `config`, `models`, `sse`,
   `transport`, `sink`).
+- `rust/runtime/src/transport/core/trace.rs` (`TraceData`, derived k6/HAR
+  durations, `TraceReference`/`TraceExport`).
+- `rust/runtime/src/transport/http/sink/endpoint_dispatch.rs` (`http_trace`
+  projection onto `metrics_core::ingest::RequestTrace`).
 - `rust/runtime/src/transport/{reduce.rs,measure.rs}` (shared reduction/measure).
 - `rust/cli/tests/*_stdio.rs` and tier-2 online endpoint tests.
