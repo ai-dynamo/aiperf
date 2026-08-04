@@ -286,13 +286,34 @@ struct WorkerReply {
     live_record: Option<RecordIngest>,
 }
 
+/// Everything a worker reports back about one hopped request, in the order it
+/// happens.
+///
+/// One ordered stream rather than a channel per event kind. The coordinator is
+/// this mode's throughput bound -- a per-thread sample during a hop run showed
+/// one thread at 1.08 cores with the other 144 idle -- so its per-request cost
+/// is the whole budget. Three channels plus a three-branch `select!` held live
+/// for each request's full lifetime became one `recv` loop over one channel.
+/// Ordering is preserved by the channel itself, so TTFT still lands before
+/// completion and the prefill slot is still released early.
+enum WorkerEvent {
+    /// First token observed; releases the prefill slot.
+    FirstToken(i64),
+    /// One endpoint-normalized frame, for runs with a live response observer.
+    Response(ParsedResponse),
+    /// Terminal reply. Always last for a given request.
+    Completed(Box<WorkerReply>),
+}
+
 /// One measured turn hopped from the coordinator loop to a worker thread.
 struct WorkerCommand {
     turn: PreparedTurn,
     context: MeasuredContext,
-    first_token: oneshot::Sender<i64>,
-    responses: Option<mpsc::Sender<ParsedResponse>>,
-    completed: oneshot::Sender<WorkerReply>,
+    events: mpsc::Sender<WorkerEvent>,
+    /// Whether the coordinator has a live response observer. A separate response
+    /// channel used to carry this signal by its presence; with one merged event
+    /// stream it must be stated.
+    wants_responses: bool,
     cancellation: PlacementCancellation,
 }
 
@@ -800,19 +821,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             .ok_or_else(|| anyhow!("execution run origin is not configured"))
     }
 
-    /// Receive from an optional channel, parking forever when it is absent.
-///
-/// The `select!` arm that uses this is gated on a live response observer, so
-/// the `None` branch is unreachable; parking rather than resolving keeps the
-/// arm from completing spuriously if that gate ever changes.
-async fn recv_optional<T>(rx: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
-    match rx {
-        Some(rx) => rx.recv().await,
-        None => std::future::pending().await,
-    }
-}
-
-async fn execute_command(
+    async fn execute_command(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -851,74 +860,44 @@ async fn execute_command(
             let guard = InflightGuard::new(&chosen.inflight);
             (senders[index].clone(), guard)
         };
-        let (first_token_tx, mut first_token_rx) = oneshot::channel();
-        // Only build the response channel when something consumes it. A run
-        // without a live response observer -- the ordinary benchmark shape --
-        // was allocating a 256-slot mpsc per request and dropping it unread, on
-        // the single coordinator thread that this mode's throughput is bounded
-        // by.
-        let (response_tx, mut response_rx) = match responses {
-            Some(_) => {
-                let (tx, rx) = mpsc::channel(WORKER_RESPONSE_CAPACITY);
-                (Some(tx), Some(rx))
-            }
-            None => (None, None),
+        // Sized so a streaming run's frames do not block the worker on a full
+        // channel; a run with no observer only ever carries TTFT + completion.
+        let capacity = if responses.is_some() {
+            WORKER_RESPONSE_CAPACITY
+        } else {
+            2
         };
-        let (completed_tx, mut completed_rx) = oneshot::channel();
+        let (event_tx, mut event_rx) = mpsc::channel(capacity);
         let cancellation = PlacementCancellation::new();
         let mut cancellation_guard = PlacementCancellationGuard::new(cancellation.clone());
         sender
             .send(WorkerMessage::Command(Box::new(WorkerCommand {
                 turn,
                 context,
-                first_token: first_token_tx,
-                responses: response_tx,
-                completed: completed_tx,
+                events: event_tx,
+                wants_responses: responses.is_some(),
                 cancellation,
             })))
             .await
             .map_err(|_| anyhow!("execution worker stopped before accepting a command"))?;
 
-        let mut first_token_channel_done = false;
-        let mut response_channel_done = responses.is_none();
         let reply = loop {
-            tokio::select! {
-                biased;
-                first = &mut first_token_rx, if !first_token_channel_done => {
-                    first_token_channel_done = true;
-                    if let Ok(ttft_ns) = first {
-                        on_first_token(ttft_ns);
-                    }
+            match event_rx.recv().await {
+                Some(WorkerEvent::FirstToken(ttft_ns)) => on_first_token(ttft_ns),
+                Some(WorkerEvent::Response(response)) => {
+                    let responses = responses
+                        .ok_or_else(|| anyhow!("worker sent a response frame with no observer"))?;
+                    poll_fn(|context| responses.poll_ready(context)).await?;
+                    responses.start_send(response)?;
                 }
-                response = Self::recv_optional(&mut response_rx), if !response_channel_done => {
-                    match response {
-                        Some(response) => {
-                            let responses = responses
-                                .expect("response channel exists only for streaming dispatch");
-                            poll_fn(|context| responses.poll_ready(context)).await?;
-                            responses.start_send(response)?;
-                        }
-                        None => response_channel_done = true,
-                    }
-                }
-                completed = &mut completed_rx => {
-                    break completed.map_err(|_| {
-                        anyhow!("execution worker dropped a command before completion")
-                    })?;
+                Some(WorkerEvent::Completed(reply)) => break *reply,
+                None => {
+                    return Err(anyhow!(
+                        "execution worker dropped a command before completion"
+                    ));
                 }
             }
         };
-        if !first_token_channel_done && let Ok(ttft_ns) = first_token_rx.try_recv() {
-            on_first_token(ttft_ns);
-        }
-        if let Some(responses) = responses
-            && let Some(rx) = response_rx.as_mut()
-        {
-            while let Ok(response) = rx.try_recv() {
-                poll_fn(|context| responses.poll_ready(context)).await?;
-                responses.start_send(response)?;
-            }
-        }
         cancellation_guard.disarm();
         Ok(reply)
     }
@@ -1065,11 +1044,11 @@ async fn run_worker<S: WorkerSink + 'static>(
 /// Relays a worker's streamed parsed responses back to the coordinator dispatch
 /// future over a bounded channel.
 struct WorkerResponseObserver {
-    sender: RefCell<PollSender<ParsedResponse>>,
+    sender: RefCell<PollSender<WorkerEvent>>,
 }
 
 impl WorkerResponseObserver {
-    fn new(sender: mpsc::Sender<ParsedResponse>) -> Self {
+    fn new(sender: mpsc::Sender<WorkerEvent>) -> Self {
         Self {
             sender: RefCell::new(PollSender::new(sender)),
         }
@@ -1089,6 +1068,7 @@ impl TurnResponseObserver for WorkerResponseObserver {
     }
 
     fn start_send(&self, response: ParsedResponse) -> Result<()> {
+        let response = WorkerEvent::Response(response);
         self.sender
             .borrow_mut()
             .send_item(response)
@@ -1104,19 +1084,21 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
     let WorkerCommand {
         turn,
         context,
-        first_token,
-        responses,
-        completed,
+        events,
+        wants_responses,
         cancellation,
     } = command;
     let uuid = turn.request.uuid;
-    let first_token = RefCell::new(Some(first_token));
+    let first_token_sent = Cell::new(false);
     let on_first_token = |ttft_ns| {
-        if let Some(sender) = first_token.borrow_mut().take() {
-            let _ = sender.send(ttft_ns);
+        // TTFT precedes every response frame for its request and the channel
+        // reserves room for it, so this cannot displace a queued frame.
+        // `try_send` keeps the callback synchronous, as the sink requires.
+        if !first_token_sent.replace(true) {
+            let _ = events.try_send(WorkerEvent::FirstToken(ttft_ns));
         }
     };
-    let response_observer = responses.map(WorkerResponseObserver::new);
+    let response_observer = wants_responses.then(|| WorkerResponseObserver::new(events.clone()));
     let reply = match &worker_observer {
         Some(observer) => {
             let dispatch = sink.dispatch_measured(
@@ -1155,17 +1137,20 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
             }
         }
         None => {
-            let _ = completed.send(WorkerReply {
-                result: Err(anyhow!(
-                    "worker-local measurement was not configured before a measured command"
-                )),
-                live_record: None,
-            });
+            let _ = events
+                .send(WorkerEvent::Completed(Box::new(WorkerReply {
+                    result: Err(anyhow!(
+                        "worker-local measurement was not configured before a measured command"
+                    )),
+                    live_record: None,
+                })))
+                .await;
             return;
         }
     };
-    drop(first_token.borrow_mut().take());
-    let _ = completed.send(reply);
+    // Completion is always the last event for this request; the coordinator
+    // breaks its receive loop on it.
+    let _ = events.send(WorkerEvent::Completed(Box::new(reply))).await;
 }
 
 fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {
