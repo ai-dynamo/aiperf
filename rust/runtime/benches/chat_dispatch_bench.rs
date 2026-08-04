@@ -487,6 +487,10 @@ fn chat_dispatch_body_path_profile() {
         }
     }
 
+    for sample in &samples {
+        sample.print();
+    }
+
     // --- Conversation depth against the reply-group inline bound. ---
     //
     // A continuation dispatch collects one `(position, wires)` group per
