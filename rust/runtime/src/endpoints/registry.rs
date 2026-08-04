@@ -314,6 +314,11 @@ pub trait PreparedEndpointBehavior: Endpoint {
     fn renders_all_turns(&self) -> bool {
         false
     }
+
+    /// See [`PreparedEndpoint::splices_lowered_wires`].
+    fn splices_lowered_wires(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) fn format_legacy_payload<E>(
@@ -408,6 +413,24 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// `false`. This runtime property is absent from the capability wire.
     fn precomputable_body(&self) -> bool {
         true
+    }
+
+    /// Whether this dialect renders its message array by splicing each turn's
+    /// pre-lowered wire bytes, rather than reading the turn's composed media.
+    ///
+    /// True exactly for the dialects
+    /// [`ShapeLowerer`](crate::endpoints::ShapeLowerer) can lower — the predicate
+    /// [`Dataset::lower_messages_for_endpoint`](crate::dataset::Dataset::lower_messages_for_endpoint)
+    /// used to produce those wires. Answering `true` lets dispatch skip resolving
+    /// composed content the formatter would discard; answering `false` resolves
+    /// it, which is always correct and merely slower. Defaults to `false`, so a
+    /// new dialect is correct before it is fast.
+    ///
+    /// This is *not* [`Self::renders_all_turns`]: `sagemaker` and `kserve_chat`
+    /// render every turn but compose their own message parts, so they render all
+    /// turns and splice no lowered wires. The two capabilities are independent.
+    fn splices_lowered_wires(&self) -> bool {
+        false
     }
 
     /// Borrow endpoint-owned request headers prepared once per worker/profile.
@@ -539,6 +562,10 @@ where
 
     fn renders_all_turns(&self) -> bool {
         self.endpoint.renders_all_turns()
+    }
+
+    fn splices_lowered_wires(&self) -> bool {
+        self.endpoint.splices_lowered_wires()
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {

@@ -553,6 +553,13 @@ impl PreparedEndpointTableResolver {
                 default.endpoint_id.as_str()
             );
         }
+        // Only the default endpoint's own id and aliases are registered, so a
+        // per-turn override can name this endpoint or fail — it can never route a
+        // turn to a *different* dialect. `ConversationSession::capture_response`
+        // depends on that: it drops a lowered reply's composed content knowing the
+        // only formatter that will ever see the reply is one that splices
+        // `lowered` verbatim. A resolver that registered other prepared profiles
+        // by name would turn that into silent data loss with every test green.
         let mut named = HashMap::new();
         for name in std::iter::once(endpoint.descriptor().id)
             .chain(endpoint.descriptor().aliases.iter().copied())
@@ -1972,16 +1979,105 @@ mod tests {
         );
     }
 
-    /// The differential every [`PreparedEndpoint::extracted`] override owes,
-    /// swept across every built-in endpoint.
+    /// A prepared endpoint whose reported structure deliberately disagrees with
+    /// the body it dispatches, by exactly one image part.
     ///
-    /// This arms itself: today no endpoint reports structure, so the inner
-    /// assertion is skipped and only the catalog-breadth floor below is
-    /// asserted — nothing here pins that endpoints report nothing. The first
-    /// override makes the assertion live against the body that endpoint actually
-    /// dispatches — `format_payload` through `materialize_standalone`, not a
-    /// hand-written payload. A divergence is a silent ISL shift, not a failure
-    /// the run surfaces.
+    /// The sweep below has no real [`PreparedEndpoint::extracted`] override to
+    /// run against — every built-in returns `None` — so without this the
+    /// differential would be skipped for every endpoint and could not fail at
+    /// all. This is the endpoint the differential is *for*: the first real
+    /// override that drifts from its own formatter.
+    #[derive(Debug)]
+    struct MisreportingEndpoint(Box<dyn PreparedEndpoint>);
+
+    impl PreparedEndpoint for MisreportingEndpoint {
+        fn descriptor(&self) -> &'static crate::endpoints::EndpointDescriptor {
+            self.0.descriptor()
+        }
+
+        fn config(&self) -> &crate::endpoints::EffectiveEndpointConfig {
+            self.0.config()
+        }
+
+        fn format_payload(
+            &self,
+            request: &crate::endpoints::PreparedRequest<'_>,
+        ) -> crate::endpoints::EndpointResult<BodyPlan> {
+            self.0.format_payload(request)
+        }
+
+        fn headers(&self) -> &std::collections::BTreeMap<String, String> {
+            self.0.headers()
+        }
+
+        fn readiness_policy(
+            &self,
+            model: &str,
+        ) -> crate::endpoints::EndpointResult<crate::endpoints::ReadinessPolicy> {
+            self.0.readiness_policy(model)
+        }
+
+        fn parse_response(
+            &self,
+            response: &crate::endpoints::ServerResponse,
+        ) -> crate::endpoints::EndpointResult<Option<crate::endpoints::ParsedResponse>> {
+            self.0.parse_response(response)
+        }
+
+        fn extract_payload_inputs(&self, body: &Value) -> crate::endpoints::ExtractedPayload {
+            self.0.extract_payload_inputs(body)
+        }
+
+        fn build_assistant_turn(
+            &self,
+            record: &crate::endpoints::RequestRecord,
+        ) -> crate::endpoints::EndpointResult<Option<crate::endpoints::Turn>> {
+            self.0.build_assistant_turn(record)
+        }
+
+        fn captures_assistant_turn(&self) -> bool {
+            self.0.captures_assistant_turn()
+        }
+
+        fn extracted(
+            &self,
+            _request: &crate::endpoints::PreparedRequest<'_>,
+            plan: &BodyPlan,
+        ) -> Option<crate::endpoints::ExtractedPayload> {
+            let dispatched = plan.materialize_standalone().ok()?;
+            let parsed: Value = serde_json::from_slice(&dispatched).ok()?;
+            let mut extracted = self.0.extract_payload_inputs(&parsed);
+            extracted.image_count += 1;
+            Some(extracted)
+        }
+    }
+
+    /// The structure an endpoint reports without parsing, against the body it
+    /// actually dispatches. `None` when the endpoint reports nothing.
+    fn extracted_differential(
+        prepared: &dyn PreparedEndpoint,
+        request: &crate::endpoints::PreparedRequest<'_>,
+        plan: &BodyPlan,
+    ) -> Option<(
+        crate::endpoints::ExtractedPayload,
+        crate::endpoints::ExtractedPayload,
+    )> {
+        let direct = prepared.extracted(request, plan)?;
+        let dispatched = plan.materialize_standalone().unwrap();
+        let parsed: Value = serde_json::from_slice(&dispatched).unwrap();
+        Some((direct, prepared.extract_payload_inputs(&parsed)))
+    }
+
+    /// The differential every [`PreparedEndpoint::extracted`] override owes,
+    /// swept across every built-in endpoint — and armed, so it cannot pass
+    /// vacuously.
+    ///
+    /// No built-in reports structure today, so the registry half of this sweep
+    /// establishes only that none has started to without a differential. The
+    /// [`MisreportingEndpoint`] half is what keeps the comparison itself honest:
+    /// it drifts from its own dispatched body by one image part and the sweep
+    /// must see it. Without that, the first real override could diverge silently
+    /// — an ISL shift no run surfaces.
     #[test]
     fn extracted_structure_matches_the_dispatched_body_for_every_endpoint() {
         let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
@@ -2001,7 +2097,7 @@ mod tests {
             None,
         );
 
-        let mut swept = 0usize;
+        let mut formatted = 0usize;
         for id in registry.canonical_ids() {
             let Ok(prepared) = registry.prepare(id, crate::endpoints::RawEndpointConfig::default())
             else {
@@ -2012,23 +2108,39 @@ mod tests {
             let Ok(plan) = prepared.format_payload(&request) else {
                 continue;
             };
-            swept += 1;
-            let Some(direct) = prepared.extracted(&request, &plan) else {
-                continue;
-            };
-            let dispatched = plan.materialize_standalone().unwrap();
-            let parsed: Value = serde_json::from_slice(&dispatched).unwrap();
-            assert_eq!(
-                direct,
-                prepared.extract_payload_inputs(&parsed),
-                "endpoint {id} reports structure that diverges from its dispatched body"
-            );
+            formatted += 1;
+            if let Some((direct, parsed)) =
+                extracted_differential(prepared.as_ref(), &request, &plan)
+            {
+                assert_eq!(
+                    direct, parsed,
+                    "endpoint {id} reports structure that diverges from its dispatched body"
+                );
+            }
         }
         // A floor, not the exact count: the sweep must keep covering the bulk of
-        // the catalog rather than silently narrowing to one dialect.
+        // the catalog rather than silently narrowing to one dialect. This counts
+        // endpoints that formatted a bare text turn, not endpoints differentially
+        // checked — the arming below is what pins the check.
         assert!(
-            swept >= 10,
-            "the sweep covered only {swept} endpoints; it must exercise the catalog"
+            formatted >= 10,
+            "the sweep covered only {formatted} endpoints; it must exercise the catalog"
+        );
+
+        let misreporting = MisreportingEndpoint(
+            registry
+                .prepare(
+                    &EndpointId::new("chat").unwrap(),
+                    crate::endpoints::RawEndpointConfig::default(),
+                )
+                .unwrap(),
+        );
+        let plan = misreporting.format_payload(&request).unwrap();
+        let (direct, parsed) = extracted_differential(&misreporting, &request, &plan)
+            .expect("the armed endpoint reports structure");
+        assert_ne!(
+            direct, parsed,
+            "the differential did not see a reported structure that disagrees with its body"
         );
     }
 

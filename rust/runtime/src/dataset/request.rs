@@ -505,7 +505,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 None => {
                     let turns = session.endpoint_turns(
                         store,
-                        splices_lowered_wires(endpoint.descriptor(), phase),
+                        splices_lowered_wires(endpoint, phase),
                     )?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
@@ -1095,6 +1095,23 @@ impl ConversationSession {
             .reply_images
             .zip(images)
             .and_then(|(total, added)| total.checked_add(added));
+        // Dropping the composed content is sound only because nothing downstream
+        // can read it back, which rests on two invariants held elsewhere. Both
+        // are load-bearing and neither is enforced by a type:
+        //
+        // 1. No lowerable dialect's formatter inspects a reply's content. Every
+        //    dialect `ShapeLowerer` can lower splices `lowered` verbatim
+        //    (`rendered_turn_messages`, `endpoints.rs`), and every dialect that
+        //    does read `texts`/`role`/`raw_messages` directly either rejects
+        //    multiple turns or selects `first()`/`last()` — neither of which a
+        //    captured reply can ever be. A new lowerable id whose formatter
+        //    inspects content makes this silent data loss.
+        // 2. A per-turn endpoint override cannot route this reply to some other
+        //    dialect: the only `PreparedTurnEndpointResolver` registers just the
+        //    default endpoint's id and aliases (`multiturn.rs`,
+        //    `PreparedEndpointTableResolver::single`) and errors on any other
+        //    name. A second resolver that registered other profiles by name would
+        //    break this the same way.
         if turn.lowered.is_some() {
             turn.texts.clear();
             turn.images.clear();
@@ -1468,14 +1485,19 @@ fn reply_splices_only_wires(reply: &EndpointTurn) -> bool {
 /// Whether this dispatch renders its message array by splicing lowered wires,
 /// making a turn's composed media unreachable from the formatter.
 ///
-/// True exactly for the dialects [`ShapeLowerer`] can lower — the same predicate
+/// The dialect half is the endpoint's own
+/// [`PreparedEndpoint::splices_lowered_wires`] answer rather than a list of ids
+/// kept here, so a new dialect declares its own capability where it is defined
+/// instead of being silently omitted from an enumeration in another module.
+/// `lowerable_dialects_declare_that_they_splice_lowered_wires` pins that answer
+/// against [`ShapeLowerer`], the predicate
 /// [`Dataset::lower_messages_for_endpoint`](crate::dataset::Dataset::lower_messages_for_endpoint)
-/// used to produce those wires, so a turn carrying `lowered` bytes under a
-/// `true` answer is guaranteed to be rendered through `rendered_turn_messages`.
+/// used to produce those wires.
+///
 /// Warmup is excluded: it re-renders the first turn from its media so the system
 /// prompt can be folded into that message.
-fn splices_lowered_wires(descriptor: &EndpointDescriptor, phase: CreditPhase) -> bool {
-    phase != CreditPhase::Warmup && ShapeLowerer::for_descriptor_id(descriptor.id).is_some()
+fn splices_lowered_wires(endpoint: &dyn PreparedEndpoint, phase: CreditPhase) -> bool {
+    phase != CreditPhase::Warmup && endpoint.splices_lowered_wires()
 }
 
 /// Resolve one authored dataset turn into the endpoint-facing turn, including

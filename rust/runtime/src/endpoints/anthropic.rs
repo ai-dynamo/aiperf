@@ -250,6 +250,10 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
     fn renders_all_turns(&self) -> bool {
         true
     }
+
+    fn splices_lowered_wires(&self) -> bool {
+        true
+    }
 }
 
 /// Compare a wire event/type name against an already-normalized constant
