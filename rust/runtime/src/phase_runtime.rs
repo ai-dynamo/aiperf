@@ -1008,7 +1008,9 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             plan.ancillary.url_selector,
             plan.ancillary.phase,
         );
-        if plan.credit_dispatch && let Err(error) = runtime.enable_credit_dispatch() {
+        if plan.credit_dispatch
+            && let Err(error) = runtime.enable_credit_dispatch()
+        {
             return Rc::new(FailedScheduledPhaseExecution {
                 phase_id: config.id.clone(),
                 error: format!("{error:#}"),

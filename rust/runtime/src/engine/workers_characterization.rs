@@ -1049,9 +1049,7 @@ mod tests {
             })
             .collect();
         turn_indices.sort_unstable();
-        let mut expected: Vec<u64> = (0..SESSIONS)
-            .flat_map(|_| (0..TURNS as u64))
-            .collect();
+        let mut expected: Vec<u64> = (0..SESSIONS).flat_map(|_| (0..TURNS as u64)).collect();
         expected.sort_unstable();
         assert_eq!(
             turn_indices, expected,

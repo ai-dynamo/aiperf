@@ -1096,9 +1096,9 @@ impl TurnDispatcher for ConfiguredDispatcher {
         let report = self.execution_backend.next_credit_report().await?;
         let kind = match report.kind {
             CreditReportKind::FirstToken(ttft_ns) => TurnCreditReportKind::FirstToken(ttft_ns),
-            CreditReportKind::CreditReturn(measured) => {
-                TurnCreditReportKind::CreditReturn(Box::new(self.absorb_credit(report.uuid, *measured)))
-            }
+            CreditReportKind::CreditReturn(measured) => TurnCreditReportKind::CreditReturn(
+                Box::new(self.absorb_credit(report.uuid, *measured)),
+            ),
         };
         Some(TurnCreditReport {
             uuid: report.uuid,
@@ -1355,15 +1355,8 @@ mod tests {
         let build = |split: bool| -> (Vec<u8>, Option<f64>) {
             let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
             let config = MetricsConfig::default();
-            let capture = RunCapture::new(
-                clock.clone(),
-                0,
-                config.clone(),
-                false,
-                false,
-                false,
-                false,
-            );
+            let capture =
+                RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, false);
             let (a, b, c) = facts();
             register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
             register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Completed, &b);
@@ -1596,15 +1589,8 @@ mod tests {
         // absolute-slot placement in the capture's exact
         // accumulator, then merge it into a fresh report accumulator.
         let subject_summary = |phase: MetricsPhase| -> Vec<u8> {
-            let capture = RunCapture::new(
-                clock.clone(),
-                0,
-                config.clone(),
-                false,
-                false,
-                false,
-                true,
-            );
+            let capture =
+                RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, true);
             assert!(
                 capture.exact_fold && !capture.metrics_only,
                 "exact-fold keeps EXACT storage, not sketch"
@@ -1698,16 +1684,8 @@ mod tests {
         ];
 
         // Exact-fold path: fold each record at completion with native OTLP enabled.
-        let capture = RunCapture::new(
-            clock.clone(),
-            0,
-            config.clone(),
-            false,
-            false,
-            false,
-            true,
-        )
-        .with_otel(true);
+        let capture = RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, true)
+            .with_otel(true);
         for (i, (uuid, ingest, errored)) in specs.iter().enumerate() {
             let mut ingest = ingest.clone();
             ingest.errored = *errored;
@@ -1767,15 +1745,7 @@ mod tests {
     fn exact_fold_flags_and_dense_dispatch_ordinals() {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
         let config = MetricsConfig::default();
-        let capture = RunCapture::new(
-            clock.clone(),
-            0,
-            config.clone(),
-            false,
-            false,
-            false,
-            true,
-        );
+        let capture = RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, true);
         assert!(
             capture.folds_records(),
             "exact-fold is a fold-and-drop mode"

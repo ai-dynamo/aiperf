@@ -1631,7 +1631,10 @@ pub struct WorkerMaterializationRecipe {
 
 impl WorkerMaterializationRecipe {
     /// Build this worker's materializer over its own prepared endpoint table.
-    pub fn build(&self, endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>) -> WorkerMaterializer {
+    pub fn build(
+        &self,
+        endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+    ) -> WorkerMaterializer {
         WorkerMaterializer {
             recipe: self.clone(),
             endpoint: NativeSessionEndpoint::Prepared {
@@ -1672,9 +1675,10 @@ impl WorkerMaterializer {
     /// so `advance_to` walks the same sequence it would have on the issuer.
     pub fn materialize(&self, credit: &CreditIdentity) -> Result<TurnToSend> {
         let session = self.session_for(credit)?;
-        let turn = session
-            .backend
-            .build_turn_at(&session, credit.turn_index, Some(credit.num_turns))?;
+        let turn =
+            session
+                .backend
+                .build_turn_at(&session, credit.turn_index, Some(credit.num_turns))?;
         // The last turn releases the session; a single-turn conversation never
         // keeps one at all.
         if credit.turn_index + 1 >= credit.num_turns {

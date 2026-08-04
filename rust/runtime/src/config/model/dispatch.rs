@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
 //! Admission-strategy selector shared by the typed config model and runtime.
 //!
 //! `DispatchMode` is the `runtime.dispatch` selector for `workers>1` scheduled
@@ -109,8 +110,7 @@ mod dispatch_mode_tests {
         ] {
             let encoded = serde_json::to_string(&mode).expect("mode serializes");
             assert_eq!(encoded, spelling);
-            let decoded: DispatchMode =
-                serde_json::from_str(spelling).expect("mode deserializes");
+            let decoded: DispatchMode = serde_json::from_str(spelling).expect("mode deserializes");
             assert_eq!(decoded, mode);
         }
     }
