@@ -3145,6 +3145,20 @@ mod tests {
         .unwrap()
     }
 
+    /// A captured assistant reply, lowered before capture exactly as
+    /// `multiturn::NativeSessionBackend::build_next_turn` lowers one.
+    fn captured_reply(endpoint: &dyn PreparedEndpoint, index: usize) -> EndpointTurn {
+        let mut reply = EndpointTurn {
+            role: Some("assistant".into()),
+            texts: vec![Media::new(vec![format!("reply {index}")])],
+            ..EndpointTurn::default()
+        };
+        if let Some(lowerer) = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id) {
+            reply.lowered = Some(lowerer.lower_turn(&reply).unwrap());
+        }
+        reply
+    }
+
     fn dispatch_turn(
         dataset: Arc<Dataset>,
         endpoint: &dyn PreparedEndpoint,
@@ -3154,6 +3168,14 @@ mod tests {
         let mut session = ConversationSession::new(dataset, SessionId::from("session")).unwrap();
         for index in 0..=turn_index {
             session.advance_to(index).unwrap();
+            // A mode that splices live replies gets one after every turn but the
+            // current, which is what makes a continuation body more than its
+            // authored turns.
+            if index < turn_index && session.should_capture_response() {
+                session
+                    .capture_response(captured_reply(endpoint, index), 3, Some(0))
+                    .unwrap();
+            }
         }
         session
             .materialize_prepared(
@@ -3173,10 +3195,18 @@ mod tests {
     fn cached_plan_is_byte_identical_to_per_dispatch_format_across_matrix() {
         // Cache and per-dispatch formatting must remain byte-identical across the
         // endpoint, context, override, max-token, and extra-body matrix.
+        //
+        // `DeltasWithoutResponses` is here for its *continuation* turns, whose
+        // cached plan holds only the authored turns and splices the live replies
+        // in at dispatch. Byte identity against the fully formatted body is the
+        // only thing that establishes those splice positions are right; the
+        // per-turn assertions below additionally establish that the spliced path
+        // is the one being compared, since a cache miss would also compare equal.
         for endpoint_id in ["chat", "responses", "messages"] {
             for mode in [
                 ConversationContextMode::MessageArrayWithResponses,
                 ConversationContextMode::DeltasWithResponses,
+                ConversationContextMode::DeltasWithoutResponses,
             ] {
                 for with_max_tokens in [false, true] {
                     for with_extra_body in [false, true] {
@@ -3195,6 +3225,7 @@ mod tests {
                                     with_max_tokens,
                                     with_extra_body,
                                 ),
+                                text_turn(&mut pool, b"third turn", with_max_tokens, with_extra_body),
                             ];
                             let base = single_conversation_dataset(mode, turns, pool);
                             let endpoint = prepare_endpoint(endpoint_id);
@@ -3222,12 +3253,24 @@ mod tests {
                                 overrides
                             };
 
-                            for turn_index in 0..2 {
-                                assert!(
-                                    cached
-                                        .cached_body_plan(&SessionId::from("session"), turn_index)
-                                        .is_some(),
-                                    "expected cached plan: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
+                            for turn_index in 0..3 {
+                                let entry = cached
+                                    .cached_body_plan(&SessionId::from("session"), turn_index)
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "expected cached plan: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
+                                        )
+                                    });
+                                let splices = mode
+                                    == ConversationContextMode::DeltasWithoutResponses
+                                    && turn_index > 0;
+                                assert_eq!(
+                                    entry
+                                        .replies
+                                        .as_ref()
+                                        .map(|replies| replies.positions.len()),
+                                    splices.then_some(turn_index),
+                                    "wrong splice reservation: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
                                 );
                                 let from_cache = dispatch_turn(
                                     cached.clone(),
@@ -3245,6 +3288,17 @@ mod tests {
                                     from_cache, from_format,
                                     "byte divergence: endpoint={endpoint_id} mode={mode:?} max_tokens={with_max_tokens} extra_body={with_extra_body} overrides={overrides_variant} turn={turn_index}"
                                 );
+                                // The cached plan on its own carries only the
+                                // authored turns, so a continuation body that
+                                // equals it never spliced anything and the row
+                                // above would have compared two unspliced bodies.
+                                if splices {
+                                    assert_ne!(
+                                        entry.plan.materialize_standalone().unwrap().len(),
+                                        from_cache.len(),
+                                        "continuation body was not spliced: endpoint={endpoint_id} ti={turn_index}"
+                                    );
+                                }
                             }
                         }
                     }
@@ -3641,6 +3695,11 @@ mod tests {
     /// turn — authored and captured alike — is rendered from its composed media
     /// on the live path, which is what the spliced path must reproduce byte for
     /// byte.
+    ///
+    /// `expect_lowered` is the control. `lower_messages_for_endpoint` answers
+    /// `Ok` however many turns it actually lowered — including none — so without
+    /// pinning the authored turn's post-lowering state, both arms could be the
+    /// same unlowered path and every comparison below would hold vacuously.
     fn continuation_body(
         endpoint: &dyn PreparedEndpoint,
         mode: ConversationContextMode,
@@ -3648,11 +3707,18 @@ mod tests {
         pool: SegmentPool,
         phase: CreditPhase,
         lower: bool,
+        expect_lowered: bool,
     ) -> Bytes {
         let mut dataset = single_conversation_dataset(mode, turns, pool);
         let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
         if lower {
             dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+            assert_eq!(
+                !dataset.conversations()[0].turns[0].body.is_empty(),
+                expect_lowered,
+                "lowering left the authored turn in the wrong state, so this \
+                 fixture is not exercising the path it names"
+            );
         }
         let mut session =
             ConversationSession::new(Arc::new(dataset), SessionId::from("session")).unwrap();
@@ -3708,6 +3774,7 @@ mod tests {
                             pool,
                             phase,
                             lower,
+                            true,
                         )
                     };
                     assert_eq!(
@@ -3755,6 +3822,10 @@ mod tests {
                 pool,
                 CreditPhase::Profiling,
                 lower,
+                // The control, inverted: these authored `raw_messages` snapshots
+                // must come through the lowering pass untouched, which is the
+                // whole claim this test makes.
+                false,
             )
         };
         let body = build(true);
