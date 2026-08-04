@@ -603,9 +603,8 @@ class TestCoverageGaps:
     async def test_ensure_worker_respawns_after_worker_exits(
         self, tmp_path: Path
     ) -> None:
-        # Covers the _kill() call in _ensure_worker (line 138) by triggering a
-        # respawn. The second grade sees a dead worker and spawns a new one.
-        # We verify by checking that _proc changes between grades.
+        # Worker serves one request then exits. The second grade_codegen() call
+        # must detect the dead worker via returncode, respawn, and succeed.
         die_after_one = """
             import sys, orjson
             line = sys.stdin.buffer.readline()
@@ -617,16 +616,21 @@ class TestCoverageGaps:
         """
         w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, die_after_one))
         try:
-            await w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=10)
+            result1 = await w.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result1 == {"pass@1": 1.0}
             first_proc = w._proc
-            # Force the proc to appear exited so _ensure_worker takes the respawn path
+            # Let the worker finish exiting so _ensure_worker sees returncode != None.
             if first_proc is not None:
                 await first_proc.wait()
-            # Now _ensure_worker should detect returncode is not None and respawn
-            async with w._spawn_lock:
-                if w._proc is not None or w._reader_task is not None:
-                    await w._kill()
-                w._worker_proven = False
+            result2 = await w.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result2 == {"pass@1": 1.0}
+            assert w._proc is not first_proc, (
+                "expected a new worker process after respawn"
+            )
         finally:
             await w.aclose()
 
