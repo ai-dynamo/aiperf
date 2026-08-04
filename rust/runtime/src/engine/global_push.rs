@@ -57,9 +57,29 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::clock::Clock;
+use crate::endpoints::PreparedEndpointTable;
+use crate::engine::turn_execution::CreditMaterializerFactory;
+use crate::multiturn::{
+    NativeDatasetConversationSource, WorkerMaterializationRecipe, WorkerMaterializer,
+};
 use crate::phase_runtime::ScheduledPhaseSidecar;
 
 use super::execute::{ScheduledShardOutcome, ShardedShared};
+
+/// Hands every worker its own materializer over the one shared recipe.
+///
+/// The recipe is `Send + Sync` and shared; the resolver is `Rc` and must be
+/// built per worker over the dense-key table that worker was handed.
+struct NativeCreditMaterializerFactory {
+    recipe: WorkerMaterializationRecipe,
+    endpoints: Arc<crate::engine::execute::NativePreparedEndpointTableFactory>,
+}
+
+impl CreditMaterializerFactory for NativeCreditMaterializerFactory {
+    fn build_worker(&self, table: PreparedEndpointTable) -> Result<WorkerMaterializer> {
+        Ok(self.recipe.build(self.endpoints.resolver_over(table)?))
+    }
+}
 
 /// Run the whole cell's schedule from ONE coordinator-owned issuer, routing each
 /// issued turn to a worker thread as a credit returned out of band.
@@ -78,5 +98,42 @@ pub(crate) async fn run_global_push(
     profiling_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     coordinator_clock: Rc<dyn Clock>,
 ) -> Result<ScheduledShardOutcome> {
-    super::global_hop::run_single_coordinator(shared, profiling_sidecars, coordinator_clock).await
+    // Built once per run over the same partition the coordinator pipeline
+    // samples from, so every conversation the issuer can draw is one every
+    // worker can rebuild. Constructing a source purely for its recipe costs one
+    // `lower_static_messages` pass; `NativeDataset` is handle-only, so the
+    // dataset itself is shared, not copied.
+    let credit_materializer: Option<Arc<dyn CreditMaterializerFactory>> = if shared.workers > 1 {
+        let partition = crate::engine::sharded_scheduled::two_level_partition(
+            shared.cell_id,
+            shared.cells,
+            0,
+            1,
+        )?;
+        let recipe = NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
+            shared.dataset.clone(),
+            shared.primary_model.clone(),
+            shared.default_output_tokens,
+            shared.rng_root,
+            &shared.samplers,
+            shared.table_factory.coordinator_resolver()?,
+            Some(partition),
+        )?
+        .with_response_tokenizer(shared.tokenizer.clone())
+        .with_input_token_counter(shared.input_token_counter.clone())
+        .worker_recipe();
+        Some(Arc::new(NativeCreditMaterializerFactory {
+            recipe,
+            endpoints: shared.table_factory.clone(),
+        }))
+    } else {
+        None
+    };
+    super::global_hop::run_single_coordinator(
+        shared,
+        profiling_sidecars,
+        coordinator_clock,
+        credit_materializer,
+    )
+    .await
 }

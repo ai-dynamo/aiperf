@@ -152,6 +152,15 @@ pub struct RequestRateWorkload {
     rate_gate: Option<Arc<GlobalRateGate>>,
     state: Rc<RequestRateState>,
     on_failure: OnFailure,
+    /// Whether this phase routes credits whose request body the WORKER builds
+    /// (`--dispatch global-push`), so the issuer does not pay materialization on
+    /// the one thread that bounds that mode.
+    ///
+    /// Applied to SINGLE-TURN sessions only. A continuation's body can splice
+    /// the live model reply, which the worker's replay of
+    /// `build_turn_at` cannot reproduce, so a multi-turn session keeps
+    /// issuer-side materialization and stays byte-identical.
+    defer_single_turn_bodies: bool,
 }
 
 impl RequestRateWorkload {
@@ -214,7 +223,34 @@ impl RequestRateWorkload {
             state: Rc::new(RequestRateState::default()),
             // Transport failures are recorded and issuance continues by default.
             on_failure: OnFailure::for_scheduled_default(),
+            defer_single_turn_bodies: false,
         })
+    }
+
+    /// Route single-turn credits without materializing their bodies, leaving
+    /// that to the worker (`--dispatch global-push`).
+    pub fn with_deferred_single_turn_bodies(mut self, defer: bool) -> Self {
+        self.defer_single_turn_bodies = defer;
+        // The cached first sample was built eagerly by the constructor; rebuild
+        // it under the new policy so the very first issued turn is deferred too.
+        if defer && let Some(cached) = self.next_new_turn.borrow_mut().as_mut()
+            && cached.num_turns == 1
+            && let Ok(deferred) = cached.session_handle().build_deferred_turn(0, None)
+        {
+            *cached = deferred;
+        }
+        self
+    }
+
+    /// Build the next new session's turn under this phase's materialization
+    /// policy: deferred when the session is single-turn and the worker will
+    /// build it, eagerly materialized otherwise.
+    fn build_new_session_turn(&self, sampled: &crate::multiturn::SampledSession) -> Result<TurnToSend> {
+        if self.defer_single_turn_bodies && sampled.available_turns() == 1 {
+            sampled.build_deferred_turn(0, None)
+        } else {
+            sampled.build_first_turn(None)
+        }
     }
 
     /// Select the run-failure discipline. `Abort` latches the whole run on the
@@ -343,11 +379,8 @@ impl RequestRateWorkload {
 
         // Cache the next sample only after successful issuance. Sequential and
         // shuffle samplers therefore do not advance on a skipped interval.
-        let next = self
-            .conversations
-            .borrow_mut()
-            .next(None)?
-            .build_first_turn(None)?;
+        let sampled = self.conversations.borrow_mut().next(None)?;
+        let next = self.build_new_session_turn(&sampled)?;
         *self.next_new_turn.borrow_mut() = Some(next);
         Ok(NewSessionOutcome::Issued)
     }

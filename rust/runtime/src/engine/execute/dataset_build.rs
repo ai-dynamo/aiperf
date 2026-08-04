@@ -117,6 +117,10 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     // Cross-phase accelerated cache-warmup handoff carrier (empty for every
     // non-accelerated run). Consumed only by the `agentic_replay` phase branch.
     warmup_handoff: crate::agentic_tree::WarmupHandoffCarrierAny,
+    // Whether this phase routes single-turn credits whose body the WORKER
+    // builds (`--dispatch global-push`); see
+    // `RequestRateWorkload::with_deferred_single_turn_bodies`.
+    defer_single_turn_bodies: bool,
 ) -> Result<ScheduledPhasePlan> {
     // Silence the unused-binding warning on builds without the `agentx` feature
     // (the only consumer is the feature-gated agentic_replay branch below).
@@ -177,7 +181,8 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                 // Under `global`/`global-hop` dispatch this phase paces against
                 // the cell-shared gate; `None` (sharded / single-thread) leaves
                 // local `intervals` pacing intact.
-                .with_rate_gate(shared.rate.clone()),
+                .with_rate_gate(shared.rate.clone())
+                .with_deferred_single_turn_bodies(defer_single_turn_bodies),
             ) as Rc<dyn Workload>;
             (
                 workload,

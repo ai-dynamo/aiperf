@@ -452,6 +452,13 @@ pub(crate) async fn execute_scheduled_pipeline(
         });
         let shared_resources = native_scheduled_resources(&sliced_phases);
 
+        // `GlobalPush` routes every turn as a credit the worker returns out of
+        // band; every other mode awaits one dispatch future per request. A lone
+        // worker has no cross-thread placement to route to -- `build_native`
+        // gives it a co-located sink -- so it keeps the ordinary path, exactly
+        // as a lone-worker `GlobalHop` run is just a single-thread run.
+        let credit_dispatch =
+            matches!(shared.dispatch_mode, DispatchMode::GlobalPush) && shared.workers > 1;
         let mut plans = Vec::with_capacity(sliced_phases.len());
         let mut profiling_index = 0usize;
         for (phase_index, phase) in sliced_phases.iter().enumerate() {
@@ -484,6 +491,7 @@ pub(crate) async fn execute_scheduled_pipeline(
                 shared.on_failure,
                 shared.agentic_trees.clone(),
                 shared.warmup_handoff.clone(),
+                credit_dispatch,
             )?;
             let profiling_idx = if phase.common().exclude_from_results {
                 None
@@ -522,13 +530,7 @@ pub(crate) async fn execute_scheduled_pipeline(
                 // out of band; every other mode awaits one dispatch future per
                 // request. Selected per phase because the phase runtime owns the
                 // credit-return loop's lifetime.
-                // A lone worker has no cross-thread placement to route credits
-                // to -- `build_native` gives it a co-located sink -- so it keeps
-                // the ordinary path, exactly as a lone-worker `GlobalHop` run is
-                // just a single-thread run.
-                .with_credit_dispatch(
-                    matches!(shared.dispatch_mode, DispatchMode::GlobalPush) && shared.workers > 1,
-                );
+                .with_credit_dispatch(credit_dispatch);
             plans.push(plan);
         }
 

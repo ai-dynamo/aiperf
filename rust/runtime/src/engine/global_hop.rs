@@ -65,7 +65,8 @@ pub(crate) async fn run_global_hop(
     profiling_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     coordinator_clock: Rc<dyn Clock>,
 ) -> Result<ScheduledShardOutcome> {
-    run_single_coordinator(shared, profiling_sidecars, coordinator_clock).await
+    // The hop materializes on the issuer, so its workers need no materializer.
+    run_single_coordinator(shared, profiling_sidecars, coordinator_clock, None).await
 }
 
 /// The single-coordinator pipeline itself, shared by [`run_global_hop`] and
@@ -81,6 +82,9 @@ pub(crate) async fn run_single_coordinator(
     shared: Arc<ShardedShared>,
     profiling_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     coordinator_clock: Rc<dyn Clock>,
+    credit_materializer: Option<
+        Arc<dyn crate::engine::turn_execution::CreditMaterializerFactory>,
+    >,
 ) -> Result<ScheduledShardOutcome> {
     let workers = shared.workers as usize;
     ensure!(
@@ -134,7 +138,7 @@ pub(crate) async fn run_single_coordinator(
         transport: shared.transport_config.clone(),
         raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
-        credit_materializer: None,
+        credit_materializer,
         hop_routing: shared.hop_routing,
         virtual_worker_width: None,
     })?;

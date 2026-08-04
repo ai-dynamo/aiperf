@@ -738,6 +738,12 @@ impl TurnToSend {
     pub fn is_final_turn(&self) -> bool {
         self.turn_index + 1 >= self.num_turns
     }
+
+    /// The sampled session this turn was built from, for a caller that needs to
+    /// rebuild the same turn under a different materialization policy.
+    pub fn session_handle(&self) -> &SampledSession {
+        &self.session
+    }
 }
 
 /// Metadata retained from issue until a dispatch returns.

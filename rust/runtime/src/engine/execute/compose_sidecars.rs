@@ -397,6 +397,9 @@ pub(crate) async fn execute_native_inner(
                     on_failure,
                     agentic_trees.clone(),
                     warmup_handoff.clone(),
+                    // The unsharded path materializes on its single co-located
+                    // sink; there is no worker to defer to.
+                    false,
                 )?;
                 let profiling_idx = if phase.common().exclude_from_results {
                     None

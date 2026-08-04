@@ -326,10 +326,23 @@ impl NativePreparedEndpointTableFactory {
     }
 
     pub(crate) fn coordinator_resolver(&self) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
-        let table = Rc::new(self.prepare_table()?);
+        self.resolver_over(self.prepare_table()?)
+    }
+
+    /// Wrap one already-prepared table in the same default-endpoint resolver
+    /// [`Self::coordinator_resolver`] builds.
+    ///
+    /// A worker that materializes its own credits needs a resolver over the
+    /// dense-key table it was handed, and a resolver is `Rc` so it cannot be
+    /// built once and shared across threads.
+    pub(crate) fn resolver_over(
+        &self,
+        table: PreparedEndpointTable,
+    ) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
         let default = self.reference(DEFAULT_ENDPOINT_PROFILE_ID)?;
         Ok(Rc::new(PreparedEndpointTableResolver::single(
-            table, default,
+            Rc::new(table),
+            default,
         )?))
     }
 }
