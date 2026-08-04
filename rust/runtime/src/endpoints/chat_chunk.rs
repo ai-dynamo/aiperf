@@ -91,37 +91,36 @@ impl ChatChunk {
     /// `chat.completion.chunk` while streaming. Any other `object` value is
     /// declined so non-streaming and unknown bodies keep using the generic
     /// extractor rather than being guessed at.
-    pub fn stream_response_data(&self) -> Option<ResponseData> {
+    pub fn into_stream_response_data(self) -> Option<ResponseData> {
         match self.object.as_deref() {
             Some("chat.completion.chunk") | None => {}
             Some(_) => return None,
         }
-        let delta = &self.choices.first()?.delta;
-        let content = delta.content.clone();
+        // Consumes the chunk so the delta's strings move into the result. The
+        // chunk is dropped immediately after this call on every path, so
+        // borrowing it here only bought a clone of the content and reasoning
+        // text -- one extra allocation and copy per streamed token.
+        let delta = self.choices.into_iter().next()?.delta;
+        let content = delta.content;
         if let Some(reasoning) = delta
             .reasoning_content
-            .as_deref()
-            .or(delta.reasoning.as_deref())
+            .or(delta.reasoning)
             .filter(|value| !value.is_empty())
         {
             return Some(ResponseData::Reasoning {
                 content,
-                reasoning: reasoning.to_string(),
+                reasoning,
             });
         }
-        let mut parts = Vec::new();
-        for call in &delta.tool_calls {
-            let Some(function) = call.function.as_ref() else {
+        let mut parts: Vec<String> = Vec::new();
+        for call in delta.tool_calls {
+            let Some(function) = call.function else {
                 continue;
             };
-            if let Some(name) = function.name.as_deref().filter(|value| !value.is_empty()) {
+            if let Some(name) = function.name.filter(|value| !value.is_empty()) {
                 parts.push(name);
             }
-            if let Some(arguments) = function
-                .arguments
-                .as_deref()
-                .filter(|value| !value.is_empty())
-            {
+            if let Some(arguments) = function.arguments.filter(|value| !value.is_empty()) {
                 parts.push(arguments);
             }
         }
@@ -295,7 +294,7 @@ mod tests {
     #[test]
     fn typed_response_data_matches_the_generic_value_extractor() {
         for payload in DIFFERENTIAL_CORPUS {
-            let typed = parse(payload).stream_response_data();
+            let typed = parse(payload).into_stream_response_data();
             assert_eq!(
                 typed,
                 generic_stream_response_data(payload),
@@ -309,7 +308,7 @@ mod tests {
     #[test]
     fn typed_response_data_declines_non_chunk_objects() {
         let non_streaming = r#"{"object":"chat.completion","choices":[{"index":0,"message":{"content":"hi"}}]}"#;
-        assert_eq!(parse(non_streaming).stream_response_data(), None);
+        assert_eq!(parse(non_streaming).into_stream_response_data(), None);
     }
 
     /// The regression the first cut shipped: servers that omit `object` had
@@ -318,7 +317,7 @@ mod tests {
     fn typed_response_data_accepts_a_chunk_without_an_object_field() {
         let no_object = r#"{"id":"response","choices":[{"index":0,"delta":{"content":"hel"}}]}"#;
         assert_eq!(
-            parse(no_object).stream_response_data(),
+            parse(no_object).into_stream_response_data(),
             Some(ResponseData::Text {
                 text: "hel".to_string()
             })

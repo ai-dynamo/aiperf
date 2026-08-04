@@ -416,7 +416,7 @@ impl TransportSink {
                 // Matches the generic parse: with no usage, a chunk yields a
                 // ParsedResponse only when it carries response data, so
                 // role-only frames leave `parsed_any` alone exactly as before.
-                if let Some(data) = chunk.stream_response_data() {
+                if let Some(data) = chunk.into_stream_response_data() {
                     parsed_any = true;
                     let parsed = ParsedResponse {
                         perf_ns: u64::try_from(message.perf_ns).unwrap_or_default(),
