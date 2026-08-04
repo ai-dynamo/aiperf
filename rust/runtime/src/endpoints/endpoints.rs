@@ -1198,7 +1198,9 @@ pub(crate) fn non_empty_field(obj: &Map<String, Value>, field: &str) -> Option<V
     }
 }
 
-fn extract_chat_response_data(obj: &Map<String, Value>) -> Option<ResponseData> {
+/// Visible to `chat_chunk`'s differential test, which asserts the typed
+/// streaming fast path yields exactly this function's result.
+pub(crate) fn extract_chat_response_data(obj: &Map<String, Value>) -> Option<ResponseData> {
     let key = match obj.get("object").and_then(Value::as_str) {
         Some("chat.completion") => "message",
         Some("chat.completion.chunk") => "delta",
