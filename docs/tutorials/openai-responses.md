@@ -326,7 +326,7 @@ and completions rows:
  "stream": true, "tokenization_mode": "tokenizer_call"}
 ```
 
-See the [mock server README](../../tests/aiperf_mock_server/README.md#request-recording)
+See the [mock server README](https://github.com/ai-dynamo/aiperf/blob/main/tests/aiperf_mock_server/README.md#request-recording)
 for the full output format and summary schema.
 
 ---
