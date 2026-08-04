@@ -1130,7 +1130,7 @@ impl ConversationSession {
     fn reply_wire_groups<'session>(
         &'session self,
         cached: &CachedTurnPlan,
-        groups: &mut SmallVec<[(u32, &'session [Bytes]); 4]>,
+        groups: &mut SmallVec<[(u32, &'session [Bytes]); 16]>,
     ) -> bool {
         let Some(replies) = cached.replies.as_ref() else {
             return self.replies.is_empty();
