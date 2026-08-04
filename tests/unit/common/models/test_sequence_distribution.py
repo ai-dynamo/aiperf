@@ -912,6 +912,24 @@ class TestRangeRatioDistribution:
             assert isl == expected_isls[i]
             assert osl == expected_osls[i]
 
+    def test_preseed_prefix_len_shifts_isl_cache(self):
+        """prefix_len adds to each sampled ISL so first_turn_adj gives back body range."""
+        dist = RangeRatioDistribution(
+            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
+        )
+        n = 5
+        prefix = 20
+        dist_no_prefix = RangeRatioDistribution(
+            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
+        )
+        dist_no_prefix.preseed(n, 0)
+        dist.preseed(n, 0, prefix_len=prefix)
+
+        for _ in range(n):
+            isl_with, _ = dist.sample()
+            isl_without, _ = dist_no_prefix.sample()
+            assert isl_with == isl_without + prefix
+
     def test_preseed_exposes_rng_for_offset_draws(self):
         """_preseed_rng after preseed is advanced past ISL+OSL draws."""
         dist = RangeRatioDistribution(

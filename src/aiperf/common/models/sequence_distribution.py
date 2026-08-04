@@ -639,7 +639,7 @@ class RangeRatioDistribution:
             floor, cfg.compute_high(mean, ratio)
         )
 
-    def preseed(self, n: int, seed: int | None) -> None:
+    def preseed(self, n: int, seed: int | None, prefix_len: int = 0) -> None:
         """Pre-generate all ISL then all OSL values using vLLM's PCG64 draw order.
 
         Creates ``numpy.random.default_rng(seed)`` internally so the RNG
@@ -648,14 +648,20 @@ class RangeRatioDistribution:
         :meth:`PromptGenerator.preseed` can continue drawing offsets from the
         same stream without the caller needing to manage generator state.
 
+        When ``prefix_len > 0``, each sampled ISL has ``prefix_len`` added
+        before caching. ``SyntheticDatasetComposer`` later subtracts it via
+        ``first_turn_isl_adjustment`` to obtain the body ISL, so the body
+        distribution stays identical to the no-prefix case and the prefix is
+        purely additive on the wire — matching vLLM's ``--random-prefix-len``
+        and SGLang's ``prefix_len`` behaviour.
+
         Subclasses override this method to use a different RNG algorithm
         (e.g. :class:`SGLangRangeRatioDistribution` uses MT19937 to match
         SGLang's ``benchmark_serving.py``).
         """
         g = np.random.default_rng(seed)
-        self._isl_cache = g.integers(
-            self._input_low, self._input_high + 1, size=n
-        ).tolist()
+        raw_isls = g.integers(self._input_low, self._input_high + 1, size=n)
+        self._isl_cache = (raw_isls + prefix_len).tolist()
         self._osl_cache = g.integers(
             self._output_low, self._output_high + 1, size=n
         ).tolist()
@@ -797,13 +803,12 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
         super().__init__(isl_mean=max(1, int(isl_mean) - chat_template_len), **kwargs)
         self._chat_template_len = chat_template_len
 
-    def preseed(self, n: int, seed: int | None) -> None:
+    def preseed(self, n: int, seed: int | None, prefix_len: int = 0) -> None:
         if seed is not None:
             np.random.seed(seed)
         g = _LegacyRNG()
-        self._isl_cache = g.integers(
-            self._input_low, self._input_high + 1, size=n
-        ).tolist()
+        raw_isls = g.integers(self._input_low, self._input_high + 1, size=n)
+        self._isl_cache = (raw_isls + prefix_len).tolist()
         self._osl_cache = g.integers(
             self._output_low, self._output_high + 1, size=n
         ).tolist()
