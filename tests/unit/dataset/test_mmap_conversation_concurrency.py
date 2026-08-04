@@ -13,7 +13,9 @@ position.
 """
 
 import mmap
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -42,10 +44,16 @@ def _make_conversation(index: int) -> Conversation:
     )
 
 
-async def _build_client(
+@asynccontextmanager
+async def _open_client(
     tmp_path: Path, benchmark_id: str, count: int
-) -> MemoryMapDatasetClient:
-    """Write ``count`` conversations and open a client over them."""
+) -> AsyncIterator[MemoryMapDatasetClient]:
+    """Write ``count`` conversations and open a client over them.
+
+    The backing store is stopped on exit, so its ``@on_stop`` cleanup unlinks
+    the mmap files instead of leaking them for the run's lifetime. The client
+    is closed first: the store's cleanup deletes the files it maps.
+    """
     store = MemoryMapDatasetBackingStore(
         benchmark_id=benchmark_id, format=MemoryMapFormat.CONVERSATION
     )
@@ -55,10 +63,15 @@ async def _build_client(
     await store.finalize()
 
     metadata = store.get_client_metadata()
-    return MemoryMapDatasetClient(
+    client = MemoryMapDatasetClient(
         metadata.data_file_path,
         metadata.index_file_path,
     )
+    try:
+        yield client
+    finally:
+        client.close()
+        await store.stop()
 
 
 @pytest.mark.asyncio
@@ -67,22 +80,22 @@ async def test_get_conversation_concurrent_readers_returns_own_bytes(
 ) -> None:
     """Concurrent get_conversation() calls must not read each other's bytes."""
     monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
-    client = await _build_client(tmp_path, "test_conv_concurrency", _CONVERSATION_COUNT)
+    async with _open_client(
+        tmp_path, "test_conv_concurrency", _CONVERSATION_COUNT
+    ) as client:
 
-    def _read_many(thread_index: int) -> None:
-        for n in range(_LOOKUPS_PER_THREAD):
-            # Stagger the starting id per thread so the interleaving covers many
-            # (offset, size) pairs rather than repeatedly hitting one record.
-            i = (thread_index + n) % _CONVERSATION_COUNT
-            conv = client.get_conversation(f"conv-{i}")
-            assert conv.session_id == f"conv-{i}"
+        def _read_many(thread_index: int) -> None:
+            for n in range(_LOOKUPS_PER_THREAD):
+                # Stagger the starting id per thread so the interleaving covers
+                # many (offset, size) pairs rather than repeatedly hitting one
+                # record.
+                i = (thread_index + n) % _CONVERSATION_COUNT
+                conv = client.get_conversation(f"conv-{i}")
+                assert conv.session_id == f"conv-{i}"
 
-    try:
         with ThreadPoolExecutor(max_workers=_THREADS) as pool:
             # list() resolves every future so exceptions propagate.
             list(pool.map(_read_many, range(_THREADS)))
-    finally:
-        client.close()
 
 
 class _InterleavingMmap:
@@ -128,9 +141,7 @@ async def test_get_conversation_ignores_competing_seek_between_seek_and_read(
     foreign record's bytes.
     """
     monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
-    client = await _build_client(tmp_path, "test_conv_position", 3)
-
-    try:
+    async with _open_client(tmp_path, "test_conv_position", 3) as client:
         foreign = client.index.offsets["conv-2"].offset
         client.data_mmap = _InterleavingMmap(client.data_mmap, foreign)
 
@@ -138,8 +149,6 @@ async def test_get_conversation_ignores_competing_seek_between_seek_and_read(
 
         assert conversation.session_id == "conv-0"
         assert conversation.turns[0].texts[0].contents[0].startswith("conv-0:")
-    finally:
-        client.close()
 
 
 @pytest.mark.asyncio
@@ -152,12 +161,8 @@ async def test_get_conversation_matches_written_data_under_prefault_setting(
     monkeypatch.setattr(
         "aiperf.common.environment.Environment.DATASET.MMAP_PREFAULT", prefault
     )
-    client = await _build_client(tmp_path, f"test_conv_prefault_{prefault}", 5)
-
-    try:
+    async with _open_client(tmp_path, f"test_conv_prefault_{prefault}", 5) as client:
         for i in range(5):
             conv = client.get_conversation(f"conv-{i}")
             assert conv.session_id == f"conv-{i}"
             assert conv.turns[0].texts[0].contents[0].startswith(f"conv-{i}:")
-    finally:
-        client.close()
