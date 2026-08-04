@@ -78,12 +78,12 @@ fn text_only_weka_trace() -> (tempfile::TempDir, String) {
     (dir, path)
 }
 
-/// Per-record `num_images` values, treating an absent field as "no image metric
+/// Per-record `num_images` values, treating an absent metric as "no image count
 /// recorded" (the runtime drops a zero count rather than emitting it).
-fn record_image_counts(records: &[Value]) -> Vec<Option<u64>> {
+fn record_image_counts(records: &[Value]) -> Vec<Option<f64>> {
     records
         .iter()
-        .map(|record| record["num_images"].as_u64())
+        .map(|record| record["metrics"]["num_images"]["value"].as_f64())
         .collect()
 }
 
@@ -102,7 +102,7 @@ async fn a_text_only_graph_run_records_no_image_metric() {
     );
     assert!(r.success(), "weka graph run failed: {}", r.stderr);
 
-    let records = r.artifacts.raw_records();
+    let records = r.artifacts.jsonl();
     assert!(!records.is_empty(), "run produced no records");
     assert_eq!(
         record_image_counts(&records),
@@ -134,12 +134,17 @@ async fn authored_raw_messages_carrying_images_are_still_counted() {
     );
     assert!(r.success(), "dag graph run failed: {}", r.stderr);
 
-    let records = r.artifacts.raw_records();
+    let records = r.artifacts.jsonl();
     assert_eq!(records.len(), 1, "expected one record, got {records:?}");
     assert_eq!(
         record_image_counts(&records),
-        vec![Some(IMAGES as u64)],
+        vec![Some(IMAGES as f64)],
         "authored image parts ride in opaque raw messages, so the parse fallback \
          is the only thing that can count them"
+    );
+    assert_eq!(
+        r.artifacts.json()["num_images"]["avg"].as_f64(),
+        Some(IMAGES as f64),
+        "the summary must agree with the per-record counts"
     );
 }
