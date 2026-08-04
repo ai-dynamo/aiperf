@@ -246,7 +246,8 @@ class CodegenGradingWorker:
 
     async def _run_reader(self) -> None:
         """Read worker responses and resolve the corresponding pending futures by id."""
-        assert self._proc is not None and self._proc.stdout
+        if self._proc is None or self._proc.stdout is None:
+            return
         reader = self._proc.stdout
         try:
             while True:
