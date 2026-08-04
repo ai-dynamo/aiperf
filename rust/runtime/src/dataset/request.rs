@@ -488,7 +488,11 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             // and interleaved as the body is emitted. `reply_wire_groups`
             // rejects a cache entry this dispatch's replies do not match, which
             // drops the whole turn back to live formatting.
-            let mut groups: SmallVec<[(u32, &[Bytes]); 4]> = SmallVec::new();
+            // Inline capacity is the conversation depth a continuation dispatch
+            // stays allocation-free to; past it the groups spill to the heap for
+            // one extra allocation per request. 16 covers the multi-turn depths
+            // benchmarks actually run.
+            let mut groups: SmallVec<[(u32, &[Bytes]); 16]> = SmallVec::new();
             let cached = cached.filter(|cached| session.reply_wire_groups(cached, &mut groups));
             let mut plan = match cached {
                 // Shared, not copied: a dispatch that mutates nothing dispatches
@@ -524,6 +528,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 .and_then(|cached| cached.replies.as_ref())
                 .filter(|replies| !overrides_replace_field(&plan, replies.field, overrides))
                 .map(|replies| WireSplice::new(replies.field, &groups));
+            #[cfg(test)]
+            if splice.is_some() {
+                SPLICED_DISPATCHES.with(|count| count.set(count.get() + 1));
+            }
             let (effective, stream_fix) = effective_from_plan(
                 &plan,
                 current,
@@ -1378,6 +1386,22 @@ pub(crate) fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Dispatches on this thread that materialized through a cached continuation
+    /// plan's wire splice.
+    ///
+    /// Declining the cache is always *safe* — the turn reformats live and the
+    /// body is identical — which is exactly why the byte-identity matrix cannot
+    /// see it: a build that declined every splice would compare a live body
+    /// against a live body and pass. Without an observable count the entire
+    /// measured saving could regress to zero with every gate green.
+    ///
+    /// Thread-local rather than a global counter so concurrently running tests
+    /// cannot perturb each other's reading.
+    pub(crate) static SPLICED_DISPATCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Whether a dispatch override rewrites the very field a cached plan's captured
 /// replies splice into.
 ///
@@ -1410,6 +1434,7 @@ fn overrides_replace_field(plan: &BodyPlan, field: usize, overrides: &Overrides)
 /// reaching here by some future path must not depend on that clearing.
 fn reply_splices_only_wires(reply: &EndpointTurn) -> bool {
     reply.model.is_none()
+        && reply.role.is_none()
         && reply.max_tokens.is_none()
         && reply.raw_tools.is_none()
         && reply.raw_system.is_none()
@@ -3234,7 +3259,7 @@ mod tests {
             ] {
                 for with_max_tokens in [false, true] {
                     for with_extra_body in [false, true] {
-                        for overrides_variant in 0..3 {
+                        for overrides_variant in 0..4 {
                             let mut pool = SegmentPool::new();
                             let turns = vec![
                                 text_turn(
@@ -3278,22 +3303,32 @@ mod tests {
                                 overrides.set_stream(true);
                                 overrides.set_model("override-model");
                             }
+                            // This dialect's message-array field name, and the
+                            // one a *different* dialect would use.
+                            let (own, other) = if endpoint_id == "responses" {
+                                ("input", "messages")
+                            } else {
+                                ("messages", "input")
+                            };
                             if overrides_variant == 2 {
-                                // An override naming the message-array field
-                                // replaces the whole array, replies included, so
-                                // the splice must stand down rather than be
-                                // applied to a field the merge rewrote. The
-                                // *other* dialect's field name is also present,
-                                // to pin that it does not cancel this splice.
-                                let (own, other) = if endpoint_id == "responses" {
-                                    ("input", "messages")
-                                } else {
-                                    ("messages", "input")
-                                };
+                                // Naming this plan's own array field replaces the
+                                // whole array, replies included, so the splice
+                                // must stand down rather than be applied to a
+                                // field `merge_overrides` rewrote to a literal.
                                 overrides.insert(
                                     own,
                                     serde_json::json!([{"role": "user", "content": "replaced"}]),
                                 );
+                            }
+                            if overrides_variant == 3 {
+                                // Naming only the *other* dialect's field must
+                                // NOT stand the splice down: that field is an
+                                // ordinary appended extra here. An implementation
+                                // testing a set of known array names instead of
+                                // this plan's own field would decline, and
+                                // dispatch a continuation body with no history at
+                                // all — which variant 2 cannot catch, since there
+                                // the splice is meant to stand down either way.
                                 overrides.insert(other, Value::from(7));
                             }
 
@@ -3316,11 +3351,26 @@ mod tests {
                                     splices.then_some(turn_index),
                                     "wrong splice reservation: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
                                 );
+                                // Declining the cache is safe and invisible to the
+                                // comparison below — a build that spliced nothing
+                                // would reformat live and still agree — so count
+                                // the dispatches that actually took the spliced
+                                // path. Without this the whole saving could be
+                                // gone with every assertion still passing.
+                                let before = SPLICED_DISPATCHES.get();
                                 let from_cache = dispatch_turn(
                                     cached.clone(),
                                     endpoint.as_ref(),
                                     turn_index,
                                     &overrides,
+                                );
+                                assert_eq!(
+                                    SPLICED_DISPATCHES.get() - before,
+                                    // Everything but an override replacing this
+                                    // plan's own array field must splice.
+                                    u64::from(splices && overrides_variant != 2),
+                                    "spliced-dispatch count: endpoint={endpoint_id} mode={mode:?} \
+                                     overrides={overrides_variant} ti={turn_index}"
                                 );
                                 let from_format = dispatch_turn(
                                     uncached.clone(),

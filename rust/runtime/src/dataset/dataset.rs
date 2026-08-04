@@ -988,6 +988,24 @@ fn reply_marker_wire(index: usize) -> Bytes {
 /// extra-body fragment (`reply_splices_only_wires` in `dataset::request` refuses
 /// one that does). So a turn holding a single lowered wire renders exactly where
 /// a real reply would, through the dialect's own formatter.
+///
+/// **The precondition the probe cannot check.** Reading one marker's position
+/// and then splicing an arbitrary reply there is only sound because a formatter
+/// renders a `lowered` turn *verbatim* — extending the array with its wires,
+/// whatever they contain and however many there are, inspecting neither. Every
+/// message-array dialect does (`rendered_turn_messages` in
+/// `endpoints::endpoints`), and the Responses replay-unsafe filter that might
+/// look like an exception runs at lowering time inside `ShapeLowerer::lower_turn`,
+/// so it is already baked into the wires before capture. But nothing enforces
+/// it: a future formatter that filtered or merged lowered wires by content would
+/// satisfy this probe on a one-wire marker and then produce a different array
+/// for a real reply. A dialect that wants to inspect lowered content must opt
+/// out of continuation caching.
+///
+/// The second unwritten invariant is that authored turn 0 renders at least one
+/// message, so a marker is never the array's first element. That is what keeps
+/// `rendered_first_is_system` — the only formatter step that reads a wire's
+/// bytes — from ever seeing a reply's.
 fn reply_marker_turn(wire: Bytes) -> EndpointTurn {
     EndpointTurn {
         lowered: Some(SmallVec::from_buf([wire])),
