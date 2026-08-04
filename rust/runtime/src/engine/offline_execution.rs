@@ -1271,6 +1271,9 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                             std::sync::Arc::default(),
                             // ...and no accelerated cache-warmup carrier either.
                             crate::agentic_tree::empty_warmup_handoff_carrier(),
+                            // Offline co-simulation dispatches on the caller's
+                            // reactor with no worker to defer materialization to.
+                            false,
                         )?
                         .with_metrics_config(metrics.clone())
                         .with_performance_record_capture(false)

@@ -129,7 +129,7 @@ pub struct ProfileFlags {
     /// `global-hop` and `global-push` are in a different class: a single issuer
     /// does every request's issuance work, so the run is bound by one thread.
     /// On the same box the hop saturated near 54k requests/sec and the push near
-    /// 93k (+72%, from routing instead of awaiting, from letting the worker
+    /// 96k (+76%, from routing instead of awaiting, from letting the worker
     /// build the body, and from dropping issuer work nothing reads), against
     /// 277k for `sharded`. Below that ceiling the
     /// ordering guarantee is close to free; above it, the issuer IS the
