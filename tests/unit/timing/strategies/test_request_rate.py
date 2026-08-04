@@ -368,15 +368,14 @@ async def test_high_res_pacer_os_error_falls_back_to_event_loop_timers() -> None
 
 @pytest.mark.asyncio
 async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> None:
-    """A cancel (even a repeated one) during active pacing must not orphan the pacer.
+    """A cancel during active pacing drains the pacer instead of orphaning it.
 
     ``_wait_for_pacer_or_rate_update`` cancels its two child tasks in a
-    ``finally`` block and then awaits them. A second ``Task.cancel()`` — eager
-    cancellation, or an external shutdown racing a first cancel — sets
-    ``_must_cancel`` and would otherwise interrupt that await, abandoning the
-    pacer's in-flight sleep as a pending task ("Task was destroyed but it is
-    pending!") and leaving its tick event stale for the next caller. The
-    shielded gather keeps the drain running to completion regardless.
+    ``finally`` block and then awaits them through a shielded gather, so an
+    outer cancellation cannot abandon the pacer's in-flight sleep as a pending
+    task ("Task was destroyed but it is pending!") and leave its tick event
+    stale for the next ``sleep_until`` caller. Cancels twice to also cover a
+    repeat cancel (external shutdown racing a first cancel).
     """
 
     class FakeIntervalGenerator:
@@ -384,7 +383,10 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
             self.rate = config.request_rate
 
         def next_interval(self) -> float:
-            return 0.001
+            # Comfortably inside RATE_RAMP_UPDATE_INTERVAL (0.1s) so the
+            # high-res branch is taken, but long enough that setup overhead
+            # cannot push the first deadline into the past.
+            return 0.05
 
     class FakePacer:
         def __init__(self) -> None:
@@ -414,7 +416,7 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
     config = CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=TimingMode.REQUEST_RATE,
-        request_rate=1000.0,
+        request_rate=20.0,
         total_expected_requests=1,
     )
     with patch(
@@ -433,9 +435,8 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
     pacer = FakePacer()
     with patch.object(strategy, "_create_high_res_pacer", return_value=pacer):
         task = asyncio.create_task(strategy.execute_phase())
-        await pacer.started.wait()
-        # Two cancels: the second sets ``_must_cancel``, so the cleanup await is
-        # re-cancelled before the child tasks have been drained.
+        await asyncio.wait_for(pacer.started.wait(), timeout=5.0)
+        # A repeat cancel models an external shutdown racing the first one.
         task.cancel()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
