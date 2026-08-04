@@ -187,7 +187,9 @@ class; `global-hop` revives a cross-thread per-request hop dispatcher
 global issuance order. Every workload shape shards (rate/concurrency by budget
 under `sharded`/by shared gate under `global`, user_centric/fixed_schedule
 enumerate per conversation — `user_centric` also draws, so under `global` its
-draws are position-addressed while its enumeration stays the residue class,
+draws are position-addressed while its enumeration stays the residue class, and
+its plan math reads the draw corpus via
+`ConversationSource::sampled_conversations()`,
 static-accuracy by per-shard capture graded once at finalize;
 `shardable` is just `workers > 1`). A transport contributes only a
 `WorkerSink` via an `ExecutionSinkBuilder`, never its own worker loop/measurement

@@ -876,6 +876,21 @@ pub trait ConversationSource {
     /// Stable dataset metadata used by strategy setup.
     fn conversations(&self) -> &[ConversationMetadata];
 
+    /// The population this source can actually DRAW, which is wider than
+    /// [`Self::conversations`] whenever the source addresses absolute corpus
+    /// positions outside its own partition.
+    ///
+    /// Enumerating work (fixed-schedule replay, the single-turn-per-conversation
+    /// workload, per-cell `inputs.json`) reads `conversations`; only
+    /// distribution-shaped setup math reads this. Shaping a plan from a corpus
+    /// the source will not sample is what makes the two diverge.
+    ///
+    /// Defaults to [`Self::conversations`], exact for any source whose draw
+    /// stays inside what it enumerates.
+    fn sampled_conversations(&self) -> &[ConversationMetadata] {
+        self.conversations()
+    }
+
     /// Sample the next runtime session, optionally using a caller-supplied
     /// correlation id (user-centric uses the monotonically assigned user id).
     fn next(&mut self, x_correlation_id: Option<String>) -> Result<SampledSession>;
@@ -1839,6 +1854,18 @@ impl NativeDatasetConversationSource {
 impl ConversationSource for NativeDatasetConversationSource {
     fn conversations(&self) -> &[ConversationMetadata] {
         &self.owned_metadata
+    }
+
+    fn sampled_conversations(&self) -> &[ConversationMetadata] {
+        match self.draw {
+            // A position-addressed shard strides the whole authored space, so
+            // the full corpus is the population its setup math describes. Its
+            // own residue class is a 1/W systematic sample of that corpus, and
+            // after the first recycle wrap the shard leaves the class entirely
+            // whenever `gcd(stride, corpus_len) < stride`.
+            DrawMode::Position { .. } => &self.metadata,
+            DrawMode::Owned => &self.owned_metadata,
+        }
     }
 
     fn materialize_input_payloads(&self) -> Result<Option<Vec<UpFrontInputSession>>> {
@@ -3303,6 +3330,56 @@ mod tests {
             assert!(owned.contains(&session.conversation_id));
             session.build_first_turn(None).unwrap();
         }
+    }
+
+    /// `user_centric` shapes its virtual-history plan from the corpus it DRAWS,
+    /// not the one it enumerates, so a position-addressed shard reads the full
+    /// corpus while a `Sharded` shard keeps its residue class.
+    ///
+    /// The dataset makes the two bases disagree on the ONE thing the plan is
+    /// admitted on. Cell 0 of 2 enumerates authored indices `{0, 2}` — both
+    /// single-turn — so the residue mean is 1.0 and rounds to 1, below the
+    /// `average turns >= 2` floor. The full corpus mean is `5/3 = 1.67` and
+    /// rounds to 2. The position-addressed shard genuinely draws the 3-turn row
+    /// (its positions `0, 2, 4` wrap to authored index 1), so the full-corpus
+    /// basis is the honest one and the residue basis would fail a run the corpus
+    /// admits purely because `workers > 1`.
+    ///
+    /// Reverting the read site to `conversations()` flips the first assertion;
+    /// widening `Sharded` to the full corpus flips the second.
+    #[tokio::test]
+    async fn user_centric_shapes_from_the_drawn_corpus_not_the_enumerated_one() {
+        use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
+
+        let dataset = uneven_turn_count_dataset().await;
+        let config = UserCentricConfig {
+            num_users: 2,
+            request_rate: 10.0,
+            concurrency: None,
+        };
+
+        let addressed = position_addressed_source(dataset.clone(), 0, 2).await;
+        assert_eq!(addressed.conversations().len(), 2, "enumeration is 1/W");
+        assert_eq!(
+            addressed.sampled_conversations().len(),
+            3,
+            "a position-addressed shard draws the whole corpus"
+        );
+        UserCentricWorkload::new(config, Box::new(addressed))
+            .expect("the drawn corpus averages 1.67 turns, which rounds to 2");
+
+        let owned = partitioned_sequential_source(dataset, 0, 2).await;
+        assert_eq!(
+            owned.sampled_conversations().len(),
+            2,
+            "a Sharded shard draws only what it enumerates"
+        );
+        let error = UserCentricWorkload::new(config, Box::new(owned))
+            .expect_err("the owned residue is all single-turn, so it cannot seed users");
+        assert!(
+            error.to_string().contains("multi-turn"),
+            "unexpected rejection: {error}"
+        );
     }
 
     /// Three conversations whose MIDDLE row carries 3 turns while its neighbours

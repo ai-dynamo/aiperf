@@ -376,15 +376,27 @@ impl UserCentricWorkload {
     /// This setup runs before the benchmark start timestamp is captured.
     pub fn new(config: UserCentricConfig, mut source: Box<dyn ConversationSource>) -> Result<Self> {
         let config = config.validate()?;
-        if source.conversations().is_empty() {
-            bail!("user-centric conversation dataset cannot be empty");
-        }
-        let average_turns = source
-            .conversations()
-            .iter()
-            .map(|conversation| conversation.turns.len())
-            .sum::<usize>() as f64
-            / source.conversations().len() as f64;
+        // The DRAW corpus, not the enumeration corpus. Under `Global` dispatch a
+        // shard strides absolute corpus positions, so averaging the residue class
+        // it merely enumerates would shape the virtual-history plan for a
+        // population it does not sample. This mean sets `session_lifetime` (hence
+        // every seeded user's turn cap and the coprime `spacing_step`) and gates
+        // the `average turns >= 2` admission below, so a residue class whose mean
+        // turn count differs from the corpus mean would also reject runs the
+        // corpus admits — a hard failure whose presence depended on `workers`.
+        // `Sharded` shards keep the residue basis: there the shard's draw and its
+        // enumeration are the same self-contained sub-corpus.
+        let average_turns = {
+            let corpus = source.sampled_conversations();
+            if corpus.is_empty() {
+                bail!("user-centric conversation dataset cannot be empty");
+            }
+            corpus
+                .iter()
+                .map(|conversation| conversation.turns.len())
+                .sum::<usize>() as f64
+                / corpus.len() as f64
+        };
         let rounded_turns = average_turns.round_ties_even() as usize;
         if rounded_turns < 2 {
             bail!("user-centric mode requires multi-turn conversations (average turns >= 2)");
