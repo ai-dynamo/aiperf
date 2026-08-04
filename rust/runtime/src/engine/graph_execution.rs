@@ -362,6 +362,9 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                     connection_reuse: profile.connection_reuse,
                     session_header: profile.session_header.clone(),
                     content_server_base: self.content_server_base.clone(),
+                    // `build_graph_dispatcher` stamps the request-payload
+                    // capture flags from this run's raw-artifact selection.
+                    ..TransportSinkConfig::default()
                 },
                 url_count: profile.config.urls.len(),
             });

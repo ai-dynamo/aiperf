@@ -170,10 +170,16 @@ pub struct HttpSinkBuilder {
 
 impl HttpSinkBuilder {
     pub fn from_config(config: &ExecutionBackendConfig) -> Self {
+        // The run's two request-payload consumers reach the sink here, the same
+        // way `GrpcSinkBuilder` carries them: with both off the HTTP sink skips
+        // taking a second handle on the assembled body entirely.
+        let mut transport = config.transport.clone();
+        transport.capture_raw = config.raw_enabled;
+        transport.inputs_enabled = config.inputs_enabled;
         Self {
             base_urls: config.base_urls.clone(),
             model: config.model.clone(),
-            transport: config.transport.clone(),
+            transport,
             prepared_endpoints: config.prepared_endpoints.clone(),
         }
     }

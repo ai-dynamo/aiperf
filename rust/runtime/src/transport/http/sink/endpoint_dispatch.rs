@@ -278,7 +278,16 @@ impl TransportSink {
             },
         )
         .await?;
-        let request_payload = prepared.canonical_body().clone();
+        // The canonical body is read back only by the raw artifact and
+        // `inputs.json`. Taking the handle unconditionally promoted the
+        // assembled body — `BytesMut::freeze()`-derived, so `len == capacity`
+        // and the first clone heap-allocates a shared control block — on every
+        // dispatch of every run, including the runs that export neither.
+        let request_payload = if self.captures_request_payload() {
+            prepared.canonical_body().clone()
+        } else {
+            Bytes::new()
+        };
         let request_url = prepared.request_config().url.clone();
 
         let first_token_released = Cell::new(false);

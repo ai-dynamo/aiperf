@@ -120,7 +120,7 @@ fn enforce_turn_data_policy(
 /// The client config owns Clock-enforced transport deadlines and protocol
 /// selection; reuse and affinity remain per-request policies applied when a
 /// materialized turn becomes a [`RequestConfig`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TransportSinkConfig {
     /// Low-level HTTP client policy.
     pub client: ClientConfig,
@@ -132,6 +132,29 @@ pub struct TransportSinkConfig {
     /// is enabled. Media URLs starting with it are tagged at dispatch with
     /// `?rid&mi&td`; `None` disables tagging.
     pub content_server_base: Option<Arc<str>>,
+    /// Whether a raw artifact will consume this run's per-dispatch request
+    /// payload.
+    pub capture_raw: bool,
+    /// Whether this run retains canonical request payloads for `inputs.json`.
+    ///
+    /// Together with [`Self::capture_raw`] this decides whether the canonical
+    /// body handle is taken at all. Both default to `true` so a construction
+    /// site that has not been told the run's artifact selection keeps
+    /// capturing rather than silently emptying an artifact.
+    pub inputs_enabled: bool,
+}
+
+impl Default for TransportSinkConfig {
+    fn default() -> Self {
+        Self {
+            client: ClientConfig::default(),
+            connection_reuse: ConnectionReuseStrategy::default(),
+            session_header: None,
+            content_server_base: None,
+            capture_raw: true,
+            inputs_enabled: true,
+        }
+    }
 }
 
 /// Response-capturing request-dispatch seam used by the shared paced issuer.
@@ -168,6 +191,11 @@ pub struct TransportSink {
     start_ns: Cell<i64>,
     connection_reuse: ConnectionReuseStrategy,
     content_server_base: Option<Arc<str>>,
+    /// Whether any configured artifact consumes the canonical request payload.
+    /// With no consumer the dispatch paths below never take the handle, which
+    /// leaves the assembled body with a single live handle and so avoids
+    /// promoting it to a shared (heap-allocated) control block.
+    capture_request_payload: bool,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
     /// Worker-local metric accumulator for measured execution. Unset until
     /// [`configure_measurement`] is called.
@@ -264,6 +292,7 @@ impl TransportSink {
             start_ns: Cell::new(start_ns),
             connection_reuse: config.connection_reuse,
             content_server_base: config.content_server_base,
+            capture_request_payload: config.capture_raw || config.inputs_enabled,
             prepared_endpoints: None,
             measurement: WorkerMeasurement::default(),
         })
@@ -276,6 +305,15 @@ impl TransportSink {
     pub fn with_prepared_endpoints(mut self, endpoints: Rc<PreparedEndpointTable>) -> Self {
         self.prepared_endpoints = Some(endpoints);
         self
+    }
+
+    /// Whether this run has any consumer for the canonical request payload.
+    ///
+    /// The raw artifact writes it verbatim and `inputs.json` retains it; with
+    /// neither selected the payload handle is never taken, and the assembled
+    /// body stays uniquely owned through dispatch.
+    pub(super) fn captures_request_payload(&self) -> bool {
+        self.capture_request_payload
     }
 
     fn ms(&self, ns: i64) -> f64 {
@@ -387,7 +425,14 @@ impl TransportSink {
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };
-        let request_payload = body.clone();
+        // Only the raw artifact and `inputs.json` read this back. With neither
+        // selected the clone would promote the assembled body to a shared
+        // control block for a value nothing consumes.
+        let request_payload = if self.capture_request_payload {
+            body.clone()
+        } else {
+            Bytes::new()
+        };
 
         let selected_url = self.selected_url(url_index, endpoint_path.as_deref())?;
         let mut cfg = RequestConfig::new(selected_url);
