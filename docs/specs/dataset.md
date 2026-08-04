@@ -36,6 +36,54 @@ Lowering is the single compiler into the store; validated content-addressed
 raw-token handles (`Payload::TokenIds` / `Turn::raw_token_ids`) support token-in
 input.
 
+A `Segment` pairs a `Payload` with its `SegmentId` — the 32-byte BLAKE3 content
+address. `Role` is framed into that hash, so the same text under a different role
+is a distinct segment. Interning is domain-specific (`intern_message`,
+`intern_text`, `intern_raw`, `intern_token_ids`, `intern_media`,
+`intern_trace_hash_ids`), each taking an optional prefix parent whose id folds
+into the child's.
+
+### Write side: pool, freeze, thaw
+
+The store has two states, and the transition between them is load-bearing.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pool: SegmentPool::new()
+    Pool --> Pool: intern_*(parent, payload)<br/>dedup via SegmentId → Handle map
+    Pool --> Frozen: freeze()<br/>arena into_boxed_slice,<br/>write-side map discarded
+    Frozen --> Pool: thaw(&dyn SegmentStore)<br/>rebuild arena 0..len through the trait,<br/>reconstruct ids from stored SegmentIds
+    Frozen --> [*]: shared across worker threads
+
+    note right of Frozen
+        Dispatch reads only this state.
+        Lookup is an arena index — no hashing,
+        no allocation, no synchronization.
+    end note
+    note left of Pool
+        Handle indices are append-only.
+        A thaw→intern→freeze cycle never
+        renumbers an existing handle.
+    end note
+```
+
+`SegmentPool` is the mutable write side: a `Vec<Segment>` arena plus a
+`SegmentId → Handle` map for dedup. `freeze` converts the arena to a boxed slice
+and drops the map — the frozen `InMemorySegmentStore` is a pure dense array,
+shareable across worker threads with no lock.
+
+`thaw` reopens a frozen store as a pool, **preserving every existing handle index
+and stored `SegmentId` exactly**. It rebuilds the arena by walking `0..len`
+through the `SegmentStore` trait rather than downcasting, and reconstructs the
+dedup map from stored ids rather than re-hashing — so content keeps the identity
+it was interned under even if the hashing scheme later changes.
+
+That stability is what makes endpoint lowering possible:
+`lower_messages_for_endpoint` runs *after* the dataset is composed and frozen, and
+appends freshly-rendered `Message` wires for the selected endpoint. Because new
+segments append after the existing arena, every handle minted during composition
+stays valid across the cycle.
+
 ### Pipeline
 
 - **Loaders** parse each real format. Each is paired one-to-one with a
@@ -73,7 +121,11 @@ store (see [graph-runtime.md](graph-runtime.md)).
 
 ## Source anchors
 
-- `rust/runtime/src/dataset/` (`segment.rs` `SegmentStore`/domains, `model.rs`
-  `Turn`, `dataset.rs`, `compose.rs`, `sampler.rs`, `materialize.rs`, `loader/`,
-  `generator/`, `tokenizer.rs`, `synthesis.rs`, `media.rs`).
+- `rust/runtime/src/dataset/segment.rs` — `Handle`, `SegmentId`, `Role`,
+  `Payload`, `SegmentDomain`, `Segment`, the `SegmentStore` trait, the mutable
+  `SegmentPool` (`intern_*`, `thaw`, `freeze`), and the frozen
+  `InMemorySegmentStore`.
+- `rust/runtime/src/dataset/` (`model.rs` `Turn`, `dataset.rs`
+  `lower_messages_for_endpoint`, `compose.rs`, `sampler.rs`, `materialize.rs`,
+  `loader/`, `generator/`, `tokenizer.rs`, `synthesis.rs`, `media.rs`).
 - `rust/runtime/src/body_plan.rs` (splice into wire bytes).

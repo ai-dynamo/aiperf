@@ -102,6 +102,30 @@ as `Payload::Message` segments and the store is refrozen once.
 
 This is the "serialize once" guarantee. Everything downstream moves `Bytes`.
 
+### What the store holds (summary)
+
+Full design in [dataset.md](dataset.md); repeated here only as far as body
+construction depends on it. Content is interned once into immutable,
+content-addressed segments, each named by a dense `Handle`; identical content
+under an identical prefix collapses to one segment. Each segment carries a
+**domain** that determines how it may appear in a body:
+
+| Domain | Content | Body-spliceable? |
+|---|---|---|
+| **Message** | A complete JSON message object (`{"role":…,"content":…}`), one element of a message array. | Yes — as an array element |
+| **Raw** | A complete opaque request body (verbatim replay / prebuilt body). | Yes — as a whole body, or a nested sub-body field |
+| **Text-only** | Text whose bytes are retained for non-message fields, plus an authoritative token count. | No |
+| **Token IDs** | An integer token array for token-native endpoints. | No — reaches the wire only through the gRPC codec |
+| **Media** | An image/audio/video reference. | No |
+| **Trace-hash-IDs** | Authored source-trace block identities, carried for prefix accounting. | No |
+
+The store is **frozen** before dispatch, so segment lookup on the hot path is a
+pure read. Load-time lowering appends to it by thawing, interning, and refreezing
+once — existing handles keep their indices across that cycle, which is what lets
+plans and turns built before lowering stay valid after it.
+
+Body construction consumes handles; it never mints content.
+
 ### The plan vocabulary
 
 A body plan is one of two shapes:
