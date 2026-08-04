@@ -619,7 +619,13 @@ pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelR
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
     {
-        metadata.response_id = Some(response_id.to_string());
+        // Streaming repeats the same `id` on every chunk, so a 150-chunk response
+        // built and discarded 150 identical Strings. Allocate only on an actual
+        // change; last-wins semantics are unchanged because an equal value would
+        // have overwritten itself.
+        if metadata.response_id.as_deref() != Some(response_id) {
+            metadata.response_id = Some(response_id.to_string());
+        }
     }
     if let Some(finish_reason) = value
         .pointer("/choices/0/finish_reason")
