@@ -722,11 +722,6 @@ impl ScheduledRuntime {
         }
     }
 
-    /// Number of credits routed to a worker and not yet returned.
-    pub(crate) fn outstanding_credit_count(&self) -> usize {
-        self.outstanding_credits.borrow().len()
-    }
-
     /// Whether this phase routes turns as credits.
     pub fn uses_credit_dispatch(&self) -> bool {
         self.credit_dispatch.get()
