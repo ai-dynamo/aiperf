@@ -12,7 +12,7 @@
 //! Per-request cancellation and endpoint resolution consume the timing scalars
 //! and preserve the full-send timer invariant.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 #[cfg(test)]
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -175,6 +175,17 @@ pub struct TransportSink {
     ///
     /// [`configure_measurement`]: RequestExecutor::configure_measurement
     measurement: WorkerMeasurement,
+    /// Single-entry memo for [`selected_url`](Self::selected_url), keyed by the
+    /// request's `(url index, endpoint path)`.
+    ///
+    /// URL selection is pure — it depends only on the run's fixed `model` and
+    /// `base_urls` plus that key — yet it ran three `String` allocations and four
+    /// `{model_name}` pattern scans (or a full `Url::parse`) on every request to
+    /// rebuild a byte-identical string. A scheduled run reuses one key for its
+    /// whole lifetime, so one entry collapses the hot path to a single clone.
+    /// Only successful renders are memoized, so template validation still fails
+    /// closed on every request that would have failed before.
+    url_memo: RefCell<Option<(usize, Option<Box<str>>, String)>>,
 }
 
 impl TransportSink {
@@ -267,6 +278,7 @@ impl TransportSink {
             content_server_base: config.content_server_base,
             prepared_endpoints: None,
             measurement: WorkerMeasurement::default(),
+            url_memo: RefCell::new(None),
         })
     }
 
@@ -291,14 +303,20 @@ impl TransportSink {
 
     fn selected_url(&self, url_index: Option<u32>, endpoint_path: Option<&str>) -> Result<String> {
         let selected_index = url_index.unwrap_or(0) as usize;
+        if let Some((index, path, rendered)) = self.url_memo.borrow().as_ref()
+            && *index == selected_index
+            && path.as_deref() == endpoint_path
+        {
+            return Ok(rendered.clone());
+        }
         let selected_url = self.urls.get(selected_index).ok_or_else(|| {
             anyhow::anyhow!(
                 "URL index {selected_index} is out of range for {} configured endpoints",
                 self.urls.len()
             )
         })?;
-        match endpoint_path {
-            None => Ok(selected_url.clone()),
+        let rendered = match endpoint_path {
+            None => selected_url.clone(),
             Some(path) if path.starts_with('/') => {
                 // Expand the supported path template before removing a duplicate
                 // `/v1` prefix.
@@ -317,13 +335,16 @@ impl TransportSink {
                 } else {
                     rendered.as_str()
                 };
-                Ok(format!("{base_url}{rendered}"))
+                format!("{base_url}{rendered}")
             }
-            Some(url) if url::Url::parse(url).is_ok() => Ok(url.to_string()),
+            Some(url) if url::Url::parse(url).is_ok() => url.to_string(),
             Some(value) => {
                 anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
             }
-        }
+        };
+        *self.url_memo.borrow_mut() =
+            Some((selected_index, endpoint_path.map(Box::from), rendered.clone()));
+        Ok(rendered)
     }
 
     /// Dispatch `req`, invoking `on_first_token` once when the transport observes
