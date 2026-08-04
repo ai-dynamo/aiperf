@@ -2603,7 +2603,7 @@ mod tests {
         assert_eq!(request.endpoint_path.as_deref(), Some("/v1/responses"));
     }
 
-    use crate::endpoints::ShapeLowerer;
+    use crate::endpoints::{ShapeLowerer, TurnMessageLowerer};
 
     fn content_turn(text: Handle, image: Option<Handle>) -> Turn {
         let mut content = smallvec![ContentGroup {
@@ -3653,7 +3653,7 @@ mod tests {
         let endpoint = prepare_endpoint("chat");
         let build = |lower: bool| {
             let mut pool = SegmentPool::new();
-            let snapshot = |messages: Value| {
+            let mut snapshot = |messages: Value| {
                 let handle = pool
                     .intern_raw(None, Bytes::from(serde_json::to_vec(&messages).unwrap()))
                     .unwrap();
