@@ -1292,6 +1292,19 @@ impl NativeSessionBackend {
     }
 }
 
+/// How a source draws its next conversation.
+#[derive(Clone, Copy)]
+enum DrawMode {
+    /// Step a stateful sampler over this shard's owned corpus. The shard
+    /// recycles inside its own residue class.
+    Owned,
+    /// Take the absolute corpus positions this shard's partition owns. The
+    /// union across shards is exactly one unpartitioned sampler's sequence, so
+    /// the cell recycles once at the end of the whole corpus rather than `W`
+    /// times at each shard's own boundary.
+    Position { next: u64, stride: u64 },
+}
+
 /// Native handle-only dataset source used by online scheduled workloads.
 pub struct NativeDatasetConversationSource {
     dataset: Arc<NativeDataset>,
@@ -1309,6 +1322,9 @@ pub struct NativeDatasetConversationSource {
     /// when the source is unpartitioned, which is every single-process run.
     owned_metadata: Arc<Vec<ConversationMetadata>>,
     sampler: Box<dyn Sampler>,
+    /// Selected once at construction; the corpus the `sampler` spans depends on
+    /// it, so the two must not be reassigned independently.
+    draw: DrawMode,
     endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
@@ -1359,11 +1375,16 @@ impl NativeDatasetConversationSource {
             samplers,
             endpoint_resolver,
             None,
+            false,
         )
     }
 
     /// Inject a per-thread cell partition. `None` reads
     /// `AIPERF_CELL_ID`/`AIPERF_CELL_COUNT` from the process environment.
+    ///
+    /// `position_addressed` selects the absolute-position draw over the full
+    /// corpus when the partition is real and the strategy has a closed form; see
+    /// [`DrawMode`].
     #[allow(clippy::too_many_arguments)]
     pub fn preferred_with_prepared_resolver_for_partition(
         dataset: NativeDataset,
@@ -1373,6 +1394,7 @@ impl NativeDatasetConversationSource {
         samplers: &SamplerRegistry,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
         cell_partition: Option<ModuloCellPartition>,
+        position_addressed: bool,
     ) -> Result<Self> {
         let mut dataset = dataset;
         let primary_model_name = model.into();
@@ -1394,6 +1416,7 @@ impl NativeDatasetConversationSource {
             Arc::new(TiktokenTokenizer::builtin()),
             default_output_tokens,
             cell_partition,
+            position_addressed,
         )
     }
 
@@ -1429,17 +1452,23 @@ impl NativeDatasetConversationSource {
             default_output_tokens,
             endpoint_resolver,
             None,
+            false,
         )
     }
 
     /// Inject a per-thread cell partition. `None` reads
     /// `AIPERF_CELL_ID`/`AIPERF_CELL_COUNT` from the process environment.
+    ///
+    /// `position_addressed` selects the absolute-position draw over the full
+    /// corpus when the partition is real and the strategy has a closed form; see
+    /// [`DrawMode`].
     pub fn sequential_with_prepared_resolver_for_partition(
         dataset: NativeDataset,
         model: impl Into<String>,
         default_output_tokens: usize,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
         cell_partition: Option<ModuloCellPartition>,
+        position_addressed: bool,
     ) -> Result<Self> {
         let mut dataset = dataset;
         let primary_model_name = model.into();
@@ -1460,13 +1489,14 @@ impl NativeDatasetConversationSource {
             Arc::new(TiktokenTokenizer::builtin()),
             default_output_tokens,
             cell_partition,
+            position_addressed,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
     fn new_with_endpoint(
         dataset: Arc<NativeDataset>,
-        make_sampler: impl FnOnce(
+        make_sampler: impl Fn(
             &[crate::dataset::model::ConversationMetadata],
         ) -> Result<Box<dyn Sampler>>,
         endpoint: NativeSessionEndpoint,
@@ -1474,6 +1504,7 @@ impl NativeDatasetConversationSource {
         response_tokenizer: Arc<dyn TextTokenizer>,
         default_output_tokens: usize,
         cell_partition: Option<ModuloCellPartition>,
+        position_addressed: bool,
     ) -> Result<Self> {
         if default_output_tokens == 0 {
             bail!("native dataset default output tokens must be positive");
@@ -1488,8 +1519,12 @@ impl NativeDatasetConversationSource {
             None => ModuloCellPartition::from_env().filter(|partition| partition.cell_count() > 1),
             Some(_) => None,
         };
-        let owned_model: Vec<crate::dataset::model::ConversationMetadata> = dataset
-            .sampleable_metadata()
+        // The full sampleable corpus, in authored order. `owned_model` is its
+        // residue-class subset; position addressing samples the whole thing.
+        let metadata_model: Vec<crate::dataset::model::ConversationMetadata> =
+            dataset.sampleable_metadata().cloned().collect();
+        let owned_model: Vec<crate::dataset::model::ConversationMetadata> = metadata_model
+            .iter()
             .enumerate()
             .filter(|(index, _)| {
                 ownership
@@ -1507,7 +1542,27 @@ impl NativeDatasetConversationSource {
                  so every shard receives at least one conversation"
             );
         }
-        let sampler = make_sampler(&owned_model)?;
+        // Position addressing needs a sampler over the FULL corpus, because the
+        // positions this shard owns index the whole authored space. Probe the
+        // capability on that sampler: `at_position` is pure, so probing cannot
+        // disturb it. A strategy without a closed form (any RNG-stateful one)
+        // falls back to today's owned-corpus walk rather than approximating.
+        let (sampler, draw) = match ownership.filter(|_| position_addressed) {
+            Some(partition) => {
+                let full = make_sampler(&metadata_model)?;
+                match full.at_position(0) {
+                    Some(_) => (
+                        full,
+                        DrawMode::Position {
+                            next: u64::from(partition.cell_id()),
+                            stride: u64::from(partition.cell_count()),
+                        },
+                    ),
+                    None => (make_sampler(&owned_model)?, DrawMode::Owned),
+                }
+            }
+            None => (make_sampler(&owned_model)?, DrawMode::Owned),
+        };
         // Resolution is total; enumeration is the residue class. Building
         // `metadata` over the full corpus is what lets a position-addressed
         // draw resolve a conversation this shard does not own — the gap that
@@ -1567,6 +1622,7 @@ impl NativeDatasetConversationSource {
             metadata_by_id,
             owned_metadata,
             sampler,
+            draw,
             endpoint,
             materializer,
             response_tokenizer,
@@ -1770,7 +1826,22 @@ impl ConversationSource for NativeDatasetConversationSource {
     }
 
     fn next(&mut self, x_correlation_id: Option<String>) -> Result<SampledSession> {
-        let id = self.sampler.next();
+        let id = match self.draw {
+            DrawMode::Owned => self.sampler.next(),
+            DrawMode::Position { next, stride } => {
+                self.draw = DrawMode::Position {
+                    next: next.saturating_add(stride),
+                    stride,
+                };
+                match self.sampler.at_position(next) {
+                    Some(id) => id,
+                    // The constructor selects `Position` only after probing
+                    // `at_position`, so this is unreachable; degrade to the
+                    // stateful draw rather than panic on the issue path.
+                    None => self.sampler.next(),
+                }
+            }
+        };
         self.session(id.as_str(), x_correlation_id)
     }
 
@@ -3065,8 +3136,9 @@ mod tests {
     /// shard's owned corpus — the fixed giver, not a full-corpus draw filter.
     ///
     /// `shuffle` has no closed-form position addressing (its draw depends on RNG
-    /// stream history), so it keeps the owned walk in EVERY dispatch mode. This
-    /// test is the regression guard for that fallback.
+    /// stream history), so it keeps the owned walk in EVERY dispatch mode — a
+    /// position-addressed shuffle source falls back to exactly this walk. This
+    /// test is the regression guard for what that fallback lands on.
     #[tokio::test]
     async fn partitioned_preferred_shuffle_recycles_only_owned_raw_payloads() {
         let jsonl = (0..5)
@@ -3120,6 +3192,7 @@ mod tests {
                 &samplers,
                 resolver,
                 Some(ModuloCellPartition::new(0, 2).unwrap()),
+                false,
             )
             .unwrap();
 

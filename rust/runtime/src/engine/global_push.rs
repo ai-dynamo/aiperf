@@ -135,6 +135,7 @@ pub(crate) async fn run_global_push(
                 &shared.samplers,
                 shared.table_factory.coordinator_resolver()?,
                 Some(partition),
+                false,
             )?
             .with_response_tokenizer(shared.tokenizer.clone())
             .with_input_token_counter(shared.input_token_counter.clone())

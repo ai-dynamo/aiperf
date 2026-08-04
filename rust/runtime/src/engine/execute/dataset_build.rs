@@ -62,6 +62,7 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
                 default_output_tokens,
                 self.endpoint_resolver.clone(),
                 self.cell_partition,
+                false,
             )?
         } else {
             NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
@@ -72,6 +73,7 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
                 self.samplers,
                 self.endpoint_resolver.clone(),
                 self.cell_partition,
+                false,
             )?
         };
         Ok(Box::new(
