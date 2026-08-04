@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("pyarrow")
 
 import pyarrow as pa
+import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 from pytest import param
 
@@ -26,6 +27,16 @@ from tests.unit.conftest import make_run_from_cli
 def _write_parquet(path: Path, rows: list[dict]) -> Path:
     table = pa.Table.from_pylist(rows)
     pq.write_table(table, path)
+    return path
+
+
+def _write_arrow(path: Path, rows: list[dict], batch_size: int = 2) -> Path:
+    table = pa.Table.from_pylist(rows)
+    with (
+        pa.OSFile(str(path), "wb") as sink,
+        ipc.new_file(sink, table.schema) as writer,
+    ):
+        writer.write_table(table, max_chunksize=batch_size)
     return path
 
 
@@ -139,6 +150,59 @@ class TestBasetenTraceDatasetLoader:
             "hash_ids": [1, 2],
             "block_size": 64,
         }
+
+    @pytest.mark.parametrize("suffix", [".arrow", ".ipc"])
+    def test_arrow_ipc_load_matches_parquet(self, tmp_path: Path, suffix: str) -> None:
+        rows = [
+            {
+                "timestamp_start_unix_ms": timestamp,
+                "prompt": f"prompt-{index}",
+                "input_tokens": index + 1,
+                "output_tokens": index,
+                "total_hashes": [index, index + 1],
+                "poor_man_session_id": index // 2,
+                "block_size": 64,
+            }
+            for index, timestamp in enumerate(range(100, 500, 10), start=1)
+        ]
+        parquet_path = _write_parquet(tmp_path / "trace.parquet", rows)
+        arrow_path = _write_arrow(tmp_path / f"trace{suffix}", rows, batch_size=3)
+
+        def load(path: Path) -> dict[str, list[dict]]:
+            loader = BasetenTraceDatasetLoader(
+                filename=str(path),
+                run=_make_run(
+                    path,
+                    replay_speedup=2.0,
+                    trace_session_sample_ratio=0.1,
+                    random_seed=7,
+                ),
+                prompt_generator=_mock_prompt_generator(),
+            )
+            return {
+                session_id: [trace.model_dump() for trace in traces]
+                for session_id, traces in loader.load_dataset().items()
+            }
+
+        assert BasetenTraceDatasetLoader.can_load(filename=arrow_path) is True
+        assert load(arrow_path) == load(parquet_path)
+
+    def test_count_arrow_ipc_records_and_sessions(self, tmp_path: Path) -> None:
+        path = _write_arrow(
+            tmp_path / "trace.arrow",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": str(index),
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "poor_man_session_id": session_id,
+                }
+                for index, session_id in enumerate((1, 1, 2, None))
+            ],
+        )
+
+        assert count_baseten_parquet_records_and_sessions(str(path)) == (4, 3)
 
     def test_convert_to_conversations_uses_literal_prompts(self, tmp_path: Path):
         path = _write_parquet(

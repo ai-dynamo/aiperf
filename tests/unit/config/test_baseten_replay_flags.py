@@ -25,11 +25,16 @@ import pytest
 pytest.importorskip("pyarrow")
 
 import pyarrow as pa
+import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.flags._converter_dataset import build_dataset
+from aiperf.config.flags._converter_profiling import (
+    _count_dataset_records,
+    _first_record_has_timestamp,
+)
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
 
@@ -76,6 +81,28 @@ def trace_parquet(tmp_path: Path) -> Path:
     ]
     pq.write_table(pa.Table.from_pylist(rows), path)
     return path
+
+
+def test_arrow_ipc_profiling_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "trace.arrow"
+    table = pa.Table.from_pylist(
+        [
+            {
+                "timestamp_start_unix_ms": 100,
+                "prompt": "hello",
+                "input_tokens": 3,
+                "output_tokens": 4,
+            }
+        ]
+    )
+    with (
+        pa.OSFile(str(path), "wb") as sink,
+        ipc.new_file(sink, table.schema) as writer,
+    ):
+        writer.write_table(table)
+
+    assert _first_record_has_timestamp(path) is True
+    assert _count_dataset_records(path) == 1
 
 
 def _baseten_argv(trace_parquet: Path, *extra: str) -> list[str]:

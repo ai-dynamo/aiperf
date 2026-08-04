@@ -116,6 +116,11 @@ projects only the columns required by the selected replay options. It also
 skips `inputs.json` generation, which would otherwise duplicate large recorded
 prompts.
 
+The same schema can be stored as one uncompressed Arrow IPC file with an
+`.arrow` or `.ipc` suffix. AIPerf memory-maps that file and materializes only
+rows selected for replay. Use `--custom-dataset-type baseten_trace`; no schema
+or row-order conversion beyond the storage format is required.
+
 ## Using Pre-formatted Messages
 
 Instead of synthetic prompts generated from `input_length` and `hash_ids`, you can provide an OpenAI-compatible `messages` array directly per trace entry. This is useful for replaying captured conversations (e.g., coding agent sessions) with exact prompt content.
