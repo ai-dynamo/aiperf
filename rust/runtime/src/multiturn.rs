@@ -24,6 +24,7 @@ use crate::dataset::{
     EndpointRequestMaterializer, Handle, Overrides, Payload, RequestMaterializer, Sampler,
     SamplerRegistry, SegmentStore, SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
+use crate::dataset::request::reply_image_count;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::endpoints::{
     CreditPhase, Endpoint, EndpointId, EndpointKey, Media as EndpointMedia, PreparedEndpoint,
@@ -606,6 +607,11 @@ fn lower_static_messages(
     dataset
         .precompute_body_plans(resolved.endpoint, primary_model_name)
         .map_err(|error| anyhow!("failed to precompute body plans: {error}"))?;
+    // Establish each turn's wire image count here too, so dispatch never
+    // deserializes the body it just assembled to recover one number.
+    dataset
+        .precompute_image_counts(resolved.endpoint, primary_model_name)
+        .map_err(|error| anyhow!("failed to precompute image counts: {error}"))?;
     Ok(())
 }
 
@@ -952,14 +958,12 @@ impl RuntimeSessionBackend for NativeSessionBackend {
             // Lower a completed reply once against the default prepared endpoint
             // so subsequent turns splice its stored wire. Dialects without message
             // arrays remain on the live rendering path.
-            let lowerer = match &self.endpoint {
+            let resolved = match &self.endpoint {
                 NativeSessionEndpoint::Prepared {
                     endpoint_resolver, ..
-                } => {
-                    let resolved = endpoint_resolver.resolve(None)?;
-                    ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id)
-                }
+                } => endpoint_resolver.resolve(None)?,
             };
+            let lowerer = ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id);
             let mut session = self.session.borrow_mut();
             if session.should_capture_response() {
                 let tokens = match response.completion_tokens {
@@ -981,7 +985,10 @@ impl RuntimeSessionBackend for NativeSessionBackend {
                 if let Some(lowerer) = &lowerer {
                     reply.lowered = Some(lowerer.lower_turn(&reply)?);
                 }
-                session.capture_response(reply, tokens)?;
+                // Count this reply's own image parts now, so a later turn's
+                // image count stays known without inspecting its whole body.
+                let images = reply_image_count(&reply, resolved.endpoint);
+                session.capture_response(reply, tokens, images)?;
             }
         }
         self.materialize(owner, current.turn_index + 1, current.num_turns, false)

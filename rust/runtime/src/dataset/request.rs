@@ -424,14 +424,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
-            image_count: raw_body_handle(current, store)
-                .ok()
-                .flatten()
-                .is_none()
-                .then(|| known_image_count(current, turn_index))
-                .flatten(),
+            // Established up front by dataset precompute over the same turn set
+            // this body assembles, plus the replies captured so far; `None`
+            // leaves dispatch to derive it by parsing the body.
+            image_count: session.known_image_count(turn_index, overrides),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
@@ -568,14 +564,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 None
             },
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
-            image_count: raw_body_handle(current, store)
-                .ok()
-                .flatten()
-                .is_none()
-                .then(|| known_image_count(current, turn_index))
-                .flatten(),
+            // Established up front by dataset precompute over the same turn set
+            // this body assembles, plus the replies captured so far; `None`
+            // leaves dispatch to derive it by parsing the body.
+            image_count: session.known_image_count(turn_index, overrides),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
@@ -653,13 +645,13 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
+            // The dispatched body is empty here, so only a first turn's authored
+            // content is describable; later turns parse.
             image_count: raw_body_handle(current, store)
                 .ok()
                 .flatten()
                 .is_none()
-                .then(|| known_image_count(current, turn_index))
+                .then(|| trace_identity_image_count(current, turn_index))
                 .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -730,13 +722,13 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
                 None
             },
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
+            // The dispatched body is empty here, so only a first turn's authored
+            // content is describable; later turns parse.
             image_count: raw_body_handle(current, store)
                 .ok()
                 .flatten()
                 .is_none()
-                .then(|| known_image_count(current, turn_index))
+                .then(|| trace_identity_image_count(current, turn_index))
                 .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -915,6 +907,10 @@ pub struct ConversationSession {
     context_mode: ConversationContextMode,
     current_turn: Option<usize>,
     replies: Vec<CapturedReply>,
+    /// Running number of wire image parts contributed by the replies captured so
+    /// far, or `None` once any reply's contribution could not be established.
+    /// Only the `*WithoutResponses` modes splice replies, so only they read it.
+    reply_images: Option<u32>,
 }
 
 impl std::fmt::Debug for ConversationSession {
@@ -939,6 +935,7 @@ impl ConversationSession {
             context_mode,
             current_turn: None,
             replies: Vec::new(),
+            reply_images: Some(0),
         })
     }
 
@@ -1028,7 +1025,17 @@ impl ConversationSession {
     /// Store one endpoint-normalized assistant turn after the current request.
     /// `tokens` should be the server's authoritative completion count when
     /// available, so later request accounting needs no hot-path tokenization.
-    pub fn capture_response(&mut self, turn: EndpointTurn, tokens: u64) -> Result<()> {
+    ///
+    /// `images` is the number of wire image parts this reply adds to later turns'
+    /// bodies (see [`reply_image_count`]); `None` means it could not be
+    /// established, which makes every later turn's count unknown so dispatch
+    /// falls back to parsing.
+    pub fn capture_response(
+        &mut self,
+        turn: EndpointTurn,
+        tokens: u64,
+        images: Option<u32>,
+    ) -> Result<()> {
         if !self.should_capture_response() {
             return Err(DatasetError::Validation(format!(
                 "context mode {:?} does not accept live assistant responses",
@@ -1048,12 +1055,36 @@ impl ConversationSession {
                 self.conversation_id.as_str()
             )));
         }
+        self.reply_images = self
+            .reply_images
+            .zip(images)
+            .and_then(|(total, added)| total.checked_add(added));
         self.replies.push(CapturedReply {
             after_turn,
             turn,
             tokens,
         });
         Ok(())
+    }
+
+    /// Exact number of wire image parts the current turn's body carries, or
+    /// `None` when it is not established and dispatch must parse the body.
+    ///
+    /// This is the authored-dataset count the dataset precomputed for this
+    /// `(conversation, turn)` plus, for the modes that splice them, the replies
+    /// captured so far. Both halves are absent by default — an un-precomputed
+    /// dataset yields `None` and the parse fallback, which is always correct.
+    fn known_image_count(&self, turn_index: usize, overrides: &Overrides) -> Option<u32> {
+        if overrides_replace_items(overrides) {
+            return None;
+        }
+        let authored = self
+            .dataset
+            .cached_image_count(&self.conversation_id, turn_index)?;
+        if !self.should_capture_response() {
+            return Some(authored);
+        }
+        self.reply_images?.checked_add(authored)
     }
 
     /// Materialize the current request through an injected implementation.
@@ -1312,15 +1343,14 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
     Ok(resolved)
 }
 
-/// Wire image count derivable from the composed turn content without re-parsing
-/// the serialized body.
+/// Wire image count for a trace-identity turn, derived from the composed turn
+/// content without re-parsing the serialized body.
 ///
-/// Sound only for the first turn of a conversation: later turns may carry
-/// accumulated history images on the wire that `current.content` (this turn's
-/// authored content) does not enumerate, so those return `None` and let dispatch
-/// fall back to parsing the body. Raw payloads are handled by the caller (they
-/// have no structured content groups) and also stay `None`.
-fn known_image_count(current: &Turn, turn_index: usize) -> Option<u32> {
+/// The trace-hash and token-native materializers dispatch an empty body, so this
+/// only ever describes the authored content of a first turn; later turns return
+/// `None`. It is deliberately separate from the precomputed dataset counts
+/// ([`Dataset::cached_image_count`]), which describe a real serialized wire body.
+fn trace_identity_image_count(current: &Turn, turn_index: usize) -> Option<u32> {
     if turn_index != 0 {
         return None;
     }
@@ -1331,6 +1361,141 @@ fn known_image_count(current: &Turn, turn_index: usize) -> Option<u32> {
         .map(|group| group.handles.len())
         .sum();
     u32::try_from(count).ok()
+}
+
+/// Exact number of wire image parts one authored dataset turn contributes to the
+/// `messages`/`input` array a dispatch body carries, or `None` when it cannot be
+/// established without parsing the dispatched body.
+///
+/// Called only from dataset precompute, never on the timed path.
+///
+/// `image_count` is incremented in exactly one place — the image arm of
+/// `walk_content_part` in `endpoints::extraction`, for a part inside an item's
+/// `content` array whose `type` names an image part for the dialect. So a turn's
+/// contribution is zero unless one of these reaches that arm:
+///
+/// - a non-text content group (`images`/`audios`/`videos` on the resolved turn),
+///   which the endpoint renders into media content parts;
+/// - an authored `raw_messages` item spliced verbatim, whose `content` may be an
+///   array of arbitrary parts;
+/// - an authored `extra_body` that itself supplies a `messages`/`input` array.
+///
+/// Text content groups render text parts, and `raw_tools`/`raw_system` land in
+/// `tools`/`system`, which `extract_inputs` does not walk. When none of the three
+/// applies the count is provably zero and this returns `Some(0)` without building
+/// anything. Otherwise it builds this one turn's body through the same endpoint
+/// and counts it with the same extractor dispatch would use, so the answer is
+/// exact by construction rather than by enumerating render paths.
+///
+/// Per-turn attribution is sound because `rendered_turn_messages` maps each turn
+/// independently (a turn's lowered wire or raw messages are spliced positionally)
+/// and the extractor sums `image_count` per item, so the whole-body count is the
+/// sum of the per-turn counts plus the captured replies.
+pub(crate) fn dataset_turn_image_count(
+    store: &dyn SegmentStore,
+    endpoint: &dyn PreparedEndpoint,
+    primary_model_name: &str,
+    turn: &Turn,
+) -> Option<u32> {
+    // A raw payload is dispatched verbatim and has no structured content groups.
+    if raw_body_handle(turn, store).ok().flatten().is_some() {
+        return None;
+    }
+    let resolved = resolve_turn(store, turn).ok()?;
+    if is_provably_image_free(&resolved) {
+        return Some(0);
+    }
+    let request = PreparedRequest::new(
+        primary_model_name,
+        std::slice::from_ref(&resolved),
+        None,
+        None,
+        CreditPhase::Profiling,
+        None,
+        None,
+        None,
+    );
+    let body = endpoint
+        .format_payload(&request)
+        .ok()?
+        .materialize_standalone()
+        .ok()?;
+    let payload: Value = serde_json::from_slice(&body).ok()?;
+    u32::try_from(endpoint.extract_payload_inputs(&payload).image_count).ok()
+}
+
+/// Exact number of wire image parts one captured assistant reply contributes, or
+/// `None` when it cannot be established.
+///
+/// A reply is spliced into the same `messages`/`input` array as an authored turn
+/// and the extractor counts image parts in every item regardless of role, so a
+/// reply whose content is an array of parts must be inspected rather than assumed
+/// empty. It is already a decoded `Value` tree, so the common assistant shape
+/// (`content` is a string) resolves without touching the extractor at all.
+pub(crate) fn reply_image_count(
+    reply: &EndpointTurn,
+    endpoint: &dyn PreparedEndpoint,
+) -> Option<u32> {
+    if !reply.images.is_empty() || !reply.audios.is_empty() || !reply.videos.is_empty() {
+        return None;
+    }
+    // No preformatted items: the reply renders from its text media alone, which
+    // can only produce text parts.
+    let Some(messages) = reply.raw_messages.as_ref().filter(|items| !items.is_empty()) else {
+        return Some(0);
+    };
+    // The Responses lowerer drops replay-unsafe output items, so a lowered wire
+    // count below the item count means the dispatched array is a subset of what
+    // is inspected here and counting the items would over-report.
+    if reply
+        .lowered
+        .as_ref()
+        .is_some_and(|lowered| lowered.len() != messages.len())
+    {
+        return None;
+    }
+    if messages
+        .iter()
+        .all(|item| !matches!(item.get("content"), Some(Value::Array(_))))
+    {
+        return Some(0);
+    }
+    // `walk_items_arrays` walks both `messages` and `input`, so this reaches the
+    // items for every message-array dialect.
+    let payload = Value::Object(Map::from_iter([(
+        "messages".to_string(),
+        Value::Array(messages.clone()),
+    )]));
+    u32::try_from(endpoint.extract_payload_inputs(&payload).image_count).ok()
+}
+
+/// Whether a resolved turn provably contributes no wire image part. See
+/// [`dataset_turn_image_count`] for the enumeration this encodes.
+fn is_provably_image_free(resolved: &EndpointTurn) -> bool {
+    resolved.images.is_empty()
+        && resolved.audios.is_empty()
+        && resolved.videos.is_empty()
+        && resolved
+            .raw_messages
+            .as_ref()
+            .is_none_or(|items| items.iter().all(|item| !has_array_content(item)))
+        && resolved
+            .extra_body
+            .as_ref()
+            .is_none_or(|extra| !extra.contains_key("messages") && !extra.contains_key("input"))
+}
+
+/// Whether a message-array item carries a content-part array, the only shape the
+/// extractor can find an image part in.
+fn has_array_content(item: &Value) -> bool {
+    matches!(item.get("content"), Some(Value::Array(_)))
+}
+
+/// Whether a per-dispatch override set could rewrite the item array the image
+/// count was established over.
+fn overrides_replace_items(overrides: &Overrides) -> bool {
+    !overrides.is_empty()
+        && (overrides.fields().contains_key("messages") || overrides.fields().contains_key("input"))
 }
 
 fn raw_token_ids(store: &dyn SegmentStore, handle: Option<Handle>) -> Result<Option<Vec<u32>>> {

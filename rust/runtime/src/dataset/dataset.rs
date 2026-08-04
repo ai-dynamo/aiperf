@@ -16,7 +16,8 @@ use crate::dataset::model::{
     DispatchTiming, MediaKind, PrerequisiteKind, SessionId, Turn,
 };
 use crate::dataset::request::{
-    raw_body_handle, resolve_prompt, resolve_turn, split_snapshot, token_ids_handle,
+    dataset_turn_image_count, raw_body_handle, resolve_prompt, resolve_turn, split_snapshot,
+    token_ids_handle,
 };
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::{
@@ -61,6 +62,17 @@ pub struct Dataset {
     /// of deep-copying it, copying only when an override or a stream correction
     /// actually mutates it.
     body_plans: Arc<Vec<Vec<Option<Arc<BodyPlan>>>>>,
+    /// Precomputed wire image count per `[conversation position][turn index]`,
+    /// covering the authored turns the conversation's context mode puts on the
+    /// wire for that turn. Empty until
+    /// [`precompute_image_counts`](Dataset::precompute_image_counts) runs; a
+    /// `None` slot (or an empty outer vector) means dispatch derives the count by
+    /// parsing the body, which is always correct.
+    ///
+    /// Keyed by dense position for the same reason as `body_plans`: the hot-path
+    /// lookup is two indexed reads. Held behind an [`Arc`] so a per-worker
+    /// `Dataset` clone stays O(1).
+    image_counts: Arc<Vec<Vec<Option<u32>>>>,
 }
 
 impl fmt::Debug for Dataset {
@@ -131,6 +143,7 @@ impl Dataset {
             segments,
             metadata,
             body_plans: Arc::new(Vec::new()),
+            image_counts: Arc::new(Vec::new()),
         })
     }
 
@@ -375,6 +388,84 @@ impl Dataset {
         };
         self.body_plans = Arc::new(plans);
         Ok(())
+    }
+
+    /// Establish the wire image count for every conversation turn up front, so a
+    /// dispatch reads a number instead of deserializing the body it just built.
+    ///
+    /// The count is a property of the dataset, not of a dispatch: the turns a
+    /// context mode puts on the wire are fixed by
+    /// [`ConversationContextMode`], and the image parts each authored turn
+    /// contributes are fixed by its composed content. Only the replies the
+    /// `*WithoutResponses` modes splice are runtime-determined, and the session
+    /// accumulates those separately as it captures them.
+    ///
+    /// Per turn index the stored value is the count over the authored turns that
+    /// index's body carries:
+    ///
+    /// - `MessageArrayWithResponses` sends only the current turn, and
+    ///   `MessageArrayWithoutResponses` sends the current turn's snapshot (which
+    ///   subsumes every earlier one), so both store that turn's own count;
+    /// - both delta modes resend turns `0..=index`, so they store the prefix sum.
+    ///
+    /// A turn whose count is not establishable — a raw payload, an unrenderable
+    /// turn, a per-turn endpoint override that changes the dialect — stores
+    /// `None`, and so does every later delta turn that would include it. Graph
+    /// conversations dispatch through the graph path and are skipped entirely.
+    ///
+    /// Call after [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint)
+    /// and before sharing the dataset. Idempotent, and independent of
+    /// [`precompute_body_plans`](Dataset::precompute_body_plans): a dialect whose
+    /// body cannot be cached still has a knowable image count.
+    pub fn precompute_image_counts(
+        &mut self,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
+    ) -> Result<()> {
+        let counts = {
+            let store = self.segments.as_ref();
+            let mut counts: Vec<Vec<Option<u32>>> = Vec::with_capacity(self.conversations.len());
+            for conversation in self.conversations.iter() {
+                let mut turn_counts: Vec<Option<u32>> = vec![None; conversation.turns.len()];
+                if conversation.dag.is_none() {
+                    let cumulative = matches!(
+                        self.context_mode(conversation),
+                        ConversationContextMode::DeltasWithResponses
+                            | ConversationContextMode::DeltasWithoutResponses
+                    );
+                    let mut running = Some(0_u32);
+                    for (turn, slot) in conversation.turns.iter().zip(turn_counts.iter_mut()) {
+                        // An authored per-turn endpoint override formats through a
+                        // different dialect than the one counted here.
+                        let count = if turn.endpoint.is_some() {
+                            None
+                        } else {
+                            dataset_turn_image_count(store, endpoint, primary_model_name, turn)
+                        };
+                        if cumulative {
+                            running = running
+                                .zip(count)
+                                .and_then(|(total, turn)| total.checked_add(turn));
+                            *slot = running;
+                        } else {
+                            *slot = count;
+                        }
+                    }
+                }
+                counts.push(turn_counts);
+                report_build_progress("image counts", counts.len(), self.conversations.len());
+            }
+            counts
+        };
+        self.image_counts = Arc::new(counts);
+        Ok(())
+    }
+
+    /// Read the precomputed authored-turn image count for one conversation turn.
+    /// `None` means fall back to parsing the dispatched body.
+    pub(crate) fn cached_image_count(&self, id: &SessionId, turn_index: usize) -> Option<u32> {
+        let position = *self.index.get(id)?;
+        *self.image_counts.get(position)?.get(turn_index)?
     }
 
     /// Borrow the cached profiling-phase [`BodyPlan`] for one conversation turn, if
