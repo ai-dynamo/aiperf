@@ -200,12 +200,14 @@ Features:
 Choose encoding codec based on your hardware and requirements.
 
 > [!IMPORTANT]
-> The AIPerf container ships a minimal FFmpeg build supporting only VP8/VP9
-> video with Vorbis or Opus audio. Codecs outside that set — `libx264`,
-> `libx265`, `h264_nvenc`, `hevc_nvenc` and `aac` — remain valid options, but
-> encoding with them fails inside the container. To use them, run AIPerf from
-> PyPI against a system FFmpeg built with those encoders, or rebuild the
-> container's FFmpeg with them enabled.
+> AIPerf invokes whichever `ffmpeg` binary is on `PATH`. The container bundles a
+> minimal build at `/opt/ffmpeg` supporting only VP8/VP9 video with Vorbis or
+> Opus audio; a PyPI install uses the FFmpeg you have installed.
+>
+> Codecs outside that set — `libx264`, `libx265`, `h264_nvenc`, `hevc_nvenc` and
+> `aac` — remain valid options, but encoding with them fails inside the
+> container. To use them, run AIPerf with your own FFmpeg on `PATH`, or rebuild
+> the container's FFmpeg with them enabled.
 
 #### CPU Encoding (Default)
 
@@ -224,12 +226,12 @@ aiperf profile \
 **Available CPU Codecs:**
 - `libvpx-vp9`: VP9 encoding, BSD-licensed (default, WebM and MP4 formats)
 - `libvpx`: VP8 encoding, BSD-licensed
-- `libx264`: H.264 encoding, GPL-licensed, widely compatible (MP4 format, system FFmpeg only)
-- `libx265`: H.265 encoding, GPL-licensed, smaller file sizes, slower encoding (MP4 format, system FFmpeg only)
+- `libx264`: H.264 encoding, GPL-licensed, widely compatible (MP4 format; not in the AIPerf container)
+- `libx265`: H.265 encoding, GPL-licensed, smaller file sizes, slower encoding (MP4 format; not in the AIPerf container)
 
 #### GPU Encoding (NVIDIA)
 
-For faster encoding with NVIDIA GPUs, using a system FFmpeg built with NVENC:
+For faster encoding with NVIDIA GPUs, using an FFmpeg built with NVENC:
 
 ```bash
 aiperf profile \
@@ -242,7 +244,7 @@ aiperf profile \
     --request-count 50
 ```
 
-**Available NVIDIA GPU Codecs (system FFmpeg only):**
+**Available NVIDIA GPU Codecs** (require an FFmpeg built with NVENC; not in the AIPerf container):
 - `h264_nvenc`: H.264 GPU encoding
 - `hevc_nvenc`: H.265 GPU encoding, smaller files
 
@@ -290,7 +292,7 @@ This generates videos with a mono audio track using an auto-selected codec (libv
 |---|---|---|---|
 | `--video-audio-num-channels` | `int` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `float` | `44.1` | Sample rate in kHz (8-96) |
-| `--video-audio-codec` | `string` | auto | Audio codec (`libvorbis`, `libopus`, `aac`; `aac` is not in the container) |
+| `--video-audio-codec` | `string` | auto | Audio codec (`libvorbis`, `libopus`, `aac`; `aac` is not in the AIPerf container) |
 | `--video-audio-depth` | `int` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 #### Audio Codec Selection
@@ -532,7 +534,7 @@ This allows seamless integration with vision-language model APIs that accept bas
 ### Encoding Performance
 
 - **CPU codecs** (`libvpx-vp9`, `libvpx`): Slower but always available, including in the AIPerf container
-- **GPU codecs** (`h264_nvenc`, `hevc_nvenc`): Much faster, requires an NVIDIA GPU and a system FFmpeg built with NVENC
+- **GPU codecs** (`h264_nvenc`, `hevc_nvenc`): Much faster, requires an NVIDIA GPU and an FFmpeg built with NVENC
 - Higher resolution and frame rates increase encoding time
 
 ### Video Size Impact
@@ -611,7 +613,7 @@ All video-related parameters at a glance:
 |---|---|---|
 | `--video-audio-num-channels` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `44.1` | Sample rate in kHz (8-96) |
-| `--video-audio-codec` | auto | Audio codec (`libvorbis`, `libopus`, `aac`; `aac` is not in the container) |
+| `--video-audio-codec` | auto | Audio codec (`libvorbis`, `libopus`, `aac`; `aac` is not in the AIPerf container) |
 | `--video-audio-depth` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 ## Summary

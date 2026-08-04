@@ -661,8 +661,8 @@ class VideoAudioCodec(CaseInsensitiveStrEnum):
     """Audio codecs for embedding audio in synthetic video files."""
 
     AAC = "aac"
-    """AAC codec. Not built into the AIPerf container; selecting it requires a
-    system FFmpeg that provides an AAC encoder."""
+    """AAC codec. Not built into the AIPerf container's FFmpeg; selecting it
+    requires an FFmpeg build that includes an AAC encoder."""
 
     LIBVORBIS = "libvorbis"
     """Vorbis codec. Default for WebM containers."""

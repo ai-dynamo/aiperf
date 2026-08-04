@@ -93,8 +93,8 @@ class VideoAudioConfig(BaseConfig):
             "If not specified, auto-selects based on video format: "
             "libopus for MP4, libvorbis for WebM. "
             "Options: libvorbis, libopus, aac. The AIPerf container ships only "
-            "libvorbis and libopus; aac requires a system FFmpeg that provides "
-            "an AAC encoder. "
+            "libvorbis and libopus; aac requires an FFmpeg build that "
+            "includes an AAC encoder. "
             "libopus always encodes at 48 kHz, so any "
             "--video-audio-sample-rate is resampled during muxing.",
         ),
@@ -204,7 +204,7 @@ class VideoConfig(BaseConfig):
             "Any codec the local FFmpeg supports can be used, but the AIPerf "
             "container ships a minimal FFmpeg build limited to VP8/VP9 video "
             "with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc "
-            "require a system FFmpeg built with them.",
+            "require an FFmpeg build that includes them.",
         ),
     ]
 

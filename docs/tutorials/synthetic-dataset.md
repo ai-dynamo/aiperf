@@ -183,7 +183,7 @@ aiperf profile \
 Video generation is fully documented in [Synthetic Video Generation](synthetic-video.md). Key points:
 
 - **Synthesis Types**: `moving_shapes` (animated geometry), `grid_clock` (grid with animation), or `noise` (random pixels)
-- **Codecs**: `libvpx-vp9` (default) and `libvpx`; other FFmpeg codecs such as `libx264` or `h264_nvenc` require a system FFmpeg built with them
+- **Codecs**: `libvpx-vp9` (default) and `libvpx`; other FFmpeg codecs such as `libx264` or `h264_nvenc` require an FFmpeg build that includes them (not in the AIPerf container)
 - **Formats**: WebM (default) or MP4
 
 **Prerequisite:** Video generation requires FFmpeg. For installations, see [Synthetic Video Tutorial](synthetic-video.md#installing-ffmpeg).
