@@ -58,12 +58,12 @@ pub enum DispatchMode {
     /// # It still does NOT reach `Sharded`
     ///
     /// Measured on 144 cores against `aiperf-mock-server --fast` at ISL 550 /
-    /// OSL 1 / concurrency 512: 77.4k requests/sec against `GlobalHop`'s 47.4k
-    /// (+63%) and `Sharded`'s 295.5k. Removing the coordinator from each
-    /// request's lifetime was worth only ~6% of that, because the awaited future
-    /// was never the cost; moving body materialization to the worker was worth
-    /// ~23%. A profile of the pegged issuer thread attributed its per-request
-    /// CPU to dataset sampling and body materialization (~29%), issuance
+    /// OSL 1 / concurrency 512: 93.4k requests/sec against `GlobalHop`'s 54.4k
+    /// (+72%) and `Sharded`'s 277.1k. Removing the coordinator from each
+    /// request's lifetime accounts for only a sixth of that gain, because the
+    /// awaited future was never the cost; the rest came from a profile of the
+    /// pegged issuer thread, which attributed its per-request CPU to dataset
+    /// sampling and body materialization (~29%, now on the worker), issuance
     /// accounting (~22%, of which routing and enqueue is only ~5%), and the
     /// credit-return drain with its capture bookkeeping and metric fold (~20%).
     /// What remains is per-request work a single issuer must do however requests

@@ -103,8 +103,8 @@ requests.
     `LocalTaskScheduler::begin_external_task`, so `wait_idle` still bounds the
     phase; grace escalation cancels at the worker
     (`RequestExecutor::cancel_credits`) and each credit is still RETURNED.
-  Measured on 144 cores at ISL 550 / OSL 1 / concurrency 512: 77.4k requests/sec
-  against `GlobalHop`'s 47.4k and `Sharded`'s 295.5k. A single issuer is bound by
+  Measured on 144 cores at ISL 550 / OSL 1 / concurrency 512: 93.4k requests/sec
+  against `GlobalHop`'s 54.4k and `Sharded`'s 277.1k. A single issuer is bound by
   one thread doing every request's issuance work; that is the mode's ceiling, not
   a defect.
 - `--cells` cellular tiling composes unchanged under every dispatch mode:

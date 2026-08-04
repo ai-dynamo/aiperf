@@ -128,9 +128,10 @@ pub struct ProfileFlags {
     /// shared gate makes it far less repeatable run to run (±5% vs ±0.2%).
     /// `global-hop` and `global-push` are in a different class: a single issuer
     /// does every request's issuance work, so the run is bound by one thread.
-    /// On the same box the hop saturated near 47k requests/sec and the push near
-    /// 77k (+63%, from routing instead of awaiting and from letting the worker
-    /// build the body), against 295k for `sharded`. Below that ceiling the
+    /// On the same box the hop saturated near 54k requests/sec and the push near
+    /// 93k (+72%, from routing instead of awaiting, from letting the worker
+    /// build the body, and from dropping issuer work nothing reads), against
+    /// 277k for `sharded`. Below that ceiling the
     /// ordering guarantee is close to free; above it, the issuer IS the
     /// benchmark. A slow target hides this entirely — every mode then measures
     /// the target, not the client.
