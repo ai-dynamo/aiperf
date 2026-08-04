@@ -607,6 +607,7 @@ pub(super) fn http_trace(record: &RequestRecord) -> RequestTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::Clock;
     use crate::endpoints::PreparedEndpoint;
     use crate::transport::core::SseMessage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
