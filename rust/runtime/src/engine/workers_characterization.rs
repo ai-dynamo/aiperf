@@ -1413,12 +1413,25 @@ mod tests {
     /// `Global` at `workers > 1` must draw the SAME conversation multiset a
     /// single unpartitioned issuer draws.
     ///
-    /// Today it does not. Each shard narrows the corpus to its authored-index
-    /// residue class (`multiturn.rs` `new_with_endpoint`) and recycles inside
-    /// it, so the shards wrap at their own boundaries instead of once at the end
-    /// of the whole corpus. `entries = 5`, `workers = 2`, `requests = 8` is the
-    /// smallest fixture that exposes it: 5 does not divide 2, so the two shards'
-    /// cycles fall out of step with the single-issuer walk.
+    /// Today it does not. Measured at `entries = 5`, `workers = 2`,
+    /// `requests = 8`, the two runs draw the same five conversations at
+    /// different multiplicities:
+    ///
+    /// ```text
+    /// baseline (1 issuer): 000000 x2  000001 x2  000002 x2  000003 x1  000004 x1
+    /// Global   (2 shards): 000000 x2  000001 x2  000002 x1  000003 x2  000004 x1
+    /// ```
+    ///
+    /// `session_000002` is drawn twice by the single issuer but once under
+    /// `Global`, and `session_000003` the reverse. Each shard narrows the corpus
+    /// to its authored-index residue class (`multiturn.rs` `new_with_endpoint`)
+    /// and recycles inside it, so the shards wrap at their own boundaries
+    /// instead of once at the end of the whole corpus: shard 0 owns `{0, 2, 4}`
+    /// and walks `0, 2, 4, 0`; shard 1 owns `{1, 3}` and walks `1, 3, 1, 3`.
+    /// The single issuer instead walks `0, 1, 2, 3, 4, 0, 1, 2`. `entries = 5`,
+    /// `workers = 2` is the smallest fixture that exposes it: 2 does not divide
+    /// 5, so the two shards' cycles fall out of step with the single-issuer
+    /// walk.
     ///
     /// `sorted_data_keys` cannot see this (every conversation has the same
     /// ISL/OSL), which is why the identity oracle exists.
