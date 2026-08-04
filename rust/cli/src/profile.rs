@@ -1819,30 +1819,37 @@ mod unimplemented_flag_tests {
     #[test]
     fn every_table_entry_detects_its_own_flag() {
         on_big_stack(|| {
-        for (name, is_set) in UNIMPLEMENTED_FLAGS {
-            let baseline = parse(&[]);
-            assert!(!is_set(&baseline), "{name} reads as set with no args");
+            for (name, is_set) in UNIMPLEMENTED_FLAGS {
+                let baseline = parse(&[]);
+                assert!(!is_set(&baseline), "{name} reads as set with no args");
 
-            // Bool-valued flags accept `=true`; the rest need a value. Try the
-            // valued form first and fall back to the bare switch.
-            let flags = ProfileFlags::parse_from_args(
-                &["-m", "mock-model", "--url", "http://127.0.0.1:8000", name, "1"]
+                // Bool-valued flags accept `=true`; the rest need a value. Try the
+                // valued form first and fall back to the bare switch.
+                let flags = ProfileFlags::parse_from_args(
+                    &[
+                        "-m",
+                        "mock-model",
+                        "--url",
+                        "http://127.0.0.1:8000",
+                        name,
+                        "1",
+                    ]
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>(),
-            )
-            .or_else(|_| {
-                ProfileFlags::parse_from_args(
-                    &["-m", "mock-model", "--url", "http://127.0.0.1:8000", name]
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>(),
                 )
-            })
-            .unwrap_or_else(|e| panic!("{name} is not an accepted flag: {e}"));
+                .or_else(|_| {
+                    ProfileFlags::parse_from_args(
+                        &["-m", "mock-model", "--url", "http://127.0.0.1:8000", name]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .unwrap_or_else(|e| panic!("{name} is not an accepted flag: {e}"));
 
-            assert!(is_set(&flags), "{name} did not flip its own predicate");
-        }
+                assert!(is_set(&flags), "{name} did not flip its own predicate");
+            }
         });
     }
 
@@ -1851,12 +1858,12 @@ mod unimplemented_flag_tests {
     #[test]
     fn a_clean_command_line_warns_about_nothing() {
         on_big_stack(|| {
-        let flags = parse(&[]);
-        assert!(
-            !UNIMPLEMENTED_FLAGS.iter().any(|(_, is_set)| is_set(&flags)),
-            "a minimal command line must trip no entry"
-        );
-        warn_unimplemented_flags(&flags);
+            let flags = parse(&[]);
+            assert!(
+                !UNIMPLEMENTED_FLAGS.iter().any(|(_, is_set)| is_set(&flags)),
+                "a minimal command line must trip no entry"
+            );
+            warn_unimplemented_flags(&flags);
         });
     }
 }
