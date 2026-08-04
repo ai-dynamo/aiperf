@@ -3374,8 +3374,10 @@ mod tests {
             2,
             "a Sharded shard draws only what it enumerates"
         );
+        // `err()` rather than `expect_err`: the workload is not `Debug`.
         let error = UserCentricWorkload::new(config, Box::new(owned))
-            .expect_err("the owned residue is all single-turn, so it cannot seed users");
+            .err()
+            .expect("the owned residue is all single-turn, so it cannot seed users");
         assert!(
             error.to_string().contains("multi-turn"),
             "unexpected rejection: {error}"
