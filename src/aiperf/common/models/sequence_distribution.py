@@ -770,6 +770,15 @@ class _LegacyRNG:
 class SGLangRangeRatioDistribution(RangeRatioDistribution):
     """RangeRatioDistribution with SGLang-compatible MT19937 preseed.
 
+    Also mirrors SGLang's ``use_chat_template`` bound adjustment: when
+    ``chat_template_len > 0``, it is subtracted from ``isl_mean`` before
+    the sampling window is computed — matching::
+
+        chat_template_len = len(tokenizer.encode(_apply_chat_template("a"))) - 1
+        input_len = input_len - chat_template_len      # SGLang adjusts mean first
+        lower = int(input_len * ratio)
+        upper = input_len
+
     Overrides :meth:`preseed` to use ``numpy.random`` (MT19937 global state)
     instead of ``numpy.random.default_rng`` (PCG64), matching the draw order
     in SGLang's ``benchmark_serving.py``::
@@ -782,6 +791,11 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
     the draws so that aiperf runs are reproducible even though SGLang itself
     never seeds the global RNG before sampling.
     """
+
+    def __init__(self, *, chat_template_len: int = 0, **kwargs: object) -> None:
+        isl_mean = kwargs.pop("isl_mean")  # type: ignore[assignment]
+        super().__init__(isl_mean=max(1, int(isl_mean) - chat_template_len), **kwargs)
+        self._chat_template_len = chat_template_len
 
     def preseed(self, n: int, seed: int | None) -> None:
         if seed is not None:
