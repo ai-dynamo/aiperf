@@ -149,8 +149,17 @@ fn worker_profiles_scale_ttft_and_itl_after_placement() {
     }
 }
 
+/// With virtual workers off, records carry no virtual placement at all: no
+/// `worker_assignment_index`, and a `worker_id` naming the REAL shard that ran the
+/// request rather than a modeled `dry-run-{n}` slot.
+///
+/// This used to assert `worker_id == "rust-0"` for every record of a 4-worker run.
+/// That constant was the export's fallback for a record no executing worker had
+/// stamped, not an observation: `Sharded`/`Global` never reached the stamping path,
+/// so the artifact claimed one worker had executed all four shards' requests.
 #[test]
-fn disabled_mode_preserves_legacy_worker_projection() {
+fn disabled_mode_reports_the_real_shard_and_no_virtual_placement() {
+    const WORKERS: u64 = 4;
     let yaml = config(
         "  workers: 4\n  dispatch: global",
         "    enabled: false",
@@ -159,7 +168,20 @@ fn disabled_mode_preserves_legacy_worker_projection() {
     let run = run_config(&yaml);
     run.assert_success();
     for record in run.artifacts.jsonl() {
-        assert_eq!(record["metadata"]["worker_id"], "rust-0");
+        let worker = record["metadata"]["worker_id"]
+            .as_str()
+            .expect("worker id")
+            .to_owned();
+        let index: u64 = worker
+            .strip_prefix("rust-")
+            .and_then(|suffix| suffix.parse().ok())
+            .unwrap_or_else(|| {
+                panic!("a non-virtual run names a real shard as rust-{{n}}, got {worker}")
+            });
+        assert!(
+            index < WORKERS,
+            "worker_id {worker} is outside the run's 0..{WORKERS} worker grid"
+        );
         assert!(record["metadata"].get("worker_assignment_index").is_none());
     }
 }
