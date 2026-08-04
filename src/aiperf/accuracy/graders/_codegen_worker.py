@@ -91,7 +91,11 @@ def handle_batch(
     """
     all_samples: list[Any] = []
     all_generations: list[Any] = []
-    id_map: list[tuple[int, Any]] = []  # (batch_position, req_id)
+    # (req_idx, req_id, start, count) — start/count index into the flat lists.
+    # evaluation_sample and generated_code are already lists (one element each for
+    # the current single-problem-per-request grader), so extend, not append, to
+    # keep all_samples flat and avoid the double-nesting that causes pass@1 = 0.0.
+    id_map: list[tuple[int, Any, int, int]] = []
     responses: list[dict[str, Any] | None] = [None] * len(reqs)
 
     for i, req in enumerate(reqs):
@@ -120,9 +124,10 @@ def handle_batch(
                 "error": f"malformed request: {exc!r}",
             }
             continue
-        all_samples.append(sample)
-        all_generations.append(generation)
-        id_map.append((i, req_id))
+        start = len(all_samples)
+        all_samples.extend(sample)
+        all_generations.extend(generation)
+        id_map.append((i, req_id, start, len(all_samples) - start))
 
     if all_samples:
         batch_error: str | None = None
@@ -137,13 +142,13 @@ def handle_batch(
         except Exception as exc:
             batch_error = _truncate_error(f"{type(exc).__name__}: {exc}")
 
-        for pos, (req_idx, req_id) in enumerate(id_map):
+        for req_idx, req_id, start, count in id_map:
             if batch_error is not None:
                 responses[req_idx] = {"id": req_id, "ok": False, "error": batch_error}
             else:
                 try:
                     metrics = compute_metrics_fn(
-                        {0: raw_results[pos]},
+                        {j: raw_results[start + j] for j in range(count)},
                         k_list=list(_LCB_PASS_AT_K),
                     )
                     responses[req_idx] = {
