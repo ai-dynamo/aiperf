@@ -988,10 +988,21 @@ mod tests {
         .unwrap();
 
         let sampled = source.next(None).unwrap();
-        let eager = sampled.build_first_turn(None).unwrap();
+        // Deferred FIRST: the assertion below is that this path leaves the
+        // walking state unbuilt, which an earlier eager build would mask.
         let deferred = sampled.build_deferred_turn(0, None).unwrap();
 
         assert!(deferred.deferred_body, "the turn must be marked deferred");
+        assert!(
+            !sampled.has_walking_state(),
+            "an identity-only credit must not build the conversation-walking state —              that state is the worker's job, and constructing it on the issuer is              exactly the per-request cost the deferred path exists to avoid"
+        );
+        // The eager path is what legitimately needs it, on the same session.
+        let eager = sampled.build_first_turn(None).unwrap();
+        assert!(
+            sampled.has_walking_state(),
+            "materializing on the issuer must still build the walking state"
+        );
         assert!(
             deferred.request_body.is_none(),
             "a deferred turn must not carry a body"

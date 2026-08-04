@@ -275,6 +275,14 @@ pub struct TurnResponse {
 }
 
 trait RuntimeSessionBackend: fmt::Debug {
+    /// Whether conversation-walking state has been built (see
+    /// [`SampledSession::has_walking_state`]). Backends with no lazy state
+    /// report `true`.
+    #[cfg(test)]
+    fn has_walking_state(&self) -> bool {
+        true
+    }
+
     fn available_turns(&self) -> usize;
     fn build_first_turn(
         &self,
@@ -334,6 +342,18 @@ impl fmt::Debug for SampledSession {
 }
 
 impl SampledSession {
+    /// Whether this session has built its conversation-walking state yet.
+    ///
+    /// Exists for the test that pins the deferred path's whole reason for
+    /// existing: an identity-only credit must not construct state the worker
+    /// will build for itself. A refactor that reintroduces the eager
+    /// construction would otherwise only show up as a silent throughput
+    /// regression on one thread.
+    #[cfg(test)]
+    pub(crate) fn has_walking_state(&self) -> bool {
+        self.backend.has_walking_state()
+    }
+
     /// Number of turns available in the sampled template.
     pub fn available_turns(&self) -> usize {
         self.backend.available_turns()
@@ -916,6 +936,11 @@ impl fmt::Debug for NativeSessionBackend {
 }
 
 impl RuntimeSessionBackend for NativeSessionBackend {
+    #[cfg(test)]
+    fn has_walking_state(&self) -> bool {
+        self.session.borrow().is_some()
+    }
+
     fn available_turns(&self) -> usize {
         self.metadata.turns.len()
     }
