@@ -1994,7 +1994,12 @@ mod tests {
                 "endpoint {id} reports structure that diverges from its dispatched body"
             );
         }
-        assert!(swept > 0, "the sweep must exercise at least one endpoint");
+        // A floor, not the exact count: the sweep must keep covering the bulk of
+        // the catalog rather than silently narrowing to one dialect.
+        assert!(
+            swept >= 10,
+            "the sweep covered only {swept} endpoints; it must exercise the catalog"
+        );
     }
 
     /// The counter honors a reported structure and falls back to parsing without
