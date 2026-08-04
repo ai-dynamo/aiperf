@@ -75,8 +75,8 @@ use crate::rng::{
     SequenceLengthPair, namespace,
 };
 use crate::scheduled::{
-    IssuanceGate, ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher,
-    TurnRecordProcessor, Workload,
+    IssuanceGate, ScheduledAncillaryPolicies, TurnCreditReport, TurnCreditReportKind,
+    TurnDispatchOutcome, TurnDispatcher, TurnRecordProcessor, Workload,
 };
 use crate::timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
@@ -84,7 +84,7 @@ use crate::timing::{
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
-use crate::transport::core::{MeasuredContext, MeasuredOutcome};
+use crate::transport::core::{CreditReportKind, MeasuredContext, MeasuredOutcome};
 use crate::transport::core::{PreparedTurn, RequestExecutor};
 use crate::transport::http::TransportSinkConfig;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};

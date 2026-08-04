@@ -1258,6 +1258,7 @@ mod tests {
             requested_output_length: osl,
             metadata: crate::metrics::RequestMetricMetadata::default(),
             wants_live_record: false,
+            wants_http_exchange: false,
             consume_record: false,
         }
     }

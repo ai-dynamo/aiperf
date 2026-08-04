@@ -269,6 +269,7 @@ fn measured_context(correlation_id: &str, turn_index: u32) -> MeasuredContext {
             ..RequestMetricMetadata::default()
         },
         wants_live_record: false,
+        wants_http_exchange: false,
         consume_record: false,
     }
 }

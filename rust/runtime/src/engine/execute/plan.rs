@@ -603,20 +603,16 @@ pub(crate) fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 ///
 /// The streaming [`RecordArtifactLane`] supports records JSONL, raw JSONL, CSV,
 /// Parquet, and `outputs.json`. Per-record OTLP histograms fold into an
-/// order-independent accumulator. Reproducible `inputs.json` payloads are generated
-/// up front, so these outputs do not require record retention.
-///
-/// `inputs_need_retain` is the one dataset-dependent input: `inputs.json` still needs
-/// the during-run capture path (and so still disqualifies exact-fold) when the dataset
-/// is a live-reply multi-turn shape whose later-turn bodies cannot be reproduced up
-/// front (see [`dataset_supports_up_front_inputs`]).
+/// order-independent accumulator. `inputs.json` payloads are always generated up front
+/// from the resident dataset (a run whose dataset cannot be projected that way is
+/// rejected outright, see [`dataset_supports_up_front_inputs`]), so none of these
+/// outputs requires record retention.
 ///
 /// Parquet is only streamable under the `parquet` feature; a lite runner cannot emit
 /// it, so a requested Parquet sidecar still disqualifies exact-fold on a lite build
 /// (the run then falls to the retain path, which warns and skips the artifact).
 pub(crate) fn wants_per_record_artifacts(
     artifacts: &crate::engine::protocol::ArtifactSpec,
-    inputs_need_retain: bool,
 ) -> bool {
     // Per-record OTLP folds at completion and outputs.json streams through the lane,
     // so neither requires retained records.
@@ -632,7 +628,7 @@ pub(crate) fn wants_per_record_artifacts(
     // Dataset-analysis (`--dry-run`) reads the full retained record set to derive its
     // per-turn / length / cache-reuse sections, so it disqualifies exact-fold on BOTH
     // the scheduled and graph paths (the graph path double-gates already — harmless).
-    inputs_need_retain || parquet_needs_retain || artifacts.dataset_analysis_path.is_some()
+    parquet_needs_retain || artifacts.dataset_analysis_path.is_some()
 }
 
 /// Whether every conversation in `dataset` can have its `inputs.json` request bodies
@@ -769,16 +765,14 @@ mod tests {
 
     use super::*;
 
-    /// Streamable artifacts do not disqualify exact-fold. `inputs.json` still
-    /// disqualifies ONLY when the dataset cannot be generated up front
-    /// (`inputs_need_retain == true`). (Parquet only streams under the `parquet`
-    /// feature; a lite build keeps it disqualifying — asserted below under the matching
-    /// cfg.)
+    /// Streamable artifacts do not disqualify exact-fold, `inputs.json` included: it is
+    /// always generated up front. (Parquet only streams under the `parquet` feature; a
+    /// lite build keeps it disqualifying — asserted below under the matching cfg.)
     #[test]
     fn exact_fold_gate_accepts_streamed_artifacts_and_rejects_retained_ones() {
         use crate::engine::protocol::ArtifactSpec;
 
-        let eligible = |artifacts: &ArtifactSpec, inputs_need_retain: bool| {
+        let eligible = |artifacts: &ArtifactSpec| {
             exact_fold_eligible(ExactFoldInputs {
                 sketch_mode: false,
                 shardable: false,
@@ -787,15 +781,12 @@ mod tests {
                 wants_adaptive_record: false,
                 has_live_sink: false,
                 has_heartbeat: false,
-                wants_per_record_artifacts: wants_per_record_artifacts(
-                    artifacts,
-                    inputs_need_retain,
-                ),
+                wants_per_record_artifacts: wants_per_record_artifacts(artifacts),
             })
         };
 
         // No artifacts require retention.
-        assert!(eligible(&ArtifactSpec::default(), false));
+        assert!(eligible(&ArtifactSpec::default()));
 
         // The lane streams records, raw data, and CSV; per-record OTLP folds at
         // completion and does not participate in this gate.
@@ -806,7 +797,7 @@ mod tests {
             trace: true,
             ..ArtifactSpec::default()
         };
-        assert!(eligible(&streamed, false));
+        assert!(eligible(&streamed));
 
         // Parquet streams when the feature is enabled; a lite build retains records.
         let parquet = ArtifactSpec {
@@ -815,12 +806,12 @@ mod tests {
         };
         #[cfg(feature = "parquet")]
         assert!(
-            eligible(&parquet, false),
+            eligible(&parquet),
             "parquet streams under the parquet feature"
         );
         #[cfg(not(feature = "parquet"))]
         assert!(
-            !eligible(&parquet, false),
+            !eligible(&parquet),
             "a lite build cannot stream parquet, so it disqualifies exact-fold"
         );
 
@@ -830,23 +821,18 @@ mod tests {
             ..ArtifactSpec::default()
         };
         assert!(
-            eligible(&outputs, false),
+            eligible(&outputs),
             "outputs.json streams at completion"
         );
 
-        // inputs.json is eligible when it can be generated up front, and disqualifying
-        // only when the dataset forces the during-run capture path.
+        // inputs.json is always generated up front, so it never disqualifies.
         let inputs = ArtifactSpec {
             inputs_path: Some("inputs.json".into()),
             ..ArtifactSpec::default()
         };
         assert!(
-            eligible(&inputs, false),
-            "up-front-feasible inputs.json does not disqualify"
-        );
-        assert!(
-            !eligible(&inputs, true),
-            "a live-reply multi-turn dataset keeps inputs.json on the retain path"
+            eligible(&inputs),
+            "up-front inputs.json does not disqualify exact-fold"
         );
     }
 
@@ -975,7 +961,7 @@ mod tests {
         // The production graph caller wires none of the retain-forcing consumers:
         // wires NONE of the retain-forcing per-record consumers, so it feeds the shared
         // `exact_fold_eligible` gate `false` for them and `wants_per_record_artifacts`
-        // with `inputs_need_retain = false` (the graph path never writes inputs.json).
+        // The graph path never writes inputs.json.
         let graph_gate = |artifacts: &ArtifactSpec, sketch: bool| {
             exact_fold_eligible(ExactFoldInputs {
                 sketch_mode: sketch,
@@ -985,7 +971,7 @@ mod tests {
                 wants_adaptive_record: false,
                 has_live_sink: false,
                 has_heartbeat: false,
-                wants_per_record_artifacts: wants_per_record_artifacts(artifacts, false),
+                wants_per_record_artifacts: wants_per_record_artifacts(artifacts),
             })
         };
 
@@ -1132,11 +1118,10 @@ mod tests {
             dataset_analysis_path: None,
             ..Default::default()
         };
-        // `inputs_need_retain == false`: inputs.json is up-front-able for this shape.
         #[cfg(feature = "parquet")]
         {
             assert!(
-                !wants_per_record_artifacts(&streamed, false),
+                !wants_per_record_artifacts(&streamed),
                 "records/raw/CSV/parquet/outputs stream+merge — not a disqualifier on a Parquet build"
             );
             // Sharded runs remain eligible with all streamable artifacts.
@@ -1148,13 +1133,11 @@ mod tests {
                 wants_adaptive_record: false,
                 has_live_sink: false,
                 has_heartbeat: false,
-                wants_per_record_artifacts: wants_per_record_artifacts(&streamed, false),
+                wants_per_record_artifacts: wants_per_record_artifacts(&streamed),
             }));
         }
-        // Live-reply inputs.json that cannot be reproduced up front still disqualifies.
-        assert!(wants_per_record_artifacts(&streamed, true));
         // A lite build cannot stream Parquet, so a requested sidecar still disqualifies.
         #[cfg(not(feature = "parquet"))]
-        assert!(wants_per_record_artifacts(&streamed, false));
+        assert!(wants_per_record_artifacts(&streamed));
     }
 }

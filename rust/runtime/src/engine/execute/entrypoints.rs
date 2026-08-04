@@ -479,8 +479,7 @@ pub(crate) async fn execute_graph_native(
     // per-record consumers (live sink / heartbeat / adaptive / accuracy — all rejected
     // or never built by `execute_graph_native`; see `graph_exact_fold_drop_is_safe`),
     // so it passes them as `false` and the shared `exact_fold_eligible` reduces to the
-    // graph-relevant `!sketch && !unstreamable_parquet` check. `inputs_need_retain` is
-    // false because the graph path never writes `inputs.json`.
+    // graph-relevant `!sketch && !unstreamable_parquet` check.
     // The dry-run dataset analysis is a per-record consumer: it reads the FULL
     // retained record set (clean + errored) to build the length, timeline, and
     // prefix-cache sections, so requesting it forces retain mode on the graph
@@ -498,7 +497,7 @@ pub(crate) async fn execute_graph_native(
             wants_adaptive_record: false,
             has_live_sink: false,
             has_heartbeat: false,
-            wants_per_record_artifacts: wants_per_record_artifacts(&request.artifacts, false),
+            wants_per_record_artifacts: wants_per_record_artifacts(&request.artifacts),
         });
     // Sketch retention (bounded memory) also folds each record into the accumulator's
     // per-(phase,tag) t-digest and drops it: `metrics_config` already carries the

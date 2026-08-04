@@ -141,6 +141,14 @@ pub struct MeasuredContext {
     /// Whether a live-results sink is attached and the worker must return a
     /// non-consuming cloned record for live emission.
     pub wants_live_record: bool,
+    /// Whether an artifact will consume this request's raw HTTP exchange.
+    ///
+    /// Only the raw artifact reads it. When nothing does, a worker that returns
+    /// a credit releases the request payload and transport record locally
+    /// instead of shipping both to the coordinator to be dropped there --
+    /// dropping them was measured at ~7% of the single issuer's CPU, on the one
+    /// thread that bounds the run.
+    pub wants_http_exchange: bool,
     /// Whether the returned record should be *moved out* of the worker observer
     /// (freeing its token storage) rather than cloned. Set in metrics-only
     /// (sketch) mode, where the coordinator folds each record into a bounded

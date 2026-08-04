@@ -336,6 +336,7 @@ impl RunCapture {
                 ..RequestMetricMetadata::default()
             },
             wants_live_record: self.wants_live_record(),
+            wants_http_exchange: self.raw_enabled,
             // Fold-and-drop modes (sketch + exact-fold) fold each record and drop it,
             // so the worker must move the record out of its observer to free token
             // storage as it goes.
@@ -1211,6 +1212,7 @@ mod tests {
                 requested_output_length: 8,
                 metadata: RequestMetricMetadata::default(),
                 wants_live_record: false,
+                wants_http_exchange: false,
                 consume_record: false,
             },
         });

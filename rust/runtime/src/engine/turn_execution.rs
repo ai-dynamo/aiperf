@@ -1430,9 +1430,19 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
             }
         })
         .flatten();
-    let outcome = result.map(|result| MeasuredOutcome {
-        result,
-        live_record,
+    let outcome = result.map(|mut result| {
+        // Nothing downstream reads the raw exchange unless a raw artifact was
+        // requested, so release it HERE rather than shipping a ~ISL-sized body
+        // and a transport record to the coordinator only for it to drop them on
+        // the one thread that bounds the run.
+        if !context.wants_http_exchange {
+            result.request_payload = bytes::Bytes::new();
+            result.record = crate::transport::core::RequestRecord::default();
+        }
+        MeasuredOutcome {
+            result,
+            live_record,
+        }
     });
     // Returning the credit is what releases the issuer's admission slot, so it
     // is sent with backpressure rather than dropped on a full stream.
@@ -1831,6 +1841,7 @@ mod tests {
             requested_output_length: 4,
             metadata: RequestMetricMetadata::default(),
             wants_live_record: false,
+            wants_http_exchange: false,
             consume_record: false,
         }
     }
