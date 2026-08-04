@@ -1922,9 +1922,13 @@ mod lowering_tests {
         let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
         let mut lowerable = Vec::new();
         for id in registry.canonical_ids() {
-            let prepared = registry
-                .prepare(id, crate::endpoints::RawEndpointConfig::default())
-                .unwrap();
+            // A dialect that cannot bind without authored configuration (the
+            // template endpoint needs one) is not a message-array shape and has
+            // no lowerer either way.
+            let Ok(prepared) = registry.prepare(id, crate::endpoints::RawEndpointConfig::default())
+            else {
+                continue;
+            };
             let descriptor_id = prepared.descriptor().id;
             let lowers = ShapeLowerer::for_descriptor_id(descriptor_id).is_some();
             assert_eq!(
@@ -1937,7 +1941,10 @@ mod lowering_tests {
             }
         }
         lowerable.sort_unstable();
-        assert_eq!(lowerable, ["chat", "chat_embeddings", "messages", "responses"]);
+        assert_eq!(
+            lowerable,
+            ["chat", "chat_embeddings", "messages", "responses"]
+        );
         // Rendering every turn is a different capability: these two compose their
         // own message parts and must never be treated as splicing lowered wires.
         for id in ["sagemaker", "kserve_chat"] {

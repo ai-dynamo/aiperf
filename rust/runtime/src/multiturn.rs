@@ -1629,7 +1629,7 @@ impl CreditCounter {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::dataset::{ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
+    use crate::dataset::{BodyPlan, ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
     use crate::endpoints::ChatEndpoint;
     use crate::rng::RngRoot;
     use serde_json::json;

@@ -11,11 +11,11 @@ use std::sync::Arc;
 
 use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
-    EmbeddingsEndpoint, Endpoint, EndpointDescriptor, ExtractedPayload, HfTeiRankingsEndpoint,
+    EmbeddingsEndpoint, Endpoint, ExtractedPayload, HfTeiRankingsEndpoint,
     HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
     ImageRetrievalEndpoint, Media, MessagesEndpoint, ModelEndpoint, NimEmbeddingsEndpoint,
     NimRankingsEndpoint, PreparedEndpoint, PreparedRequest, RawEndpoint, RequestInfo,
-    ResponsesEndpoint, ShapeLowerer, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
+    ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
     VideoGenerationEndpoint,
 };
 use bytes::Bytes;
@@ -503,10 +503,8 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                     Arc::clone(&cached.plan)
                 }
                 None => {
-                    let turns = session.endpoint_turns(
-                        store,
-                        splices_lowered_wires(endpoint, phase),
-                    )?;
+                    let turns =
+                        session.endpoint_turns(store, splices_lowered_wires(endpoint, phase))?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
                     let request = PreparedRequest::new(
