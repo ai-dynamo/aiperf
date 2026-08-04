@@ -132,6 +132,20 @@ than requiring a separate generator type.
 a prefix pool is configured, prefix prompts are generated using the same
 arithmetic token-ID sequence as body prompts.
 
+### Prefix semantics vs vLLM / SGLang
+
+aiperf and the vLLM/SGLang benchmarkers treat the prefix differently:
+
+| Tool | Prefix behaviour | Wire ISL |
+|------|-----------------|----------|
+| aiperf (`--prompt-prefix-pool-size` / `--prompt-prefix-length`) | Prefix is **budgeted** from the ISL target — body tokens = `ISL - prefix_len`, prefix prepended on top | ≈ configured ISL |
+| vLLM (`--random-prefix-len`) | Prefix is **additive** — body tokens = sampled ISL, prefix prepended on top | configured ISL + prefix_len |
+| SGLang (`prefix_len`) | Same as vLLM — additive | configured ISL + prefix_len |
+
+aiperf's budgeted behaviour keeps the total prompt size predictable and on-target regardless of prefix length, which is the right default for controlled benchmarks where `--prompt-input-tokens-mean` should reflect the actual wire ISL. The vLLM/SGLang additive behaviour is designed for KV-cache simulations where the prefix represents cached shared context and the configured length represents the *variable* content on top of it.
+
+If you want additive prefix behaviour to match vLLM, use `--shared-system-prompt-length` with a length that accounts for additional template markup, or compare ISL distributions directly using the mock server recorder to confirm the intended total.
+
 ## Random corpus
 
 ``random`` generates prompts entirely from vocabulary token IDs using the
