@@ -103,8 +103,11 @@ pub struct HttpEndpointPolicy {
 /// HTTP-ready request produced by an [`HttpEndpointBinding`].
 #[derive(Debug, Clone)]
 pub struct PreparedHttpEndpointRequest {
-    canonical_body: Bytes,
     wire_body: Bytes,
+    /// The pre-lowering canonical JSON, retained only when HTTP lowering
+    /// re-encoded the body into something else. `None` means the wire body *is*
+    /// the canonical body, which is every JSON endpoint.
+    canonical_body: Option<Bytes>,
     request_config: RequestConfig,
     streaming: bool,
     polling: Option<PollingOptions>,
@@ -150,8 +153,12 @@ impl SseMessageFilter for BindingSseMessageFilter<'_> {
 
 impl PreparedHttpEndpointRequest {
     /// Return the endpoint's canonical JSON bytes before HTTP-specific lowering.
+    ///
+    /// Byte-identical to what a separately retained canonical handle held: the
+    /// wire body is the canonical body unless [`prepare_request`] re-encoded it,
+    /// and only that case stores the pre-lowering bytes.
     pub fn canonical_body(&self) -> &Bytes {
-        &self.canonical_body
+        self.canonical_body.as_ref().unwrap_or(&self.wire_body)
     }
 
     /// Return the resolved HTTP request configuration.
@@ -294,7 +301,6 @@ where
         reuse,
     } = request;
     let policy = binding.request_policy(endpoint_path.as_deref(), streaming, url_index)?;
-    let canonical_body = body.clone();
     // Media is resolved to its final wire form during dataset generation: local
     // files are encoded to `data:` URLs, and remote HTTP(S) URLs are either sent
     // to the server as-is (the server fetches them) or pre-fetched and inlined up
@@ -302,20 +308,24 @@ where
     // re-serializes the body — the only per-request transform is the multipart
     // form re-encode, which restructures an already-inlined payload into form
     // parts (e.g. image_edit) and cannot be precomputed as raw JSON bytes.
-    let wire_body = if matches!(policy.content_type, RequestContentType::MultipartFormData) {
-        let payload = serde_json::from_slice::<Value>(&body).map_err(|error| {
-            HttpEndpointBindingError::new(format!(
-                "decode endpoint {:?} request before applying its HTTP lifecycle: {error}",
-                binding.endpoint_id()
-            ))
-        })?;
-        let encoded = binding.encode_body(&payload, policy.content_type)?;
-        headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
-        headers.insert("Content-Type".into(), encoded.content_type);
-        encoded.bytes
-    } else {
-        body
-    };
+    //
+    // Only that re-encode makes the wire and canonical bodies differ, so it is
+    // also the only case that keeps a second handle on the assembled bytes.
+    let (wire_body, canonical_body) =
+        if matches!(policy.content_type, RequestContentType::MultipartFormData) {
+            let payload = serde_json::from_slice::<Value>(&body).map_err(|error| {
+                HttpEndpointBindingError::new(format!(
+                    "decode endpoint {:?} request before applying its HTTP lifecycle: {error}",
+                    binding.endpoint_id()
+                ))
+            })?;
+            let encoded = binding.encode_body(&payload, policy.content_type)?;
+            headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
+            headers.insert("Content-Type".into(), encoded.content_type);
+            (encoded.bytes, Some(body))
+        } else {
+            (body, None)
+        };
 
     let mut request_config = RequestConfig::new(policy.url);
     request_config.headers = headers;
@@ -327,8 +337,8 @@ where
     request_config.reuse = reuse;
 
     Ok(PreparedHttpEndpointRequest {
-        canonical_body,
         wire_body,
+        canonical_body,
         request_config,
         streaming,
         polling: policy.polling,
@@ -671,7 +681,10 @@ mod tests {
         let request = prepare_request(&binding, endpoint_request(body.clone()))
             .await
             .unwrap();
-        assert_eq!(request.canonical_body, body);
+        // A JSON endpoint keeps no second handle; the accessor still answers
+        // with the same bytes.
+        assert!(request.canonical_body.is_none());
+        assert_eq!(request.canonical_body(), &body);
         assert_eq!(request.wire_body, body);
         assert_eq!(
             request.request_config.url,
@@ -687,7 +700,10 @@ mod tests {
         let request = prepare_request(&binding, endpoint_request(body.clone()))
             .await
             .unwrap();
-        assert_eq!(request.canonical_body, body);
+        // Multipart lowering rewrote the wire body, so the pre-lowering JSON is
+        // retained separately and the raw artifact still records it verbatim.
+        assert_eq!(request.canonical_body.as_ref(), Some(&body));
+        assert_eq!(request.canonical_body(), &body);
         assert_ne!(request.wire_body, body);
         assert!(
             request.request_config.headers["Content-Type"]

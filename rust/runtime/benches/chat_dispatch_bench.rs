@@ -596,9 +596,9 @@ fn dispatch_body_consumed(
 ///
 /// - *One handle, then drop* — `grpc/sink.rs:344`, which parses the bytes and
 ///   drops them. Consuming removes the only clone, so this banks −1 alloc.
-/// - *Two handles* — both HTTP sites. `http/sink.rs:391` takes
-///   `body.clone()` for the record payload, and `endpoint_dispatch.rs:217`
-///   reaches `endpoint_binding.rs`, which used to clone into `canonical_body`
+/// - *Two handles* — both HTTP sites. `http/sink.rs:391` takes `body.clone()`
+///   for the record payload, and the endpoint-aware path reaches
+///   `HttpTransport::send_body`, which clones into `RequestRecord::request_body`
 ///   unconditionally. The promotion merely relocates to that second clone:
 ///   1 alloc before, 1 alloc after. What is saved is a refcount inc/dec pair.
 ///
@@ -606,7 +606,11 @@ fn dispatch_body_consumed(
 ///
 /// The `HTTP CHAIN` rows model the *whole* endpoint-aware chat path rather than
 /// one call site, which is the only way to see whether removing any single
-/// clone removes the allocation or merely relocates it.
+/// clone removes the allocation or merely relocates it. Measured, they do not:
+/// `before` and `after` both report 4.0 allocs / 551 alloc-B on the 0.5 KB body
+/// while `floor` reports 3.0 / 527, so the promotion is one 24-byte `Shared`
+/// block that survives as long as *any* second handle does. Reaching the floor
+/// means retaining no raw artifact at all, not deleting one more clone.
 #[test]
 fn chat_dispatch_wire_ownership_profile() {
     println!("\n=== L2b: to_wire(&self) vs into_wire(self) on an owned request ===");

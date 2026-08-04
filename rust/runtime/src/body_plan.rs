@@ -682,8 +682,10 @@ impl RequestBody {
             Self::Wire(bytes) => Ok(bytes),
             // `Plan` and `Value` read through `&self` regardless, so delegating
             // compiles to the same code as restating them and keeps the
-            // right-sizing rationale documented in exactly one place.
-            other => other.to_wire(),
+            // right-sizing rationale documented in exactly one place. Matched by
+            // name rather than `_` so a future owned-bytes variant fails to
+            // compile here instead of silently taking the cloning path.
+            other @ (Self::Plan(_) | Self::Value(_)) => other.to_wire(),
         }
     }
 }
