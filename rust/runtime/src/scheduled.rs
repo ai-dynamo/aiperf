@@ -630,6 +630,58 @@ impl ScheduledRuntime {
         })
     }
 
+    /// Feed this phase's own collector/native-metrics observers the issue-time
+    /// facts. Skipped when nothing reads them (see
+    /// [`Self::feeds_local_measurement`]).
+    fn register_local_measurement(
+        &self,
+        turn: &TurnToSend,
+        record_index: usize,
+        session_num: u64,
+        issued_ns: i64,
+    ) {
+        self.native_metrics.register_metadata(
+            turn.uuid,
+            RequestMetricMetadata {
+                request_index: Some(record_index),
+                session_num: Some(session_num),
+                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
+                conversation_id: self
+                    .native_metrics
+                    .retains_record_dimensions()
+                    .then(|| turn.conversation_id.clone()),
+                correlation_id: Some(if self.native_metrics.retains_record_dimensions() {
+                    turn.request_correlation_id.clone()
+                } else {
+                    String::new()
+                }),
+                audio_duration_s: turn.audio_duration_seconds,
+                has_credit_timestamp: self.credit_latency_enabled.get(),
+                dimensions: self.dispatcher.inference_dimensions(turn),
+                ..RequestMetricMetadata::default()
+            },
+        );
+        self.observer.on_arrival(
+            turn.uuid,
+            (issued_ns - self.start_ns) as f64 / 1_000_000.0,
+            turn.input_length,
+            turn.max_output_tokens,
+        );
+    }
+
+    /// Whether this phase's own collector and native-metrics observers are read
+    /// by anyone.
+    ///
+    /// Under `workers > 1` the authoritative report is built from the DRAINED
+    /// WORKER records, and the pipeline reads only this runtime's timing
+    /// recorder off the phase report (`execute_scheduled_pipeline`'s
+    /// `issued_times`) -- the compatibility and native-metric planes are
+    /// computed per request and then thrown away. On a single issuer that waste
+    /// lands entirely on the one thread that bounds the run: ~6% of it, measured.
+    fn feeds_local_measurement(&self) -> bool {
+        !self.credit_dispatch.get()
+    }
+
     /// Route issued turns as credits instead of resolving one dispatch future
     /// per request (`--dispatch global-push`).
     ///
@@ -780,16 +832,18 @@ impl ScheduledRuntime {
         self.recorder
             .borrow_mut()
             .terminal(record_index, &outcome, self.start_ns);
-        self.native_metrics.record_response(
-            turn_uuid,
-            NativeResponseMetadata {
-                start_ns: Some(outcome.start_ns),
-                end_ns: Some(outcome.end_ns),
-                prompt_tokens: outcome.prompt_tokens,
-                completion_tokens: outcome.completion_tokens,
-                http: outcome.http,
-            },
-        );
+        if self.feeds_local_measurement() {
+            self.native_metrics.record_response(
+                turn_uuid,
+                NativeResponseMetadata {
+                    start_ns: Some(outcome.start_ns),
+                    end_ns: Some(outcome.end_ns),
+                    prompt_tokens: outcome.prompt_tokens,
+                    completion_tokens: outcome.completion_tokens,
+                    http: outcome.http,
+                },
+            );
+        }
         let processor_input = (!self.record_processors.borrow().is_empty()).then(|| {
             (
                 credit.clone(),
@@ -1143,33 +1197,9 @@ impl ScheduledRuntime {
             scheduled_ns,
             issued_ns,
         );
-        self.native_metrics.register_metadata(
-            turn.uuid,
-            RequestMetricMetadata {
-                request_index: Some(record_index),
-                session_num: Some(session_num),
-                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
-                conversation_id: self
-                    .native_metrics
-                    .retains_record_dimensions()
-                    .then(|| turn.conversation_id.clone()),
-                correlation_id: Some(if self.native_metrics.retains_record_dimensions() {
-                    turn.request_correlation_id.clone()
-                } else {
-                    String::new()
-                }),
-                audio_duration_s: turn.audio_duration_seconds,
-                has_credit_timestamp: self.credit_latency_enabled.get(),
-                dimensions: self.dispatcher.inference_dimensions(&turn),
-                ..RequestMetricMetadata::default()
-            },
-        );
-        self.observer.on_arrival(
-            turn.uuid,
-            (issued_ns - self.start_ns) as f64 / 1_000_000.0,
-            turn.input_length,
-            turn.max_output_tokens,
-        );
+        if self.feeds_local_measurement() {
+            self.register_local_measurement(&turn, record_index, session_num, issued_ns);
+        }
         let credit = IssuedCredit::from_issued_turn(credit_id, issued_ns, &turn, issued_url_index);
 
         // Credit dispatch: route the turn and return to the scheduling loop
