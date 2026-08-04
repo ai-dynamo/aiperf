@@ -537,7 +537,7 @@ mod tests {
                 row.get("metadata")
                     .and_then(|metadata| metadata.get("conversation_id"))
                     .and_then(Value::as_str)
-                    .expect("record metadata carries a conversation_id")
+                    .unwrap_or_else(|| panic!("row missing metadata.conversation_id: {row}"))
                     .to_string()
             })
             .collect();
@@ -1429,14 +1429,15 @@ mod tests {
     /// instead of once at the end of the whole corpus: shard 0 owns `{0, 2, 4}`
     /// and walks `0, 2, 4, 0`; shard 1 owns `{1, 3}` and walks `1, 3, 1, 3`.
     /// The single issuer instead walks `0, 1, 2, 3, 4, 0, 1, 2`. `entries = 5`,
-    /// `workers = 2` is the smallest fixture that exposes it: 2 does not divide
-    /// 5, so the two shards' cycles fall out of step with the single-issuer
-    /// walk.
+    /// `workers = 2` is a minimal fixture that exposes it: 2 does not divide 5,
+    /// so the two shards' cycles fall out of step with the single-issuer walk.
+    ///
+    /// The oracle sorts, so this pins the drawn MULTISET, not the draw order.
     ///
     /// `sorted_data_keys` cannot see this (every conversation has the same
     /// ISL/OSL), which is why the identity oracle exists.
     #[test]
-    fn global_workers_gt_1_draws_the_single_issuer_conversation_sequence() {
+    fn global_workers_gt_1_draws_the_single_issuer_conversation_multiset() {
         let registry = AIPerfRegistry::builtin().unwrap();
         let mock = FixedMock::spawn();
         let entries = 5;
