@@ -352,7 +352,14 @@ impl TransportSink {
         // in the old capture kept exactly the successfully-decoded responses
         // regardless of parse outcome, so we push right after a successful
         // decode (before any parse-failure `continue`) to preserve that set.
-        let captures_turn = endpoint.captures_assistant_turn();
+        // A reconstructed assistant turn is only ever read back as context for a
+        // *later* turn of the same session (`multiturn` splices it into the next
+        // request; `TurnDispatchOutcome::to_turn_response` forwards it to the
+        // continuation hooks). It is not exported and no metric derives from it,
+        // so on a session's final turn the reconstruction — parsing every buffered
+        // response into `Value` maps and dropping them — is pure waste. Single-turn
+        // workloads mark every request final, which is the common benchmark shape.
+        let captures_turn = !is_final_turn && endpoint.captures_assistant_turn();
         let mut decoded_responses: Vec<ServerResponse> = Vec::new();
         for response in &record.responses {
             let Some(decoded) = binding.decode_response(response) else {
