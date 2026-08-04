@@ -598,11 +598,15 @@ fn dispatch_body_consumed(
 ///   drops them. Consuming removes the only clone, so this banks −1 alloc.
 /// - *Two handles* — both HTTP sites. `http/sink.rs:391` takes
 ///   `body.clone()` for the record payload, and `endpoint_dispatch.rs:217`
-///   reaches `endpoint_binding.rs:297`, which clones into `canonical_body`
+///   reaches `endpoint_binding.rs`, which used to clone into `canonical_body`
 ///   unconditionally. The promotion merely relocates to that second clone:
 ///   1 alloc before, 1 alloc after. What is saved is a refcount inc/dec pair.
 ///
 /// The `SOLE HANDLE` rows model gRPC; the `SECOND HANDLE` rows model HTTP.
+///
+/// The `HTTP CHAIN` rows model the *whole* endpoint-aware chat path rather than
+/// one call site, which is the only way to see whether removing any single
+/// clone removes the allocation or merely relocates it.
 #[test]
 fn chat_dispatch_wire_ownership_profile() {
     println!("\n=== L2b: to_wire(&self) vs into_wire(self) on an owned request ===");
@@ -666,6 +670,51 @@ fn chat_dispatch_wire_ownership_profile() {
                 let payload = body.clone();
                 (body, payload)
             },
+        ));
+
+        // The full endpoint-aware chat chain, every handle that is live at once.
+        //
+        // Four handles were taken per dispatch: `prepare_request` cloned the
+        // assembled body into `canonical_body`, `endpoint_dispatch.rs` cloned
+        // that into `request_payload`, `PreparedHttpEndpointRequest::dispatch`
+        // cloned `wire_body` for the transport, and `HttpTransport::send_body`
+        // cloned it once more into `RequestRecord::request_body`. Only the first
+        // clone allocates — it installs the shared control block — so a removed
+        // clone buys an allocation only when no later clone survives it.
+        samples.push(measure(
+            format!("[{size_label}] HTTP CHAIN before: canonical+payload+wire+record"),
+            len,
+            ITERS,
+            || {
+                let body = dispatch_body_consumed(&session, endpoint.as_ref(), &overrides);
+                let canonical = body.clone();
+                let wire = body;
+                let payload = canonical.clone();
+                let sent = wire.clone();
+                let recorded = sent.clone();
+                (canonical, wire, payload, sent, recorded)
+            },
+        ));
+        samples.push(measure(
+            format!("[{size_label}] HTTP CHAIN after:  payload+wire+record"),
+            len,
+            ITERS,
+            || {
+                let wire = dispatch_body_consumed(&session, endpoint.as_ref(), &overrides);
+                let payload = wire.clone();
+                let sent = wire.clone();
+                let recorded = sent.clone();
+                (wire, payload, sent, recorded)
+            },
+        ));
+        // The floor the chain would reach if the wire handle were the only one:
+        // no promotion at all. The gap between this and the two rows above is
+        // the cost of retaining a raw artifact, not of any one clone.
+        samples.push(measure(
+            format!("[{size_label}] HTTP CHAIN floor:  wire only"),
+            len,
+            ITERS,
+            || dispatch_body_consumed(&session, endpoint.as_ref(), &overrides),
         ));
     }
 
