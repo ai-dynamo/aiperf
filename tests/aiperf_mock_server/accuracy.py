@@ -246,9 +246,22 @@ def _field(obj: dict[str, Any], aliases: tuple[str, ...]) -> Any | None:
 
 
 def _derive_seed(random_seed: int, key_norm: str) -> int:
-    """Stable seed from ``(random_seed, key_norm)``."""
+    """Stable seed from ``(random_seed, key_norm)``.
+
+    The parts are joined with a delimiter rather than concatenated, so the
+    boundary between them is unambiguous. Raw concatenation made
+    ``(1, "23q")`` and ``(12, "3q")`` hash identically, which let two runs with
+    different ``--random-seed`` values produce the same verdict stream — a trap
+    when sweeping seeds for independent samples. (Within a single run the seed
+    prefix is fixed-length, so distinct keys could never collide.)
+
+    Mirrors the delimited construction ``aiperf.common.random_generator`` uses
+    for its own seed derivation. The helper itself is deliberately not imported:
+    the mock server is a standalone package with no ``aiperf`` dependency, and
+    aiperf's derivation hangs off a process-global RNG manager.
+    """
     digest = hashlib.blake2b(
-        str(random_seed).encode("ascii") + key_norm.encode() + b"mock.accuracy",
+        f"{random_seed}:{key_norm}:mock.accuracy".encode(),
         digest_size=8,
     ).digest()
     return int.from_bytes(digest, "big", signed=False)

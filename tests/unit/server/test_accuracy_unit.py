@@ -16,6 +16,7 @@ from aiperf_mock_server.accuracy import (
     AccuracyMatch,
     AccuracySettings,
     Adversarial,
+    _derive_seed,
     bump_number,
     format_correct,
 )
@@ -265,6 +266,26 @@ def test_decision_is_deterministic_for_any_integer_seed() -> None:
         entry = ds.lookup("q")
         assert entry is not None
         assert ds.decide(entry) == ds.decide(entry)
+
+
+def test_seed_derivation_has_no_cross_seed_collisions() -> None:
+    """Different ``(random_seed, key)`` pairs must not derive the same seed.
+
+    Regression: the parts used to be concatenated without a delimiter, so
+    ``(1, "23q")`` and ``(12, "3q")`` produced the same digest and two runs with
+    different --random-seed values replayed an identical verdict stream.
+    """
+    assert _derive_seed(1, "23q") != _derive_seed(12, "3q")
+    assert _derive_seed(12, "3") != _derive_seed(1, "23")
+
+    # exhaustive over a small grid: every (seed, key) pair stays distinct
+    pairs = [(s, k) for s in (1, 2, 12, 21, 123) for k in ("3", "23", "3q", "23q")]
+    derived = {(s, k): _derive_seed(s, k) for s, k in pairs}
+    assert len(set(derived.values())) == len(pairs)
+
+
+def test_seed_derivation_is_stable_for_the_same_inputs() -> None:
+    assert _derive_seed(42, "the q") == _derive_seed(42, "the q")
 
 
 def test_correct_rate_is_honored_across_prompts() -> None:
