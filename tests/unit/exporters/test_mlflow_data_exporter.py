@@ -637,3 +637,101 @@ def _silent_crash_subprocess_entry(exporter_config: Any, result_queue: Any) -> N
     import os
 
     os._exit(137)
+
+
+class TestSweepChildNaming:
+    """Tests for _derive_sweep_child_name — names per-probe runs by swept value."""
+
+    def test_concurrency_sweep_names_child(
+        self, tmp_path: Path, sample_results: ProfileResults
+    ) -> None:
+        """Concurrency-based phase produces 'Concurrency=N' name."""
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            profiling={"type": "concurrency", "requests": 100, "concurrency": 64},
+        )
+        exporter = self._make_exporter(cfg, sample_results)
+        assert exporter._derive_sweep_child_name() == "Concurrency=64"
+
+    def test_concurrency_1_edge_case(
+        self, tmp_path: Path, sample_results: ProfileResults
+    ) -> None:
+        """Concurrency=1 still produces a valid name."""
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            profiling={"type": "concurrency", "requests": 100, "concurrency": 1},
+        )
+        exporter = self._make_exporter(cfg, sample_results)
+        assert exporter._derive_sweep_child_name() == "Concurrency=1"
+
+    def test_poisson_rate_phase_names_by_rate(
+        self, tmp_path: Path, sample_results: ProfileResults
+    ) -> None:
+        """Poisson rate phase produces 'RequestRate=N' name."""
+        cfg = _make_mlflow_cfg(
+            tmp_path, profiling={"type": "poisson", "requests": 100, "rate": 50.0}
+        )
+        exporter = self._make_exporter(cfg, sample_results)
+        name = exporter._derive_sweep_child_name()
+        assert name is not None
+        assert name.startswith("RequestRate=")
+
+    def test_rate_phase_with_concurrency_cap_prefers_rate(
+        self, tmp_path: Path, sample_results: ProfileResults
+    ) -> None:
+        """A rate phase with concurrency as a cap names by rate, not the cap."""
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            profiling={
+                "type": "poisson",
+                "requests": 100,
+                "rate": 25.0,
+                "concurrency": 128,
+            },
+        )
+        exporter = self._make_exporter(cfg, sample_results)
+        name = exporter._derive_sweep_child_name()
+        assert name is not None
+        assert "RequestRate=" in name
+        assert name != "Concurrency=128"
+
+    def test_no_profiling_phases_returns_none(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Empty profiling phases → None (falls back to default naming)."""
+        cfg = _make_mlflow_cfg(
+            tmp_path, profiling={"type": "concurrency", "requests": 1, "concurrency": 1}
+        )
+        exporter = self._make_exporter(cfg, sample_results)
+        monkeypatch.setattr(exporter._cfg, "get_profiling_phases", lambda: [])
+        assert exporter._derive_sweep_child_name() is None
+
+    def test_root_run_no_parent_preserves_configured_name(
+        self, tmp_path: Path, sample_results: ProfileResults
+    ) -> None:
+        """When parent_run_id is absent, the exporter's _run_name is the configured name."""
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            run_name="top-level-job",
+            profiling={"type": "concurrency", "requests": 100, "concurrency": 16},
+        )
+        exporter = self._make_exporter(cfg, sample_results)
+        # Sweep name is derivable...
+        assert exporter._derive_sweep_child_name() == "Concurrency=16"
+        # ...but _run_name is what gets used for root runs (no parent)
+        assert exporter._run_name == "top-level-job"
+
+    @staticmethod
+    def _make_exporter(
+        cfg: BenchmarkConfig, results: ProfileResults
+    ) -> MLflowDataExporter:
+        """Create an exporter instance for name-derivation tests."""
+        exporter_cfg = ExporterConfig(
+            cfg=cfg,
+            results=results,
+            telemetry_results=None,
+        )
+        return MLflowDataExporter(exporter_config=exporter_cfg)

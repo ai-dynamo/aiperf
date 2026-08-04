@@ -205,6 +205,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         uploaded_artifacts: list[str] = []
 
         reused_live_run = existing_live_run_id is not None
+        _renamed_live_run_name: str | None = None
         if reused_live_run:
             # On reuse, carry forward the parent_run_id from the live metadata.
             resolved_parent_run_id: str | None = existing_metadata.get("parent_run_id")
@@ -212,11 +213,44 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             if cli_parent and cli_parent != resolved_parent_run_id:
                 self.info("parent_run_id ignored on live-run reuse")
             run_context = mlflow.start_run(run_id=existing_live_run_id)
+            # Rename the live-streaming run to the swept dimension value when
+            # it's a child under a parent (sweep/search). Live streaming creates
+            # the run with the configured --mlflow-run-name which is the same
+            # for every probe — rename so each child is distinguishable.
+            if resolved_parent_run_id:
+                sweep_name = self._derive_sweep_child_name()
+                if sweep_name:
+                    try:
+                        client.update_run(existing_live_run_id, name=sweep_name)
+                        _renamed_live_run_name = sweep_name
+                    except Exception as exc:
+                        self.warning(
+                            "Best-effort rename of live run to '%s' failed: %s",
+                            sweep_name,
+                            exc,
+                        )
         else:
             resolved_parent_run_id = self._cfg.mlflow.parent_run_id
             # Fresh run: compute the name up front so _start_new_run can pass it
             # to mlflow.start_run. Reused runs keep the name MLflow already stored.
-            new_run_name = self._run_name or self._derive_default_run_name()
+            # When nesting under a parent (sweep/search), prefer a name derived
+            # from the swept dimension value (e.g., "Concurrency=4") so child runs
+            # are distinguishable in the MLflow UI. Falls back to --mlflow-run-name
+            # or auto-generated name for top-level (no parent) runs.
+            if resolved_parent_run_id:
+                # Child run under a sweep/search parent: derive name from
+                # the swept dimension value so each probe is distinguishable.
+                # Takes priority over --mlflow-run-name because in a sweep
+                # every probe receives the same configured name (making them
+                # identical). Falls back to --mlflow-run-name or default only
+                # when the swept dimension can't be determined.
+                new_run_name = (
+                    self._derive_sweep_child_name()
+                    or self._run_name
+                    or self._derive_default_run_name()
+                )
+            else:
+                new_run_name = self._run_name or self._derive_default_run_name()
             run_context, resolved_parent_run_id = self._start_new_run(
                 mlflow, new_run_name, resolved_parent_run_id
             )
@@ -227,7 +261,13 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             # On reuse, the fanout may have let MLflow auto-generate one when
             # the user did not pass --mlflow-run-name, so re-reading from the
             # run info is the only way to avoid a metadata / MLflow desync.
-            run_name = run.info.run_name or self._derive_default_run_name()
+            # If we renamed the live run (sweep child), use the new name so
+            # mlflow_export.json stays consistent with what MLflow UI shows.
+            run_name = (
+                (_renamed_live_run_name if reused_live_run else None)
+                or run.info.run_name
+                or self._derive_default_run_name()
+            )
 
             # Log batched metrics/params/tags atomically (single round-trip).
             metrics = [
@@ -325,6 +365,45 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         if self._benchmark_id:
             return f"aiperf-{self._benchmark_id[:8]}"
         return f"aiperf-{int(time.time())}"
+
+    def _derive_sweep_child_name(self) -> str | None:
+        """Derive a human-readable name from the swept dimension for this probe.
+
+        In a sweep or search, each per-probe child run should be named by
+        its swept parameter value (e.g., "Concurrency=4") rather than
+        repeating the caller-supplied --mlflow-run-name for every child.
+        Returns None when the run is not part of a sweep/search (caller
+        falls back to --mlflow-run-name or the default).
+
+        Detection uses the artifact directory pattern set by the orchestrator:
+        - ``search_iter_NNNN/`` → adaptive search (concurrency is swept)
+        - ``concurrency_N/`` → magic-list concurrency sweep
+        - ``rate_N/`` or ``request_rate_N/`` → rate sweep (future)
+        - None of the above → not a sweep, preserve configured name.
+
+        This avoids incorrectly renaming ordinary nested runs that happen
+        to have a parent_run_id and a fixed concurrency.
+        """
+        artifact_path = str(self._artifact_directory)
+
+        # Concurrency sweeps: adaptive search or magic-list
+        if "search_iter" in artifact_path or "concurrency_" in artifact_path:
+            profiling_phases = self._cfg.get_profiling_phases()
+            if profiling_phases:
+                phase = profiling_phases[0]
+                if getattr(phase, "concurrency", None) is not None:
+                    return f"Concurrency={phase.concurrency}"
+
+        # Rate sweeps (future pattern — not currently produced by the
+        # orchestrator, but ready when it is)
+        if "rate_" in artifact_path or "request_rate_" in artifact_path:
+            profiling_phases = self._cfg.get_profiling_phases()
+            if profiling_phases:
+                rate = get_phase_rate(profiling_phases[0])
+                if rate is not None:
+                    return f"RequestRate={rate}"
+
+        return None
 
     # Statistic fields on JsonMetricResult / MetricResult that are pushed to
     # MLflow. The exporter skips fields that are None, so listing a superset is
