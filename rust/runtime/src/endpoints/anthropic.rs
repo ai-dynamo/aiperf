@@ -246,6 +246,10 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
         merge_extra(&mut payload, last.extra_body.as_ref());
         build_reserved_plan(&payload, "messages", message_wires)
     }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
 }
 
 /// Compare a wire event/type name against an already-normalized constant

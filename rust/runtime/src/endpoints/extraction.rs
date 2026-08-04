@@ -116,6 +116,9 @@ fn walk_items_arrays(
     }
     if found {
         result.messages = Some(chat_messages);
+        // The walk covered the array the one `image_count` increment lives under,
+        // so whatever it counted -- including zero -- is exact for this body.
+        result.owns_image_count = true;
     }
     found
 }

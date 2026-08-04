@@ -21,8 +21,7 @@ use crate::dataset::request::{
 };
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::{
-    CreditPhase, PreparedEndpoint, PreparedRequest, ShapeLowerer, Turn as EndpointTurn,
-    TurnMessageLowerer,
+    CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn, TurnMessageLowerer,
 };
 use smallvec::SmallVec;
 
@@ -414,14 +413,26 @@ impl Dataset {
     /// accumulates those separately as it captures them.
     ///
     /// Composing per-turn counts into a body's count is only valid for a dialect
-    /// whose body is the concatenation of every turn's items — the message-array
-    /// shapes, which [`ShapeLowerer::for_descriptor_id`] identifies exactly. A
-    /// dialect that instead SELECTS one turn out of the list renders only that
-    /// turn: KServe V2 VLM formats `request.turns().first()`, so under a delta
-    /// mode the wire carries turn 0's images no matter which turn is current, and
-    /// a prefix sum would over-report every later turn. Those dialects therefore
-    /// describe only turn 0 — the one index where every context mode hands the
-    /// endpoint exactly `[turn 0]` — and leave later turns to the parse.
+    /// that renders every turn handed to the formatter — see
+    /// [`PreparedEndpoint::renders_all_turns`]. A dialect that instead SELECTS
+    /// one turn renders only that one: KServe V2 VLM formats
+    /// `request.turns().first()`, so under a delta mode the wire carries turn 0's
+    /// images no matter which turn is current, and a prefix sum would over-report
+    /// every later turn.
+    ///
+    /// A selecting dialect therefore describes at most turn 0, and even that only
+    /// outside `MessageArrayWithoutResponses`. Under the other three modes turn 0
+    /// is exactly one authored turn — the deltas take `0..=0`, the message-array
+    /// mode takes the current turn, and no reply has been captured yet — so
+    /// whichever turn the dialect selects is that turn. `MessageArrayWithoutResponses`
+    /// is the exception: it emits `split_snapshot(t0)`, which fans a turn holding
+    /// N authored `raw_messages` into N `EndpointTurn`s, so a selecting dialect
+    /// sees one of N while a count built from the unsplit turn covers all N. The
+    /// built-in selectors do not render `raw_messages` (their extractor then
+    /// establishes nothing and the raw-messages guard already returns `None`),
+    /// but `template` renders a user-authored body that can expose `turns` or
+    /// `turn` into an item array, so the mode is excluded rather than relying on
+    /// that.
     ///
     /// For a concatenating dialect, per turn index the stored value is the count
     /// over the authored turns that index's body carries:
@@ -451,11 +462,16 @@ impl Dataset {
             for conversation in self.conversations.iter() {
                 let mut turn_counts: Vec<Option<u32>> = vec![None; conversation.turns.len()];
                 if conversation.dag.is_none() {
+                    let mode = self.context_mode(conversation);
                     let cumulative = matches!(
-                        self.context_mode(conversation),
+                        mode,
                         ConversationContextMode::DeltasWithResponses
                             | ConversationContextMode::DeltasWithoutResponses
                     );
+                    // `split_snapshot` can fan turn 0 into several formatter
+                    // turns, so even index 0 is not a single-turn request here.
+                    let selecting_describes_turn_zero =
+                        mode != ConversationContextMode::MessageArrayWithoutResponses;
                     let mut running = Some(0_u32);
                     for (turn_index, (turn, slot)) in conversation
                         .turns
@@ -474,11 +490,12 @@ impl Dataset {
                             .and_then(|(total, turn)| total.checked_add(turn));
                         // Whether this turn's body is the concatenation of every
                         // turn handed to the formatter, or a selection from them.
-                        let concatenates = endpoint.is_some_and(|endpoint| {
-                            ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).is_some()
-                        });
+                        let concatenates =
+                            endpoint.is_some_and(PreparedEndpoint::renders_all_turns);
                         *slot = if !concatenates {
-                            (turn_index == 0).then_some(count).flatten()
+                            (turn_index == 0 && selecting_describes_turn_zero)
+                                .then_some(count)
+                                .flatten()
                         } else if cumulative {
                             running
                         } else {

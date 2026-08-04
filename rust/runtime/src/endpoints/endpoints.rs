@@ -381,6 +381,10 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         }
         build_reserved_plan(&payload, "messages", message_wires)
     }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
 }
 
 impl Endpoint for ResponsesEndpoint {
@@ -593,6 +597,10 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         }
         build_reserved_plan(&payload, "input", input_wires)
     }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
 }
 
 impl Endpoint for CompletionsEndpoint {
@@ -740,6 +748,10 @@ impl PreparedEndpointBehavior for ChatEmbeddingsEndpoint {
         config: &RawEndpointConfig,
     ) -> EndpointResult<BodyPlan> {
         ChatEndpoint.format_prepared_payload(request, config)
+    }
+
+    fn renders_all_turns(&self) -> bool {
+        true
     }
 }
 

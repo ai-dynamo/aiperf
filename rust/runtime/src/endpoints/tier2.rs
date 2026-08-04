@@ -923,6 +923,9 @@ impl Endpoint for ImageRetrievalEndpoint {
                         .count() as u32
                 })
                 .unwrap_or(0),
+            // Counted straight off the body this dialect posts, so an empty
+            // `input` is an exact zero rather than an absent answer.
+            owns_image_count: true,
             ..ExtractedPayload::default()
         }
     }

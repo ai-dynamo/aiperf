@@ -409,6 +409,15 @@ pub struct ExtractedPayload {
     pub tool_texts: Vec<String>,
     /// Number of image content parts.
     pub image_count: u32,
+    /// Whether [`image_count`](Self::image_count) is this dialect's authoritative
+    /// answer for the body it was extracted from, as opposed to no information.
+    ///
+    /// The two are not the same and must not be conflated: an extractor that
+    /// walked the body's item array and found no image part establishes an exact
+    /// zero, while one whose dialect carries images somewhere no wire walk can
+    /// see (image edit posts them as multipart form data) establishes nothing and
+    /// leaves its caller to find the count elsewhere.
+    pub owns_image_count: bool,
     /// Number of audio content parts.
     pub audio_count: u32,
     /// Number of video content parts.

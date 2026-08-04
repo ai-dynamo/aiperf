@@ -100,6 +100,10 @@ impl PreparedEndpoint for PreparedSageMakerEndpoint {
             .format_prepared_payload(request, self.config.as_raw())
     }
 
+    fn renders_all_turns(&self) -> bool {
+        self.endpoint.renders_all_turns()
+    }
+
     fn headers(&self) -> &BTreeMap<String, String> {
         &self.headers
     }

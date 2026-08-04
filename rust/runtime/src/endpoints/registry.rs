@@ -309,6 +309,11 @@ pub trait PreparedEndpointBehavior: Endpoint {
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
     ) -> EndpointResult<BodyPlan>;
+
+    /// See [`PreparedEndpoint::renders_all_turns`].
+    fn renders_all_turns(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) fn format_legacy_payload<E>(
@@ -381,6 +386,20 @@ pub trait PreparedEndpoint: fmt::Debug {
 
     /// Build a request-body plan the shared materializer splices into wire bytes.
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
+
+    /// Whether the body is the concatenation of every turn handed to the
+    /// formatter, rather than a selection from them.
+    ///
+    /// A dialect that renders `request.turns()` in full lets a caller compose a
+    /// per-turn property of the body (see
+    /// [`Dataset::precompute_image_counts`](crate::dataset::Dataset::precompute_image_counts))
+    /// by summing over the turns. A dialect that instead formats one chosen turn
+    /// — KServe V2 formats `turns().first()` — does not, and a sum over its turns
+    /// describes a body it never sends. Defaults to `false`, so a dialect that
+    /// does not opt in is treated as selecting.
+    fn renders_all_turns(&self) -> bool {
+        false
+    }
 
     /// Whether static bind-time inputs fully determine the body, allowing the
     /// [`BodyPlan`] to be cached.
@@ -516,6 +535,10 @@ where
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         self.endpoint
             .format_prepared_payload(request, self.config.as_raw())
+    }
+
+    fn renders_all_turns(&self) -> bool {
+        self.endpoint.renders_all_turns()
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {

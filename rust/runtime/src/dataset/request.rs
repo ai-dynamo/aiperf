@@ -1434,21 +1434,18 @@ pub(crate) fn dataset_turn_image_count(
         .map(|payload| endpoint.extract_payload_inputs(&payload));
     match extracted {
         // The endpoint's own extractor is the function dispatch would run on
-        // this same body, so its answer is authoritative wherever it actually
-        // established one: either it found the `messages`/`input` item array its
-        // one increment lives under (`messages` is populated exactly then), or
-        // it counted images by its own dialect-specific rule (image retrieval
-        // counts `input[].type == "image_url"`, the KServe VLM tensor extractor
-        // counts the image tensor). Both of those are exact where
-        // `composed_image_count` is not: the formatters drop empty content
-        // strings, `handles.len()` does not.
-        Some(extracted) if extracted.messages.is_some() || extracted.image_count > 0 => {
-            Some(extracted.image_count)
-        }
-        // The extractor established nothing: either the body is not JSON, or it
-        // is a flat shape with no item array and no images the dialect
-        // recognises (image edit posts the turn's image as multipart form data,
-        // which is not visible to any wire walk). Fall back to the media the
+        // this same body, and it reports whether the count it produced is this
+        // dialect's authoritative answer. Take it whenever it is — INCLUDING an
+        // exact zero. Conflating "the extractor said zero" with "the extractor
+        // said nothing" is precisely what `composed_image_count` gets wrong: the
+        // formatters drop empty content strings (`!content.is_empty()`) and
+        // `handles.len()` does not, so a turn whose image contents are all empty
+        // sends no image and must report none.
+        Some(extracted) if extracted.owns_image_count => Some(extracted.image_count),
+        // The extractor established nothing: the body is not JSON, or it is a
+        // flat shape whose dialect carries images somewhere no wire walk can see
+        // (image edit posts the turn's image as multipart form data). Fall back
+        // to the media the
         // turn composed, which is what the pre-existing first-turn path
         // reported. Sound only with nothing preformatted in play — reaching here
         // means `is_provably_image_free` found media groups or array-content raw
