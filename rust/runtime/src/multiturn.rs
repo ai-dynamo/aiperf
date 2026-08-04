@@ -2935,6 +2935,44 @@ mod tests {
         }
     }
 
+    /// A partitioned shard must be able to RESOLVE a conversation it does not
+    /// ENUMERATE. These are two different ownerships: `conversations()` is the
+    /// shard's replay corpus, while `session_for` must succeed for anything the
+    /// dataset holds, because a position-addressed draw reaches outside the
+    /// shard's residue class by design.
+    ///
+    /// This is the exact failure the earlier `PartitionedSampler` attempt hit
+    /// ("requested foreign sessions after recycle"): the draw was widened while
+    /// the resolution map stayed narrow.
+    #[tokio::test]
+    async fn a_partitioned_shard_resolves_a_conversation_it_does_not_enumerate() {
+        let dataset = raw_payload_jsonl_dataset(3).await;
+        let all_ids: Vec<String> = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.session_id.as_str().to_string())
+            .collect();
+        let source = partitioned_sequential_source(dataset, 0, 2).await;
+
+        let enumerated = owned_ids(&source);
+        assert_eq!(
+            enumerated.len(),
+            2,
+            "cell 0 of 2 enumerates the even authored indices only, got {enumerated:?}"
+        );
+        let unowned = all_ids
+            .iter()
+            .find(|id| !enumerated.contains(id))
+            .expect("a 3-conversation corpus split 2 ways leaves cell 0 one unowned id");
+
+        assert!(
+            source.session_for(unowned, "corr-1".to_string()).is_ok(),
+            "a shard must RESOLVE an unowned conversation ({unowned}) even though it \
+             does not ENUMERATE it; rejecting it as 'not sampleable' is what sank the \
+             earlier full-corpus draw attempt"
+        );
+    }
+
     /// Preferred (shuffle) sampling under a partition still recycles only the
     /// shard's owned corpus — the fixed giver, not a full-corpus draw filter.
     #[tokio::test]
