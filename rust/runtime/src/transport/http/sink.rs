@@ -543,11 +543,33 @@ impl TransportSink {
     }
 }
 
+/// Follow a fixed JSON path without [`Value::pointer`].
+///
+/// `Value::pointer` splits its path on `/` and runs two `String::replace` calls
+/// per segment to undo `~0`/`~1` escaping, so every lookup allocates and scans.
+/// [`absorb_wire_response_metadata`] issues up to seven of them per decoded
+/// response, which on a streamed reply is per generated token — profiling put
+/// the resulting `str::replace` + `StrSearcher::new` + `Split<char>` at ~11% of
+/// load-phase samples.
+///
+/// Every call site here uses a static, escape-free path, so walking the
+/// segments directly is byte-identical and allocation-free. A segment naming an
+/// array is indexed by its decimal value, matching pointer semantics.
+fn dig<'v>(value: &'v Value, path: &[&str]) -> Option<&'v Value> {
+    let mut current = value;
+    for segment in path {
+        current = match current {
+            Value::Array(items) => items.get(segment.parse::<usize>().ok()?)?,
+            _ => current.get(segment)?,
+        };
+    }
+    Some(current)
+}
+
 fn parse_non_streaming_response(value: &Value) -> (String, Option<u32>, Option<u32>) {
-    let text = value
-        .pointer("/choices/0/message/reasoning_content")
-        .or_else(|| value.pointer("/choices/0/message/content"))
-        .or_else(|| value.pointer("/choices/0/text"))
+    let text = dig(value, &["choices", "0", "message", "reasoning_content"])
+        .or_else(|| dig(value, &["choices","0","message","content"]))
+        .or_else(|| dig(value, &["choices", "0", "text"]))
         .or_else(|| value.get("output_text"))
         .and_then(Value::as_str)
         .map(str::to_string)
@@ -614,17 +636,15 @@ fn absorb_chat_chunk_metadata(chunk: &ChatChunk, metadata: &mut ModelResponseMet
 }
 
 fn absorb_non_streaming_content(value: &Value, metadata: &mut ModelResponseMetadata) {
-    let reasoning = value
-        .pointer("/choices/0/message/reasoning_content")
-        .or_else(|| value.pointer("/choices/0/message/reasoning"))
+    let reasoning = dig(value, &["choices", "0", "message", "reasoning_content"])
+        .or_else(|| dig(value, &["choices","0","message","reasoning"]))
         .and_then(Value::as_str);
     if let Some(reasoning) = reasoning {
         metadata.content.get_or_insert_with(String::new);
         append_optional_text(&mut metadata.reasoning, reasoning);
     }
-    let content = value
-        .pointer("/choices/0/message/content")
-        .or_else(|| value.pointer("/choices/0/text"))
+    let content = dig(value, &["choices", "0", "message", "content"])
+        .or_else(|| dig(value, &["choices", "0", "text"]))
         .or_else(|| value.get("output_text"))
         .and_then(Value::as_str);
     if let Some(content) = content {
@@ -636,7 +656,7 @@ pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelR
     if let Some(response_id) = value
         .get("id")
         .or_else(|| value.get("request_id"))
-        .or_else(|| value.pointer("/response/id"))
+        .or_else(|| dig(value, &["response", "id"]))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
     {
@@ -648,10 +668,9 @@ pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelR
             metadata.response_id = Some(response_id.to_string());
         }
     }
-    if let Some(finish_reason) = value
-        .pointer("/choices/0/finish_reason")
-        .or_else(|| value.pointer("/response/incomplete_details/reason"))
-        .or_else(|| value.pointer("/incomplete_details/reason"))
+    if let Some(finish_reason) = dig(value, &["choices", "0", "finish_reason"])
+        .or_else(|| dig(value, &["response", "incomplete_details", "reason"]))
+        .or_else(|| dig(value, &["incomplete_details", "reason"]))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
     {
@@ -659,12 +678,11 @@ pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelR
     }
     let usage = value
         .get("usage")
-        .or_else(|| value.pointer("/response/usage"));
+        .or_else(|| dig(value, &["response", "usage"]));
     metadata.cached_prompt_tokens = usage
         .and_then(|usage| {
-            usage
-                .pointer("/prompt_tokens_details/cached_tokens")
-                .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+            dig(usage, &["prompt_tokens_details", "cached_tokens"])
+                .or_else(|| dig(usage, &["input_tokens_details", "cached_tokens"]))
                 .or_else(|| usage.get("cache_read_input_tokens"))
         })
         .and_then(Value::as_u64)
