@@ -201,16 +201,51 @@ reference implementation for chat):
    each named field into an unfilled `FieldValue::Reserved` slot. A reserved name
    the payload never declared is an error here.
 4. Fill the slot with the real wires via `fill_reserved`, which preserves the
-   field's position and errors on an unreserved name or an empty wire list.
+   field's position and errors on an unreserved name.
 
 The marker's *value* is discarded — only its key position matters, which is why
-`Value::Null` is as good as any array. Both halves are fallible on purpose: an
-unfilled `Reserved` slot fails at materialization rather than emitting `[]`, and a
-fill under an undeclared name fails immediately, so the two ways the older
-empty-array-placeholder convention shipped a body with no message array are now
-loud. Three call sites share the `build_reserved_plan` helper
-(`endpoints.rs:754-765`) — `messages` for chat (`endpoints.rs:382`) and Anthropic
-(`anthropic.rs:247`), `input` for Responses (`endpoints.rs:594`).
+`Value::Null` is as good as any array. Both structural failures are fatal on
+purpose: an unfilled `Reserved` slot fails at materialization rather than emitting
+`[]`, and a fill under an undeclared name fails immediately, so the two ways the
+older empty-array-placeholder convention shipped a body with no message array are
+now loud. Both are dialect code defects — unreachable for a correct dialect and
+independent of the dataset — which is what makes failing hard safe. Three call
+sites share the `build_reserved_plan` helper (`endpoints.rs:754-765`) — `messages`
+for chat (`endpoints.rs:382`) and Anthropic (`anthropic.rs:247`), `input` for
+Responses (`endpoints.rs:594`).
+
+### Operator-visible failure: a Responses turn that lowers to zero messages
+
+An **empty** wire list is explicitly *not* a construction failure, because it is
+the one case that is data-dependent rather than a code defect.
+
+- **Which dialect.** Responses only. Chat and Anthropic cannot reach it: every
+  branch of `rendered_turn_messages` (`endpoints.rs:778-826`) contributes at
+  least one message per turn for `PartShape::Chat` and `PartShape::Messages`,
+  and `require_prepared_turns` (`endpoints.rs:750`) guarantees at least one turn.
+- **What triggers it.** The Responses branch drops replay-unsafe output items
+  (`reasoning`, `web_search_call`, `file_search_call`, `image_generation_call`,
+  `code_interpreter_call`, `computer_call` — `is_replay_unsafe_output_item`,
+  `endpoints.rs:1551`). A turn whose `raw_messages` are *entirely* such items
+  contributes nothing. If every turn in a conversation is like that and no
+  `user_context_message` is set, `input` lowers to zero wires. The same filter
+  runs in `ShapeLowerer::lower_turn` (`endpoints.rs:984-1006`), so a *captured*
+  reasoning-only assistant reply also lowers to `Some([])` at
+  `multiturn.rs:947` — a live multi-turn path, not only authored input.
+- **What the operator sees.** A `warn!` naming the field
+  (`"message array lowered to zero elements"`), then `"input":[]` on the wire,
+  then the endpoint's own rejection recorded as a failed request. Issuance
+  continues — `OnFailure::for_scheduled_default()` is `Continue`
+  (`request_rate.rs:215-225`) — and the run completes and writes artifacts.
+
+That last point is why an empty fill must not raise `EndpointError`. The trigger
+is *per turn*: an error would propagate `materialize_prepared` →
+`NativeSessionBackend::materialize` (`multiturn.rs:977`) → out of
+`Workload::execute` (`scheduled.rs:1191`, `request_rate.rs:206`) →
+`PhaseExecutionError` (`phase_runtime.rs:1136-1138`), so **one** bad conversation
+in an otherwise healthy dataset would fail the phase and the whole run instead of
+contributing a handful of rejected requests. The empty array is byte-identical to
+what the preceding placeholder convention dispatched.
 
 **The endpoint declares shape only.** It chooses field names, field order, and
 which slot is a literal versus content. It never emits commas or brackets, and

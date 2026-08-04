@@ -446,19 +446,23 @@ impl BodyPlan {
     /// Fill a [`Reserved`](FieldValue::Reserved) slot with pre-serialized wires,
     /// in the position the slot was reserved at.
     ///
-    /// Errors when the plan reserved no such name, when the named field is not a
-    /// reserved slot (already filled, or a plain value), or when `wires` is
-    /// empty. An empty array is not a legitimate body for any dialect that
-    /// reserves a slot: every one of them requires at least one message, so an
-    /// empty fill is a caller bug, and reporting it here names the field instead
-    /// of leaving the server to reject an unexplained body.
+    /// Errors when the plan reserved no slot under `name`, or when the named
+    /// field is not a reserved slot (already filled, or a plain value). That is
+    /// a dialect that dropped, misspelled, or reordered its reservation — a code
+    /// defect, unreachable for any correct dialect and independent of the
+    /// dataset, so failing hard is safe.
+    ///
+    /// An **empty** `wires` list is deliberately *not* an error, because unlike
+    /// the above it is data-dependent. A Responses turn whose recorded output
+    /// items are all replay-unsafe (`reasoning`, `web_search_call`, …) lowers to
+    /// zero wires, and one such conversation inside an otherwise healthy dataset
+    /// must not take the whole run down. The field materializes as `[]` —
+    /// byte-identical to what the preceding empty-array placeholder dispatched —
+    /// so the request is recorded as the server rejection it has always been and
+    /// issuance continues. The warning is what makes that case loud; it fires
+    /// once per affected turn, bounded by the failures already being recorded.
     #[must_use = "an unhandled fill failure leaves the slot unfilled and the body unbuildable"]
     pub fn fill_reserved(&mut self, name: &str, wires: SmallVec<[Bytes; 1]>) -> Result<()> {
-        if wires.is_empty() {
-            return Err(DatasetError::ReservedField(format!(
-                "cannot fill reserved field {name:?} with an empty array"
-            )));
-        }
         let Self::Fields(program) = self else {
             return Err(DatasetError::ReservedField(format!(
                 "cannot fill reserved field {name:?}: this plan carries no named fields"
@@ -472,6 +476,13 @@ impl BodyPlan {
                 "cannot fill {name:?}: the plan reserved no slot under that name"
             )));
         };
+        if wires.is_empty() {
+            tracing::warn!(
+                field = name,
+                "message array lowered to zero elements; dispatching an empty array, \
+                 which the endpoint will reject"
+            );
+        }
         program.replace_at(index, FieldValue::Wires(wires));
         Ok(())
     }
@@ -1125,10 +1136,23 @@ mod tests {
         filled.fill_reserved("messages", wires(1)).unwrap();
         assert!(filled.fill_reserved("messages", wires(1)).is_err());
 
-        // An empty fill is the second silent no-op the old splice had.
-        let mut empty =
-            BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
-        assert!(empty.fill_reserved("messages", SmallVec::new()).is_err());
+    }
+
+    #[test]
+    fn empty_fill_still_dispatches_an_empty_array_rather_than_failing_the_run() {
+        // Data-dependent, unlike a missing reservation: a Responses turn whose
+        // recorded output is entirely replay-unsafe lowers to zero wires. The old
+        // placeholder shipped `[]` and the server rejected that one request while
+        // the run continued; erroring here would instead `?` out of
+        // `Workload::execute` and kill the phase, so one bad conversation in a
+        // healthy dataset would take the whole benchmark down.
+        let mut plan = BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
+        plan.fill_reserved("messages", SmallVec::new()).unwrap();
+        assert_eq!(
+            plan.materialize_standalone().unwrap(),
+            Bytes::from_static(br#"{"messages":[],"model":"m"}"#),
+            "an empty fill must stay byte-identical to the placeholder it replaced"
+        );
     }
 
     #[test]
