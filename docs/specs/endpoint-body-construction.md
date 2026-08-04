@@ -265,13 +265,14 @@ bytes must equal that key-for-key.
 
 Two equivalent foldings exist and must agree byte-for-byte:
 
-- **Merge into the plan** (`merge_overrides` → `set_literal`, `body_plan.rs:250-268`),
-  used when downstream logic must read the effective model / cap / stream flag back
-  off the plan.
+- **Merge into the plan** (`merge_overrides`, `body_plan.rs:559`, → `set_literal`,
+  `body_plan.rs:550`), used when downstream logic must read the effective model /
+  cap / stream flag back off the plan.
 - **Override tail** — serialized members appended after the plan's fields at
-  materialize time (`materialize_fields`, `body_plan.rs:359-364`).
+  emit time (`BodyEmitter::overrides`, the last call in `emit_fields`,
+  `body_plan.rs:1030`).
 
-`effective_from_plan` (`dataset/request.rs:730-756`) reads five field names back
+`effective_from_plan` (`dataset/request.rs:784`) reads five field names back
 off the merged plan to derive the effective request: `model`, `stream`,
 `max_tokens`, `max_completion_tokens`, `max_output_tokens`.
 
@@ -279,7 +280,7 @@ off the merged plan to derive the effective request: `model`, `stream`,
 
 A Fields plan for a static turn does not vary between profiling dispatches, so
 eligible plans are built once at bind and cloned per dispatch
-(`Dataset::precompute_body_plans`, `dataset/dataset.rs:266`).
+(`Dataset::precompute_body_plans`, `dataset/dataset.rs:342`).
 
 ```mermaid
 flowchart TD
@@ -289,9 +290,11 @@ flowchart TD
     C -- "false: graph conversation" --> Z
     C -- true --> D{"context mode"}
     D -- "*WithResponses<br/>(no turn depends on a live reply)" --> E["cache every turn"]
-    D -- "*WithoutResponses<br/>(only turn 0 is reply-independent)" --> F["cache turn 0 only;<br/>continuation turns go live"]
+    D -- "DeltasWithoutResponses" --> F["cache turn 0, and cache each<br/>continuation turn as its authored<br/>turns plus reply-splice positions"]
+    D -- "MessageArrayWithoutResponses" --> F2["cache turn 0 only;<br/>continuation turns go live"]
     E --> G{"per-turn endpoint override,<br/>raw body, or raw_token_ids?"}
     F --> G
+    F2 --> G
     G -- yes --> Z
     G -- no --> H["format_payload → cache the plan"]
     H --> I{"format_payload failed?"}
@@ -300,10 +303,15 @@ flowchart TD
 
 Only the **profiling** phase reads the cache; warmup always takes the live path
 because it folds the system prompt inside the formatter
-(`dataset/request.rs:469-474`). The pass is idempotent — it rebuilds the whole
+(`dataset/request.rs:479`). The pass is idempotent — it rebuilds the whole
 cache from the current conversations on each call.
 
-`precomputable_body()` defaults to `true` (`endpoints/registry.rs:390`). Exactly
+A cache hit is counted (`CACHE_HITS`, `dataset/request.rs`, test builds only)
+because declining one is byte-identical to taking it: the byte-comparison matrix
+cannot tell a hit from a live reformat, so the counter is the only thing standing
+between the saving and a silent regression.
+
+`precomputable_body()` defaults to `true` (`endpoints/registry.rs:414`). Exactly
 three dialect families opt out, each because its body genuinely cannot be known at
 bind: the Jinja template dialect (may reference per-dispatch identity such as
 `x_request_id`), raw passthrough (splices the dispatching turn's own authored
@@ -342,22 +350,26 @@ sequenceDiagram
     Note over C: known defect — see<br/>Future requirements
 ```
 
-**JSON path** (`JsonBodyMaterializer`, `body_plan.rs:290-367`). Walks the Fields
-plan in order into a single contiguous `BytesMut`. Message wires are validated as
-JSON objects as they are spliced — a malformed wire is a construction error, not a
-silent bad body (`body_plan.rs:370-375`). The result is **one** buffer, no
-scatter-gather, honoring transports that require a complete body. HTTP passes it
-to the wire unchanged (`transport/http/sink.rs:387`).
+**JSON path.** Emission is push-based: `emit_fields` (`body_plan.rs:960`) plays
+the program field by field into a `BodyEmitter` (`body_plan.rs:760`), and
+`JsonEmitter` (`body_plan.rs:1037`) is the implementation that concatenates into a
+single contiguous `BytesMut`. `JsonBodyMaterializer` (`body_plan.rs:1147`) is a
+thin driver over that pair, retained as the name callers already use. Message
+wires are validated as JSON objects as they are spliced — a malformed wire is a
+construction error, not a silent bad body (`JsonEmitter::array`,
+`body_plan.rs:1086`). The result is **one** buffer, no scatter-gather, honoring
+transports that require a complete body. HTTP passes it to the wire unchanged.
 
-A `Raw` plan takes a shortcut: `splice_raw_object` returns the stored `Bytes`
-unchanged when the override set is empty (`dataset/materialize.rs:238-242`), so
-verbatim replay costs a refcount bump.
+A `Raw` or `Prebuilt` plan takes a shortcut through `BodyEmitter::whole`:
+`splice_raw_object` returns the stored `Bytes` unchanged when the override set is
+empty (`dataset/materialize.rs:238`), so verbatim replay costs a refcount bump.
 
-**gRPC path.** There is **no protobuf materializer.** The scheduled path hands gRPC
-the same materialized JSON bytes (`transport/core/dispatch.rs:238`); the sink
-parses them back into a `serde_json::Value` (`transport/grpc/sink.rs:336`); and
+**gRPC path.** There is **no protobuf materializer.** The scheduled path hands
+gRPC the same body. A `RequestBody::Value` is taken as it stands; every other form
+is assembled to JSON bytes and parsed back into a `serde_json::Value`
+(`transport/grpc/sink.rs:349-355`); and
 `encode_model_infer_request` walks that tree into protobuf
-(`transport/grpc/codec.rs:54-55`). Every gRPC request therefore pays a full JSON
+(`transport/grpc/codec.rs:54`). Every gRPC request therefore pays a full JSON
 serialize **and** a full JSON parse for structure the runtime already had. This is
 a known defect, scoped in [Future requirements](#future-requirements).
 
@@ -367,16 +379,23 @@ For precision, these are all of them:
 
 | Site | What it reads | Cost |
 |---|---|---|
-| `resolve_turn` → `message_wire` (`dataset/request.rs:1181`) | lowered message wires | `Bytes` refcount clone |
-| `raw_body_handle` → `BodyPlan::Raw` materialize (`dataset/request.rs:349`, `:449`) | a complete prebuilt body | `Bytes` refcount clone |
+| `resolve_turn_inner` → `message_wire` (`dataset/request.rs:1541`, `dataset/materialize.rs:179`) | lowered message wires | `Bytes` refcount clone |
+| `raw_body_handle` → `BodyPlan::Raw` materialize (`dataset/request.rs:353`, `:457`) | a complete prebuilt body | `Bytes` refcount clone |
 | `resolve_prompt` (system / user context) | prompt text | owned `String` |
 
-`JsonBodyMaterializer::materialize(plan, store, overrides)` has exactly two
-non-test callers, both passing `BodyPlan::raw`. Every Fields plan goes through
-`materialize_standalone` (`body_plan.rs:272-275`), which materializes against a
-freshly-constructed **empty** store — sound precisely because no reachable Fields
-plan contains a handle. The empty store costs nothing (`InMemorySegmentStore`
-wraps a `Box<[Segment]>`, whose `Default` does not allocate).
+A Fields plan reaches the wire through one of two store-free entry points, both
+materializing against a freshly-constructed **empty** store — sound precisely
+because no reachable Fields plan contains a handle:
+
+- `materialize_standalone` (`body_plan.rs:567`) for a plan that carries its whole
+  body, and
+- `materialize_spliced` (`body_plan.rs:578`) for a cached continuation plan, which
+  additionally interleaves this dispatch's captured reply wires at the positions
+  the plan reserved. It is byte-identical to `materialize_standalone` when there
+  is nothing to splice.
+
+The empty store costs nothing (`InMemorySegmentStore` wraps a `Box<[Segment]>`,
+whose `Default` does not allocate).
 
 ## Invariants (the acceptance contract)
 
