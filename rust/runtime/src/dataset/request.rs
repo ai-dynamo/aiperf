@@ -492,7 +492,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         .endpoint_turns(store, splices_lowered_wires(endpoint.descriptor(), phase))?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
-                    let conversation_id = session.conversation_id().as_str().to_string();
                     let request = PreparedRequest::new(
                         primary_model_name,
                         &turns,
@@ -501,7 +500,9 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         phase,
                         None,
                         None,
-                        Some(&conversation_id),
+                        // Borrowed from the session, which outlives `request`;
+                        // the identifier needs no per-dispatch copy.
+                        Some(session.conversation_id().as_str()),
                     );
                     let plan = endpoint.format_payload(&request)?;
                     if overrides.is_empty() {
@@ -1075,6 +1076,7 @@ impl ConversationSession {
             turn.audios.clear();
             turn.videos.clear();
             turn.raw_messages = None;
+            turn.role = None;
         }
         self.replies.push(CapturedReply {
             after_turn,
@@ -1405,6 +1407,10 @@ fn resolve_turn_inner(
         ..EndpointTurn::default()
     };
     if skip_lowered_content && resolved.lowered.is_some() {
+        // `role` shares the media's fate: the only reader is
+        // `render_turn_message`, which a spliced turn never reaches, and the
+        // role is already baked into the lowered wire.
+        resolved.role = None;
         return Ok(resolved);
     }
     for group in &turn.content {

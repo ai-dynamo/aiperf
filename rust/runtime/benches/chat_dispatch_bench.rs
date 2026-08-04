@@ -47,7 +47,7 @@ use aiperf_runtime::dataset::{Dataset, TurnEndpointLookup};
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
 use aiperf_runtime::endpoints::{
     CreditPhase, EndpointId, EndpointRegistry, PreparedEndpoint, PreparedEndpointTable,
-    RawEndpointConfig, ShapeLowerer,
+    RawEndpointConfig, ShapeLowerer, TurnMessageLowerer,
 };
 use aiperf_runtime::multiturn::{
     ConversationSource, IssuedCredit, NativeDatasetConversationSource, PreparedEndpointReference,
