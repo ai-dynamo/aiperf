@@ -114,7 +114,12 @@ pub struct ProfileFlags {
     /// partition with no shared gate — higher throughput, but aggregate
     /// concurrency/rate are only approximate, so NOT byte-exact), or
     /// `global-hop` (every request routed through one coordinator-owned
-    /// dispatcher — exact global issuance order, lowest throughput).
+    /// dispatcher — exact global issuance order, lowest throughput), or
+    /// `global-push` (one issuer stamps global order and pushes to workers
+    /// without awaiting any individual request, after the Python
+    /// `StickyCreditRouter`; same sticky/least-loaded worker selection as
+    /// `global-hop`, without the coordinator sitting in each request's
+    /// lifetime).
     ///
     /// The cost gradient is very uneven, so read it as two tiers rather than
     /// three steps. `sharded` and `global` are close: on a 144-core box against
