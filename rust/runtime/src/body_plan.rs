@@ -44,9 +44,12 @@ pub type FieldName = Cow<'static, str>;
 /// the same count as re-serializing at materialization, but the bytes are then
 /// also free to measure, which is what lets [`FieldProgram`] reserve exactly.
 ///
-/// This matters most where a literal is large: `vllm_generate` binds an
-/// ISL-sized `token_ids` integer array, whose serialization dwarfs the memcpy
-/// that splicing the cached wire costs.
+/// This matters most where a literal is large. `from_object` converts a
+/// top-level array to spliceable [`Wires`](FieldValue::Wires) only when every
+/// element is an *object*, so the prompt-sized `input` string arrays that the
+/// embeddings and rankings endpoints bind stay literals — and those plans also
+/// carry `model`, so [`prebuilt_if_static`](BodyPlan::prebuilt_if_static) cannot
+/// collapse them and the program stays alive for the whole run.
 ///
 /// The wire is absent only when the value would not serialize, in which case
 /// materialization re-attempts it and surfaces the error.
@@ -59,7 +62,15 @@ pub struct LiteralValue {
 impl LiteralValue {
     /// Bind a value, serializing its wire once.
     pub fn new(value: Value) -> Self {
-        let wire = serde_json::to_vec(&value).ok().map(Bytes::from);
+        // `to_vec` starts at a 128-byte `Vec` and grows by doubling, so its
+        // capacity almost never equals its length. `Bytes::from(Vec)` takes the
+        // free `into_boxed_slice` path *only* on that equality; otherwise it both
+        // allocates a `Shared` and retains the slack — which a cached plan then
+        // holds for the whole run. Right-sizing first takes the promotable
+        // `Box<[u8]>` path: no allocation here, and `Shared` only if it is cloned.
+        let wire = serde_json::to_vec(&value)
+            .ok()
+            .map(|bytes| Bytes::from(bytes.into_boxed_slice()));
         Self { value, wire }
     }
 
@@ -91,13 +102,16 @@ impl From<Value> for LiteralValue {
 ///
 /// Content values are *segment references*, never inline bytes: the endpoint
 /// declares which stored segment fills a slot and the materializer splices its
-/// pre-serialized wire bytes. Only endpoint-generated scalars/structs that have
-/// no content segment (`model`, `max_tokens`, `stream`, …) are [`Literal`].
+/// pre-serialized wire bytes. Everything endpoint-generated that has no content
+/// segment is a [`Literal`] — usually a scalar or a small struct (`model`,
+/// `max_tokens`, `stream`, `sampling_params`, …), but also prompt-sized values
+/// that are not object arrays, such as an embeddings `input` string array or
+/// `vllm_generate`'s token-ID array.
 ///
 /// [`Literal`]: FieldValue::Literal
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldValue {
-    /// An endpoint-generated scalar or struct, serialized once when bound.
+    /// An endpoint-generated value with no content segment, serialized when bound.
     Literal(LiteralValue),
     /// One pre-serialized content segment (system block, tools, a nested body).
     Segment(Handle),
@@ -920,6 +934,30 @@ mod tests {
             plan.materialize_standalone().unwrap(),
             Bytes::from(serde_json::to_vec(&object).unwrap())
         );
+    }
+
+    #[test]
+    fn literal_wire_retains_no_capacity_slack() {
+        // `serde_json::to_vec` hands back a 128-byte-minimum, doubling-grown Vec.
+        // Handing that to `Bytes::from` directly would retain the slack for the
+        // life of a cached plan and allocate a `Shared` eagerly; right-sizing
+        // first takes the promotable path. `BytesMut::from` reclaims a unique
+        // buffer without copying, so its capacity reports what was retained.
+        for value in [
+            Value::Bool(false),
+            Value::String("m".into()),
+            serde_json::json!((0..4096).collect::<Vec<u32>>()),
+        ] {
+            let expected = serde_json::to_vec(&value).unwrap().len();
+            let wire = LiteralValue::new(value).wire.expect("value serializes");
+            assert_eq!(wire.len(), expected);
+            assert_eq!(
+                BytesMut::from(wire).capacity(),
+                expected,
+                "literal wire retained capacity slack; \
+                 was `Bytes::from(Vec)` restored in place of the boxed slice?"
+            );
+        }
     }
 
     #[test]
