@@ -490,9 +490,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             // drops the whole turn back to live formatting.
             let mut groups: SmallVec<[(u32, &[Bytes]); 4]> = SmallVec::new();
             let cached = cached.filter(|cached| session.reply_wire_groups(cached, &mut groups));
-            let splice = cached
-                .and_then(|cached| cached.replies.as_ref())
-                .map(|replies| WireSplice::new(replies.field, &groups));
             let mut plan = match cached {
                 // Shared, not copied: a dispatch that mutates nothing dispatches
                 // straight off the dataset's plan.
@@ -523,6 +520,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                     Arc::new(plan)
                 }
             };
+            let splice = cached
+                .and_then(|cached| cached.replies.as_ref())
+                .filter(|replies| !overrides_replace_field(&plan, replies.field, overrides))
+                .map(|replies| WireSplice::new(replies.field, &groups));
             let (effective, stream_fix) = effective_from_plan(
                 &plan,
                 current,
@@ -1130,8 +1131,7 @@ impl ConversationSession {
             return false;
         }
         for (index, (position, reply)) in replies.positions.iter().zip(&self.replies).enumerate() {
-            let wires = reply.turn.lowered.as_deref();
-            match wires {
+            match reply.turn.lowered.as_deref() {
                 Some(wires)
                     if reply.after_turn == index && reply_splices_only_wires(&reply.turn) =>
                 {
@@ -1375,6 +1375,28 @@ pub(crate) fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
             })
             .collect(),
         _ => vec![turn],
+    }
+}
+
+/// Whether a dispatch override rewrites the very field a cached plan's captured
+/// replies splice into.
+///
+/// Such an override supersedes the entire array — the authored turns and the
+/// replies alike — exactly as it does on the live path, where `merge_overrides`
+/// runs after the array is fully assembled. So the splice is dropped rather than
+/// applied to a field the merge has already turned into a literal.
+///
+/// Compared against the plan's own field name rather than the message-array
+/// names the dialects use, since an override naming `input` must not cancel a
+/// splice into a `messages` field, or vice versa: that would dispatch a
+/// continuation body silently missing its history.
+fn overrides_replace_field(plan: &BodyPlan, field: usize, overrides: &Overrides) -> bool {
+    match plan {
+        BodyPlan::Fields(program) if !overrides.is_empty() => program
+            .fields()
+            .get(field)
+            .is_some_and(|(name, _)| overrides.fields().contains_key(name.as_ref())),
+        _ => false,
     }
 }
 
@@ -3212,7 +3234,7 @@ mod tests {
             ] {
                 for with_max_tokens in [false, true] {
                     for with_extra_body in [false, true] {
-                        for overrides_variant in 0..2 {
+                        for overrides_variant in 0..3 {
                             let mut pool = SegmentPool::new();
                             let turns = vec![
                                 text_turn(
@@ -3251,14 +3273,29 @@ mod tests {
                             let cached = Arc::new(cached_ds);
                             let uncached = Arc::new(uncached_ds);
 
-                            let overrides = if overrides_variant == 0 {
-                                Overrides::new()
-                            } else {
-                                let mut overrides = Overrides::new();
+                            let mut overrides = Overrides::new();
+                            if overrides_variant > 0 {
                                 overrides.set_stream(true);
                                 overrides.set_model("override-model");
-                                overrides
-                            };
+                            }
+                            if overrides_variant == 2 {
+                                // An override naming the message-array field
+                                // replaces the whole array, replies included, so
+                                // the splice must stand down rather than be
+                                // applied to a field the merge rewrote. The
+                                // *other* dialect's field name is also present,
+                                // to pin that it does not cancel this splice.
+                                let (own, other) = if endpoint_id == "responses" {
+                                    ("input", "messages")
+                                } else {
+                                    ("messages", "input")
+                                };
+                                overrides.insert(
+                                    own,
+                                    serde_json::json!([{"role": "user", "content": "replaced"}]),
+                                );
+                                overrides.insert(other, Value::from(7));
+                            }
 
                             for turn_index in 0..3 {
                                 let entry = cached
@@ -3299,7 +3336,9 @@ mod tests {
                                 // authored turns, so a continuation body that
                                 // equals it never spliced anything and the row
                                 // above would have compared two unspliced bodies.
-                                if splices {
+                                // Not asserted for the array-replacing override,
+                                // which is meant to leave nothing to splice.
+                                if splices && overrides_variant != 2 {
                                     assert_ne!(
                                         entry.plan.materialize_standalone().unwrap().len(),
                                         from_cache.len(),
