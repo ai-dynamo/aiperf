@@ -47,9 +47,9 @@ pub type FieldName = Cow<'static, str>;
 /// This matters most where a literal is large. `from_object` converts a
 /// top-level array to spliceable [`Wires`](FieldValue::Wires) only when every
 /// element is an *object*, so the prompt-sized `input` string arrays that the
-/// embeddings and rankings endpoints bind stay literals — and those plans also
-/// carry `model`, so [`prebuilt_if_static`](BodyPlan::prebuilt_if_static) cannot
-/// collapse them and the program stays alive for the whole run.
+/// embeddings endpoints bind stay literals — and those plans also carry `model`,
+/// so [`prebuilt_if_static`](BodyPlan::prebuilt_if_static) cannot collapse them
+/// and the program stays alive for the whole run.
 ///
 /// The wire is absent only when the value would not serialize, in which case
 /// materialization re-attempts it and surfaces the error.
@@ -122,6 +122,17 @@ pub enum FieldValue {
     /// identically to [`Segments`](FieldValue::Segments); the materializer needs
     /// no store lookup. Serialized exactly once by the producer, never here.
     Wires(SmallVec<[Bytes; 1]>),
+    /// A slot that holds a field's ordinal position until
+    /// [`fill_reserved`](BodyPlan::fill_reserved) supplies its wires.
+    ///
+    /// A dialect that builds its body as a `serde_json::Map` gets field order
+    /// from insertion order, so the message field has to be inserted *before*
+    /// the fields that follow it — but its wires are assembled separately and
+    /// are not a `Value`. `Reserved` is that position, and it has no
+    /// serialization: materializing one is an error rather than an empty array,
+    /// so a forgotten or misspelled fill fails loudly instead of dispatching a
+    /// body with no messages.
+    Reserved,
 }
 
 /// An ordered named-field program plus the exact serialized length of the body
@@ -135,7 +146,9 @@ pub enum FieldValue {
 ///
 /// It is `None` whenever a [`Segment`](FieldValue::Segment) or
 /// [`Segments`](FieldValue::Segments) value makes the length depend on a segment
-/// store the program does not hold, and whenever a literal fails to serialize.
+/// store the program does not hold, whenever a literal fails to serialize, and
+/// whenever a [`Reserved`](FieldValue::Reserved) slot is still unfilled — such a
+/// program has no serialized length at all, since materializing it is an error.
 /// A `None` hint costs only the old capacity heuristic; a *wrong* hint would be
 /// a silent regression, so every mutator either maintains it exactly or clears
 /// it, and a debug assertion checks it against the finished buffer.
@@ -254,7 +267,9 @@ fn value_len(value: &FieldValue) -> Option<usize> {
         // The wire was serialized when the value was bound, so its exact length
         // is free here and the write path splices it rather than re-serializing.
         FieldValue::Literal(literal) => literal.wire().map(Bytes::len),
-        FieldValue::Segment(_) | FieldValue::Segments(_) => None,
+        // A reserved slot has no serialization, so a program still holding one
+        // has no length — materializing it errors rather than producing a body.
+        FieldValue::Segment(_) | FieldValue::Segments(_) | FieldValue::Reserved => None,
         FieldValue::Wires(wires) => Some(array_len(wires.iter().map(Bytes::len), wires.len())),
     }
 }
@@ -378,9 +393,17 @@ impl BodyPlan {
             let name = Cow::Owned(key.clone());
             match value.as_array() {
                 Some(elements) if !elements.is_empty() && elements.iter().all(Value::is_object) => {
+                    // Right-size before `Bytes::from`, exactly as `LiteralValue::new`
+                    // does: `to_vec` leaves capacity slack that the `Vec` path would
+                    // both retain and pay a `Shared` allocation for. These wires are
+                    // held for the run by every cached chat/embeddings plan, so the
+                    // slack is retained per message rather than per body.
                     let wires = elements
                         .iter()
-                        .map(|element| serde_json::to_vec(element).map(Bytes::from))
+                        .map(|element| {
+                            serde_json::to_vec(element)
+                                .map(|bytes| Bytes::from(bytes.into_boxed_slice()))
+                        })
                         .collect::<std::result::Result<SmallVec<[Bytes; 1]>, _>>()?;
                     plan = plan.push(name, FieldValue::Wires(wires));
                 }
@@ -390,17 +413,67 @@ impl BodyPlan {
         Ok(plan)
     }
 
-    /// Replace an existing message-array field with pre-serialized wires while
-    /// preserving field order. Empty wire lists leave the field unchanged.
-    pub fn splice_message_wires(&mut self, name: &str, wires: SmallVec<[Bytes; 1]>) {
+    /// Build a plan from an object, converting each named field to an unfilled
+    /// [`Reserved`](FieldValue::Reserved) slot.
+    ///
+    /// The object's entry for a reserved name exists only to fix that field's
+    /// ordinal position; its value is discarded. Every reserved name must be
+    /// present — a name the object never declared is an error here rather than
+    /// a body silently missing that field, which is what a dialect that forgot
+    /// or misspelled its position marker used to dispatch.
+    pub fn from_object_reserving(
+        object: &serde_json::Map<String, Value>,
+        reserved: &[&str],
+    ) -> Result<Self> {
+        let mut program = match Self::from_object(object)? {
+            Self::Fields(program) => program,
+            // `from_object` builds only `Fields`; the other plans carry no
+            // named fields and so can reserve nothing.
+            other => return Ok(other),
+        };
+        for name in reserved {
+            let Some(index) = program.position(name) else {
+                return Err(DatasetError::ReservedField(format!(
+                    "cannot reserve {name:?}: the payload declares no such field, \
+                     so it has no position to hold"
+                )));
+            };
+            program.replace_at(index, FieldValue::Reserved);
+        }
+        Ok(Self::Fields(program))
+    }
+
+    /// Fill a [`Reserved`](FieldValue::Reserved) slot with pre-serialized wires,
+    /// in the position the slot was reserved at.
+    ///
+    /// Errors when the plan reserved no such name, when the named field is not a
+    /// reserved slot (already filled, or a plain value), or when `wires` is
+    /// empty. An empty array is not a legitimate body for any dialect that
+    /// reserves a slot: every one of them requires at least one message, so an
+    /// empty fill is a caller bug, and reporting it here names the field instead
+    /// of leaving the server to reject an unexplained body.
+    #[must_use = "an unhandled fill failure leaves the slot unfilled and the body unbuildable"]
+    pub fn fill_reserved(&mut self, name: &str, wires: SmallVec<[Bytes; 1]>) -> Result<()> {
         if wires.is_empty() {
-            return;
+            return Err(DatasetError::ReservedField(format!(
+                "cannot fill reserved field {name:?} with an empty array"
+            )));
         }
-        if let Self::Fields(program) = self
-            && let Some(index) = program.position(name)
-        {
-            program.replace_at(index, FieldValue::Wires(wires));
-        }
+        let Self::Fields(program) = self else {
+            return Err(DatasetError::ReservedField(format!(
+                "cannot fill reserved field {name:?}: this plan carries no named fields"
+            )));
+        };
+        let index = program.position(name).filter(|index| {
+            matches!(program.fields()[*index], (_, FieldValue::Reserved))
+        });
+        let Some(index) = index else {
+            return Err(DatasetError::ReservedField(format!(
+                "cannot fill {name:?}: the plan reserved no slot under that name"
+            )));
+        };
+        program.replace_at(index, FieldValue::Wires(wires));
+        Ok(())
     }
 
     /// Borrow a top-level literal field's value by name.
@@ -574,6 +647,15 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
                     push_message(&mut body, wire, element)?;
                 }
                 body.put_u8(b']');
+            }
+            // The partially-written buffer is dropped with the error, so an
+            // unfilled slot yields no body at all rather than a body missing
+            // the field the endpoint meant to put here.
+            FieldValue::Reserved => {
+                return Err(DatasetError::ReservedField(format!(
+                    "field {name:?} was reserved but never filled; the endpoint must \
+                     call fill_reserved before the body is materialized"
+                )));
             }
         }
     }
@@ -979,14 +1061,97 @@ mod tests {
         assert!(JsonBodyMaterializer::materialize(&plan, &store, &Overrides::new()).is_ok());
 
         // Replacing the segment array with wires makes the length knowable again.
-        plan.splice_message_wires(
-            "messages",
-            smallvec::smallvec![Bytes::from_static(br#"{"role":"user","content":"hi"}"#)],
+        let BodyPlan::Fields(program) = &mut plan else {
+            panic!("field plan");
+        };
+        let index = program.position("messages").unwrap();
+        program.replace_at(
+            index,
+            FieldValue::Wires(smallvec::smallvec![Bytes::from_static(
+                br#"{"role":"user","content":"hi"}"#
+            )]),
         );
         assert_eq!(
             hint(&plan),
             Some(plan.materialize_standalone().unwrap().len())
         );
+    }
+
+    /// The payload key a dialect inserts purely to hold a field's position.
+    fn reserving_payload() -> serde_json::Map<String, Value> {
+        let mut payload = serde_json::Map::new();
+        payload.insert("messages".into(), Value::Null);
+        payload.insert("model".into(), Value::String("m".into()));
+        payload
+    }
+
+    fn wires(count: usize) -> SmallVec<[Bytes; 1]> {
+        (0..count)
+            .map(|_| Bytes::from_static(br#"{"role":"user","content":"hi"}"#))
+            .collect()
+    }
+
+    #[test]
+    fn unfilled_reserved_field_is_an_error_not_an_empty_array() {
+        let plan = BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
+        assert!(
+            plan.materialize_standalone().is_err(),
+            "an unfilled Reserved field must fail loudly, not emit []"
+        );
+        // And it must not be paying for a capacity hint it cannot honor.
+        assert_eq!(hint(&plan), None);
+    }
+
+    #[test]
+    fn filling_an_absent_field_is_an_error() {
+        let mut plan = BodyPlan::from_object_reserving(&serde_json::Map::new(), &[]).unwrap();
+        assert!(
+            plan.fill_reserved("messages", wires(1)).is_err(),
+            "filling a field the plan does not declare must error"
+        );
+
+        // Reserving a name the payload never declared fails at construction —
+        // the failure mode of a dialect that forgot or misspelled its marker.
+        assert!(BodyPlan::from_object_reserving(&reserving_payload(), &["mesages"]).is_err());
+
+        // A declared-but-not-reserved field is not a fill target either: that is
+        // a dialect that dropped the reservation but kept the fill.
+        let mut unreserved = BodyPlan::from_object_reserving(&reserving_payload(), &[]).unwrap();
+        assert!(unreserved.fill_reserved("messages", wires(1)).is_err());
+
+        // Nor is a slot that was already filled.
+        let mut filled =
+            BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
+        filled.fill_reserved("messages", wires(1)).unwrap();
+        assert!(filled.fill_reserved("messages", wires(1)).is_err());
+
+        // An empty fill is the second silent no-op the old splice had.
+        let mut empty = BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
+        assert!(empty.fill_reserved("messages", SmallVec::new()).is_err());
+    }
+
+    #[test]
+    fn filled_reservation_is_byte_identical_to_the_placeholder_splice() {
+        // The reserved slot must hold the field's ordinal position exactly: a
+        // slot that drifted to the end would still be valid JSON and still
+        // carry every message, so only the bytes catch it.
+        let message = br#"{"role":"user","content":"hi"}"#;
+        let expected = Bytes::from_static(
+            br#"{"messages":[{"role":"user","content":"hi"}],"model":"m","stream":true}"#,
+        );
+
+        let mut payload = serde_json::Map::new();
+        payload.insert("messages".into(), Value::Null);
+        payload.insert("model".into(), Value::String("m".into()));
+        payload.insert("stream".into(), Value::Bool(true));
+        let mut plan = BodyPlan::from_object_reserving(&payload, &["messages"]).unwrap();
+        plan.fill_reserved("messages", smallvec::smallvec![Bytes::from_static(message)])
+            .unwrap();
+
+        let body = plan.materialize_standalone().unwrap();
+        assert_eq!(body, expected);
+        // Filling restores an exact hint: the slot's length became knowable.
+        assert_eq!(hint(&plan), Some(body.len()));
     }
 
     #[test]

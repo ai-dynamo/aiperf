@@ -348,9 +348,9 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         let message_wires = format_chat_message_wires(request, turns)?;
         let last = turns.last().expect("non-empty turns");
         let mut payload = Map::new();
-        // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition.
-        payload.insert("messages".into(), Value::Array(Vec::new()));
+        // Reserved slot: the value is discarded, the key fixes the field's
+        // insertion position, and `fill_reserved` supplies the real wires.
+        payload.insert("messages".into(), Value::Null);
         payload.insert(
             "model".into(),
             Value::String(
@@ -379,9 +379,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        let mut plan = BodyPlan::from_object(&payload)?;
-        plan.splice_message_wires("messages", message_wires);
-        Ok(plan)
+        build_reserved_plan(&payload, "messages", message_wires)
     }
 }
 
@@ -567,9 +565,9 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         let last = turns.last().expect("non-empty turns");
         let input_wires = format_responses_input_wires(request, turns)?;
         let mut payload = Map::new();
-        // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition.
-        payload.insert("input".into(), Value::Array(Vec::new()));
+        // Reserved slot: the value is discarded, the key fixes the field's
+        // insertion position, and `fill_reserved` supplies the real wires.
+        payload.insert("input".into(), Value::Null);
         payload.insert(
             "model".into(),
             Value::String(
@@ -593,9 +591,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        let mut plan = BodyPlan::from_object(&payload)?;
-        plan.splice_message_wires("input", input_wires);
-        Ok(plan)
+        build_reserved_plan(&payload, "input", input_wires)
     }
 }
 
@@ -745,6 +741,27 @@ impl PreparedEndpointBehavior for ChatEmbeddingsEndpoint {
     ) -> EndpointResult<BodyPlan> {
         ChatEndpoint.format_prepared_payload(request, config)
     }
+}
+
+/// Build a message-array body plan: reserve `field` at the position its payload
+/// key holds, then fill it with the assembled wires.
+///
+/// Both halves are fallible on purpose. Reserving a name the payload never
+/// declared, and filling a name the plan never reserved, are the two ways the
+/// old empty-array-placeholder convention shipped a body with no message array
+/// and no error; here each is an [`EndpointError::InvalidRequest`] naming the
+/// field.
+pub(crate) fn build_reserved_plan(
+    payload: &Map<String, Value>,
+    field: &str,
+    wires: SmallVec<[Bytes; 1]>,
+) -> EndpointResult<BodyPlan> {
+    let build = || -> crate::dataset::error::Result<BodyPlan> {
+        let mut plan = BodyPlan::from_object_reserving(payload, &[field])?;
+        plan.fill_reserved(field, wires)?;
+        Ok(plan)
+    };
+    build().map_err(|error| EndpointError::InvalidRequest(error.to_string()))
 }
 
 pub(crate) fn require_prepared_turns<'a>(
