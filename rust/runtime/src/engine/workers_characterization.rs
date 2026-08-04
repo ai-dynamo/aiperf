@@ -525,6 +525,26 @@ mod tests {
         keys
     }
 
+    /// The conversation identities a run actually drew, as a sorted multiset.
+    ///
+    /// `sorted_data_keys` cannot express this: `synthetic_spec` pins every
+    /// conversation to the same ISL/OSL, so a `(ISL, OSL)` multiset is blind to
+    /// WHICH conversation each record came from.
+    fn sorted_conversation_ids(rows: &[Value]) -> Vec<String> {
+        let mut ids: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                row.get("metadata")
+                    .and_then(|metadata| metadata.get("conversation_id"))
+                    .and_then(Value::as_str)
+                    .expect("record metadata carries a conversation_id")
+                    .to_string()
+            })
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// Proves the whole point of `DispatchMode::Global`: with a concurrency cap
     /// that does NOT evenly divide `workers` (`concurrency = 3`, `workers = 4`),
     /// `Sharded` mode's per-thread `owned_positions(cap, t, workers).max(1)`
@@ -1387,6 +1407,65 @@ mod tests {
             sorted_data_keys(&baseline),
             sorted_data_keys(&global),
             "Global workers>1 must be DATA-identical to the single-thread baseline"
+        );
+    }
+
+    /// `Global` at `workers > 1` must draw the SAME conversation multiset a
+    /// single unpartitioned issuer draws.
+    ///
+    /// Today it does not. Each shard narrows the corpus to its authored-index
+    /// residue class (`multiturn.rs` `new_with_endpoint`) and recycles inside
+    /// it, so the shards wrap at their own boundaries instead of once at the end
+    /// of the whole corpus. `entries = 5`, `workers = 2`, `requests = 8` is the
+    /// smallest fixture that exposes it: 5 does not divide 2, so the two shards'
+    /// cycles fall out of step with the single-issuer walk.
+    ///
+    /// `sorted_data_keys` cannot see this (every conversation has the same
+    /// ISL/OSL), which is why the identity oracle exists.
+    #[test]
+    fn global_workers_gt_1_draws_the_single_issuer_conversation_sequence() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 5;
+        let requests = 8u64;
+        let phase = || -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "concurrency": 2,
+            }))
+            .unwrap()
+        };
+
+        // The authority: one issuer over the whole corpus, recycling once at the
+        // end of it.
+        let baseline = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        assert_pinned_records(&baseline, requests as usize, true);
+
+        let global = run_dispatch_records(
+            &registry,
+            &mock,
+            2,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::Global,
+        );
+        assert_pinned_records(&global, requests as usize, true);
+
+        assert_eq!(
+            sorted_conversation_ids(&global),
+            sorted_conversation_ids(&baseline),
+            "Global at workers>1 must draw the single issuer's conversation \
+             multiset, not W interleaved per-shard recycle cycles"
         );
     }
 
