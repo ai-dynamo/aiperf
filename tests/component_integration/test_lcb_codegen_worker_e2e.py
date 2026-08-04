@@ -34,6 +34,48 @@ def _sample_and_solution() -> tuple[list[dict[str, str]], list[list[str]]]:
     return sample, [["a, b = map(int, input().split())\nprint(a + b)"]]
 
 
+def _make_problem(
+    io_pairs: list[tuple[str, str]], solution: str
+) -> tuple[list[dict[str, str]], list[list[str]]]:
+    sample = [
+        {
+            "input_output": orjson.dumps(
+                {
+                    "inputs": [i for i, _ in io_pairs],
+                    "outputs": [o for _, o in io_pairs],
+                    "fn_name": None,
+                }
+            ).decode()
+        }
+    ]
+    return sample, [[solution]]
+
+
+# Four distinct problems with distinct expected verdicts so per-problem
+# misalignment (e.g. from a batching bug) can't pass all assertions.
+_CONCURRENT_PROBLEMS: list[tuple[list[dict[str, str]], list[list[str]], float]] = [
+    (
+        *_make_problem(
+            [("1 2\n", "3\n"), ("10 20\n", "30\n")],
+            "a,b=map(int,input().split());print(a+b)",
+        ),
+        1.0,
+    ),
+    (
+        *_make_problem([("5\n", "25\n"), ("3\n", "9\n")], "n=int(input());print(n*n)"),
+        1.0,
+    ),
+    (
+        *_make_problem([("4\n", "16\n")], "print('wrong')"),  # deliberately wrong
+        0.0,
+    ),
+    (
+        *_make_problem([("7\n", "49\n"), ("2\n", "4\n")], "n=int(input());print(n**2)"),
+        1.0,
+    ),
+]
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_worker_grades_correct_stdin_solution() -> None:
@@ -52,20 +94,27 @@ async def test_worker_grades_correct_stdin_solution() -> None:
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_worker_grades_multiple_problems_concurrently() -> None:
-    """N concurrent grade_codegen() calls all resolve correctly.
+    """Concurrent grade_codegen() calls with distinct problems all return the
+    correct per-problem verdict.
 
-    This exercises the batch-drain path: all N requests are sent before the
-    worker responds, so they are drained into a single codegen_metrics call and
-    processed in parallel by lighteval's ProcessPoolExecutor.
+    Uses four problems with different expected pass@1 values (including one
+    deliberately wrong) so per-problem misalignment from a batching bug cannot
+    pass all assertions — identical problems would mask misattributed results.
     """
     worker = CodegenGradingWorker()
-    sample, code = _sample_and_solution()
-    n = 4
     try:
         results = await asyncio.gather(
-            *[worker.grade_codegen(sample, code, timeout=240) for _ in range(n)]
+            *[
+                worker.grade_codegen(sample, code, timeout=240)
+                for sample, code, _ in _CONCURRENT_PROBLEMS
+            ]
         )
-        assert len(results) == n
-        assert all(float(r["pass@1"]) == 1.0 for r in results), results
+        assert len(results) == len(_CONCURRENT_PROBLEMS)
+        for i, ((_, _, expected), result) in enumerate(
+            zip(_CONCURRENT_PROBLEMS, results, strict=True)
+        ):
+            assert float(result["pass@1"]) == expected, (
+                f"problem {i}: expected pass@1={expected}, got {result}"
+            )
     finally:
         await worker.aclose()
