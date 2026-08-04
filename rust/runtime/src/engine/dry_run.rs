@@ -1207,6 +1207,7 @@ mod tests {
                 model: "fixture-model".to_string(),
                 transport: TransportSinkConfig::default(),
                 raw_enabled: false,
+                inputs_enabled: false,
                 prepared_endpoints: None,
                 hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
                 virtual_worker_width: None,

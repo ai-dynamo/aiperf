@@ -250,6 +250,9 @@ pub(crate) async fn execute_native_inner(
             model: primary_model.clone(),
             transport: transport_config,
             raw_enabled: request.artifacts.raw_path.is_some(),
+            // Mirrors the `RunCapture` below: under exact-fold `inputs.json` comes
+            // from the resident dataset at the coordinator, not from dispatch.
+            inputs_enabled: request.artifacts.inputs_path.is_some() && !exact_fold,
             prepared_endpoints,
             hop_routing: if request.dispatch_mode
                 == crate::engine::protocol::DispatchMode::GlobalHop

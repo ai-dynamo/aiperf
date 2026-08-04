@@ -87,6 +87,7 @@ pub struct GrpcSinkBuilder {
     prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
     bindings: GrpcBindingRegistry,
     raw_enabled: bool,
+    inputs_enabled: bool,
 }
 
 impl GrpcSinkBuilder {
@@ -98,6 +99,7 @@ impl GrpcSinkBuilder {
             prepared_endpoints: config.prepared_endpoints.clone(),
             bindings,
             raw_enabled: config.raw_enabled,
+            inputs_enabled: config.inputs_enabled,
         }
     }
 }
@@ -119,6 +121,7 @@ impl ExecutionSinkBuilder for GrpcSinkBuilder {
             self.prepared_endpoints.as_deref(),
             self.bindings.clone(),
             self.raw_enabled,
+            self.inputs_enabled,
         )
     }
 }
@@ -160,6 +163,7 @@ fn prepare_grpc_sink(
     prepared_endpoints: Option<&dyn PreparedEndpointTableFactory>,
     bindings: GrpcBindingRegistry,
     capture_raw: bool,
+    inputs_enabled: bool,
 ) -> Result<GrpcTransportSink> {
     let endpoints = prepared_endpoints
         .ok_or_else(|| anyhow!("gRPC execution requires a prepared endpoint table factory"))?
@@ -173,10 +177,14 @@ fn prepare_grpc_sink(
         bindings,
         Rc::new(endpoints),
         capture_raw,
+        inputs_enabled,
     )
 }
 
 /// Assemble a gRPC sink from a worker-local prepared endpoint table.
+///
+/// `capture_raw` and `inputs_enabled` are the run's two request-payload consumers;
+/// with both off the sink skips building the canonical payload entirely.
 ///
 /// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
 #[allow(clippy::too_many_arguments)]
@@ -189,6 +197,7 @@ pub(crate) fn grpc_sink_with_endpoints(
     bindings: GrpcBindingRegistry,
     endpoints: Rc<PreparedEndpointTable>,
     capture_raw: bool,
+    inputs_enabled: bool,
 ) -> Result<GrpcTransportSink> {
     GrpcTransportSink::new(
         clock,
@@ -211,6 +220,7 @@ pub(crate) fn grpc_sink_with_endpoints(
             connection_reuse: grpc_reuse(transport.connection_reuse),
             session_header: transport.session_header,
             capture_raw,
+            inputs_enabled,
         },
         bindings,
     )?

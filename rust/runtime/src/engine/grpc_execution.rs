@@ -60,6 +60,10 @@ impl NativeTransportExecution for GrpcNativeExecution {
                 GrpcBindingRegistry::builtin()?,
                 endpoints,
                 capture_raw,
+                // Graph execution retains the request payload only for raw
+                // artifacts (`EngineGraphSink` gates it on `raw_enabled`); it never
+                // feeds `inputs.json`, which graph runs do not emit.
+                false,
             )?,
         ))
     }

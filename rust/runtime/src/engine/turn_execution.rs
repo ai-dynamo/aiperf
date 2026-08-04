@@ -57,6 +57,11 @@ pub struct ExecutionBackendConfig {
     /// this to skip building the per-request HTTP-compatibility record when no
     /// raw artifact will consume it.
     pub raw_enabled: bool,
+    /// Whether this run captures canonical request payloads for `inputs.json`
+    /// during dispatch. False under exact-fold, where `inputs.json` is generated
+    /// once at the coordinator from the resident dataset instead. The gRPC sink
+    /// pairs this with `raw_enabled` to decide whether to build the payload at all.
+    pub inputs_enabled: bool,
     /// Optional worker-local endpoint preparation.
     ///
     /// Each worker receives an independent dense-key table.
@@ -1539,6 +1544,7 @@ mod tests {
                 model: "fixture-model".to_string(),
                 transport: TransportSinkConfig::default(),
                 raw_enabled: false,
+                inputs_enabled: false,
                 prepared_endpoints: Some(table_factory),
                 hop_routing: HopRouting::RoundRobin,
                 virtual_worker_width: None,

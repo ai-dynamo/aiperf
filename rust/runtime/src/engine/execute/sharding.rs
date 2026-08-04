@@ -186,6 +186,20 @@ pub(crate) struct ShardedShared {
     pub(crate) global_admission: Option<Arc<GlobalAdmission>>,
 }
 
+impl ShardedShared {
+    /// Whether a worker captures canonical request payloads for `inputs.json`
+    /// during dispatch. Under exact-fold `inputs.json` is generated once at the
+    /// coordinator from the resident dataset, so the shard must not capture it
+    /// (that would double-count across shards).
+    ///
+    /// The worker's [`RunCapture`] and the transport sink that builds the payload
+    /// both read this, so they cannot drift into a sink that skips the payload a
+    /// capture still wants.
+    pub(crate) fn captures_inputs(&self) -> bool {
+        self.inputs_enabled && !self.exact_fold
+    }
+}
+
 /// A sub-cell thread's finished records: kept exactly (retained for the report
 /// ingest + per-record artifacts) or folded into a bounded per-shard accumulator and
 /// dropped (sketch or exact-fold). Folded storage uses
@@ -318,6 +332,7 @@ pub(crate) async fn execute_scheduled_shard(
         model: shared.primary_model.clone(),
         transport: shared.transport_config.clone(),
         raw_enabled: shared.raw_enabled,
+        inputs_enabled: shared.captures_inputs(),
         prepared_endpoints: Some(prepared_endpoints),
         // `workers == 1` co-located sink: no hop, so routing is inert.
         hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
@@ -406,11 +421,7 @@ pub(crate) async fn execute_scheduled_pipeline(
             start_ns,
             shared.metrics_config.clone(),
             shared.raw_enabled,
-            // Under exact-fold, inputs.json is generated once at the coordinator
-            // from the resident dataset, so the
-            // shard never captures it during dispatch (which would double-count across
-            // shards). The retain path keeps the per-shard during-run capture.
-            shared.inputs_enabled && !shared.exact_fold,
+            shared.captures_inputs(),
             // Worker threads never feed the live sink or heartbeat lane (D5); those are
             // driven once-per-cell on the main thread.
             false,
