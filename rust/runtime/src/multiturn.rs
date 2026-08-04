@@ -1994,8 +1994,8 @@ mod tests {
             )
             .unwrap();
         let turns = [EndpointTurn {
-            role: "user".into(),
-            texts: vec!["hello world".into()],
+            role: Some("user".into()),
+            texts: vec![EndpointMedia::new(vec!["hello world".to_string()])],
             ..EndpointTurn::default()
         }];
         let request = crate::endpoints::PreparedRequest::new(
