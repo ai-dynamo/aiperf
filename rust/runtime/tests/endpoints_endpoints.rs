@@ -13,6 +13,35 @@ fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }
 
+/// The dispatched bytes rather than a re-parse: field *order* survives only here.
+fn plan_wire(plan: aiperf_runtime::body_plan::BodyPlan) -> String {
+    String::from_utf8(plan.materialize_standalone().unwrap().to_vec()).unwrap()
+}
+
+/// The message field's reserved slot must hold the ordinal position its payload
+/// key was inserted at. A slot that drifted to the end would still be valid JSON
+/// carrying every message, so every value-level assertion in this file would
+/// still pass — only the bytes catch it.
+#[test]
+fn chat_and_responses_message_fields_lead_the_dispatched_body() {
+    assert_eq!(
+        plan_wire(
+            ChatEndpoint
+                .format_payload(&request(EndpointType::Chat, vec![text_turn("hi")]))
+                .unwrap()
+        ),
+        r#"{"messages":[{"role":"user","content":"hi"}],"model":"model-a","stream":false}"#
+    );
+    assert_eq!(
+        plan_wire(
+            ResponsesEndpoint
+                .format_payload(&request(EndpointType::Responses, vec![text_turn("hi")]))
+                .unwrap()
+        ),
+        r#"{"input":[{"role":"user","content":"hi","type":"message"}],"model":"model-a","stream":false}"#
+    );
+}
+
 fn cfg(endpoint_type: EndpointType) -> EndpointConfig {
     EndpointConfig {
         endpoint_type,
