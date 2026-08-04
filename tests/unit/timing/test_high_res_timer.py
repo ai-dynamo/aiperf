@@ -8,6 +8,29 @@ import pytest
 from aiperf.common.constants import IS_LINUX
 from aiperf.timing.high_res_timer import ThreadPacer, TimerFdPacer
 
+# The autouse no_sleep fixture rewrites asyncio.sleep to a bare event-loop yield,
+# so spinning on it never releases the GIL and the pacer worker thread may never
+# be scheduled. These helpers block in a worker thread (via asyncio.to_thread) so
+# the real time.sleep hands the interpreter over without stalling the loop.
+
+
+def _worker_is_waiting(pacer: ThreadPacer, timeout: float = 5.0) -> bool:
+    """Block until the pacer worker has parked on its deadline."""
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        with pacer._condition:
+            if pacer._waiting_generation is not None:
+                return True
+        time.sleep(0.001)
+    return False
+
+
+def _block_until(deadline_perf_s: float) -> None:
+    """Block in real time until an absolute perf_counter deadline."""
+    remaining = deadline_perf_s - time.perf_counter()
+    if remaining > 0:
+        time.sleep(remaining)
+
 
 @pytest.mark.asyncio
 class TestThreadPacer:
@@ -35,26 +58,23 @@ class TestThreadPacer:
     async def test_cancelled_sleep_does_not_wake_replacement_early(self) -> None:
         pacer = ThreadPacer()
         try:
-            first_deadline = time.perf_counter() + 0.1
+            first_deadline = time.perf_counter() + 0.3
             first_sleep = asyncio.create_task(pacer.sleep_until(first_deadline))
-            for _ in range(100):
-                with pacer._condition:
-                    if pacer._waiting_generation is not None:
-                        break
-                await asyncio.sleep(0)
-            else:
-                pytest.fail("pacer worker did not start waiting")
+            assert await asyncio.to_thread(_worker_is_waiting, pacer), (
+                "pacer worker did not start waiting"
+            )
 
             first_sleep.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await first_sleep
 
-            replacement_deadline = time.perf_counter() + 0.15
+            replacement_deadline = time.perf_counter() + 0.5
             replacement_sleep = asyncio.create_task(
                 pacer.sleep_until(replacement_deadline)
             )
-            while time.perf_counter() < first_deadline + 0.02:
-                await asyncio.sleep(0)
+            # Past the cancelled sleep's deadline: a leaked stale tick would have
+            # completed the replacement early.
+            await asyncio.to_thread(_block_until, first_deadline + 0.05)
             assert not replacement_sleep.done()
 
             await replacement_sleep
