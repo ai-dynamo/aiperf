@@ -499,6 +499,9 @@ impl PendingRequest {
             .unwrap_or_default();
         RecordIngest {
             request_index: self.metadata.request_index.or(Some(ordinal as usize)),
+            // Assigned by the coordinator's issuer after the worker join, not here: a
+            // worker-local observer only knows its own dense arrival slot.
+            global_dispatch_index: None,
             correlation_id: self
                 .metadata
                 .correlation_id
