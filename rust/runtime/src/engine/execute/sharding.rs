@@ -431,6 +431,12 @@ pub(crate) async fn execute_scheduled_pipeline(
         // Inject this thread's partition so its sampler draws only its nested
         // subset of the cell's instances.
         cell_partition: Some(partition),
+        // `Global` promises parity with one global limiter; drawing absolute
+        // positions extends that promise from admission to the dataset, so its
+        // W shards sample the corpus exactly as a single issuer would.
+        // `Sharded` keeps the per-shard residue walk — it is the documented
+        // throughput opt-in "where byte-exact parity does not matter".
+        position_addressed: matches!(shared.dispatch_mode, DispatchMode::Global),
     };
 
     // A static-accuracy run gives each shard its OWN capture processor over the

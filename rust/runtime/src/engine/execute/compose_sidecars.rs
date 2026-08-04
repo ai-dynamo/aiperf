@@ -126,6 +126,9 @@ pub(crate) async fn execute_native_inner(
                 samplers: registry.samplers(),
                 // Coordinator and cell-entry paths read the process-global partition.
                 cell_partition: None,
+                // A single coordinator already walks the whole corpus, so
+                // position addressing would be inert here.
+                position_addressed: false,
             }),
         )
     };

@@ -42,6 +42,11 @@ pub(crate) struct PreparedNativeConversationSourceFactory<'a> {
     /// process-global partition; thread-per-core execution injects a per-thread
     /// partition that `AIPERF_CELL_ID`/`_COUNT` cannot express.
     pub(crate) cell_partition: Option<ModuloCellPartition>,
+    /// Draw absolute corpus positions rather than recycling this shard's own
+    /// residue class, so the cell's draw sequence matches a single issuer's.
+    /// `Global` only: `Sharded` is the explicit throughput mode where per-shard
+    /// partitioning is the point.
+    pub(crate) position_addressed: bool,
 }
 
 impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory<'_> {
@@ -62,7 +67,7 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
                 default_output_tokens,
                 self.endpoint_resolver.clone(),
                 self.cell_partition,
-                false,
+                self.position_addressed,
             )?
         } else {
             NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
@@ -73,7 +78,7 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
                 self.samplers,
                 self.endpoint_resolver.clone(),
                 self.cell_partition,
-                false,
+                self.position_addressed,
             )?
         };
         Ok(Box::new(
