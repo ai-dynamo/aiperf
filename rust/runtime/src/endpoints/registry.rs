@@ -403,6 +403,20 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// Extract tokenizable input and media counts from a built body.
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload;
 
+    /// Structure this endpoint can report without parsing its own body.
+    ///
+    /// `None` means the caller falls back to parsing, which is always correct.
+    /// An endpoint overriding this MUST be covered by a differential test against
+    /// the parse-derived path — a divergence is a silent ISL shift.
+    ///
+    /// Callers only offer this for a body the endpoint just formatted from
+    /// `request` with no dispatch override applied; a cached or mutated plan
+    /// is not passed here.
+    fn extracted(&self, request: &PreparedRequest<'_>, plan: &BodyPlan) -> Option<ExtractedPayload> {
+        let _ = (request, plan);
+        None
+    }
+
     /// Parse every response in a request record.
     ///
     /// The default parses each response with [`Self::parse_response`], dropping

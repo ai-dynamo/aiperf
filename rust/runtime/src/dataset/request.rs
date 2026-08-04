@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
-    EmbeddingsEndpoint, Endpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint,
+    EmbeddingsEndpoint, Endpoint, ExtractedPayload, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint,
     ImageEditEndpoint, ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, MessagesEndpoint,
     ModelEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, PreparedEndpoint, PreparedRequest,
     RawEndpoint, RequestInfo, ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint,
@@ -71,6 +71,11 @@ pub struct MaterializedRequest {
     pub turn_index: usize,
     /// Whether this is the final authored turn.
     pub is_final_turn: bool,
+    /// Input structure the endpoint reported for this exact body, when it can
+    /// supply one without re-parsing (see [`PreparedEndpoint::extracted`]).
+    ///
+    /// `None` means "derive it by parsing `body`", which is always correct.
+    pub extracted: Option<ExtractedPayload>,
 }
 
 /// Endpoint-independent request-materialization extension point.
@@ -429,6 +434,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted: None,
         })
     }
 
@@ -444,6 +450,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         let store = session.dataset.segments().as_ref();
         let configured_streaming = endpoint.config().streaming();
         let supports_streaming = endpoint.descriptor().supports_streaming;
+        // Endpoint-reported input structure, offered only for a body this call
+        // formatted itself with no dispatch override applied. Raw bodies, cached
+        // plans, and overridden plans leave it absent so the counter parses.
+        let mut extracted = None;
         let (body, effective) = if let Some(raw) = raw_body_handle(current, store)? {
             (
                 JsonBodyMaterializer::materialize(&BodyPlan::raw(raw), store, overrides)?,
@@ -477,7 +487,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 // Shared, not copied: a dispatch that mutates nothing dispatches
                 // straight off the dataset's plan.
                 Some(cached) => Arc::clone(cached),
-                None => Arc::new({
+                None => {
                     let turns = session.endpoint_turns(store)?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
@@ -492,8 +502,12 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         None,
                         Some(&conversation_id),
                     );
-                    endpoint.format_payload(&request)?
-                }),
+                    let plan = endpoint.format_payload(&request)?;
+                    if overrides.is_empty() {
+                        extracted = endpoint.extracted(&request, &plan);
+                    }
+                    Arc::new(plan)
+                }
             };
             let (effective, stream_fix) = effective_from_plan(
                 &plan,
@@ -554,6 +568,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted,
         })
     }
 }
@@ -638,6 +653,7 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted: None,
         })
     }
 
@@ -714,6 +730,7 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted: None,
         })
     }
 }

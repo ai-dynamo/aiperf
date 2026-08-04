@@ -64,6 +64,23 @@ pub trait InputTokenCounter: Send + Sync {
         Ok(authored_input_tokens)
     }
 
+    /// Count input tokens for a materialized dispatch that may already carry the
+    /// endpoint-reported input structure.
+    ///
+    /// `extracted` is `Some` only when the endpoint reported the structure of
+    /// this exact body through [`PreparedEndpoint::extracted`]. The default
+    /// ignores it and defers to [`Self::count_prepared_input_tokens`], which
+    /// parses the body and is always correct.
+    fn count_materialized_input_tokens(
+        &self,
+        endpoint: &dyn PreparedEndpoint,
+        body: &[u8],
+        _extracted: Option<&crate::endpoints::ExtractedPayload>,
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        self.count_prepared_input_tokens(endpoint, body, authored_input_tokens)
+    }
+
     /// Whether immutable first turns may reuse a previously computed count.
     ///
     /// Stateful or externally backed counters keep the conservative default.
@@ -122,7 +139,7 @@ impl EndpointInputTokenCounter {
 
     fn count_extracted(
         &self,
-        extracted: crate::endpoints::ExtractedPayload,
+        extracted: &crate::endpoints::ExtractedPayload,
         authored_input_tokens: u64,
     ) -> Result<u64> {
         if self.apply_chat_template
@@ -174,7 +191,7 @@ impl InputTokenCounter for EndpointInputTokenCounter {
             return Ok(authored_input_tokens);
         };
         self.count_extracted(
-            endpoint.extract_payload_inputs(&body),
+            &endpoint.extract_payload_inputs(&body),
             authored_input_tokens,
         )
     }
@@ -189,9 +206,22 @@ impl InputTokenCounter for EndpointInputTokenCounter {
             return Ok(authored_input_tokens);
         };
         self.count_extracted(
-            endpoint.extract_payload_inputs(&body),
+            &endpoint.extract_payload_inputs(&body),
             authored_input_tokens,
         )
+    }
+
+    fn count_materialized_input_tokens(
+        &self,
+        endpoint: &dyn PreparedEndpoint,
+        body: &[u8],
+        extracted: Option<&crate::endpoints::ExtractedPayload>,
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        match extracted {
+            Some(extracted) => self.count_extracted(extracted, authored_input_tokens),
+            None => self.count_prepared_input_tokens(endpoint, body, authored_input_tokens),
+        }
     }
 
     fn caches_static_first_turns(&self) -> bool {
@@ -1015,9 +1045,10 @@ impl NativeSessionBackend {
             } else {
                 let (_, endpoint) = &prepared_endpoint;
                 // Opaque bodies report absent as 0 at the u64 counter boundary for now.
-                let counted = self.input_token_counter.count_prepared_input_tokens(
+                let counted = self.input_token_counter.count_materialized_input_tokens(
                     *endpoint,
                     &materialized.body,
+                    materialized.extracted.as_ref(),
                     materialized.input_tokens.unwrap_or(0),
                 )?;
                 if let Some(key) = static_count_key {
