@@ -379,15 +379,15 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 conversation_id: Some(session.conversation_id().as_str().to_string()),
             };
             let mut plan = endpoint.format_payload(&request_info)?;
-            plan.merge_overrides(overrides);
-            let effective = effective_from_plan(
-                &mut plan,
+            let (effective, stream_fix) = effective_from_plan(
+                &plan,
                 current,
                 &model_endpoint.primary_model_name,
                 model_endpoint.endpoint.streaming,
                 endpoint.descriptor().supports_streaming,
                 overrides,
             )?;
+            apply_dispatch_mutations(&mut plan, overrides, stream_fix);
             (plan.materialize_standalone()?, effective)
         };
 
@@ -474,8 +474,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 })
                 .flatten();
             let mut plan = match cached {
-                Some(cached) => cached.clone(),
-                None => {
+                // Shared, not copied: a dispatch that mutates nothing dispatches
+                // straight off the dataset's plan.
+                Some(cached) => Arc::clone(cached),
+                None => Arc::new({
                     let turns = session.endpoint_turns(store)?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
@@ -491,17 +493,22 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         Some(&conversation_id),
                     );
                     endpoint.format_payload(&request)?
-                }
+                }),
             };
-            plan.merge_overrides(overrides);
-            let effective = effective_from_plan(
-                &mut plan,
+            let (effective, stream_fix) = effective_from_plan(
+                &plan,
                 current,
                 primary_model_name,
                 configured_streaming,
                 supports_streaming,
                 overrides,
             )?;
+            // Copy the shared plan only for a dispatch that actually writes it.
+            // The scheduled path dispatches with neither an override nor a stream
+            // correction, so its normal case never copies.
+            if !overrides.is_empty() || stream_fix.is_some() {
+                apply_dispatch_mutations(Arc::make_mut(&mut plan), overrides, stream_fix);
+            }
             (plan.materialize_standalone()?, effective)
         };
 
@@ -717,17 +724,24 @@ struct EffectiveRequest {
     streaming: bool,
 }
 
-/// Read effective model/max-tokens/streaming from a merged [`BodyPlan`] and
-/// force `stream` off when the endpoint cannot stream.
+/// Read effective model/max-tokens/streaming for one dispatch without touching
+/// the plan, and report the `stream` literal the plan must be corrected to when
+/// the endpoint cannot stream (`None` when no correction applies).
+///
+/// This reads the plan as it *would* look once [`BodyPlan::merge_overrides`] has
+/// folded `overrides` in — see [`merged_literal`] — because the plan literal, not
+/// the override, is what the dispatched body carries. Reading before the merge
+/// rather than after keeps an unmutated plan shareable, so a dispatch with no
+/// override and no stream correction copies nothing.
 fn effective_from_plan(
-    plan: &mut BodyPlan,
+    plan: &BodyPlan,
     turn: &Turn,
     primary_model_name: &str,
     configured_streaming: bool,
     supports_streaming: bool,
     overrides: &Overrides,
-) -> Result<EffectiveRequest> {
-    let model = match plan.literal_field("model") {
+) -> Result<(EffectiveRequest, Option<bool>)> {
+    let model = match merged_literal(plan, overrides, "model") {
         Some(Value::String(model)) => model.clone(),
         Some(_) => {
             return Err(DatasetError::Validation(
@@ -738,11 +752,11 @@ fn effective_from_plan(
     };
     let mut max_tokens = effective_max_tokens(turn, overrides)?;
     for field in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
-        if let Some(value) = plan.literal_field(field) {
+        if let Some(value) = merged_literal(plan, overrides, field) {
             max_tokens = Some(positive_u32(value, field)?);
         }
     }
-    let requested_streaming = match plan.literal_field("stream") {
+    let requested_streaming = match merged_literal(plan, overrides, "stream") {
         Some(Value::Bool(streaming)) => *streaming,
         Some(_) => {
             return Err(DatasetError::Validation(
@@ -752,14 +766,54 @@ fn effective_from_plan(
         None => effective_streaming(turn, configured_streaming, supports_streaming, overrides)?,
     };
     let streaming = requested_streaming && supports_streaming;
-    if requested_streaming != streaming {
+    let stream_fix = (requested_streaming != streaming).then_some(streaming);
+    Ok((
+        EffectiveRequest {
+            model,
+            max_tokens,
+            streaming,
+        },
+        stream_fix,
+    ))
+}
+
+/// What [`BodyPlan::literal_field`] would return *after*
+/// [`BodyPlan::merge_overrides`] folded `overrides` into the plan.
+///
+/// `merge_overrides` writes every override name as a top-level literal and
+/// touches no other field, so the post-merge literal for a name is the override
+/// when the override set carries it and the plan's own literal otherwise. On a
+/// non-`Fields` plan the merge is a no-op and `literal_field` is always `None`,
+/// so the override is invisible here exactly as it is post-merge — a raw or
+/// prebuilt body applies its overrides as a spliced tail instead. The match is
+/// exhaustive so a new variant has to restate its answer rather than inherit a
+/// wrong one.
+fn merged_literal<'a>(
+    plan: &'a BodyPlan,
+    overrides: &'a Overrides,
+    name: &str,
+) -> Option<&'a Value> {
+    match plan {
+        BodyPlan::Fields(_) => overrides
+            .fields()
+            .get(name)
+            .or_else(|| plan.literal_field(name)),
+        BodyPlan::Raw(_) | BodyPlan::Prebuilt(_) => None,
+    }
+}
+
+/// Fold this dispatch's overrides and stream correction into the plan, in the
+/// order [`effective_from_plan`] read them: overrides first (in place for a name
+/// the plan already declares, appended otherwise), then the stream correction
+/// overwriting whatever `stream` ended up as.
+///
+/// A no-op exactly when `overrides` is empty and `stream_fix` is `None`, which
+/// is what lets a shared plan skip its copy on that dispatch.
+fn apply_dispatch_mutations(plan: &mut BodyPlan, overrides: &Overrides, stream_fix: Option<bool>) {
+    plan.merge_overrides(overrides);
+    if let Some(streaming) = stream_fix {
         plan.set_literal("stream", Value::Bool(streaming));
     }
-    Ok(EffectiveRequest {
-        model,
-        max_tokens,
-        streaming,
-    })
 }
 
 fn effective_model(turn: &Turn, primary_model_name: &str, overrides: &Overrides) -> Result<String> {

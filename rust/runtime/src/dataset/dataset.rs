@@ -54,7 +54,13 @@ pub struct Dataset {
     /// endpoint-bind lowering; a `None` slot (or an empty outer vector) means the
     /// turn falls back to per-dispatch formatting. Keyed by dense position so the
     /// hot-path lookup is two indexed reads, never a hash.
-    body_plans: Vec<Vec<Option<BodyPlan>>>,
+    ///
+    /// The outer [`Arc`] keeps [`Dataset::clone`] O(1) in plans — a `Dataset` is
+    /// cloned once per worker thread and again per phase, and no clone ever
+    /// writes the cache. The inner [`Arc`] lets dispatch share one plan instead
+    /// of deep-copying it, copying only when an override or a stream correction
+    /// actually mutates it.
+    body_plans: Arc<Vec<Vec<Option<Arc<BodyPlan>>>>>,
 }
 
 impl fmt::Debug for Dataset {
@@ -124,7 +130,7 @@ impl Dataset {
             index,
             segments,
             metadata,
-            body_plans: Vec::new(),
+            body_plans: Arc::new(Vec::new()),
         })
     }
 
@@ -286,15 +292,16 @@ impl Dataset {
         // as data URLs) out of the timed dispatch loop. Token-native dialects opt
         // out via `precomputable_body() == false`.
         if !endpoint.precomputable_body() {
-            self.body_plans = Vec::new();
+            self.body_plans = Arc::new(Vec::new());
             return Ok(());
         }
         let plans = {
             let store = self.segments.as_ref();
-            let mut plans: Vec<Vec<Option<BodyPlan>>> =
+            let mut plans: Vec<Vec<Option<Arc<BodyPlan>>>> =
                 Vec::with_capacity(self.conversations.len());
             for conversation in self.conversations.iter() {
-                let mut turn_plans: Vec<Option<BodyPlan>> = vec![None; conversation.turns.len()];
+                let mut turn_plans: Vec<Option<Arc<BodyPlan>>> =
+                    vec![None; conversation.turns.len()];
                 let mode = self.context_mode(conversation);
                 let static_mode = matches!(
                     mode,
@@ -355,9 +362,9 @@ impl Dataset {
                         // blob now so dispatch clones it instead of re-splicing a
                         // multi-MB buffer every request.
                         if let Ok(plan) = endpoint.format_payload(&request) {
-                            *slot = Some(
+                            *slot = Some(Arc::new(
                                 plan.prebuilt_if_static(endpoint.descriptor().supports_streaming),
-                            );
+                            ));
                         }
                     }
                 }
@@ -366,14 +373,19 @@ impl Dataset {
             }
             plans
         };
-        self.body_plans = plans;
+        self.body_plans = Arc::new(plans);
         Ok(())
     }
 
     /// Borrow the cached profiling-phase [`BodyPlan`] for one conversation turn, if
     /// [`precompute_body_plans`](Dataset::precompute_body_plans) cached it. Dispatch
-    /// clones the returned plan instead of reformatting; a `None` means fall back.
-    pub(crate) fn cached_body_plan(&self, id: &SessionId, turn_index: usize) -> Option<&BodyPlan> {
+    /// shares the returned plan instead of reformatting, and copies it only when a
+    /// per-dispatch mutation applies; a `None` means fall back.
+    pub(crate) fn cached_body_plan(
+        &self,
+        id: &SessionId,
+        turn_index: usize,
+    ) -> Option<&Arc<BodyPlan>> {
         let position = *self.index.get(id)?;
         self.body_plans.get(position)?.get(turn_index)?.as_ref()
     }
