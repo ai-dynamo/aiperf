@@ -38,6 +38,7 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
 use crate::multiturn::InputTokenCounter;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
+use crate::body_plan::RequestBody;
 use crate::transport::core::{Dispatcher, PreparedEndpointBinding, PreparedTurn, Request};
 use crate::transport::http::{PreparedEndpointReference, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
@@ -495,8 +496,7 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             input_length: usize::try_from(input_tokens).unwrap_or(usize::MAX),
             max_output_tokens: input.max_output_tokens,
             prompt_text: None,
-            request_body: None,
-            request_body_bytes: Some(payload),
+            body: Some(RequestBody::wire(payload)),
             headers,
             parameters: input.parameters,
             endpoint_path,
