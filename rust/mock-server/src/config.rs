@@ -456,6 +456,23 @@ pub struct MockServerConfig {
     )]
     pub ludicrous_speed: bool,
 
+    /// Which API shape `--ludicrous-speed`/`--plaid` serves.
+    ///
+    /// Resolved once at startup rather than per request: routing on the request
+    /// path would put a scan on the hot path, and this server exists to have no
+    /// per-request work at all. The shape is a property of the run, so the
+    /// client's `--endpoint-type` must be matched here -- a chat payload
+    /// answering a completions run parses to no response data, producing a run
+    /// with zero output tokens instead of an error. Ignored unless
+    /// `--ludicrous-speed` is set.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_PLAID_ENDPOINT",
+        value_enum,
+        default_value = "chat"
+    )]
+    pub plaid_endpoint: PlaidEndpoint,
+
     #[arg(
         long,
         env = "MOCK_SERVER_ACCESS_LOGS",
@@ -916,3 +933,16 @@ mod tests {
         assert_eq!(cfg.error_status_codes, vec![429u16, 503, 400, 500]);
     }
 }
+
+/// API shape served by `--ludicrous-speed`/`--plaid`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[clap(rename_all = "lower")]
+pub enum PlaidEndpoint {
+    /// `chat.completion.chunk` frames with `choices[].delta.content`.
+    #[default]
+    Chat,
+    /// `text_completion` frames with `choices[].text`.
+    Completions,
+}
+

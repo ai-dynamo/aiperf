@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::MockServerConfig;
+use crate::config::PlaidEndpoint;
 
 fn find(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).position(|w| w == n)
@@ -45,19 +46,23 @@ fn content_length(head: &[u8]) -> usize {
     0
 }
 
+/// The single reply this process serves, chosen once at startup.
+///
+/// Selecting per request would put a path scan on the hot path, which is the
+/// one thing this server exists to avoid; the shape is a property of the run,
+/// so it is resolved from `--plaid-endpoint` before the first accept.
 struct Responses {
-    chat: Arc<Vec<u8>>,
-    completions: Arc<Vec<u8>>,
+    body: Arc<Vec<u8>>,
     models: Arc<Vec<u8>>,
 }
 
-fn build_responses() -> Responses {
+fn build_responses(endpoint: PlaidEndpoint) -> Responses {
     let body = b"data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"x\"}}]}\n\ndata: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
     let head = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         body.len()
     );
-    let chat: Arc<Vec<u8>> = Arc::new([head.as_bytes(), body].concat());
+    let chat: Vec<u8> = [head.as_bytes(), body].concat();
 
     // Completions streams `choices[].text` under `object: text_completion`,
     // not `choices[].delta.content` -- the runtime's CompletionsEndpoint
@@ -68,7 +73,7 @@ fn build_responses() -> Responses {
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         completions_body.len()
     );
-    let completions: Arc<Vec<u8>> = Arc::new([chead.as_bytes(), completions_body].concat());
+    let completions: Vec<u8> = [chead.as_bytes(), completions_body].concat();
 
     let models = b"{\"object\":\"list\",\"data\":[{\"id\":\"mock-model\",\"object\":\"model\"}]}";
     let mhead = format!(
@@ -78,20 +83,12 @@ fn build_responses() -> Responses {
     let models_resp: Arc<Vec<u8>> = Arc::new([mhead.as_bytes(), models.as_ref()].concat());
 
     Responses {
-        chat,
-        completions,
+        body: Arc::new(match endpoint {
+            PlaidEndpoint::Chat => chat,
+            PlaidEndpoint::Completions => completions,
+        }),
         models: models_resp,
     }
-}
-
-/// True when the request line targets the OpenAI completions path.
-///
-/// Scans the request line only: a header value (`Referer`, say) could otherwise
-/// carry the path and mis-route the reply. `/v1/chat/completions` does not
-/// contain `/v1/completions` as a substring, so the two paths never collide.
-fn is_completions(head: &[u8]) -> bool {
-    let line = head.split(|&b| b == b'\n').next().unwrap_or(head);
-    find(line, b"/v1/completions").is_some()
 }
 
 /// Parses and answers every complete request found in `chunk` starting at
@@ -120,10 +117,8 @@ fn drain_requests<S: Write>(
         }
         let reply = if head.starts_with(b"GET") {
             &resp.models
-        } else if is_completions(head) {
-            &resp.completions
         } else {
-            &resp.chat
+            &resp.body
         };
         if stream.write_all(reply).is_err() {
             return Err(());
@@ -213,9 +208,9 @@ fn accept_loop<L: FastListener>(listener: Arc<L>, resp: Arc<Responses>) {
     }
 }
 
-fn serve<L: FastListener>(listener: L, threads: usize) {
+fn serve<L: FastListener>(listener: L, threads: usize, endpoint: PlaidEndpoint) {
     let listener = Arc::new(listener);
-    let resp = Arc::new(build_responses());
+    let resp = Arc::new(build_responses(endpoint));
     let threads = threads.max(1);
     let mut handles = Vec::with_capacity(threads);
     for _ in 0..threads {
@@ -281,7 +276,7 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
         }
         let listener = std::os::unix::net::UnixListener::bind(&uds_path)?;
         println!("fastmock listening on uds:{uds_path} ({threads} accept threads)");
-        serve(listener, threads);
+        serve(listener, threads, config.plaid_endpoint);
         return Ok(());
     }
 
@@ -290,7 +285,7 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
         "fastmock listening on {}:{} ({threads} accept threads)",
         config.host, config.port
     );
-    serve(listener, threads);
+    serve(listener, threads, config.plaid_endpoint);
     Ok(())
 }
 
@@ -298,33 +293,30 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn completions_path_routes_separately_from_chat() {
-        assert!(is_completions(b"POST /v1/completions HTTP/1.1\r\n"));
-        assert!(!is_completions(b"POST /v1/chat/completions HTTP/1.1\r\n"));
-    }
-
-    /// The scan is confined to the request line, so a header that happens to
-    /// carry the completions path cannot steal a chat reply.
-    #[test]
-    fn a_header_carrying_the_path_does_not_misroute() {
-        let head = b"POST /v1/chat/completions HTTP/1.1\r\nReferer: http://h/v1/completions\r\n";
-        assert!(!is_completions(head));
-    }
-
     /// Each payload must carry the `object` its runtime parser demands:
     /// CompletionsEndpoint accepts only `completion`/`text_completion` and
     /// reads `choices[].text`, while chat reads `choices[].delta.content`.
-    /// A swapped discriminator parses to zero response data, which shows up as
+    /// A swapped discriminator parses to zero response data, which surfaces as
     /// a run with no output tokens rather than as an error.
     #[test]
-    fn each_payload_carries_the_object_its_parser_requires() {
-        let responses = build_responses();
-        let completions = String::from_utf8_lossy(&responses.completions).into_owned();
+    fn each_endpoint_serves_the_object_its_parser_requires() {
+        let completions =
+            String::from_utf8_lossy(&build_responses(PlaidEndpoint::Completions).body).into_owned();
         assert!(completions.contains(r#""object":"text_completion""#));
         assert!(completions.contains(r#""text":"x""#));
 
-        let chat = String::from_utf8_lossy(&responses.chat).into_owned();
+        let chat = String::from_utf8_lossy(&build_responses(PlaidEndpoint::Chat).body).into_owned();
         assert!(chat.contains(r#""object":"chat.completion.chunk""#));
+        assert!(chat.contains(r#""content":"x""#));
+    }
+
+    /// The model list is served for `GET` regardless of the selected endpoint,
+    /// since readiness probes hit it on every run.
+    #[test]
+    fn model_list_is_served_for_either_endpoint() {
+        for endpoint in [PlaidEndpoint::Chat, PlaidEndpoint::Completions] {
+            let models = String::from_utf8_lossy(&build_responses(endpoint).models).into_owned();
+            assert!(models.contains("mock-model"));
+        }
     }
 }
