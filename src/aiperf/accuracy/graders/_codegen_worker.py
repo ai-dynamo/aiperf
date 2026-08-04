@@ -117,6 +117,9 @@ def handle_batch(
         try:
             sample = req["evaluation_sample"]
             generation = req["generated_code"]
+            start = len(all_samples)
+            all_samples.extend(sample)
+            all_generations.extend(generation)
         except (KeyError, TypeError) as exc:
             responses[i] = {
                 "id": req_id,
@@ -124,9 +127,6 @@ def handle_batch(
                 "error": f"malformed request: {exc!r}",
             }
             continue
-        start = len(all_samples)
-        all_samples.extend(sample)
-        all_generations.extend(generation)
         id_map.append((i, req_id, start, len(all_samples) - start))
 
     if all_samples:
