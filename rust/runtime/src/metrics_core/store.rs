@@ -349,6 +349,18 @@ impl ListMetricBackend for RaggedSeries {
 pub struct CategoryInterner<T: Eq + Hash> {
     codes_by_hash: FxHashMap<u64, HashCodes>,
     values: Vec<T>,
+    /// Code returned by the previous lookup.
+    ///
+    /// A category column is overwhelmingly a run of one value — every record in
+    /// a phase carries the same phase name, phase kind, and model — so the
+    /// previous answer is almost always the next one. Hitting this skips hashing
+    /// the value and probing the map, leaving a single equality compare. Safe
+    /// because codes are stable: `values` is append-only and nothing reassigns
+    /// or removes a code once issued.
+    ///
+    /// This is on the record-fold hot path, which under a single-issuer dispatch
+    /// mode runs entirely on the one thread that bounds the run.
+    last: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,6 +374,7 @@ impl<T: Eq + Hash> Default for CategoryInterner<T> {
         Self {
             codes_by_hash: FxHashMap::default(),
             values: Vec::new(),
+            last: None,
         }
     }
 }
@@ -372,8 +385,12 @@ where
 {
     /// Returns the existing dense code or inserts the value at the next code.
     pub fn intern(&mut self, value: T) -> u32 {
+        if let Some(code) = self.repeated(&value) {
+            return code;
+        }
         let hash = category_hash(&value);
         if let Some(code) = self.code_with_hash(hash, &value) {
+            self.last = Some(code);
             return code;
         }
         self.insert_new(hash, value)
@@ -381,11 +398,21 @@ where
 
     /// Returns the existing dense code, cloning only when the value is new.
     pub fn intern_ref(&mut self, value: &T) -> u32 {
+        if let Some(code) = self.repeated(value) {
+            return code;
+        }
         let hash = category_hash(value);
         if let Some(code) = self.code_with_hash(hash, value) {
+            self.last = Some(code);
             return code;
         }
         self.insert_new(hash, value.clone())
+    }
+
+    /// The previous lookup's code when this is the same value again.
+    fn repeated(&self, value: &T) -> Option<u32> {
+        let code = self.last?;
+        (self.values[code as usize] == *value).then_some(code)
     }
 
     /// Looks up a previously interned value.
@@ -432,6 +459,7 @@ where
                 self.codes_by_hash.insert(hash, HashCodes::One(code));
             }
         }
+        self.last = Some(code);
         code
     }
 
@@ -1642,6 +1670,33 @@ fn raw_metric_value(value: MetricValue) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// The repeat memo must be a pure fast path: same codes, same values, and a
+    /// value seen before the previous one must still resolve. A memo that
+    /// shadowed the map would silently collapse distinct categories into one —
+    /// every grouped metric would then be attributed to the wrong bucket while
+    /// still looking well-formed.
+    #[test]
+    fn interning_a_repeated_value_agrees_with_the_map() {
+        let mut interner: CategoryInterner<String> = CategoryInterner::default();
+        let profiling = interner.intern("profiling".to_string());
+        let warmup = interner.intern("warmup".to_string());
+        assert_ne!(profiling, warmup);
+
+        // A run of one value (the shape the memo exists for).
+        for _ in 0..8 {
+            assert_eq!(interner.intern_ref(&"warmup".to_string()), warmup);
+        }
+        // Then back to an older value, which only the map can answer.
+        assert_eq!(interner.intern_ref(&"profiling".to_string()), profiling);
+        assert_eq!(interner.intern_ref(&"warmup".to_string()), warmup);
+        // And a new value still gets a fresh code after a memo hit.
+        let fresh = interner.intern("sweep".to_string());
+        assert_ne!(fresh, profiling);
+        assert_ne!(fresh, warmup);
+        assert_eq!(interner.code(&"sweep".to_string()), Some(fresh));
+        assert_eq!(interner.code(&"profiling".to_string()), Some(profiling));
+    }
     use super::*;
     use crate::metrics_core::catalog::CATALOG;
 
