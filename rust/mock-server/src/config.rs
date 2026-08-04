@@ -461,10 +461,11 @@ pub struct MockServerConfig {
     /// Resolved once at startup rather than per request: routing on the request
     /// path would put a scan on the hot path, and this server exists to have no
     /// per-request work at all. The shape is a property of the run, so the
-    /// client's `--endpoint-type` must be matched here -- a chat payload
-    /// answering a completions run parses to no response data, producing a run
-    /// with zero output tokens instead of an error. Ignored unless
-    /// `--ludicrous-speed` is set.
+    /// client's `--endpoint-type` must be matched here: the endpoint adapters
+    /// are strict about the `object` discriminator, so a chat payload answering
+    /// a completions run parses to no response data and the run aborts with
+    /// "All N inference request(s) failed". Ignored unless `--ludicrous-speed`
+    /// is set.
     #[arg(
         long,
         env = "MOCK_SERVER_PLAID_ENDPOINT",

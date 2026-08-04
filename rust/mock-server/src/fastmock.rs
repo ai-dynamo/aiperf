@@ -296,8 +296,9 @@ mod tests {
     /// Each payload must carry the `object` its runtime parser demands:
     /// CompletionsEndpoint accepts only `completion`/`text_completion` and
     /// reads `choices[].text`, while chat reads `choices[].delta.content`.
-    /// A swapped discriminator parses to zero response data, which surfaces as
-    /// a run with no output tokens rather than as an error.
+    /// A swapped discriminator parses to zero response data, and the run
+    /// aborts with "All N inference request(s) failed" -- verified against a
+    /// live mismatched run, not inferred.
     #[test]
     fn each_endpoint_serves_the_object_its_parser_requires() {
         let completions =
