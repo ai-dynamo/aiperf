@@ -168,8 +168,12 @@ impl PreparedHttpEndpointRequest {
 
     /// Dispatch the prepared HTTP request and decode streaming frames through
     /// the binding before evaluating first-token significance.
+    ///
+    /// Consumes the prepared request: the transport is the wire body's terminal
+    /// owner, so handing it over by value keeps the assembled bytes uniquely
+    /// owned instead of cloning a second handle out of a still-live `self`.
     pub async fn dispatch(
-        &self,
+        self,
         transport: &HttpTransport,
         clock: Rc<dyn Clock>,
         binding: &dyn HttpEndpointBinding,
@@ -180,7 +184,7 @@ impl PreparedHttpEndpointRequest {
                 transport,
                 clock,
                 &self.request_config,
-                self.wire_body.clone(),
+                self.wire_body,
                 options,
                 &JsonVideoPollingProtocol,
             )
@@ -191,7 +195,7 @@ impl PreparedHttpEndpointRequest {
         transport
             .send_request_bytes_with_first_token_filter(
                 &self.request_config,
-                self.wire_body.clone(),
+                self.wire_body,
                 self.streaming,
                 |ttft_ns, message| {
                     binding
@@ -204,8 +208,10 @@ impl PreparedHttpEndpointRequest {
     }
 
     /// Dispatch while awaiting bounded capacity for every decoded response.
+    ///
+    /// Consumes the prepared request for the same reason as [`Self::dispatch`].
     pub async fn dispatch_backpressured(
-        &self,
+        self,
         transport: &HttpTransport,
         clock: Rc<dyn Clock>,
         binding: &dyn HttpEndpointBinding,
@@ -216,7 +222,7 @@ impl PreparedHttpEndpointRequest {
                 transport,
                 clock,
                 &self.request_config,
-                self.wire_body.clone(),
+                self.wire_body,
                 options,
                 &JsonVideoPollingProtocol,
             )
@@ -231,7 +237,7 @@ impl PreparedHttpEndpointRequest {
         transport
             .send_request_bytes_with_sse_filter(
                 &self.request_config,
-                self.wire_body.clone(),
+                self.wire_body,
                 self.streaming,
                 &mut filter,
             )
