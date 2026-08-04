@@ -38,6 +38,29 @@ pub(crate) fn compose_phase_sidecars(
     Ok(phase_sidecars)
 }
 
+/// Whether this phase dispatches only part of the dataset, so an up-front
+/// full-dataset `inputs.json` projection would over-include.
+///
+/// A fixed-schedule phase does so ONLY when a trace filter is set: `start_offset` /
+/// `end_offset` are inclusive bounds that drop entries outside them. Without a
+/// filter the whole trace dispatches and the projection is exact — which is the
+/// ordinary mooncake/trace run, and treating it as unprojectable silently dropped
+/// its `inputs.json`.
+///
+/// Agentic replay always qualifies: it owns its own t*-sampled dispatch and spawns
+/// trajectories dynamically, so the dispatched set is not knowable up front.
+fn phase_filters_dataset(phase: &PhaseSpec) -> bool {
+    match phase {
+        PhaseSpec::FixedSchedule {
+            start_offset,
+            end_offset,
+            ..
+        } => start_offset.is_some() || end_offset.is_some(),
+        PhaseSpec::AgenticReplay { .. } => true,
+        _ => false,
+    }
+}
+
 pub(crate) async fn execute_native_inner(
     request: NativeRunSpec,
     mut accuracy: Option<&mut PreparedAccuracy>,
@@ -203,10 +226,9 @@ pub(crate) async fn execute_native_inner(
     // single coordinator thread. Two shapes cannot be projected up front: a multi-turn
     // conversation whose context mode splices the live model reply into a later turn
     // (the body is not knowable until the previous response lands), and a
-    // fixed-schedule or agentic-replay phase, which filters the dispatched
-    // conversations to a first-turn window an up-front full-dataset pass would
-    // over-include. SKIP the artifact for those rather than writing a file that does
-    // not match what went on the wire.
+    // phase that dispatches only PART of the dataset, which an up-front full-dataset
+    // pass would over-include. SKIP the artifact for those rather than writing a file
+    // that does not match what went on the wire.
     // Skip, not reject: `inputs_path` is not opt-in. `Artifacts::inputs_path` is a
     // non-`Option` `String` that the wire always populates, so it is `Some` on
     // essentially every run and cannot be read as "the user asked for this file".
@@ -214,12 +236,7 @@ pub(crate) async fn execute_native_inner(
     // artifact nobody requested. Warn loudly and run.
     let mut request = request;
     let inputs_up_front_ok = dataset_supports_up_front_inputs(&dataset)
-        && !request.phases.iter().any(|phase| {
-            matches!(
-                phase,
-                PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
-            )
-        });
+        && !request.phases.iter().any(phase_filters_dataset);
     if !inputs_up_front_ok && request.artifacts.inputs_path.is_some() {
         tracing::warn!(
             "skipping inputs.json: it is a projection of the resident dataset, and this \

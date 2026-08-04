@@ -140,7 +140,18 @@ async fn test_mooncake_trace_multi_turn_with_session_id() {
     ));
 
     assert_eq!(r.artifacts.request_count() as usize, request_count);
-    assert!(has_all_outputs(&r));
+    // Every artifact EXCEPT inputs.json. A multi-turn trace whose later turns splice
+    // the live model reply cannot have its request bodies projected from the resident
+    // dataset, and inputs.json is that projection — it is no longer captured during
+    // the run. The run must still succeed and emit everything else; silently emitting
+    // an inputs.json that did not match the wire is the failure this guards against.
+    assert!(!r.artifacts.json().is_null());
+    assert!(!r.artifacts.csv().is_empty());
+    assert!(!r.artifacts.jsonl().is_empty());
+    assert!(
+        r.artifacts.inputs().is_null(),
+        "a live-reply multi-turn trace must not emit an inputs.json it cannot project"
+    );
 }
 
 #[tokio::test]

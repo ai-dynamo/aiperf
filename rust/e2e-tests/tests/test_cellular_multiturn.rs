@@ -199,34 +199,61 @@ async fn test_cellular_multi_turn_exact_fold_matches_single_cell() {
     }
 }
 
-/// A live-reply multi-turn SYNTHETIC dataset forces the retain path (its `inputs.json`
-/// must be captured during the run), on which multi-turn cellular cannot merge correctly.
-/// The run must be REJECTED with a clear message — never silently mis-merged.
+/// Multi-turn cellular must never SILENTLY mis-merge: on the retain path its cells
+/// ship partitions the controller cannot combine, and the run must be rejected with a
+/// clear message.
+///
+/// This used to be reachable by a live-reply multi-turn synthetic dataset, because
+/// `inputs.json` was captured DURING the run and that capture forced retain. It is not
+/// anymore — `inputs.json` is a projection of the resident dataset, generated up front,
+/// so nothing about a live-reply dataset forces retain and such a run now takes
+/// exact-fold and merges correctly (proved by
+/// `test_cellular_multi_turn_exact_fold_matches_single_cell`, which asserts 1-cell vs
+/// N-cell metric parity on exactly that path).
+///
+/// So the backstop is exercised through the env force-switch that routes every path to
+/// retain, which is what that switch exists for. Both directions are asserted: the
+/// ordinary run must SUCCEED, and the forced-retain run must be REJECTED. Asserting
+/// only the rejection would let a change that made retain unreachable pass while
+/// silently deleting the coverage.
 #[tokio::test]
 async fn test_cellular_multi_turn_retain_is_rejected() {
     if cfg!(target_os = "macos") {
         return;
     }
     let h = AIPerfHarness::new().await;
-    // Synthetic multi-turn (turns > 1) with num-conversations: the gate admits it
-    // (exact-fold predicted), but the cell falls to retain to capture the live-reply
-    // inputs.json, and the controller's merge-time backstop bails.
-    let r = h.run(&format!(
+    let args = format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --num-conversations {SESSIONS} --session-turns-mean {TURNS} --session-turns-stddev 0 \
          --concurrency {CONCURRENCY} --cells {CELLS} --random-seed {SEED} \
          --synthetic-input-tokens-mean 32 --output-tokens-mean 8 --ui simple",
         h.mock.url
-    ));
-    assert!(
-        !r.success(),
-        "live-reply multi-turn synthetic cellular must be rejected (retain path), but it succeeded"
     );
-    let combined = format!("{}\n{}", r.stdout, r.stderr).to_lowercase();
+
+    // Exact-fold: multi-turn cellular merges correctly and the run completes.
+    let folded = h.run(&args);
+    assert!(
+        folded.success(),
+        "multi-turn cellular must succeed on the exact-fold path; \
+         inputs.json no longer forces retain:\nstdout:\n{}\nstderr:\n{}",
+        folded.stdout,
+        folded.stderr
+    );
+
+    // Forced retain: the cells ship partitions the controller cannot merge, so the
+    // run must bail rather than emit a silently wrong merge.
+    let retained = h.run_env(&args, &[("AIPERF_RUNTIME_EXACT_FOLD", "0")]);
+    assert!(
+        !retained.success(),
+        "multi-turn cellular on the retain path must be rejected, but it succeeded:\nstdout:\n{}\nstderr:\n{}",
+        retained.stdout,
+        retained.stderr
+    );
+    let combined = format!("{}\n{}", retained.stdout, retained.stderr).to_lowercase();
     assert!(
         combined.contains("multi-turn") && combined.contains("exact-fold"),
         "rejection must name the multi-turn / exact-fold limitation; got:\nstdout:\n{}\nstderr:\n{}",
-        r.stdout,
-        r.stderr
+        retained.stdout,
+        retained.stderr
     );
 }
