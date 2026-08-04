@@ -333,7 +333,7 @@ where
         // Matched by name rather than falling out of an `else`: this arm now
         // asserts that the wire body *is* the canonical body, so a future
         // re-encoding content type inheriting it would write wire bytes into
-        // the raw artifact and `inputs.json` with nothing to fail. Exhaustive
+        // the raw artifact with nothing to fail. Exhaustive
         // matching turns that into a compile error at this seam.
         RequestContentType::ApplicationJson => (body, None),
     };

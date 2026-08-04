@@ -317,11 +317,11 @@ impl TransportSink {
             },
         )
         .await?;
-        // The canonical body is read back only by the raw artifact and
-        // `inputs.json`. Taking the handle unconditionally promoted the
-        // assembled body — `BytesMut::freeze()`-derived, so `len == capacity`
-        // and the first clone heap-allocates a shared control block — on every
-        // dispatch of every run, including the runs that export neither.
+        // The canonical body is read back only by the raw artifact. Taking the
+        // handle unconditionally promoted the assembled body —
+        // `BytesMut::freeze()`-derived, so `len == capacity` and the first clone
+        // heap-allocates a shared control block — on every dispatch of every
+        // run, including the runs that export no raw artifact.
         let request_payload = if self.captures_request_payload() {
             prepared.canonical_body().clone()
         } else {
@@ -747,7 +747,7 @@ mod tests {
     /// Dispatch one streaming chat turn through the real endpoint-aware path at
     /// the given artifact-capture flags, returning the canonical request payload
     /// the sink handed back.
-    async fn dispatch_payload_at(base: &str, capture_raw: bool, inputs_enabled: bool) -> Bytes {
+    async fn dispatch_payload_at(base: &str, capture_raw: bool) -> Bytes {
         let clock = crate::clock::RealClock::new();
         let sink = TransportSink::new_multi_configured(
             clock.clone(),
@@ -756,7 +756,6 @@ mod tests {
             "m",
             crate::transport::http::TransportSinkConfig {
                 capture_raw,
-                inputs_enabled,
                 ..crate::transport::http::TransportSinkConfig::default()
             },
         )
@@ -815,39 +814,33 @@ mod tests {
             .run_until(async {
                 let base = crate::test_util::spawn_mock().await;
 
-                // Closed: neither the raw artifact nor `inputs.json` is selected,
-                // so nothing would read the payload and no handle is taken.
+                // Closed: the raw artifact is not selected, so nothing would read
+                // the payload and no handle is taken.
+                //
+                // `inputs.json` is deliberately NOT a second leg here. It is
+                // projected from the resident dataset at finalize
+                // (`compose_sidecars::build_up_front_input_sessions`) and a run
+                // that cannot be projected that way is rejected before any phase
+                // runs, so no dispatched payload reaches it. Re-introducing a
+                // payload-sourced `inputs.json` must reopen this gate — and this
+                // assertion is what fails if it does not.
                 assert!(
-                    dispatch_payload_at(&base, false, false).await.is_empty(),
+                    dispatch_payload_at(&base, false).await.is_empty(),
                     "no artifact consumes the canonical payload, so the gate must \
                      not take a handle on the assembled body"
                 );
 
-                // Open on each half independently. `inputs.json` without raw is the
-                // case a gate on `capture_raw` alone would break: `write_inputs_json`
-                // cannot parse an empty body and would abort the export.
-                let raw_only = dispatch_payload_at(&base, true, false).await;
-                let inputs_only = dispatch_payload_at(&base, false, true).await;
-                let both = dispatch_payload_at(&base, true, true).await;
-
-                for (label, payload) in [
-                    ("capture_raw", &raw_only),
-                    ("inputs_enabled", &inputs_only),
-                    ("both", &both),
-                ] {
-                    assert!(
-                        !payload.is_empty(),
-                        "{label} consumes the canonical payload, so the gate must capture it"
-                    );
-                }
-                // Byte-identity across every open combination: which consumer opened
-                // the gate must not change what is recorded.
-                assert_eq!(raw_only, inputs_only);
-                assert_eq!(raw_only, both);
+                // Open: the raw artifact reads the payload back verbatim.
+                let raw = dispatch_payload_at(&base, true).await;
+                assert!(
+                    !raw.is_empty(),
+                    "the raw artifact consumes the canonical payload, so the gate \
+                     must capture it"
+                );
 
                 // And what is recorded is the canonical chat body actually sent.
                 assert_eq!(
-                    serde_json::from_slice::<Value>(&raw_only).unwrap(),
+                    serde_json::from_slice::<Value>(&raw).unwrap(),
                     crate::endpoints::chat_request_body("m", &[("user", "hello world")], 2),
                 );
             })

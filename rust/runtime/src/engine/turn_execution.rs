@@ -65,11 +65,6 @@ pub struct ExecutionBackendConfig {
     /// this to skip building the per-request HTTP-compatibility record when no
     /// raw artifact will consume it.
     pub raw_enabled: bool,
-    /// Whether this run captures canonical request payloads for `inputs.json`
-    /// during dispatch. False under exact-fold, where `inputs.json` is generated
-    /// once at the coordinator from the resident dataset instead. The gRPC sink
-    /// pairs this with `raw_enabled` to decide whether to build the payload at all.
-    pub inputs_enabled: bool,
     /// Optional worker-local endpoint preparation.
     ///
     /// Each worker receives an independent dense-key table.
@@ -202,12 +197,11 @@ pub struct HttpSinkBuilder {
 
 impl HttpSinkBuilder {
     pub fn from_config(config: &ExecutionBackendConfig) -> Self {
-        // The run's two request-payload consumers reach the sink here, the same
-        // way `GrpcSinkBuilder` carries them: with both off the HTTP sink skips
+        // The run's only request-payload consumer reaches the sink here, the
+        // same way `GrpcSinkBuilder` carries it: with it off the HTTP sink skips
         // taking a second handle on the assembled body entirely.
         let mut transport = config.transport.clone();
         transport.capture_raw = config.raw_enabled;
-        transport.inputs_enabled = config.inputs_enabled;
         Self {
             base_urls: config.base_urls.clone(),
             model: config.model.clone(),
@@ -2031,7 +2025,6 @@ mod tests {
                 model: "fixture-model".to_string(),
                 transport: TransportSinkConfig::default(),
                 raw_enabled: false,
-                inputs_enabled: false,
                 prepared_endpoints: Some(table_factory),
                 credit_materializer: None,
                 hop_routing: HopRouting::RoundRobin,

@@ -59,19 +59,6 @@ pub struct GrpcTransportSinkConfig {
     /// dispatch. When false, [`compatibility_record`] skips re-serializing every
     /// response into the record that would only be discarded.
     pub capture_raw: bool,
-    /// Whether the run retains canonical request payloads for `inputs.json`.
-    /// Together with `capture_raw` this decides whether [`request_payload`] is
-    /// built at all; see [`GrpcTransportSink::dispatch_collect`].
-    ///
-    /// **Both default to `false` here, the opposite of the identically-named
-    /// fields on [`TransportSinkConfig`], which default to `true`.** This type is
-    /// only ever constructed field-complete (`grpc_sink_with_endpoints` names
-    /// every field), so an unstamped site cannot exist; the HTTP config is built
-    /// through `..Default::default()` literals and must fail toward capturing.
-    ///
-    /// [`request_payload`]: crate::transport::core::DispatchResult::request_payload
-    /// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
-    pub inputs_enabled: bool,
 }
 
 /// A [`RequestSink`] request retaining its prepared endpoint binding.
@@ -113,7 +100,6 @@ impl Default for GrpcTransportSinkConfig {
             connection_reuse: GrpcConnectionReuseStrategy::Pooled,
             session_header: None,
             capture_raw: false,
-            inputs_enabled: false,
         }
     }
 }
@@ -131,8 +117,6 @@ pub struct GrpcTransportSink {
     prepared_bindings: Vec<Box<dyn crate::transport::grpc::GrpcEndpointBinding>>,
     /// Whether the run retains raw HTTP-compatibility records (raw artifacts on).
     capture_raw: bool,
-    /// Whether the run retains canonical request payloads for `inputs.json`.
-    inputs_enabled: bool,
     /// Worker-local metric accumulator, unset until `configure_measurement`.
     measurement: WorkerMeasurement,
 }
@@ -186,7 +170,6 @@ impl GrpcTransportSink {
             prepared_endpoints: None,
             prepared_bindings: Vec::new(),
             capture_raw: config.capture_raw,
-            inputs_enabled: config.inputs_enabled,
             measurement: WorkerMeasurement::default(),
         })
     }
@@ -502,15 +485,15 @@ impl GrpcTransportSink {
             http: grpc_metrics_trace(&record),
         };
         // `request_payload` has three read sites, each already gated:
-        // `record_input_payload` early-returns unless `inputs.json` is requested, and
-        // `record_http_exchange`/graph execution retain it only under raw artifacts.
-        // On a run with neither, this re-serialize was pure per-request waste.
+        // `record_http_exchange`/graph execution retain this only under raw
+        // artifacts, the payload's only consumer. On a run without them, the
+        // re-serialize was pure per-request waste.
         //
         // Kept as `to_vec` of the decoded `body` rather than passing the prepared
         // bytes through: that round trip normalizes whitespace, and raw-payload turns
         // retain their authored bytes verbatim, so passing through would change the
         // raw artifact for them.
-        let request_payload = if self.capture_raw || self.inputs_enabled {
+        let request_payload = if self.capture_raw {
             Bytes::from(serde_json::to_vec(&body)?)
         } else {
             Bytes::new()

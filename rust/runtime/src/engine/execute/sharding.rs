@@ -126,12 +126,6 @@ pub(crate) struct ShardedShared {
     pub(crate) artifact_dir: PathBuf,
     /// Whether raw HTTP exchanges are retained.
     pub(crate) raw_enabled: bool,
-    /// Whether `inputs.json` is a requested artifact for this run.
-    ///
-    /// The artifact itself is projected from the resident dataset at finalize and
-    /// never harvested from dispatch, so this feeds only the transport sink's
-    /// request-payload gate (see [`Self::captures_inputs`]).
-    pub(crate) inputs_enabled: bool,
     /// Final (relative) per-record artifact paths for the per-shard lanes.
     /// When this sharded run selected exact-fold AND any of these is requested, each
     /// worker opens its OWN [`RecordArtifactLane`] to a per-shard temp file derived
@@ -188,19 +182,6 @@ pub(crate) struct ShardedShared {
     /// built once on the main thread from this cell's (already cell-level-sliced,
     /// not thread-level-sliced) phase budgets. `None` under `Sharded`.
     pub(crate) global_admission: Option<Arc<GlobalAdmission>>,
-}
-
-impl ShardedShared {
-    /// Whether a worker's transport sink takes the canonical request-payload
-    /// handle on behalf of `inputs.json`.
-    ///
-    /// `inputs.json` is now projected up front from the resident dataset, so no
-    /// dispatch feeds it and this leg of the sink gate has no consumer left. It
-    /// is preserved verbatim across the dataplane merge so the gate's behavior is
-    /// unchanged; retiring it is a separate, deliberate change.
-    pub(crate) fn captures_inputs(&self) -> bool {
-        self.inputs_enabled && !self.exact_fold
-    }
 }
 
 /// A sub-cell thread's finished records: kept exactly (retained for the report
@@ -331,7 +312,6 @@ pub(crate) async fn execute_scheduled_shard(
         model: shared.primary_model.clone(),
         transport: shared.transport_config.clone(),
         raw_enabled: shared.raw_enabled,
-        inputs_enabled: shared.captures_inputs(),
         prepared_endpoints: Some(prepared_endpoints),
         credit_materializer: None,
         // `workers == 1` co-located sink: no hop, so routing is inert.

@@ -204,7 +204,6 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
             model: "fixture-model".to_string(),
             transport,
             raw_enabled: false,
-            inputs_enabled: false,
             prepared_endpoints: Some(table_factory),
             credit_materializer: None,
             hop_routing: routing,

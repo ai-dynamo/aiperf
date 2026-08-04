@@ -122,23 +122,20 @@ pub struct TransportSinkConfig {
     pub content_server_base: Option<Arc<str>>,
     /// Whether a raw artifact will consume this run's per-dispatch request
     /// payload.
-    pub capture_raw: bool,
-    /// Whether this run retains canonical request payloads for `inputs.json`.
+    /// This is the payload's ONLY consumer: `inputs.json` is projected from the
+    /// resident dataset at finalize and never reads a dispatched body.
     ///
-    /// Together with [`Self::capture_raw`] this decides whether the canonical
-    /// body handle is taken at all.
-    ///
-    /// **Both default to `true`, the opposite of the identically-named fields on
-    /// [`GrpcTransportSinkConfig`], which default to `false`.** The asymmetry is
+    /// **Defaults to `true`, the opposite of the identically-named field on
+    /// [`GrpcTransportSinkConfig`], which defaults to `false`.** The asymmetry is
     /// deliberate: this type is built by struct literals that inherit the rest of
     /// their fields from [`Default`], so a site that has not been told the run's
     /// artifact selection must fail toward capturing (losing the per-dispatch
-    /// saving) rather than toward silently emptying `inputs.json` or the raw
-    /// artifact. The gRPC config is only ever constructed field-complete, so it
-    /// has no such site to protect.
+    /// saving) rather than toward silently emptying the raw artifact. The gRPC
+    /// config is only ever constructed field-complete, so it has no such site to
+    /// protect.
     ///
     /// [`GrpcTransportSinkConfig`]: crate::transport::grpc::GrpcTransportSinkConfig
-    pub inputs_enabled: bool,
+    pub capture_raw: bool,
 }
 
 impl Default for TransportSinkConfig {
@@ -149,7 +146,6 @@ impl Default for TransportSinkConfig {
             session_header: None,
             content_server_base: None,
             capture_raw: true,
-            inputs_enabled: true,
         }
     }
 }
@@ -314,7 +310,7 @@ impl TransportSink {
             start_ns: Cell::new(start_ns),
             connection_reuse: config.connection_reuse,
             content_server_base: config.content_server_base,
-            capture_request_payload: config.capture_raw || config.inputs_enabled,
+            capture_request_payload: config.capture_raw,
             prepared_endpoints: None,
             measurement: WorkerMeasurement::default(),
             url_memo: RefCell::new(None),
@@ -347,9 +343,9 @@ impl TransportSink {
 
     /// Whether this run has any consumer for the canonical request payload.
     ///
-    /// The raw artifact writes it verbatim and `inputs.json` retains it; with
-    /// neither selected the payload handle is never taken, and the assembled
-    /// body stays uniquely owned through dispatch.
+    /// The raw artifact writes it verbatim and is its only consumer; without it
+    /// the payload handle is never taken, and the assembled body stays uniquely
+    /// owned through dispatch.
     pub(super) fn captures_request_payload(&self) -> bool {
         self.capture_request_payload
     }

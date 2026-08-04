@@ -82,11 +82,9 @@ impl NativeTransportExecution for HttpNativeExecution {
         endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
         capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
-        // The graph path's only request-payload consumer is the raw artifact
-        // (`CapturedHttpExchange`); `inputs.json` is never written for a graph
-        // run, so the payload handle is taken only under raw capture.
+        // The request payload's only consumer is the raw artifact
+        // (`CapturedHttpExchange`), so the handle is taken only under raw capture.
         transport_config.capture_raw = capture_raw;
-        transport_config.inputs_enabled = false;
         Ok(Rc::new(
             crate::transport::http::TransportSink::new_multi_configured(
                 clock,

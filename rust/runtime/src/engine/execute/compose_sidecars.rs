@@ -92,9 +92,9 @@ pub(crate) async fn execute_native_inner(
                 // Tag content-server media URLs so served fetches correlate back
                 // to the request; only when the server publishes files.
                 content_server_base: content_server_media_base(&request)?,
-                // The request-payload capture flags are stamped per execution
-                // backend from `ExecutionBackendConfig` (which knows whether
-                // this run shards and exact-folds); the defaults here capture.
+                // The request-payload capture flag is stamped per execution
+                // backend from `ExecutionBackendConfig`, which knows this run's
+                // raw-artifact selection; the default here captures.
                 ..TransportSinkConfig::default()
             },
             Some(table_factory),
@@ -262,9 +262,6 @@ pub(crate) async fn execute_native_inner(
             model: primary_model.clone(),
             transport: transport_config,
             raw_enabled: request.artifacts.raw_path.is_some(),
-            // Mirrors the `RunCapture` below: under exact-fold `inputs.json` comes
-            // from the resident dataset at the coordinator, not from dispatch.
-            inputs_enabled: request.artifacts.inputs_path.is_some() && !exact_fold,
             prepared_endpoints,
             // The unsharded path materializes on its single co-located sink.
             credit_materializer: None,
@@ -641,7 +638,6 @@ pub(crate) async fn execute_native_inner(
             benchmark_id: request.benchmark_id.clone(),
             artifact_dir: request.artifact_dir.clone(),
             raw_enabled: request.artifacts.raw_path.is_some(),
-            inputs_enabled: request.artifacts.inputs_path.is_some(),
             // per-shard artifact lanes: the shards stream these when exact-fold
             // is selected; the coordinator concatenates them at finalize.
             records_path: request.artifacts.records_path.clone(),
