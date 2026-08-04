@@ -33,7 +33,7 @@ pub use crate::body_plan::{
 pub use corpus::{
     MAX_CHARS_PER_CHUNK, SHAKESPEARE_CORPUS, tokenize_corpus_chunked, tokenize_sonnet_corpus,
 };
-pub use dataset::{Dataset, DatasetMetadata};
+pub use dataset::{Dataset, DatasetMetadata, TurnEndpointLookup};
 pub use error::{DatasetError, Result};
 pub use fetch::{DatasetFetcher, HttpDatasetFetcher};
 pub use generator::{

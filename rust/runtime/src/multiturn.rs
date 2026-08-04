@@ -24,6 +24,7 @@ use crate::dataset::{
     EndpointRequestMaterializer, Handle, Overrides, Payload, RequestMaterializer, Sampler,
     SamplerRegistry, SegmentStore, SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
+use crate::dataset::TurnEndpointLookup;
 use crate::dataset::request::reply_image_count;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::endpoints::{
@@ -510,6 +511,14 @@ pub trait PreparedTurnEndpointResolver: fmt::Debug {
     fn resolve(&self, name: Option<&str>) -> Result<ResolvedPreparedEndpoint<'_>>;
 }
 
+/// Every prepared resolver is also the endpoint lookup dataset precompute needs,
+/// so image counting reaches per-turn overrides without a second seam.
+impl<T: PreparedTurnEndpointResolver + ?Sized> TurnEndpointLookup for T {
+    fn endpoint_for(&self, name: Option<&str>) -> Option<&dyn PreparedEndpoint> {
+        self.resolve(name).ok().map(|resolved| resolved.endpoint)
+    }
+}
+
 /// Dense-table prepared endpoint resolver used by local online execution.
 pub struct PreparedEndpointTableResolver {
     table: Rc<PreparedEndpointTable>,
@@ -610,7 +619,7 @@ fn lower_static_messages(
     // Establish each turn's wire image count here too, so dispatch never
     // deserializes the body it just assembled to recover one number.
     dataset
-        .precompute_image_counts(resolved.endpoint, primary_model_name)
+        .precompute_image_counts(endpoint_resolver, primary_model_name)
         .map_err(|error| anyhow!("failed to precompute image counts: {error}"))?;
     Ok(())
 }

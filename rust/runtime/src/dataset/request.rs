@@ -1354,13 +1354,7 @@ fn trace_identity_image_count(current: &Turn, turn_index: usize) -> Option<u32> 
     if turn_index != 0 {
         return None;
     }
-    let count: usize = current
-        .content
-        .iter()
-        .filter(|group| group.kind == MediaKind::Image)
-        .map(|group| group.handles.len())
-        .sum();
-    u32::try_from(count).ok()
+    composed_image_count(current)
 }
 
 /// Exact number of wire image parts one authored dataset turn contributes to the
@@ -1420,8 +1414,39 @@ pub(crate) fn dataset_turn_image_count(
         .ok()?
         .materialize_standalone()
         .ok()?;
-    let payload: Value = serde_json::from_slice(&body).ok()?;
-    u32::try_from(endpoint.extract_payload_inputs(&payload).image_count).ok()
+    let extracted = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .map(|payload| endpoint.extract_payload_inputs(&payload));
+    match extracted {
+        // `messages` is populated exactly when the extractor found the
+        // `messages`/`input` item array its one `image_count` increment lives
+        // under, so its count then describes the dispatched body exactly.
+        Some(extracted) if extracted.messages.is_some() => {
+            u32::try_from(extracted.image_count).ok()
+        }
+        // No item array in the dispatched body: the media dialects post a flat
+        // JSON object or multipart/form-data, so the wire walk has nothing to
+        // count and the turn's own composed media is the count. Sound only with
+        // nothing preformatted in play — reaching here means
+        // `is_provably_image_free` found media groups, array-content raw
+        // messages, or an item-bearing `extra_body`, and the latter two can hide
+        // an image the content groups do not enumerate.
+        _ => (resolved.raw_messages.is_none() && resolved.extra_body.is_none())
+            .then(|| composed_image_count(turn))
+            .flatten(),
+    }
+}
+
+/// Number of image content items one authored turn composed, independent of how
+/// a dialect renders them.
+fn composed_image_count(turn: &Turn) -> Option<u32> {
+    let count: usize = turn
+        .content
+        .iter()
+        .filter(|group| group.kind == MediaKind::Image)
+        .map(|group| group.handles.len())
+        .sum();
+    u32::try_from(count).ok()
 }
 
 /// Exact number of wire image parts one captured assistant reply contributes, or
@@ -2155,6 +2180,7 @@ mod tests {
                     ..EndpointTurn::default()
                 },
                 11,
+                Some(0),
             )
             .unwrap();
         session.advance_to(1).unwrap();
@@ -2208,6 +2234,7 @@ mod tests {
                     ..EndpointTurn::default()
                 },
                 7,
+                Some(0),
             )
             .unwrap();
         session.advance_to(1).unwrap();

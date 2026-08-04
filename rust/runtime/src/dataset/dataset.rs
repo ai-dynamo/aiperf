@@ -25,6 +25,18 @@ use crate::endpoints::{
 };
 use smallvec::SmallVec;
 
+/// Resolve the prepared endpoint that will format one turn's body.
+///
+/// [`precompute_image_counts`](Dataset::precompute_image_counts) counts each
+/// turn through the dialect that actually renders it, so a turn carrying an
+/// authored per-turn endpoint override is counted through that override rather
+/// than through the run default.
+pub trait TurnEndpointLookup {
+    /// Binding for an authored per-turn override name, or the run default when
+    /// `name` is `None`. `None` means the turn's dialect is unresolvable here.
+    fn endpoint_for(&self, name: Option<&str>) -> Option<&dyn PreparedEndpoint>;
+}
+
 /// Media-free structural metadata for one frozen dataset.
 #[derive(Debug, Clone)]
 pub struct DatasetMetadata {
@@ -409,9 +421,9 @@ impl Dataset {
     /// - both delta modes resend turns `0..=index`, so they store the prefix sum.
     ///
     /// A turn whose count is not establishable — a raw payload, an unrenderable
-    /// turn, a per-turn endpoint override that changes the dialect — stores
-    /// `None`, and so does every later delta turn that would include it. Graph
-    /// conversations dispatch through the graph path and are skipped entirely.
+    /// turn, an unresolvable per-turn endpoint override — stores `None`, and so
+    /// does every later delta turn that would include it. Graph conversations
+    /// dispatch through the graph path and are skipped entirely.
     ///
     /// Call after [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint)
     /// and before sharing the dataset. Idempotent, and independent of
@@ -419,7 +431,7 @@ impl Dataset {
     /// body cannot be cached still has a knowable image count.
     pub fn precompute_image_counts(
         &mut self,
-        endpoint: &dyn PreparedEndpoint,
+        endpoints: &(impl TurnEndpointLookup + ?Sized),
         primary_model_name: &str,
     ) -> Result<()> {
         let counts = {
@@ -435,13 +447,13 @@ impl Dataset {
                     );
                     let mut running = Some(0_u32);
                     for (turn, slot) in conversation.turns.iter().zip(turn_counts.iter_mut()) {
-                        // An authored per-turn endpoint override formats through a
-                        // different dialect than the one counted here.
-                        let count = if turn.endpoint.is_some() {
-                            None
-                        } else {
-                            dataset_turn_image_count(store, endpoint, primary_model_name, turn)
-                        };
+                        // Count through the dialect that renders this turn, which
+                        // an authored per-turn override can change.
+                        let count = endpoints
+                            .endpoint_for(turn.endpoint.as_deref())
+                            .and_then(|endpoint| {
+                                dataset_turn_image_count(store, endpoint, primary_model_name, turn)
+                            });
                         if cumulative {
                             running = running
                                 .zip(count)
