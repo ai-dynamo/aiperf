@@ -80,11 +80,11 @@ Install shell completion for this application.
 
 This command generates and installs the completion script to the appropriate location for your shell. After installation, you may need to restart your shell or source your shell configuration file.
 
-#### `--shell` `<str>`
+### `--shell` `<str>`
 
 Shell type for completion. If not specified, attempts to auto-detect current shell.
 
-#### `-o`, `--output` `<str>`
+### `-o`, `--output` `<str>`
 
 Output path for the completion script. If not specified, uses shell-specific default.
 
@@ -94,23 +94,23 @@ Output path for the completion script. If not specified, uses shell-specific def
 
 Render a per-session swim-lane PNG with concurrency curve underneath.
 
-#### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
 
 One or more AIPerf run directories.
 
-#### `-o`, `--out` `<str>`
+### `-o`, `--out` `<str>`
 
 Output PNG path. Only valid when a single run directory is given.
 
-#### `-c`, `--concurrency` `<int>`
+### `-c`, `--concurrency` `<int>`
 
 Target concurrency to draw as a reference line in the concurrency panel.
 
-#### `--ramp` `<float>`
+### `--ramp` `<float>`
 
 Ramp duration in seconds for the ramp-done marker; overrides the value read from ``profile_export_aiperf.json`` (useful when only the jsonl was exported).
 
-#### `--html`, `--no-html`
+### `--html`, `--no-html`
 
 Also write an interactive HTML trace viewer (``swim_lane.html``, or the ``--out`` path with an ``.html`` suffix).
 
@@ -120,25 +120,25 @@ Also write an interactive HTML trace viewer (``swim_lane.html``, or the ``--out`
 
 Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
 
-#### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
 
 One or more AIPerf run directories.
 
-#### `-o`, `--out` `<str>`
+### `-o`, `--out` `<str>`
 
 Output HTML path. Only valid when a single run directory is given.
 
-#### `-n`, `--limit-conversations` `<int>`
+### `-n`, `--limit-conversations` `<int>`
 
 Max conversations to render (roots first, then by earliest request time).
 <br/>_Default: `40`_
 
-#### `--max-turns` `<int>`
+### `--max-turns` `<int>`
 
 Max turns rendered per conversation; the rest are summarized as a hidden count.
 <br/>_Default: `60`_
 
-#### `--content-cap` `<int>`
+### `--content-cap` `<int>`
 
 Max characters kept per unique message body; longer bodies are truncated with a remaining-chars note. Raise for full fidelity.
 <br/>_Default: `8000`_
@@ -149,16 +149,16 @@ Max characters kept per unique message body; longer bodies are truncated with a 
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
-#### `--input-file` `<str>` _(Required)_
+### `--input-file` `<str>` _(Required)_
 
 Path to input mooncake trace JSONL file.
 
-#### `--block-size` `<int>`
+### `--block-size` `<int>`
 
 KV cache block size for analysis (default: 512).
 <br/>_Default: `512`_
 
-#### `--output-file` `<str>`
+### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
 
@@ -183,33 +183,33 @@ aiperf chat --model Qwen/Qwen3-0.6B --no-history
 aiperf chat --model Qwen/Qwen3-0.6B --quick "hello, who are you?"
 ```
 
-#### `-m`, `--model` `<str>` _(Required)_
+### `-m`, `--model` `<str>` _(Required)_
 
 Model name served by the endpoint.
 
-#### `-u`, `--url` `<str>`
+### `-u`, `--url` `<str>`
 
 Base URL of the OpenAI-compatible server (e.g. http://localhost:8000), matching `aiperf profile`.
 <br/>_Default: `http://localhost:8000`_
 
-#### `--system-prompt` `<str>`
+### `--system-prompt` `<str>`
 
 Optional system prompt prepended to the conversation.
 
-#### `-q`, `--quick` `<str>`
+### `-q`, `--quick` `<str>`
 
 Send a single MESSAGE and print the response + stats, then exit.
 
-#### `--history`, `--no-history`
+### `--history`, `--no-history`
 
 Retain and resend conversation history each turn (default). Pass --no-history for stateless, completion-style turns. Ignored with --quick.
 <br/>_Default: `True`_
 
-#### `--api-key` `<str>`
+### `--api-key` `<str>`
 
 API key sent as a Bearer token. Defaults to the OPENAI_API_KEY environment variable.
 
-#### `--tokenizer` `<str>`
+### `--tokenizer` `<str>`
 
 Tokenizer for client-side token counts. Defaults to the model name. Pass `builtin` for a zero-network tokenizer.
 
@@ -221,35 +221,35 @@ Generate, list, or search bundled AIPerf config templates.
 
 Without ``--output``, selected template YAML is printed to stdout. With ``--output``, the customized template is written to that path after applying ``--model`` and ``--url`` overrides.
 
-#### `-t`, `--template` `<str>`
+### `-t`, `--template` `<str>`
 
 Template name to generate (e.g. 'minimal', 'goodput_slo').
 
-#### `-l`, `--list`, `--no-list`
+### `-l`, `--list`, `--no-list`
 
 List bundled templates and exit.
 
-#### `-s`, `--search` `<str>`
+### `-s`, `--search` `<str>`
 
 Filter templates by keyword.
 
-#### `-c`, `--category` `<str>`
+### `-c`, `--category` `<str>`
 
 Filter --list by category.
 
-#### `-v`, `--verbose`, `--no-verbose`
+### `-v`, `--verbose`, `--no-verbose`
 
 Show tags and difficulty columns.
 
-#### `-m`, `--model` `<str>`
+### `-m`, `--model` `<str>`
 
 Override the template's model name.
 
-#### `-u`, `--url` `<str>`
+### `-u`, `--url` `<str>`
 
 Override the template's endpoint URL.
 
-#### `-o`, `--output` `<str>`
+### `-o`, `--output` `<str>`
 
 Write to file instead of stdout.
 
@@ -261,19 +261,19 @@ Expand a sweep config and print the resulting variations.
 
 Drives the same `load_config` -> `build_benchmark_plan` pipeline that `aiperf profile` uses, then prints what the orchestrator would have iterated over - without launching any benchmarks. Useful for verifying sweep paths, dir_name conventions, and per-variation merges before spending compute.
 
-#### `--config-file` `<str>` _(Required)_
+### `--config-file` `<str>` _(Required)_
 
 Path to an AIPerf YAML config containing a `sweep:` block.
 
-#### `-F`, `--full`, `--no-full`
+### `-F`, `--full`, `--no-full`
 
 Also emit each variation's fully-merged BenchmarkConfig body.
 
-#### `-i`, `--index` `<int>`
+### `-i`, `--index` `<int>`
 
 Show only the variation at this zero-based index (implies --full).
 
-#### `-f`, `--format` `<str>`
+### `-f`, `--format` `<str>`
 
 Output format: text (default human-readable), yaml, or json.
 <br/>_Default: `text`_
@@ -286,7 +286,7 @@ Validate an AIPerf config file.
 
 Loads the config through the same pipeline as `aiperf profile`, surfacing fatal errors (exit 1) and non-fatal warnings (printed to stderr; exit 0). Useful as a pre-flight check or in CI before kicking off a benchmark.
 
-#### `--config-file` `<str>` _(Required)_
+### `--config-file` `<str>` _(Required)_
 
 Path to an AIPerf YAML config to validate.
 
@@ -390,6 +390,38 @@ How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends
 Seconds between endpoint readiness probe attempts.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
+
+#### `--reset-kv-cache`
+
+Enable once-per-cell KV-cache reset via POST to the endpoint.
+<br/>_Flag (no value required)_
+
+#### `--reset-kv-cache-timeout-seconds` `<float>`
+
+Timeout seconds for reset_kv_cache control requests.
+<br/>_Constraints: > 0_
+
+#### `--reset-kv-cache-path` `<str>`
+
+Relative path for reset_kv_cache (default /reset_prefix_cache).
+
+#### `--server-profiler`
+
+Enable server profiler start/stop around profiling phases.
+<br/>_Flag (no value required)_
+
+#### `--server-profiler-timeout-seconds` `<float>`
+
+Timeout seconds for server_profiler control requests.
+<br/>_Constraints: > 0_
+
+#### `--server-profiler-start-path` `<str>`
+
+Relative path for profiler start (default /start_profile).
+
+#### `--server-profiler-stop-path` `<str>`
+
+Relative path for profiler stop (default /stop_profile).
 
 #### `--api-key` `<str>`
 
@@ -526,7 +558,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
@@ -1511,7 +1543,7 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 #### `--search-sla` `<list>`
 
-SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float in the metric's native unit. For request_error_rate, 1 means 1% (percentage points), unlike --error-rate-sla, which accepts a fraction. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:avg:lt:1'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
 
 #### `--search-sla-tier` `<list>`
 
@@ -1547,7 +1579,7 @@ End-to-end request-latency SLA threshold in milliseconds (p99). Maps to the `req
 
 #### `--error-rate-sla` `<float>`
 
-Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (p99). Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
+Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (avg), converting the fraction to the metric's percentage-point scale. Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
 <br/>_Constraints: > 0, &lt; 1_
 
 #### `--slo-attainment-fraction` `<float>`
@@ -1754,50 +1786,50 @@ aiperf plot --paths artifacts/my-run --mlflow-upload
 aiperf plot --paths artifacts/my-run --mlflow-upload --mlflow-tracking-uri http://127.0.0.1:5000 --mlflow-run-id <run_id>
 ```
 
-#### `--paths`, `--empty-paths` `<list>`
+### `--paths`, `--empty-paths` `<list>`
 
 Paths to profiling run directories. Defaults to ./artifacts if not specified.
 
-#### `--output` `<str>`
+### `--output` `<str>`
 
 Directory to save generated plots. Defaults to &lt;first_path>/plots if not specified.
 
-#### `--theme` `<str>`
+### `--theme` `<str>`
 
 Plot theme to use: 'light' (white background) or 'dark' (dark background). Defaults to 'light'.
 <br/>_Default: `light`_
 
-#### `--config` `<str>`
+### `--config` `<str>`
 
 Path to custom plot configuration YAML file. If not specified, auto-creates and uses ~/.aiperf/plot_config.yaml.
 
-#### `--verbose`, `--no-verbose`
+### `--verbose`, `--no-verbose`
 
 Show detailed error tracebacks in console (errors are always logged to ~/.aiperf/plot.log).
 
-#### `--dashboard`, `--no-dashboard`
+### `--dashboard`, `--no-dashboard`
 
 Launch interactive dashboard server instead of generating static PNGs.
 
-#### `--host` `<str>`
+### `--host` `<str>`
 
 Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
 <br/>_Default: `127.0.0.1`_
 
-#### `--port` `<int>`
+### `--port` `<int>`
 
 Port for dashboard server (only used with --dashboard). Defaults to 8050.
 <br/>_Default: `8050`_
 
-#### `--mlflow-upload`, `--no-mlflow-upload`
+### `--mlflow-upload`, `--no-mlflow-upload`
 
 Upload generated PNG plot artifacts to an existing MLflow run. Mutually exclusive with --dashboard.
 
-#### `--mlflow-tracking-uri` `<str>`
+### `--mlflow-tracking-uri` `<str>`
 
 Optional MLflow tracking URI override for plot upload.
 
-#### `--mlflow-run-id` `<str>`
+### `--mlflow-run-id` `<str>`
 
 Optional MLflow run id override for plot upload.
 
@@ -1807,20 +1839,20 @@ Optional MLflow run id override for plot upload.
 
 Explore AIPerf plugins: aiperf plugins [category] [type]
 
-#### `--category` `<str>`
+### `--category` `<str>`
 
 Category to explore.
 <br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `spec_decode_adapter`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
-#### `--name` `<str>`
+### `--name` `<str>`
 
 Type name for details.
 
-#### `-a`, `--all`, `--no-all`
+### `-a`, `--all`, `--no-all`
 
 Show all categories and plugins.
 
-#### `-v`, `--validate`, `--no-validate`
+### `-v`, `--validate`, `--no-validate`
 
 Validate plugins.yaml.
 
@@ -1920,6 +1952,38 @@ How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends
 Seconds between endpoint readiness probe attempts.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
+
+#### `--reset-kv-cache`
+
+Enable once-per-cell KV-cache reset via POST to the endpoint.
+<br/>_Flag (no value required)_
+
+#### `--reset-kv-cache-timeout-seconds` `<float>`
+
+Timeout seconds for reset_kv_cache control requests.
+<br/>_Constraints: > 0_
+
+#### `--reset-kv-cache-path` `<str>`
+
+Relative path for reset_kv_cache (default /reset_prefix_cache).
+
+#### `--server-profiler`
+
+Enable server profiler start/stop around profiling phases.
+<br/>_Flag (no value required)_
+
+#### `--server-profiler-timeout-seconds` `<float>`
+
+Timeout seconds for server_profiler control requests.
+<br/>_Constraints: > 0_
+
+#### `--server-profiler-start-path` `<str>`
+
+Relative path for profiler start (default /start_profile).
+
+#### `--server-profiler-stop-path` `<str>`
+
+Relative path for profiler stop (default /stop_profile).
 
 #### `--api-key` `<str>`
 
@@ -2056,7 +2120,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
@@ -3041,7 +3105,7 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 #### `--search-sla` `<list>`
 
-SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float in the metric's native unit. For request_error_rate, 1 means 1% (percentage points), unlike --error-rate-sla, which accepts a fraction. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:avg:lt:1'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
 
 #### `--search-sla-tier` `<list>`
 
@@ -3077,7 +3141,7 @@ End-to-end request-latency SLA threshold in milliseconds (p99). Maps to the `req
 
 #### `--error-rate-sla` `<float>`
 
-Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (p99). Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
+Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (avg), converting the fraction to the metric's percentage-point scale. Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
 <br/>_Constraints: > 0, &lt; 1_
 
 #### `--slo-attainment-fraction` `<float>`
@@ -3277,21 +3341,21 @@ aiperf speed-bench-report ./artifacts/ --metric accept_rate
 aiperf speed-bench-report ./artifacts/ --metric throughput
 ```
 
-#### `--paths`, `--empty-paths` `<list>` _(Required)_
+### `--paths`, `--empty-paths` `<list>` _(Required)_
 
 Run directories or parent directories containing run subdirectories.
 
-#### `--output` `<str>`
+### `--output` `<str>`
 
 Output CSV file path. Defaults to ./speed_bench_report.csv.
 <br/>_Default: `speed_bench_report.csv`_
 
-#### `--format` `<str>`
+### `--format` `<str>`
 
 Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
 <br/>_Default: `both`_
 
-#### `--metric` `<str>`
+### `--metric` `<str>`
 
 Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
 <br/>_Default: `accept_length`_
@@ -3302,34 +3366,34 @@ Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaul
 
 Synthesize a dataset workload.
 
-#### `--target` `<str>` _(Required)_
+### `--target` `<str>` _(Required)_
 
 Dataset workload to synthesize.
 
-#### `--num-sessions` `<int>`
+### `--num-sessions` `<int>`
 
 Number of sessions to generate.
 <br/>_Default: `1000`_
 
-#### `--output` `<str>`
+### `--output` `<str>`
 
 Parent directory for the run directory.
 <br/>_Default: `.`_
 
-#### `--config` `<str>`
+### `--config` `<str>`
 
 Path to config/manifest JSON.
 
-#### `--seed` `<int>`
+### `--seed` `<int>`
 
 Random seed for reproducibility.
 <br/>_Default: `42`_
 
-#### `--max-isl` `<int>`
+### `--max-isl` `<int>`
 
 Maximum input sequence length.
 
-#### `--max-osl` `<int>`
+### `--max-osl` `<int>`
 
 Maximum output sequence length.
 
@@ -3339,10 +3403,10 @@ Maximum output sequence length.
 
 Validate a benchmark artifact.
 
-#### `--target` `<str>` _(Required)_
+### `--target` `<str>` _(Required)_
 
 Artifact format to validate.
 
-#### `--input` `<str>` _(Required)_
+### `--input` `<str>` _(Required)_
 
 Path to the artifact file.

@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, NonNegativeInt
 
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
@@ -351,4 +351,16 @@ class JsonExportData(AIPerfBaseModel):
         default=None,
         description="Metrics computed from warmup-phase requests only. Profiling "
         "metrics remain in the top-level metric fields.",
+    )
+    pooled_spec_decode_acceptance_histogram: (
+        dict[NonNegativeInt, NonNegativeInt] | None
+    ) = Field(
+        default=None,
+        description=(
+            "Run-level pooled speculative-decoding acceptance histogram: "
+            "accepted-draft count j mapped to the total number of verify steps "
+            "that accepted exactly j draft tokens, summed across every request. "
+            "Its counts sum to total_spec_decode_steps. Present only when spec "
+            "decode was active; absent otherwise."
+        ),
     )

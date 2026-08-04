@@ -174,6 +174,7 @@ class PhaseRunner(TaskManagerMixin):
         )
         self._callback_handler = callback_handler
         self._on_phase_complete: Callable[[], None] | None = None
+        self._on_phase_error: Callable[[BaseException], None] | None = None
 
         # Per-phase components - order matters
         self._scheduler = LoopScheduler()
@@ -331,6 +332,42 @@ class PhaseRunner(TaskManagerMixin):
         """
         self._on_phase_complete = callback
 
+    def set_phase_error_callback(
+        self, callback: Callable[[BaseException], None]
+    ) -> None:
+        """Set callback to invoke when a seamless non-final phase's detached
+        return-wait task ends with a fatal control-node failure.
+
+        ``PhaseRunner.run()`` returns without awaiting the seamless return-wait
+        task, so raising inside it would only reject the background task and
+        never reach the orchestrator. This callback forwards the failure so the
+        run fails instead of reporting success.
+        """
+        self._on_phase_error = callback
+
+    @property
+    def return_wait_task(self) -> asyncio.Task | None:
+        """The detached seamless return-wait task (None unless this phase is
+        seamless non-final). The orchestrator awaits it as a barrier so a late
+        fatal control-node failure surfaces before the run reports success."""
+        return self._return_wait_task
+
+    @property
+    def control_fatal_error(self) -> BaseException | None:
+        """A fatal request-free control-node failure recorded on this phase's
+        progress tracker, if any (see ``record_control_fatal_error``)."""
+        return self._progress.fatal_error
+
+    def record_control_fatal_error(self, error: BaseException) -> None:
+        """Record a fatal control-node failure on THIS phase's progress tracker.
+
+        Called by the orchestrator's fatal-error sink. A control-node failure is
+        fatal to the whole run, so it is recorded on every active phase rather
+        than only the callback handler's mutable ``progress`` slot -- which,
+        under seamless mode's concurrent runners, may point at the wrong phase.
+        """
+        self._progress.record_fatal_error(error)
+
     def _is_phase_complete(self) -> bool:
         """Return True if the request-count cap has been reached AND no DAG
         children are still in flight.
@@ -385,6 +422,13 @@ class PhaseRunner(TaskManagerMixin):
             ramper.stop()
         self._scheduler.cancel_all()
 
+    def _raise_if_control_node_failed(self) -> None:
+        """Re-raise a fatal request-free control-node failure recorded on the
+        progress tracker (via the router's fatal-error sink), so the phase exits
+        with a visible error instead of reporting the graph as complete."""
+        if self._progress.fatal_error is not None:
+            raise self._progress.fatal_error
+
     def _on_return_wait_complete(self, task: asyncio.Task) -> None:
         """Handle completion of background return wait task (seamless mode).
 
@@ -394,6 +438,24 @@ class PhaseRunner(TaskManagerMixin):
         if self._progress_task:
             self._progress_task.cancel()
 
+        # Retrieve the detached task's own exception so it is not left as an
+        # unretrieved-task-exception, and treat it as a phase failure.
+        task_exc = None if task.cancelled() else task.exception()
+
+        # Seamless path: a fatal request-free control-node failure (recorded on
+        # the progress tracker during the background wait, or raised by the task
+        # itself) must not be reported as a clean phase completion. Forward it to
+        # the orchestrator so the RUN fails -- the sync path raises
+        # ``_raise_if_control_node_failed`` for this, but the seamless task is
+        # never awaited, so we propagate via the error callback instead.
+        fatal = self._progress.fatal_error or task_exc
+        if fatal is not None:
+            self.error(
+                lambda: "fatal request-free control-node failure in seamless "
+                f"phase {self._config.phase}: {fatal!r}"
+            )
+            if self._on_phase_error is not None:
+                self._on_phase_error(fatal)
         if self._on_phase_complete:
             self._on_phase_complete()
 
@@ -606,6 +668,11 @@ class PhaseRunner(TaskManagerMixin):
         else:
             await self._wait_for_returning_complete(strategy, phase_id=phase_id)
             self._progress_task.cancel()
+            # Surface a fatal control-node failure recorded during the wait.
+            # Checked HERE -- after the wait returns via ANY of its exit paths,
+            # including the "all credits already returned" fast path that the
+            # fatal-error callback itself unblocks -- so it is never swallowed.
+            self._raise_if_control_node_failed()
 
         for ramper in self._rampers:
             ramper.stop()

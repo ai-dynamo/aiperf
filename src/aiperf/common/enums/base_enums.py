@@ -22,21 +22,50 @@ class CaseInsensitiveStrEnum(str, Enum):
     lookup functionality for its members.
     """
 
+    def __init__(self: Self, *args: object) -> None:
+        # Comparisons and hashing sit on hot paths (per-SSE-chunk field checks
+        # at >1M/s under load); normalize once per member instead of per call.
+        self._norm_value_cache = _normalize_name(self.value)
+        self._norm_hash_cache = hash(self._norm_value_cache)
+
+    def _norm_value(self: Self) -> str:
+        # Lazy fallback for members created outside Enum construction
+        # (e.g. dynamically registered custom members), which skip __init__.
+        norm = self.__dict__.get("_norm_value_cache")
+        if norm is None:
+            norm = _normalize_name(self.value)
+            self._norm_value_cache = norm
+        return norm
+
     def __str__(self) -> str:
         return self.value
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}.{self.name}"
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self: Self, other: object) -> bool:
+        if self is other:
+            return True
+        if isinstance(other, CaseInsensitiveStrEnum):
+            return self._norm_value() == other._norm_value()
         if isinstance(other, str):
-            return _normalize_name(self.value) == _normalize_name(other)
+            # Exact match first: skips normalization for the common case where
+            # the raw wire string already equals the member value.
+            return str.__eq__(
+                self, other
+            ) is True or self._norm_value() == _normalize_name(other)
         if isinstance(other, Enum):
-            return _normalize_name(self.value) == _normalize_name(other.value)
+            return isinstance(other.value, str) and self._norm_value() == (
+                _normalize_name(other.value)
+            )
         return super().__eq__(other)
 
-    def __hash__(self) -> int:
-        return hash(_normalize_name(self.value))
+    def __hash__(self: Self) -> int:
+        norm_hash = self.__dict__.get("_norm_hash_cache")
+        if norm_hash is None:
+            norm_hash = hash(self._norm_value())
+            self._norm_hash_cache = norm_hash
+        return norm_hash
 
     @classmethod
     def _missing_(cls, value):

@@ -107,7 +107,7 @@ RUN mkdir -p /opt/licenses/dpkg \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build ffmpeg with libvpx (VP9 codec)
-ARG FFMPEG_VERSION=8.1.1
+ARG FFMPEG_VERSION=8.1.2
 RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cd ffmpeg-${FFMPEG_VERSION} \

@@ -234,6 +234,7 @@ class TestCreditReturnBasicFlow:
             False,  # cancelled=False
             errored=False,
             is_child=False,  # agent_depth=0 root credit
+            no_request=False,
         )
 
     async def test_on_credit_return_checks_global_idle_after_dispatch(
@@ -264,6 +265,7 @@ class TestCreditReturnBasicFlow:
             True,  # cancelled=True
             errored=False,
             is_child=False,  # agent_depth=0 root credit
+            no_request=False,
         )
 
     async def test_on_credit_return_notifies_result_aware_strategy(
@@ -898,7 +900,11 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled, errored=False, is_child=False
+            credit.is_final_turn,
+            cancelled,
+            errored=False,
+            is_child=False,
+            no_request=False,
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()
@@ -1393,3 +1399,25 @@ class TestWarmupEarlyAbort:
 
         warmup_strategy.record_warmup_failure.assert_called_once()
         assert handler._warmup_abort_triggered is False
+
+
+async def test_no_request_return_skips_prefill_counter(
+    registered_handler, mock_progress
+):
+    """A no_request virtual credit must NOT bump the prefill-released counter
+    (increment_sent skips its billable counter too), else the derived
+    in_flight_prefills = sent - released underflows by one per coordinator turn.
+    The concurrency slot is still released via the return path."""
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c",
+        x_correlation_id="corr-c",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns(),
+        no_request=True,
+    )
+    credit_return = make_credit_return(credit, first_token_sent=False)
+    await registered_handler.on_credit_return("worker-1", credit_return)
+    mock_progress.increment_prefill_released.assert_not_called()

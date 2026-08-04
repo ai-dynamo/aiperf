@@ -15,6 +15,7 @@ from aiperf.common.accumulator_protocols import (
     StreamExporterProtocol,
     SummaryContext,
 )
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
@@ -393,6 +394,38 @@ class ErrorTrackingState:
     error_counts: dict[ErrorDetails, int] = field(
         default_factory=lambda: defaultdict(int)
     )
+
+
+_logger = AIPerfLogger(__name__)
+
+
+def _pooled_spec_decode_histogram(
+    summary_ctx: SummaryContext,
+) -> dict[int, int] | None:
+    """Pull the pooled acceptance histogram off the metric_records summary.
+
+    The dict rides on ``AccumulatorMetricsSummary`` (not in ``records``) because
+    it is a dict aggregate outside the scalar/list metric machinery. Only the
+    ``metric_results`` accumulator pools one, so exactly one populated histogram
+    is expected; if more than one accumulator populates one the single-source
+    assumption has broken, so warn and use the first rather than silently
+    picking a dict-ordering winner. None when spec decode was off for the
+    exported phase. A module-level function (not a method) so mocked
+    RecordsManager instances in unit tests cannot shadow it with an auto-mock.
+    """
+    populated = [
+        summary.pooled_spec_decode_acceptance_histogram
+        for summary in summary_ctx.accumulator_outputs.values()
+        if isinstance(summary, AccumulatorMetricsSummary)
+        and summary.pooled_spec_decode_acceptance_histogram
+    ]
+    if len(populated) > 1:
+        _logger.warning(
+            f"Expected one accumulator to pool a spec-decode acceptance "
+            f"histogram, found {len(populated)}; using the first. Reconciliation "
+            "with total_spec_decode_steps may be unreliable."
+        )
+    return populated[0] if populated else None
 
 
 class RecordsManager(PullClientMixin, BaseComponentService):
@@ -1953,6 +1986,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     phase, 0
                 ),
                 phase_records=phase_records,
+                pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(
+                    summary_ctx
+                ),
             ),
             errors=error_results,
         )

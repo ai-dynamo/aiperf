@@ -196,6 +196,7 @@ endpoint:
       supports_images: true
       supports_videos: true
       consumes_system_message: true
+      supports_cache_bust: true
       metrics_title: LLM Metrics
 
   cohere_rankings:
@@ -236,6 +237,7 @@ endpoint:
       supports_images: true
       supports_audio: true
       consumes_system_message: true
+      supports_cache_bust: true
       metrics_title: LLM Metrics
 
   messages:
@@ -253,6 +255,7 @@ endpoint:
       tokenizes_input: true
       supports_images: true
       consumes_system_message: true
+      supports_cache_bust: true
       metrics_title: LLM Metrics
 
   chat_embeddings:
@@ -1304,6 +1307,14 @@ console_exporter:
     description: |
       Console exporter for primary benchmark metrics. Displays formatted metric
       tables to stdout for user-facing results. Always loaded.
+
+  spec_decode:
+    class: aiperf.exporters.console_spec_decode_exporter:ConsoleSpecDecodeExporter
+    description: |
+      Dedicated console section for speculative-decoding acceptance: the Spec
+      Decode metric table followed immediately by the one-line pooled
+      accepted-draft histogram. Renders nothing when no request carried
+      spec-decode acceptance stats.
 
   gpu_vendor_disclaimer:
     class: aiperf.exporters.console_gpu_vendor_disclaimer_exporter:ConsoleGpuVendorDisclaimerExporter
