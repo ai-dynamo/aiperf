@@ -677,12 +677,22 @@ pub(crate) async fn execute_native_inner(
                 "profiling",
             ));
         }
-        // `GlobalHop` runs one coordinator loop hopping turns to worker threads;
-        // `Sharded`/`Global` run `W` independent per-thread scheduling loops.
+        // `GlobalHop` and `GlobalPush` each run one coordinator loop over `W`
+        // worker threads -- the hop awaits every request, the push routes each as
+        // a credit returned out of band; `Sharded`/`Global` run `W` independent
+        // per-thread scheduling loops.
         let outcome = match request.dispatch_mode {
-            DispatchMode::GlobalHop | DispatchMode::GlobalPush => {
+            DispatchMode::GlobalHop => {
                 crate::engine::global_hop::run_global_hop(shared, profiling_sidecars, clock.clone())
                     .await?
+            }
+            DispatchMode::GlobalPush => {
+                crate::engine::global_push::run_global_push(
+                    shared,
+                    profiling_sidecars,
+                    clock.clone(),
+                )
+                .await?
             }
             DispatchMode::Sharded | DispatchMode::Global => {
                 crate::engine::sharded_scheduled::run_sharded_scheduled(

@@ -1078,12 +1078,71 @@ impl TurnDispatcher for ConfiguredDispatcher {
         }
     }
 
+    fn supports_credit_dispatch(&self) -> bool {
+        self.execution_backend.supports_credit_dispatch()
+    }
+
+    fn send_credit(&self, turn: TurnToSend) -> Result<()> {
+        // `begin` still runs here, on the coordinator, in issuance order: it is
+        // what fixes the worker-count-independent global dispatch ordinal. Only
+        // the AWAIT moves to the worker.
+        let context = self.capture.begin(&turn);
+        let turn = PreparedTurn::from_turn(turn, &self.model);
+        self.execution_backend.send_credit(turn, context)
+    }
+
+    async fn next_credit_report(&self) -> Option<TurnCreditReport> {
+        let report = self.execution_backend.next_credit_report().await?;
+        let kind = match report.kind {
+            CreditReportKind::FirstToken(ttft_ns) => TurnCreditReportKind::FirstToken(ttft_ns),
+            CreditReportKind::CreditReturn(measured) => {
+                TurnCreditReportKind::CreditReturn(Box::new(self.absorb_credit(report.uuid, *measured)))
+            }
+        };
+        Some(TurnCreditReport {
+            uuid: report.uuid,
+            kind,
+        })
+    }
+
+    fn cancel_credits(&self) {
+        self.execution_backend.cancel_credits();
+    }
+
     async fn prewarm(&self, turn: TurnToSend) -> Result<()> {
         // Warm the execution backend (every worker) with the real prepared
         // request shape; the backend discards the round-trip and records
         // nothing, so timed issuance starts from a warmed transport.
         let turn = PreparedTurn::from_turn(turn, &self.model);
         self.execution_backend.prewarm(turn).await
+    }
+}
+
+impl ConfiguredDispatcher {
+    /// Fold a returned credit's worker-built facts into the coordinator capture,
+    /// exactly as the awaited path's `Ok` arm does.
+    fn absorb_credit(
+        &self,
+        uuid: Uuid,
+        measured: Result<MeasuredOutcome>,
+    ) -> Result<TurnDispatchOutcome> {
+        let MeasuredOutcome {
+            result: collected,
+            live_record,
+        } = measured?;
+        let outcome = collected.outcome;
+        self.capture
+            .record_http_exchange(uuid, collected.request_payload, collected.record)?;
+        self.capture.record_model_output(
+            uuid,
+            &outcome.response_text,
+            outcome.model_response.content.as_deref(),
+            outcome.model_response.reasoning.as_deref(),
+        )?;
+        if let Some(live_record) = live_record {
+            self.capture.record_live(uuid, live_record);
+        }
+        Ok(outcome)
     }
 }
 

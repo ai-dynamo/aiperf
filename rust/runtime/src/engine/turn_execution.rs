@@ -24,7 +24,8 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
 use crate::transport::core::{
-    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
+    CreditReportKind, DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn,
+    RequestExecutor, WorkerCreditReport,
 };
 use crate::transport::http::{TransportSink, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
@@ -38,6 +39,13 @@ use uuid::Uuid;
 const WORKER_QUEUE_CAPACITY: usize = 256;
 /// Bounded per-command streaming-response relay depth.
 const WORKER_RESPONSE_CAPACITY: usize = 256;
+/// Bounded depth of the shared credit-return stream every worker reports on.
+///
+/// One channel for the whole placement, not one per credit: sized well above a
+/// realistic in-flight set so a worker is never parked reporting a return, but
+/// still bounded — a worker that fills it simply waits, and the coordinator's
+/// drain loop is a separate task that is always able to run and empty it.
+const CREDIT_RETURN_CAPACITY: usize = 8192;
 
 /// Inputs for one execution backend.
 pub struct ExecutionBackendConfig {
@@ -317,6 +325,27 @@ struct WorkerCommand {
     cancellation: PlacementCancellation,
 }
 
+/// One credit ROUTED to a worker thread, which then owns the request for its
+/// whole lifetime and returns the credit out of band.
+///
+/// The difference from [`WorkerCommand`] is entirely on the return path. A
+/// hopped command carries its own reply channel because one coordinator future
+/// is parked on it; a credit carries a clone of the placement's single shared
+/// return stream and tags every report with the request `uuid`, because the
+/// coordinator has already moved on and drains all workers from one loop.
+struct CreditCommand {
+    turn: PreparedTurn,
+    context: MeasuredContext,
+    /// Index of the worker this credit was routed to, echoed back on every
+    /// report so the coordinator can release the right worker's depth.
+    worker: usize,
+    events: mpsc::Sender<WorkerCreditReport>,
+    /// Placement-wide latch fired by [`RequestExecutor::cancel_credits`]. Shared
+    /// rather than per credit: nothing coordinator-side holds a per-request
+    /// handle to fire, and grace escalation cancels the whole phase at once.
+    cancellation: PlacementCancellation,
+}
+
 /// Control-plane message multiplexed onto each worker's command channel.
 enum WorkerMessage {
     /// Build the worker-local observer from the single resolved metrics
@@ -327,6 +356,8 @@ enum WorkerMessage {
     },
     /// Execute one prepared turn (buffered or measured).
     Command(Box<WorkerCommand>),
+    /// Execute one routed credit, reporting on the shared return stream.
+    Credit(Box<CreditCommand>),
     /// Warm this worker's sink with one discarded round-trip before timed
     /// issuance, then acknowledge so the coordinator can release all workers
     /// from a warmed state (the Rust-native "workers ready, go" barrier).
@@ -431,6 +462,30 @@ struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     sticky: RefCell<HashMap<String, usize>>,
     run_origin_ns: Cell<Option<i64>>,
     dimension_sink: B::Sink,
+    /// Push-mode return stream, shared by every worker and drained by one
+    /// coordinator loop. Built eagerly because it costs one channel per run.
+    credit_returns: CreditReturnStream,
+    /// Per-worker routed-order backlog for pushed commands that did not fit in
+    /// a worker's bounded queue.
+    ///
+    /// [`RequestExecutor::send_credit`] is synchronous, so it cannot wait for
+    /// capacity; parking the command here instead of blocking keeps the issuer
+    /// off the request's critical path. Whenever this is non-empty for a worker
+    /// EVERY later command for that worker joins it, so routed order survives
+    /// the detour. It drains on each return-stream event, which is exactly when
+    /// that worker frees a queue slot. Bounded in practice by the same
+    /// admission gate that bounds in-flight requests.
+    credit_backlog: RefCell<Vec<std::collections::VecDeque<Box<CreditCommand>>>>,
+    /// Placement-wide cancellation latch shared by every pushed command.
+    credit_cancellation: PlacementCancellation,
+}
+
+/// The coordinator's end of the push return stream.
+struct CreditReturnStream {
+    sender: mpsc::Sender<WorkerCreditReport>,
+    /// Borrowed only inside a `poll_recv` call, never across an await, so the
+    /// single drain loop cannot collide with the backlog flush.
+    receiver: RefCell<mpsc::Receiver<WorkerCreditReport>>,
 }
 
 /// Decrements a worker's in-flight counter on drop, so a cancelled or
@@ -662,6 +717,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             }
         }
 
+        let (credit_tx, credit_rx) = mpsc::channel(CREDIT_RETURN_CAPACITY);
         Ok(Self {
             senders: RefCell::new(Some(senders)),
             threads: RefCell::new(threads),
@@ -672,7 +728,65 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             sticky: RefCell::new(HashMap::new()),
             run_origin_ns: Cell::new(None),
             dimension_sink,
+            credit_returns: CreditReturnStream {
+                sender: credit_tx,
+                receiver: RefCell::new(credit_rx),
+            },
+            credit_backlog: RefCell::new(
+                (0..workers)
+                    .map(|_| std::collections::VecDeque::new())
+                    .collect(),
+            ),
+            credit_cancellation: PlacementCancellation::new(),
         })
+    }
+
+    /// Move as much of each worker's routed-order backlog into its bounded queue
+    /// as that queue currently accepts.
+    ///
+    /// Called on every push and every return-stream event. A worker with a
+    /// backlog has a full queue, which means it has in-flight requests, which
+    /// means more events are coming — so the backlog always drains without a
+    /// dedicated pump task.
+    fn flush_credit_backlog(&self) {
+        let mut backlog = self.credit_backlog.borrow_mut();
+        if backlog.iter().all(|queue| queue.is_empty()) {
+            return;
+        }
+        let senders = self.senders.borrow();
+        let Some(senders) = senders.as_ref() else {
+            return;
+        };
+        for (index, queue) in backlog.iter_mut().enumerate() {
+            while let Some(command) = queue.pop_front() {
+                match senders[index].try_send(WorkerMessage::Credit(command)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(WorkerMessage::Credit(command))) => {
+                        queue.push_front(command);
+                        break;
+                    }
+                    // A closed worker cannot report a terminal, so dropping the
+                    // command here would leave the issuer's pending entry open
+                    // forever. Synthesize the terminal on the return stream.
+                    Err(mpsc::error::TrySendError::Closed(WorkerMessage::Credit(command))) => {
+                        self.report_credit_failure(command.turn.request.uuid, index);
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    /// Return a credit no worker can drive, so the issuer's pending entry is
+    /// always closed exactly once even when a worker dies mid-run.
+    fn report_credit_failure(&self, uuid: Uuid, worker: usize) {
+        let _ = self.credit_returns.sender.try_send(WorkerCreditReport {
+            uuid,
+            worker,
+            kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
+                "execution worker stopped before accepting a routed credit"
+            )))),
+        });
     }
 
     fn shutdown_workers(&self) -> Result<()> {
@@ -776,6 +890,96 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
             result: reply.result?,
             live_record: reply.live_record,
         })
+    }
+
+    fn supports_credit_dispatch(&self) -> bool {
+        true
+    }
+
+    fn send_credit(&self, turn: PreparedTurn, context: MeasuredContext) -> Result<()> {
+        let _run_origin_ns = self.origin()?;
+        // A worker frees queue capacity only by finishing work, and finishing
+        // work emits a return-stream event — so the flush that matters happens
+        // on the drain. This one keeps a backlog from outliving a lull in
+        // completions.
+        self.flush_credit_backlog();
+        let index = {
+            let senders = self.senders.borrow();
+            let senders = senders
+                .as_ref()
+                .ok_or_else(|| anyhow!("execution backend is shut down"))?;
+            let mut rr_cursor = self.next_worker.get();
+            let index = pick_worker(
+                self.routing,
+                senders.len(),
+                context.metadata.correlation_id.as_deref(),
+                turn.request.is_final_turn,
+                &self.inflight,
+                &mut self.sticky.borrow_mut(),
+                &mut rr_cursor,
+            );
+            self.next_worker.set(rr_cursor);
+            index
+        };
+        // Same stamping order as the hop: `sent`/`last_sent` decide the next
+        // tie. The in-flight depth differs by design — the hop releases it at
+        // reply, a push issuer at credit return (see `DispatchMode::GlobalPush`)
+        // — so it is incremented here and decremented on the terminal report.
+        let chosen = &self.inflight[index];
+        chosen.sent.set(chosen.sent.get() + 1);
+        self.send_seq.set(self.send_seq.get() + 1);
+        chosen.last_sent.set(self.send_seq.get());
+        chosen.inflight.set(chosen.inflight.get().saturating_add(1));
+
+        let command = Box::new(CreditCommand {
+            turn,
+            context,
+            worker: index,
+            events: self.credit_returns.sender.clone(),
+            cancellation: self.credit_cancellation.clone(),
+        });
+        let mut backlog = self.credit_backlog.borrow_mut();
+        // Routed order is the contract: once this worker has a backlog every
+        // later command for it must queue behind, never overtake.
+        if !backlog[index].is_empty() {
+            backlog[index].push_back(command);
+            return Ok(());
+        }
+        let senders = self.senders.borrow();
+        let senders = senders
+            .as_ref()
+            .ok_or_else(|| anyhow!("execution backend is shut down"))?;
+        match senders[index].try_send(WorkerMessage::Credit(command)) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(WorkerMessage::Credit(command))) => {
+                backlog[index].push_back(command);
+                Ok(())
+            }
+            Err(_) => Err(anyhow!(
+                "execution worker stopped before accepting a routed credit"
+            )),
+        }
+    }
+
+    async fn next_credit_report(&self) -> Option<WorkerCreditReport> {
+        // `poll_recv` keeps the receiver borrow inside one poll, so the backlog
+        // flush below (and any other executor call) can never hit a live borrow.
+        let report =
+            poll_fn(|context| self.credit_returns.receiver.borrow_mut().poll_recv(context)).await?;
+        if let CreditReportKind::CreditReturn(_) = &report.kind {
+            // The returned credit releases its worker's depth — the one
+            // deliberate difference from the hop, which releases at reply.
+            if let Some(load) = self.inflight.get(report.worker) {
+                load.inflight.set(load.inflight.get().saturating_sub(1));
+            }
+            // A returned credit is exactly when that worker freed a queue slot.
+            self.flush_credit_backlog();
+        }
+        Some(report)
+    }
+
+    fn cancel_credits(&self) {
+        self.credit_cancellation.cancel();
     }
 
     fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
@@ -995,6 +1199,13 @@ async fn run_worker<S: WorkerSink + 'static>(
                             execute_worker_command(sink, observer, *command).await;
                         });
                     }
+                    Some(WorkerMessage::Credit(command)) => {
+                        let sink = sink.clone();
+                        let observer = observer.clone();
+                        jobs.spawn_local(async move {
+                            execute_worker_credit(sink, observer, *command).await;
+                        });
+                    }
                     Some(WorkerMessage::Prewarm { turn, done }) => {
                         let sink = sink.clone();
                         jobs.spawn_local(async move {
@@ -1151,6 +1362,87 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
     // Completion is always the last event for this request; the coordinator
     // breaks its receive loop on it.
     let _ = events.send(WorkerEvent::Completed(Box::new(reply))).await;
+}
+
+/// Drive one routed credit to terminal and return it on the shared stream.
+///
+/// The worker owns the whole request here — no coordinator future is parked on
+/// it — so every report it makes is tagged with the request `uuid`. Live
+/// response streaming is deliberately absent: the credit path is selected only
+/// for runs with no live response observer (see
+/// [`ScheduledRuntime`](crate::scheduled::ScheduledRuntime)'s issuance split),
+/// because forwarding frames would put the coordinator back in the request's
+/// lifetime and undo the entire point of the mode.
+async fn execute_worker_credit<S: WorkerSink + 'static>(
+    sink: Rc<S>,
+    worker_observer: Option<Rc<NativeMetricsObserver>>,
+    command: CreditCommand,
+) {
+    let CreditCommand {
+        turn,
+        context,
+        worker,
+        events,
+        cancellation,
+    } = command;
+    let uuid = turn.request.uuid;
+    let Some(observer) = worker_observer else {
+        let _ = events
+            .send(WorkerCreditReport {
+                uuid,
+                worker,
+                kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
+                    "worker-local measurement was not configured before a routed credit"
+                )))),
+            })
+            .await;
+        return;
+    };
+    let first_token_sent = Cell::new(false);
+    let on_first_token = |ttft_ns| {
+        // `try_send` keeps the callback synchronous, as the sink requires. A
+        // dropped first-token report costs the issuer an early prefill release,
+        // never a lost credit: the return below is sent with backpressure.
+        if !first_token_sent.replace(true) {
+            let _ = events.try_send(WorkerCreditReport {
+                uuid,
+                worker,
+                kind: CreditReportKind::FirstToken(ttft_ns),
+            });
+        }
+    };
+    let dispatch = sink.dispatch_measured(&observer, turn, &context, &on_first_token, None);
+    tokio::pin!(dispatch);
+    let result = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => {
+            Err(anyhow!("execution command cancelled by its coordinator"))
+        }
+        result = &mut dispatch => result,
+    };
+    let live_record = context
+        .wants_live_record
+        .then(|| {
+            if context.consume_record {
+                observer.drain_terminal_record(uuid, 0)
+            } else {
+                observer.snapshot_record(uuid, 0)
+            }
+        })
+        .flatten();
+    let outcome = result.map(|result| MeasuredOutcome {
+        result,
+        live_record,
+    });
+    // Returning the credit is what releases the issuer's admission slot, so it
+    // is sent with backpressure rather than dropped on a full stream.
+    let _ = events
+        .send(WorkerCreditReport {
+            uuid,
+            worker,
+            kind: CreditReportKind::CreditReturn(Box::new(outcome)),
+        })
+        .await;
 }
 
 fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {

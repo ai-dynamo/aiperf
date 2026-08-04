@@ -47,6 +47,32 @@ pub trait LocalTaskScheduler {
 
     /// Resolve once every tracked task has drained.
     fn wait_idle(&self) -> LocalTask;
+
+    /// Enrol one unit of work that this scheduler does not drive, so
+    /// [`Self::task_count`] and [`Self::wait_idle`] still account for it.
+    ///
+    /// A pushed request (`--dispatch global-push`) is owned end to end by a
+    /// worker thread and reported back out of band, so no local future
+    /// represents it. Without this handle the phase's drain barrier would see
+    /// an idle scheduler while requests were still in flight and finalize the
+    /// phase early. The returned handle releases the slot on drop, matching the
+    /// guard a spawned task carries. [`Self::cancel_all`] cannot abort one —
+    /// the work is on another thread — so the owner must cancel it at the
+    /// source and let the resulting terminal drop the handle.
+    fn begin_external_task(&self) -> ExternalTask;
+}
+
+/// Scheduler-drain enrolment for work driven outside the local executor.
+///
+/// Released on drop; see [`LocalTaskScheduler::begin_external_task`].
+pub struct ExternalTask {
+    state: Rc<SchedulerState>,
+}
+
+impl Drop for ExternalTask {
+    fn drop(&mut self) {
+        self.state.finish_task();
+    }
 }
 
 struct SchedulerState {
@@ -213,6 +239,13 @@ impl LocalTaskScheduler for ClockTaskScheduler {
                 idle.await;
             }
         })
+    }
+
+    fn begin_external_task(&self) -> ExternalTask {
+        self.state.start_task();
+        ExternalTask {
+            state: self.state.clone(),
+        }
     }
 }
 

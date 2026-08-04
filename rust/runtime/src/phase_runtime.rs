@@ -339,6 +339,11 @@ pub struct ScheduledPhasePlan {
     /// Whether post-drain compatibility and native reductions may share the
     /// bounded reduction pool.
     pub parallel_report_reduction: bool,
+    /// Whether this phase routes issued turns as credits returned out of band
+    /// (`--dispatch global-push`) instead of awaiting one dispatch future per
+    /// request. Rejected at build time when the dispatcher cannot return
+    /// credits.
+    pub credit_dispatch: bool,
     /// Run-wide observers that receive the exact phase-local measurement
     /// stream in addition to the phase's own collector and native metrics.
     ///
@@ -372,8 +377,15 @@ impl ScheduledPhasePlan {
             retain_native_metric_record_dimensions: true,
             capture_timing_records: true,
             parallel_report_reduction: false,
+            credit_dispatch: false,
             additional_observers: Vec::new(),
         }
+    }
+
+    /// Route this phase's issued turns as credits returned out of band.
+    pub fn with_credit_dispatch(mut self, credit_dispatch: bool) -> Self {
+        self.credit_dispatch = credit_dispatch;
+        self
     }
 
     /// Preserve natural-exhaustion workloads that own their authored bounds.
@@ -996,6 +1008,12 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             plan.ancillary.url_selector,
             plan.ancillary.phase,
         );
+        if plan.credit_dispatch && let Err(error) = runtime.enable_credit_dispatch() {
+            return Rc::new(FailedScheduledPhaseExecution {
+                phase_id: config.id.clone(),
+                error: format!("{error:#}"),
+            });
+        }
         self.runtimes.borrow_mut().push(runtime.clone());
         Rc::new(ScheduledPhaseExecution {
             phase_id: config.id.clone(),
@@ -1004,6 +1022,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             runtime,
             tracker,
             wait_for_natural_drain: !plan.enforce_stop,
+            credit_returns: RefCell::new(None),
             controller,
             resources: plan.resources,
             sidecars: plan.sidecars,
@@ -1023,6 +1042,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         Box::pin(async move {
             for runtime in runtimes {
                 runtime.scheduler().cancel_all();
+                runtime.cancel_outstanding_credits();
             }
             tokio::task::yield_now().await;
             Ok(())
@@ -1072,6 +1092,11 @@ struct ScheduledPhaseExecution {
     runtime: Rc<ScheduledRuntime>,
     tracker: Rc<PhaseDispatchTracker>,
     wait_for_natural_drain: bool,
+    /// The phase's single credit-return drain loop, when credit dispatch is
+    /// selected. One task for the whole phase replaces the per-request future
+    /// the ordinary path parks; it is aborted at `finalize`, after the drain
+    /// barrier that depends on it.
+    credit_returns: RefCell<Option<tokio::task::JoinHandle<()>>>,
     controller: Rc<dyn ScheduledPhaseController>,
     resources: Rc<dyn ScheduledPhaseResources>,
     sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
@@ -1115,6 +1140,16 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let realtime = self.realtime_live.clone();
         let realtime_clock = self.clock.clone();
         let realtime_origin_ns = self.realtime_origin_ns;
+        // The phase's single credit-return drain, started before the first
+        // credit can be routed. It outlives this future on purpose: the natural
+        // drain below and `finalize`'s barrier both wait on credits it is the
+        // only consumer of, so `finalize` owns aborting it.
+        if self.runtime.uses_credit_dispatch() && self.credit_returns.borrow().is_none() {
+            let drain_runtime = self.runtime.clone();
+            *self.credit_returns.borrow_mut() = Some(tokio::task::spawn_local(async move {
+                drain_runtime.run_credit_returns().await;
+            }));
+        }
         Box::pin(async move {
             let realtime_task =
                 realtime
@@ -1170,6 +1205,11 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let tracker = self.tracker.clone();
         Box::pin(async move {
             runtime.scheduler().cancel_all();
+            // `cancel_all` aborts local futures; a credit is held by a worker
+            // thread and has none, so it must be cancelled at the worker. Each
+            // is still returned, so its slot and drain enrolment release
+            // normally.
+            runtime.cancel_outstanding_credits();
             tracker.cancel_active();
             tokio::task::yield_now().await;
             Ok(())
@@ -1202,12 +1242,19 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let strategy = self.workload.name();
         let snapshot = self.workload.user_control_snapshot();
         let runtime = self.runtime.clone();
+        let credit_returns = self.credit_returns.borrow_mut().take();
         let sidecars = self.sidecars.clone();
         let clock = self.clock.clone();
         let reports = self.reports.clone();
         let defer_report = self.defer_report;
         Box::pin(async move {
+            // The drain barrier resolves only once every routed credit has been
+            // returned AND settled, so the loop below is idle by the time it is
+            // aborted -- and no later phase can inherit its consumer.
             runtime.scheduler().wait_idle().await;
+            if let Some(credit_returns) = credit_returns {
+                credit_returns.abort();
+            }
             finish_phase_sidecars(&sidecars, clock.as_ref(), "scheduled").await?;
             let report = if defer_report {
                 PendingScheduledPhaseReport::Deferred {

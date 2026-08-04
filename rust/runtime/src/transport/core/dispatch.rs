@@ -256,6 +256,38 @@ impl PreparedTurn {
     }
 }
 
+/// One worker's out-of-band report about a credit the issuer sent it.
+///
+/// The Rust counterpart of Python's `WorkerToRouterMessage`. `--dispatch
+/// global-push` sends a credit to a worker and returns; the worker owns the
+/// whole round-trip and reports back on the placement's single shared return
+/// stream, tagged by `uuid` because the reports of every in-flight credit are
+/// interleaved on it. Per-credit ordering is preserved by that stream, so
+/// `FirstToken` still precedes `CreditReturn`.
+pub struct WorkerCreditReport {
+    /// Request this report belongs to.
+    pub uuid: Uuid,
+    /// Index of the reporting worker within its placement.
+    ///
+    /// Echoed back because a returned credit has to release the in-flight depth
+    /// of the worker that held it, and the coordinator deliberately keeps no
+    /// per-request routing table to look that up in.
+    pub worker: usize,
+    /// What the worker observed.
+    pub kind: CreditReportKind,
+}
+
+/// The kinds of report a worker sends back about a credit.
+pub enum CreditReportKind {
+    /// First token observed, in nanoseconds since dispatch start. Releases the
+    /// issuer's prefill slot while the request keeps decoding.
+    FirstToken(i64),
+    /// The credit is returned: terminal outcome, always the last report for a
+    /// given `uuid`. Returning it is what releases the issuer's admission slot
+    /// and the worker's in-flight depth.
+    CreditReturn(Box<Result<MeasuredOutcome>>),
+}
+
 /// Pluggable execution placement behind the one logical turn dispatcher.
 ///
 /// Implementations may execute on the caller's reactor, a thread-per-core
@@ -314,6 +346,39 @@ pub trait RequestExecutor {
             "selected HTTP execution placement does not support worker-local measurement"
         ))
     }
+
+    /// Whether this placement accepts credits and returns them out of band
+    /// (`--dispatch global-push`).
+    fn supports_credit_dispatch(&self) -> bool {
+        false
+    }
+
+    /// Route one credit to its worker and return WITHOUT awaiting the
+    /// round-trip, after Python's `StickyCreditRouter::send_credit`.
+    ///
+    /// Synchronous on purpose: the issuer calls this from the single
+    /// coordinator scheduling loop, and the whole point of the mode is that no
+    /// coordinator future stays resident for the request's lifetime. A
+    /// placement that cannot accept a credit immediately must queue it in
+    /// routed order rather than block.
+    fn send_credit(&self, _turn: PreparedTurn, _context: MeasuredContext) -> Result<()> {
+        Err(anyhow!(
+            "selected execution placement does not accept dispatched credits"
+        ))
+    }
+
+    /// Receive the next out-of-band worker report, or `None` once no worker can
+    /// report again.
+    async fn next_credit_report(&self) -> Option<WorkerCreditReport> {
+        None
+    }
+
+    /// Ask every worker to abandon the credit it is driving.
+    ///
+    /// Each abandoned credit is still RETURNED with a cancelled terminal, so the
+    /// issuer's accounting closes normally instead of being fabricated
+    /// coordinator-side.
+    fn cancel_credits(&self) {}
 
     /// Warm each worker's dispatch path before timed issuance.
     ///

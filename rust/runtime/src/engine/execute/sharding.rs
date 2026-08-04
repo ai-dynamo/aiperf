@@ -516,7 +516,18 @@ pub(crate) async fn execute_scheduled_pipeline(
             plan = plan
                 .with_record_processors(record_processors)
                 .with_performance_record_capture(false)
-                .with_native_metric_record_dimensions(false);
+                .with_native_metric_record_dimensions(false)
+                // `GlobalPush` routes every turn as a credit the worker returns
+                // out of band; every other mode awaits one dispatch future per
+                // request. Selected per phase because the phase runtime owns the
+                // credit-return loop's lifetime.
+                // A lone worker has no cross-thread placement to route credits
+                // to -- `build_native` gives it a co-located sink -- so it keeps
+                // the ordinary path, exactly as a lone-worker `GlobalHop` run is
+                // just a single-thread run.
+                .with_credit_dispatch(
+                    matches!(shared.dispatch_mode, DispatchMode::GlobalPush) && shared.workers > 1,
+                );
             plans.push(plan);
         }
 
