@@ -23,7 +23,7 @@ use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::ExecutorFlags;
 use crate::graph::materialize::SegmentItemsMaterializer;
-use crate::graph::model::{GraphTracePlan, LlmNode};
+use crate::graph::model::{GraphTracePlan, LlmNode, PromptItem};
 use crate::graph::placement::{
     GraphPlacementError, LocalTracePlacement, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
@@ -269,6 +269,9 @@ pub(crate) struct GraphEndpointRequest {
     cancel_after_ns: Option<i64>,
     session_num: u64,
     phase: Phase,
+    /// Exact wire image count established by the node's authored shape, or `None`
+    /// to let dispatch derive it by parsing the serialized body.
+    known_image_count: Option<u32>,
 }
 
 pub(crate) struct GraphEndpointDispatch {
@@ -502,7 +505,7 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             is_final_turn: input.is_final_turn,
             cancel_after_ns: input.cancel_after_ns,
             url_index: Some(session_url_index(input.session_num, profile.url_count)),
-            image_count: None,
+            image_count: input.known_image_count,
             recorded_api_time_ns: None,
             recorded_ttft_ns: None,
         };
@@ -873,6 +876,39 @@ struct PreparedNodeMetadata {
     raw_system: Option<Vec<Value>>,
     extra_body: Option<Map<String, Value>>,
     parameters: BTreeMap<String, String>,
+    /// Wire image count this node's body is known to carry, or `None` when it
+    /// cannot be established without parsing the serialized body. See
+    /// [`node_known_image_count`].
+    known_image_count: Option<u32>,
+}
+
+/// The exact wire image count of a graph node's request body, when the node's
+/// authored shape makes it knowable without parsing the serialized body.
+///
+/// Graph prompt assembly is text-only by construction: `graph::lowering` rejects
+/// any turn whose content is a non-[`MediaKind::Text`] kind, the `Seg`/`Text`
+/// items resolve to message/text payloads composed from `OpenAiChatMessage`
+/// (string content), and `Splice` items carry a predecessor's assistant reply.
+/// The one shape that can smuggle media past that check is
+/// [`PromptItem::RawMessages`]: `graph::materialize` splits an authored
+/// `dag_jsonl` message array into per-object wires and only validates that each
+/// entry is an object, so an authored `image_url` part rides through unseen.
+///
+/// `raw_system` and an `extra_body` that overwrites a content root (`merge_extra`
+/// inserts unconditionally) are the other two ways authored JSON reaches the
+/// `messages`/`input` arrays the payload extractor walks, so both also fall back.
+///
+/// `Some(0)` lets the dispatch path skip a full body reparse whose only consumer
+/// is `num_images`; `None` preserves that reparse.
+fn node_known_image_count(node: &LlmNode, prepared: &PreparedNodeMetadata) -> Option<u32> {
+    let has_raw_messages = node
+        .items
+        .iter()
+        .any(|item| matches!(item, PromptItem::RawMessages { .. }));
+    let overrides_content_root = prepared.extra_body.as_ref().is_some_and(|extra| {
+        extra.contains_key("messages") || extra.contains_key("input")
+    });
+    (!has_raw_messages && prepared.raw_system.is_none() && !overrides_content_root).then_some(0)
 }
 
 struct EngineGraphSink {
@@ -1005,6 +1041,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             cancel_after_ns: options.cancel_after_ns,
             session_num: self.session_num,
             phase: self.phase,
+            known_image_count: prepared.known_image_count,
         })?;
         let GraphEndpointDispatch {
             transport,
@@ -1172,13 +1209,16 @@ impl EngineGraphSink {
         if let Some(prepared) = self.prepared_metadata.borrow().get(node_id).cloned() {
             return Ok(prepared);
         }
-        let prepared = Rc::new(PreparedNodeMetadata {
+        let mut metadata = PreparedNodeMetadata {
             extra_headers: self.raw_string_map(node, "extra_headers_handle")?,
             raw_tools: self.raw_array(node, "tools_handle")?,
             raw_system: self.raw_array(node, "raw_system_handle")?,
             extra_body: self.raw_object(node, "extra_body_handle")?,
             parameters: self.raw_string_map(node, "request_parameters_handle")?,
-        });
+            known_image_count: None,
+        };
+        metadata.known_image_count = node_known_image_count(node, &metadata);
+        let prepared = Rc::new(metadata);
         self.prepared_metadata
             .borrow_mut()
             .insert(node_id.to_string(), prepared.clone());
@@ -1295,6 +1335,77 @@ mod tests {
     use crate::multiturn::AuthoredInputTokenCounter;
     use crate::transport::core::ConnectionReuseStrategy;
 
+    fn node_with_items(items: Vec<PromptItem>) -> LlmNode {
+        LlmNode {
+            output: "out".into(),
+            streaming: true,
+            inputs: Vec::new(),
+            min_start_delay_us: None,
+            max_tokens: None,
+            items,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    fn empty_metadata() -> PreparedNodeMetadata {
+        PreparedNodeMetadata {
+            extra_headers: BTreeMap::new(),
+            raw_tools: None,
+            raw_system: None,
+            extra_body: None,
+            parameters: BTreeMap::new(),
+            known_image_count: None,
+        }
+    }
+
+    #[test]
+    fn a_text_only_prompt_program_reports_a_known_zero_image_count() {
+        let node = node_with_items(vec![
+            PromptItem::Seg {
+                seg: Handle::new(0),
+            },
+            PromptItem::Splice {
+                splice: "reply".into(),
+            },
+        ]);
+        assert_eq!(
+            node_known_image_count(&node, &empty_metadata()),
+            Some(0),
+            "lowering rejects non-text media, so a Seg/Splice program carries no images"
+        );
+    }
+
+    #[test]
+    fn an_authored_raw_message_array_falls_back_to_parsing_the_body() {
+        // `raw_message_wires` validates only object-ness, so an authored
+        // `image_url` part rides through unseen: the count stays unknown here.
+        let node = node_with_items(vec![PromptItem::RawMessages {
+            raw_messages: Handle::new(0),
+        }]);
+        assert_eq!(node_known_image_count(&node, &empty_metadata()), None);
+    }
+
+    #[test]
+    fn an_extra_body_that_overwrites_the_messages_root_falls_back() {
+        let node = node_with_items(vec![PromptItem::Seg {
+            seg: Handle::new(0),
+        }]);
+        let mut metadata = empty_metadata();
+        metadata.extra_body = Some(Map::from_iter([(
+            "messages".to_string(),
+            serde_json::json!([]),
+        )]));
+        assert_eq!(node_known_image_count(&node, &metadata), None);
+
+        // An unrelated extra key does not disturb the known count.
+        let mut benign = empty_metadata();
+        benign.extra_body = Some(Map::from_iter([(
+            "ignore_eos".to_string(),
+            serde_json::Value::Bool(true),
+        )]));
+        assert_eq!(node_known_image_count(&node, &benign), Some(0));
+    }
+
     #[derive(Debug)]
     struct PreparedOnlyChatFactory;
 
@@ -1370,9 +1481,11 @@ mod tests {
                 cancel_after_ns: None,
                 session_num: 0,
                 phase: Phase::Profiling,
+                known_image_count: Some(0),
             })
             .unwrap();
         assert_eq!(dispatch.input_tokens, 4);
+        assert_eq!(dispatch.request.image_count, Some(0));
         let crate::transport::core::PreparedEndpointBinding::Prepared(reference) =
             dispatch.endpoint;
         assert_eq!(reference.endpoint_id.as_str(), "chat");
