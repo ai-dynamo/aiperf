@@ -36,8 +36,42 @@ use crate::transport::reduce::{
 
 use super::{
     HttpCollectedDispatch, HttpDispatchResult, Request, TransportSink, absorb_transport_error,
-    absorb_wire_response_metadata,
+    absorb_wire_response_metadata, normalize_finish_reason,
 };
+use crate::transport::core::Response;
+use crate::transport::http::sse::ChatChunk;
+
+/// Metadata absorption for a streamed chat chunk, equivalent to
+/// [`absorb_wire_response_metadata`] on the same body but without a `Value`.
+///
+/// Deliberately NOT [`super::absorb_chat_chunk_metadata`]: that one also appends
+/// content and reasoning into the metadata, which on this path is the job of
+/// `reduce_parsed_response`. Using it here would emit every delta twice. It also
+/// scans all choices, whereas the generic reader takes `choices[0]` only.
+///
+/// `cached_prompt_tokens` is untouched because the caller only takes this path
+/// for chunks with no `usage`, and the generic reader leaves it unchanged there.
+fn absorb_chat_chunk_wire_metadata(chunk: &ChatChunk, metadata: &mut ModelResponseMetadata) {
+    if let Some(response_id) = chunk
+        .id
+        .as_deref()
+        .or(chunk.request_id.as_deref())
+        .filter(|value| !value.is_empty())
+    {
+        // Streaming repeats one id per chunk; allocate only on a real change.
+        if metadata.response_id.as_deref() != Some(response_id) {
+            metadata.response_id = Some(response_id.to_string());
+        }
+    }
+    if let Some(finish_reason) = chunk
+        .choices
+        .first()
+        .and_then(|choice| choice.finish_reason.as_deref())
+        .filter(|value| !value.is_empty())
+    {
+        metadata.finish_reason = Some(normalize_finish_reason(finish_reason));
+    }
+}
 
 trait RuntimeEndpointAdapter {
     fn descriptor(&self) -> &'static EndpointDescriptor;
@@ -360,8 +394,49 @@ impl TransportSink {
         // response into `Value` maps and dropping them — is pure waste. Single-turn
         // workloads mark every request final, which is the common benchmark shape.
         let captures_turn = !is_final_turn && endpoint.captures_assistant_turn();
+        // Streamed chat is the hot shape: at OSL 150 the generic path below
+        // builds 150 `String` copies and 150 `serde_json::Value` trees per
+        // request, and `preserve_order` makes every object an `IndexMap` whose
+        // keys are individually allocated and SipHashed. A typed decode reads
+        // the same fields with none of that. Only chunks this type fully models
+        // take it; everything else falls through unchanged.
+        let chat_fast_path = endpoint.descriptor().id == "chat" && !captures_turn;
         let mut decoded_responses: Vec<ServerResponse> = Vec::new();
         for response in &record.responses {
+            if chat_fast_path
+                && let Response::Sse(message) = response
+                && !message.is_done()
+                && let Some(data) = message.data()
+                && let Ok(chunk) = serde_json::from_str::<ChatChunk>(data)
+                // A chunk carrying usage still needs `ParsedResponse.usage` as a
+                // `Value`, so hand those (one per request) to the generic path.
+                && chunk.usage.is_none()
+            {
+                absorb_chat_chunk_wire_metadata(&chunk, &mut model_response);
+                // Matches the generic parse: with no usage, a chunk yields a
+                // ParsedResponse only when it carries response data, so
+                // role-only frames leave `parsed_any` alone exactly as before.
+                if let Some(data) = chunk.response_data() {
+                    parsed_any = true;
+                    let parsed = ParsedResponse {
+                        perf_ns: u64::try_from(message.perf_ns).unwrap_or_default(),
+                        data: Some(data),
+                        usage: None,
+                        sources: None,
+                    };
+                    parsed_content |= reduce_parsed_response(
+                        &parsed,
+                        &emitter,
+                        EndpointReduceAccumulators {
+                            response_text: &mut response_text,
+                            model_response: &mut model_response,
+                            endpoint_metrics: &mut endpoint_metrics,
+                            observed_usage: &mut observed_usage,
+                        },
+                    );
+                }
+                continue;
+            }
             let Some(decoded) = binding.decode_response(response) else {
                 continue;
             };
