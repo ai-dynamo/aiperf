@@ -143,11 +143,22 @@ class ThreadPacer:
         self._thread.start()
 
     def _set_tick_if_current(self, generation: int) -> None:
+        """Wake the waiter only if ``generation`` is still the live deadline.
+
+        Runs on the loop thread. A cancelled or superseded ``sleep_until``
+        bumps ``_generation``, so its in-flight wakeup is dropped here rather
+        than releasing the next waiter ahead of its own deadline.
+        """
         with self._condition:
             if not self._closed and self._generation == generation:
                 self._tick.set()
 
     def _run(self) -> None:
+        """Sleep to each deadline, waking the loop when it expires.
+
+        Waits on the condition rather than ``time.sleep`` so a cancellation or
+        a replacement deadline interrupts the current wait immediately.
+        """
         while True:
             with self._condition:
                 while not self._closed:
