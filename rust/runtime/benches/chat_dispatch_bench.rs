@@ -487,9 +487,41 @@ fn chat_dispatch_body_path_profile() {
         }
     }
 
-    for sample in &samples {
+    // --- Conversation depth against the reply-group inline bound. ---
+    //
+    // A continuation dispatch collects one `(position, wires)` group per
+    // captured reply into a `SmallVec` with 16 inline slots. Up to that depth
+    // the collection is stack-only; past it every request heap-allocates it
+    // once more. Both sides are measured rather than argued, since "history
+    // depth is free" is exactly the kind of claim that is only true up to a
+    // bound nobody wrote down.
+    println!("\n=== L1b: conversation depth vs. the reply-group inline bound ===");
+    let mut depth_samples = Vec::new();
+    for depth in [16_usize, 24] {
+        let mut pool = SegmentPool::new();
+        let turns: Vec<Turn> = (0..=depth)
+            .map(|index| user_turn(&mut pool, filler(55, index as u8)))
+            .collect();
+        let dataset = build_dataset(
+            ConversationContextMode::DeltasWithoutResponses,
+            turns,
+            pool,
+            endpoint.as_ref(),
+            true,
+        );
+        let session = session_at(dataset, endpoint.as_ref(), depth, 55);
+        let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
+        depth_samples.push(measure(
+            format!("[0.5K/msg] turn {depth:<2} ({depth} replies, inline bound 16)"),
+            len,
+            ITERS,
+            || dispatch_body(&session, endpoint.as_ref(), &overrides),
+        ));
+    }
+    for sample in &depth_samples {
         sample.print();
     }
+    samples.extend(depth_samples);
 
     println!("\n=== L2: image-count re-parse on the dispatched body ===");
     println!(
