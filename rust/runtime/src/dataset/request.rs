@@ -3556,4 +3556,135 @@ mod tests {
         // Same text, different media must not mis-dedup to one wire.
         assert_ne!(turns[0].body[0], turns[1].body[0]);
     }
+
+    /// Build a `*WithoutResponses` continuation body, optionally with the
+    /// dataset (and the captured reply) lowered to spliceable wires.
+    ///
+    /// `lower == false` is the reference: nothing carries `lowered`, so every
+    /// turn — authored and captured alike — is rendered from its composed media
+    /// on the live path, which is what the spliced path must reproduce byte for
+    /// byte.
+    fn continuation_body(
+        endpoint: &dyn PreparedEndpoint,
+        mode: ConversationContextMode,
+        turns: Vec<Turn>,
+        pool: SegmentPool,
+        phase: CreditPhase,
+        lower: bool,
+    ) -> Bytes {
+        let mut dataset = single_conversation_dataset(mode, turns, pool);
+        let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+        if lower {
+            dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        }
+        let mut session =
+            ConversationSession::new(Arc::new(dataset), SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+        let mut reply = EndpointTurn {
+            role: Some("assistant".into()),
+            texts: vec![Media::new(vec!["prior reply".to_string()])],
+            ..EndpointTurn::default()
+        };
+        if lower {
+            reply.lowered = Some(lowerer.lower_turn(&reply).unwrap());
+        }
+        session.capture_response(reply, 3, Some(0)).unwrap();
+        session.advance_to(1).unwrap();
+        session
+            .materialize_prepared(
+                &EndpointRequestMaterializer,
+                endpoint,
+                "primary-model",
+                phase,
+                &Overrides::new(),
+            )
+            .unwrap()
+            .body
+            .to_wire()
+            .unwrap()
+    }
+
+    /// The spliced resolution drops a lowered turn's composed media and role
+    /// because the formatter cannot reach them. If that were ever untrue the
+    /// dispatched body would silently differ from the rendered one, so pin the
+    /// two against each other across the message-array dialects, both phases,
+    /// and both authored-turn shapes.
+    ///
+    /// Warmup is the load-bearing half: it re-renders the first turn from its
+    /// media to fold the system prompt in, so it must stay off the spliced path.
+    #[test]
+    fn spliced_continuation_body_matches_the_rendered_one() {
+        for endpoint_id in ["chat", "responses", "messages"] {
+            let endpoint = prepare_endpoint(endpoint_id);
+            for phase in [CreditPhase::Profiling, CreditPhase::Warmup] {
+                for with_max_tokens in [false, true] {
+                    let build = |lower: bool| {
+                        let mut pool = SegmentPool::new();
+                        let turns = vec![
+                            text_turn(&mut pool, b"hello world", with_max_tokens, false),
+                            text_turn(&mut pool, b"second turn", with_max_tokens, false),
+                        ];
+                        continuation_body(
+                            endpoint.as_ref(),
+                            ConversationContextMode::DeltasWithoutResponses,
+                            turns,
+                            pool,
+                            phase,
+                            lower,
+                        )
+                    };
+                    assert_eq!(
+                        build(true),
+                        build(false),
+                        "spliced/rendered divergence: endpoint={endpoint_id} phase={phase:?} \
+                         max_tokens={with_max_tokens}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `MessageArrayWithoutResponses` carries authored `raw_messages` snapshots,
+    /// which `turn_is_lowerable` excludes from lowering — so its continuation
+    /// turns never reach the spliced resolution and `merge_message_array_snapshots`
+    /// still prefix-diffs the same rendered turns it always did.
+    #[test]
+    fn authored_snapshot_turns_are_unaffected_by_lowering() {
+        let endpoint = prepare_endpoint("chat");
+        let build = |lower: bool| {
+            let mut pool = SegmentPool::new();
+            let snapshot = |messages: Value| {
+                let handle = pool
+                    .intern_raw(None, Bytes::from(serde_json::to_vec(&messages).unwrap()))
+                    .unwrap();
+                Turn {
+                    role: Some(Role::from("user")),
+                    raw_messages: Some(handle),
+                    input_tokens: Some(2),
+                    ..Turn::default()
+                }
+            };
+            let turns = vec![
+                snapshot(serde_json::json!([{"role": "user", "content": "first"}])),
+                snapshot(serde_json::json!([
+                    {"role": "user", "content": "first"},
+                    {"role": "user", "content": "second"},
+                ])),
+            ];
+            continuation_body(
+                endpoint.as_ref(),
+                ConversationContextMode::MessageArrayWithoutResponses,
+                turns,
+                pool,
+                CreditPhase::Profiling,
+                lower,
+            )
+        };
+        let body = build(true);
+        assert_eq!(body, build(false));
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        // Turn 0's snapshot, the captured reply, then turn 1's one-message delta.
+        assert_eq!(parsed["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(parsed["messages"][1]["content"], "prior reply");
+    }
 }
