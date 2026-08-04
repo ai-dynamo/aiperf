@@ -331,9 +331,10 @@ Tracked against this path; details and sequencing in
 
 - **Six consumers re-derive structure stage 8 discarded.** `MaterializedRequest`
   carries `body: Bytes` and drops the `BodyPlan`, so every consumer needing
-  structure parses the bytes back: the gRPC sink (`transport/grpc/sink.rs:336`,
-  plus a second full re-serialize at `:489` that is *not* gated by `capture_raw`
-  even though the next line gates the record on exactly that), input-token
+  structure parses the bytes back: the gRPC sink (`transport/grpc/sink.rs:344`,
+  whose second full re-serialize at `:509` now runs only when a raw artifact or
+  `inputs.json` will read it, so the parse-back remains but the re-serialize no
+  longer runs unconditionally), input-token
   counting on the issuance path (`multiturn.rs:1018-1022`), multipart form
   re-encoding (`transport/http/transport/endpoint_binding.rs:305-315`),
   content-URL tagging (`transport/http/sink.rs:1068-1081`), and the agentic-replay
