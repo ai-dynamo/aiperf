@@ -1522,11 +1522,14 @@ impl NativeDatasetConversationSource {
             Some(_) => None,
         };
         // Only a position-addressed draw indexes the WHOLE authored space, so
-        // only it materializes the full corpus; every other mode would never
-        // read that copy again, and `ConversationMetadata` owns its turn vector,
-        // so the clone is deep and per-conversation. Both corpora enumerate the
-        // same `sampleable_metadata()` order through this one `owns` predicate,
-        // so their index bases cannot drift apart.
+        // only it needs a full-corpus SAMPLER MODEL. This gating avoids a
+        // SECOND full-corpus copy, not the first: `metadata` below is built
+        // unconditionally over `sampleable_metadata()` for every mode, and is
+        // the deeper per-conversation clone. `ConversationMetadata` owns its
+        // turn vector, so this copy is deep too and a non-addressed mode would
+        // never read it again. Both corpora enumerate the same
+        // `sampleable_metadata()` order through this one `owns` predicate, so
+        // their index bases cannot drift apart.
         let addressing = ownership.filter(|_| position_addressed);
         let owns = |index: usize| {
             ownership

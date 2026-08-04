@@ -66,24 +66,68 @@ requests.
     process); exact arrival-*pattern* parity is `global-hop`'s job.
   - Dataset sampling is **position-addressed** over the full corpus
     (`rust/runtime/src/multiturn.rs` `DrawMode::Position`,
-    `rust/runtime/src/dataset/sampler.rs` `Sampler::at_position`): each worker
-    thread draws the absolute corpus positions its `two_level_partition`
-    residue owns, so the union across threads is exactly one unpartitioned
-    sampler's draw sequence and the cell recycles once at the end of the whole
-    corpus. Closed form — no lock, atomic, or cross-thread state. Applies to
-    strategies whose draw is a pure function of position (`sequential`, the
-    default); RNG-stateful strategies (`random`, `shuffle`) have no closed form
-    and keep the per-shard owned-corpus walk. `Sharded` keeps the owned-corpus
-    walk in every case: it is the throughput opt-in where byte-exact parity
-    does not matter.
+    `rust/runtime/src/dataset/sampler.rs` `Sampler::at_position`): worker
+    thread `i` of `W` draws absolute corpus positions `i, i+W, i+2W, …` — the
+    positions its `two_level_partition` residue owns — instead of recycling
+    inside its own residue class. Closed form: one `next`/`stride` pair per
+    thread, no lock, atomic, or cross-thread state.
+    - The guarantee is over the **multiset** of drawn conversations, not a
+      sequence: threads draw concurrently and nothing orders their draws
+      against each other. `Global`'s ordering guarantee remains the aggregate
+      admission one; per-request issuance order is `global-hop`/`global-push`.
+    - The union across threads is one unpartitioned sampler's draw multiset
+      **for budget-bounded phases only**. Thread `i` contributes the positions
+      `≡ i mod W`, so the union is the contiguous prefix `0..T` exactly when
+      each thread's draw count equals `|{k < T : k ≡ i mod W}|`. That is what
+      `slice_common` (`rust/runtime/src/engine/sharded_scheduled.rs:242-252`)
+      produces: it slices `requests` and `sessions` with `owned_positions`
+      (`rust/runtime/src/engine/cell_launcher.rs:272-279`,
+      `(total - k).div_ceil(count)`), which is that residue-class cardinality
+      by construction. Both fields are `Option`. On a **duration-bounded**
+      phase (`requests: None`, `sessions: None`) neither is sliced, per-thread
+      draw counts are load-dependent, and the union is a ragged set with holes
+      rather than a clean prefix — still full-corpus reach, but no exact
+      single-issuer multiset.
+    - Applies to strategies whose draw is a pure function of position
+      (`sequential`, which every concrete loader returns from
+      `preferred_sampling_strategy`); RNG-stateful strategies (`random`,
+      `shuffle`) have no closed form, fail the constructor's `at_position`
+      probe, and keep the per-shard owned-corpus walk. `Sharded` keeps the
+      owned-corpus walk in every case: it is the throughput opt-in where
+      byte-exact parity does not matter.
   - `GlobalAdmission` is `Some` only under `Global`; `None` under `Sharded`
     (per-thread `1/W` slicing needs no shared gate) and under
     `GlobalHop`/`GlobalPush` (their single coordinator loop enforces the full
     cap through one local `SlotPool`, so no cross-thread gate is needed — see
     `rust/runtime/src/engine/global_hop.rs`).
-  - Conversation partitioning for `fixed_schedule`/`user_centric` is
-    unaffected by `Global`; only concurrency/rate admission moves to the
-    shared gate.
+  - Conversation **enumeration** is unaffected by `Global` for both
+    `fixed_schedule` and `user_centric`: `ConversationSource::conversations()`
+    returns `owned_metadata` (`rust/runtime/src/multiturn.rs:1837`), which is
+    built from the partition alone and never from the position-addressing
+    flag, so each thread still enumerates only its residue class.
+    - `fixed_schedule` is unaffected outright — it only enumerates
+      (`rust/runtime/src/fixed_schedule.rs:85`) and continues turns by
+      conversation id; it never takes a sampler draw.
+    - `user_centric` **draws** through `source.next(…)`
+      (`rust/runtime/src/user_centric.rs:404`) from the same source, so under
+      `Global` at `workers > 1` its draws are position-addressed like any
+      other. Its enumeration is still the residue class, so the two now cover
+      different populations. This is a shaping asymmetry, not an accounting
+      one: `conversations()` feeds only the empty-dataset bail and the mean
+      turn count (`user_centric.rs:379-391`), and that mean reaches
+      `plan_user_centric` solely as `avg_session_turns`, which sets the
+      virtual-history depth `session_lifetime` and the coprime `spacing_step`
+      (`rust/runtime/src/timing/user_centric.rs:105-114`) — never `stagger_ns`
+      or `turn_gap_ns`, which are functions of `num_users` and `request_rate`.
+      Per-user turn accounting is re-derived from the concrete draw:
+      `num_turns = min(planned.max_turns, actual_turns).max(1)`
+      (`rust/runtime/src/multiturn.rs:1049-1052`), and the pool records that
+      actual (`user_centric.rs:413-414`). Resolution is total — `metadata` and
+      `metadata_by_id` are built over the full corpus unconditionally
+      (`multiturn.rs:1587-1621`) — so drawing a conversation this thread does
+      not own resolves correctly.
+  - Only concurrency/rate admission moves to the shared gate; the dataset
+    change above is the one other behavioural difference `Global` carries.
 - `GlobalHop` is a single-coordinator hop executor
   (`rust/runtime/src/engine/turn_execution.rs`,
   `rust/runtime/src/engine/global_hop.rs`): one logical dispatcher
