@@ -32,16 +32,9 @@ pub trait Clock {
     /// overrides this with deterministic event-by-event advancement; a
     /// [`RunOutcome::deadlocked`] result means no virtual event can make progress.
     fn drive(self: Rc<Self>, body: Pin<Box<dyn Future<Output = ()> + '_>>) -> RunOutcome {
-        // IO + time only, deliberately not enable_all(). enable_all() also
-        // starts the signal driver, and tokio sweeps its child-process orphan
-        // queue from every park of the runtime. This driver parks once per idle
-        // turn of the request loop, so a frame-pointer profile of the load
-        // phase attributed 4-6% of client CPU to
-        // OrphanQueueImpl::reap_orphans over an always-empty queue.
-        //
-        // Code that really does spawn `tokio::process` children (the cell
-        // launcher, the accuracy worker) runs on its own multi-threaded
-        // runtime, not on this driver.
+        // IO + time only: this driver needs no signal handling. See
+        // turn_execution::run_worker_thread for why this does not remove
+        // tokio's child-process orphan sweep from the park path.
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()

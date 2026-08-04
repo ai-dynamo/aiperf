@@ -380,9 +380,8 @@ pub(crate) async fn run_sharded_scheduled(
 
 /// Run one shard on a worker-local current-thread runtime and `LocalSet`.
 fn run_worker_thread(shared: &ShardedShared, worker_id: usize) -> Result<ScheduledShardOutcome> {
-    // IO + time only; see the note in turn_execution::run_worker_thread. The
-    // signal driver enable_all() would add exists only to reap child-process
-    // orphans, which a shard worker never creates.
+    // IO + time only; see the note in turn_execution::run_worker_thread for
+    // why this does not remove tokio's orphan sweep.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
