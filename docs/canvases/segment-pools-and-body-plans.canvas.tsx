@@ -816,9 +816,15 @@ function PageBodyPlan({ t }: { t: Theme }) {
     Wires(SmallVec<[Bytes; 1]>),       // dynamic content, no store lookup
 }
 
+pub struct FieldProgram {
+    fields: SmallVec<[(FieldName, FieldValue); 8]>,
+    exact_len: Option<usize>,          // exact body length; None if store-dependent
+}
+
 pub enum BodyPlan {
-    Raw(Handle),                                   // whole body passthrough
-    Fields(SmallVec<[(FieldName, FieldValue); 8]>),
+    Raw(Handle),           // whole body passthrough
+    Fields(FieldProgram),  // ordered named-field object
+    Prebuilt(Bytes),       // collapsed static body, cloned at dispatch
 }`}
           </pre>
         </CardBody>
