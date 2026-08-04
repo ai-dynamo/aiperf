@@ -17,6 +17,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::body_plan::RequestBody;
 use crate::cellular::partition::{CellPartition, ModuloCellPartition};
 use crate::dataset::{
     ConversationSession as NativeConversationSession, Dataset as NativeDataset,
@@ -32,7 +33,6 @@ use crate::graph::wire::OpenAiChatMessage;
 use crate::rng::RngRoot;
 use crate::timing::{RunState, StopConfig};
 use anyhow::{Result, anyhow, bail};
-use crate::body_plan::RequestBody;
 use bytes::Bytes;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -1809,10 +1809,7 @@ mod tests {
             .unwrap()
             .build_first_turn(None)
             .unwrap();
-        assert_eq!(
-            sessions[0].payloads[0],
-            dispatched_body(&dispatch_turn)
-        );
+        assert_eq!(sessions[0].payloads[0], dispatched_body(&dispatch_turn));
     }
 
     /// Up-front generation of a static (authored-response) multi-turn conversation
@@ -1856,10 +1853,7 @@ mod tests {
             .unwrap()
             .build_first_turn(None)
             .unwrap();
-        assert_eq!(
-            sessions[0].payloads[0],
-            dispatched_body(&dispatch_turn0)
-        );
+        assert_eq!(sessions[0].payloads[0], dispatched_body(&dispatch_turn0));
     }
 
     /// Jump-resume: `build_turn_at(k)` on a fresh session yields the turn at `k`
@@ -1899,8 +1893,7 @@ mod tests {
 
         // The reconstructed context reflects turns 0..=1: the recorded message array
         // carries the current turn's content (q1) and is distinct from turn 0 (q0).
-        let jump_body: Value =
-            serde_json::from_slice(&dispatched_body(&jump_turn1)).unwrap();
+        let jump_body: Value = serde_json::from_slice(&dispatched_body(&jump_turn1)).unwrap();
         let messages = jump_body["messages"].to_string();
         assert!(
             messages.contains("q1"),
@@ -1919,10 +1912,7 @@ mod tests {
             .build_turn_at(0, None)
             .unwrap();
         assert_eq!(jump_turn0.turn_index, 0);
-        assert_eq!(
-            dispatched_body(&jump_turn0),
-            dispatched_body(&seq_turn0),
-        );
+        assert_eq!(dispatched_body(&jump_turn0), dispatched_body(&seq_turn0),);
     }
 
     /// A live-reply-dependent multi-turn dataset (the default DeltasWithoutResponses
@@ -2145,8 +2135,7 @@ mod tests {
             .unwrap()
             .build_first_turn(None)
             .unwrap();
-        let first_body: Value =
-            serde_json::from_slice(&dispatched_body(&first)).unwrap();
+        let first_body: Value = serde_json::from_slice(&dispatched_body(&first)).unwrap();
         assert_eq!(first_body["messages"][0]["content"], "first question");
         let next = source
             .next_turn(

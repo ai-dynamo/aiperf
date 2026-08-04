@@ -19,12 +19,12 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll, Waker};
 
+use crate::body_plan::RequestBody;
 use crate::clock::{Clock, SimClock};
 use crate::dataset::{Handle, TextTokenizer, TiktokenTokenizer};
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::observer::CollectorObserver;
 use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
-use crate::body_plan::RequestBody;
 use crate::endpoints::chat_request_body;
 use crate::graph::bench::{BenchConfig, build_workload};
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
@@ -2348,9 +2348,9 @@ impl TurnDispatcher for DynosimSink {
                         .iter()
                         .map(|message| (message.role.as_str(), message.content.as_str()))
                         .collect::<Vec<_>>();
-                    let payload =
-                        chat_request_body(&self.model, &messages, turn.max_output_tokens);
-                    Some(RequestBody::wire(Bytes::from(serde_json::to_vec(&payload)?)))
+                    let payload = chat_request_body(&self.model, &messages, turn.max_output_tokens);
+                    let wire = serde_json::to_vec(&payload)?;
+                    Some(RequestBody::wire(Bytes::from(wire)))
                 }
             };
             self.dispatch_collect(

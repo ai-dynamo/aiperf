@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::body_plan::RequestBody;
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::dataset::{Handle, Payload, SegmentStore};
 use crate::dispatch::collector::ReplayTerminalStatus;
@@ -38,7 +39,6 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
 use crate::multiturn::InputTokenCounter;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
-use crate::body_plan::RequestBody;
 use crate::transport::core::{Dispatcher, PreparedEndpointBinding, PreparedTurn, Request};
 use crate::transport::http::{PreparedEndpointReference, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};

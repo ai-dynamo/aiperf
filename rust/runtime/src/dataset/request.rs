@@ -2625,7 +2625,8 @@ mod tests {
                             &overrides,
                         )
                         .unwrap();
-                    let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
+                    let body: Value =
+                        serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
                     let case = format!(
                         "endpoint={endpoint_id} max_tokens={with_max_tokens} overrides={overrides_variant}"
                     );
