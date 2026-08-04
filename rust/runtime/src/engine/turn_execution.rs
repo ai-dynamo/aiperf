@@ -1164,6 +1164,44 @@ fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {
 }
 
 #[cfg(test)]
+mod raw_retention_tests {
+    use super::*;
+    use crate::clock::RealClock;
+
+    fn builder(raw_enabled: bool) -> HttpSinkBuilder {
+        HttpSinkBuilder {
+            base_urls: vec!["http://127.0.0.1:1".to_string()],
+            model: "m".to_string(),
+            transport: TransportSinkConfig::default(),
+            prepared_endpoints: None,
+            raw_enabled,
+        }
+    }
+
+    /// A run configured for a raw HTTP-exchange artifact must keep the response
+    /// bodies: the worker-side release is what feeds that artifact, so an
+    /// inverted flag would empty it while every summary metric still looked
+    /// correct.
+    #[test]
+    fn raw_artifact_run_retains_response_bodies() {
+        let sink = builder(true)
+            .build_sink(RealClock::new(), 0)
+            .expect("sink builds");
+        assert!(sink.retains_raw_responses());
+    }
+
+    /// Without a raw artifact nothing reads them, so they are released on the
+    /// worker rather than on whichever thread later drops the record.
+    #[test]
+    fn run_without_raw_artifact_releases_response_bodies() {
+        let sink = builder(false)
+            .build_sink(RealClock::new(), 0)
+            .expect("sink builds");
+        assert!(!sink.retains_raw_responses());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;

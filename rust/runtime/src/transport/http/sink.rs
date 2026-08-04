@@ -305,6 +305,12 @@ impl TransportSink {
         self.retain_raw_responses.set(retain);
     }
 
+    /// Whether this sink retains response bodies for a raw artifact.
+    #[cfg(test)]
+    pub(crate) fn retains_raw_responses(&self) -> bool {
+        self.retain_raw_responses.get()
+    }
+
     /// Install worker-local prepared endpoint bindings.
     ///
     /// Execution commands carry only dense keys and canonical IDs; endpoint
