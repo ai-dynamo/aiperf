@@ -883,7 +883,18 @@ impl fmt::Debug for NativeSessionEndpoint {
 
 #[derive(Clone)]
 struct NativeSessionBackend {
-    session: RefCell<NativeConversationSession>,
+    /// Conversation-walking state, built on first use.
+    ///
+    /// Constructing it reads the conversation out of the dataset, which is real
+    /// per-request work on the issuer — and an identity-only credit never needs
+    /// it, because `build_deferred_turn_at` reads authored metadata and leaves
+    /// the walking to the worker that materializes. Lazy so the deferred path
+    /// does not pay for state it will never touch.
+    session: RefCell<Option<NativeConversationSession>>,
+    /// The conversation this backend walks, retained so the state above can be
+    /// built on demand.
+    session_id: crate::dataset::SessionId,
+    dataset: Arc<NativeDataset>,
     template_index: usize,
     metadata: ConversationMetadata,
     endpoint: NativeSessionEndpoint,
@@ -1023,7 +1034,8 @@ impl RuntimeSessionBackend for NativeSessionBackend {
                     ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id)
                 }
             };
-            let mut session = self.session.borrow_mut();
+            let mut walker = self.walker()?;
+            let session = walker.as_mut().expect("walker() populates the state");
             if session.should_capture_response() {
                 let tokens = match response.completion_tokens {
                     Some(tokens) => tokens,
@@ -1052,6 +1064,18 @@ impl RuntimeSessionBackend for NativeSessionBackend {
 }
 
 impl NativeSessionBackend {
+    /// Borrow the conversation-walking state, building it on first use.
+    fn walker(&self) -> Result<std::cell::RefMut<'_, Option<NativeConversationSession>>> {
+        let mut session = self.session.borrow_mut();
+        if session.is_none() {
+            *session = Some(NativeConversationSession::new(
+                self.dataset.clone(),
+                self.session_id.clone(),
+            )?);
+        }
+        Ok(session)
+    }
+
     fn materialize(
         &self,
         owner: &SampledSession,
@@ -1059,7 +1083,8 @@ impl NativeSessionBackend {
         num_turns: usize,
         jump: bool,
     ) -> Result<TurnToSend> {
-        let mut session = self.session.borrow_mut();
+        let mut walker = self.walker()?;
+        let session = walker.as_mut().expect("walker() populates the state");
         if jump {
             session.seek_to(turn_index)?;
         } else {
@@ -1502,7 +1527,9 @@ impl NativeDatasetConversationSource {
         let metadata = self.metadata[metadata_index].clone();
         let x_correlation_id = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let backend = NativeSessionBackend {
-            session: RefCell::new(NativeConversationSession::new(self.dataset.clone(), id)?),
+            session: RefCell::new(None),
+            session_id: id,
+            dataset: self.dataset.clone(),
             template_index: metadata_index,
             metadata,
             endpoint: self.endpoint.clone(),
@@ -1723,10 +1750,9 @@ impl WorkerMaterializer {
                 )
             })?;
         let backend = NativeSessionBackend {
-            session: RefCell::new(NativeConversationSession::new(
-                self.recipe.dataset.clone(),
-                id,
-            )?),
+            session: RefCell::new(None),
+            session_id: id,
+            dataset: self.recipe.dataset.clone(),
             template_index,
             metadata: self.recipe.metadata[template_index].clone(),
             endpoint: self.endpoint.clone(),
