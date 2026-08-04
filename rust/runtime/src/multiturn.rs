@@ -294,6 +294,23 @@ trait RuntimeSessionBackend: fmt::Debug {
         current: &TurnToSend,
         response: TurnResponse,
     ) -> Result<TurnToSend>;
+
+    /// Build turn `index`'s scheduling identity WITHOUT materializing its
+    /// request body, for a placement that materializes on the worker.
+    ///
+    /// The body-bearing fields come out as placeholders and `deferred_body` is
+    /// set; `input_length`/`max_output_tokens` are filled from authored metadata
+    /// so issuer-side accounting is unchanged, and the worker replaces them with
+    /// what it actually built. The default materializes as usual, so a backend
+    /// with no worker-side materializer keeps working unchanged.
+    fn build_deferred_turn_at(
+        &self,
+        owner: &SampledSession,
+        index: usize,
+        max_turns: Option<usize>,
+    ) -> Result<TurnToSend> {
+        self.build_turn_at(owner, index, max_turns)
+    }
 }
 
 /// A sampled runtime session for one reusable conversation template.
@@ -325,6 +342,17 @@ impl SampledSession {
     /// Build the first turn, clamping virtual history to the sampled template.
     pub fn build_first_turn(&self, max_turns: Option<usize>) -> Result<TurnToSend> {
         self.backend.build_first_turn(self, max_turns)
+    }
+
+    /// Build turn `index`'s scheduling identity without materializing its
+    /// request body, leaving that to the worker the credit is routed to
+    /// (see [`RuntimeSessionBackend::build_deferred_turn_at`]).
+    pub fn build_deferred_turn(
+        &self,
+        index: usize,
+        max_turns: Option<usize>,
+    ) -> Result<TurnToSend> {
+        self.backend.build_deferred_turn_at(self, index, max_turns)
     }
 
     /// Jump-resume the session at `start_index`, reconstructing the recorded
@@ -697,6 +725,11 @@ pub struct TurnToSend {
     pub cancel_after_ns: Option<i64>,
     /// Effective endpoint index, including a continuation's session pin.
     pub url_index: Option<u32>,
+    /// Whether this turn's request body was deliberately NOT materialized by the
+    /// issuer, leaving the worker that receives the credit to build it from the
+    /// resident dataset (`--dispatch global-push`). The body-bearing fields are
+    /// placeholders until then; see [`WorkerMaterializer`].
+    pub deferred_body: bool,
     session: SampledSession,
 }
 
@@ -896,6 +929,65 @@ impl RuntimeSessionBackend for NativeSessionBackend {
         self.materialize(owner, start_index, num_turns, start_index != 0)
     }
 
+    fn build_deferred_turn_at(
+        &self,
+        owner: &SampledSession,
+        index: usize,
+        max_turns: Option<usize>,
+    ) -> Result<TurnToSend> {
+        let timing = self.metadata.turns.get(index).ok_or_else(|| {
+            anyhow!(
+                "no turn {index} in conversation {} (only {} turns exist)",
+                self.metadata.conversation_id,
+                self.metadata.turns.len()
+            )
+        })?;
+        let num_turns = max_turns
+            .unwrap_or(self.metadata.turns.len())
+            .min(self.metadata.turns.len())
+            .max(1);
+        // The endpoint here is a routing placeholder: the worker resolves the
+        // authoritative one (including any per-turn override) when it
+        // materializes, because reading the override needs the session state
+        // this path deliberately does not touch.
+        let NativeSessionEndpoint::Prepared {
+            endpoint_resolver, ..
+        } = &self.endpoint;
+        let selected = endpoint_resolver.resolve(None)?;
+        Ok(TurnToSend {
+            uuid: Uuid::new_v4(),
+            effective_model: None,
+            conversation_id: owner.conversation_id.clone(),
+            x_correlation_id: owner.x_correlation_id.clone(),
+            request_correlation_id: owner.x_correlation_id.clone(),
+            turn_index: index,
+            num_turns,
+            // Authored lengths, so the issuer's admission and arrival accounting
+            // are identical to the materializing path; the worker overwrites
+            // both with what it actually built.
+            input_length: timing.input_length,
+            max_output_tokens: timing.max_output_tokens,
+            messages: Vec::new(),
+            request_body: None,
+            request_headers: BTreeMap::new(),
+            request_parameters: BTreeMap::new(),
+            endpoint_path: None,
+            endpoint: TurnEndpoint::Prepared(selected.reference),
+            streaming: false,
+            audio_duration_seconds: None,
+            image_count: None,
+            timestamp_ms: timing.timestamp_ms,
+            delay_ms: timing.delay_ms,
+            trace_hash_ids: None,
+            raw_token_ids: None,
+            data_policy: TurnDataPolicy::ordinary(),
+            cancel_after_ns: None,
+            url_index: None,
+            deferred_body: true,
+            session: owner.clone(),
+        })
+    }
+
     fn next_metadata(&self, turn_index: usize) -> Result<TurnMetadata> {
         let next_index = turn_index + 1;
         self.metadata.turns.get(next_index).cloned().ok_or_else(|| {
@@ -1069,6 +1161,7 @@ impl NativeSessionBackend {
             data_policy: TurnDataPolicy::ordinary(),
             cancel_after_ns: None,
             url_index: None,
+            deferred_body: false,
             session: owner.clone(),
         })
     }
@@ -1356,6 +1449,36 @@ impl NativeDatasetConversationSource {
         self
     }
 
+    /// A `Send + Sync` recipe for rebuilding this source's MATERIALIZATION half
+    /// inside a worker thread.
+    ///
+    /// Only sampling and endpoint resolution are issuer-local: the sampler
+    /// decides global order and stays on the coordinator, and the resolver is
+    /// `Rc` because every worker already builds its own prepared endpoint table.
+    /// Everything materialization actually reads -- the lowered dataset, the
+    /// request materializer, the tokenizer, the token counter -- is already
+    /// `Arc<dyn _: Send + Sync>` and is shared, not copied.
+    ///
+    /// This is what lets `--dispatch global-push` send a credit that carries
+    /// only identity, the way Python's `Credit` does, and have the worker build
+    /// the request body. Body materialization was ~29% of the single issuer's
+    /// CPU, on the one thread that bounds that mode.
+    pub fn worker_recipe(&self) -> WorkerMaterializationRecipe {
+        let NativeSessionEndpoint::Prepared {
+            primary_model_name, ..
+        } = &self.endpoint;
+        WorkerMaterializationRecipe {
+            dataset: self.dataset.clone(),
+            metadata: Arc::new(self.metadata.clone()),
+            metadata_by_id: Arc::new(self.metadata_by_id.clone()),
+            primary_model_name: primary_model_name.clone(),
+            materializer: self.materializer.clone(),
+            response_tokenizer: self.response_tokenizer.clone(),
+            input_token_counter: self.input_token_counter.clone(),
+            default_output_tokens: self.default_output_tokens,
+        }
+    }
+
     fn session(
         &self,
         conversation_id: &str,
@@ -1489,6 +1612,145 @@ impl ConversationSource for NativeDatasetConversationSource {
     ) -> Result<SampledSession> {
         self.session(conversation_id, Some(x_correlation_id))
     }
+}
+
+/// `Send + Sync` recipe for rebuilding a materializing conversation source
+/// inside a worker thread. Built once per run by
+/// [`NativeDatasetConversationSource::worker_recipe`].
+#[derive(Clone)]
+pub struct WorkerMaterializationRecipe {
+    dataset: Arc<NativeDataset>,
+    metadata: Arc<Vec<ConversationMetadata>>,
+    metadata_by_id: Arc<HashMap<String, usize>>,
+    primary_model_name: String,
+    materializer: Arc<dyn RequestMaterializer>,
+    response_tokenizer: Arc<dyn TextTokenizer>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+    default_output_tokens: usize,
+}
+
+impl WorkerMaterializationRecipe {
+    /// Build this worker's materializer over its own prepared endpoint table.
+    pub fn build(&self, endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>) -> WorkerMaterializer {
+        WorkerMaterializer {
+            recipe: self.clone(),
+            endpoint: NativeSessionEndpoint::Prepared {
+                primary_model_name: self.primary_model_name.clone(),
+                endpoint_resolver,
+            },
+            static_input_count_cache: Rc::new(RefCell::new(FxHashMap::default())),
+            sessions: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+/// Worker-local materialization of credits that carry only identity.
+///
+/// Holds the conversation sessions for the credits routed to this worker.
+/// A session is stateful — [`NativeConversationSession`] walks turns with
+/// `advance_to`/`seek_to` and accumulates reply history — so a multi-turn
+/// conversation's credits MUST all be routed to the same worker. Credit
+/// dispatch pins them; a single-turn conversation needs no pinning and its
+/// session is dropped as soon as its one turn is built.
+pub struct WorkerMaterializer {
+    recipe: WorkerMaterializationRecipe,
+    endpoint: NativeSessionEndpoint,
+    static_input_count_cache: StaticInputCountCache,
+    /// Live sessions keyed by runtime session id. Entries appear on a
+    /// conversation's first turn and are removed on its last, so this never
+    /// outgrows the multi-turn sessions currently pinned to this worker.
+    sessions: RefCell<HashMap<String, SampledSession>>,
+}
+
+impl WorkerMaterializer {
+    /// Materialize one identity-only credit into the fully built turn the
+    /// issuer would otherwise have built.
+    ///
+    /// Byte-identical to the issuer-side path: it runs the same
+    /// [`NativeSessionBackend::build_turn_at`] over the same lowered dataset and
+    /// the same materializer, and this worker owns the conversation's session,
+    /// so `advance_to` walks the same sequence it would have on the issuer.
+    pub fn materialize(&self, credit: &CreditIdentity) -> Result<TurnToSend> {
+        let session = self.session_for(credit)?;
+        let turn = session
+            .backend
+            .build_turn_at(&session, credit.turn_index, Some(credit.num_turns))?;
+        // The last turn releases the session; a single-turn conversation never
+        // keeps one at all.
+        if credit.turn_index + 1 >= credit.num_turns {
+            self.sessions.borrow_mut().remove(&credit.x_correlation_id);
+        }
+        Ok(turn)
+    }
+
+    /// The session this credit belongs to, created on its conversation's first
+    /// turn and retained only while the conversation has turns left.
+    fn session_for(&self, credit: &CreditIdentity) -> Result<SampledSession> {
+        if let Some(session) = self.sessions.borrow().get(&credit.x_correlation_id) {
+            return Ok(session.clone());
+        }
+        let session = self.build_session(credit)?;
+        if credit.num_turns > 1 {
+            self.sessions
+                .borrow_mut()
+                .insert(credit.x_correlation_id.clone(), session.clone());
+        }
+        Ok(session)
+    }
+
+    fn build_session(&self, credit: &CreditIdentity) -> Result<SampledSession> {
+        let id = crate::dataset::SessionId::from(credit.conversation_id.as_str());
+        self.recipe.dataset.get(&id)?;
+        let template_index = self
+            .recipe
+            .metadata_by_id
+            .get(&credit.conversation_id)
+            .copied()
+            .ok_or_else(|| {
+                anyhow!(
+                    "routed credit names conversation {:?}, which this worker cannot materialize",
+                    credit.conversation_id
+                )
+            })?;
+        let backend = NativeSessionBackend {
+            session: RefCell::new(NativeConversationSession::new(
+                self.recipe.dataset.clone(),
+                id,
+            )?),
+            template_index,
+            metadata: self.recipe.metadata[template_index].clone(),
+            endpoint: self.endpoint.clone(),
+            materializer: self.recipe.materializer.clone(),
+            response_tokenizer: self.recipe.response_tokenizer.clone(),
+            input_token_counter: self.recipe.input_token_counter.clone(),
+            static_input_count_cache: self.static_input_count_cache.clone(),
+            segments: self.recipe.dataset.segments().clone(),
+            default_output_tokens: self.recipe.default_output_tokens,
+        };
+        Ok(SampledSession {
+            conversation_id: credit.conversation_id.clone(),
+            x_correlation_id: credit.x_correlation_id.clone(),
+            backend: Rc::new(backend),
+        })
+    }
+}
+
+/// The identity half of a routed credit: everything a worker needs to rebuild
+/// the request, and nothing more.
+///
+/// The Rust counterpart of Python's `Credit`
+/// (`src/aiperf/credit/structs.py`), which likewise carries ids and indices
+/// rather than a materialized body.
+#[derive(Clone, Debug)]
+pub struct CreditIdentity {
+    /// Dataset template this credit draws from.
+    pub conversation_id: String,
+    /// Runtime session id; the sticky-routing key and the session-cache key.
+    pub x_correlation_id: String,
+    /// Zero-based turn index within the conversation.
+    pub turn_index: usize,
+    /// Total turns this runtime session will send.
+    pub num_turns: usize,
 }
 
 /// Lock-free-by-serialization counters for a single issuer loop.

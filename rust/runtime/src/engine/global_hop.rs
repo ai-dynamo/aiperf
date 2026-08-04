@@ -134,6 +134,7 @@ pub(crate) async fn run_single_coordinator(
         transport: shared.transport_config.clone(),
         raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
+        credit_materializer: None,
         hop_routing: shared.hop_routing,
         virtual_worker_width: None,
     })?;

@@ -16,7 +16,9 @@ use crate::dispatch::sink::{Dispatchable, RequestObserver};
 
 use crate::metrics::RequestMetricMetadata;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy, TurnEndpoint, TurnToSend};
+use crate::multiturn::{
+    CreditIdentity, PreparedEndpointReference, TurnDataPolicy, TurnEndpoint, TurnToSend,
+};
 use crate::scheduled::{TurnDispatchOutcome, TurnResponseObserver};
 use crate::transport::core::record::RequestRecord;
 
@@ -190,6 +192,11 @@ pub struct PreparedTurn {
     pub endpoint_aware: bool,
     /// Content retention/cache/diagnostic policy fixed by materialization.
     pub data_policy: TurnDataPolicy,
+    /// Present when the issuer routed this credit WITHOUT materializing its
+    /// body. Every body-bearing field above is then a placeholder and the
+    /// receiving worker rebuilds the request from the resident dataset, the way
+    /// Python's `Credit` carries ids and lets the worker build the request.
+    pub deferred: Option<CreditIdentity>,
 }
 
 impl fmt::Debug for PreparedTurn {
@@ -227,6 +234,14 @@ impl PreparedTurn {
     /// Remove scheduler-local session state and build one owned execution command.
     pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
         let is_final_turn = turn.is_final_turn();
+        let deferred = turn.deferred_body.then(|| CreditIdentity {
+            conversation_id: turn.conversation_id.clone(),
+            x_correlation_id: turn.x_correlation_id.clone(),
+            turn_index: turn.turn_index,
+            num_turns: turn.num_turns,
+        });
+        // A deferred credit has no body yet; the worker's materialization sets
+        // this from what it actually builds.
         let endpoint_aware = turn.request_body.is_some();
         let data_policy = turn.data_policy;
         let model = turn
@@ -260,6 +275,7 @@ impl PreparedTurn {
             endpoint,
             endpoint_aware,
             data_policy,
+            deferred,
         }
     }
 }

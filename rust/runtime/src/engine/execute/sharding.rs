@@ -313,6 +313,7 @@ pub(crate) async fn execute_scheduled_shard(
         transport: shared.transport_config.clone(),
         raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
+        credit_materializer: None,
         // `workers == 1` co-located sink: no hop, so routing is inert.
         hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
         virtual_worker_width: None,

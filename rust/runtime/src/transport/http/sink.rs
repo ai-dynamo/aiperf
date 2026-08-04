@@ -735,6 +735,7 @@ impl TransportSink {
             endpoint,
             endpoint_aware: _,
             data_policy,
+            deferred: _,
         } = turn;
         if !data_policy.allow_result_cache() {
             request

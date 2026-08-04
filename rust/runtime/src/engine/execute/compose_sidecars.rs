@@ -259,6 +259,8 @@ pub(crate) async fn execute_native_inner(
             transport: transport_config,
             raw_enabled: request.artifacts.raw_path.is_some(),
             prepared_endpoints,
+            // The unsharded path materializes on its single co-located sink.
+            credit_materializer: None,
             hop_routing: if request.dispatch_mode
                 == crate::engine::protocol::DispatchMode::GlobalHop
             {

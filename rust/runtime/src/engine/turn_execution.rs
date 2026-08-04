@@ -21,7 +21,7 @@ use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
 use crate::engine::protocol::HopRouting;
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use crate::multiturn::TurnToSend;
+use crate::multiturn::{TurnToSend, WorkerMaterializer};
 use crate::scheduled::TurnResponseObserver;
 use crate::transport::core::{
     CreditReportKind, DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn,
@@ -69,6 +69,9 @@ pub struct ExecutionBackendConfig {
     ///
     /// Each worker receives an independent dense-key table.
     pub prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+    /// Optional worker-local materialization of identity-only credits. Present
+    /// only for `GlobalPush`; every other mode materializes on the issuer.
+    pub credit_materializer: Option<Arc<dyn CreditMaterializerFactory>>,
     /// Worker-assignment policy applied by the `workers > 1` hop executor. Inert
     /// for `workers == 1` (co-located sink, no hop).
     pub hop_routing: HopRouting,
@@ -80,6 +83,19 @@ pub struct ExecutionBackendConfig {
 pub trait PreparedEndpointTableFactory: Send + Sync {
     /// Build one deterministic dense-key table.
     fn prepare_worker(&self) -> Result<PreparedEndpointTable>;
+}
+
+/// Constructs the worker-local materializer that rebuilds routed credits.
+///
+/// `--dispatch global-push` can route a credit that carries only identity, the
+/// way Python's `Credit` does, and have the worker build the request body --
+/// body materialization was ~29% of the single issuer's CPU, on the one thread
+/// that bounds that mode. Each worker gets its own materializer over its own
+/// prepared endpoint table; the dataset and the materializer/tokenizer/counter
+/// behind it are shared, not copied.
+pub trait CreditMaterializerFactory: Send + Sync {
+    /// Build one worker's materializer over `table`, its own dense-key table.
+    fn build_worker(&self, table: PreparedEndpointTable) -> Result<WorkerMaterializer>;
 }
 
 /// Constructs the request executor for a run.
@@ -161,6 +177,12 @@ pub trait ExecutionSinkBuilder: Send + Sync + 'static {
 
     /// Build one worker-local sink on `clock` for `worker_id`.
     fn build_sink(&self, clock: Rc<dyn Clock>, worker_id: usize) -> Result<Self::Sink>;
+
+    /// Build this worker's materializer for identity-only credits, if the run
+    /// routes them. `None` keeps issuer-side materialization.
+    fn build_credit_materializer(&self) -> Result<Option<WorkerMaterializer>> {
+        Ok(None)
+    }
 }
 
 /// Constructs worker-local HTTP transport sinks.
@@ -169,6 +191,7 @@ pub struct HttpSinkBuilder {
     model: String,
     transport: TransportSinkConfig,
     prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+    credit_materializer: Option<Arc<dyn CreditMaterializerFactory>>,
     raw_enabled: bool,
 }
 
@@ -179,6 +202,7 @@ impl HttpSinkBuilder {
             model: config.model.clone(),
             transport: config.transport.clone(),
             prepared_endpoints: config.prepared_endpoints.clone(),
+            credit_materializer: config.credit_materializer.clone(),
             raw_enabled: config.raw_enabled,
         }
     }
@@ -201,6 +225,19 @@ impl ExecutionSinkBuilder for HttpSinkBuilder {
             self.prepared_endpoints.as_deref(),
             self.raw_enabled,
         )
+    }
+
+    fn build_credit_materializer(&self) -> Result<Option<WorkerMaterializer>> {
+        let (Some(credit_materializer), Some(endpoints)) =
+            (&self.credit_materializer, &self.prepared_endpoints)
+        else {
+            return Ok(None);
+        };
+        // Its OWN dense-key table, exactly as the sink gets: a resolver is `Rc`
+        // and cannot cross the thread boundary.
+        Ok(Some(
+            credit_materializer.build_worker(endpoints.prepare_worker()?)?,
+        ))
     }
 }
 
@@ -1149,17 +1186,28 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
             return Err(error).context("constructing worker-local transport sink");
         }
     };
+    let materializer = match builder.build_credit_materializer() {
+        Ok(materializer) => materializer.map(Rc::new),
+        Err(error) => {
+            let _ = started.send(Err(error.to_string()));
+            return Err(error).context("constructing worker-local credit materializer");
+        }
+    };
     if started.send(Ok(())).is_err() {
         return Ok(());
     }
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, run_worker(receiver, sink, clock, worker_id));
+    local.block_on(
+        &runtime,
+        run_worker(receiver, sink, materializer, clock, worker_id),
+    );
     Ok(())
 }
 
 async fn run_worker<S: WorkerSink + 'static>(
     mut receiver: mpsc::Receiver<WorkerMessage>,
     sink: Rc<S>,
+    materializer: Option<Rc<WorkerMaterializer>>,
     clock: Rc<dyn Clock>,
     worker_id: usize,
 ) {
@@ -1202,8 +1250,18 @@ async fn run_worker<S: WorkerSink + 'static>(
                     Some(WorkerMessage::Credit(command)) => {
                         let sink = sink.clone();
                         let observer = observer.clone();
+                        // Materialization runs INLINE, before the job is spawned:
+                        // a conversation's session is stateful, so its turns must
+                        // be built in routed order, not raced by concurrent tasks.
+                        let command = match materialize_credit(materializer.as_deref(), *command) {
+                            Ok(command) => command,
+                            Err(report) => {
+                                let _ = report.events.try_send(report.failure);
+                                continue;
+                            }
+                        };
                         jobs.spawn_local(async move {
-                            execute_worker_credit(sink, observer, *command).await;
+                            execute_worker_credit(sink, observer, command).await;
                         });
                     }
                     Some(WorkerMessage::Prewarm { turn, done }) => {
@@ -1364,6 +1422,61 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
     let _ = events.send(WorkerEvent::Completed(Box::new(reply))).await;
 }
 
+/// A credit this worker could not materialize, plus the return it owes for it.
+struct CreditMaterializationFailure {
+    events: mpsc::Sender<WorkerCreditReport>,
+    failure: WorkerCreditReport,
+}
+
+/// Rebuild an identity-only credit's request on this worker.
+///
+/// A credit that already carries its body passes straight through, so a run
+/// with no worker-side materializer is untouched. Failure returns the credit
+/// with an error terminal rather than dropping it: the issuer holds a pending
+/// entry that only a return can close.
+fn materialize_credit(
+    materializer: Option<&WorkerMaterializer>,
+    mut command: CreditCommand,
+) -> std::result::Result<CreditCommand, CreditMaterializationFailure> {
+    let Some(identity) = command.turn.deferred.clone() else {
+        return Ok(command);
+    };
+    let uuid = command.turn.request.uuid;
+    let worker = command.worker;
+    let fail = |command: CreditCommand, message: String| CreditMaterializationFailure {
+        events: command.events,
+        failure: WorkerCreditReport {
+            uuid,
+            worker,
+            kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(message)))),
+        },
+    };
+    let Some(materializer) = materializer else {
+        return Err(fail(
+            command,
+            "a credit was routed unmaterialized to a worker with no materializer".to_string(),
+        ));
+    };
+    let turn = match materializer.materialize(&identity) {
+        Ok(turn) => turn,
+        Err(error) => return Err(fail(command, format!("{error:#}"))),
+    };
+    // Keep the issuer's identity — the uuid the whole measurement plane keys on,
+    // and the issuance-time policy scalars — and take everything the body
+    // determines from what this worker actually built.
+    let mut prepared = PreparedTurn::from_turn(turn, &command.turn.model);
+    prepared.request.uuid = uuid;
+    prepared.request.cancel_after_ns = command.turn.request.cancel_after_ns;
+    prepared.request.url_index = command.turn.request.url_index;
+    prepared.request.is_final_turn = command.turn.request.is_final_turn;
+    // The worker's count is authoritative now, so the observer's arrival facts
+    // must come from it rather than from the issuer's authored estimate.
+    command.context.input_length = prepared.request.input_length;
+    command.context.requested_output_length = prepared.request.max_output_tokens;
+    command.turn = prepared;
+    Ok(command)
+}
+
 /// Drive one routed credit to terminal and return it on the shared stream.
 ///
 /// The worker owns the whole request here — no coordinator future is parked on
@@ -1486,6 +1599,7 @@ mod raw_retention_tests {
             model: "m".to_string(),
             transport: TransportSinkConfig::default(),
             prepared_endpoints: None,
+            credit_materializer: None,
             raw_enabled,
         }
     }
@@ -1907,6 +2021,7 @@ mod tests {
                 transport: TransportSinkConfig::default(),
                 raw_enabled: false,
                 prepared_endpoints: Some(table_factory),
+                credit_materializer: None,
                 hop_routing: HopRouting::RoundRobin,
                 virtual_worker_width: None,
             })
@@ -1953,6 +2068,7 @@ mod tests {
             }),
             endpoint_aware: true,
             data_policy: crate::multiturn::TurnDataPolicy::ordinary(),
+            deferred: None,
         }
     }
 

@@ -1069,6 +1069,9 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                     endpoint,
                     endpoint_aware: true,
                     data_policy: crate::multiturn::TurnDataPolicy::ordinary(),
+                    // Graph programs are placed by `ThreadPerCoreTracePlacement`
+                    // and never routed as credits.
+                    deferred: None,
                 },
                 self.observer.as_ref(),
                 &|_| {

@@ -205,6 +205,7 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
             transport,
             raw_enabled: false,
             prepared_endpoints: Some(table_factory),
+            credit_materializer: None,
             hop_routing: routing,
             virtual_worker_width: None,
         })
@@ -253,6 +254,7 @@ fn streaming_turn(correlation_id: &str, is_final_turn: bool) -> PreparedTurn {
         }),
         endpoint_aware: true,
         data_policy: TurnDataPolicy::ordinary(),
+        deferred: None,
     }
 }
 
