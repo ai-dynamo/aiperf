@@ -9,6 +9,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from aiperf.common.models import Audio, Text, Turn
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.endpoints.openai_audio_transcription import (
     AudioTranscriptionEndpoint,
     _build_audio_field,
@@ -31,13 +32,13 @@ class TestAudioTranscriptionEndpoint:
     """Tests for AudioTranscriptionEndpoint format_payload + parse_response."""
 
     @pytest.fixture
-    def model_endpoint(self):
+    def model_endpoint(self) -> ModelEndpointInfo:
         return create_model_endpoint(
             EndpointType.AUDIO_TRANSCRIPTION, model_name="openai/whisper-large-v3"
         )
 
     @pytest.fixture
-    def endpoint(self, model_endpoint):
+    def endpoint(self, model_endpoint: ModelEndpointInfo) -> AudioTranscriptionEndpoint:
         return create_endpoint_with_mock_transport(
             AudioTranscriptionEndpoint, model_endpoint
         )
@@ -45,7 +46,7 @@ class TestAudioTranscriptionEndpoint:
     # ===== format_payload =====
 
     def test_format_payload_wav_produces_correct_file_field(
-        self, endpoint, model_endpoint
+        self, endpoint: AudioTranscriptionEndpoint, model_endpoint: ModelEndpointInfo
     ) -> None:
         turn = Turn(
             audios=[Audio(contents=[_WAV_CONTENT])], model="openai/whisper-large-v3"
@@ -61,7 +62,7 @@ class TestAudioTranscriptionEndpoint:
         assert file_field["content_type"] == "audio/wav"
 
     def test_format_payload_mp3_mime_and_filename(
-        self, endpoint, model_endpoint
+        self, endpoint: AudioTranscriptionEndpoint, model_endpoint: ModelEndpointInfo
     ) -> None:
         turn = Turn(audios=[Audio(contents=[_MP3_CONTENT])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
@@ -72,7 +73,7 @@ class TestAudioTranscriptionEndpoint:
         assert payload["file"]["content_type"] == "audio/mpeg"
 
     def test_format_payload_is_json_serialisable(
-        self, endpoint, model_endpoint
+        self, endpoint: AudioTranscriptionEndpoint, model_endpoint: ModelEndpointInfo
     ) -> None:
         """Payload must survive model_dump(mode='json') + orjson round-trip."""
         turn = Turn(audios=[Audio(contents=[_WAV_CONTENT])])
@@ -82,7 +83,9 @@ class TestAudioTranscriptionEndpoint:
         TypeAdapter(dict).dump_python(payload, mode="json")
         orjson.dumps(payload)
 
-    def test_format_payload_extra_inputs_forwarded(self, model_endpoint) -> None:
+    def test_format_payload_extra_inputs_forwarded(
+        self, model_endpoint: ModelEndpointInfo
+    ) -> None:
         me = create_model_endpoint(
             EndpointType.AUDIO_TRANSCRIPTION,
             extra=[("language", "en"), ("temperature", "0.0")],
@@ -97,7 +100,7 @@ class TestAudioTranscriptionEndpoint:
         assert payload["temperature"] == "0.0"
 
     def test_format_payload_reserved_key_in_extra_inputs_ignored(
-        self, model_endpoint, caplog
+        self, model_endpoint: ModelEndpointInfo, caplog: pytest.LogCaptureFixture
     ) -> None:
         me = create_model_endpoint(
             EndpointType.AUDIO_TRANSCRIPTION,
@@ -112,13 +115,17 @@ class TestAudioTranscriptionEndpoint:
         assert isinstance(payload["file"], dict)
         assert "b64_data" in payload["file"]
 
-    def test_format_payload_no_turns_raises(self, endpoint, model_endpoint) -> None:
+    def test_format_payload_no_turns_raises(
+        self, endpoint: AudioTranscriptionEndpoint, model_endpoint: ModelEndpointInfo
+    ) -> None:
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
 
         with pytest.raises(ValueError, match="requires at least one turn"):
             endpoint.format_payload(request_info)
 
-    def test_format_payload_no_audio_raises(self, endpoint, model_endpoint) -> None:
+    def test_format_payload_no_audio_raises(
+        self, endpoint: AudioTranscriptionEndpoint, model_endpoint: ModelEndpointInfo
+    ) -> None:
         turn = Turn(texts=[Text(contents=["transcribe this"])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
@@ -127,7 +134,9 @@ class TestAudioTranscriptionEndpoint:
 
     # ===== parse_response =====
 
-    def test_parse_response_extracts_text(self, endpoint) -> None:
+    def test_parse_response_extracts_text(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
         response = create_mock_response(
             json_data={"text": "Hello world", "usage": {"prompt_tokens": 10}}
         )
@@ -137,19 +146,41 @@ class TestAudioTranscriptionEndpoint:
         assert result is not None
         assert result.usage == {"prompt_tokens": 10}
 
-    def test_parse_response_no_json_returns_none(self, endpoint) -> None:
+    def test_parse_response_no_json_returns_none(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
         response = create_mock_response(json_data=None)
         assert endpoint.parse_response(response) is None
 
-    def test_parse_response_missing_text_field_returns_none(self, endpoint) -> None:
+    def test_parse_response_missing_text_field_returns_none(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
         response = create_mock_response(json_data={"error": "bad request"})
         assert endpoint.parse_response(response) is None
 
-    def test_parse_response_no_usage_is_fine(self, endpoint) -> None:
+    def test_parse_response_no_usage_is_fine(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
         response = create_mock_response(json_data={"text": "Transcript here."})
         result = endpoint.parse_response(response)
         assert result is not None
         assert result.usage is None
+
+    def test_parse_response_plain_text_body(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
+        """response_format text/srt/vtt returns a non-JSON body; the whole body
+        is the transcript and must not be dropped."""
+        response = create_mock_response(json_data=None, text="a plain transcript")
+        result = endpoint.parse_response(response)
+        assert result is not None
+        assert result.usage is None
+
+    def test_parse_response_empty_body_returns_none(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
+        response = create_mock_response(json_data=None, text="")
+        assert endpoint.parse_response(response) is None
 
     # ===== _build_audio_field =====
 
@@ -158,6 +189,8 @@ class TestAudioTranscriptionEndpoint:
         [
             ("wav", "audio/wav"),
             ("mp3", "audio/mpeg"),
+            ("mpga", "audio/mpeg"),
+            ("mpeg", "audio/mpeg"),
             ("flac", "audio/flac"),
             ("ogg", "audio/ogg"),
             ("m4a", "audio/mp4"),

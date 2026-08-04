@@ -83,7 +83,7 @@ def test_different_audio_length(expected_audio_length):
 
 
 @pytest.mark.parametrize("expected_audio_length", [1.0, 2.5])
-def test_generate_records_sampled_duration(expected_audio_length):
+def test_generate_records_sampled_duration(expected_audio_length: float) -> None:
     """generate() exposes the sampled duration via last_audio_duration_seconds
     so the composer can hoist it onto Turn.audio_duration_seconds for RTFx."""
     config = make_config(mean=expected_audio_length, stddev=0.0)

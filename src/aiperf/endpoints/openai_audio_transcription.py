@@ -9,9 +9,13 @@ from aiperf.common.models import (
 )
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
+# Covers OpenAI's supported transcription formats. mp3/mpga/mpeg all map to the
+# IANA-registered audio/mpeg (RFC 3003); mpga/mpeg are file-extension aliases.
 _MIME_BY_FORMAT: dict[str, str] = {
     "wav": "audio/wav",
     "mp3": "audio/mpeg",
+    "mpga": "audio/mpeg",
+    "mpeg": "audio/mpeg",
     "flac": "audio/flac",
     "ogg": "audio/ogg",
     "m4a": "audio/mp4",
@@ -82,12 +86,17 @@ class AudioTranscriptionEndpoint(BaseEndpoint):
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
         json_obj = response.get_json()
-        if not json_obj:
+        if json_obj:
+            # response_format json / verbose_json: transcript is the "text" field.
+            text = json_obj.get("text")
+            usage = json_obj.get("usage") or None
+        else:
+            # response_format text / srt / vtt: the whole body IS the transcript
+            # (not JSON), so fall back to the raw text rather than dropping it.
+            text = response.get_text()
+            usage = None
+        if not text:
             return None
-        text = json_obj.get("text")
-        if text is None:
-            return None
-        usage = json_obj.get("usage") or None
         return ParsedResponse(
             perf_ns=response.perf_ns,
             data=self.make_text_response_data(text),
