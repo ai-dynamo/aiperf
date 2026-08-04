@@ -900,16 +900,18 @@ struct PreparedNodeMetadata {
 ///
 /// `Some(0)` lets the dispatch path skip a full body reparse whose only consumer
 /// is `num_images`; `None` preserves that reparse.
-fn node_known_image_count(node: &LlmNode, prepared: &PreparedNodeMetadata) -> Option<u32> {
+fn node_known_image_count(
+    node: &LlmNode,
+    raw_system: Option<&Vec<Value>>,
+    extra_body: Option<&Map<String, Value>>,
+) -> Option<u32> {
     let has_raw_messages = node
         .items
         .iter()
         .any(|item| matches!(item, PromptItem::RawMessages { .. }));
-    let overrides_content_root = prepared
-        .extra_body
-        .as_ref()
+    let overrides_content_root = extra_body
         .is_some_and(|extra| extra.contains_key("messages") || extra.contains_key("input"));
-    (!has_raw_messages && prepared.raw_system.is_none() && !overrides_content_root).then_some(0)
+    (!has_raw_messages && raw_system.is_none() && !overrides_content_root).then_some(0)
 }
 
 struct EngineGraphSink {
@@ -1210,16 +1212,20 @@ impl EngineGraphSink {
         if let Some(prepared) = self.prepared_metadata.borrow().get(node_id).cloned() {
             return Ok(prepared);
         }
-        let mut metadata = PreparedNodeMetadata {
+        let raw_system = self.raw_array(node, "raw_system_handle")?;
+        let extra_body = self.raw_object(node, "extra_body_handle")?;
+        let prepared = Rc::new(PreparedNodeMetadata {
             extra_headers: self.raw_string_map(node, "extra_headers_handle")?,
             raw_tools: self.raw_array(node, "tools_handle")?,
-            raw_system: self.raw_array(node, "raw_system_handle")?,
-            extra_body: self.raw_object(node, "extra_body_handle")?,
             parameters: self.raw_string_map(node, "request_parameters_handle")?,
-            known_image_count: None,
-        };
-        metadata.known_image_count = node_known_image_count(node, &metadata);
-        let prepared = Rc::new(metadata);
+            known_image_count: node_known_image_count(
+                node,
+                raw_system.as_ref(),
+                extra_body.as_ref(),
+            ),
+            raw_system,
+            extra_body,
+        });
         self.prepared_metadata
             .borrow_mut()
             .insert(node_id.to_string(), prepared.clone());
@@ -1348,17 +1354,6 @@ mod tests {
         }
     }
 
-    fn empty_metadata() -> PreparedNodeMetadata {
-        PreparedNodeMetadata {
-            extra_headers: BTreeMap::new(),
-            raw_tools: None,
-            raw_system: None,
-            extra_body: None,
-            parameters: BTreeMap::new(),
-            known_image_count: None,
-        }
-    }
-
     #[test]
     fn a_text_only_prompt_program_reports_a_known_zero_image_count() {
         let node = node_with_items(vec![
@@ -1370,7 +1365,7 @@ mod tests {
             },
         ]);
         assert_eq!(
-            node_known_image_count(&node, &empty_metadata()),
+            node_known_image_count(&node, None, None),
             Some(0),
             "lowering rejects non-text media, so a Seg/Splice program carries no images"
         );
@@ -1383,7 +1378,7 @@ mod tests {
         let node = node_with_items(vec![PromptItem::RawMessages {
             raw_messages: Handle::new(0),
         }]);
-        assert_eq!(node_known_image_count(&node, &empty_metadata()), None);
+        assert_eq!(node_known_image_count(&node, None, None), None);
     }
 
     #[test]
@@ -1391,20 +1386,12 @@ mod tests {
         let node = node_with_items(vec![PromptItem::Seg {
             seg: Handle::new(0),
         }]);
-        let mut metadata = empty_metadata();
-        metadata.extra_body = Some(Map::from_iter([(
-            "messages".to_string(),
-            serde_json::json!([]),
-        )]));
-        assert_eq!(node_known_image_count(&node, &metadata), None);
+        let overriding = Map::from_iter([("messages".to_string(), serde_json::json!([]))]);
+        assert_eq!(node_known_image_count(&node, None, Some(&overriding)), None);
 
         // An unrelated extra key does not disturb the known count.
-        let mut benign = empty_metadata();
-        benign.extra_body = Some(Map::from_iter([(
-            "ignore_eos".to_string(),
-            serde_json::Value::Bool(true),
-        )]));
-        assert_eq!(node_known_image_count(&node, &benign), Some(0));
+        let benign = Map::from_iter([("ignore_eos".to_string(), serde_json::Value::Bool(true))]);
+        assert_eq!(node_known_image_count(&node, None, Some(&benign)), Some(0));
     }
 
     #[derive(Debug)]
