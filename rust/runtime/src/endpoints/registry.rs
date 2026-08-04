@@ -412,7 +412,11 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// Callers only offer this for a body the endpoint just formatted from
     /// `request` with no dispatch override applied; a cached or mutated plan
     /// is not passed here.
-    fn extracted(&self, request: &PreparedRequest<'_>, plan: &BodyPlan) -> Option<ExtractedPayload> {
+    fn extracted(
+        &self,
+        request: &PreparedRequest<'_>,
+        plan: &BodyPlan,
+    ) -> Option<ExtractedPayload> {
         let _ = (request, plan);
         None
     }

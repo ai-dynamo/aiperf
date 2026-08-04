@@ -1965,12 +1965,7 @@ mod tests {
         let reported = prepared.extract_payload_inputs(&payload);
         assert_eq!(
             counter
-                .count_materialized_input_tokens(
-                    prepared.as_ref(),
-                    &body,
-                    Some(&reported),
-                    99
-                )
+                .count_materialized_input_tokens(prepared.as_ref(), &body, Some(&reported), 99)
                 .unwrap(),
             parsed
         );

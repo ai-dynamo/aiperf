@@ -11,11 +11,12 @@ use std::sync::Arc;
 
 use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
-    EmbeddingsEndpoint, Endpoint, ExtractedPayload, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint,
-    ImageEditEndpoint, ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, MessagesEndpoint,
-    ModelEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, PreparedEndpoint, PreparedRequest,
-    RawEndpoint, RequestInfo, ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint,
-    Turn as EndpointTurn, VideoGenerationEndpoint,
+    EmbeddingsEndpoint, Endpoint, ExtractedPayload, HfTeiRankingsEndpoint,
+    HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
+    ImageRetrievalEndpoint, Media, MessagesEndpoint, ModelEndpoint, NimEmbeddingsEndpoint,
+    NimRankingsEndpoint, PreparedEndpoint, PreparedRequest, RawEndpoint, RequestInfo,
+    ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
+    VideoGenerationEndpoint,
 };
 use bytes::Bytes;
 use serde_json::{Map, Value};
