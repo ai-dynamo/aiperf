@@ -2552,7 +2552,8 @@ mod tests {
             let id = worker_id(row);
             let expected = format!("rust-{}", dispatch_index(row) % WORKERS as u64);
             assert_eq!(
-                id, expected,
+                id,
+                expected,
                 "worker {id} reported ordinal {} — every shard issues exactly its \
                  own residue class modulo the worker count",
                 dispatch_index(row)

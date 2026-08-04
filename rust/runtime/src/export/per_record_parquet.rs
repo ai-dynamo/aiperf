@@ -256,7 +256,9 @@ fn build_record_batch(
     arrays.push(int_column(rows.iter().map(|r| Some(r.request_start_ns))));
     arrays.push(int_column(rows.iter().map(|r| r.request_ack_ns)));
     arrays.push(int_column(rows.iter().map(|r| Some(r.request_end_ns))));
-    arrays.push(string_column(rows.iter().map(|r| Some(r.worker_id.clone()))));
+    arrays.push(string_column(
+        rows.iter().map(|r| Some(r.worker_id.clone())),
+    ));
     arrays.push(int_column(rows.iter().map(|r| r.global_dispatch_index)));
     arrays.push(string_column(
         rows.iter().map(|_| Some(RECORD_PROCESSOR_ID.to_string())),
