@@ -1135,7 +1135,6 @@ mod tests {
             BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
         filled.fill_reserved("messages", wires(1)).unwrap();
         assert!(filled.fill_reserved("messages", wires(1)).is_err());
-
     }
 
     #[test]
@@ -1146,7 +1145,8 @@ mod tests {
         // the run continued; erroring here would instead `?` out of
         // `Workload::execute` and kill the phase, so one bad conversation in a
         // healthy dataset would take the whole benchmark down.
-        let mut plan = BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
+        let mut plan =
+            BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
         plan.fill_reserved("messages", SmallVec::new()).unwrap();
         assert_eq!(
             plan.materialize_standalone().unwrap(),
