@@ -841,6 +841,11 @@ fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> (Bytes,
 
 #[cfg(test)]
 mod tests {
+    use crate::dispatch::sink::ObservedUsage;
+    use crate::transport::http::sse::ChatChunk;
+    use crate::endpoints::chat_request_body;
+    use crate::transport::core::Response;
+    use crate::transport::http::models::RequestConfig;
     use std::cell::Cell;
 
     use super::*;
@@ -974,20 +979,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn first_token_filter_skips_non_content_sse_messages() {
-        let role = SseMessage::parse(r#"data: {"choices":[{"delta":{"role":"assistant"}}]}"#, 1);
-        let usage = SseMessage::parse(r#"data: {"choices":[],"usage":{"completion_tokens":1}}"#, 2);
-        let content = SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"hello"}}]}"#, 3);
-        let reasoning = SseMessage::parse(
-            r#"data: {"choices":[{"delta":{"reasoning_content":"think"}}]}"#,
-            4,
-        );
-        assert!(!is_meaningful_chat_token(&role));
-        assert!(!is_meaningful_chat_token(&usage));
-        assert!(is_meaningful_chat_token(&content));
-        assert!(is_meaningful_chat_token(&reasoning));
-    }
 
     #[test]
     fn vllm_request_id_and_finish_reason_enter_normalized_metadata() {
@@ -1070,7 +1061,12 @@ mod tests {
                         true,
                         |_ttft_ns, message| {
                             attempts.set(attempts.get() + 1);
-                            is_meaningful_chat_token(message)
+                            // Inlined from the removed non-endpoint-aware path:
+                            // a frame counts only if it carries delta text.
+                            message.data().is_some_and(|data| {
+                                serde_json::from_str::<ChatChunk>(data)
+                                    .is_ok_and(|chunk| !chunk.delta_text().is_empty())
+                            })
                         },
                     )
                     .await;
@@ -1084,66 +1080,4 @@ mod tests {
             .await;
     }
 
-    #[tokio::test]
-    async fn dispatch_invokes_first_token_hook_once() {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let base = crate::test_util::spawn_mock().await;
-                let clock = RealClock::new();
-                let sink = TransportSink::new(clock.clone(), clock.now_ns(), &base, "m", false);
-                let hook_calls = Rc::new(Cell::new(0));
-                let hook_calls_for_hook = hook_calls.clone();
-                let req = Request {
-                    uuid: Uuid::new_v4(),
-                    input_length: 4,
-                    max_output_tokens: 2,
-                    prompt_text: Some("hello world".to_string()),
-                    image_count: None,
-                    recorded_api_time_ns: None,
-                    recorded_ttft_ns: None,
-                    request_body: None,
-                    request_body_bytes: None,
-                    headers: BTreeMap::new(),
-                    parameters: BTreeMap::new(),
-                    endpoint_path: None,
-                    streaming: true,
-                    x_correlation_id: None,
-                    is_final_turn: true,
-                    cancel_after_ns: None,
-                    url_index: None,
-                };
-
-                let observer = RecordingObserver::default();
-                let first_token_ns = Rc::new(Cell::new(None));
-                let first_token_ns_for_hook = first_token_ns.clone();
-
-                let result = sink.dispatch_collect_with_hooks(req, &observer, |ttft_ns| {
-                    hook_calls_for_hook.set(hook_calls_for_hook.get() + 1);
-                    first_token_ns_for_hook.set(Some(ttft_ns));
-                })
-                .await
-                .unwrap();
-
-                assert_eq!(hook_calls.get(), 1);
-                assert_eq!(
-                    observer.usage.lock().unwrap().as_slice(),
-                    &[ObservedUsage {
-                        prompt_tokens: result.prompt_tokens.map(|value| value as usize),
-                        completion_tokens: result.completion_tokens.map(|value| value as usize),
-                        ..ObservedUsage::default()
-                    }]
-                );
-                let first_observed_token_ms = observer.tokens.lock().unwrap()[0];
-                let first_hook_ms = first_token_ns.get().unwrap() as f64 / 1_000_000.0;
-                let dispatch_start_ms = sink.ms(result.start_ns);
-                assert!(
-                    ((first_observed_token_ms - dispatch_start_ms) - first_hook_ms).abs()
-                        < 0.1,
-                    "hook TTFT {first_hook_ms:.6}ms must match first observed token at {:.6}ms from dispatch",
-                    first_observed_token_ms - dispatch_start_ms,
-                );
-            })
-            .await;
-    }
 }

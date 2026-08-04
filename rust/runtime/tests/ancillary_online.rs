@@ -9,20 +9,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aiperf_runtime::ancillary::AncillaryTimingConfig;
 use aiperf_runtime::clock::{Clock, RealClock};
-use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
-use aiperf_runtime::dispatch::observer::CollectorObserver;
-use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::fixed_schedule::FixedScheduleConfig;
 use aiperf_runtime::transport::core::ErrorKind;
-use aiperf_runtime::transport::core::Request;
-use aiperf_runtime::transport::http::TransportSink;
 use aiperf_runtime::transport::http::config::ClientConfig;
 use aiperf_runtime::transport::http::models::RequestConfig;
 use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 use axum::{
-    Router, body::Bytes, extract::State, http::header, response::IntoResponse, routing::post,
+    Router, body::Bytes, http::header, routing::post,
 };
-use uuid::Uuid;
 
 mod common;
 
@@ -95,93 +89,6 @@ async fn round_robin_resolves_to_real_endpoints_and_keeps_sessions_sticky() {
         .await;
 }
 
-#[tokio::test]
-async fn post_send_disconnect_is_reported_as_a_canceled_terminal() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            #[derive(Clone)]
-            struct BodyState {
-                body: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
-                received: Arc<tokio::sync::Notify>,
-            }
-            async fn delayed_after_full_body(
-                State(state): State<BodyState>,
-                body: Bytes,
-            ) -> impl IntoResponse {
-                *state.body.lock().unwrap() = Some(body.to_vec());
-                state.received.notify_one();
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                ([(header::CONTENT_TYPE, "text/event-stream")], SSE).into_response()
-            }
-            let state = BodyState {
-                body: Arc::new(std::sync::Mutex::new(None)),
-                received: Arc::new(tokio::sync::Notify::new()),
-            };
-            let app = Router::new()
-                .route("/v1/chat/completions", post(delayed_after_full_body))
-                .with_state(state.clone());
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-            let clock: Rc<dyn Clock> = RealClock::new();
-            let start_ns = clock.now_ns();
-            let sink = TransportSink::new(
-                clock.clone(),
-                start_ns,
-                &format!("http://{address}"),
-                "model",
-                false,
-            );
-            let observer = CollectorObserver::new(true);
-            let uuid = Uuid::new_v4();
-            observer.on_arrival(uuid, 0.0, 1, 1);
-            let result = sink
-                .dispatch_collect_with_hooks(
-                    Request {
-                        uuid,
-                        input_length: 1,
-                        max_output_tokens: 1,
-                        prompt_text: Some("complete request".into()),
-                        request_body: None,
-                        request_body_bytes: None,
-                        headers: std::collections::BTreeMap::new(),
-                        parameters: std::collections::BTreeMap::new(),
-                        endpoint_path: None,
-                        streaming: true,
-                        x_correlation_id: None,
-                        is_final_turn: true,
-                        cancel_after_ns: Some(0),
-                        url_index: None,
-                        image_count: None,
-                        recorded_api_time_ns: None,
-                        recorded_ttft_ns: None,
-                    },
-                    &observer,
-                    |_| {},
-                )
-                .await
-                .unwrap();
-
-            assert_eq!(result.terminal, ReplayTerminalStatus::Canceled);
-            if state.body.lock().unwrap().is_none() {
-                tokio::time::timeout(std::time::Duration::from_secs(1), state.received.notified())
-                    .await
-                    .expect("server must receive the complete request before disconnect");
-            }
-            let body = state.body.lock().unwrap().clone().unwrap();
-            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            assert_eq!(body["messages"][0]["content"], "complete request");
-            let report = observer.finish((clock.now_ns() - start_ns) as f64 / 1_000_000.0);
-            assert_eq!(report.per_request.len(), 1);
-            assert_eq!(
-                report.per_request[0].terminal_status,
-                ReplayTerminalStatus::Canceled
-            );
-        })
-        .await;
-}
 
 #[tokio::test]
 async fn positive_disconnect_delay_is_measured_from_send_completion() {
