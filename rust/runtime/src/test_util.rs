@@ -161,13 +161,14 @@ pub async fn partitioned_single_turn_source(
         .unwrap();
     let mut table = crate::endpoints::PreparedEndpointTable::new();
     let key = table.push(prepared).unwrap();
-    let resolver: std::rc::Rc<dyn crate::multiturn::PreparedTurnEndpointResolver> = std::rc::Rc::new(
-        crate::multiturn::PreparedEndpointTableResolver::single(
-            std::rc::Rc::new(table),
-            PreparedEndpointReference { key, endpoint_id },
-        )
-        .unwrap(),
-    );
+    let resolver: std::rc::Rc<dyn crate::multiturn::PreparedTurnEndpointResolver> =
+        std::rc::Rc::new(
+            crate::multiturn::PreparedEndpointTableResolver::single(
+                std::rc::Rc::new(table),
+                PreparedEndpointReference { key, endpoint_id },
+            )
+            .unwrap(),
+        );
     Box::new(
         NativeDatasetConversationSource::sequential_with_prepared_resolver_for_partition(
             dataset,

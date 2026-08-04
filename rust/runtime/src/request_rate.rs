@@ -1124,9 +1124,9 @@ mod tests {
                     },
                     true,
                 );
-                running.push(tokio::task::spawn_local(
-                    async move { workload.execute(runtime).await },
-                ));
+                running.push(tokio::task::spawn_local(async move {
+                    workload.execute(runtime).await
+                }));
             }
             for task in running {
                 task.await.unwrap().unwrap();
