@@ -301,10 +301,11 @@ When `--video-audio-codec` is not specified, the codec is automatically selected
 | MP4 | `libopus` (Opus) |
 
 > [!NOTE]
-> Opus only supports 48, 24, 16, 12 and 8 kHz. Any other
-> `--video-audio-sample-rate` is resampled during muxing, so the audio stream in
-> the generated file reports the nearest supported rate rather than the
-> requested one. Use `libvorbis` if you need an exact 44.1 kHz track.
+> `libopus` always encodes at 48 kHz. Whatever `--video-audio-sample-rate` you
+> request is resampled to 48 kHz during muxing, so the audio stream in the
+> generated file reports 48 kHz — this applies to every rate, including ones
+> Opus itself supports such as 16 kHz. Use `libvorbis` if the track must keep
+> its requested rate.
 
 You can override the auto-selection with an explicit codec:
 
