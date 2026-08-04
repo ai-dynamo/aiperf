@@ -565,8 +565,19 @@ impl BodyPlan {
     /// Materialize a plan that references no stored segments (only literals and
     /// inline wires).
     pub fn materialize_standalone(&self) -> Result<Bytes> {
+        self.materialize_spliced(None)
+    }
+
+    /// Materialize a store-free plan, interleaving one dispatch's live wires
+    /// into the field `splice` names.
+    ///
+    /// This is how a *cached* plan serves a turn whose message array carries
+    /// content the plan could not know: the plan stays shared and immutable and
+    /// the live wires are supplied per dispatch, rather than the plan being
+    /// deep-copied and rewritten to hold them.
+    pub fn materialize_spliced(&self, splice: Option<&WireSplice<'_>>) -> Result<Bytes> {
         let store = crate::dataset::segment::InMemorySegmentStore::default();
-        JsonBodyMaterializer::materialize(self, &store, &Overrides::new())
+        JsonBodyMaterializer::materialize_spliced(self, &store, &Overrides::new(), splice)
     }
 
     /// Whether materializing this plan needs no segment store.
@@ -799,14 +810,131 @@ pub trait BodyEmitter {
     fn finish(self) -> Result<Self::Output>;
 }
 
+/// One dispatch's live wires and where they interleave into a plan's message
+/// array — the per-dispatch half of a body whose static half is a cached plan.
+///
+/// A multi-turn continuation body is `t0 r0 t1 r1 … tN`: the captured replies
+/// land in **interior** positions, not appended. Expressing that by rewriting
+/// the plan would mean copying it per dispatch — every literal's `String` and
+/// every wire's `Bytes` — which costs more than reformatting saves. So the plan
+/// stays immutable and shared, and this rides alongside [`Overrides`] instead.
+///
+/// `field` is an index into [`FieldProgram::fields`] rather than a name so the
+/// dispatch path does no string comparison; the producer of the splice
+/// establishes it once. `groups` pairs each live wire run with the position in
+/// the plan's own wire list it is inserted **before**, in ascending order. A
+/// position at or past the end appends.
+#[derive(Debug, Clone, Copy)]
+pub struct WireSplice<'a> {
+    field: usize,
+    groups: &'a [(u32, &'a [Bytes])],
+}
+
+impl<'a> WireSplice<'a> {
+    /// Bind live wire runs to the plan field they splice into.
+    pub fn new(field: usize, groups: &'a [(u32, &'a [Bytes])]) -> Self {
+        Self { field, groups }
+    }
+
+    /// The bytes this splice adds to the field's serialized array: every
+    /// inserted wire, plus the comma each one needs. Splicing into an *empty*
+    /// array needs one comma fewer, because its first element has nothing to
+    /// separate from.
+    fn added_len(&self, base_elements: usize) -> usize {
+        let mut inserted = 0_usize;
+        let mut bytes = 0_usize;
+        for (_, wires) in self.groups {
+            inserted += wires.len();
+            bytes += wires.iter().map(Bytes::len).sum::<usize>();
+        }
+        let commas = if base_elements == 0 {
+            inserted.saturating_sub(1)
+        } else {
+            inserted
+        };
+        bytes + commas
+    }
+
+    /// The field's finished element order: the plan's own wires with each group
+    /// spliced in at its position. Lazy and borrowing, so a spliced dispatch
+    /// builds no intermediate list and bumps no refcount.
+    fn interleave(&self, base: &'a [Bytes]) -> Interleave<'a> {
+        Interleave {
+            base,
+            groups: self.groups,
+            base_index: 0,
+            group: 0,
+            within: 0,
+        }
+    }
+}
+
+/// The [`WireSplice`] merge, as an iterator over borrowed wires.
+struct Interleave<'a> {
+    base: &'a [Bytes],
+    groups: &'a [(u32, &'a [Bytes])],
+    base_index: usize,
+    group: usize,
+    within: usize,
+}
+
+impl<'a> Iterator for Interleave<'a> {
+    type Item = &'a Bytes;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // A group is due once the base cursor reaches its position, and
+            // unconditionally once the base is exhausted, so a trailing group is
+            // appended rather than dropped.
+            let due = self.groups.get(self.group).is_some_and(|(position, _)| {
+                *position as usize <= self.base_index || self.base_index >= self.base.len()
+            });
+            if due {
+                let (_, wires) = &self.groups[self.group];
+                if let Some(wire) = wires.get(self.within) {
+                    self.within += 1;
+                    return Some(wire);
+                }
+                self.group += 1;
+                self.within = 0;
+                continue;
+            }
+            let wire = self.base.get(self.base_index)?;
+            self.base_index += 1;
+            return Some(wire);
+        }
+    }
+}
+
 /// Play `plan` into `emitter`, resolving segment handles against `store` and
 /// applying the per-dispatch `overrides`.
 pub fn emit<E: BodyEmitter, S: SegmentStore + ?Sized>(
     plan: &BodyPlan,
     store: &S,
     overrides: &Overrides,
+    emitter: E,
+) -> Result<E::Output> {
+    emit_spliced(plan, store, overrides, None, emitter)
+}
+
+/// Play `plan` into `emitter`, additionally interleaving one dispatch's live
+/// wires into the field `splice` names.
+///
+/// A whole-body plan has no named field to splice into, so pairing one with a
+/// splice is rejected rather than silently emitting the body without the live
+/// content — that would dispatch a multi-turn request missing its history.
+pub fn emit_spliced<E: BodyEmitter, S: SegmentStore + ?Sized>(
+    plan: &BodyPlan,
+    store: &S,
+    overrides: &Overrides,
+    splice: Option<&WireSplice<'_>>,
     mut emitter: E,
 ) -> Result<E::Output> {
+    if splice.is_some() && !matches!(plan, BodyPlan::Fields(_)) {
+        return Err(DatasetError::Validation(
+            "a whole-body plan carries no named field for a wire splice".into(),
+        ));
+    }
     match plan {
         BodyPlan::Raw(handle) => match store.get(*handle)? {
             Payload::Raw { wire } => emitter.whole(wire, overrides)?,
@@ -821,7 +949,9 @@ pub fn emit<E: BodyEmitter, S: SegmentStore + ?Sized>(
         // Already a complete object; the emitter applies any (rare) override
         // tail and otherwise takes the prebuilt bytes without a store lookup.
         BodyPlan::Prebuilt(bytes) => emitter.whole(bytes, overrides)?,
-        BodyPlan::Fields(program) => emit_fields(program, store, overrides, &mut emitter)?,
+        BodyPlan::Fields(program) => {
+            emit_fields(program, store, overrides, splice, &mut emitter)?;
+        }
     }
     emitter.finish()
 }
@@ -831,9 +961,26 @@ fn emit_fields<E: BodyEmitter, S: SegmentStore + ?Sized>(
     program: &FieldProgram,
     store: &S,
     overrides: &Overrides,
+    splice: Option<&WireSplice<'_>>,
     emitter: &mut E,
 ) -> Result<()> {
     let fields = program.fields();
+    // Resolved before anything is written so a splice naming a field that cannot
+    // receive one fails before a partial body exists. `added_len` also has to
+    // reach the hint below, which is why this is not folded into the loop.
+    let spliced_len = match splice {
+        None => 0,
+        Some(splice) => match fields.get(splice.field) {
+            Some((_, FieldValue::Wires(wires))) => splice.added_len(wires.len()),
+            _ => {
+                return Err(DatasetError::Validation(format!(
+                    "wire splice names field {} of {}, which is not a spliceable wire array",
+                    splice.field,
+                    fields.len()
+                )));
+            }
+        },
+    };
     let override_inner = overrides.inner_bytes()?;
     // The tail is per-dispatch, so the program's hint does not cover it.
     let tail = if override_inner.is_empty() {
@@ -844,11 +991,11 @@ fn emit_fields<E: BodyEmitter, S: SegmentStore + ?Sized>(
     // An exact hint makes the body one allocation with no slack; without one
     // (a store-dependent segment value) fall back to a rough guess.
     let size = match program.exact_len() {
-        Some(exact) => SizeHint::Exact(exact + tail),
-        None => SizeHint::Estimated(fields.len() * 32 + override_inner.len() + 2),
+        Some(exact) => SizeHint::Exact(exact + tail + spliced_len),
+        None => SizeHint::Estimated(fields.len() * 32 + override_inner.len() + spliced_len + 2),
     };
     emitter.begin(size)?;
-    for (name, value) in fields {
+    for (index, (name, value)) in fields.iter().enumerate() {
         emitter.field(name)?;
         match value {
             FieldValue::Literal(literal) => emitter.literal(literal)?,
@@ -859,10 +1006,18 @@ fn emit_fields<E: BodyEmitter, S: SegmentStore + ?Sized>(
                     .map(|handle| message_wire(store, *handle).map(Cow::Owned));
                 emitter.array(&mut elements)?;
             }
-            FieldValue::Wires(wires) => {
-                let mut elements = wires.iter().map(|wire| Ok(Cow::Borrowed(wire)));
-                emitter.array(&mut elements)?;
-            }
+            FieldValue::Wires(wires) => match splice.filter(|splice| splice.field == index) {
+                Some(splice) => {
+                    let mut elements = splice
+                        .interleave(wires)
+                        .map(|wire| Ok(Cow::Borrowed(wire)));
+                    emitter.array(&mut elements)?;
+                }
+                None => {
+                    let mut elements = wires.iter().map(|wire| Ok(Cow::Borrowed(wire)));
+                    emitter.array(&mut elements)?;
+                }
+            },
             // Whatever the emitter has written so far is dropped with the
             // error, so an unfilled slot yields no body at all rather than a
             // body missing the field the endpoint meant to put here.
@@ -1002,6 +1157,18 @@ impl JsonBodyMaterializer {
     ) -> Result<Bytes> {
         emit(plan, store, overrides, JsonEmitter::default())
     }
+
+    /// Materialize a plan, interleaving one dispatch's live wires into the field
+    /// `splice` names. Byte-identical to [`materialize`](Self::materialize) when
+    /// `splice` is `None`.
+    pub fn materialize_spliced<S: SegmentStore + ?Sized>(
+        plan: &BodyPlan,
+        store: &S,
+        overrides: &Overrides,
+        splice: Option<&WireSplice<'_>>,
+    ) -> Result<Bytes> {
+        emit_spliced(plan, store, overrides, splice, JsonEmitter::default())
+    }
 }
 
 /// Resolve one non-array content segment to its exact wire bytes. Message and
@@ -1103,6 +1270,81 @@ mod tests {
             streamable.prebuilt_if_static(true),
             BodyPlan::Fields(_)
         ));
+    }
+
+    #[test]
+    fn spliced_plan_equals_a_plan_built_with_the_live_wires_inline() {
+        let wire = |text: &str| Bytes::from(format!(r#"{{"role":"user","content":"{text}"}}"#));
+        let reply = |text: &str| Bytes::from(format!(r#"{{"role":"assistant","content":"{text}"}}"#));
+        let statics = [wire("t0"), wire("t1"), wire("t2")];
+        let replies = [[reply("r0")], [reply("r1")]];
+
+        // The cached shape: the static turns only, replies supplied per dispatch
+        // at the interior positions they occupy.
+        let cached = BodyPlan::new()
+            .wire_array("messages", statics.clone())
+            .str("model", "m")
+            .bool("stream", true);
+        let groups: [(u32, &[Bytes]); 2] = [(1, &replies[0]), (2, &replies[1])];
+        let spliced = cached
+            .materialize_spliced(Some(&WireSplice::new(0, &groups)))
+            .unwrap();
+
+        // The same body built with every wire inline, which is what the live
+        // per-dispatch formatter produces.
+        let inline = BodyPlan::new()
+            .wire_array(
+                "messages",
+                [
+                    statics[0].clone(),
+                    replies[0][0].clone(),
+                    statics[1].clone(),
+                    replies[1][0].clone(),
+                    statics[2].clone(),
+                ],
+            )
+            .str("model", "m")
+            .bool("stream", true)
+            .materialize_standalone()
+            .unwrap();
+
+        assert_eq!(spliced, inline);
+        // And the cached plan is untouched — no dispatch copied it.
+        assert_eq!(
+            cached.materialize_standalone().unwrap(),
+            BodyPlan::new()
+                .wire_array("messages", statics)
+                .str("model", "m")
+                .bool("stream", true)
+                .materialize_standalone()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn splice_onto_a_field_that_cannot_receive_one_is_an_error() {
+        let plan = BodyPlan::new()
+            .str("model", "m")
+            .wire_array("messages", [Bytes::from_static(br#"{"role":"user"}"#)]);
+        let wires = [Bytes::from_static(br#"{"role":"assistant"}"#)];
+        let groups: [(u32, &[Bytes]); 1] = [(0, &wires)];
+
+        // Field 0 is a literal, not a wire array.
+        assert!(
+            plan.materialize_spliced(Some(&WireSplice::new(0, &groups)))
+                .is_err()
+        );
+        // Out of range.
+        assert!(
+            plan.materialize_spliced(Some(&WireSplice::new(7, &groups)))
+                .is_err()
+        );
+        // A whole-body plan has no named field at all.
+        assert!(
+            BodyPlan::Prebuilt(Bytes::from_static(b"{}"))
+                .materialize_spliced(Some(&WireSplice::new(0, &groups)))
+                .is_err()
+        );
     }
 
     #[test]
