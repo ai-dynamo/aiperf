@@ -1421,9 +1421,7 @@ pub(crate) fn dataset_turn_image_count(
         // `messages` is populated exactly when the extractor found the
         // `messages`/`input` item array its one `image_count` increment lives
         // under, so its count then describes the dispatched body exactly.
-        Some(extracted) if extracted.messages.is_some() => {
-            u32::try_from(extracted.image_count).ok()
-        }
+        Some(extracted) if extracted.messages.is_some() => Some(extracted.image_count),
         // No item array in the dispatched body: the media dialects post a flat
         // JSON object or multipart/form-data, so the wire walk has nothing to
         // count and the turn's own composed media is the count. Sound only with
@@ -1495,7 +1493,7 @@ pub(crate) fn reply_image_count(
         "messages".to_string(),
         Value::Array(messages.clone()),
     )]));
-    u32::try_from(endpoint.extract_payload_inputs(&payload).image_count).ok()
+    Some(endpoint.extract_payload_inputs(&payload).image_count)
 }
 
 /// Whether a resolved turn provably contributes no wire image part. See
