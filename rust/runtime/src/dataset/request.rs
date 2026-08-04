@@ -21,7 +21,7 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
-use crate::body_plan::{BodyPlan, JsonBodyMaterializer};
+use crate::body_plan::{BodyPlan, JsonBodyMaterializer, RequestBody};
 use crate::dataset::dataset::Dataset;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::{Overrides, message_wire};
@@ -34,9 +34,9 @@ use smallvec::SmallVec;
 /// One fully built dispatch request and its media-free accounting metadata.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterializedRequest {
-    /// Serialized request bytes. Raw payloads retain their authored bytes exactly
-    /// unless explicit dispatch overrides were supplied.
-    pub body: Bytes,
+    /// The request body crossing to the transport. Raw payloads retain their
+    /// authored bytes exactly unless explicit dispatch overrides were supplied.
+    pub body: RequestBody,
     /// Per-turn headers, after validating every value as a string.
     pub headers: BTreeMap<String, String>,
     /// Per-turn URL query parameters.
@@ -413,7 +413,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body,
+            body: RequestBody::wire(body),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
@@ -523,6 +523,16 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             // correction, so its normal case never copies.
             if !overrides.is_empty() || stream_fix.is_some() {
                 apply_dispatch_mutations(Arc::make_mut(&mut plan), overrides, stream_fix);
+                // The structure was captured from the plan the endpoint
+                // formatted. A stream correction rewrites the `stream` literal
+                // independently of `overrides`, so the dispatched body can
+                // differ from the one described; drop the report rather than
+                // let it describe a body that was not sent. Clearing here
+                // rather than capturing later is forced: `request` is dropped
+                // at the end of the arm above. The branch is not taken on
+                // normal scheduled dispatch, so this costs the hot path
+                // nothing.
+                extracted = None;
             }
             (plan.materialize_standalone()?, effective)
         };
@@ -543,7 +553,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body,
+            body: RequestBody::wire(body),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
@@ -632,7 +642,7 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body: Bytes::new(),
+            body: RequestBody::wire(Bytes::new()),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
@@ -705,7 +715,7 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body: Bytes::new(),
+            body: RequestBody::wire(Bytes::new()),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),

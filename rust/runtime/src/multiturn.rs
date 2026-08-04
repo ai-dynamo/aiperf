@@ -32,6 +32,7 @@ use crate::graph::wire::OpenAiChatMessage;
 use crate::rng::RngRoot;
 use crate::timing::{RunState, StopConfig};
 use anyhow::{Result, anyhow, bail};
+use crate::body_plan::RequestBody;
 use bytes::Bytes;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -701,7 +702,7 @@ pub struct TurnToSend {
     /// Full OpenAI message history, including captured prior replies.
     pub messages: Vec<OpenAiChatMessage>,
     /// Exact segment-backed request body, when the native dataset seam built it.
-    pub request_body: Option<Bytes>,
+    pub request_body: Option<RequestBody>,
     /// Per-turn HTTP headers.
     pub request_headers: BTreeMap<String, String>,
     /// Per-turn URL query parameters.
@@ -1051,7 +1052,7 @@ impl NativeSessionBackend {
                 // Opaque bodies report absent as 0 at the u64 counter boundary for now.
                 let counted = self.input_token_counter.count_materialized_input_tokens(
                     *endpoint,
-                    &materialized.body,
+                    &materialized.body.to_wire()?,
                     materialized.extracted.as_ref(),
                     materialized.input_tokens.unwrap_or(0),
                 )?;
@@ -1477,16 +1478,29 @@ impl NativeDatasetConversationSource {
             }
             let mut payloads = Vec::with_capacity(num_turns);
             let mut current = session.build_first_turn(None)?;
-            payloads.push(current.request_body.clone().ok_or_else(|| {
-                anyhow!("materialized turn for conversation {conversation_id:?} produced no body")
-            })?);
+            payloads.push(
+                current
+                    .request_body
+                    .as_ref()
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "materialized turn for conversation {conversation_id:?} produced no body"
+                        )
+                    })?
+                    .to_wire()?,
+            );
             for _ in 1..num_turns {
                 let next = session.build_next_turn(&current, no_capture_reply())?;
-                payloads.push(next.request_body.clone().ok_or_else(|| {
-                    anyhow!(
-                        "materialized turn for conversation {conversation_id:?} produced no body"
-                    )
-                })?);
+                payloads.push(
+                    next.request_body
+                        .as_ref()
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "materialized turn for conversation {conversation_id:?} produced no body"
+                            )
+                        })?
+                        .to_wire()?,
+                );
                 current = next;
             }
             sessions.insert(conversation_id.to_string(), payloads);
@@ -1947,7 +1961,8 @@ mod tests {
     /// swept across every built-in endpoint.
     ///
     /// This arms itself: today no endpoint reports structure, so the inner
-    /// assertion is skipped and the sweep only pins that fact. The first
+    /// assertion is skipped and only the catalog-breadth floor below is
+    /// asserted — nothing here pins that endpoints report nothing. The first
     /// override makes the assertion live against the body that endpoint actually
     /// dispatches — `format_payload` through `materialize_standalone`, not a
     /// hand-written payload. A divergence is a silent ISL shift, not a failure

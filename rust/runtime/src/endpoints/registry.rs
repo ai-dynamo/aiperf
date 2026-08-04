@@ -411,13 +411,9 @@ pub trait PreparedEndpoint: fmt::Debug {
     ///
     /// Callers only offer this for a body the endpoint just formatted from
     /// `request` with no dispatch override applied; a cached plan and an
-    /// override-mutated plan are not passed here.
-    ///
-    /// One correction still lands after this call: a run that requested
-    /// streaming from a dialect that does not support it has `stream` set to the
-    /// corrected literal on the dispatched body. An override reading `stream`
-    /// must therefore derive it from `plan`/`request`, not assume the body it
-    /// described is byte-identical to the one dispatched.
+    /// override-mutated plan are not passed here. A report is discarded when a
+    /// later dispatch mutation rewrites the plan, so the structure returned
+    /// here always describes the body that is dispatched.
     fn extracted(
         &self,
         request: &PreparedRequest<'_>,
