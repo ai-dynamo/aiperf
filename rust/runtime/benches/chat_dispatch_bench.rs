@@ -586,9 +586,23 @@ fn dispatch_body_consumed(
 /// freshly materialized body, which is what dispatch holds.
 ///
 /// A `BytesMut::freeze()`-derived body has `len == capacity` and so rides the
-/// promotable vtable: the borrowed accessor's clone heap-allocates a `Shared`
-/// block instead of bumping a refcount. Each iteration materializes a new body,
-/// so the first-clone promotion is paid every time, exactly as in a run.
+/// promotable vtable: the first clone heap-allocates a 24-byte `Shared` block
+/// instead of bumping a refcount. Each iteration materializes a new body, so
+/// that first-clone promotion is paid every time, exactly as in a run.
+///
+/// **Two shapes, and they do not give the same answer.** Exactly one promotion
+/// is required per body as soon as two handles exist, so what `into_wire` saves
+/// depends entirely on how many handles the call site takes:
+///
+/// - *One handle, then drop* — `grpc/sink.rs:344`, which parses the bytes and
+///   drops them. Consuming removes the only clone, so this banks −1 alloc.
+/// - *Two handles* — both HTTP sites. `http/sink.rs:391` takes
+///   `body.clone()` for the record payload, and `endpoint_dispatch.rs:217`
+///   reaches `endpoint_binding.rs:297`, which clones into `canonical_body`
+///   unconditionally. The promotion merely relocates to that second clone:
+///   1 alloc before, 1 alloc after. What is saved is a refcount inc/dec pair.
+///
+/// The `SOLE HANDLE` rows model gRPC; the `SECOND HANDLE` rows model HTTP.
 #[test]
 fn chat_dispatch_wire_ownership_profile() {
     println!("\n=== L2b: to_wire(&self) vs into_wire(self) on an owned request ===");
@@ -616,17 +630,42 @@ fn chat_dispatch_wire_ownership_profile() {
             "into_wire must be byte-identical to to_wire"
         );
 
+        // gRPC shape: the assembled bytes are the only handle taken.
         samples.push(measure(
-            format!("[{size_label}] turn 0 dispatch, BORROWED to_wire (before)"),
+            format!("[{size_label}] SOLE HANDLE, to_wire   (gRPC, before)"),
             len,
             ITERS,
             || dispatch_body(&session, endpoint.as_ref(), &overrides),
         ));
         samples.push(measure(
-            format!("[{size_label}] turn 0 dispatch, CONSUMED into_wire (after)"),
+            format!("[{size_label}] SOLE HANDLE, into_wire (gRPC, after)"),
             len,
             ITERS,
             || dispatch_body_consumed(&session, endpoint.as_ref(), &overrides),
+        ));
+
+        // HTTP shape: a second handle is taken immediately afterwards, the way
+        // `http/sink.rs:391` and `endpoint_binding.rs:297` both do. One
+        // promotion is owed either way; consuming only moves who pays it.
+        samples.push(measure(
+            format!("[{size_label}] SECOND HANDLE, to_wire   (HTTP, before)"),
+            len,
+            ITERS,
+            || {
+                let body = dispatch_body(&session, endpoint.as_ref(), &overrides);
+                let payload = body.clone();
+                (body, payload)
+            },
+        ));
+        samples.push(measure(
+            format!("[{size_label}] SECOND HANDLE, into_wire (HTTP, after)"),
+            len,
+            ITERS,
+            || {
+                let body = dispatch_body_consumed(&session, endpoint.as_ref(), &overrides);
+                let payload = body.clone();
+                (body, payload)
+            },
         ));
     }
 

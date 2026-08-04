@@ -661,12 +661,18 @@ impl RequestBody {
     }
 
     /// Assemble the wire bytes, consuming the body. Byte-identical to
-    /// [`to_wire`](Self::to_wire) for every arm; only the ownership differs.
+    /// [`to_wire`](Self::to_wire) by construction: only [`Wire`](Self::Wire) is
+    /// answered here, and every other arm delegates rather than restating its
+    /// emitter, so the two accessors cannot drift.
     ///
-    /// The [`Wire`](Self::Wire) arm returns its `Bytes` by move — no clone, and
-    /// so no `Shared` promotion. That promotion is a heap allocation, not a
-    /// refcount bump: a `BytesMut::freeze()`-derived body has `len == capacity`
-    /// and therefore sits on the promotable vtable until something clones it.
+    /// The [`Wire`](Self::Wire) arm returns its `Bytes` by move, avoiding the
+    /// `Shared` promotion a clone would force — a `BytesMut::freeze()`-derived
+    /// body has `len == capacity` and so rides the promotable vtable, making
+    /// that first clone a 24-byte heap allocation rather than a refcount bump.
+    ///
+    /// The saving is only banked where the moved handle is the *sole* handle.
+    /// A caller that takes a second handle afterwards pays the promotion there
+    /// instead, and nets a refcount inc/dec pair rather than an allocation.
     /// Prefer this at call sites that own the [`Request`] they destructured;
     /// [`to_wire`](Self::to_wire) stays for borrowed callers.
     ///
@@ -674,10 +680,10 @@ impl RequestBody {
     pub fn into_wire(self) -> Result<Bytes> {
         match self {
             Self::Wire(bytes) => Ok(bytes),
-            Self::Plan(plan) => plan.materialize_standalone(),
-            Self::Value(value) => Ok(Bytes::from(
-                serde_json::to_vec(value.as_ref())?.into_boxed_slice(),
-            )),
+            // `Plan` and `Value` read through `&self` regardless, so delegating
+            // compiles to the same code as restating them and keeps the
+            // right-sizing rationale documented in exactly one place.
+            other => other.to_wire(),
         }
     }
 }
