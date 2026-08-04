@@ -183,7 +183,13 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             for task in (pacer_task, rate_update_task):
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(pacer_task, rate_update_task, return_exceptions=True)
+            # Shielded so a second cancellation of the enclosing task (eager
+            # cancellation, or an external shutdown racing a first cancel)
+            # cannot interrupt the gather and leave the pacer's tick wait
+            # pending. The outer CancelledError is re-raised after cleanup.
+            await asyncio.shield(
+                asyncio.gather(pacer_task, rate_update_task, return_exceptions=True)
+            )
 
         if pacer_task in done:
             pacer_task.result()

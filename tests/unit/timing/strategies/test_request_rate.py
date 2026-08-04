@@ -366,6 +366,93 @@ async def test_high_res_pacer_os_error_falls_back_to_event_loop_timers() -> None
     credit_issuer.try_issue_credit.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> None:
+    """A cancel (even a repeated one) during active pacing must not orphan the pacer.
+
+    ``_wait_for_pacer_or_rate_update`` cancels its two child tasks in a
+    ``finally`` block and then awaits them. A second ``Task.cancel()`` — eager
+    cancellation, or an external shutdown racing a first cancel — sets
+    ``_must_cancel`` and would otherwise interrupt that await, abandoning the
+    pacer's in-flight sleep as a pending task ("Task was destroyed but it is
+    pending!") and leaving its tick event stale for the next caller. The
+    shielded gather keeps the drain running to completion regardless.
+    """
+
+    class FakeIntervalGenerator:
+        def __init__(self, config) -> None:
+            self.rate = config.request_rate
+
+        def next_interval(self) -> float:
+            return 0.001
+
+    class FakePacer:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.sleep_cancelled = False
+            self.closed = False
+
+        async def sleep_until(self, _deadline_perf_s: float) -> None:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.sleep_cancelled = True
+                raise
+
+        def close(self) -> None:
+            self.closed = True
+
+    lifecycle = MagicMock()
+    lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
+    conversation_source = MagicMock()
+    conversation_source.next.return_value.build_first_turn.return_value = object()
+    credit_issuer = MagicMock()
+    credit_issuer.try_issue_credit = AsyncMock(return_value=False)
+    stop_checker = MagicMock()
+    stop_checker.can_start_new_session.return_value = True
+    config = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.REQUEST_RATE,
+        request_rate=1000.0,
+        total_expected_requests=1,
+    )
+    with patch(
+        "aiperf.timing.strategies.request_rate.plugins.get_class",
+        return_value=FakeIntervalGenerator,
+    ):
+        strategy = RequestRateStrategy(
+            config=config,
+            conversation_source=conversation_source,
+            scheduler=MagicMock(),
+            stop_checker=stop_checker,
+            credit_issuer=credit_issuer,
+            lifecycle=lifecycle,
+        )
+
+    pacer = FakePacer()
+    with patch.object(strategy, "_create_high_res_pacer", return_value=pacer):
+        task = asyncio.create_task(strategy.execute_phase())
+        await pacer.started.wait()
+        # Two cancels: the second sets ``_must_cancel``, so the cleanup await is
+        # re-cancelled before the child tasks have been drained.
+        task.cancel()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # The shielded gather keeps running after the outer cancel lands; give
+        # it the loop iterations it needs to finish draining.
+        for _ in range(10):
+            if pacer.sleep_cancelled:
+                break
+            await asyncio.sleep(0)
+
+    assert pacer.sleep_cancelled, "pacer sleep was orphaned instead of drained"
+    assert pacer.closed, "pacer was not closed on the cancellation path"
+    credit_issuer.try_issue_credit.assert_not_awaited()
+
+
 def _build_minimal_strategy() -> RequestRateStrategy:
     class FakeIntervalGenerator:
         def __init__(self, config):
