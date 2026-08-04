@@ -244,12 +244,17 @@ impl TransportSink {
         // batches. Fall back to parsing only when the count is unknown (raw
         // payloads, history-accumulating turns) or content-server tagging already
         // produced the value for free.
-        let payload = parsed.or_else(|| {
-            known_image_count
-                .is_none()
-                .then(|| serde_json::from_slice::<Value>(&body).ok())
-                .flatten()
-        });
+        let payload = match parsed {
+            Some(parsed) => Some(parsed),
+            // Parsing anyway would produce the same `num_images`, so the skip is
+            // invisible to every artifact — see `BODY_PARSE_SKIPS`.
+            None if known_image_count.is_some() => {
+                #[cfg(test)]
+                BODY_PARSE_SKIPS.with(|count| count.set(count.get() + 1));
+                None
+            }
+            None => serde_json::from_slice::<Value>(&body).ok(),
+        };
         let mut endpoint_metrics = ObservedEndpointMetrics {
             num_images: known_image_count
                 .map(|count| count as usize)
@@ -605,6 +610,22 @@ pub(super) fn http_trace(record: &RequestRecord) -> RequestTrace {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Dispatches on this thread that skipped the body re-parse because
+    /// composition had already established the exact wire image count.
+    ///
+    /// Parsing anyway yields the same `num_images`, so the skip is invisible to
+    /// every artifact and to every metric: a build that lost it would export
+    /// byte-identical output and only pay a full `serde_json` deserialize of a
+    /// possibly multi-MB multimodal body on each timed dispatch. Without a count
+    /// there is no signal at all that the fast path is still taken.
+    ///
+    /// Thread-local rather than a global counter so concurrently running tests
+    /// cannot perturb each other's reading.
+    static BODY_PARSE_SKIPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::clock::Clock;
@@ -744,6 +765,115 @@ mod tests {
                     serde_json::from_slice::<Value>(&raw_only).unwrap(),
                     crate::endpoints::chat_request_body("m", &[("user", "hello world")], 2),
                 );
+            })
+            .await;
+    }
+
+    /// Records the endpoint metrics one dispatch observed.
+    #[derive(Default)]
+    struct ImageObserver {
+        num_images: Cell<Option<usize>>,
+    }
+
+    impl RequestObserver for ImageObserver {
+        fn on_arrival(&self, _: uuid::Uuid, _: f64, _: usize, _: usize) {}
+        fn on_admit(&self, _: uuid::Uuid, _: f64, _: usize) {}
+        fn on_token(&self, _: uuid::Uuid, _: f64) {}
+        fn on_endpoint_metrics(&self, _: uuid::Uuid, metrics: ObservedEndpointMetrics) {
+            self.num_images.set(metrics.num_images);
+        }
+        fn on_terminal(&self, _: uuid::Uuid, _: ReplayTerminalStatus) {}
+    }
+
+    /// Dispatch one multimodal chat body, optionally handing dispatch the image
+    /// count composition already established, and report what was observed.
+    async fn dispatch_images_at(base: &str, known: Option<u32>) -> (Option<usize>, u64) {
+        let clock = crate::clock::RealClock::new();
+        let sink = TransportSink::new_multi_configured(
+            clock.clone(),
+            clock.now_ns(),
+            std::slice::from_ref(&base.to_string()),
+            "m",
+            crate::transport::http::TransportSinkConfig::default(),
+        )
+        .unwrap();
+        let endpoint = prepared_streaming("chat");
+        let body = serde_json::json!({
+            "model": "m",
+            "stream": true,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "what is this"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AB=="}}
+            ]}]
+        });
+        let request = Request {
+            uuid: uuid::Uuid::new_v4(),
+            input_length: 2,
+            max_output_tokens: 2,
+            prompt_text: None,
+            body: Some(crate::body_plan::RequestBody::wire(Bytes::from(
+                serde_json::to_vec(&body).unwrap(),
+            ))),
+            headers: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::new(),
+            endpoint_path: None,
+            streaming: true,
+            x_correlation_id: None,
+            is_final_turn: true,
+            cancel_after_ns: None,
+            url_index: None,
+            image_count: known,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
+        };
+        let observer = ImageObserver::default();
+        let on_first_token = |_: i64| {};
+        let before = BODY_PARSE_SKIPS.get();
+        sink.dispatch_prepared_endpoint_collect_record_with_hooks(
+            request,
+            endpoint.as_ref(),
+            "m",
+            EndpointDispatchHooks::new(
+                &observer,
+                &on_first_token,
+                None,
+                TurnDataPolicy::ordinary(),
+            ),
+        )
+        .await
+        .unwrap();
+        (observer.num_images.get(), BODY_PARSE_SKIPS.get() - before)
+    }
+
+    /// Pin that a composed image count actually replaces the body re-parse, and
+    /// that it answers what the parse would have.
+    ///
+    /// Only the second half is observable from any artifact: both paths report the
+    /// same `num_images`, so a build that stopped trusting the composed count
+    /// would export identical output and silently pay a full multimodal-body
+    /// deserialize on every timed dispatch. The skip count is the only signal.
+    #[tokio::test]
+    async fn a_composed_image_count_replaces_the_body_reparse() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+
+                let (parsed_images, parsed_skips) = dispatch_images_at(&base, None).await;
+                assert_eq!(parsed_skips, 0, "an unknown count must parse the body");
+
+                let (known_images, known_skips) = dispatch_images_at(&base, Some(2)).await;
+                assert_eq!(
+                    known_skips, 1,
+                    "an established count must skip the body parse"
+                );
+
+                assert_eq!(
+                    known_images, parsed_images,
+                    "the composed count must equal what parsing the same body reports"
+                );
+                assert_eq!(known_images, Some(2));
             })
             .await;
     }

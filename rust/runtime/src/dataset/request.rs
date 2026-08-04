@@ -497,7 +497,11 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             let mut plan = match cached {
                 // Shared, not copied: a dispatch that mutates nothing dispatches
                 // straight off the dataset's plan.
-                Some(cached) => Arc::clone(&cached.plan),
+                Some(cached) => {
+                    #[cfg(test)]
+                    CACHE_HITS.with(|count| count.set(count.get() + 1));
+                    Arc::clone(&cached.plan)
+                }
                 None => {
                     let turns = session.endpoint_turns(
                         store,
@@ -1400,6 +1404,19 @@ thread_local! {
     /// Thread-local rather than a global counter so concurrently running tests
     /// cannot perturb each other's reading.
     pub(crate) static SPLICED_DISPATCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
+    /// Dispatches on this thread that materialized through a precomputed plan
+    /// instead of formatting the turn live.
+    ///
+    /// The same blind spot as [`SPLICED_DISPATCHES`], one level up and wider: a
+    /// hit on turn 0, on a `*WithResponses` mode, or on a dialect that splices
+    /// nothing carries no splice, so the splice counter cannot see it, and
+    /// declining the cache reformats to identical bytes. The cache is what moves
+    /// `format_payload` out of the timed loop for the input-array dialects —
+    /// embeddings, rankings, image retrieval, where a single body inlines a whole
+    /// image batch as data URLs — so a build that declined every hit would give
+    /// the entire saving back with every byte assertion still passing.
+    pub(crate) static CACHE_HITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether a dispatch override rewrites the very field a cached plan's captured
@@ -3358,11 +3375,25 @@ mod tests {
                                 // path. Without this the whole saving could be
                                 // gone with every assertion still passing.
                                 let before = SPLICED_DISPATCHES.get();
+                                // The splice counter above is blind to the hits
+                                // that splice nothing — turn 0, and every turn of
+                                // the static modes — which is most of this matrix
+                                // and all of the input-array dialects' saving.
+                                // Count the cache hit itself so declining is
+                                // visible on its own.
+                                let hits_before = CACHE_HITS.get();
                                 let from_cache = dispatch_turn(
                                     cached.clone(),
                                     endpoint.as_ref(),
                                     turn_index,
                                     &overrides,
+                                );
+                                assert_eq!(
+                                    CACHE_HITS.get() - hits_before,
+                                    1,
+                                    "dispatch did not take the precomputed plan: \
+                                     endpoint={endpoint_id} mode={mode:?} \
+                                     overrides={overrides_variant} ti={turn_index}"
                                 );
                                 assert_eq!(
                                     SPLICED_DISPATCHES.get() - before,
