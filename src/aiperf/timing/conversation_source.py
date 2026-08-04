@@ -118,6 +118,7 @@ class SampledSession:
             root_correlation_id=self.root_correlation_id,
             is_session_start=True,
             has_forks=first_meta.has_forks if first_meta is not None else False,
+            no_request=first_meta.no_request if first_meta is not None else False,
             branch_mode=self.branch_mode,
             cache_bust_marker=self.cache_bust_marker,
             cache_bust_target=self.cache_bust_target,
@@ -152,6 +153,7 @@ class SampledSession:
             # the resumed root acquires a session slot + counts even at k_i > 0.
             is_session_start=True,
             has_forks=meta.has_forks if meta is not None else False,
+            no_request=meta.no_request if meta is not None else False,
             branch_mode=self.branch_mode,
             cache_bust_marker=self.cache_bust_marker,
             cache_bust_target=self.cache_bust_target,
@@ -183,6 +185,14 @@ class ConversationSource:
         self._metadata_lookup: dict[str, ConversationMetadata] = {
             conv.conversation_id: conv for conv in dataset_metadata.conversations
         }
+        # Monotonic per-sample ordinal. ``next()`` is synchronous (no await), so
+        # this increments atomically in the seeded sampler's call order -- a
+        # STABLE per-instance id across runs under ``--random-seed``. Recorded
+        # only for orchestrator roots (bounded to the graph-instance count), which
+        # need a reproducible key for think-time sampling because their random
+        # UUID ``x_correlation_id`` cannot seed a reproducible draw.
+        self._sample_seq = 0
+        self._orchestrator_ordinal: dict[str, int] = {}
 
     @property
     def dataset_metadata(self) -> DatasetMetadata:
@@ -226,7 +236,7 @@ class ConversationSource:
         conversation_id = self._dataset_sampler.next_conversation_id()
         metadata = self._metadata_lookup[conversation_id]
         correlation_id = x_correlation_id or str(uuid.uuid4())
-        return SampledSession(
+        session = SampledSession(
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=correlation_id,
@@ -235,6 +245,29 @@ class ConversationSource:
             ),
             cache_bust_target=self._cache_bust_target,
         )
+        seq = self._sample_seq
+        self._sample_seq += 1
+        # Store only when a sampled think-time distribution is present -- that is
+        # the ONLY consumer of the ordinal. Fixed-think and fire-and-forget
+        # orchestrators never read it, so storing them would leak unused entries.
+        if metadata.is_orchestrator and metadata.think_time is not None:
+            self._orchestrator_ordinal[session.x_correlation_id] = seq
+        return session
+
+    def sample_ordinal(self, x_correlation_id: str) -> int | None:
+        """Deterministic sampling ordinal for an orchestrator root instance.
+
+        Returns None for non-orchestrator sessions. Stable across runs under the
+        same ``--random-seed`` (unlike the random-UUID ``x_correlation_id``), so
+        it can key a reproducible per-instance think-time draw.
+        """
+        return self._orchestrator_ordinal.get(x_correlation_id)
+
+    def forget_ordinal(self, x_correlation_id: str) -> None:
+        """Drop a graph instance's stored ordinal once it reaches END, bounding
+        the map to in-flight sampled orchestrators (no unbounded growth over a
+        long duration run). Idempotent."""
+        self._orchestrator_ordinal.pop(x_correlation_id, None)
 
     def get_metadata(self, conversation_id: str) -> ConversationMetadata:
         """Get metadata for a specific conversation."""

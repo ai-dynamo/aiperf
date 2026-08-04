@@ -55,6 +55,28 @@ class PhaseProgressTracker:
         self.all_credits_sent_event: asyncio.Event = asyncio.Event()
         self.all_credits_returned_event: asyncio.Event = asyncio.Event()
 
+        # Fatal error from a request-free control node (e.g. a virtual-return
+        # callback that raised while firing an orchestrator's branches). Recorded
+        # here so a detached failure surfaces to the phase instead of being
+        # logged and swallowed while the graph silently stops progressing.
+        self._fatal_error: BaseException | None = None
+
+    @property
+    def fatal_error(self) -> BaseException | None:
+        """A recorded fatal control-node error, or None."""
+        return self._fatal_error
+
+    def record_fatal_error(self, error: BaseException) -> None:
+        """Record a fatal control-node error and unblock the drain wait.
+
+        Keeps only the first error. Sets ``all_credits_returned_event`` so the
+        runner's completion wait returns promptly; the runner then re-raises the
+        recorded error so the phase exits visibly rather than hanging.
+        """
+        if self._fatal_error is None:
+            self._fatal_error = error
+        self.all_credits_returned_event.set()
+
     # =========================================================================
     # Counter Properties (delegated to CreditCounter via protocol)
     # =========================================================================
@@ -109,6 +131,7 @@ class PhaseProgressTracker:
         errored: bool = False,
         *,
         is_child: bool = False,
+        no_request: bool = False,
     ) -> bool:
         """Atomically increment returned count.
 
@@ -124,6 +147,9 @@ class PhaseProgressTracker:
                 real HTTP requests — but skip session-level bookkeeping
                 (``completed_sessions`` / ``cancelled_sessions``)
                 because children inherit the parent's session slot.
+            no_request: Whether the returned credit is a virtual ``no_request``
+                orchestrator credit (excluded from the billable request count,
+                symmetric with ``increment_sent``). Orthogonal to ``is_child``.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -139,7 +165,11 @@ class PhaseProgressTracker:
         checking lifecycle.is_complete before calling this method.
         """
         return self._counter.increment_returned(
-            is_final_turn, cancelled, errored=errored, is_child=is_child
+            is_final_turn,
+            cancelled,
+            errored=errored,
+            is_child=is_child,
+            no_request=no_request,
         )
 
     def increment_prefill_released(self) -> None:
