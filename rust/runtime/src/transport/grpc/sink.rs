@@ -63,7 +63,14 @@ pub struct GrpcTransportSinkConfig {
     /// Together with `capture_raw` this decides whether [`request_payload`] is
     /// built at all; see [`GrpcTransportSink::dispatch_collect`].
     ///
+    /// **Both default to `false` here, the opposite of the identically-named
+    /// fields on [`TransportSinkConfig`], which default to `true`.** This type is
+    /// only ever constructed field-complete (`grpc_sink_with_endpoints` names
+    /// every field), so an unstamped site cannot exist; the HTTP config is built
+    /// through `..Default::default()` literals and must fail toward capturing.
+    ///
     /// [`request_payload`]: crate::transport::core::DispatchResult::request_payload
+    /// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
     pub inputs_enabled: bool,
 }
 

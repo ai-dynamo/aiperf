@@ -138,9 +138,18 @@ pub struct TransportSinkConfig {
     /// Whether this run retains canonical request payloads for `inputs.json`.
     ///
     /// Together with [`Self::capture_raw`] this decides whether the canonical
-    /// body handle is taken at all. Both default to `true` so a construction
-    /// site that has not been told the run's artifact selection keeps
-    /// capturing rather than silently emptying an artifact.
+    /// body handle is taken at all.
+    ///
+    /// **Both default to `true`, the opposite of the identically-named fields on
+    /// [`GrpcTransportSinkConfig`], which default to `false`.** The asymmetry is
+    /// deliberate: this type is built by struct literals that inherit the rest of
+    /// their fields from [`Default`], so a site that has not been told the run's
+    /// artifact selection must fail toward capturing (losing the per-dispatch
+    /// saving) rather than toward silently emptying `inputs.json` or the raw
+    /// artifact. The gRPC config is only ever constructed field-complete, so it
+    /// has no such site to protect.
+    ///
+    /// [`GrpcTransportSinkConfig`]: crate::transport::grpc::GrpcTransportSinkConfig
     pub inputs_enabled: bool,
 }
 
@@ -428,7 +437,7 @@ impl TransportSink {
         // Only the raw artifact and `inputs.json` read this back. With neither
         // selected the clone would promote the assembled body to a shared
         // control block for a value nothing consumes.
-        let request_payload = if self.capture_request_payload {
+        let request_payload = if self.captures_request_payload() {
             body.clone()
         } else {
             Bytes::new()

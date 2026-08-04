@@ -626,6 +626,127 @@ mod tests {
             .unwrap()
     }
 
+    /// Discards every observation; these tests assert only the returned payload.
+    struct SilentObserver;
+
+    impl RequestObserver for SilentObserver {
+        fn on_arrival(&self, _: uuid::Uuid, _: f64, _: usize, _: usize) {}
+        fn on_admit(&self, _: uuid::Uuid, _: f64, _: usize) {}
+        fn on_token(&self, _: uuid::Uuid, _: f64) {}
+        fn on_usage(&self, _: uuid::Uuid, _: ObservedUsage) {}
+        fn on_terminal(&self, _: uuid::Uuid, _: ReplayTerminalStatus) {}
+    }
+
+    /// Dispatch one streaming chat turn through the real endpoint-aware path at
+    /// the given artifact-capture flags, returning the canonical request payload
+    /// the sink handed back.
+    async fn dispatch_payload_at(base: &str, capture_raw: bool, inputs_enabled: bool) -> Bytes {
+        let clock = crate::clock::RealClock::new();
+        let sink = TransportSink::new_multi_configured(
+            clock.clone(),
+            clock.now_ns(),
+            std::slice::from_ref(&base.to_string()),
+            "m",
+            crate::transport::http::TransportSinkConfig {
+                capture_raw,
+                inputs_enabled,
+                ..crate::transport::http::TransportSinkConfig::default()
+            },
+        )
+        .unwrap();
+        let endpoint = prepared_streaming("chat");
+        let request = Request {
+            uuid: uuid::Uuid::new_v4(),
+            input_length: 2,
+            max_output_tokens: 2,
+            prompt_text: Some("hello world".to_string()),
+            body: None,
+            headers: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::new(),
+            endpoint_path: None,
+            streaming: true,
+            x_correlation_id: None,
+            is_final_turn: true,
+            cancel_after_ns: None,
+            url_index: None,
+            image_count: None,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
+        };
+        let observer = SilentObserver;
+        let on_first_token = |_: i64| {};
+        sink.dispatch_prepared_endpoint_collect_record_with_hooks(
+            request,
+            endpoint.as_ref(),
+            "m",
+            EndpointDispatchHooks::new(
+                &observer,
+                &on_first_token,
+                None,
+                TurnDataPolicy::ordinary(),
+            ),
+        )
+        .await
+        .unwrap()
+        .request_payload
+    }
+
+    /// Pin BOTH directions of the canonical-payload gate at the seam that decides
+    /// it, which no product artifact can observe on its own.
+    ///
+    /// A wrongly-CLOSED gate loses an artifact and is caught downstream
+    /// (`test_exact_fold_ab_parity`, `test_http_raw_capture`). A wrongly-OPEN one
+    /// is silent: the artifacts are identical and only the per-dispatch
+    /// allocation returns. `TransportSinkConfig::default()` deliberately opens the
+    /// gate, so any future construction site that forgets to stamp the run's
+    /// artifact selection reverts the saving with no other signal — this assertion
+    /// is that signal.
+    #[tokio::test]
+    async fn request_payload_is_taken_only_when_an_artifact_consumes_it() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+
+                // Closed: neither the raw artifact nor `inputs.json` is selected,
+                // so nothing would read the payload and no handle is taken.
+                assert!(
+                    dispatch_payload_at(&base, false, false).await.is_empty(),
+                    "no artifact consumes the canonical payload, so the gate must \
+                     not take a handle on the assembled body"
+                );
+
+                // Open on each half independently. `inputs.json` without raw is the
+                // case a gate on `capture_raw` alone would break: `write_inputs_json`
+                // cannot parse an empty body and would abort the export.
+                let raw_only = dispatch_payload_at(&base, true, false).await;
+                let inputs_only = dispatch_payload_at(&base, false, true).await;
+                let both = dispatch_payload_at(&base, true, true).await;
+
+                for (label, payload) in [
+                    ("capture_raw", &raw_only),
+                    ("inputs_enabled", &inputs_only),
+                    ("both", &both),
+                ] {
+                    assert!(
+                        !payload.is_empty(),
+                        "{label} consumes the canonical payload, so the gate must capture it"
+                    );
+                }
+                // Byte-identity across every open combination: which consumer opened
+                // the gate must not change what is recorded.
+                assert_eq!(raw_only, inputs_only);
+                assert_eq!(raw_only, both);
+
+                // And what is recorded is the canonical chat body actually sent.
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&raw_only).unwrap(),
+                    crate::endpoints::chat_request_body("m", &[("user", "hello world")], 2),
+                );
+            })
+            .await;
+    }
+
     #[test]
     fn endpoint_sse_filter_uses_the_selected_dialect() {
         let tgi = SseMessage::parse(r#"data: {"token":{"text":"hello"}}"#, 10);
