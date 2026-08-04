@@ -778,6 +778,54 @@ mod tests {
 
     use super::*;
 
+    /// A run whose `inputs.json` cannot be projected up front must still RUN.
+    ///
+    /// `Artifacts::inputs_path` is a non-`Option` `String` that the wire always
+    /// populates, so `ArtifactSpec::inputs_path` is `Some` on essentially every run
+    /// and cannot be read as "the user asked for this file". An earlier version of
+    /// this gate was an `ensure!`, which turned an un-projectable artifact into a hard
+    /// abort — and since fixed-schedule and agentic-replay phases are never
+    /// projectable, it rejected every such benchmark over an artifact nobody had
+    /// requested. The artifact is skipped instead; this pins the discriminator both
+    /// ways so the gate cannot quietly become a refusal again.
+    #[test]
+    fn an_unprojectable_inputs_artifact_is_skipped_not_a_run_ending_error() {
+        use crate::engine::protocol::PhaseSpec;
+
+        let filters_the_dataset = |phases: &[PhaseSpec]| {
+            phases.iter().any(|phase| {
+                matches!(
+                    phase,
+                    PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
+                )
+            })
+        };
+        let fixed: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "fixed_schedule",
+            "name": "profiling",
+            "exclude_from_results": false,
+        }))
+        .expect("fixed-schedule phase parses");
+        let concurrency: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 4u64,
+            "concurrency": 2,
+        }))
+        .expect("concurrency phase parses");
+
+        assert!(
+            filters_the_dataset(std::slice::from_ref(&fixed)),
+            "a fixed-schedule phase dispatches only part of the dataset, so an up-front \
+             full-dataset projection would over-include"
+        );
+        assert!(
+            !filters_the_dataset(std::slice::from_ref(&concurrency)),
+            "an ordinary concurrency phase dispatches the whole dataset and stays projectable"
+        );
+    }
+
     /// Streamable artifacts do not disqualify exact-fold, `inputs.json` included: it is
     /// always generated up front. (Parquet only streams under the `parquet` feature; a
     /// lite build keeps it disqualifying — asserted below under the matching cfg.)

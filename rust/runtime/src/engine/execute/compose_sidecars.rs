@@ -201,8 +201,14 @@ pub(crate) async fn execute_native_inner(
     // (the body is not knowable until the previous response lands), and a
     // fixed-schedule or agentic-replay phase, which filters the dispatched
     // conversations to a first-turn window an up-front full-dataset pass would
-    // over-include. Reject the artifact for those, before any phase runs, rather than
-    // writing a file that does not match what went on the wire.
+    // over-include. SKIP the artifact for those rather than writing a file that does
+    // not match what went on the wire.
+    // Skip, not reject: `inputs_path` is not opt-in. `Artifacts::inputs_path` is a
+    // non-`Option` `String` that the wire always populates, so it is `Some` on
+    // essentially every run and cannot be read as "the user asked for this file".
+    // Rejecting would abort every fixed-schedule and agentic-replay benchmark over an
+    // artifact nobody requested. Warn loudly and run.
+    let mut request = request;
     let inputs_up_front_ok = dataset_supports_up_front_inputs(&dataset)
         && !request.phases.iter().any(|phase| {
             matches!(
@@ -210,13 +216,16 @@ pub(crate) async fn execute_native_inner(
                 PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
             )
         });
-    ensure!(
-        request.artifacts.inputs_path.is_none() || inputs_up_front_ok,
-        "inputs.json cannot be generated for this run: it is a projection of the \
-         resident dataset, and either a multi-turn conversation splices live model \
-         replies into later turns or a fixed-schedule/agentic-replay phase dispatches \
-         only part of the dataset. Drop the inputs artifact to run this configuration."
-    );
+    if !inputs_up_front_ok && request.artifacts.inputs_path.is_some() {
+        tracing::warn!(
+            "skipping inputs.json: it is a projection of the resident dataset, and this \
+             run either splices live model replies into later turns or dispatches only \
+             part of the dataset (fixed-schedule/agentic-replay), so an up-front \
+             projection would not match what goes on the wire"
+        );
+        request.artifacts.inputs_path = None;
+    }
+    let request = request;
     let exact_fold = exact_fold_enabled_by_env()
         && exact_fold_eligible(ExactFoldInputs {
             sketch_mode,
