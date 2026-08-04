@@ -334,6 +334,12 @@ pub(crate) async fn execute_scheduled_shard(
             )
         })
         .collect();
+    // This thread IS the executing worker for every request it issues (the
+    // `workers == 1` backend above is a co-located sink, so there is no hop that
+    // could re-attribute them). Label its records with the two-level partition
+    // index, which is unique across the whole `(cell × thread)` grid and is the
+    // same residue class that decides which corpus positions this thread draws.
+    let worker_label: Arc<str> = format!("rust-{}", partition.cell_id()).into();
     execute_scheduled_pipeline(
         shared,
         thread_id,
@@ -341,6 +347,7 @@ pub(crate) async fn execute_scheduled_shard(
         sliced_phases,
         clock,
         execution_backend,
+        Some(worker_label),
     )
     .await
 }
@@ -358,6 +365,13 @@ pub(crate) async fn execute_scheduled_shard(
 ///
 /// `shard_id` names this pipeline's per-shard artifact temp directory (`0` for
 /// the single-coordinator `GlobalHop` pipeline).
+///
+/// `worker_label` is this pipeline's executing-worker identity for the per-record
+/// `worker_id`, and is `Some` exactly when the pipeline runs its own requests: a
+/// per-thread shard labels its own records, while the single-coordinator pipeline
+/// passes `None` because the hop worker loop knows which thread actually ran each
+/// request.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_scheduled_pipeline(
     shared: &ShardedShared,
     shard_id: usize,
@@ -365,6 +379,7 @@ pub(crate) async fn execute_scheduled_pipeline(
     sliced_phases: Vec<PhaseSpec>,
     clock: Rc<dyn Clock>,
     execution_backend: Rc<dyn RequestExecutor>,
+    worker_label: Option<Arc<str>>,
 ) -> Result<ScheduledShardOutcome> {
     let start_ns = shared.start_ns;
     // when this sharded run selected exact-fold AND a per-record artifact is
@@ -420,6 +435,7 @@ pub(crate) async fn execute_scheduled_pipeline(
             shared.phase_ordinal_bases.clone(),
         )
         .with_record_lane(record_lane)
+        .with_worker_label(worker_label)
         // Stage each turn's model output text so this shard's streaming outputs.json
         // entry carries it, then drop it in the fold (exact-fold + outputs.json only).
         .with_outputs_capture(shared.exact_fold && shared.outputs_path.is_some()),

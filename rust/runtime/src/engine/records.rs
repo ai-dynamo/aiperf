@@ -117,6 +117,8 @@ struct RecordMetadata {
     request_end_ns: i64,
     worker_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    global_dispatch_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     worker_assignment_index: Option<u64>,
     record_processor_id: &'static str,
     benchmark_phase: Phase,
@@ -158,6 +160,25 @@ struct ClassifiedRecordError {
     error_type: &'static str,
     /// Human-readable message.
     message: String,
+}
+
+/// `worker_id` for a record no executing worker attributed.
+///
+/// Every native execution path that owns a worker identity stamps it (a
+/// `Sharded`/`Global` shard, a `GlobalHop`/`GlobalPush` hop worker, a virtual
+/// dry-run placement, a graph worker). This names the remaining case — a
+/// single-loop run with no distinct worker to name — and keeps the historical
+/// spelling a one-worker run has always emitted.
+const UNATTRIBUTED_WORKER_ID: &str = "rust-0";
+
+/// The record's executing-worker identity for the per-record artifacts, falling
+/// back to [`UNATTRIBUTED_WORKER_ID`]. Shared by every per-record row builder so
+/// the JSONL, raw JSONL, CSV, and Parquet artifacts agree per record.
+fn record_worker_id(ingest: &RecordIngest) -> String {
+    ingest
+        .worker_id
+        .clone()
+        .unwrap_or_else(|| UNATTRIBUTED_WORKER_ID.to_string())
 }
 
 /// Classify a captured record's terminal error.
@@ -272,6 +293,8 @@ struct RawRecordMetadata {
     request_ack_ns: Option<i64>,
     request_end_ns: i64,
     worker_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    global_dispatch_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worker_assignment_index: Option<u64>,
     record_processor_id: &'static str,
@@ -436,6 +459,8 @@ pub(crate) fn per_record_parquet_row(
         request_start_ns: record.start_ns,
         request_ack_ns: record.first_token_ns,
         request_end_ns: record.end_ns,
+        worker_id: record_worker_id(record),
+        global_dispatch_index: record.request_index.and_then(|index| i64::try_from(index).ok()),
         benchmark_phase: phase_str(record.phase),
         was_cancelled: record.canceled,
         cancellation_time_ns: record.canceled.then_some(record.end_ns),
@@ -583,7 +608,7 @@ pub(crate) fn record_csv_row(
     cells.push(record.start_ns.to_string());
     cells.push(csv_opt_i64(record.first_token_ns));
     cells.push(record.end_ns.to_string());
-    cells.push("rust-0".to_string());
+    cells.push(record_worker_id(record));
     cells.push("aiperf runner".to_string());
     cells.push(phase_str(record.phase).to_string());
     cells.push(record.canceled.to_string());
@@ -913,10 +938,8 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             request_start_ns: record.start_ns,
             request_ack_ns: record.first_token_ns,
             request_end_ns: record.end_ns,
-            worker_id: record
-                .worker_id
-                .clone()
-                .unwrap_or_else(|| "rust-0".to_string()),
+            worker_id: record_worker_id(record),
+            global_dispatch_index: record.request_index,
             worker_assignment_index: record.worker_assignment_index,
             record_processor_id: "aiperf runner",
             benchmark_phase: record.phase,
@@ -961,10 +984,8 @@ fn raw_record_row<'a>(
             request_start_ns: ingest.start_ns,
             request_ack_ns: ingest.first_token_ns,
             request_end_ns: ingest.end_ns,
-            worker_id: ingest
-                .worker_id
-                .clone()
-                .unwrap_or_else(|| "rust-0".to_string()),
+            worker_id: record_worker_id(ingest),
+            global_dispatch_index: ingest.request_index,
             worker_assignment_index: ingest.worker_assignment_index,
             record_processor_id: "aiperf runner",
             benchmark_phase: ingest.phase,

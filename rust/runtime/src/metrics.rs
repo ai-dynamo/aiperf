@@ -11,6 +11,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::clock::Clock;
 use crate::dispatch::collector::ReplayTerminalStatus;
@@ -36,7 +37,13 @@ pub struct RequestMetricMetadata {
     /// Zero-based turn index within a session.
     pub turn_index: u32,
     /// Worker identity for per-worker series.
-    pub worker_id: Option<String>,
+    ///
+    /// A shared handle, not an owned `String`: the executing worker builds its
+    /// label once per shard and every request clones the handle, and this whole
+    /// struct is cloned again per request when the worker-local observer
+    /// registers it. `into_record` materializes the record's owned
+    /// [`RecordIngest::worker_id`] once, at the record boundary.
+    pub worker_id: Option<Arc<str>>,
     /// Global logical-worker placement sequence for virtual dry runs.
     pub worker_assignment_index: Option<u64>,
     /// Conversation identity for multi-turn series.
@@ -498,7 +505,7 @@ impl PendingRequest {
                 .unwrap_or_else(|| uuid.to_string()),
             session_num: self.metadata.session_num.unwrap_or(ordinal),
             turn_index: self.metadata.turn_index,
-            worker_id: self.metadata.worker_id,
+            worker_id: self.metadata.worker_id.as_deref().map(str::to_owned),
             worker_assignment_index: self.metadata.worker_assignment_index,
             conversation_id: self.metadata.conversation_id,
             dimensions: self.metadata.dimensions,

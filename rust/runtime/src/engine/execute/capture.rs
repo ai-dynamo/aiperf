@@ -112,6 +112,14 @@ pub(crate) struct RunCapture {
     /// batch writer) and whenever no `outputs.json` artifact is requested. Set once via
     /// [`Self::with_outputs_capture`].
     pub(crate) capture_outputs_text: bool,
+    /// This shard's executing-worker label, stamped on every record the shard
+    /// produces (`rust-{two-level partition index}`). Built once per shard and
+    /// cloned per request, so the per-request cost is a handle clone, not a
+    /// formatted allocation. `None` for a pipeline that is not itself the
+    /// executing worker: the single-coordinator `GlobalHop`/`GlobalPush` loop
+    /// leaves it unset so the hop worker loop stamps the thread that actually ran
+    /// each request. Set once via [`Self::with_worker_label`].
+    pub(crate) worker_label: Option<Arc<str>>,
 }
 
 impl RunCapture {
@@ -230,7 +238,20 @@ impl RunCapture {
             record_lane: None,
             otel: None,
             capture_outputs_text: false,
+            worker_label: None,
         }
+    }
+
+    /// Attach this shard's executing-worker label.
+    ///
+    /// Builder-style so only a pipeline that IS the executing worker opts in.
+    /// `Sharded`/`Global` run one pipeline per worker thread and each labels its
+    /// own records; the single-coordinator `GlobalHop`/`GlobalPush` pipeline
+    /// dispatches across `W` threads it does not own, so it passes `None` and the
+    /// hop worker loop attributes each record to the thread that ran it.
+    pub(crate) fn with_worker_label(mut self, label: Option<Arc<str>>) -> Self {
+        self.worker_label = label;
+        self
     }
 
     /// Attach the streaming per-record artifact lane, consumed once per completed
@@ -318,6 +339,20 @@ impl RunCapture {
         self.fold_dispatch_ordinals.borrow_mut().remove(&uuid)
     }
 
+    /// Issue-time metadata for `turn`: the coordinator-known dimensions plus this
+    /// shard's worker label. Shared by [`Self::begin`] and
+    /// [`Self::synthesize_streaming_fallback`] so a turn that failed before it
+    /// reached the worker is attributed to the same worker a completed one is.
+    fn turn_metadata(&self, turn: &TurnToSend) -> RequestMetricMetadata {
+        RequestMetricMetadata {
+            turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
+            conversation_id: Some(turn.conversation_id.clone()),
+            audio_duration_s: turn.audio_duration_seconds,
+            worker_id: self.worker_label.clone(),
+            ..RequestMetricMetadata::default()
+        }
+    }
+
     /// Record the dispatch identity plus coordinator-known arrival facts, and
     /// return the measured context the dispatcher forwards to the worker so it
     /// registers arrival locally. The identity push order is the global dispatch
@@ -329,12 +364,7 @@ impl RunCapture {
             arrival_ms,
             input_length: turn.input_length,
             requested_output_length: turn.max_output_tokens,
-            metadata: RequestMetricMetadata {
-                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
-                conversation_id: Some(turn.conversation_id.clone()),
-                audio_duration_s: turn.audio_duration_seconds,
-                ..RequestMetricMetadata::default()
-            },
+            metadata: self.turn_metadata(turn),
             wants_live_record: self.wants_live_record(),
             wants_http_exchange: self.raw_enabled,
             // Fold-and-drop modes (sketch + exact-fold) fold each record and drop it,
@@ -738,15 +768,7 @@ impl RunCapture {
             self.metrics_config.clone(),
         );
         let arrival_ms = self.clock.now_ns().saturating_sub(self.origin_ns) as f64 / 1_000_000.0;
-        fallback.register_metadata(
-            turn.uuid,
-            RequestMetricMetadata {
-                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
-                conversation_id: Some(turn.conversation_id.clone()),
-                audio_duration_s: turn.audio_duration_seconds,
-                ..RequestMetricMetadata::default()
-            },
-        );
+        fallback.register_metadata(turn.uuid, self.turn_metadata(turn));
         fallback.on_arrival(
             turn.uuid,
             arrival_ms,

@@ -95,6 +95,13 @@ pub struct PerRecordRow {
     pub request_start_ns: i64,
     pub request_ack_ns: Option<i64>,
     pub request_end_ns: i64,
+    /// Identity of the worker that executed the request, matching the JSONL
+    /// `metadata.worker_id`.
+    pub worker_id: String,
+    /// Dense global dispatch ordinal, matching the JSONL
+    /// `metadata.global_dispatch_index`. `None` for a record the workload assigned
+    /// no ordinal, which becomes a null cell rather than a fabricated position.
+    pub global_dispatch_index: Option<i64>,
     /// Serialized [`crate::metrics_core::Phase`] (`"warmup"` / `"profiling"`).
     pub benchmark_phase: &'static str,
     pub was_cancelled: bool,
@@ -110,8 +117,6 @@ pub struct PerRecordRow {
     pub trace: Option<PerRecordTrace>,
 }
 
-/// Constant `worker_id` column value, matching the JSONL metadata.
-const WORKER_ID: &str = "rust-0";
 /// Constant `record_processor_id` column value, matching the JSONL metadata.
 const RECORD_PROCESSOR_ID: &str = "aiperf runner";
 
@@ -158,6 +163,7 @@ fn build_schema(columns: &[PerRecordMetricColumn], include_trace: bool) -> Arc<S
         Field::new("request_ack_ns", DataType::Int64, true),
         Field::new("request_end_ns", DataType::Int64, false),
         Field::new("worker_id", DataType::Utf8, false),
+        Field::new("global_dispatch_index", DataType::Int64, true),
         Field::new("record_processor_id", DataType::Utf8, false),
         Field::new("benchmark_phase", DataType::Utf8, false),
         Field::new("was_cancelled", DataType::Boolean, false),
@@ -250,9 +256,8 @@ fn build_record_batch(
     arrays.push(int_column(rows.iter().map(|r| Some(r.request_start_ns))));
     arrays.push(int_column(rows.iter().map(|r| r.request_ack_ns)));
     arrays.push(int_column(rows.iter().map(|r| Some(r.request_end_ns))));
-    arrays.push(string_column(
-        rows.iter().map(|_| Some(WORKER_ID.to_string())),
-    ));
+    arrays.push(string_column(rows.iter().map(|r| Some(r.worker_id.clone()))));
+    arrays.push(int_column(rows.iter().map(|r| r.global_dispatch_index)));
     arrays.push(string_column(
         rows.iter().map(|_| Some(RECORD_PROCESSOR_ID.to_string())),
     ));
@@ -606,6 +611,8 @@ mod tests {
             turn_index: 1,
             request_start_ns: 1_000_000,
             request_end_ns: 11_000_000,
+            worker_id: "rust-0".into(),
+            global_dispatch_index: Some(7),
             benchmark_phase: "profiling",
             metrics: BTreeMap::from([
                 ("request_latency".to_string(), 10.0),
@@ -623,6 +630,10 @@ mod tests {
             turn_index: 0,
             request_start_ns: 1_000_000,
             request_end_ns: 5_000_000,
+            // A different worker and no assigned ordinal: both are per-row values,
+            // not the file-wide constants this column used to carry.
+            worker_id: "rust-3".into(),
+            global_dispatch_index: None,
             benchmark_phase: "profiling",
             was_cancelled: true,
             cancellation_time_ns: Some(5_000_000),
@@ -675,6 +686,17 @@ mod tests {
         assert_eq!(phase.value(0), "profiling");
         let worker = column::<StringArray>(&batch, "worker_id");
         assert_eq!(worker.value(0), "rust-0");
+        assert_eq!(
+            worker.value(1),
+            "rust-3",
+            "worker_id must be the row's executing worker, not a file-wide constant"
+        );
+        let dispatch_index = column::<Int64Array>(&batch, "global_dispatch_index");
+        assert_eq!(dispatch_index.value(0), 7);
+        assert!(
+            dispatch_index.is_null(1),
+            "an unassigned dispatch ordinal must be null, never a fabricated position"
+        );
         let conv = column::<StringArray>(&batch, "conversation_id");
         assert!(conv.is_valid(0));
         assert!(conv.is_null(1));

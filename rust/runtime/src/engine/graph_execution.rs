@@ -1100,7 +1100,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 turn_index: metadata_u64(node, "turn_index")
                     .and_then(|value| u32::try_from(value).ok())
                     .unwrap_or(0),
-                worker_id: retain_dimensions.then(|| self.worker_id.to_string()),
+                worker_id: retain_dimensions.then(|| self.worker_id.to_string().into()),
                 // One authored root may be cycled many times by a bounded or
                 // duration phase. Metrics identity follows the unique trace
                 // instance; the authored conversation stays in node metadata.

@@ -1016,7 +1016,7 @@ impl RequestExecutor for FakeRequestExecutor {
                 metadata.correlation_id.as_deref(),
                 turn.request.is_final_turn,
             );
-            metadata.worker_id = Some(format!("dry-run-{worker}"));
+            metadata.worker_id = Some(format!("dry-run-{worker}").into());
             metadata.worker_assignment_index = Some(assignment_index);
             let guard = VirtualInflightGuard::new(&placement.inflight[worker].inflight);
             let contention = (placement.contention_scope == VirtualContentionScope::WorkerLocal)

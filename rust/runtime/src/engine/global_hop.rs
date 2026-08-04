@@ -160,6 +160,11 @@ pub(crate) async fn run_single_coordinator(
         sliced_phases,
         clock,
         execution_backend,
+        // No shard-level worker label: this loop dispatches across `W` threads it
+        // does not run on, so its own partition index would name the coordinator,
+        // not the executor. The hop worker loop stamps each record with the thread
+        // that actually ran it.
+        None,
     )
     .await;
 
