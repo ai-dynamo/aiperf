@@ -958,6 +958,13 @@ mod tests {
                  was `Bytes::from(Vec)` restored in place of the boxed slice?"
             );
         }
+
+        // The probe must be able to see slack, or the assertions above are
+        // vacuous: the un-right-sized shape has to report the Vec's capacity.
+        let slack = serde_json::to_vec(&Value::Bool(false)).unwrap();
+        let retained = slack.capacity();
+        assert!(retained > slack.len(), "to_vec no longer over-allocates");
+        assert_eq!(BytesMut::from(Bytes::from(slack)).capacity(), retained);
     }
 
     #[test]
