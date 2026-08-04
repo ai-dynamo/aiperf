@@ -150,9 +150,13 @@ impl FieldProgram {
         self.fields[index].1 = value;
         match (previous, replacement) {
             (Some(previous), Some(replacement)) => {
+                // `current` folded `previous` in, so the subtraction is in range;
+                // checked arithmetic degrades a future invariant break to a
+                // dropped hint rather than a wrapped, absurd reservation.
                 self.exact_len = self
                     .exact_len
-                    .map(|current| current + replacement - previous);
+                    .and_then(|current| current.checked_add(replacement))
+                    .and_then(|total| total.checked_sub(previous));
             }
             (Some(_), None) => self.exact_len = None,
             (None, _) => self.recompute(),
