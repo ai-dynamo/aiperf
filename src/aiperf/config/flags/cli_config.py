@@ -52,6 +52,7 @@ from aiperf.common.enums import (
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
+    VideoAudioCodec,
     VideoFormat,
     VideoSynthType,
 )
@@ -1769,14 +1770,14 @@ class CLIConfig(BaseConfig):
     ] = 0
 
     video_audio_codec: Annotated[
-        str | None,
+        VideoAudioCodec | None,
         Field(
             description="Audio codec for the embedded audio track. "
             "If not specified, auto-selects based on video format: "
             "libopus for MP4, libvorbis for WebM. "
-            "Any codec the local FFmpeg supports can be used, but the AIPerf "
-            "container ships only libvorbis and libopus; others such as aac "
-            "require a system FFmpeg built with them. "
+            "Options: libvorbis, libopus, aac. The AIPerf container ships only "
+            "libvorbis and libopus; aac requires a system FFmpeg that provides "
+            "an AAC encoder. "
             "libopus always encodes at 48 kHz, so any "
             "--video-audio-sample-rate is resampled during muxing.",
         ),

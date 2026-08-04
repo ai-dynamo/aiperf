@@ -947,7 +947,15 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Any codec the local FFmpeg supports can be used, but the AIPerf container ships only libvorbis and libopus; others such as aac require a system FFmpeg built with them. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus, aac. The AIPerf container ships only libvorbis and libopus; aac requires a system FFmpeg that provides an AAC encoder. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `aac` |  | AAC codec. Not built into the AIPerf container; selecting it requires a system FFmpeg that provides an AAC encoder. |
+| `libvorbis` |  | Vorbis codec. Default for WebM containers. |
+| `libopus` |  | Opus codec. Default for MP4 containers. Always encodes at 48 kHz regardless of the requested sample rate. |
 
 #### `--video-audio-depth` `<str>`
 
@@ -2501,7 +2509,15 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Any codec the local FFmpeg supports can be used, but the AIPerf container ships only libvorbis and libopus; others such as aac require a system FFmpeg built with them. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus, aac. The AIPerf container ships only libvorbis and libopus; aac requires a system FFmpeg that provides an AAC encoder. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `aac` |  | AAC codec. Not built into the AIPerf container; selecting it requires a system FFmpeg that provides an AAC encoder. |
+| `libvorbis` |  | Vorbis codec. Default for WebM containers. |
+| `libopus` |  | Opus codec. Default for MP4 containers. Always encodes at 48 kHz regardless of the requested sample rate. |
 
 #### `--video-audio-depth` `<str>`
 

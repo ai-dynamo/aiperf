@@ -14,7 +14,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import VideoFormat, VideoSynthType
+from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
 from aiperf.config.dataset import VIDEO_AUDIO_CODEC_MAP, VideoConfig
 from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS, import_soundfile
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
@@ -341,7 +341,7 @@ class VideoGenerator(BaseGenerator):
         )
         return output_buffer.getvalue()
 
-    def _resolve_audio_codec(self) -> str:
+    def _resolve_audio_codec(self) -> VideoAudioCodec:
         """Resolve the audio codec, auto-selecting from format if not explicitly set."""
         if self.config.audio.codec is not None:
             return self.config.audio.codec
