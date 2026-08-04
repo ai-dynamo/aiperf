@@ -341,4 +341,9 @@ class CodegenGradingWorker:
             if not fut.done():
                 fut.set_exception(CodegenWorkerError("grading worker closed"))
         self._pending.clear()
-        await self._kill()
+        # Acquire _spawn_lock so teardown cannot race with an in-flight
+        # _ensure_worker awaiting create_subprocess_exec. Without the lock,
+        # _kill() sees _proc=None and skips cleanup; the spawn then completes
+        # and leaves an orphaned start_new_session worker with no owner.
+        async with self._spawn_lock:
+            await self._kill()
