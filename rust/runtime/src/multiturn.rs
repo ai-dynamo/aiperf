@@ -1322,8 +1322,10 @@ pub struct NativeDatasetConversationSource {
     /// when the source is unpartitioned, which is every single-process run.
     owned_metadata: Arc<Vec<ConversationMetadata>>,
     sampler: Box<dyn Sampler>,
-    /// Selected once at construction; the corpus the `sampler` spans depends on
-    /// it, so the two must not be reassigned independently.
+    /// The VARIANT is selected once at construction and pins which corpus
+    /// `sampler` spans, so the two are never re-selected independently. The
+    /// `Position` counter inside it does advance: `next` writes the field back
+    /// on every position draw.
     draw: DrawMode,
     endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
@@ -1519,20 +1521,35 @@ impl NativeDatasetConversationSource {
             None => ModuloCellPartition::from_env().filter(|partition| partition.cell_count() > 1),
             Some(_) => None,
         };
-        // The full sampleable corpus, in authored order. `owned_model` is its
-        // residue-class subset; position addressing samples the whole thing.
-        let metadata_model: Vec<crate::dataset::model::ConversationMetadata> =
-            dataset.sampleable_metadata().cloned().collect();
-        let owned_model: Vec<crate::dataset::model::ConversationMetadata> = metadata_model
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                ownership
-                    .map(|partition| partition.owns(*index as u64))
-                    .unwrap_or(true)
-            })
-            .map(|(_, conversation)| conversation.clone())
-            .collect();
+        // Only a position-addressed draw indexes the WHOLE authored space, so
+        // only it materializes the full corpus; every other mode would never
+        // read that copy again, and `ConversationMetadata` owns its turn vector,
+        // so the clone is deep and per-conversation. Both corpora enumerate the
+        // same `sampleable_metadata()` order through this one `owns` predicate,
+        // so their index bases cannot drift apart.
+        let addressing = ownership.filter(|_| position_addressed);
+        let owns = |index: usize| {
+            ownership
+                .map(|partition| partition.owns(index as u64))
+                .unwrap_or(true)
+        };
+        let metadata_model: Option<Vec<crate::dataset::model::ConversationMetadata>> =
+            addressing.map(|_| dataset.sampleable_metadata().cloned().collect());
+        let owned_model: Vec<crate::dataset::model::ConversationMetadata> =
+            match metadata_model.as_deref() {
+                Some(full) => full
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| owns(*index))
+                    .map(|(_, conversation)| conversation.clone())
+                    .collect(),
+                None => dataset
+                    .sampleable_metadata()
+                    .enumerate()
+                    .filter(|(index, _)| owns(*index))
+                    .map(|(_, conversation)| conversation.clone())
+                    .collect(),
+            };
         // One sampler over the owned corpus only — the single giver for this shard.
         // Do not wrap with PartitionedSampler: position filtering over a full-corpus
         // sequential draw is what requested foreign sessions after recycle.
@@ -1547,9 +1564,9 @@ impl NativeDatasetConversationSource {
         // capability on that sampler: `at_position` is pure, so probing cannot
         // disturb it. A strategy without a closed form (any RNG-stateful one)
         // falls back to today's owned-corpus walk rather than approximating.
-        let (sampler, draw) = match ownership.filter(|_| position_addressed) {
-            Some(partition) => {
-                let full = make_sampler(&metadata_model)?;
+        let (sampler, draw) = match metadata_model.zip(addressing) {
+            Some((full_model, partition)) => {
+                let full = make_sampler(&full_model)?;
                 match full.at_position(0) {
                     Some(_) => (
                         full,
@@ -1829,6 +1846,11 @@ impl ConversationSource for NativeDatasetConversationSource {
         let id = match self.draw {
             DrawMode::Owned => self.sampler.next(),
             DrawMode::Position { next, stride } => {
+                // Saturating, not wrapping or checked: wrapping would silently
+                // restart this shard at position 0 and re-issue the corpus from
+                // the top, and checked would have to fail a draw that cannot
+                // legitimately fail. Freezing on one position is the least
+                // damaging of the three, and 2^64 draws is unreachable anyway.
                 self.draw = DrawMode::Position {
                     next: next.saturating_add(stride),
                     stride,
@@ -3144,10 +3166,10 @@ mod tests {
     /// Preferred (shuffle) sampling under a partition still recycles only the
     /// shard's owned corpus — the fixed giver, not a full-corpus draw filter.
     ///
-    /// `shuffle` has no closed-form position addressing (its draw depends on RNG
-    /// stream history), so it keeps the owned walk in EVERY dispatch mode — a
-    /// position-addressed shuffle source falls back to exactly this walk. This
-    /// test is the regression guard for what that fallback lands on.
+    /// This pins the walk itself under `position_addressed: false`. That a
+    /// position-addressed shuffle source FALLS BACK to this same walk is the
+    /// separate claim, covered by
+    /// `position_addressed_shuffle_falls_back_to_the_owned_walk`.
     #[tokio::test]
     async fn partitioned_preferred_shuffle_recycles_only_owned_raw_payloads() {
         let jsonl = (0..5)
@@ -3212,6 +3234,34 @@ mod tests {
             assert!(
                 owned.contains(&session.conversation_id),
                 "shuffle giver leaked {}",
+                session.conversation_id
+            );
+            session.build_first_turn(None).unwrap();
+        }
+    }
+
+    /// `shuffle` has no closed-form position addressing, so asking a shuffle
+    /// source for it must fall back to the owned walk rather than approximate
+    /// one. This covers the `at_position` probe returning `None`.
+    ///
+    /// The assertion discriminates the two modes rather than merely restating
+    /// the owned one: shard 0 of 2 over five rows owns authored indices
+    /// `{0, 2, 4}`, so a `Position` draw would take positions `0, 2, 4, 6, 8`,
+    /// and position 6 wraps to authored index 1 — a conversation this shard does
+    /// NOT own. Six all-owned draws are therefore only possible under
+    /// `DrawMode::Owned`.
+    #[tokio::test]
+    async fn position_addressed_shuffle_falls_back_to_the_owned_walk() {
+        let mut source = shuffle_source_with_mode(5, 0, 2, true).await;
+
+        let owned = owned_ids(&source);
+        assert_eq!(owned.len(), 3, "cell 0 of 2 owns authored indices 0, 2, 4");
+        for draw in 0..6 {
+            let session = source.next(None).unwrap();
+            assert!(
+                owned.contains(&session.conversation_id),
+                "draw {draw} left the owned corpus with {}, so the shuffle source \
+                 took a position-addressed draw instead of falling back",
                 session.conversation_id
             );
             session.build_first_turn(None).unwrap();
@@ -3298,6 +3348,73 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    /// A `shuffle`-strategy source over `rows` raw_payload conversations —
+    /// the RNG-stateful strategy that has no closed-form position addressing.
+    async fn shuffle_source_with_mode(
+        rows: usize,
+        cell_id: u32,
+        cell_count: u32,
+        position_addressed: bool,
+    ) -> NativeDatasetConversationSource {
+        let jsonl = (0..rows)
+            .map(|n| {
+                format!(r#"{{"messages":[{{"role":"user","content":"p{n}"}}],"stream":false}}"#)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let mut load = LoadConfig::new(DatasetSource::Bytes(Bytes::from(jsonl)));
+        load.sampling_strategy = Some("shuffle".into());
+        let dataset = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("raw_payload"),
+                &load,
+                &ComposeConfig::new("model", RngRoot::new(Some(7))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.metadata().sampling_strategy, "shuffle");
+
+        let samplers = SamplerRegistry::with_builtin_strategies().unwrap();
+        NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
+            dataset,
+            "model",
+            4,
+            RngRoot::new(Some(7)),
+            &samplers,
+            chat_resolver(),
+            Some(ModuloCellPartition::new(cell_id, cell_count).unwrap()),
+            position_addressed,
+        )
+        .unwrap()
+    }
+
+    /// One prepared non-streaming `chat` endpoint, resolved for every turn.
+    fn chat_resolver() -> Rc<dyn PreparedTurnEndpointResolver> {
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                crate::endpoints::RawEndpointConfig {
+                    streaming: false,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        Rc::new(
+            PreparedEndpointTableResolver::single(
+                Rc::new(table),
+                PreparedEndpointReference { key, endpoint_id },
+            )
+            .unwrap(),
+        )
     }
 
     async fn partitioned_sequential_source(
