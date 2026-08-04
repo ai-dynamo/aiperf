@@ -31,10 +31,10 @@ pub enum DispatchMode {
     #[default]
     Global,
     GlobalHop,
-    /// One issuer stamps global order and PUSHES to workers without awaiting any
-    /// individual request, after the Python `StickyCreditRouter`: credits go out
-    /// on a queue and workers report `FirstToken`/`CreditReturn` back
-    /// out-of-band.
+    /// One issuer stamps global order and ROUTES a credit to a worker without
+    /// awaiting any individual request, after the Python `StickyCreditRouter`:
+    /// the worker owns the whole round-trip and reports `FirstToken` /
+    /// `CreditReturn` back out of band on one shared stream.
     ///
     /// Shares `GlobalHop`'s worker selection (sticky session binding, else
     /// least-loaded) and, like it, needs no cross-thread admission gate: a single
@@ -43,13 +43,25 @@ pub enum DispatchMode {
     /// is a router, not a shared queue workers pull from -- the issuer picks a
     /// specific worker and routes to it, exactly as `send_credit` does. The one
     /// behavioural difference is WHEN the load signal moves: `GlobalHop` holds a
-    /// worker's in-flight slot from send through reply, while a push issuer
-    /// releases it on credit-return, so `LeastLoaded` can break ties
+    /// worker's in-flight slot from send through reply, while a credit router
+    /// releases it on credit return, so `LeastLoaded` can break ties
     /// differently. Under `RoundRobin`/`Sticky` the assignment is identical.
     ///
-    /// Exists because the hop's coordinator is a serialization point --
-    /// measured near 50k requests/sec against a target the other modes push
-    /// past 290k on, with one thread at 1.08 cores and the other 144 idle.
+    /// # It does NOT lift the single-issuer ceiling
+    ///
+    /// Measured on 144 cores against `aiperf-mock-server --fast` at ISL 550 /
+    /// OSL 1 / concurrency 512: 55.5k requests/sec against `GlobalHop`'s 52.3k
+    /// and `Sharded`'s 283.6k. Removing the coordinator from each request's
+    /// lifetime is worth ~6%, because that was never where the cost was. A
+    /// profile of the pegged issuer thread attributes its per-request CPU to
+    /// dataset sampling and body materialization (~29%), issuance accounting
+    /// (~22%, of which routing and enqueue is only ~5%), and the credit-return
+    /// drain with its capture bookkeeping and metric fold (~20%). All of that is
+    /// per-request work a single issuer must do however requests reach workers;
+    /// `Sharded` is faster because its `W` loops each do a `1/W` share of it.
+    ///
+    /// Choose this mode for exact global issuance order at lower coordinator
+    /// cost than the hop, not as a throughput mode.
     GlobalPush,
 }
 

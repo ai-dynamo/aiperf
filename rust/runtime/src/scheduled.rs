@@ -812,12 +812,29 @@ impl ScheduledRuntime {
         // The detached local task also keeps grading latency out of the
         // scheduler's dispatch-drain boundary and performance wall time.
         if let Some((processor_credit, processor_outcome, correlation_id)) = processor_input {
-            self.spawn_record_processing(
-                processor_credit,
-                processor_outcome,
-                turn_uuid,
-                correlation_id,
-            );
+            if self.credit_dispatch.get() {
+                // Credit dispatch already settles from a single loop AFTER credit
+                // return, so detaching buys nothing here and costs a spawned task
+                // plus a retained `JoinHandle` per request -- a Vec that grows to
+                // one entry per request of the run, on the thread that bounds it.
+                // Every in-tree processor folds or stages synchronously; a future
+                // processor that blocks would stall this loop, which is why the
+                // ordinary path keeps its detached task.
+                self.run_record_processing(
+                    processor_credit,
+                    processor_outcome,
+                    turn_uuid,
+                    correlation_id,
+                )
+                .await;
+            } else {
+                self.spawn_record_processing(
+                    processor_credit,
+                    processor_outcome,
+                    turn_uuid,
+                    correlation_id,
+                );
+            }
         }
     }
 
@@ -863,6 +880,25 @@ impl ScheduledRuntime {
             }
         });
         self.record_processor_tasks.borrow_mut().push(task);
+    }
+
+    /// Run the terminal record processors on the calling task, recording any
+    /// error exactly as the detached variant does.
+    async fn run_record_processing(
+        &self,
+        credit: IssuedCredit,
+        outcome: TurnDispatchOutcome,
+        request_id: Uuid,
+        correlation_id: String,
+    ) {
+        let processors = self.record_processors.borrow().clone();
+        for processor in processors {
+            if let Err(error) = processor.process(&credit, &outcome).await {
+                self.record_processor_errors.borrow_mut().push(format!(
+                    "request {request_id} correlation {correlation_id:?}: {error:#}"
+                ));
+            }
+        }
     }
 
     pub(crate) async fn wait_record_processors(&self) -> Result<()> {
