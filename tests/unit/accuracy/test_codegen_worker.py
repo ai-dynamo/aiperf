@@ -32,7 +32,13 @@ def _fake_compute_metrics(
 def _fake_codegen_batch_ok(
     samples: list, generations: list, **_kwargs: Any
 ) -> tuple[dict[str, Any], dict[int, list]]:
-    # Returns aggregate metrics (ignored by handle_batch) and per-problem results.
+    # Assert the contract: lighteval indexes samples[i] as a dict, so each
+    # element must be a dict, not a list.  This catches the double-nesting bug
+    # where append() was used instead of extend() in handle_batch.
+    for s in samples:
+        assert isinstance(s, dict), (
+            f"expected sample dict, got {type(s).__name__}: {s!r}"
+        )
     n = len(samples)
     raw_results = {i: [[True]] for i in range(n)}  # all pass
     return {"pass@1": 1.0}, raw_results
