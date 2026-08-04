@@ -63,14 +63,18 @@ async def _open_client(
     await store.finalize()
 
     metadata = store.get_client_metadata()
-    client = MemoryMapDatasetClient(
-        metadata.data_file_path,
-        metadata.index_file_path,
-    )
+    client: MemoryMapDatasetClient | None = None
     try:
+        # Constructed inside the guard: if opening the mmap raises, the store
+        # still gets stopped and its files still get unlinked.
+        client = MemoryMapDatasetClient(
+            metadata.data_file_path,
+            metadata.index_file_path,
+        )
         yield client
     finally:
-        client.close()
+        if client is not None:
+            client.close()
         await store.stop()
 
 
