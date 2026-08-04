@@ -1939,6 +1939,79 @@ mod tests {
         );
     }
 
+    /// The differential every `PreparedEndpoint::extracted` override owes: a
+    /// reported structure must count identically to the parse-derived one, and
+    /// an absent report must fall back to parsing. A divergence here is a silent
+    /// ISL shift, not a failure the run surfaces.
+    #[test]
+    fn materialized_counter_matches_the_parse_derived_path() {
+        let payload = json!({
+            "messages":[{"role":"user","content":"hello world"}],
+            "tools":[{"type":"function","function":{"name":"weather"}}]
+        });
+        let body = serde_json::to_vec(&payload).unwrap();
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let prepared = registry
+            .prepare(
+                &EndpointId::new("chat").unwrap(),
+                crate::endpoints::RawEndpointConfig::default(),
+            )
+            .unwrap();
+        let counter = EndpointInputTokenCounter::new(Arc::new(FixedTemplateTokenizer), false);
+
+        let parsed = counter
+            .count_prepared_input_tokens(prepared.as_ref(), &body, 99)
+            .unwrap();
+        let reported = prepared.extract_payload_inputs(&payload);
+        assert_eq!(
+            counter
+                .count_materialized_input_tokens(
+                    prepared.as_ref(),
+                    &body,
+                    Some(&reported),
+                    99
+                )
+                .unwrap(),
+            parsed
+        );
+        assert_eq!(
+            counter
+                .count_materialized_input_tokens(prepared.as_ref(), &body, None, 99)
+                .unwrap(),
+            parsed
+        );
+    }
+
+    /// No built-in endpoint reports its own structure yet, so every dispatch
+    /// still counts through the parse-derived path.
+    #[test]
+    fn built_in_endpoints_report_no_extracted_structure() {
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let prepared = registry
+            .prepare(
+                &EndpointId::new("chat").unwrap(),
+                crate::endpoints::RawEndpointConfig::default(),
+            )
+            .unwrap();
+        let turns = [EndpointTurn {
+            role: "user".into(),
+            texts: vec!["hello world".into()],
+            ..EndpointTurn::default()
+        }];
+        let request = crate::endpoints::PreparedRequest::new(
+            "test-model",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let plan = prepared.format_payload(&request).unwrap();
+        assert!(prepared.extracted(&request, &plan).is_none());
+    }
+
     #[tokio::test]
     async fn credit_counter_counts_root_turns_for_session_bounds() {
         let dataset = inline_multi_turn_dataset(2, 2, "model").await;
