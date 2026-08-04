@@ -20,10 +20,10 @@ use crate::dataset::request::{
     token_ids_handle,
 };
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
-use bytes::Bytes;
 use crate::endpoints::{
     CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn, TurnMessageLowerer,
 };
+use bytes::Bytes;
 use smallvec::SmallVec;
 
 /// Resolve the prepared endpoint that will format one turn's body.
@@ -443,12 +443,13 @@ impl Dataset {
                         // blob now so dispatch clones it instead of re-splicing a
                         // multi-MB buffer every request.
                         if let Ok(plan) = endpoint.format_payload(&request) {
-                            *slot = Some(CachedTurnPlan {
-                                plan: Arc::new(plan.prebuilt_if_static(
-                                    endpoint.descriptor().supports_streaming,
-                                )),
-                                replies: None,
-                            });
+                            *slot =
+                                Some(CachedTurnPlan {
+                                    plan: Arc::new(plan.prebuilt_if_static(
+                                        endpoint.descriptor().supports_streaming,
+                                    )),
+                                    replies: None,
+                                });
                         }
                     }
                 }

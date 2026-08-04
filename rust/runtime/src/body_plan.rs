@@ -1008,9 +1008,7 @@ fn emit_fields<E: BodyEmitter, S: SegmentStore + ?Sized>(
             }
             FieldValue::Wires(wires) => match splice.filter(|splice| splice.field == index) {
                 Some(splice) => {
-                    let mut elements = splice
-                        .interleave(wires)
-                        .map(|wire| Ok(Cow::Borrowed(wire)));
+                    let mut elements = splice.interleave(wires).map(|wire| Ok(Cow::Borrowed(wire)));
                     emitter.array(&mut elements)?;
                 }
                 None => {
@@ -1275,7 +1273,8 @@ mod tests {
     #[test]
     fn spliced_plan_equals_a_plan_built_with_the_live_wires_inline() {
         let wire = |text: &str| Bytes::from(format!(r#"{{"role":"user","content":"{text}"}}"#));
-        let reply = |text: &str| Bytes::from(format!(r#"{{"role":"assistant","content":"{text}"}}"#));
+        let reply =
+            |text: &str| Bytes::from(format!(r#"{{"role":"assistant","content":"{text}"}}"#));
         let statics = [wire("t0"), wire("t1"), wire("t2")];
         let replies = [[reply("r0")], [reply("r1")]];
 

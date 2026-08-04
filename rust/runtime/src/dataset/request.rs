@@ -1132,7 +1132,9 @@ impl ConversationSession {
         for (index, (position, reply)) in replies.positions.iter().zip(&self.replies).enumerate() {
             let wires = reply.turn.lowered.as_deref();
             match wires {
-                Some(wires) if reply.after_turn == index && reply_splices_only_wires(&reply.turn) => {
+                Some(wires)
+                    if reply.after_turn == index && reply_splices_only_wires(&reply.turn) =>
+                {
                     groups.push((*position, wires));
                 }
                 _ => {
@@ -3225,7 +3227,12 @@ mod tests {
                                     with_max_tokens,
                                     with_extra_body,
                                 ),
-                                text_turn(&mut pool, b"third turn", with_max_tokens, with_extra_body),
+                                text_turn(
+                                    &mut pool,
+                                    b"third turn",
+                                    with_max_tokens,
+                                    with_extra_body,
+                                ),
                             ];
                             let base = single_conversation_dataset(mode, turns, pool);
                             let endpoint = prepare_endpoint(endpoint_id);
