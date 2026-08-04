@@ -57,6 +57,142 @@ pub enum FieldValue {
     Wires(SmallVec<[Bytes; 1]>),
 }
 
+/// An ordered named-field program plus the exact serialized length of the body
+/// it materializes to.
+///
+/// `exact_len` lets [`materialize_fields`] reserve the finished body in one
+/// allocation instead of growing a guessed buffer per dispatch. It counts the
+/// enclosing braces, every `"name":` frame, every separating comma, and each
+/// value's serialized bytes — but **not** the per-dispatch override tail, which
+/// is not part of the program.
+///
+/// It is `None` whenever a [`Segment`](FieldValue::Segment) or
+/// [`Segments`](FieldValue::Segments) value makes the length depend on a segment
+/// store the program does not hold, and whenever a literal fails to serialize.
+/// A `None` hint costs only the old capacity heuristic; a *wrong* hint would be
+/// a silent regression, so every mutator either maintains it exactly or clears
+/// it, and a debug assertion checks it against the finished buffer.
+#[derive(Debug, Clone)]
+pub struct FieldProgram {
+    fields: SmallVec<[(FieldName, FieldValue); 8]>,
+    exact_len: Option<usize>,
+}
+
+/// Two programs are equal when they declare the same fields; `exact_len` is a
+/// derived cache of the field list, not part of the plan's identity.
+impl PartialEq for FieldProgram {
+    fn eq(&self, other: &Self) -> bool {
+        self.fields == other.fields
+    }
+}
+
+impl Default for FieldProgram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FieldProgram {
+    /// The `{`/`}` an empty program still materializes to.
+    const BRACE_BYTES: usize = 2;
+
+    /// Start an empty program.
+    pub fn new() -> Self {
+        Self {
+            fields: SmallVec::new(),
+            exact_len: Some(Self::BRACE_BYTES),
+        }
+    }
+
+    /// Borrow the declared fields in order.
+    pub fn fields(&self) -> &[(FieldName, FieldValue)] {
+        &self.fields
+    }
+
+    /// The exact serialized length of this program's body without any
+    /// per-dispatch override tail, when it does not depend on a segment store.
+    pub fn exact_len(&self) -> Option<usize> {
+        self.exact_len
+    }
+
+    /// Append a field, extending the hint by the new entry plus its separator.
+    fn push(&mut self, name: FieldName, value: FieldValue) {
+        let separator = usize::from(!self.fields.is_empty());
+        self.exact_len = self
+            .exact_len
+            .zip(entry_len(&name, &value))
+            .map(|(current, entry)| current + separator + entry);
+        self.fields.push((name, value));
+    }
+
+    /// Replace an existing field's value in place, or append when absent.
+    fn set(&mut self, name: FieldName, value: FieldValue) {
+        match self.position(&name) {
+            Some(index) => self.replace_at(index, value),
+            None => self.push(name, value),
+        }
+    }
+
+    /// Index of a declared field by name.
+    fn position(&self, name: &str) -> Option<usize> {
+        self.fields.iter().position(|(field, _)| field == name)
+    }
+
+    /// Replace one field's value in place, preserving field order.
+    ///
+    /// The hint moves by the difference between the two values. When the
+    /// replaced value's length was unknown (a store-dependent segment) the
+    /// difference is unknowable, so the whole hint is rebuilt — that value may
+    /// have been the only thing making the program store-dependent.
+    fn replace_at(&mut self, index: usize, value: FieldValue) {
+        let previous = value_len(&self.fields[index].1);
+        let replacement = value_len(&value);
+        self.fields[index].1 = value;
+        match (previous, replacement) {
+            (Some(previous), Some(replacement)) => {
+                self.exact_len = self
+                    .exact_len
+                    .map(|current| current + replacement - previous);
+            }
+            (Some(_), None) => self.exact_len = None,
+            (None, _) => self.recompute(),
+        }
+    }
+
+    /// Rebuild `exact_len` from the current field list.
+    fn recompute(&mut self) {
+        let separators = self.fields.len().saturating_sub(1);
+        self.exact_len = self
+            .fields
+            .iter()
+            .try_fold(Self::BRACE_BYTES + separators, |total, (name, value)| {
+                entry_len(name, value).map(|entry| total + entry)
+            });
+    }
+}
+
+/// The bytes one field contributes: `"`, the unescaped name, `":`, and the value.
+fn entry_len(name: &FieldName, value: &FieldValue) -> Option<usize> {
+    value_len(value).map(|value| 1 + name.len() + 2 + value)
+}
+
+/// The serialized bytes one field value contributes, or `None` when the length
+/// depends on a segment store this program does not hold.
+fn value_len(value: &FieldValue) -> Option<usize> {
+    match value {
+        // Serializing is the only way to know a literal's exact length: escaping
+        // and number formatting are the serializer's business, not ours.
+        FieldValue::Literal(literal) => serde_json::to_vec(literal).ok().map(|bytes| bytes.len()),
+        FieldValue::Segment(_) | FieldValue::Segments(_) => None,
+        FieldValue::Wires(wires) => Some(array_len(wires.iter().map(Bytes::len), wires.len())),
+    }
+}
+
+/// `[`, the elements, the commas between them, and `]`.
+fn array_len(elements: impl Iterator<Item = usize>, count: usize) -> usize {
+    2 + elements.sum::<usize>() + count.saturating_sub(1)
+}
+
 /// A declarative, wire-agnostic description of a request body.
 ///
 /// Built once per turn at lowering (the run's endpoint is known at config
@@ -73,7 +209,7 @@ pub enum BodyPlan {
     /// A complete prebuilt body spliced/cloned whole (the raw fast path).
     Raw(Handle),
     /// An ordered named-field JSON object.
-    Fields(SmallVec<[(FieldName, FieldValue); 8]>),
+    Fields(FieldProgram),
     /// A complete body serialized once at lowering into inline bytes, cloned
     /// whole at dispatch. Produced by [`BodyPlan::prebuilt_if_static`] for turns
     /// whose materialization carries no per-dispatch field (no `model`/`stream`/
@@ -87,7 +223,7 @@ pub enum BodyPlan {
 impl BodyPlan {
     /// Start an empty named-field plan.
     pub fn new() -> Self {
-        Self::Fields(SmallVec::new())
+        Self::Fields(FieldProgram::new())
     }
 
     /// Construct a plan wrapping a complete prebuilt body.
@@ -98,8 +234,8 @@ impl BodyPlan {
     // Field builders are only reachable off `new()` (a `Fields` plan); a `Raw`
     // plan is a no-op sink since it carries no named fields.
     fn push(mut self, name: FieldName, value: FieldValue) -> Self {
-        if let Self::Fields(fields) = &mut self {
-            fields.push((name, value));
+        if let Self::Fields(program) = &mut self {
+            program.push(name, value);
         }
         self
     }
@@ -189,20 +325,23 @@ impl BodyPlan {
         if wires.is_empty() {
             return;
         }
-        if let Self::Fields(fields) = self
-            && let Some(slot) = fields.iter_mut().find(|(field, _)| field == name)
+        if let Self::Fields(program) = self
+            && let Some(index) = program.position(name)
         {
-            slot.1 = FieldValue::Wires(wires);
+            program.replace_at(index, FieldValue::Wires(wires));
         }
     }
 
     /// Borrow a top-level literal field's value by name.
     pub fn literal_field(&self, name: &str) -> Option<&Value> {
         match self {
-            Self::Fields(fields) => fields.iter().find_map(|(field, value)| match value {
-                FieldValue::Literal(literal) if field == name => Some(literal),
-                _ => None,
-            }),
+            Self::Fields(program) => program
+                .fields
+                .iter()
+                .find_map(|(field, value)| match value {
+                    FieldValue::Literal(literal) if field == name => Some(literal),
+                    _ => None,
+                }),
             Self::Raw(_) | Self::Prebuilt(_) => None,
         }
     }
@@ -248,13 +387,8 @@ impl BodyPlan {
     /// exists (position preserved), else append — the insertion-order semantics
     /// of `serde_json::Map::insert`, so dispatch overrides fold in byte-for-byte.
     pub fn set_literal(&mut self, name: impl Into<FieldName>, value: Value) {
-        if let Self::Fields(fields) = self {
-            let name = name.into();
-            if let Some(slot) = fields.iter_mut().find(|(field, _)| *field == name) {
-                slot.1 = FieldValue::Literal(value);
-            } else {
-                fields.push((name, FieldValue::Literal(value)));
-            }
+        if let Self::Fields(program) = self {
+            program.set(name.into(), FieldValue::Literal(value));
         }
     }
 
@@ -305,7 +439,7 @@ impl JsonBodyMaterializer {
                     actual: payload.kind_name(),
                 }),
             },
-            BodyPlan::Fields(fields) => materialize_fields(fields, store, overrides),
+            BodyPlan::Fields(program) => materialize_fields(program, store, overrides),
             // Already a complete object; splice applies any (rare) override tail
             // and otherwise clones the prebuilt bytes without a store lookup.
             BodyPlan::Prebuilt(bytes) => splice_raw_object(bytes, overrides),
@@ -314,12 +448,25 @@ impl JsonBodyMaterializer {
 }
 
 fn materialize_fields<S: SegmentStore + ?Sized>(
-    fields: &[(FieldName, FieldValue)],
+    program: &FieldProgram,
     store: &S,
     overrides: &Overrides,
 ) -> Result<Bytes> {
+    let fields = program.fields();
     let override_inner = overrides.inner_bytes()?;
-    let mut body = BytesMut::with_capacity(fields.len() * 32 + override_inner.len() + 2);
+    // The tail is per-dispatch, so the program's hint does not cover it.
+    let tail = if override_inner.is_empty() {
+        0
+    } else {
+        override_inner.len() + usize::from(!fields.is_empty())
+    };
+    // An exact hint makes the body one allocation with no slack; without one
+    // (a store-dependent segment value) fall back to the old rough guess.
+    let capacity = match program.exact_len() {
+        Some(exact) => exact + tail,
+        None => fields.len() * 32 + override_inner.len() + 2,
+    };
+    let mut body = BytesMut::with_capacity(capacity);
     body.put_u8(b'{');
     for (index, (name, value)) in fields.iter().enumerate() {
         if index > 0 {
@@ -363,6 +510,13 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
         body.put_slice(&override_inner);
     }
     body.put_u8(b'}');
+    if let Some(exact) = program.exact_len() {
+        debug_assert_eq!(
+            exact + tail,
+            body.len(),
+            "exact_len drifted; a mutator failed to update it"
+        );
+    }
     Ok(body.freeze())
 }
 
@@ -392,7 +546,7 @@ fn segment_field_wire<S: SegmentStore + ?Sized>(store: &S, handle: Handle) -> Re
 mod tests {
     use super::*;
     use crate::dataset::materialize::build_message_body_from_wires;
-    use crate::dataset::segment::SegmentPool;
+    use crate::dataset::segment::{InMemorySegmentStore, SegmentPool};
 
     fn message(pool: &mut SegmentPool, parent: Option<Handle>, wire: &'static [u8]) -> Handle {
         pool.intern_message(parent, "user", Bytes::from_static(wire), vec![1_u32])
@@ -613,6 +767,87 @@ mod tests {
         assert_eq!(
             body,
             Bytes::from_static(br#"{"messages":[{"role":"user","content":"q"}]}"#)
+        );
+    }
+
+    fn hint(plan: &BodyPlan) -> Option<usize> {
+        match plan {
+            BodyPlan::Fields(program) => program.exact_len(),
+            BodyPlan::Raw(_) | BodyPlan::Prebuilt(_) => None,
+        }
+    }
+
+    #[test]
+    fn exact_len_matches_materialized_length() {
+        // Literals only, covering escaping and number formatting.
+        let literals = BodyPlan::new()
+            .str("model", "a \"quoted\" \u{2028} model")
+            .int("max_tokens", 1024)
+            .bool("stream", false)
+            .literal("stream_options", serde_json::json!({"include_usage": true}));
+        assert_eq!(
+            hint(&literals),
+            Some(literals.materialize_standalone().unwrap().len())
+        );
+
+        // Literals plus a spliced wire array.
+        let with_wires = BodyPlan::new()
+            .wire_array(
+                "messages",
+                [
+                    Bytes::from_static(br#"{"role":"system","content":"S"}"#),
+                    Bytes::from_static(br#"{"role":"user","content":"hi"}"#),
+                ],
+            )
+            .str("model", "m")
+            .bool("stream", true);
+        assert_eq!(
+            hint(&with_wires),
+            Some(with_wires.materialize_standalone().unwrap().len())
+        );
+
+        // A folded-in override tail: in-place replacement and append together.
+        let mut overrides = Overrides::new();
+        overrides.set_model("a-much-longer-model-name");
+        overrides.set_stream(false);
+        overrides.insert("seed", Value::from(7));
+        let mut merged = with_wires.clone();
+        merged.merge_overrides(&overrides);
+        assert_eq!(
+            hint(&merged),
+            Some(merged.materialize_standalone().unwrap().len())
+        );
+
+        // The hint excludes the per-dispatch tail, so a dispatch carrying an
+        // unmerged override set materializes to more than the program's length.
+        let dispatched = JsonBodyMaterializer::materialize(
+            &with_wires,
+            &InMemorySegmentStore::default(),
+            &overrides,
+        )
+        .unwrap();
+        assert!(hint(&with_wires).unwrap() < dispatched.len());
+    }
+
+    #[test]
+    fn exact_len_is_absent_for_store_dependent_values() {
+        let mut pool = SegmentPool::new();
+        let msg = message(&mut pool, None, br#"{"role":"user","content":"hi"}"#);
+        let store = pool.freeze();
+
+        let mut plan = BodyPlan::new().array("messages", [msg]).str("model", "m");
+        assert_eq!(hint(&plan), None);
+        // Materialization still succeeds on the fallback capacity path.
+        assert!(JsonBodyMaterializer::materialize(&plan, &store, &Overrides::new()).is_ok());
+
+        // Replacing the segment array with wires makes the length knowable again.
+        plan.splice_message_wires(
+            "messages",
+            smallvec::smallvec![Bytes::from_static(br#"{"role":"user","content":"hi"}"#)],
+        );
+        assert_eq!(
+            hint(&plan),
+            Some(plan.materialize_standalone().unwrap().len())
         );
     }
 
