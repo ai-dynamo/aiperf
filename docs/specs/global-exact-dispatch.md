@@ -55,15 +55,44 @@ requests.
     increases) that every worker thread in the cell shares as one
     `Arc<GlobalSlotPool>` per concurrency-capped phase.
   - `GlobalRateGate` (`rust/runtime/src/timing/rate_gate.rs`) is the
-    `Send`+`Sync` cross-thread rate-pacing gate: a single atomic
-    next-fire-time counter modeling a fixed-interval base grid
-    (`claim_offset_ns` hands out `0`, `interval_ns`, `2*interval_ns`, ...
-    gaplessly across every calling thread). Each caller still draws its own
-    mean-zero jitter offset from its local `IntervalGenerator` and adds it to
-    its claimed base slot. This keeps the **aggregate rate** exact but does
-    **not** reproduce true Poisson/Gamma arrival-process statistics (the
-    resulting inter-arrival times are grid-plus-offset, not a renewal
-    process); exact arrival-*pattern* parity is `global-hop`'s job.
+    `Send`+`Sync` cross-thread rate-pacing gate: a single atomic slot counter
+    modeling a fixed-interval base grid (`claim_offset_ns` hands out `0`,
+    `interval_ns`, `2*interval_ns`, ... gaplessly across every calling
+    thread; `claim_slot` returns the same claim's dense slot **index**
+    alongside that offset). Each caller still draws its own mean-zero jitter
+    offset from its local `IntervalGenerator` and adds it to its claimed base
+    slot. This keeps the **aggregate rate** exact but does **not** reproduce
+    true Poisson/Gamma arrival-process statistics (the resulting inter-arrival
+    times are grid-plus-offset, not a renewal process); exact
+    arrival-*pattern* parity is `global-hop`'s job.
+  - **Slot-addressed draws** tie the conversation to the rate slot on a
+    rate-paced phase (`RequestRateWorkload::slot_addressed_draws`,
+    `rust/runtime/src/request_rate.rs`). The workload claims one
+    `ClaimedSlot` and draws that tick's new session at corpus position
+    `slot.index` through `ConversationSource::next_at_position`, so the
+    admission time and the drawn conversation are two pure functions of one
+    lock-free `fetch_add` and their orders coincide by construction. Without
+    the tie they are separately correct but unrelated sequences: `admit_ns` is
+    monotone in the claimed slot while each thread walks its own private
+    `next += stride` cursor, so sorting per-record output by `admit_ns` does
+    not recover the corpus walk (measured 0.75% of records in sequential
+    position on a 16-worker rig, median offset 53 conversations).
+    - The tie is selected only when both hold: the source is
+      position-addressed, and every sampleable conversation is single-turn. A
+      continuation consumes a rate slot without drawing a new conversation, so
+      a multi-turn corpus would leave holes in the position walk and never
+      draw the conversations at the skipped positions.
+    - A tick that cannot admit retains its claimed slot, so a drawn sample is
+      never discarded and the claimed position sequence stays dense.
+    - Exact admission order additionally requires `constant` arrival (the
+      mean-zero jitter offset is nonzero for `poisson`/`gamma` and reorders
+      adjacent slots) and, because `admit_ns` is each worker's own
+      `Clock::now_ns()` at issuance (`rust/runtime/src/scheduled.rs`), a clock
+      whose wake is exact at the claimed slot. Under a real clock per-thread
+      wake-up skew leaves a residual scatter of roughly
+      `skew * rate` slots — local, bounded noise rather than the corpus-scale
+      decoupling above. Byte-exact per-request issuance order remains
+      `global-hop`/`global-push`, which stamp every `admit_ns` on one thread.
   - Dataset sampling is **position-addressed** over the full corpus
     (`rust/runtime/src/multiturn.rs` `DrawMode::Position`,
     `rust/runtime/src/dataset/sampler.rs` `Sampler::at_position`): worker
@@ -73,8 +102,11 @@ requests.
     thread, no lock, atomic, or cross-thread state.
     - The guarantee is over the **multiset** of drawn conversations, not a
       sequence: threads draw concurrently and nothing orders their draws
-      against each other. `Global`'s ordering guarantee remains the aggregate
-      admission one; per-request issuance order is `global-hop`/`global-push`.
+      against each other. On a rate-paced phase the slot-addressed draw above
+      does order them (`admit_ns` order is the corpus walk, up to jitter and
+      clock wake precision); on a concurrency phase `admit_ns` is wall-clock at
+      slot-free and nothing orders the draws, so per-request issuance order
+      there remains `global-hop`/`global-push`.
     - The union across threads is one unpartitioned sampler's draw multiset
       **for budget-bounded phases only**. Thread `i` contributes the positions
       `≡ i mod W`, so the union is the contiguous prefix `0..T` exactly when
@@ -223,7 +255,11 @@ driven multi-worker dispatch" is not a real configuration.
 
 - `rust/runtime/src/engine/protocol.rs` — `DispatchMode`.
 - `rust/runtime/src/timing/slots.rs` — `GlobalSlotPool`.
-- `rust/runtime/src/timing/rate_gate.rs` — `GlobalRateGate`.
+- `rust/runtime/src/timing/rate_gate.rs` — `GlobalRateGate`, `ClaimedSlot`.
+- `rust/runtime/src/request_rate.rs` — slot-addressed draws
+  (`slot_addressed_draws`, `can_address_draws_by_slot`,
+  `slot_addressed_offset_ns`) and their acceptance test
+  `global_rate_paced_admission_order_is_the_sequential_corpus_walk`.
 - `rust/runtime/src/engine/execute.rs` — `GlobalAdmission`,
   `ShardedShared::dispatch_mode`/`global_admission`, the
   `virtual_clock`/`workers = 1` SimClock gate.

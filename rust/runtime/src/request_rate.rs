@@ -1033,8 +1033,15 @@ mod tests {
     /// the conversation it draws come from the same claim. The fixture is
     /// deliberately awkward for a static per-worker partition: `5 % 4 == 1`, so
     /// the residue classes are uneven, and 12 requests over 5 conversations is
-    /// 2.4 passes, so the final pass is partial. Both are exactly the conditions
-    /// under which independent per-worker cursors diverge from the global walk.
+    /// 2.4 passes, so the final pass is partial.
+    ///
+    /// The workers are started in DESCENDING cell-id order, which is what makes
+    /// this test discriminating. Which worker wins a given claim is racy — a
+    /// live 16-worker rig run shows one worker taking four slots before the
+    /// others start — and nothing depends on the assignment. But a static
+    /// per-worker residue walk only agrees with the claim order while workers
+    /// happen to claim in cell-id order; start them in any other order and the
+    /// two sequences separate immediately, which is precisely the defect.
     ///
     /// `SimClock` makes the assertion exact — a worker wakes at precisely its
     /// claimed slot. On a real clock the same tie holds on the claim, but
@@ -1051,7 +1058,10 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
+        // Descending cell id: the start order, and hence the claim order, is
+        // deliberately not the partition order.
         let sources: Vec<Box<dyn ConversationSource>> = (0..WORKERS)
+            .rev()
             .map(|cell_id| {
                 boot.block_on(crate::test_util::partitioned_single_turn_source(
                     ENTRIES, cell_id, WORKERS, "m",
