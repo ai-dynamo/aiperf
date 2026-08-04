@@ -11,12 +11,12 @@ use std::sync::Arc;
 
 use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
-    EmbeddingsEndpoint, Endpoint, ExtractedPayload, HfTeiRankingsEndpoint,
+    EmbeddingsEndpoint, Endpoint, EndpointDescriptor, ExtractedPayload, HfTeiRankingsEndpoint,
     HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
-    EndpointDescriptor, ImageRetrievalEndpoint, Media, MessagesEndpoint, ModelEndpoint,
-    NimEmbeddingsEndpoint, NimRankingsEndpoint, PreparedEndpoint, PreparedRequest, RawEndpoint,
-    RequestInfo, ResponsesEndpoint, ShapeLowerer, SolidoRagEndpoint, TemplateEndpoint,
-    Turn as EndpointTurn, VideoGenerationEndpoint,
+    ImageRetrievalEndpoint, Media, MessagesEndpoint, ModelEndpoint, NimEmbeddingsEndpoint,
+    NimRankingsEndpoint, PreparedEndpoint, PreparedRequest, RawEndpoint, RequestInfo,
+    ResponsesEndpoint, ShapeLowerer, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
+    VideoGenerationEndpoint,
 };
 use bytes::Bytes;
 use serde_json::{Map, Value};
@@ -488,8 +488,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 // straight off the dataset's plan.
                 Some(cached) => Arc::clone(cached),
                 None => {
-                    let turns = session
-                        .endpoint_turns(store, splices_lowered_wires(endpoint.descriptor(), phase))?;
+                    let turns = session.endpoint_turns(
+                        store,
+                        splices_lowered_wires(endpoint.descriptor(), phase),
+                    )?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
                     let request = PreparedRequest::new(
@@ -1168,10 +1170,9 @@ impl ConversationSession {
                 }
                 Ok(out)
             }
-            ConversationContextMode::DeltasWithResponses => conversation.turns[..=current]
-                .iter()
-                .map(resolve)
-                .collect(),
+            ConversationContextMode::DeltasWithResponses => {
+                conversation.turns[..=current].iter().map(resolve).collect()
+            }
             ConversationContextMode::MessageArrayWithResponses => {
                 Ok(vec![resolve(&conversation.turns[current])?])
             }
@@ -1354,10 +1355,7 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
 /// `render_first` re-renders the first turn from its media so the system prompt
 /// can be folded into it. A turn that was never lowered keeps its content
 /// regardless, since there is no wire to splice.
-pub(crate) fn resolve_turn_spliced(
-    store: &dyn SegmentStore,
-    turn: &Turn,
-) -> Result<EndpointTurn> {
+pub(crate) fn resolve_turn_spliced(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
     resolve_turn_inner(store, turn, true)
 }
 
