@@ -2728,6 +2728,65 @@ mod tests {
         }
     }
 
+    /// A dialect that selects one turn out of the list rather than concatenating
+    /// them all must not be prefix-summed: `kserve_v2_vlm` formats
+    /// `request.turns().first()`, so under a delta mode the wire always carries
+    /// turn 0's images and a sum would over-report every later turn. Those turns
+    /// must stay unestablished so dispatch parses the body and gets the truth.
+    #[test]
+    fn a_turn_selecting_dialect_is_never_prefix_summed() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let image = pool
+            .intern_media(
+                None,
+                MediaKind::Image,
+                Bytes::from_static(b"http://example/a.png"),
+            )
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::DeltasWithoutResponses);
+        // Every turn carries an image, so a prefix sum would report 1, 2, 3
+        // while the wire only ever carries turn 0's one image.
+        conversation.turns = vec![
+            content_turn(text, Some(image)),
+            content_turn(text, Some(image)),
+            content_turn(text, Some(image)),
+        ];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap();
+        let endpoint = prepare_endpoint("kserve_v2_vlm");
+        dataset
+            .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "primary-model")
+            .unwrap();
+
+        let id = SessionId::from("session");
+        assert_eq!(
+            dataset.cached_image_count(&id, 0),
+            Some(1),
+            "turn 0 is the one index every context mode renders in full"
+        );
+        for turn_index in 1..3 {
+            assert_eq!(
+                dataset.cached_image_count(&id, turn_index),
+                None,
+                "turn {turn_index} must fall back to the parse, not a sum"
+            );
+        }
+    }
+
     fn prepare_endpoint(id: &str) -> Box<dyn PreparedEndpoint> {
         EndpointRegistry::builtin()
             .unwrap()
