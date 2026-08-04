@@ -691,7 +691,6 @@ fn compatibility_http_record(record: &GrpcRequestRecord) -> RequestRecord {
     }
     RequestRecord {
         start_ns: record.start_ns,
-        request_body: record.request_body.clone(),
         request_headers: record.trace.request_metadata.clone(),
         end_ns: record.end_ns,
         recv_start_ns: record.trace.response_receive_start_ns,

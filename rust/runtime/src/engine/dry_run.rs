@@ -860,7 +860,6 @@ impl FakeFabricator {
             observer.on_terminal(uuid, ReplayTerminalStatus::Canceled);
             let record = RequestRecord {
                 start_ns: start_abs,
-                request_body: request_payload.clone(),
                 end_ns: Some(cancellation_abs),
                 error: Some(error),
                 cancellation_ns: Some(cancellation_abs),
@@ -918,7 +917,6 @@ impl FakeFabricator {
             .collect::<Vec<_>>();
         let record = RequestRecord {
             start_ns: start_abs,
-            request_body: request_payload.clone(),
             end_ns: Some(end_abs),
             recv_start_ns: Some(recv_start_abs),
             status: Some(200),

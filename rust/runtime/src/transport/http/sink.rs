@@ -100,7 +100,6 @@ fn enforce_turn_data_policy(
 ) {
     if !data_policy.retain_raw_exchange() || !data_policy.allow_public_content_hash() {
         *request_payload = Bytes::new();
-        record.request_body = Bytes::new();
         record.request_headers.clear();
         record.response_headers.clear();
         record.responses.clear();
@@ -1251,7 +1250,6 @@ mod tests {
 
         let mut request_payload = Bytes::from_static(SENTINEL.as_bytes());
         let mut record = RequestRecord {
-            request_body: Bytes::from_static(SENTINEL.as_bytes()),
             request_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             response_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             responses: vec![Response::Text(crate::transport::core::TextResponse {
@@ -1276,7 +1274,6 @@ mod tests {
         );
 
         assert!(request_payload.is_empty());
-        assert!(record.request_body.is_empty());
         assert!(record.request_headers.is_empty());
         assert!(record.response_headers.is_empty());
         assert!(record.responses.is_empty());

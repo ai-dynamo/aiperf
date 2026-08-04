@@ -353,7 +353,6 @@ mod tests {
         let transport = RequestRecord {
             start_ns: 1_000_000,
             end_ns: Some(11_000_000),
-            request_body: payload.clone().into(),
             request_headers: BTreeMap::from([
                 ("Authorization".into(), "Bearer super-secret".into()),
                 ("X-Custom-Tracking".into(), "trace-123".into()),

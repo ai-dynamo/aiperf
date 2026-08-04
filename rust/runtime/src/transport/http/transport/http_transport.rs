@@ -217,7 +217,6 @@ impl HttpTransport {
             self.x_smg_routing_key_from_correlation_id,
         );
         let mut record = RequestRecord {
-            request_body: body.clone(),
             request_headers: headers.clone(),
             ..RequestRecord::started(start_ns)
         };
