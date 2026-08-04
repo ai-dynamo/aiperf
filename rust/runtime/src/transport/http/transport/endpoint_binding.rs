@@ -311,8 +311,8 @@ where
     //
     // Only that re-encode makes the wire and canonical bodies differ, so it is
     // also the only case that keeps a second handle on the assembled bytes.
-    let (wire_body, canonical_body) =
-        if matches!(policy.content_type, RequestContentType::MultipartFormData) {
+    let (wire_body, canonical_body) = match policy.content_type {
+        RequestContentType::MultipartFormData => {
             let payload = serde_json::from_slice::<Value>(&body).map_err(|error| {
                 HttpEndpointBindingError::new(format!(
                     "decode endpoint {:?} request before applying its HTTP lifecycle: {error}",
@@ -323,9 +323,14 @@ where
             headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
             headers.insert("Content-Type".into(), encoded.content_type);
             (encoded.bytes, Some(body))
-        } else {
-            (body, None)
-        };
+        }
+        // Matched by name rather than falling out of an `else`: this arm now
+        // asserts that the wire body *is* the canonical body, so a future
+        // re-encoding content type inheriting it would write wire bytes into
+        // the raw artifact and `inputs.json` with nothing to fail. Exhaustive
+        // matching turns that into a compile error at this seam.
+        RequestContentType::ApplicationJson => (body, None),
+    };
 
     let mut request_config = RequestConfig::new(policy.url);
     request_config.headers = headers;

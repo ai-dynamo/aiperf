@@ -609,8 +609,21 @@ fn dispatch_body_consumed(
 /// clone removes the allocation or merely relocates it. Measured, they do not:
 /// `before` and `after` both report 4.0 allocs / 551 alloc-B on the 0.5 KB body
 /// while `floor` reports 3.0 / 527, so the promotion is one 24-byte `Shared`
-/// block that survives as long as *any* second handle does. Reaching the floor
-/// means retaining no raw artifact at all, not deleting one more clone.
+/// block that survives as long as *any* second handle does.
+///
+/// Post-change the promotion is paid by the *first* clone in the chain,
+/// `endpoint_dispatch.rs:281`'s `canonical_body().clone()` for `request_payload`.
+/// Everything after it is a refcount bump, so deleting any single later clone —
+/// including the record clone in `HttpTransport::send_body` — buys nothing. The
+/// floor needs all three gone at once: gate `request_payload`, drop the record
+/// clone, and let `dispatch`/`dispatch_backpressured` consume `self` instead of
+/// cloning `wire_body` out of a still-live `prepared`. That last one is a plain
+/// ownership artifact of the transport handoff, not a raw-artifact cost.
+///
+/// These rows are a *model* — synthetic `.clone()` calls in the shape of the
+/// real chain, not a call into `prepare_request`/`dispatch`. That is sound for
+/// "does removing one clone remove an allocation", but it cannot catch a future
+/// allocation regression introduced *inside* those functions.
 #[test]
 fn chat_dispatch_wire_ownership_profile() {
     println!("\n=== L2b: to_wire(&self) vs into_wire(self) on an owned request ===");
@@ -712,10 +725,12 @@ fn chat_dispatch_wire_ownership_profile() {
             },
         ));
         // The floor the chain would reach if the wire handle were the only one:
-        // no promotion at all. The gap between this and the two rows above is
-        // the cost of retaining a raw artifact, not of any one clone.
+        // no promotion at all. The gap to the two rows above is not attributable
+        // to any single clone — it needs `request_payload` gated, the record
+        // clone dropped, *and* the dispatch handoff to consume `wire_body`
+        // rather than clone it out of a live `prepared`.
         samples.push(measure(
-            format!("[{size_label}] HTTP CHAIN floor:  wire only"),
+            format!("[{size_label}] HTTP CHAIN floor:  sole handle (needs all 3 gone)"),
             len,
             ITERS,
             || dispatch_body_consumed(&session, endpoint.as_ref(), &overrides),
