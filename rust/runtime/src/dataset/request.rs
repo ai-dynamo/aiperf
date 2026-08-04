@@ -21,8 +21,8 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
-use crate::body_plan::{BodyPlan, JsonBodyMaterializer, RequestBody};
-use crate::dataset::dataset::Dataset;
+use crate::body_plan::{BodyPlan, JsonBodyMaterializer, RequestBody, WireSplice};
+use crate::dataset::dataset::{CachedTurnPlan, Dataset};
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::{Overrides, message_wire};
 use crate::dataset::model::{
@@ -471,7 +471,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         } else {
             // Reuse the cached profiling-phase plan when the dataset precomputed
             // one for this exact `(conversation, turn)`. The
-            // cache is only populated for the default endpoint, static context
+            // cache is only populated for the default endpoint, eligible context
             // modes, and eligible dialects, so a hit is byte-identical to a fresh
             // `format_payload` here; anything else returns `None` and falls back.
             // Warmup folds the system prompt inside the formatter, so it never
@@ -483,10 +483,20 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         .cached_body_plan(session.conversation_id(), turn_index)
                 })
                 .flatten();
+            // A continuation turn's cached plan holds only its authored turns;
+            // its captured replies are supplied here, borrowed from the session,
+            // and interleaved as the body is emitted. `reply_wire_groups`
+            // rejects a cache entry this dispatch's replies do not match, which
+            // drops the whole turn back to live formatting.
+            let mut groups: SmallVec<[(u32, &[Bytes]); 4]> = SmallVec::new();
+            let cached = cached.filter(|cached| session.reply_wire_groups(cached, &mut groups));
+            let splice = cached
+                .and_then(|cached| cached.replies.as_ref())
+                .map(|replies| WireSplice::new(replies.field, &groups));
             let mut plan = match cached {
                 // Shared, not copied: a dispatch that mutates nothing dispatches
                 // straight off the dataset's plan.
-                Some(cached) => Arc::clone(cached),
+                Some(cached) => Arc::clone(&cached.plan),
                 None => {
                     let turns = session.endpoint_turns(
                         store,
@@ -537,7 +547,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 // nothing.
                 extracted = None;
             }
-            (plan.materialize_standalone()?, effective)
+            (plan.materialize_spliced(splice.as_ref())?, effective)
         };
 
         let endpoint_path = endpoint.config().as_raw().path.clone().or_else(|| {
@@ -1088,6 +1098,52 @@ impl ConversationSession {
         Ok(())
     }
 
+    /// Bind this dispatch's captured replies to the splice positions a cached
+    /// continuation plan reserved for them, answering whether the cached plan
+    /// describes this dispatch at all.
+    ///
+    /// The plan fixes every field but the message array — model, generation cap,
+    /// tools, system block, extra-body tail — so reusing it is only sound when
+    /// the replies contribute nothing beyond wires at the recorded positions.
+    /// Each condition below is a way that could stop holding, and each answers
+    /// `false` so the turn reformats live rather than dispatching a body that
+    /// silently disagrees with its history:
+    ///
+    /// - a plan with no reserved positions paired with a session that captured
+    ///   replies (or the reverse) is describing a different turn shape;
+    /// - a reply captured after some turn other than the one its position was
+    ///   measured for would land in the wrong place;
+    /// - an unlowered reply has no wires to splice at all;
+    /// - a reply carrying a model, cap, tools, system block, or extra body would
+    ///   change a field the plan already fixed.
+    ///
+    /// `groups` is left empty on a `false` answer.
+    fn reply_wire_groups<'session>(
+        &'session self,
+        cached: &CachedTurnPlan,
+        groups: &mut SmallVec<[(u32, &'session [Bytes]); 4]>,
+    ) -> bool {
+        let Some(replies) = cached.replies.as_ref() else {
+            return self.replies.is_empty();
+        };
+        if replies.positions.len() != self.replies.len() {
+            return false;
+        }
+        for (index, (position, reply)) in replies.positions.iter().zip(&self.replies).enumerate() {
+            let wires = reply.turn.lowered.as_deref();
+            match wires {
+                Some(wires) if reply.after_turn == index && reply_splices_only_wires(&reply.turn) => {
+                    groups.push((*position, wires));
+                }
+                _ => {
+                    groups.clear();
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Exact number of wire image parts the current turn's body carries, or
     /// `None` when it is not established and dispatch must parse the body.
     ///
@@ -1318,6 +1374,29 @@ pub(crate) fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
             .collect(),
         _ => vec![turn],
     }
+}
+
+/// Whether a captured reply contributes nothing to the body but its own message
+/// wires — the precondition for splicing it into a cached plan, whose other
+/// fields were fixed without it.
+///
+/// The media, role, and raw-message fields are already cleared by
+/// [`ConversationSession::capture_response`] for a lowered reply and are checked
+/// anyway: this is the one place the assumption is load-bearing, and a reply
+/// reaching here by some future path must not depend on that clearing.
+fn reply_splices_only_wires(reply: &EndpointTurn) -> bool {
+    reply.model.is_none()
+        && reply.max_tokens.is_none()
+        && reply.raw_tools.is_none()
+        && reply.raw_system.is_none()
+        && reply.extra_body.is_none()
+        && reply.raw_payload.is_none()
+        && reply.raw_token_ids.is_none()
+        && reply.raw_messages.is_none()
+        && reply.texts.is_empty()
+        && reply.images.is_empty()
+        && reply.audios.is_empty()
+        && reply.videos.is_empty()
 }
 
 /// Whether this dispatch renders its message array by splicing lowered wires,
