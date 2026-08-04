@@ -885,11 +885,27 @@ struct PreparedNodeMetadata {
 /// The exact wire image count of a graph node's request body, when the node's
 /// authored prompt program makes it knowable without parsing the serialized body.
 ///
-/// Two of the four [`PromptItem`] variants are text-only by construction:
-/// `graph::lowering` rejects any turn whose content is a non-`Text` `MediaKind`,
-/// and the `Seg`/`Text` handles resolve to payloads composed from
-/// `OpenAiChatMessage`, whose `content` is a `String`. The other two carry
-/// authored JSON that nothing on the graph path inspects for content kind:
+/// Two of the four [`PromptItem`] variants are text-only, and the invariant is
+/// held by their *producers*, not by any check on this path:
+///
+/// - `Seg` resolves to a `Payload::Message` wire. That payload is explicitly
+///   allowed to be multimodal in general (see `dataset::segment`, which folds
+///   the wire into the message identity for exactly that reason), so the
+///   guarantee here is only that every graph `Seg` handle is interned from a
+///   string-content message: `graph::recorded::trie` serializes `MessageWire {
+///   role, content: &str }` and `graph::conditional::fold` serializes
+///   `OpenAiChatMessage`, whose `content` is a `String`.
+/// - `Text` renders `{"role", "content": <utf8>}` from a `Payload::Text`.
+///
+/// A new graph adapter that mints a `Seg` from a lowered multimodal turn (the
+/// shape `dataset::dataset` interns for the scheduled path) would break this and
+/// must extend the fallback below. Note that `graph::lowering`'s `MediaKind`
+/// rejection does *not* cover it: that guards `turn.content`, while the
+/// `turn.messages` loop that emits `Seg` items only checks the payload variant
+/// and never inspects the wire.
+///
+/// The other two variants carry authored JSON that nothing on the graph path
+/// inspects for content kind:
 ///
 /// - `RawMessages`: `graph::materialize::raw_message_wires` splits an authored
 ///   `dag_jsonl` array into per-object wires and validates only object-ness.
@@ -903,11 +919,12 @@ struct PreparedNodeMetadata {
 /// `Some(0)` lets the dispatch path skip a full body reparse whose only consumer
 /// is `num_images`; `None` preserves that reparse.
 ///
-/// Endpoint field assembly cannot reintroduce images: `extra_body`/`extra` merge
-/// into the payload map, but the content root is a reserved slot whose value is
-/// discarded and refilled from the rendered wires (`BodyPlan::fill_reserved`),
-/// and `raw_system` renders to Anthropic's top-level `system` key, which the
-/// payload extractor does not walk.
+/// Endpoint field assembly does not reintroduce images for the dialects a graph
+/// node can reach: `extra_body`/`extra` merge into the payload map, but the
+/// message-array dialects (chat, responses, anthropic) reserve the content root,
+/// so the merged value is discarded and refilled from the rendered wires
+/// (`BodyPlan::fill_reserved`). `raw_system` renders to Anthropic's top-level
+/// `system` key, which the payload extractor does not walk.
 fn node_known_image_count(node: &LlmNode) -> Option<u32> {
     let carries_authored_json = node.items.iter().any(|item| {
         matches!(
