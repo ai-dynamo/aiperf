@@ -115,21 +115,23 @@ pub struct ProfileFlags {
     /// concurrency/rate are only approximate, so NOT byte-exact), or
     /// `global-hop` (every request routed through one coordinator-owned
     /// dispatcher — exact global issuance order, lowest throughput), or
-    /// `global-push` (one issuer stamps global order and pushes to workers
-    /// without awaiting any individual request, after the Python
-    /// `StickyCreditRouter`; same sticky/least-loaded worker selection as
-    /// `global-hop`, without the coordinator sitting in each request's
-    /// lifetime).
+    /// `global-push` (one issuer stamps global order and ROUTES a credit to a
+    /// worker without awaiting any individual request, after the Python
+    /// `StickyCreditRouter`; the credit carries only identity and the worker
+    /// builds the request body, so the coordinator sits in neither each
+    /// request's lifetime nor its materialization; same sticky/least-loaded
+    /// worker selection as `global-hop`).
     ///
     /// The cost gradient is very uneven, so read it as two tiers rather than
     /// three steps. `sharded` and `global` are close: on a 144-core box against
     /// a fast target, `sharded` measured ~2% over `global`, though `global`'s
     /// shared gate makes it far less repeatable run to run (±5% vs ±0.2%).
-    /// `global-hop` is in a different class: its single coordinator dispatcher
-    /// is a serialization point that saturated near 50k requests/sec, so the
-    /// same workload measured ~5.6x slower than the other two once they pushed
-    /// past that. Below the coordinator's ceiling the hop costs almost nothing
-    /// and its ordering guarantee is close to free; above it, the hop IS the
+    /// `global-hop` and `global-push` are in a different class: a single issuer
+    /// does every request's issuance work, so the run is bound by one thread.
+    /// On the same box the hop saturated near 47k requests/sec and the push near
+    /// 77k (+63%, from routing instead of awaiting and from letting the worker
+    /// build the body), against 295k for `sharded`. Below that ceiling the
+    /// ordering guarantee is close to free; above it, the issuer IS the
     /// benchmark. A slow target hides this entirely — every mode then measures
     /// the target, not the client.
     #[arg(long = "dispatch")]

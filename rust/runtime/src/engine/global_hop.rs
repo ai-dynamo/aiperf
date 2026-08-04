@@ -82,9 +82,7 @@ pub(crate) async fn run_single_coordinator(
     shared: Arc<ShardedShared>,
     profiling_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     coordinator_clock: Rc<dyn Clock>,
-    credit_materializer: Option<
-        Arc<dyn crate::engine::turn_execution::CreditMaterializerFactory>,
-    >,
+    credit_materializer: Option<Arc<dyn crate::engine::turn_execution::CreditMaterializerFactory>>,
 ) -> Result<ScheduledShardOutcome> {
     let workers = shared.workers as usize;
     ensure!(

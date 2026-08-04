@@ -31,17 +31,33 @@
 //! [`HopRouting::LeastLoaded`] can break a tie differently. Under
 //! [`HopRouting::RoundRobin`] and [`HopRouting::Sticky`] placement is identical.
 //!
-//! # Why the mode exists
+//! # Thin credits
 //!
-//! [`GlobalHop`]'s coordinator is a serialization point: it holds one future,
-//! one reply channel, and one cancellation latch per in-flight request for that
-//! request's entire lifetime. Measured on a 144-core box against
+//! A routed credit carries only identity -- conversation, session, turn index --
+//! and the WORKER builds the request body, exactly as Python's `Credit` does.
+//! The issuer's `sampler.next()` still stamps global order. This applies to
+//! single-turn sessions: a continuation's body can splice the live model reply,
+//! which a worker replaying `build_turn_at` over the dataset cannot reproduce,
+//! so multi-turn sessions keep issuer-side materialization and stay
+//! byte-identical.
+//!
+//! # Why the mode exists, and what it is NOT
+//!
+//! [`GlobalHop`]'s coordinator holds one future, one reply channel, and one
+//! cancellation latch per in-flight request for that request's entire lifetime,
+//! and materializes every body itself. Measured on a 144-core box against
 //! `aiperf-mock-server --fast` at ISL 550 / OSL 1 / concurrency 512, that capped
-//! the run near 52k requests/sec with a single thread at ~1.08 cores and the
-//! other 144 idle, while `sharded` and `global` ran the same workload at
-//! 281k-309k. Removing the coordinator from the request's lifetime is the only
-//! structural fix; the per-request allocations on that path were measured and
-//! are noise by comparison.
+//! the run near 47k requests/sec with a single thread pegged at ~1.06 cores and
+//! the other 144 idle, while `sharded` ran the same workload at 295k.
+//!
+//! This mode reaches 77k -- +63% over the hop -- but does NOT approach
+//! `sharded`, and the profile says why. Removing the coordinator from the
+//! request's lifetime was worth only ~6%: the awaited future was never the cost.
+//! Routing and enqueue are ~5% of the pegged thread. The cost is that ONE thread
+//! does every request's issuance work, and `sharded` is faster because its `W`
+//! loops each do a `1/W` share of it. The remaining removable items are the
+//! metric fold (~12%, would need per-worker captures merged at drain) and the
+//! coordinator's discarded observer (~6%).
 //!
 //! [`GlobalHop`]: crate::engine::protocol::DispatchMode::GlobalHop
 //! [`GlobalAdmission`]: super::execute::GlobalAdmission
@@ -110,18 +126,19 @@ pub(crate) async fn run_global_push(
             0,
             1,
         )?;
-        let recipe = NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
-            shared.dataset.clone(),
-            shared.primary_model.clone(),
-            shared.default_output_tokens,
-            shared.rng_root,
-            &shared.samplers,
-            shared.table_factory.coordinator_resolver()?,
-            Some(partition),
-        )?
-        .with_response_tokenizer(shared.tokenizer.clone())
-        .with_input_token_counter(shared.input_token_counter.clone())
-        .worker_recipe();
+        let recipe =
+            NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
+                shared.dataset.clone(),
+                shared.primary_model.clone(),
+                shared.default_output_tokens,
+                shared.rng_root,
+                &shared.samplers,
+                shared.table_factory.coordinator_resolver()?,
+                Some(partition),
+            )?
+            .with_response_tokenizer(shared.tokenizer.clone())
+            .with_input_token_counter(shared.input_token_counter.clone())
+            .worker_recipe();
         Some(Arc::new(NativeCreditMaterializerFactory {
             recipe,
             endpoints: shared.table_factory.clone(),

@@ -892,6 +892,122 @@ mod tests {
         );
     }
 
+    /// The prepared endpoint table factory the credit-materialization tests
+    /// resolve through, built exactly as `compose_sidecars` builds it.
+    fn prepared_table_factory(
+        registry: &AIPerfRegistry,
+    ) -> Arc<crate::engine::execute::NativePreparedEndpointTableFactory> {
+        Arc::new(
+            crate::engine::execute::NativePreparedEndpointTableFactory::new(
+                registry.endpoints().clone(),
+                endpoint_profile("http://127.0.0.1:1"),
+            ),
+        )
+    }
+
+    /// A worker rebuilding an identity-only credit must produce the SAME request
+    /// the issuer would have.
+    ///
+    /// This is the invariant the whole thin-credit split rests on, and the one
+    /// that fails silently: a worker materializing from a differently-seeded or
+    /// differently-partitioned source would still emit valid requests, just with
+    /// the wrong prompts and the wrong ISL, and every summary metric would look
+    /// plausible. Compared byte-for-byte on the serialized body, plus the
+    /// derived length and model, against the issuer's own `build_first_turn`.
+    #[test]
+    fn a_worker_rebuilds_a_deferred_credit_byte_identically() {
+        use crate::multiturn::{
+            ConversationSource, CreditIdentity, NativeDatasetConversationSource,
+        };
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let prepared = build_dataset(&registry, 8, 1);
+        let endpoints = prepared_table_factory(&registry);
+
+        let source = || {
+            NativeDatasetConversationSource::sequential_with_prepared_resolver(
+                prepared.dataset.clone(),
+                "mock-model",
+                FIXED_OSL,
+                endpoints.coordinator_resolver().unwrap(),
+            )
+            .unwrap()
+        };
+
+        // The issuer's eager path, and a worker's replay of the same credit.
+        let mut issuer = source();
+        let materializer = source()
+            .worker_recipe()
+            .build(endpoints.coordinator_resolver().unwrap());
+
+        for _ in 0..8 {
+            let sampled = issuer.next(None).unwrap();
+            let eager = sampled.build_first_turn(None).unwrap();
+            let rebuilt = materializer
+                .materialize(&CreditIdentity {
+                    conversation_id: eager.conversation_id.clone(),
+                    x_correlation_id: eager.x_correlation_id.clone(),
+                    turn_index: eager.turn_index,
+                    num_turns: eager.num_turns,
+                })
+                .expect("the worker can rebuild every credit the issuer can draw");
+            assert_eq!(
+                rebuilt.request_body, eager.request_body,
+                "worker-rebuilt body differs from the issuer's for conversation {:?}",
+                eager.conversation_id
+            );
+            assert_eq!(
+                rebuilt.input_length, eager.input_length,
+                "worker-rebuilt ISL differs for conversation {:?}",
+                eager.conversation_id
+            );
+            assert_eq!(rebuilt.max_output_tokens, eager.max_output_tokens);
+            assert_eq!(rebuilt.effective_model, eager.effective_model);
+        }
+    }
+
+    /// The issuer's identity-only turn must carry the accounting facts admission
+    /// and arrival depend on, even though it carries no body.
+    ///
+    /// If these came out zero the run would still complete and still report the
+    /// worker's ISL, but concurrency admission and the coordinator's arrival
+    /// facts would have been computed against nothing.
+    #[test]
+    fn a_deferred_turn_still_carries_its_scheduling_identity() {
+        use crate::multiturn::{ConversationSource, NativeDatasetConversationSource};
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let prepared = build_dataset(&registry, 4, 1);
+        let endpoints = prepared_table_factory(&registry);
+        let mut source = NativeDatasetConversationSource::sequential_with_prepared_resolver(
+            prepared.dataset.clone(),
+            "mock-model",
+            FIXED_OSL,
+            endpoints.coordinator_resolver().unwrap(),
+        )
+        .unwrap();
+
+        let sampled = source.next(None).unwrap();
+        let eager = sampled.build_first_turn(None).unwrap();
+        let deferred = sampled.build_deferred_turn(0, None).unwrap();
+
+        assert!(deferred.deferred_body, "the turn must be marked deferred");
+        assert!(
+            deferred.request_body.is_none(),
+            "a deferred turn must not carry a body"
+        );
+        assert_eq!(deferred.conversation_id, eager.conversation_id);
+        assert_eq!(deferred.x_correlation_id, eager.x_correlation_id);
+        assert_eq!(deferred.turn_index, eager.turn_index);
+        assert_eq!(deferred.num_turns, eager.num_turns);
+        assert_eq!(
+            deferred.input_length, eager.input_length,
+            "authored ISL must match what materialization derives, or admission \
+             and arrival accounting drift from the record"
+        );
+        assert_eq!(deferred.max_output_tokens, eager.max_output_tokens);
+    }
+
     /// `GlobalPush` aggregate-concurrency exactness.
     ///
     /// The property most at risk in a credit router: the issuer no longer holds
@@ -1049,7 +1165,7 @@ mod tests {
             })
             .collect();
         turn_indices.sort_unstable();
-        let mut expected: Vec<u64> = (0..SESSIONS).flat_map(|_| (0..TURNS as u64)).collect();
+        let mut expected: Vec<u64> = (0..SESSIONS).flat_map(|_| 0..TURNS as u64).collect();
         expected.sort_unstable();
         assert_eq!(
             turn_indices, expected,

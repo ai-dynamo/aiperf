@@ -833,10 +833,7 @@ mod tests {
             outputs_path: Some("outputs.json".into()),
             ..ArtifactSpec::default()
         };
-        assert!(
-            eligible(&outputs),
-            "outputs.json streams at completion"
-        );
+        assert!(eligible(&outputs), "outputs.json streams at completion");
 
         // inputs.json is always generated up front, so it never disqualifies.
         let inputs = ArtifactSpec {

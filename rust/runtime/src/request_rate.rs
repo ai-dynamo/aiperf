@@ -233,7 +233,8 @@ impl RequestRateWorkload {
         self.defer_single_turn_bodies = defer;
         // The cached first sample was built eagerly by the constructor; rebuild
         // it under the new policy so the very first issued turn is deferred too.
-        if defer && let Some(cached) = self.next_new_turn.borrow_mut().as_mut()
+        if defer
+            && let Some(cached) = self.next_new_turn.borrow_mut().as_mut()
             && cached.num_turns == 1
             && let Ok(deferred) = cached.session_handle().build_deferred_turn(0, None)
         {
@@ -245,7 +246,10 @@ impl RequestRateWorkload {
     /// Build the next new session's turn under this phase's materialization
     /// policy: deferred when the session is single-turn and the worker will
     /// build it, eagerly materialized otherwise.
-    fn build_new_session_turn(&self, sampled: &crate::multiturn::SampledSession) -> Result<TurnToSend> {
+    fn build_new_session_turn(
+        &self,
+        sampled: &crate::multiturn::SampledSession,
+    ) -> Result<TurnToSend> {
         if self.defer_single_turn_bodies && sampled.available_turns() == 1 {
             sampled.build_deferred_turn(0, None)
         } else {

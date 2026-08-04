@@ -48,21 +48,30 @@ pub enum DispatchMode {
     /// releases it on credit return, so `LeastLoaded` can break ties
     /// differently. Under `RoundRobin`/`Sticky` the assignment is identical.
     ///
-    /// # It does NOT lift the single-issuer ceiling
+    /// The credit itself carries only identity -- conversation, session, turn
+    /// index -- and the WORKER builds the request body, exactly as Python's
+    /// `Credit` does. This applies to single-turn sessions; a continuation's
+    /// body can splice the live model reply, which a worker replaying the
+    /// dataset cannot reproduce, so multi-turn sessions keep issuer-side
+    /// materialization and stay byte-identical.
+    ///
+    /// # It still does NOT reach `Sharded`
     ///
     /// Measured on 144 cores against `aiperf-mock-server --fast` at ISL 550 /
-    /// OSL 1 / concurrency 512: 55.5k requests/sec against `GlobalHop`'s 52.3k
-    /// and `Sharded`'s 283.6k. Removing the coordinator from each request's
-    /// lifetime is worth ~6%, because that was never where the cost was. A
-    /// profile of the pegged issuer thread attributes its per-request CPU to
-    /// dataset sampling and body materialization (~29%), issuance accounting
-    /// (~22%, of which routing and enqueue is only ~5%), and the credit-return
-    /// drain with its capture bookkeeping and metric fold (~20%). All of that is
-    /// per-request work a single issuer must do however requests reach workers;
-    /// `Sharded` is faster because its `W` loops each do a `1/W` share of it.
+    /// OSL 1 / concurrency 512: 77.4k requests/sec against `GlobalHop`'s 47.4k
+    /// (+63%) and `Sharded`'s 295.5k. Removing the coordinator from each
+    /// request's lifetime was worth only ~6% of that, because the awaited future
+    /// was never the cost; moving body materialization to the worker was worth
+    /// ~23%. A profile of the pegged issuer thread attributed its per-request
+    /// CPU to dataset sampling and body materialization (~29%), issuance
+    /// accounting (~22%, of which routing and enqueue is only ~5%), and the
+    /// credit-return drain with its capture bookkeeping and metric fold (~20%).
+    /// What remains is per-request work a single issuer must do however requests
+    /// reach workers; `Sharded` is faster because its `W` loops each do a `1/W`
+    /// share of it.
     ///
-    /// Choose this mode for exact global issuance order at lower coordinator
-    /// cost than the hop, not as a throughput mode.
+    /// Choose this mode for exact global issuance order at a much lower
+    /// coordinator cost than the hop, not as a throughput mode.
     GlobalPush,
 }
 
