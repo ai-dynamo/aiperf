@@ -883,35 +883,39 @@ struct PreparedNodeMetadata {
 }
 
 /// The exact wire image count of a graph node's request body, when the node's
-/// authored shape makes it knowable without parsing the serialized body.
+/// authored prompt program makes it knowable without parsing the serialized body.
 ///
-/// Graph prompt assembly is text-only by construction: `graph::lowering` rejects
-/// any turn whose content is a non-[`MediaKind::Text`] kind, the `Seg`/`Text`
-/// items resolve to message/text payloads composed from `OpenAiChatMessage`
-/// (string content), and `Splice` items carry a predecessor's assistant reply.
-/// The one shape that can smuggle media past that check is
-/// [`PromptItem::RawMessages`]: `graph::materialize` splits an authored
-/// `dag_jsonl` message array into per-object wires and only validates that each
-/// entry is an object, so an authored `image_url` part rides through unseen.
+/// Two of the four [`PromptItem`] variants are text-only by construction:
+/// `graph::lowering` rejects any turn whose content is a non-`Text` `MediaKind`,
+/// and the `Seg`/`Text` handles resolve to payloads composed from
+/// `OpenAiChatMessage`, whose `content` is a `String`. The other two carry
+/// authored JSON that nothing on the graph path inspects for content kind:
 ///
-/// `raw_system` and an `extra_body` that overwrites a content root (`merge_extra`
-/// inserts unconditionally) are the other two ways authored JSON reaches the
-/// `messages`/`input` arrays the payload extractor walks, so both also fall back.
+/// - `RawMessages`: `graph::materialize::raw_message_wires` splits an authored
+///   `dag_jsonl` array into per-object wires and validates only object-ness.
+/// - `Splice`: resolves against channel state, which a trace's authored
+///   `initial_state`/`replay_outputs` seeds verbatim
+///   (`graph::channel_store::channel_value` builds `EncodedMessages` straight
+///   from the authored array). A splice of a *reply* is text-only, but the node
+///   program cannot tell a seeded channel from a produced one without the
+///   trace's state, which is not available here — so any splice falls back.
 ///
 /// `Some(0)` lets the dispatch path skip a full body reparse whose only consumer
 /// is `num_images`; `None` preserves that reparse.
-fn node_known_image_count(
-    node: &LlmNode,
-    raw_system: Option<&Vec<Value>>,
-    extra_body: Option<&Map<String, Value>>,
-) -> Option<u32> {
-    let has_raw_messages = node
-        .items
-        .iter()
-        .any(|item| matches!(item, PromptItem::RawMessages { .. }));
-    let overrides_content_root = extra_body
-        .is_some_and(|extra| extra.contains_key("messages") || extra.contains_key("input"));
-    (!has_raw_messages && raw_system.is_none() && !overrides_content_root).then_some(0)
+///
+/// Endpoint field assembly cannot reintroduce images: `extra_body`/`extra` merge
+/// into the payload map, but the content root is a reserved slot whose value is
+/// discarded and refilled from the rendered wires (`BodyPlan::fill_reserved`),
+/// and `raw_system` renders to Anthropic's top-level `system` key, which the
+/// payload extractor does not walk.
+fn node_known_image_count(node: &LlmNode) -> Option<u32> {
+    let carries_authored_json = node.items.iter().any(|item| {
+        matches!(
+            item,
+            PromptItem::RawMessages { .. } | PromptItem::Splice { .. }
+        )
+    });
+    (!carries_authored_json).then_some(0)
 }
 
 struct EngineGraphSink {
@@ -1212,19 +1216,13 @@ impl EngineGraphSink {
         if let Some(prepared) = self.prepared_metadata.borrow().get(node_id).cloned() {
             return Ok(prepared);
         }
-        let raw_system = self.raw_array(node, "raw_system_handle")?;
-        let extra_body = self.raw_object(node, "extra_body_handle")?;
         let prepared = Rc::new(PreparedNodeMetadata {
             extra_headers: self.raw_string_map(node, "extra_headers_handle")?,
             raw_tools: self.raw_array(node, "tools_handle")?,
+            raw_system: self.raw_array(node, "raw_system_handle")?,
+            extra_body: self.raw_object(node, "extra_body_handle")?,
             parameters: self.raw_string_map(node, "request_parameters_handle")?,
-            known_image_count: node_known_image_count(
-                node,
-                raw_system.as_ref(),
-                extra_body.as_ref(),
-            ),
-            raw_system,
-            extra_body,
+            known_image_count: node_known_image_count(node),
         });
         self.prepared_metadata
             .borrow_mut()
@@ -1360,14 +1358,15 @@ mod tests {
             PromptItem::Seg {
                 seg: Handle::new(0),
             },
-            PromptItem::Splice {
-                splice: "reply".into(),
+            PromptItem::Text {
+                text: Handle::new(1),
+                role: "user".into(),
             },
         ]);
         assert_eq!(
-            node_known_image_count(&node, None, None),
+            node_known_image_count(&node),
             Some(0),
-            "lowering rejects non-text media, so a Seg/Splice program carries no images"
+            "lowering rejects non-text media, so a Seg/Text program carries no images"
         );
     }
 
@@ -1378,20 +1377,19 @@ mod tests {
         let node = node_with_items(vec![PromptItem::RawMessages {
             raw_messages: Handle::new(0),
         }]);
-        assert_eq!(node_known_image_count(&node, None, None), None);
+        assert_eq!(node_known_image_count(&node), None);
     }
 
     #[test]
-    fn an_extra_body_that_overwrites_the_messages_root_falls_back() {
-        let node = node_with_items(vec![PromptItem::Seg {
-            seg: Handle::new(0),
+    fn a_splice_falls_back_because_a_seeded_channel_can_carry_media() {
+        // `channel_value` seeds a messages-typed channel from a trace's authored
+        // `initial_state` verbatim, so `@messages` can splice in `image_url`
+        // parts. A splice of a reply would be text-only, but the prompt program
+        // alone cannot tell the two apart.
+        let node = node_with_items(vec![PromptItem::Splice {
+            splice: "messages".into(),
         }]);
-        let overriding = Map::from_iter([("messages".to_string(), serde_json::json!([]))]);
-        assert_eq!(node_known_image_count(&node, None, Some(&overriding)), None);
-
-        // An unrelated extra key does not disturb the known count.
-        let benign = Map::from_iter([("ignore_eos".to_string(), serde_json::Value::Bool(true))]);
-        assert_eq!(node_known_image_count(&node, None, Some(&benign)), Some(0));
+        assert_eq!(node_known_image_count(&node), None);
     }
 
     #[derive(Debug)]
