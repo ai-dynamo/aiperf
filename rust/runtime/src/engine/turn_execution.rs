@@ -907,8 +907,16 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
     worker_id: usize,
     started: std::sync::mpsc::SyncSender<std::result::Result<(), String>>,
 ) -> Result<()> {
+    // IO + time only, deliberately not enable_all(). enable_all() also starts
+    // the signal driver, and tokio hangs child-process orphan reaping off it:
+    // every park runs OrphanQueueImpl::reap_orphans. A worker runtime parks
+    // once per idle turn of the request loop, so at benchmark rates that sweep
+    // measured 4.35% of client CPU in a frame-pointer profile -- for a queue
+    // that is always empty, because workers spawn no child processes and
+    // handle no signals (the CLI process owns both).
     let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+        .enable_io()
+        .enable_time()
         .build()
     {
         Ok(runtime) => runtime,
