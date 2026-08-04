@@ -1540,7 +1540,10 @@ mod tests {
                 "unfilled reserved slot",
                 BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap(),
             ),
-            ("non-spliceable segment", BodyPlan::new().segment("f", tokens)),
+            (
+                "non-spliceable segment",
+                BodyPlan::new().segment("f", tokens),
+            ),
         ];
 
         let mut tail = Overrides::new();
