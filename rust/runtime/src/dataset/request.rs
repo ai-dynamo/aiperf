@@ -2540,6 +2540,93 @@ mod tests {
     }
 
     #[test]
+    fn reported_metadata_matches_the_dispatched_body_across_overrides() {
+        // `effective_from_plan` reports what the *plan* carries once overrides are
+        // folded in, not what the override set asked for — the two differ whenever
+        // a later cap name shadows an earlier one, or the plan declares a field the
+        // overrides do not. Reading the override set instead would make the runtime
+        // dispatch one body and record different metadata, silently.
+        for endpoint_id in ["chat", "responses", "messages"] {
+            for with_max_tokens in [false, true] {
+                for overrides_variant in 0..3 {
+                    let mut pool = SegmentPool::new();
+                    let turns = vec![text_turn(&mut pool, b"hello", with_max_tokens, false)];
+                    let mut data = single_conversation_dataset(
+                        ConversationContextMode::MessageArrayWithResponses,
+                        turns,
+                        pool,
+                    );
+                    let endpoint = prepare_endpoint(endpoint_id);
+                    let lowerer =
+                        ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+                    data.lower_messages_for_endpoint(&lowerer).unwrap();
+                    data.precompute_body_plans(endpoint.as_ref(), "primary-model")
+                        .unwrap();
+
+                    let overrides = match overrides_variant {
+                        0 => Overrides::new(),
+                        1 => {
+                            let mut overrides = Overrides::new();
+                            overrides.set_model("override-model");
+                            overrides.set_stream(true);
+                            overrides
+                        }
+                        // `max_tokens` is read before `max_completion_tokens`, so a
+                        // plan carrying the latter shadows this override.
+                        _ => {
+                            let mut overrides = Overrides::new();
+                            overrides.set_max_tokens("max_tokens", 99);
+                            overrides
+                        }
+                    };
+
+                    let mut session =
+                        ConversationSession::new(Arc::new(data), SessionId::from("session"))
+                            .unwrap();
+                    session.advance_to(0).unwrap();
+                    let request = session
+                        .materialize_prepared(
+                            &EndpointRequestMaterializer,
+                            endpoint.as_ref(),
+                            "primary-model",
+                            CreditPhase::Profiling,
+                            &overrides,
+                        )
+                        .unwrap();
+                    let body: Value = serde_json::from_slice(&request.body).unwrap();
+                    let case = format!(
+                        "endpoint={endpoint_id} max_tokens={with_max_tokens} overrides={overrides_variant}"
+                    );
+
+                    if let Some(model) = body.get("model") {
+                        assert_eq!(
+                            *model,
+                            Value::String(request.model.clone()),
+                            "model: {case}"
+                        );
+                    }
+                    if let Some(stream) = body.get("stream") {
+                        assert_eq!(*stream, Value::Bool(request.streaming), "stream: {case}");
+                    }
+                    // The reported cap is the last of these the body declares.
+                    let dispatched_cap =
+                        ["max_tokens", "max_completion_tokens", "max_output_tokens"]
+                            .iter()
+                            .filter_map(|field| body.get(*field))
+                            .next_back();
+                    if let Some(cap) = dispatched_cap {
+                        assert_eq!(
+                            *cap,
+                            Value::from(request.max_tokens.unwrap()),
+                            "max tokens: {case}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn warmup_phase_falls_back_to_live_format_not_profiling_cache() {
         // A system-role first turn makes warmup differ from profiling: warmup folds
         // the conversation system prompt into that first message, while profiling
