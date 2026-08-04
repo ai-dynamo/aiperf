@@ -205,6 +205,8 @@ Ground truth never crosses the wire in AIPerf (it lives only in the accuracy wor
 
 By default a row is keyed on its prompt. Only `match_key` (alias `match`) overrides that, and it must be a fragment that actually appears in the wire prompt — a bare `id` column is **not** used as the key, since dataset ids rarely appear in the prompt and keying on one silently leaves every request unmatched. Rows whose keys collide after normalization are last-wins, and the dropped rows are logged.
 
+**Code-execution graders** (`lcb_codegeneration`) need gold that actually runs, since the grader executes it against real test cases. See [`tests/scripts/lcb_oracle/`](../scripts/lcb_oracle/README.md) for a generator that builds a validated LiveCodeBench oracle without solving the problems, plus the end-to-end recipe.
+
 **Adversarial shapes** (`--accuracy-adversarial-rate`): leading whitespace, trailing prose, wrong case, reasoning-only content, `\boxed{}` wrap, multiple conflicting answers, unicode suffix, and a streaming `"object": null` SSE frame before `[DONE]`.
 
 **Live oracle:**
