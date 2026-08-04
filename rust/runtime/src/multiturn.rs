@@ -3461,8 +3461,7 @@ mod tests {
             "sequential",
             dataset.metadata().default_context_mode,
         )
-        .err()
-        .expect("a turn-less conversation must not construct a dataset");
+        .expect_err("a turn-less conversation must not construct a dataset");
         assert!(
             error.to_string().contains("contains no turns"),
             "unexpected rejection: {error}"
