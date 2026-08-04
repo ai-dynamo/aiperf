@@ -14,6 +14,8 @@ position.
 
 import mmap
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -41,7 +43,7 @@ def _make_conversation(index: int) -> Conversation:
 
 
 async def _build_client(
-    tmp_path, benchmark_id: str, count: int
+    tmp_path: Path, benchmark_id: str, count: int
 ) -> MemoryMapDatasetClient:
     """Write ``count`` conversations and open a client over them."""
     store = MemoryMapDatasetBackingStore(
@@ -61,7 +63,7 @@ async def _build_client(
 
 @pytest.mark.asyncio
 async def test_get_conversation_concurrent_readers_returns_own_bytes(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Concurrent get_conversation() calls must not read each other's bytes."""
     monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
@@ -106,19 +108,19 @@ class _InterleavingMmap:
         self._real.seek(self._foreign_offset)
         return self._real.read(size)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: slice | int) -> bytes | int:
         return self._real[item]
 
     def __len__(self) -> int:
         return len(self._real)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._real, name)
 
 
 @pytest.mark.asyncio
 async def test_get_conversation_ignores_competing_seek_between_seek_and_read(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An interleaved foreign seek must not change what get_conversation reads.
 
@@ -143,7 +145,7 @@ async def test_get_conversation_ignores_competing_seek_between_seek_and_read(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("prefault", [True, False])  # fmt: skip
 async def test_get_conversation_matches_written_data_under_prefault_setting(
-    tmp_path, monkeypatch, prefault: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prefault: bool
 ) -> None:
     """Reads are identical whether or not pages were prefaulted at open."""
     monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
