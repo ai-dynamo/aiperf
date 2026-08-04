@@ -88,6 +88,36 @@ def test_dedicated_match_key_matches_a_stable_fragment() -> None:
     assert decision.content == "C"
 
 
+@pytest.mark.parametrize("alias", ["id", "key"])  # fmt: skip
+def test_generic_id_columns_do_not_hijack_the_match_key(alias: str) -> None:
+    """A plain ``id``/``key`` column must not replace the prompt as the match key.
+
+    Regression: these are near-universal in JSONL datasets and never appear in
+    the wire prompt, so honouring them sent every request unmatched — the mock
+    served corpus text and the run reported 0% with no diagnostic.
+    """
+    body = orjson.dumps(
+        {"text": "Capital of France?", "ground_truth": "Paris", alias: "q42"}
+    ).decode()
+    ds = _dataset(body, match_mode=AccuracyMatch.SUBSTRING)
+    assert ds.lookup("Please answer. Capital of France?") is not None
+
+
+def test_duplicate_match_keys_are_reported(caplog: pytest.LogCaptureFixture) -> None:
+    """Normalization collapses whitespace, so near-duplicate prompts collide and
+    the later row silently won. Keep last-wins, but say so."""
+    body = (
+        '{"text": "same q", "ground_truth": "A"}\n'
+        '{"text": "same  q", "ground_truth": "B"}'
+    )
+    with caplog.at_level("WARNING"):
+        ds = _dataset(body)
+    assert len(ds) == 1
+    assert ds.lookup("same q").gold == "B"  # type: ignore[union-attr]
+    assert "duplicate match key" in caplog.text
+    assert "1 row(s) dropped" in caplog.text
+
+
 def test_verdict_is_stable_across_prompt_wrappings() -> None:
     body = '{"prompt": "the q", "answer": "B"}'
     ds = _dataset(

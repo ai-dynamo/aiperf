@@ -1490,6 +1490,22 @@ async def accuracy_status() -> dict[str, Any]:
     }
 
 
+@app.post("/accuracy/reset")
+async def accuracy_reset() -> dict[str, Any]:
+    """Zero the live accuracy tally, keeping the loaded dataset.
+
+    Lets a caller scope the tally to one phase (warmup vs profile, or one arm of
+    an A/B) without restarting the server, which would otherwise be the only way
+    to clear it.
+    """
+    from aiperf_mock_server.accuracy import get_accuracy_dataset, get_accuracy_live
+
+    if get_accuracy_dataset() is None:
+        return {"enabled": False, "reset": False}
+    get_accuracy_live().reset()
+    return {"enabled": True, "reset": True}
+
+
 @app.get("/v1/models")
 async def list_models() -> dict[str, Any]:
     """OpenAI-compatible models list. Respects models_ready_delay_seconds and

@@ -12,6 +12,7 @@ adversarial responses. Seeding uses ``random.Random`` derived from
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
 import re
 import threading
@@ -21,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import orjson
+
+logger = logging.getLogger(__name__)
 
 
 class AccuracyFormat(StrEnum):
@@ -285,6 +288,7 @@ class AccuracyDataset:
         """Parse a JSONL body into an ``AccuracyDataset``."""
         ci = settings.match_mode.case_insensitive()
         exact: dict[str, Entry] = {}
+        duplicates = 0
         for lineno, raw_line in enumerate(body.splitlines(), start=1):
             line = raw_line.strip()
             if not line:
@@ -315,18 +319,39 @@ class AccuracyDataset:
                     s = _value_to_string(item)
                     if s is not None:
                         choices.append(s)
-            match_base = _value_to_string(
-                _field(value, ("match_key", "match", "key", "id"))
-            )
+            # Only explicit opt-ins override the prompt as the match key. Generic
+            # columns like "id" are NOT accepted: they are near-universal in JSONL
+            # datasets and never appear in the wire prompt, so honouring them
+            # silently sent every request unmatched with no diagnostic.
+            match_base = _value_to_string(_field(value, ("match_key", "match")))
             if match_base is None:
                 match_base = prompt
             key = norm_key(match_base, ci)
+            if key in exact:
+                # Normalization collapses whitespace, so near-duplicate prompts
+                # can collide. Silently overwriting drops a row and its gold.
+                duplicates += 1
+                logger.warning(
+                    "accuracy dataset line %d: duplicate match key %r overwrites "
+                    "an earlier row (gold %r -> %r)",
+                    lineno,
+                    key[:80],
+                    exact[key].gold[:40],
+                    gold[:40],
+                )
             exact[key] = Entry(
                 key_norm=key,
                 gold=gold,
                 task=task,
                 format=fmt,
                 choices=choices,
+            )
+        if duplicates:
+            logger.warning(
+                "accuracy dataset: %d row(s) dropped to duplicate match keys; "
+                "%d unique rows loaded",
+                duplicates,
+                len(exact),
             )
         if not exact:
             raise ValueError(

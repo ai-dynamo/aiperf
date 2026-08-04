@@ -159,6 +159,43 @@ def test_accuracy_endpoint_disabled_without_dataset(test_client: TestClient) -> 
     assert status == {"enabled": False}
 
 
+def test_accuracy_reset_zeroes_the_tally_and_keeps_the_dataset(
+    test_client: TestClient, tmp_path: Path
+) -> None:
+    """A caller can scope the tally to one phase without restarting the server."""
+    _load_accuracy(tmp_path, '{"text": "the q", "ground_truth": "B"}', correct_rate=1.0)
+    _chat(test_client, "the q")
+    _chat(test_client, "unmatched prompt")
+    assert test_client.get("/accuracy").json()["matched"] == 1
+
+    assert test_client.post("/accuracy/reset").json() == {
+        "enabled": True,
+        "reset": True,
+    }
+
+    status = test_client.get("/accuracy").json()
+    assert status["enabled"] is True
+    assert status["matched"] == 0
+    assert status["correct"] == 0
+    assert status["unmatched"] == 0
+    assert status["tasks"] == {}
+    assert status["config"]["dataset_rows"] == 1  # dataset survives the reset
+
+    # and the mock still serves from the dataset afterwards
+    data = _chat(test_client, "the q")
+    assert isinstance(data, dict)
+    assert data["choices"][0]["message"]["content"] == "The answer is (B)"
+    assert test_client.get("/accuracy").json()["matched"] == 1
+
+
+def test_accuracy_reset_without_dataset_is_a_noop(test_client: TestClient) -> None:
+    set_accuracy_state(None, None)
+    assert test_client.post("/accuracy/reset").json() == {
+        "enabled": False,
+        "reset": False,
+    }
+
+
 def test_adversarial_null_object_frame_is_served_in_stream(
     test_client: TestClient, tmp_path: Path
 ) -> None:

@@ -201,7 +201,9 @@ Ground truth never crosses the wire in AIPerf (it lives only in the accuracy wor
 
 **Wrong answers:** `--accuracy-correct-rate` below `1.0` serves a deliberately wrong answer for the corresponding share of prompts. When a `passthrough` / `exact_match` gold is a fenced code block (code-execution graders such as `lcb_codegeneration`), the wrong answer replaces the code *inside* the fence rather than appending after it — graders slice between the last two fence lines and discard trailing text, so an appended suffix would leave the extracted program identical to the gold and still grade correct.
 
-**Matching:** all modes whitespace-normalize. `substring` (default) falls back to the longest row key contained in the request (few-shot / system-prompt wrapping). Per-row `match_key` matches a stable fragment. Verdicts are deterministic in `(--random-seed, key_norm)`.
+**Matching:** all modes whitespace-normalize. `substring` (default) falls back to the longest row key contained in the request (few-shot / system-prompt wrapping). Verdicts are deterministic in `(--random-seed, key_norm)`.
+
+By default a row is keyed on its prompt. Only `match_key` (alias `match`) overrides that, and it must be a fragment that actually appears in the wire prompt — a bare `id` column is **not** used as the key, since dataset ids rarely appear in the prompt and keying on one silently leaves every request unmatched. Rows whose keys collide after normalization are last-wins, and the dropped rows are logged.
 
 **Adversarial shapes** (`--accuracy-adversarial-rate`): leading whitespace, trailing prose, wrong case, reasoning-only content, `\boxed{}` wrap, multiple conflicting answers, unicode suffix, and a streaming `"object": null` SSE frame before `[DONE]`.
 
@@ -210,6 +212,11 @@ Ground truth never crosses the wire in AIPerf (it lives only in the accuracy wor
 ```bash
 curl -s http://127.0.0.1:8000/accuracy | python3 -m json.tool
 # {"enabled": true, "matched": 12, "correct": 6, "accuracy": 0.5, ...}
+
+# zero the tally between phases (warmup vs profile, or two arms of an A/B)
+# without restarting the server; the loaded dataset is kept
+curl -s -X POST http://127.0.0.1:8000/accuracy/reset
+# {"enabled": true, "reset": true}
 ```
 
 The same tally is published on `GET /metrics` as `aiperf_mock_accuracy_*` (`matched_total`, `correct_total`, `incorrect_total`, `unmatched_total`, `adversarial_total`, `cot_total`, `ratio`, plus per-task series).
