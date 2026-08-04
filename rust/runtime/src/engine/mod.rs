@@ -33,6 +33,7 @@ pub mod dry_run;
 pub mod execute;
 pub mod execution_factories;
 pub mod global_hop;
+pub mod global_push;
 pub mod gpu_telemetry;
 pub mod graph_execution;
 pub mod graph_input;

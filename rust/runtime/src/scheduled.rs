@@ -200,6 +200,34 @@ pub trait TurnDispatcher {
         ))
     }
 
+    /// Whether this dispatcher can take a credit and return it out of band
+    /// instead of resolving one future per request (`--dispatch global-push`).
+    fn supports_credit_dispatch(&self) -> bool {
+        false
+    }
+
+    /// Route one credit and return immediately, after Python's
+    /// `StickyCreditRouter::send_credit`.
+    ///
+    /// The worker owns the request from here; its report arrives later on
+    /// [`Self::next_credit_report`]. Failing here means no worker took the
+    /// credit, so the caller — not this dispatcher — settles it.
+    fn send_credit(&self, _turn: TurnToSend) -> Result<()> {
+        Err(anyhow!(
+            "selected turn dispatcher does not accept dispatched credits"
+        ))
+    }
+
+    /// Receive the next out-of-band worker report, or `None` once no worker can
+    /// report again.
+    async fn next_credit_report(&self) -> Option<TurnCreditReport> {
+        None
+    }
+
+    /// Ask every worker to abandon the credit it holds; each is still returned
+    /// with a cancelled terminal.
+    fn cancel_credits(&self) {}
+
     /// Warm the dispatch path with one discarded round-trip before timed
     /// issuance, so the first authored request is not delayed relative to its
     /// schedule by one-time setup. The default is a no-op; real dispatchers warm
@@ -207,6 +235,28 @@ pub trait TurnDispatcher {
     async fn prewarm(&self, _turn: TurnToSend) -> Result<()> {
         Ok(())
     }
+}
+
+/// One worker's out-of-band report about a credit the issuer routed to it.
+///
+/// The transport-neutral projection of
+/// [`WorkerCreditReport`](crate::transport::core::WorkerCreditReport), after
+/// Python's `WorkerToRouterMessage`. Reports for every outstanding credit are
+/// interleaved on one stream, so each carries the request `uuid`; per-credit
+/// ordering is preserved, so `FirstToken` always precedes `CreditReturn`.
+pub struct TurnCreditReport {
+    /// Request this report belongs to.
+    pub uuid: Uuid,
+    /// What the worker observed.
+    pub kind: TurnCreditReportKind,
+}
+
+/// The kinds of report a worker sends back about a credit.
+pub enum TurnCreditReportKind {
+    /// First token observed, in nanoseconds since dispatch start.
+    FirstToken(i64),
+    /// The credit is returned with its terminal result. Always last for a uuid.
+    CreditReturn(Box<Result<TurnDispatchOutcome>>),
 }
 
 /// Post-dispatch record-processing seam shared by ordinary workloads.
@@ -459,6 +509,28 @@ pub struct ScheduledRuntime {
     record_processor_tasks: RefCell<Vec<tokio::task::JoinHandle<()>>>,
     record_processor_errors: RefCell<Vec<String>>,
     parallel_report_reduction: Cell<bool>,
+    credit_dispatch: Cell<bool>,
+    outstanding_credits: RefCell<FxHashMap<Uuid, OutstandingCredit>>,
+}
+
+/// Everything the issuer must keep for a credit a worker now owns.
+///
+/// The ordinary path parks all of this inside one spawned future per request.
+/// Credit dispatch cannot: it returns to the scheduling loop the moment the
+/// credit is routed, so the continuation lives here until the worker returns
+/// the credit and [`ScheduledRuntime::settle_turn`] runs it.
+struct OutstandingCredit {
+    credit: IssuedCredit,
+    record_index: usize,
+    /// Shared rather than owned so the return loop can clone it out and drop the
+    /// map borrow before calling it — the handler releases a prefill slot, which
+    /// re-enters the runtime.
+    on_first_token: Rc<dyn Fn(i64)>,
+    on_complete: CompletionHandler,
+    /// Keeps this credit inside the scheduler's drain accounting for as long as
+    /// a worker holds it. Without it the phase's `wait_idle` barrier would see
+    /// an idle scheduler with requests still on the wire.
+    _enrolment: crate::scheduler::ExternalTask,
 }
 
 impl ScheduledRuntime {
@@ -553,7 +625,266 @@ impl ScheduledRuntime {
             record_processor_tasks: RefCell::new(Vec::new()),
             record_processor_errors: RefCell::new(Vec::new()),
             parallel_report_reduction: Cell::new(false),
+            credit_dispatch: Cell::new(false),
+            outstanding_credits: RefCell::new(FxHashMap::default()),
         })
+    }
+
+    /// Feed this phase's own collector/native-metrics observers the issue-time
+    /// facts. Skipped when nothing reads them (see
+    /// [`Self::feeds_local_measurement`]).
+    fn register_local_measurement(
+        &self,
+        turn: &TurnToSend,
+        record_index: usize,
+        session_num: u64,
+        issued_ns: i64,
+    ) {
+        self.native_metrics.register_metadata(
+            turn.uuid,
+            RequestMetricMetadata {
+                request_index: Some(record_index),
+                session_num: Some(session_num),
+                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
+                conversation_id: self
+                    .native_metrics
+                    .retains_record_dimensions()
+                    .then(|| turn.conversation_id.clone()),
+                correlation_id: Some(if self.native_metrics.retains_record_dimensions() {
+                    turn.request_correlation_id.clone()
+                } else {
+                    String::new()
+                }),
+                audio_duration_s: turn.audio_duration_seconds,
+                has_credit_timestamp: self.credit_latency_enabled.get(),
+                dimensions: self.dispatcher.inference_dimensions(turn),
+                ..RequestMetricMetadata::default()
+            },
+        );
+        self.observer.on_arrival(
+            turn.uuid,
+            (issued_ns - self.start_ns) as f64 / 1_000_000.0,
+            turn.input_length,
+            turn.max_output_tokens,
+        );
+    }
+
+    /// Whether this phase's own collector and native-metrics observers are read
+    /// by anyone.
+    ///
+    /// Under `workers > 1` the authoritative report is built from the DRAINED
+    /// WORKER records, and the pipeline reads only this runtime's timing
+    /// recorder off the phase report (`execute_scheduled_pipeline`'s
+    /// `issued_times`) -- the compatibility and native-metric planes are
+    /// computed per request and then thrown away. On a single issuer that waste
+    /// lands entirely on the one thread that bounds the run: ~6% of it, measured.
+    fn feeds_local_measurement(&self) -> bool {
+        !self.credit_dispatch.get()
+    }
+
+    /// Route issued turns as credits instead of resolving one dispatch future
+    /// per request (`--dispatch global-push`).
+    ///
+    /// Rejected unless the injected dispatcher can actually return credits, so
+    /// a mis-wired pipeline fails at setup instead of silently running the
+    /// ordinary path under a mode that promises otherwise.
+    pub(crate) fn enable_credit_dispatch(&self) -> Result<()> {
+        if !self.dispatcher.supports_credit_dispatch() {
+            return Err(anyhow!(
+                "credit dispatch was requested but the selected turn dispatcher does not \
+                 support it"
+            ));
+        }
+        self.credit_dispatch.set(true);
+        Ok(())
+    }
+
+    /// Drive returned credits until the placement's return stream ends.
+    ///
+    /// One loop for the whole phase, in place of one parked future per request:
+    /// this is the entire point of credit dispatch. It must not park — every
+    /// outstanding credit's settlement is serialized behind it — which is why
+    /// the issuance split below refuses live response streaming and why the
+    /// completion callbacks it runs schedule continuations rather than awaiting
+    /// admission for them.
+    pub(crate) async fn run_credit_returns(self: &Rc<Self>) {
+        while let Some(report) = self.dispatcher.next_credit_report().await {
+            match report.kind {
+                TurnCreditReportKind::FirstToken(ttft_ns) => {
+                    let Some(record_index) = self
+                        .outstanding_credits
+                        .borrow()
+                        .get(&report.uuid)
+                        .map(|outstanding| outstanding.record_index)
+                    else {
+                        continue;
+                    };
+                    self.recorder.borrow_mut().first_token(
+                        record_index,
+                        self.clock.now_ns(),
+                        self.start_ns,
+                        ttft_ns,
+                    );
+                    if let Some(observer) = self.turn_lifecycle_observer.borrow().as_ref() {
+                        observer.on_first_token(report.uuid);
+                    }
+                    // Cloned out (one `Rc` bump) so the map borrow ends before
+                    // the callback runs: releasing a prefill slot re-enters the
+                    // runtime and would otherwise hit a live borrow.
+                    let on_first_token = self
+                        .outstanding_credits
+                        .borrow()
+                        .get(&report.uuid)
+                        .map(|outstanding| outstanding.on_first_token.clone());
+                    if let Some(on_first_token) = on_first_token {
+                        on_first_token(ttft_ns);
+                    }
+                }
+                TurnCreditReportKind::CreditReturn(result) => {
+                    let Some(outstanding) =
+                        self.outstanding_credits.borrow_mut().remove(&report.uuid)
+                    else {
+                        // A credit returned twice, or one already settled by the
+                        // routing-failure path. Neither should happen; dropping
+                        // it is still the only safe response.
+                        tracing::debug!(uuid = %report.uuid, "credit returned with no outstanding entry");
+                        continue;
+                    };
+                    let outcome = self.credit_outcome(&outstanding.credit, *result);
+                    self.settle_turn(
+                        outstanding.credit,
+                        outstanding.record_index,
+                        outcome,
+                        outstanding.on_complete,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    /// Ask the placement to abandon every credit a worker still holds.
+    ///
+    /// Grace escalation's counterpart to `cancel_all` for the ordinary path:
+    /// there is no local future to drop, so the request is cancelled at the
+    /// worker and settles through the normal return.
+    pub(crate) fn cancel_outstanding_credits(&self) {
+        if self.credit_dispatch.get() {
+            self.dispatcher.cancel_credits();
+        }
+    }
+
+    /// Whether this phase routes turns as credits.
+    pub fn uses_credit_dispatch(&self) -> bool {
+        self.credit_dispatch.get()
+    }
+
+    /// Normalize a returned credit's result into the terminal outcome the rest
+    /// of the runtime consumes, mirroring the ordinary path's failure shape.
+    fn credit_outcome(
+        &self,
+        credit: &IssuedCredit,
+        result: Result<TurnDispatchOutcome>,
+    ) -> TurnDispatchOutcome {
+        match result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tracing::warn!(
+                    uuid = %credit.turn.uuid,
+                    error = %error,
+                    "scheduled turn dispatch failed"
+                );
+                self.observer
+                    .on_terminal(credit.turn.uuid, ReplayTerminalStatus::Failed);
+                TurnDispatchOutcome {
+                    start_ns: credit.issued_ns,
+                    end_ns: self.clock.now_ns(),
+                    terminal: ReplayTerminalStatus::Failed,
+                    response_text: String::new(),
+                    model_response: ModelResponseMetadata {
+                        error_kind: Some("turn_dispatch_error".to_string()),
+                        error_message: Some(error.to_string()),
+                        ..ModelResponseMetadata::default()
+                    },
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    http: RequestTrace::default(),
+                }
+            }
+        }
+    }
+
+    /// Terminal accounting shared by the ordinary dispatch future and the
+    /// credit-return loop: lifecycle observer, timing record, authoritative
+    /// response facts, session cleanup, the workload's completion callback, and
+    /// finally the detached record processors.
+    async fn settle_turn(
+        self: &Rc<Self>,
+        credit: IssuedCredit,
+        record_index: usize,
+        outcome: TurnDispatchOutcome,
+        on_complete: CompletionHandler,
+    ) {
+        let turn_uuid = credit.turn.uuid;
+        if let Some(observer) = self.turn_lifecycle_observer.borrow().as_ref() {
+            observer.on_terminal(&credit.turn, &outcome);
+        }
+        self.recorder
+            .borrow_mut()
+            .terminal(record_index, &outcome, self.start_ns);
+        if self.feeds_local_measurement() {
+            self.native_metrics.record_response(
+                turn_uuid,
+                NativeResponseMetadata {
+                    start_ns: Some(outcome.start_ns),
+                    end_ns: Some(outcome.end_ns),
+                    prompt_tokens: outcome.prompt_tokens,
+                    completion_tokens: outcome.completion_tokens,
+                    http: outcome.http,
+                },
+            );
+        }
+        let processor_input = (!self.record_processors.borrow().is_empty()).then(|| {
+            (
+                credit.clone(),
+                outcome.clone(),
+                credit.turn.request_correlation_id.clone(),
+            )
+        });
+        if credit.is_final_turn() {
+            self.session_url_indices
+                .borrow_mut()
+                .remove(&credit.turn.x_correlation_id);
+        }
+        on_complete(credit, outcome).await;
+        // Return the credit/release admission before downstream processing.
+        // The detached local task also keeps grading latency out of the
+        // scheduler's dispatch-drain boundary and performance wall time.
+        if let Some((processor_credit, processor_outcome, correlation_id)) = processor_input {
+            if self.credit_dispatch.get() {
+                // Credit dispatch already settles from a single loop AFTER credit
+                // return, so detaching buys nothing here and costs a spawned task
+                // plus a retained `JoinHandle` per request -- a Vec that grows to
+                // one entry per request of the run, on the thread that bounds it.
+                // Every in-tree processor folds or stages synchronously; a future
+                // processor that blocks would stall this loop, which is why the
+                // ordinary path keeps its detached task.
+                self.run_record_processing(
+                    processor_credit,
+                    processor_outcome,
+                    turn_uuid,
+                    correlation_id,
+                )
+                .await;
+            } else {
+                self.spawn_record_processing(
+                    processor_credit,
+                    processor_outcome,
+                    turn_uuid,
+                    correlation_id,
+                );
+            }
+        }
     }
 
     /// Configure post-drain parallel reduction of independent report planes.
@@ -598,6 +929,25 @@ impl ScheduledRuntime {
             }
         });
         self.record_processor_tasks.borrow_mut().push(task);
+    }
+
+    /// Run the terminal record processors on the calling task, recording any
+    /// error exactly as the detached variant does.
+    async fn run_record_processing(
+        &self,
+        credit: IssuedCredit,
+        outcome: TurnDispatchOutcome,
+        request_id: Uuid,
+        correlation_id: String,
+    ) {
+        let processors = self.record_processors.borrow().clone();
+        for processor in processors {
+            if let Err(error) = processor.process(&credit, &outcome).await {
+                self.record_processor_errors.borrow_mut().push(format!(
+                    "request {request_id} correlation {correlation_id:?}: {error:#}"
+                ));
+            }
+        }
     }
 
     pub(crate) async fn wait_record_processors(&self) -> Result<()> {
@@ -847,34 +1197,55 @@ impl ScheduledRuntime {
             scheduled_ns,
             issued_ns,
         );
-        self.native_metrics.register_metadata(
-            turn.uuid,
-            RequestMetricMetadata {
-                request_index: Some(record_index),
-                session_num: Some(session_num),
-                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
-                conversation_id: self
-                    .native_metrics
-                    .retains_record_dimensions()
-                    .then(|| turn.conversation_id.clone()),
-                correlation_id: Some(if self.native_metrics.retains_record_dimensions() {
-                    turn.request_correlation_id.clone()
-                } else {
-                    String::new()
-                }),
-                audio_duration_s: turn.audio_duration_seconds,
-                has_credit_timestamp: self.credit_latency_enabled.get(),
-                dimensions: self.dispatcher.inference_dimensions(&turn),
-                ..RequestMetricMetadata::default()
-            },
-        );
-        self.observer.on_arrival(
-            turn.uuid,
-            (issued_ns - self.start_ns) as f64 / 1_000_000.0,
-            turn.input_length,
-            turn.max_output_tokens,
-        );
+        if self.feeds_local_measurement() {
+            self.register_local_measurement(&turn, record_index, session_num, issued_ns);
+        }
         let credit = IssuedCredit::from_issued_turn(credit_id, issued_ns, &turn, issued_url_index);
+
+        // Credit dispatch: route the turn and return to the scheduling loop
+        // without leaving a future behind. Per-request cancellation and live
+        // response streaming both require the coordinator to stay inside the
+        // request's lifetime, so a turn using either falls back to the ordinary
+        // path below rather than silently losing the behaviour.
+        if self.credit_dispatch.get() && cancellation.is_none() && responses.is_none() {
+            let turn_uuid = turn.uuid;
+            let outstanding = OutstandingCredit {
+                credit,
+                record_index,
+                on_first_token: Rc::from(on_first_token),
+                on_complete,
+                _enrolment: self.scheduler.begin_external_task(),
+            };
+            self.outstanding_credits
+                .borrow_mut()
+                .insert(turn_uuid, outstanding);
+            if let Err(error) = self.dispatcher.send_credit(turn) {
+                // No worker took the credit, so no worker will return it. Settle
+                // it here, off the issuing call, so the failure follows the same
+                // terminal path a worker-reported failure does.
+                let runtime = self.clone();
+                self.scheduler.execute_async(Box::pin(async move {
+                    let Some(outstanding) =
+                        runtime.outstanding_credits.borrow_mut().remove(&turn_uuid)
+                    else {
+                        return;
+                    };
+                    let outcome = runtime.credit_outcome(&outstanding.credit, Err(error));
+                    runtime
+                        .settle_turn(
+                            outstanding.credit,
+                            outstanding.record_index,
+                            outcome,
+                            outstanding.on_complete,
+                        )
+                        .await;
+                }));
+            }
+            if final_credit {
+                self.stop_reached.notify_waiters();
+            }
+            return true;
+        }
 
         let runtime = self.clone();
         self.scheduler.execute_async(Box::pin(async move {
@@ -976,48 +1347,9 @@ impl ScheduledRuntime {
                     }
                 }
             };
-            if let Some(observer) = runtime.turn_lifecycle_observer.borrow().as_ref() {
-                observer.on_terminal(&credit.turn, &outcome);
-            }
             runtime
-                .recorder
-                .borrow_mut()
-                .terminal(record_index, &outcome, runtime.start_ns);
-            runtime.native_metrics.record_response(
-                turn_uuid,
-                NativeResponseMetadata {
-                    start_ns: Some(outcome.start_ns),
-                    end_ns: Some(outcome.end_ns),
-                    prompt_tokens: outcome.prompt_tokens,
-                    completion_tokens: outcome.completion_tokens,
-                    http: outcome.http,
-                },
-            );
-            let processor_input = (!runtime.record_processors.borrow().is_empty()).then(|| {
-                (
-                    credit.clone(),
-                    outcome.clone(),
-                    credit.turn.request_correlation_id.clone(),
-                )
-            });
-            if credit.is_final_turn() {
-                runtime
-                    .session_url_indices
-                    .borrow_mut()
-                    .remove(&credit.turn.x_correlation_id);
-            }
-            on_complete(credit, outcome).await;
-            // Return the credit/release admission before downstream processing.
-            // The detached local task also keeps grading latency out of the
-            // scheduler's dispatch-drain boundary and performance wall time.
-            if let Some((processor_credit, processor_outcome, correlation_id)) = processor_input {
-                runtime.spawn_record_processing(
-                    processor_credit,
-                    processor_outcome,
-                    turn_uuid,
-                    correlation_id,
-                );
-            }
+                .settle_turn(credit, record_index, outcome, on_complete)
+                .await;
         }));
 
         if final_credit {

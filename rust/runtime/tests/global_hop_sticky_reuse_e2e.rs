@@ -206,6 +206,7 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
             raw_enabled: false,
             inputs_enabled: false,
             prepared_endpoints: Some(table_factory),
+            credit_materializer: None,
             hop_routing: routing,
             virtual_worker_width: None,
         })
@@ -255,6 +256,7 @@ fn streaming_turn(correlation_id: &str, is_final_turn: bool) -> PreparedTurn {
         }),
         endpoint_aware: true,
         data_policy: TurnDataPolicy::ordinary(),
+        deferred: None,
     }
 }
 
@@ -271,6 +273,7 @@ fn measured_context(correlation_id: &str, turn_index: u32) -> MeasuredContext {
             ..RequestMetricMetadata::default()
         },
         wants_live_record: false,
+        wants_http_exchange: false,
         consume_record: false,
     }
 }

@@ -1745,14 +1745,12 @@ fn cellular_has_adaptive_phase(envelope: &serde_json::Value) -> bool {
 /// (`AIPERF_RUNTIME_EXACT_FOLD=0`), the heartbeat lane, sketch storage, an adaptive-scale
 /// phase, and — on a lite build — a requested Parquet sidecar.
 ///
-/// The one cell-side disqualifier it deliberately does NOT model is a live-reply
-/// multi-turn `inputs.json` that must be captured DURING the run
-/// (`execute::wants_per_record_artifacts` via `inputs_need_retain`), because deciding it
-/// needs the compiled dataset's per-conversation context mode, which the controller does
-/// not load. That case is caught instead by the merge-time backstop in [`run_cellular`]
-/// (a multi-turn run whose cells shipped retain partitions bails), so a false "exact-fold"
-/// here can never silently corrupt a merge — at worst it defers a clear gate error to an
-/// equally clear merge error.
+/// `inputs.json` is not among the disqualifiers: it is always generated up front from
+/// the resident dataset, never captured during the run, so it needs no per-conversation
+/// context mode the controller would have to load the dataset to see. The merge-time
+/// backstop in [`run_cellular`] (a multi-turn run whose cells shipped retain partitions
+/// bails) still guards a mispredicted gate, so a false "exact-fold" here can never
+/// silently corrupt a merge.
 fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
     // The env force-switch routes every path to retain for A/B.
     if !crate::engine::execute::exact_fold_enabled_by_env() {

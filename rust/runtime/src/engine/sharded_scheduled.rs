@@ -380,8 +380,11 @@ pub(crate) async fn run_sharded_scheduled(
 
 /// Run one shard on a worker-local current-thread runtime and `LocalSet`.
 fn run_worker_thread(shared: &ShardedShared, worker_id: usize) -> Result<ScheduledShardOutcome> {
+    // IO + time only; see the note in turn_execution::run_worker_thread for
+    // why this does not remove tokio's orphan sweep.
     let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+        .enable_io()
+        .enable_time()
         .build()
         .with_context(|| format!("creating sharded scheduled worker {worker_id} runtime"))?;
     let local = tokio::task::LocalSet::new();
@@ -416,9 +419,6 @@ fn merge_shards(
     if let ShardRecords::Retained(records) = &mut combined.records {
         records.sort_by_key(|record| record.ingest.request_index);
     }
-    combined
-        .input_sessions
-        .sort_by(|a, b| a.session_id.cmp(&b.session_id));
     Ok(combined)
 }
 

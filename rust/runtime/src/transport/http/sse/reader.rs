@@ -5,6 +5,7 @@
 //! 3-byte cross-chunk back-scan, timestamps each message at chunk arrival via
 //! the `Clock`, handles JSON continuations, and flushes a trailing message.
 
+use std::borrow::Cow;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
@@ -83,7 +84,17 @@ where
                 },
             };
 
-            let raw = String::from_utf8_lossy(&buffer[consumed..idx]);
+            // `from_utf8_lossy` validates through the `Utf8Chunks` iterator, which
+            // is markedly slower than `str::from_utf8`'s validator; at one SSE
+            // message per generated token this scan is on the hottest path in the
+            // client. Well-formed UTF-8 (every real endpoint, every frame) takes
+            // the fast validator and borrows; anything invalid falls back to the
+            // identical lossy replacement so behavior is unchanged.
+            let slice = &buffer[consumed..idx];
+            let raw = match std::str::from_utf8(slice) {
+                Ok(valid) => Cow::Borrowed(valid),
+                Err(_) => String::from_utf8_lossy(slice),
+            };
             let raw = raw.trim();
             consumed = idx + dlen;
             search_offset = consumed;

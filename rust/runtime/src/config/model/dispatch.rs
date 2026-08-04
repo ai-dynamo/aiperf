@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
 //! Admission-strategy selector shared by the typed config model and runtime.
 //!
 //! `DispatchMode` is the `runtime.dispatch` selector for `workers>1` scheduled
@@ -18,6 +19,12 @@ use serde::{Deserialize, Serialize};
 ///   against a single global limiter.
 /// - `GlobalHop` additionally routes every individual request through one
 ///   coordinator-owned dispatcher, for exact request-to-thread assignment order.
+///
+/// That single dispatcher is a serialization point: measured against a fast
+/// target it saturated near 50k requests/sec, roughly 5.6x below `Sharded` and
+/// `Global`, which stayed within ~2% of each other. The ordering guarantee is
+/// therefore nearly free below that rate and dominant above it. A target that
+/// cannot serve the offered load hides the difference completely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DispatchMode {
@@ -25,6 +32,47 @@ pub enum DispatchMode {
     #[default]
     Global,
     GlobalHop,
+    /// One issuer stamps global order and ROUTES a credit to a worker without
+    /// awaiting any individual request, after the Python `StickyCreditRouter`:
+    /// the worker owns the whole round-trip and reports `FirstToken` /
+    /// `CreditReturn` back out of band on one shared stream.
+    ///
+    /// Shares `GlobalHop`'s worker selection (sticky session binding, else
+    /// least-loaded) and, like it, needs no cross-thread admission gate: a single
+    /// issuer enforces the full cell-local cap directly, so aggregate concurrency
+    /// and rate stay exact. Placement is as deterministic as `GlobalHop`'s: this
+    /// is a router, not a shared queue workers pull from -- the issuer picks a
+    /// specific worker and routes to it, exactly as `send_credit` does. The one
+    /// behavioural difference is WHEN the load signal moves: `GlobalHop` holds a
+    /// worker's in-flight slot from send through reply, while a credit router
+    /// releases it on credit return, so `LeastLoaded` can break ties
+    /// differently. Under `RoundRobin`/`Sticky` the assignment is identical.
+    ///
+    /// The credit itself carries only identity -- conversation, session, turn
+    /// index -- and the WORKER builds the request body, exactly as Python's
+    /// `Credit` does. This applies to single-turn sessions; a continuation's
+    /// body can splice the live model reply, which a worker replaying the
+    /// dataset cannot reproduce, so multi-turn sessions keep issuer-side
+    /// materialization and stay byte-identical.
+    ///
+    /// # It still does NOT reach `Sharded`
+    ///
+    /// Measured on 144 cores against `aiperf-mock-server --fast` at ISL 550 /
+    /// OSL 1 / concurrency 512: 93.4k requests/sec against `GlobalHop`'s 54.4k
+    /// (+72%) and `Sharded`'s 277.1k. Removing the coordinator from each
+    /// request's lifetime accounts for only a sixth of that gain, because the
+    /// awaited future was never the cost; the rest came from a profile of the
+    /// pegged issuer thread, which attributed its per-request CPU to dataset
+    /// sampling and body materialization (~29%, now on the worker), issuance
+    /// accounting (~22%, of which routing and enqueue is only ~5%), and the
+    /// credit-return drain with its capture bookkeeping and metric fold (~20%).
+    /// What remains is per-request work a single issuer must do however requests
+    /// reach workers; `Sharded` is faster because its `W` loops each do a `1/W`
+    /// share of it.
+    ///
+    /// Choose this mode for exact global issuance order at a much lower
+    /// coordinator cost than the hop, not as a throughput mode.
+    GlobalPush,
 }
 
 /// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]
@@ -53,4 +101,32 @@ pub enum HopRouting {
     RoundRobin,
     Sticky,
     LeastLoaded,
+}
+
+#[cfg(test)]
+mod dispatch_mode_tests {
+    use super::DispatchMode;
+
+    /// The wire spelling is what users type and what protocol-v2 round-trips.
+    /// A rename here silently changes a public CLI surface, so pin all four.
+    #[test]
+    fn every_mode_round_trips_its_kebab_case_spelling() {
+        for (mode, spelling) in [
+            (DispatchMode::Sharded, "\"sharded\""),
+            (DispatchMode::Global, "\"global\""),
+            (DispatchMode::GlobalHop, "\"global-hop\""),
+            (DispatchMode::GlobalPush, "\"global-push\""),
+        ] {
+            let encoded = serde_json::to_string(&mode).expect("mode serializes");
+            assert_eq!(encoded, spelling);
+            let decoded: DispatchMode = serde_json::from_str(spelling).expect("mode deserializes");
+            assert_eq!(decoded, mode);
+        }
+    }
+
+    /// Omitting the selector must keep the parity-preserving default.
+    #[test]
+    fn default_is_global() {
+        assert_eq!(DispatchMode::default(), DispatchMode::Global);
+    }
 }

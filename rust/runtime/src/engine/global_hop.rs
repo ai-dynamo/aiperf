@@ -65,10 +65,29 @@ pub(crate) async fn run_global_hop(
     profiling_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     coordinator_clock: Rc<dyn Clock>,
 ) -> Result<ScheduledShardOutcome> {
+    // The hop materializes on the issuer, so its workers need no materializer.
+    run_single_coordinator(shared, profiling_sidecars, coordinator_clock, None).await
+}
+
+/// The single-coordinator pipeline itself, shared by [`run_global_hop`] and
+/// [`run_global_push`](super::global_push::run_global_push).
+///
+/// Both modes make the same structural promise — ONE scheduling loop holding the
+/// full cell-level cap, `W` worker threads under it — and differ only in how a
+/// dispatched turn gets to a worker and back, which is selected per phase from
+/// `shared.dispatch_mode` when the phase plan is built. Keeping one body means a
+/// change to partitioning, sidecar spanning, or merge ordering cannot drift
+/// between them.
+pub(crate) async fn run_single_coordinator(
+    shared: Arc<ShardedShared>,
+    profiling_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
+    coordinator_clock: Rc<dyn Clock>,
+    credit_materializer: Option<Arc<dyn crate::engine::turn_execution::CreditMaterializerFactory>>,
+) -> Result<ScheduledShardOutcome> {
     let workers = shared.workers as usize;
     ensure!(
         workers >= 1,
-        "global-hop execution requires at least one worker"
+        "single-coordinator execution requires at least one worker"
     );
 
     // The single coordinator scheduling loop runs on the caller's reactor, so it
@@ -118,6 +137,7 @@ pub(crate) async fn run_global_hop(
         raw_enabled: shared.raw_enabled,
         inputs_enabled: shared.captures_inputs(),
         prepared_endpoints: Some(prepared_endpoints),
+        credit_materializer,
         hop_routing: shared.hop_routing,
         virtual_worker_width: None,
     })?;
@@ -127,7 +147,7 @@ pub(crate) async fn run_global_hop(
         sidecar
             .start()
             .await
-            .map_err(|error| anyhow!("starting global-hop sidecar: {error:#}"))?;
+            .map_err(|error| anyhow!("starting single-coordinator sidecar: {error:#}"))?;
         sidecar.on_phase_start(shared.start_ns);
     }
 
@@ -152,19 +172,17 @@ pub(crate) async fn run_global_hop(
         sidecar
             .finish()
             .await
-            .map_err(|error| anyhow!("finishing global-hop sidecar: {error:#}"))?;
+            .map_err(|error| anyhow!("finishing single-coordinator sidecar: {error:#}"))?;
     }
 
     let mut outcome = outcome?;
     // The single-coordinator pipeline already carries this cell's globally-unique
     // two-level ordinals; apply the same deterministic finalization ordering
-    // `merge_shards` applies for the multi-shard paths so retained record and
-    // input-session order is independent of completion timing.
+    // `merge_shards` applies for the multi-shard paths so retained record order is
+    // independent of completion timing. inputs.json is no longer ordered here: it is
+    // projected from the resident dataset up front, not harvested from replies.
     if let ShardRecords::Retained(records) = &mut outcome.records {
         records.sort_by_key(|record| record.ingest.request_index);
     }
-    outcome
-        .input_sessions
-        .sort_by(|a, b| a.session_id.cmp(&b.session_id));
     Ok(outcome)
 }

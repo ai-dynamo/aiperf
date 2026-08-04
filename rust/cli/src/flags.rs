@@ -114,9 +114,27 @@ pub struct ProfileFlags {
     /// partition with no shared gate — higher throughput, but aggregate
     /// concurrency/rate are only approximate, so NOT byte-exact), or
     /// `global-hop` (every request routed through one coordinator-owned
-    /// dispatcher — exact global issuance order, lowest throughput). The
-    /// mode changes execution behavior: on a fast target, `sharded` runs
-    /// materially faster than `global`, which runs faster than `global-hop`.
+    /// dispatcher — exact global issuance order, lowest throughput), or
+    /// `global-push` (one issuer stamps global order and ROUTES a credit to a
+    /// worker without awaiting any individual request, after the Python
+    /// `StickyCreditRouter`; the credit carries only identity and the worker
+    /// builds the request body, so the coordinator sits in neither each
+    /// request's lifetime nor its materialization; same sticky/least-loaded
+    /// worker selection as `global-hop`).
+    ///
+    /// The cost gradient is very uneven, so read it as two tiers rather than
+    /// three steps. `sharded` and `global` are close: on a 144-core box against
+    /// a fast target, `sharded` measured ~2% over `global`, though `global`'s
+    /// shared gate makes it far less repeatable run to run (±5% vs ±0.2%).
+    /// `global-hop` and `global-push` are in a different class: a single issuer
+    /// does every request's issuance work, so the run is bound by one thread.
+    /// On the same box the hop saturated near 54k requests/sec and the push near
+    /// 93k (+72%, from routing instead of awaiting, from letting the worker
+    /// build the body, and from dropping issuer work nothing reads), against
+    /// 277k for `sharded`. Below that ceiling the
+    /// ordering guarantee is close to free; above it, the issuer IS the
+    /// benchmark. A slow target hides this entirely — every mode then measures
+    /// the target, not the client.
     #[arg(long = "dispatch")]
     pub dispatch: Option<String>,
 

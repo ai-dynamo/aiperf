@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::MockServerConfig;
+use crate::config::PlaidEndpoint;
 
 fn find(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).position(|w| w == n)
@@ -45,18 +46,34 @@ fn content_length(head: &[u8]) -> usize {
     0
 }
 
+/// The single reply this process serves, chosen once at startup.
+///
+/// Selecting per request would put a path scan on the hot path, which is the
+/// one thing this server exists to avoid; the shape is a property of the run,
+/// so it is resolved from `--plaid-endpoint` before the first accept.
 struct Responses {
-    chat: Arc<Vec<u8>>,
+    body: Arc<Vec<u8>>,
     models: Arc<Vec<u8>>,
 }
 
-fn build_responses() -> Responses {
+fn build_responses(endpoint: PlaidEndpoint) -> Responses {
     let body = b"data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"x\"}}]}\n\ndata: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
     let head = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         body.len()
     );
-    let chat: Arc<Vec<u8>> = Arc::new([head.as_bytes(), body].concat());
+    let chat: Vec<u8> = [head.as_bytes(), body].concat();
+
+    // Completions streams `choices[].text` under `object: text_completion`,
+    // not `choices[].delta.content` -- the runtime's CompletionsEndpoint
+    // refuses any other `object`, and an empty `text` parses to no response
+    // data at all.
+    let completions_body = b"data: {\"id\":\"x\",\"object\":\"text_completion\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"text\":\"x\",\"finish_reason\":null}]}\n\ndata: {\"id\":\"x\",\"object\":\"text_completion\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"text\":\"\",\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    let chead = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        completions_body.len()
+    );
+    let completions: Vec<u8> = [chead.as_bytes(), completions_body].concat();
 
     let models = b"{\"object\":\"list\",\"data\":[{\"id\":\"mock-model\",\"object\":\"model\"}]}";
     let mhead = format!(
@@ -66,7 +83,10 @@ fn build_responses() -> Responses {
     let models_resp: Arc<Vec<u8>> = Arc::new([mhead.as_bytes(), models.as_ref()].concat());
 
     Responses {
-        chat,
+        body: Arc::new(match endpoint {
+            PlaidEndpoint::Chat => chat,
+            PlaidEndpoint::Completions => completions,
+        }),
         models: models_resp,
     }
 }
@@ -77,8 +97,7 @@ fn build_responses() -> Responses {
 fn drain_requests<S: Write>(
     chunk: &[u8],
     stream: &mut S,
-    chat: &Arc<Vec<u8>>,
-    models: &Arc<Vec<u8>>,
+    resp: &Responses,
 ) -> Result<usize, ()> {
     let mut off = 0usize;
     loop {
@@ -96,12 +115,12 @@ fn drain_requests<S: Write>(
         if rest.len() < total {
             break;
         }
-        let resp = if head.starts_with(b"GET") {
-            models
+        let reply = if head.starts_with(b"GET") {
+            &resp.models
         } else {
-            chat
+            &resp.body
         };
-        if stream.write_all(resp).is_err() {
+        if stream.write_all(reply).is_err() {
             return Err(());
         }
         off += total;
@@ -109,7 +128,7 @@ fn drain_requests<S: Write>(
     Ok(off)
 }
 
-fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8>>) {
+fn handle<S: Read + Write>(mut stream: S, resp: Arc<Responses>) {
     let mut buf = vec![0u8; 65536];
     // Only populated when a request spans more than one `read()` call (rare
     // at pipeline depth 1: the client waits for a response before sending
@@ -124,7 +143,7 @@ fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8
             Err(_) => break,
         };
         if acc.is_empty() {
-            let off = match drain_requests(&buf[..n], &mut stream, &chat, &models) {
+            let off = match drain_requests(&buf[..n], &mut stream, &resp) {
                 Ok(off) => off,
                 Err(()) => return,
             };
@@ -133,7 +152,7 @@ fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8
             }
         } else {
             acc.extend_from_slice(&buf[..n]);
-            let off = match drain_requests(&acc, &mut stream, &chat, &models) {
+            let off = match drain_requests(&acc, &mut stream, &resp) {
                 Ok(off) => off,
                 Err(()) => return,
             };
@@ -179,26 +198,25 @@ impl FastListener for std::os::unix::net::UnixListener {
 }
 
 /// The kernel serializes concurrent `accept` calls on the shared listener.
-fn accept_loop<L: FastListener>(listener: Arc<L>, resp: &Responses) {
+fn accept_loop<L: FastListener>(listener: Arc<L>, resp: Arc<Responses>) {
     loop {
         let Ok(stream) = listener.accept_conn() else {
             continue;
         };
-        let chat = resp.chat.clone();
-        let models = resp.models.clone();
-        thread::spawn(move || handle(stream, chat, models));
+        let resp = resp.clone();
+        thread::spawn(move || handle(stream, resp));
     }
 }
 
-fn serve<L: FastListener>(listener: L, threads: usize) {
+fn serve<L: FastListener>(listener: L, threads: usize, endpoint: PlaidEndpoint) {
     let listener = Arc::new(listener);
-    let resp = Arc::new(build_responses());
+    let resp = Arc::new(build_responses(endpoint));
     let threads = threads.max(1);
     let mut handles = Vec::with_capacity(threads);
     for _ in 0..threads {
         let l = listener.clone();
         let r = resp.clone();
-        handles.push(thread::spawn(move || accept_loop(l, &r)));
+        handles.push(thread::spawn(move || accept_loop(l, r)));
     }
     for h in handles {
         let _ = h.join();
@@ -258,7 +276,7 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
         }
         let listener = std::os::unix::net::UnixListener::bind(&uds_path)?;
         println!("fastmock listening on uds:{uds_path} ({threads} accept threads)");
-        serve(listener, threads);
+        serve(listener, threads, config.plaid_endpoint);
         return Ok(());
     }
 
@@ -267,6 +285,39 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
         "fastmock listening on {}:{} ({threads} accept threads)",
         config.host, config.port
     );
-    serve(listener, threads);
+    serve(listener, threads, config.plaid_endpoint);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each payload must carry the `object` its runtime parser demands:
+    /// CompletionsEndpoint accepts only `completion`/`text_completion` and
+    /// reads `choices[].text`, while chat reads `choices[].delta.content`.
+    /// A swapped discriminator parses to zero response data, and the run
+    /// aborts with "All N inference request(s) failed" -- verified against a
+    /// live mismatched run, not inferred.
+    #[test]
+    fn each_endpoint_serves_the_object_its_parser_requires() {
+        let completions =
+            String::from_utf8_lossy(&build_responses(PlaidEndpoint::Completions).body).into_owned();
+        assert!(completions.contains(r#""object":"text_completion""#));
+        assert!(completions.contains(r#""text":"x""#));
+
+        let chat = String::from_utf8_lossy(&build_responses(PlaidEndpoint::Chat).body).into_owned();
+        assert!(chat.contains(r#""object":"chat.completion.chunk""#));
+        assert!(chat.contains(r#""content":"x""#));
+    }
+
+    /// The model list is served for `GET` regardless of the selected endpoint,
+    /// since readiness probes hit it on every run.
+    #[test]
+    fn model_list_is_served_for_either_endpoint() {
+        for endpoint in [PlaidEndpoint::Chat, PlaidEndpoint::Completions] {
+            let models = String::from_utf8_lossy(&build_responses(endpoint).models).into_owned();
+            assert!(models.contains("mock-model"));
+        }
+    }
 }

@@ -126,7 +126,11 @@ pub(crate) struct ShardedShared {
     pub(crate) artifact_dir: PathBuf,
     /// Whether raw HTTP exchanges are retained.
     pub(crate) raw_enabled: bool,
-    /// Whether `inputs.json` canonical payloads are retained.
+    /// Whether `inputs.json` is a requested artifact for this run.
+    ///
+    /// The artifact itself is projected from the resident dataset at finalize and
+    /// never harvested from dispatch, so this feeds only the transport sink's
+    /// request-payload gate (see [`Self::captures_inputs`]).
     pub(crate) inputs_enabled: bool,
     /// Final (relative) per-record artifact paths for the per-shard lanes.
     /// When this sharded run selected exact-fold AND any of these is requested, each
@@ -187,14 +191,13 @@ pub(crate) struct ShardedShared {
 }
 
 impl ShardedShared {
-    /// Whether a worker captures canonical request payloads for `inputs.json`
-    /// during dispatch. Under exact-fold `inputs.json` is generated once at the
-    /// coordinator from the resident dataset, so the shard must not capture it
-    /// (that would double-count across shards).
+    /// Whether a worker's transport sink takes the canonical request-payload
+    /// handle on behalf of `inputs.json`.
     ///
-    /// The worker's [`RunCapture`] and the transport sink that builds the payload
-    /// both read this, so they cannot drift into a sink that skips the payload a
-    /// capture still wants.
+    /// `inputs.json` is now projected up front from the resident dataset, so no
+    /// dispatch feeds it and this leg of the sink gate has no consumer left. It
+    /// is preserved verbatim across the dataplane merge so the gate's behavior is
+    /// unchanged; retiring it is a separate, deliberate change.
     pub(crate) fn captures_inputs(&self) -> bool {
         self.inputs_enabled && !self.exact_fold
     }
@@ -264,9 +267,6 @@ pub(crate) struct ScheduledShardOutcome {
     /// This thread's records — retained (retain path) or folded-and-dropped (sketch
     /// or exact-fold).
     pub(crate) records: ShardRecords,
-    /// This thread's `inputs.json` sessions (disjoint conversation ids across
-    /// threads, so the union needs only a re-sort by session id).
-    pub(crate) input_sessions: Vec<InputSession>,
     /// This thread's static-accuracy terminal captures (empty for a non-accuracy
     /// run). Disjoint across shards (each stamps globally-unique dispatch
     /// sequences), so the coordinator concatenates them and grades once.
@@ -279,11 +279,10 @@ pub(crate) struct ScheduledShardOutcome {
 
 impl ScheduledShardOutcome {
     /// Fold another thread's shard into this one: merge records (mode-aware), union
-    /// input sessions and accuracy captures, OR the phase flags. Record ordering is
-    /// applied once after all shards are absorbed (retained records only).
+    /// accuracy captures, OR the phase flags. Record ordering is applied once after
+    /// all shards are absorbed (retained records only).
     pub(crate) fn absorb(&mut self, other: ScheduledShardOutcome) -> Result<()> {
         self.records.absorb(other.records)?;
-        self.input_sessions.extend(other.input_sessions);
         self.accuracy_captures.extend(other.accuracy_captures);
         self.was_cancelled |= other.was_cancelled;
         self.has_warmup |= other.has_warmup;
@@ -334,6 +333,7 @@ pub(crate) async fn execute_scheduled_shard(
         raw_enabled: shared.raw_enabled,
         inputs_enabled: shared.captures_inputs(),
         prepared_endpoints: Some(prepared_endpoints),
+        credit_materializer: None,
         // `workers == 1` co-located sink: no hop, so routing is inert.
         hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
         virtual_worker_width: None,
@@ -421,7 +421,6 @@ pub(crate) async fn execute_scheduled_pipeline(
             start_ns,
             shared.metrics_config.clone(),
             shared.raw_enabled,
-            shared.captures_inputs(),
             // Worker threads never feed the live sink or heartbeat lane (D5); those are
             // driven once-per-cell on the main thread.
             false,
@@ -473,6 +472,13 @@ pub(crate) async fn execute_scheduled_pipeline(
         });
         let shared_resources = native_scheduled_resources(&sliced_phases);
 
+        // `GlobalPush` routes every turn as a credit the worker returns out of
+        // band; every other mode awaits one dispatch future per request. A lone
+        // worker has no cross-thread placement to route to -- `build_native`
+        // gives it a co-located sink -- so it keeps the ordinary path, exactly
+        // as a lone-worker `GlobalHop` run is just a single-thread run.
+        let credit_dispatch =
+            matches!(shared.dispatch_mode, DispatchMode::GlobalPush) && shared.workers > 1;
         let mut plans = Vec::with_capacity(sliced_phases.len());
         let mut profiling_index = 0usize;
         for (phase_index, phase) in sliced_phases.iter().enumerate() {
@@ -505,6 +511,7 @@ pub(crate) async fn execute_scheduled_pipeline(
                 shared.on_failure,
                 shared.agentic_trees.clone(),
                 shared.warmup_handoff.clone(),
+                credit_dispatch,
             )?;
             let profiling_idx = if phase.common().exclude_from_results {
                 None
@@ -538,7 +545,12 @@ pub(crate) async fn execute_scheduled_pipeline(
             plan = plan
                 .with_record_processors(record_processors)
                 .with_performance_record_capture(false)
-                .with_native_metric_record_dimensions(false);
+                .with_native_metric_record_dimensions(false)
+                // `GlobalPush` routes every turn as a credit the worker returns
+                // out of band; every other mode awaits one dispatch future per
+                // request. Selected per phase because the phase runtime owns the
+                // credit-return loop's lifetime.
+                .with_credit_dispatch(credit_dispatch);
             plans.push(plan);
         }
 
@@ -595,7 +607,6 @@ pub(crate) async fn execute_scheduled_pipeline(
     } else {
         ShardRecords::Retained(capture.finish(&issued_times, drained)?)
     };
-    let input_sessions = capture.take_input_sessions();
     // Drain this shard's static-accuracy captures (empty for a non-accuracy run);
     // the coordinator concatenates every shard's captures and grades once.
     let accuracy_captures = shard_accuracy_processor
@@ -608,7 +619,6 @@ pub(crate) async fn execute_scheduled_pipeline(
         .any(|report| report.kind == PhaseKind::Warmup);
     Ok(ScheduledShardOutcome {
         records,
-        input_sessions,
         accuracy_captures,
         was_cancelled,
         has_warmup,
@@ -715,23 +725,15 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_shard_outcome_absorb_unions_sessions_and_ors_flags() {
+    fn scheduled_shard_outcome_absorb_concatenates_records_and_ors_flags() {
         let mut left = ScheduledShardOutcome {
             records: ShardRecords::Retained(vec![retained_record(0)]),
-            input_sessions: vec![InputSession {
-                session_id: "conv-a".into(),
-                payloads: Vec::new(),
-            }],
             accuracy_captures: Vec::new(),
             was_cancelled: false,
             has_warmup: true,
         };
         let right = ScheduledShardOutcome {
             records: ShardRecords::Retained(vec![retained_record(1)]),
-            input_sessions: vec![InputSession {
-                session_id: "conv-b".into(),
-                payloads: Vec::new(),
-            }],
             accuracy_captures: Vec::new(),
             // Cancellation on any shard must propagate; warmup ORs to true.
             was_cancelled: true,
@@ -740,7 +742,6 @@ mod tests {
         left.absorb(right).unwrap();
         assert!(left.was_cancelled, "cancellation ORs across shards");
         assert!(left.has_warmup, "warmup presence ORs across shards");
-        assert_eq!(left.input_sessions.len(), 2, "sessions are unioned");
         let ShardRecords::Retained(records) = left.records else {
             panic!("retained shards stay retained through outcome absorb");
         };

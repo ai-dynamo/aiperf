@@ -12,7 +12,7 @@
 //! Per-request cancellation and endpoint resolution consume the timing scalars
 //! and preserve the full-send timer invariant.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 #[cfg(test)]
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -25,20 +25,18 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
-use crate::endpoints::chat_request_body;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
-use crate::transport::http::sse::ChatChunk;
 
 use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
+use crate::dispatch::sink::{RequestObserver, RequestSink};
 use crate::metrics::NativeMetricsObserver;
 use crate::transport::core::{
     ConnectionReuseStrategy, DispatchResult, Dispatcher, ErrorDetails, ErrorKind, MeasuredContext,
     MeasuredOutcome, PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor,
-    RequestRecord, Response, SseMessage,
+    RequestRecord,
 };
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{HttpVersion, RequestConfig};
+use crate::transport::http::models::HttpVersion;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::measure::{self, WorkerMeasurement};
 use serde_json::Value;
@@ -53,15 +51,6 @@ mod endpoint_dispatch;
 
 use endpoint_dispatch::EndpointDispatchHooks;
 
-/// Return true only for an SSE message that releases prefill capacity.
-///
-/// Role-only, usage-only, finish-only, malformed, and `[DONE]` messages do not.
-fn is_meaningful_chat_token(message: &SseMessage) -> bool {
-    let Some(data) = message.data() else {
-        return false;
-    };
-    serde_json::from_str::<ChatChunk>(data).is_ok_and(|chunk| !chunk.delta_text().is_empty())
-}
 
 /// Generated response returned by the response-capturing dispatch path.
 #[derive(Debug, Clone)]
@@ -211,6 +200,31 @@ pub struct TransportSink {
     ///
     /// [`configure_measurement`]: RequestExecutor::configure_measurement
     measurement: WorkerMeasurement,
+    /// Single-entry memo for [`selected_url`](Self::selected_url), keyed by the
+    /// request's `(url index, endpoint path)`.
+    ///
+    /// URL selection is pure — it depends only on the run's fixed `model` and
+    /// `base_urls` plus that key — yet it ran three `String` allocations and four
+    /// `{model_name}` pattern scans (or a full `Url::parse`) on every request to
+    /// rebuild a byte-identical string. A scheduled run reuses one key for its
+    /// whole lifetime, so one entry collapses the hot path to a single clone.
+    /// Only successful renders are memoized, so template validation still fails
+    /// closed on every request that would have failed before.
+    url_memo: RefCell<Option<(usize, Option<Box<str>>, String)>>,
+    /// Whether a raw HTTP-exchange artifact will consume the retained responses.
+    ///
+    /// When false the responses are released on the worker that produced them,
+    /// because the only consumer — `RunCapture::record_http_exchange` — drops
+    /// them behind its own `raw_enabled` guard. Under `GlobalHop` that consumer
+    /// runs on the single coordinator thread, so leaving them attached funnels
+    /// every request's response strings (151 per request at OSL 150) through
+    /// one thread's allocator; a profile put `mi_free` + `_mi_page_malloc_zero`
+    /// at 17.5% there versus 5.4% under `global`. The gRPC sink already skips
+    /// building this record for the same reason.
+    ///
+    /// Defaults to true so every other construction site keeps today's
+    /// behavior; only the worker builder opts out.
+    retain_raw_responses: Cell<bool>,
 }
 
 impl TransportSink {
@@ -304,7 +318,23 @@ impl TransportSink {
             capture_request_payload: config.capture_raw || config.inputs_enabled,
             prepared_endpoints: None,
             measurement: WorkerMeasurement::default(),
+            url_memo: RefCell::new(None),
+            retain_raw_responses: Cell::new(true),
         })
+    }
+
+    /// Declare whether a raw artifact will consume retained responses.
+    ///
+    /// See [`Self::retain_raw_responses`]. Called by the worker sink builder
+    /// once per worker; the default keeps responses attached.
+    pub fn set_retain_raw_responses(&self, retain: bool) {
+        self.retain_raw_responses.set(retain);
+    }
+
+    /// Whether this sink retains response bodies for a raw artifact.
+    #[cfg(test)]
+    pub(crate) fn retains_raw_responses(&self) -> bool {
+        self.retain_raw_responses.get()
     }
 
     /// Install worker-local prepared endpoint bindings.
@@ -337,14 +367,20 @@ impl TransportSink {
 
     fn selected_url(&self, url_index: Option<u32>, endpoint_path: Option<&str>) -> Result<String> {
         let selected_index = url_index.unwrap_or(0) as usize;
+        if let Some((index, path, rendered)) = self.url_memo.borrow().as_ref()
+            && *index == selected_index
+            && path.as_deref() == endpoint_path
+        {
+            return Ok(rendered.clone());
+        }
         let selected_url = self.urls.get(selected_index).ok_or_else(|| {
             anyhow::anyhow!(
                 "URL index {selected_index} is out of range for {} configured endpoints",
                 self.urls.len()
             )
         })?;
-        match endpoint_path {
-            None => Ok(selected_url.clone()),
+        let rendered = match endpoint_path {
+            None => selected_url.clone(),
             Some(path) if path.starts_with('/') => {
                 // Expand the supported path template before removing a duplicate
                 // `/v1` prefix.
@@ -363,315 +399,67 @@ impl TransportSink {
                 } else {
                     rendered.as_str()
                 };
-                Ok(format!("{base_url}{rendered}"))
+                format!("{base_url}{rendered}")
             }
-            Some(url) if url::Url::parse(url).is_ok() => Ok(url.to_string()),
+            Some(url) if url::Url::parse(url).is_ok() => url.to_string(),
             Some(value) => {
                 anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
             }
-        }
+        };
+        *self.url_memo.borrow_mut() =
+            Some((selected_index, endpoint_path.map(Box::from), rendered.clone()));
+        Ok(rendered)
     }
 
-    /// Dispatch `req`, invoking `on_first_token` once when the transport observes
-    /// TTFT. Request-rate scheduling uses this to release prefill capacity before
-    /// the full stream reaches terminal.
-    pub async fn dispatch_with_hooks(
-        &self,
-        req: Request,
-        obs: &dyn RequestObserver,
-        on_first_token: impl FnMut(i64),
-    ) -> Result<()> {
-        self.dispatch_collect_with_hooks(req, obs, on_first_token)
-            .await
-            .map(|_| ())
-    }
 
-    /// Dispatch and retain generated text plus authoritative usage for consumers
-    /// such as the external accuracy response collector. Measurement events are identical to
-    /// [`dispatch_with_hooks`](Self::dispatch_with_hooks).
-    pub async fn dispatch_collect_with_hooks(
-        &self,
-        req: Request,
-        obs: &dyn RequestObserver,
-        on_first_token: impl FnMut(i64),
-    ) -> Result<HttpDispatchResult> {
-        self.dispatch_collect_record_with_hooks(req, obs, on_first_token)
-            .await
-            .map(|collected| collected.result)
-    }
 
-    async fn dispatch_collect_record_with_hooks(
-        &self,
-        req: Request,
-        obs: &dyn RequestObserver,
-        mut on_first_token: impl FnMut(i64),
-    ) -> Result<HttpCollectedDispatch> {
-        let Request {
-            uuid,
-            max_output_tokens,
-            prompt_text,
-            body,
-            headers,
-            parameters,
-            endpoint_path,
-            streaming,
-            x_correlation_id,
-            is_final_turn,
-            cancel_after_ns,
-            url_index,
-            ..
-        } = req;
-        // No scheduler admission on the HTTP path; admit == dispatch time.
-        let admit_ms = self.ms(self.clock.now_ns());
-        obs.on_admit(uuid, admit_ms, 0);
-
-        let body = match body {
-            Some(body) => body.into_wire()?,
-            None => {
-                let prompt = prompt_text.unwrap_or_default();
-                let payload =
-                    chat_request_body(&self.model, &[("user", prompt.as_str())], max_output_tokens);
-                Bytes::from(serde_json::to_vec(&payload)?)
-            }
-        };
-        // Only the raw artifact and `inputs.json` read this back. With neither
-        // selected the clone would promote the assembled body to a shared
-        // control block for a value nothing consumes.
-        let request_payload = if self.captures_request_payload() {
-            body.clone()
-        } else {
-            Bytes::new()
-        };
-
-        let selected_url = self.selected_url(url_index, endpoint_path.as_deref())?;
-        let mut cfg = RequestConfig::new(selected_url);
-        cfg.headers = headers;
-        cfg.params = parameters;
-        cfg.correlation_id = x_correlation_id;
-        cfg.request_id = Some(uuid.to_string());
-        cfg.is_final_turn = is_final_turn;
-        cfg.cancel_after_ns = cancel_after_ns;
-        cfg.reuse = self.connection_reuse;
-        let first_token_released = Cell::new(false);
-        let rec = self
-            .transport
-            .send_request_bytes_with_first_token_filter(
-                &cfg,
-                body,
-                streaming,
-                |ttft_ns, message| {
-                    if !is_meaningful_chat_token(message) {
-                        return false;
-                    }
-                    if !first_token_released.replace(true) {
-                        on_first_token(ttft_ns);
-                    }
-                    true
-                },
-            )
-            .await;
-
-        let mut done = false;
-        let mut response_text = String::new();
-        let mut model_response = ModelResponseMetadata::default();
-        let mut prompt_tokens = None;
-        let mut completion_tokens = None;
-        for resp in &rec.responses {
-            match resp {
-                Response::Sse(msg) => {
-                    if msg.is_done() {
-                        done = true;
-                        continue;
-                    }
-                    let Some(data) = msg.data() else { continue };
-                    let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
-                        continue;
-                    };
-                    absorb_chat_chunk_metadata(&chunk, &mut model_response);
-                    if let Some(usage) = &chunk.usage {
-                        prompt_tokens = Some(usage.prompt_tokens);
-                        completion_tokens = Some(usage.completion_tokens);
-                        model_response.cached_prompt_tokens = usage.cached_tokens().map(u64::from);
-                    }
-                    let delta = chunk.delta_text();
-                    if !delta.is_empty() {
-                        response_text.push_str(&delta);
-                        let kind = if chunk.has_output_delta() {
-                            ObservedTokenKind::Output
-                        } else {
-                            ObservedTokenKind::Reasoning
-                        };
-                        obs.on_classified_token(uuid, self.ms(msg.perf_ns), kind);
-                    }
-                }
-                Response::Text(response) => {
-                    done = true;
-                    if let Some(value) = response.json() {
-                        let parsed = parse_non_streaming_response(&value);
-                        response_text.push_str(&parsed.0);
-                        prompt_tokens = parsed.1;
-                        completion_tokens = parsed.2;
-                        absorb_wire_response_metadata(&value, &mut model_response);
-                        absorb_non_streaming_content(&value, &mut model_response);
-                        if !response_text.is_empty() {
-                            if !first_token_released.replace(true) {
-                                on_first_token(response.perf_ns.saturating_sub(rec.start_ns));
-                            }
-                            obs.on_classified_token(
-                                uuid,
-                                self.ms(response.perf_ns),
-                                ObservedTokenKind::Output,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        let terminal = match rec.error.as_ref().map(|error| error.kind) {
-            Some(ErrorKind::Cancelled) => ReplayTerminalStatus::Canceled,
-            Some(_) => ReplayTerminalStatus::Failed,
-            None if done && rec.status == Some(200) => ReplayTerminalStatus::Completed,
-            None => ReplayTerminalStatus::Failed,
-        };
-        absorb_transport_error(
-            rec.error.as_ref(),
-            terminal,
-            rec.status,
-            &mut model_response,
-        );
-        obs.on_usage(
-            uuid,
-            ObservedUsage {
-                prompt_tokens: prompt_tokens.map(|value| value as usize),
-                completion_tokens: completion_tokens.map(|value| value as usize),
-                ..ObservedUsage::default()
-            },
-        );
-        obs.on_terminal(uuid, terminal);
-        let http = endpoint_dispatch::http_trace(&rec);
-        let result = HttpDispatchResult {
-            start_ns: rec.start_ns,
-            end_ns: rec.end_ns.unwrap_or_else(|| self.clock.now_ns()),
-            status: rec.status,
-            terminal,
-            response_text,
-            model_response,
-            prompt_tokens,
-            completion_tokens,
-            http,
-        };
-        Ok(HttpCollectedDispatch {
-            result,
-            request_payload,
-            record: rec,
-        })
-    }
 }
 
-fn parse_non_streaming_response(value: &Value) -> (String, Option<u32>, Option<u32>) {
-    let text = value
-        .pointer("/choices/0/message/reasoning_content")
-        .or_else(|| value.pointer("/choices/0/message/content"))
-        .or_else(|| value.pointer("/choices/0/text"))
-        .or_else(|| value.get("output_text"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            let output = value
-                .get("output")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .flat_map(|item| {
-                    item.get("content")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                })
-                .filter_map(|content| content.get("text").and_then(Value::as_str))
-                .fold(String::new(), |mut output, text| {
-                    output.push_str(text);
-                    output
-                });
-            (!output.is_empty()).then_some(output)
-        })
-        .unwrap_or_default();
-    let usage = value.get("usage");
-    let prompt = usage
-        .and_then(|usage| {
-            usage
-                .get("prompt_tokens")
-                .or_else(|| usage.get("input_tokens"))
-        })
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok());
-    let completion = usage
-        .and_then(|usage| {
-            usage
-                .get("completion_tokens")
-                .or_else(|| usage.get("output_tokens"))
-        })
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok());
-    (text, prompt, completion)
+/// Follow a fixed JSON path without [`Value::pointer`].
+///
+/// `Value::pointer` splits its path on `/` and runs two `String::replace` calls
+/// per segment to undo `~0`/`~1` escaping, so every lookup allocates and scans.
+/// [`absorb_wire_response_metadata`] issues up to seven of them per decoded
+/// response, which on a streamed reply is per generated token — profiling put
+/// the resulting `str::replace` + `StrSearcher::new` + `Split<char>` at ~11% of
+/// load-phase samples.
+///
+/// Every call site here uses a static, escape-free path, so walking the
+/// segments directly is byte-identical and allocation-free. A segment naming an
+/// array is indexed by its decimal value, matching pointer semantics.
+fn dig<'v>(value: &'v Value, path: &[&str]) -> Option<&'v Value> {
+    let mut current = value;
+    for segment in path {
+        current = match current {
+            Value::Array(items) => items.get(segment.parse::<usize>().ok()?)?,
+            _ => current.get(segment)?,
+        };
+    }
+    Some(current)
 }
 
-fn absorb_chat_chunk_metadata(chunk: &ChatChunk, metadata: &mut ModelResponseMetadata) {
-    if let Some(response_id) = chunk.id.as_ref().filter(|value| !value.is_empty()) {
-        metadata.response_id = Some(response_id.clone());
-    }
-    for choice in &chunk.choices {
-        if let Some(content) = &choice.delta.content {
-            append_optional_text(&mut metadata.content, content);
-        }
-        if let Some(reasoning) = &choice.delta.reasoning_content {
-            metadata.content.get_or_insert_with(String::new);
-            append_optional_text(&mut metadata.reasoning, reasoning);
-        }
-        if let Some(finish_reason) = choice
-            .finish_reason
-            .as_ref()
-            .filter(|value| !value.is_empty())
-        {
-            metadata.finish_reason = Some(normalize_finish_reason(finish_reason));
-        }
-    }
-}
 
-fn absorb_non_streaming_content(value: &Value, metadata: &mut ModelResponseMetadata) {
-    let reasoning = value
-        .pointer("/choices/0/message/reasoning_content")
-        .or_else(|| value.pointer("/choices/0/message/reasoning"))
-        .and_then(Value::as_str);
-    if let Some(reasoning) = reasoning {
-        metadata.content.get_or_insert_with(String::new);
-        append_optional_text(&mut metadata.reasoning, reasoning);
-    }
-    let content = value
-        .pointer("/choices/0/message/content")
-        .or_else(|| value.pointer("/choices/0/text"))
-        .or_else(|| value.get("output_text"))
-        .and_then(Value::as_str);
-    if let Some(content) = content {
-        append_optional_text(&mut metadata.content, content);
-    }
-}
+
 
 pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelResponseMetadata) {
     if let Some(response_id) = value
         .get("id")
         .or_else(|| value.get("request_id"))
-        .or_else(|| value.pointer("/response/id"))
+        .or_else(|| dig(value, &["response", "id"]))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
     {
-        metadata.response_id = Some(response_id.to_string());
+        // Streaming repeats the same `id` on every chunk, so a 150-chunk response
+        // built and discarded 150 identical Strings. Allocate only on an actual
+        // change; last-wins semantics are unchanged because an equal value would
+        // have overwritten itself.
+        if metadata.response_id.as_deref() != Some(response_id) {
+            metadata.response_id = Some(response_id.to_string());
+        }
     }
-    if let Some(finish_reason) = value
-        .pointer("/choices/0/finish_reason")
-        .or_else(|| value.pointer("/response/incomplete_details/reason"))
-        .or_else(|| value.pointer("/incomplete_details/reason"))
+    if let Some(finish_reason) = dig(value, &["choices", "0", "finish_reason"])
+        .or_else(|| dig(value, &["response", "incomplete_details", "reason"]))
+        .or_else(|| dig(value, &["incomplete_details", "reason"]))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
     {
@@ -679,12 +467,11 @@ pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelR
     }
     let usage = value
         .get("usage")
-        .or_else(|| value.pointer("/response/usage"));
+        .or_else(|| dig(value, &["response", "usage"]));
     metadata.cached_prompt_tokens = usage
         .and_then(|usage| {
-            usage
-                .pointer("/prompt_tokens_details/cached_tokens")
-                .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+            dig(usage, &["prompt_tokens_details", "cached_tokens"])
+                .or_else(|| dig(usage, &["input_tokens_details", "cached_tokens"]))
                 .or_else(|| usage.get("cache_read_input_tokens"))
         })
         .and_then(Value::as_u64)
@@ -723,9 +510,6 @@ pub(super) fn absorb_transport_error(
     ));
 }
 
-fn append_optional_text(target: &mut Option<String>, text: &str) {
-    target.get_or_insert_with(String::new).push_str(text);
-}
 
 fn normalize_finish_reason(value: &str) -> String {
     match value {
@@ -745,34 +529,6 @@ fn error_kind_name(kind: ErrorKind) -> &'static str {
     }
 }
 
-#[async_trait(?Send)]
-impl RequestSink<Request> for TransportSink {
-    async fn dispatch(&self, req: Request, obs: &dyn RequestObserver) -> Result<()> {
-        self.dispatch_with_hooks(req, obs, |_ttft_ns| {}).await
-    }
-}
-
-#[async_trait(?Send)]
-impl HttpRequestDispatcher for TransportSink {
-    fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
-        InferenceDimensions {
-            endpoint_url: self
-                .selected_url(request.url_index, request.endpoint_path.as_deref())
-                .ok(),
-            model: Some(self.model.clone()),
-        }
-    }
-
-    async fn dispatch_collect(
-        &self,
-        req: Request,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpDispatchResult> {
-        self.dispatch_collect_with_hooks(req, observer, on_first_token)
-            .await
-    }
-}
 
 #[async_trait(?Send)]
 impl Dispatcher for TransportSink {
@@ -786,7 +542,12 @@ impl Dispatcher for TransportSink {
     }
 
     fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
-        <Self as HttpRequestDispatcher>::inference_dimensions(self, request)
+        InferenceDimensions {
+            endpoint_url: self
+                .selected_url(request.url_index, request.endpoint_path.as_deref())
+                .ok(),
+            model: Some(self.model.clone()),
+        }
     }
 
     fn supports_response_streaming(&self) -> bool {
@@ -1018,8 +779,9 @@ impl TransportSink {
             mut request,
             model,
             endpoint,
-            endpoint_aware,
+            endpoint_aware: _,
             data_policy,
+            deferred: _,
         } = turn;
         if !data_policy.allow_result_cache() {
             request
@@ -1029,7 +791,11 @@ impl TransportSink {
                 .headers
                 .insert("pragma".to_string(), "no-cache".to_string());
         }
-        let collected = if endpoint_aware {
+        // Every product turn carries a prebuilt request body, so `PreparedTurn`
+        // always reports endpoint_aware (see PreparedTurn::from_turn). The
+        // non-endpoint-aware alternative this used to branch to was reachable
+        // only from tests.
+        let collected = {
             match endpoint {
                 PreparedEndpointBinding::Prepared(reference) => {
                     let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
@@ -1060,13 +826,6 @@ impl TransportSink {
                     .await?
                 }
             }
-        } else {
-            anyhow::ensure!(
-                responses.is_none(),
-                "true response streaming requires a prepared endpoint binding"
-            );
-            self.dispatch_collect_record_with_hooks(request, observer, on_first_token)
-                .await?
         };
         let HttpCollectedDispatch {
             result,
@@ -1129,6 +888,11 @@ fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> (Bytes,
 
 #[cfg(test)]
 mod tests {
+    use crate::dispatch::sink::ObservedUsage;
+    use crate::transport::http::sse::ChatChunk;
+    use crate::endpoints::chat_request_body;
+    use crate::transport::core::Response;
+    use crate::transport::http::models::RequestConfig;
     use std::cell::Cell;
 
     use super::*;
@@ -1262,20 +1026,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn first_token_filter_skips_non_content_sse_messages() {
-        let role = SseMessage::parse(r#"data: {"choices":[{"delta":{"role":"assistant"}}]}"#, 1);
-        let usage = SseMessage::parse(r#"data: {"choices":[],"usage":{"completion_tokens":1}}"#, 2);
-        let content = SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"hello"}}]}"#, 3);
-        let reasoning = SseMessage::parse(
-            r#"data: {"choices":[{"delta":{"reasoning_content":"think"}}]}"#,
-            4,
-        );
-        assert!(!is_meaningful_chat_token(&role));
-        assert!(!is_meaningful_chat_token(&usage));
-        assert!(is_meaningful_chat_token(&content));
-        assert!(is_meaningful_chat_token(&reasoning));
-    }
 
     #[test]
     fn vllm_request_id_and_finish_reason_enter_normalized_metadata() {
@@ -1356,7 +1106,12 @@ mod tests {
                         true,
                         |_ttft_ns, message| {
                             attempts.set(attempts.get() + 1);
-                            is_meaningful_chat_token(message)
+                            // Inlined from the removed non-endpoint-aware path:
+                            // a frame counts only if it carries delta text.
+                            message.data().is_some_and(|data| {
+                                serde_json::from_str::<ChatChunk>(data)
+                                    .is_ok_and(|chunk| !chunk.delta_text().is_empty())
+                            })
                         },
                     )
                     .await;
@@ -1370,65 +1125,4 @@ mod tests {
             .await;
     }
 
-    #[tokio::test]
-    async fn dispatch_invokes_first_token_hook_once() {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let base = crate::test_util::spawn_mock().await;
-                let clock = RealClock::new();
-                let sink = TransportSink::new(clock.clone(), clock.now_ns(), &base, "m", false);
-                let hook_calls = Rc::new(Cell::new(0));
-                let hook_calls_for_hook = hook_calls.clone();
-                let req = Request {
-                    uuid: Uuid::new_v4(),
-                    input_length: 4,
-                    max_output_tokens: 2,
-                    prompt_text: Some("hello world".to_string()),
-                    image_count: None,
-                    recorded_api_time_ns: None,
-                    recorded_ttft_ns: None,
-                    body: None,
-                    headers: BTreeMap::new(),
-                    parameters: BTreeMap::new(),
-                    endpoint_path: None,
-                    streaming: true,
-                    x_correlation_id: None,
-                    is_final_turn: true,
-                    cancel_after_ns: None,
-                    url_index: None,
-                };
-
-                let observer = RecordingObserver::default();
-                let first_token_ns = Rc::new(Cell::new(None));
-                let first_token_ns_for_hook = first_token_ns.clone();
-
-                let result = sink.dispatch_collect_with_hooks(req, &observer, |ttft_ns| {
-                    hook_calls_for_hook.set(hook_calls_for_hook.get() + 1);
-                    first_token_ns_for_hook.set(Some(ttft_ns));
-                })
-                .await
-                .unwrap();
-
-                assert_eq!(hook_calls.get(), 1);
-                assert_eq!(
-                    observer.usage.lock().unwrap().as_slice(),
-                    &[ObservedUsage {
-                        prompt_tokens: result.prompt_tokens.map(|value| value as usize),
-                        completion_tokens: result.completion_tokens.map(|value| value as usize),
-                        ..ObservedUsage::default()
-                    }]
-                );
-                let first_observed_token_ms = observer.tokens.lock().unwrap()[0];
-                let first_hook_ms = first_token_ns.get().unwrap() as f64 / 1_000_000.0;
-                let dispatch_start_ms = sink.ms(result.start_ns);
-                assert!(
-                    ((first_observed_token_ms - dispatch_start_ms) - first_hook_ms).abs()
-                        < 0.1,
-                    "hook TTFT {first_hook_ms:.6}ms must match first observed token at {:.6}ms from dispatch",
-                    first_observed_token_ms - dispatch_start_ms,
-                );
-            })
-            .await;
-    }
 }

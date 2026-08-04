@@ -21,10 +21,11 @@ use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
 use crate::engine::protocol::HopRouting;
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use crate::multiturn::TurnToSend;
+use crate::multiturn::{TurnToSend, WorkerMaterializer};
 use crate::scheduled::TurnResponseObserver;
 use crate::transport::core::{
-    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
+    CreditReportKind, DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn,
+    RequestExecutor, WorkerCreditReport,
 };
 use crate::transport::http::{TransportSink, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
@@ -38,6 +39,13 @@ use uuid::Uuid;
 const WORKER_QUEUE_CAPACITY: usize = 256;
 /// Bounded per-command streaming-response relay depth.
 const WORKER_RESPONSE_CAPACITY: usize = 256;
+/// Bounded depth of the shared credit-return stream every worker reports on.
+///
+/// One channel for the whole placement, not one per credit: sized well above a
+/// realistic in-flight set so a worker is never parked reporting a return, but
+/// still bounded — a worker that fills it simply waits, and the coordinator's
+/// drain loop is a separate task that is always able to run and empty it.
+const CREDIT_RETURN_CAPACITY: usize = 8192;
 
 /// Inputs for one execution backend.
 pub struct ExecutionBackendConfig {
@@ -66,6 +74,9 @@ pub struct ExecutionBackendConfig {
     ///
     /// Each worker receives an independent dense-key table.
     pub prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+    /// Optional worker-local materialization of identity-only credits. Present
+    /// only for `GlobalPush`; every other mode materializes on the issuer.
+    pub credit_materializer: Option<Arc<dyn CreditMaterializerFactory>>,
     /// Worker-assignment policy applied by the `workers > 1` hop executor. Inert
     /// for `workers == 1` (co-located sink, no hop).
     pub hop_routing: HopRouting,
@@ -77,6 +88,19 @@ pub struct ExecutionBackendConfig {
 pub trait PreparedEndpointTableFactory: Send + Sync {
     /// Build one deterministic dense-key table.
     fn prepare_worker(&self) -> Result<PreparedEndpointTable>;
+}
+
+/// Constructs the worker-local materializer that rebuilds routed credits.
+///
+/// `--dispatch global-push` can route a credit that carries only identity, the
+/// way Python's `Credit` does, and have the worker build the request body --
+/// body materialization was ~29% of the single issuer's CPU, on the one thread
+/// that bounds that mode. Each worker gets its own materializer over its own
+/// prepared endpoint table; the dataset and the materializer/tokenizer/counter
+/// behind it are shared, not copied.
+pub trait CreditMaterializerFactory: Send + Sync {
+    /// Build one worker's materializer over `table`, its own dense-key table.
+    fn build_worker(&self, table: PreparedEndpointTable) -> Result<WorkerMaterializer>;
 }
 
 /// Constructs the request executor for a run.
@@ -158,6 +182,12 @@ pub trait ExecutionSinkBuilder: Send + Sync + 'static {
 
     /// Build one worker-local sink on `clock` for `worker_id`.
     fn build_sink(&self, clock: Rc<dyn Clock>, worker_id: usize) -> Result<Self::Sink>;
+
+    /// Build this worker's materializer for identity-only credits, if the run
+    /// routes them. `None` keeps issuer-side materialization.
+    fn build_credit_materializer(&self) -> Result<Option<WorkerMaterializer>> {
+        Ok(None)
+    }
 }
 
 /// Constructs worker-local HTTP transport sinks.
@@ -166,6 +196,8 @@ pub struct HttpSinkBuilder {
     model: String,
     transport: TransportSinkConfig,
     prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+    credit_materializer: Option<Arc<dyn CreditMaterializerFactory>>,
+    raw_enabled: bool,
 }
 
 impl HttpSinkBuilder {
@@ -181,6 +213,8 @@ impl HttpSinkBuilder {
             model: config.model.clone(),
             transport,
             prepared_endpoints: config.prepared_endpoints.clone(),
+            credit_materializer: config.credit_materializer.clone(),
+            raw_enabled: config.raw_enabled,
         }
     }
 }
@@ -200,7 +234,21 @@ impl ExecutionSinkBuilder for HttpSinkBuilder {
             self.model.clone(),
             self.transport.clone(),
             self.prepared_endpoints.as_deref(),
+            self.raw_enabled,
         )
+    }
+
+    fn build_credit_materializer(&self) -> Result<Option<WorkerMaterializer>> {
+        let (Some(credit_materializer), Some(endpoints)) =
+            (&self.credit_materializer, &self.prepared_endpoints)
+        else {
+            return Ok(None);
+        };
+        // Its OWN dense-key table, exactly as the sink gets: a resolver is `Rc`
+        // and cannot cross the thread boundary.
+        Ok(Some(
+            credit_materializer.build_worker(endpoints.prepare_worker()?)?,
+        ))
     }
 }
 
@@ -274,8 +322,12 @@ fn prepare_transport_sink(
     model: String,
     transport: TransportSinkConfig,
     prepared_endpoints: Option<&dyn PreparedEndpointTableFactory>,
+    raw_enabled: bool,
 ) -> Result<TransportSink> {
     let sink = TransportSink::new_multi_configured(clock, start_ns, base_urls, model, transport)?;
+    // Without a raw artifact nothing reads the retained responses, so release
+    // them on this worker instead of on whichever thread consumes the record.
+    sink.set_retain_raw_responses(raw_enabled);
     match prepared_endpoints {
         Some(factory) => Ok(sink.with_prepared_endpoints(Rc::new(factory.prepare_worker()?))),
         None => Ok(sink),
@@ -290,13 +342,55 @@ struct WorkerReply {
     live_record: Option<RecordIngest>,
 }
 
+/// Everything a worker reports back about one hopped request, in the order it
+/// happens.
+///
+/// One ordered stream rather than a channel per event kind. The coordinator is
+/// this mode's throughput bound -- a per-thread sample during a hop run showed
+/// one thread at 1.08 cores with the other 144 idle -- so its per-request cost
+/// is the whole budget. Three channels plus a three-branch `select!` held live
+/// for each request's full lifetime became one `recv` loop over one channel.
+/// Ordering is preserved by the channel itself, so TTFT still lands before
+/// completion and the prefill slot is still released early.
+enum WorkerEvent {
+    /// First token observed; releases the prefill slot.
+    FirstToken(i64),
+    /// One endpoint-normalized frame, for runs with a live response observer.
+    Response(ParsedResponse),
+    /// Terminal reply. Always last for a given request.
+    Completed(Box<WorkerReply>),
+}
+
 /// One measured turn hopped from the coordinator loop to a worker thread.
 struct WorkerCommand {
     turn: PreparedTurn,
     context: MeasuredContext,
-    first_token: oneshot::Sender<i64>,
-    responses: Option<mpsc::Sender<ParsedResponse>>,
-    completed: oneshot::Sender<WorkerReply>,
+    events: mpsc::Sender<WorkerEvent>,
+    /// Whether the coordinator has a live response observer. A separate response
+    /// channel used to carry this signal by its presence; with one merged event
+    /// stream it must be stated.
+    wants_responses: bool,
+    cancellation: PlacementCancellation,
+}
+
+/// One credit ROUTED to a worker thread, which then owns the request for its
+/// whole lifetime and returns the credit out of band.
+///
+/// The difference from [`WorkerCommand`] is entirely on the return path. A
+/// hopped command carries its own reply channel because one coordinator future
+/// is parked on it; a credit carries a clone of the placement's single shared
+/// return stream and tags every report with the request `uuid`, because the
+/// coordinator has already moved on and drains all workers from one loop.
+struct CreditCommand {
+    turn: PreparedTurn,
+    context: MeasuredContext,
+    /// Index of the worker this credit was routed to, echoed back on every
+    /// report so the coordinator can release the right worker's depth.
+    worker: usize,
+    events: mpsc::Sender<WorkerCreditReport>,
+    /// Placement-wide latch fired by [`RequestExecutor::cancel_credits`]. Shared
+    /// rather than per credit: nothing coordinator-side holds a per-request
+    /// handle to fire, and grace escalation cancels the whole phase at once.
     cancellation: PlacementCancellation,
 }
 
@@ -310,6 +404,8 @@ enum WorkerMessage {
     },
     /// Execute one prepared turn (buffered or measured).
     Command(Box<WorkerCommand>),
+    /// Execute one routed credit, reporting on the shared return stream.
+    Credit(Box<CreditCommand>),
     /// Warm this worker's sink with one discarded round-trip before timed
     /// issuance, then acknowledge so the coordinator can release all workers
     /// from a warmed state (the Rust-native "workers ready, go" barrier).
@@ -414,6 +510,30 @@ struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     sticky: RefCell<HashMap<String, usize>>,
     run_origin_ns: Cell<Option<i64>>,
     dimension_sink: B::Sink,
+    /// Push-mode return stream, shared by every worker and drained by one
+    /// coordinator loop. Built eagerly because it costs one channel per run.
+    credit_returns: CreditReturnStream,
+    /// Per-worker routed-order backlog for pushed commands that did not fit in
+    /// a worker's bounded queue.
+    ///
+    /// [`RequestExecutor::send_credit`] is synchronous, so it cannot wait for
+    /// capacity; parking the command here instead of blocking keeps the issuer
+    /// off the request's critical path. Whenever this is non-empty for a worker
+    /// EVERY later command for that worker joins it, so routed order survives
+    /// the detour. It drains on each return-stream event, which is exactly when
+    /// that worker frees a queue slot. Bounded in practice by the same
+    /// admission gate that bounds in-flight requests.
+    credit_backlog: RefCell<Vec<std::collections::VecDeque<Box<CreditCommand>>>>,
+    /// Placement-wide cancellation latch shared by every pushed command.
+    credit_cancellation: PlacementCancellation,
+}
+
+/// The coordinator's end of the push return stream.
+struct CreditReturnStream {
+    sender: mpsc::Sender<WorkerCreditReport>,
+    /// Borrowed only inside a `poll_recv` call, never across an await, so the
+    /// single drain loop cannot collide with the backlog flush.
+    receiver: RefCell<mpsc::Receiver<WorkerCreditReport>>,
 }
 
 /// Decrements a worker's in-flight counter on drop, so a cancelled or
@@ -645,6 +765,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             }
         }
 
+        let (credit_tx, credit_rx) = mpsc::channel(CREDIT_RETURN_CAPACITY);
         Ok(Self {
             senders: RefCell::new(Some(senders)),
             threads: RefCell::new(threads),
@@ -655,7 +776,65 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             sticky: RefCell::new(HashMap::new()),
             run_origin_ns: Cell::new(None),
             dimension_sink,
+            credit_returns: CreditReturnStream {
+                sender: credit_tx,
+                receiver: RefCell::new(credit_rx),
+            },
+            credit_backlog: RefCell::new(
+                (0..workers)
+                    .map(|_| std::collections::VecDeque::new())
+                    .collect(),
+            ),
+            credit_cancellation: PlacementCancellation::new(),
         })
+    }
+
+    /// Move as much of each worker's routed-order backlog into its bounded queue
+    /// as that queue currently accepts.
+    ///
+    /// Called on every push and every return-stream event. A worker with a
+    /// backlog has a full queue, which means it has in-flight requests, which
+    /// means more events are coming — so the backlog always drains without a
+    /// dedicated pump task.
+    fn flush_credit_backlog(&self) {
+        let mut backlog = self.credit_backlog.borrow_mut();
+        if backlog.iter().all(|queue| queue.is_empty()) {
+            return;
+        }
+        let senders = self.senders.borrow();
+        let Some(senders) = senders.as_ref() else {
+            return;
+        };
+        for (index, queue) in backlog.iter_mut().enumerate() {
+            while let Some(command) = queue.pop_front() {
+                match senders[index].try_send(WorkerMessage::Credit(command)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(WorkerMessage::Credit(command))) => {
+                        queue.push_front(command);
+                        break;
+                    }
+                    // A closed worker cannot report a terminal, so dropping the
+                    // command here would leave the issuer's pending entry open
+                    // forever. Synthesize the terminal on the return stream.
+                    Err(mpsc::error::TrySendError::Closed(WorkerMessage::Credit(command))) => {
+                        self.report_credit_failure(command.turn.request.uuid, index);
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    /// Return a credit no worker can drive, so the issuer's pending entry is
+    /// always closed exactly once even when a worker dies mid-run.
+    fn report_credit_failure(&self, uuid: Uuid, worker: usize) {
+        let _ = self.credit_returns.sender.try_send(WorkerCreditReport {
+            uuid,
+            worker,
+            kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
+                "execution worker stopped before accepting a routed credit"
+            )))),
+        });
     }
 
     fn shutdown_workers(&self) -> Result<()> {
@@ -761,6 +940,96 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
         })
     }
 
+    fn supports_credit_dispatch(&self) -> bool {
+        true
+    }
+
+    fn send_credit(&self, turn: PreparedTurn, context: MeasuredContext) -> Result<()> {
+        let _run_origin_ns = self.origin()?;
+        // A worker frees queue capacity only by finishing work, and finishing
+        // work emits a return-stream event — so the flush that matters happens
+        // on the drain. This one keeps a backlog from outliving a lull in
+        // completions.
+        self.flush_credit_backlog();
+        let index = {
+            let senders = self.senders.borrow();
+            let senders = senders
+                .as_ref()
+                .ok_or_else(|| anyhow!("execution backend is shut down"))?;
+            let mut rr_cursor = self.next_worker.get();
+            let index = pick_worker(
+                self.routing,
+                senders.len(),
+                context.metadata.correlation_id.as_deref(),
+                turn.request.is_final_turn,
+                &self.inflight,
+                &mut self.sticky.borrow_mut(),
+                &mut rr_cursor,
+            );
+            self.next_worker.set(rr_cursor);
+            index
+        };
+        // Same stamping order as the hop: `sent`/`last_sent` decide the next
+        // tie. The in-flight depth differs by design — the hop releases it at
+        // reply, a push issuer at credit return (see `DispatchMode::GlobalPush`)
+        // — so it is incremented here and decremented on the terminal report.
+        let chosen = &self.inflight[index];
+        chosen.sent.set(chosen.sent.get() + 1);
+        self.send_seq.set(self.send_seq.get() + 1);
+        chosen.last_sent.set(self.send_seq.get());
+        chosen.inflight.set(chosen.inflight.get().saturating_add(1));
+
+        let command = Box::new(CreditCommand {
+            turn,
+            context,
+            worker: index,
+            events: self.credit_returns.sender.clone(),
+            cancellation: self.credit_cancellation.clone(),
+        });
+        let mut backlog = self.credit_backlog.borrow_mut();
+        // Routed order is the contract: once this worker has a backlog every
+        // later command for it must queue behind, never overtake.
+        if !backlog[index].is_empty() {
+            backlog[index].push_back(command);
+            return Ok(());
+        }
+        let senders = self.senders.borrow();
+        let senders = senders
+            .as_ref()
+            .ok_or_else(|| anyhow!("execution backend is shut down"))?;
+        match senders[index].try_send(WorkerMessage::Credit(command)) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(WorkerMessage::Credit(command))) => {
+                backlog[index].push_back(command);
+                Ok(())
+            }
+            Err(_) => Err(anyhow!(
+                "execution worker stopped before accepting a routed credit"
+            )),
+        }
+    }
+
+    async fn next_credit_report(&self) -> Option<WorkerCreditReport> {
+        // `poll_recv` keeps the receiver borrow inside one poll, so the backlog
+        // flush below (and any other executor call) can never hit a live borrow.
+        let report =
+            poll_fn(|context| self.credit_returns.receiver.borrow_mut().poll_recv(context)).await?;
+        if let CreditReportKind::CreditReturn(_) = &report.kind {
+            // The returned credit releases its worker's depth — the one
+            // deliberate difference from the hop, which releases at reply.
+            if let Some(load) = self.inflight.get(report.worker) {
+                load.inflight.set(load.inflight.get().saturating_sub(1));
+            }
+            // A returned credit is exactly when that worker freed a queue slot.
+            self.flush_credit_backlog();
+        }
+        Some(report)
+    }
+
+    fn cancel_credits(&self) {
+        self.credit_cancellation.cancel();
+    }
+
     fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
         let senders = {
             let senders = self.senders.borrow();
@@ -843,61 +1112,44 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             let guard = InflightGuard::new(&chosen.inflight);
             (senders[index].clone(), guard)
         };
-        let (first_token_tx, mut first_token_rx) = oneshot::channel();
-        let (response_tx, mut response_rx) = mpsc::channel(WORKER_RESPONSE_CAPACITY);
-        let (completed_tx, mut completed_rx) = oneshot::channel();
+        // Sized so a streaming run's frames do not block the worker on a full
+        // channel; a run with no observer only ever carries TTFT + completion.
+        let capacity = if responses.is_some() {
+            WORKER_RESPONSE_CAPACITY
+        } else {
+            2
+        };
+        let (event_tx, mut event_rx) = mpsc::channel(capacity);
         let cancellation = PlacementCancellation::new();
         let mut cancellation_guard = PlacementCancellationGuard::new(cancellation.clone());
         sender
             .send(WorkerMessage::Command(Box::new(WorkerCommand {
                 turn,
                 context,
-                first_token: first_token_tx,
-                responses: responses.map(|_| response_tx),
-                completed: completed_tx,
+                events: event_tx,
+                wants_responses: responses.is_some(),
                 cancellation,
             })))
             .await
             .map_err(|_| anyhow!("execution worker stopped before accepting a command"))?;
 
-        let mut first_token_channel_done = false;
-        let mut response_channel_done = responses.is_none();
         let reply = loop {
-            tokio::select! {
-                biased;
-                first = &mut first_token_rx, if !first_token_channel_done => {
-                    first_token_channel_done = true;
-                    if let Ok(ttft_ns) = first {
-                        on_first_token(ttft_ns);
-                    }
+            match event_rx.recv().await {
+                Some(WorkerEvent::FirstToken(ttft_ns)) => on_first_token(ttft_ns),
+                Some(WorkerEvent::Response(response)) => {
+                    let responses = responses
+                        .ok_or_else(|| anyhow!("worker sent a response frame with no observer"))?;
+                    poll_fn(|context| responses.poll_ready(context)).await?;
+                    responses.start_send(response)?;
                 }
-                response = response_rx.recv(), if !response_channel_done => {
-                    match response {
-                        Some(response) => {
-                            let responses = responses
-                                .expect("response channel exists only for streaming dispatch");
-                            poll_fn(|context| responses.poll_ready(context)).await?;
-                            responses.start_send(response)?;
-                        }
-                        None => response_channel_done = true,
-                    }
-                }
-                completed = &mut completed_rx => {
-                    break completed.map_err(|_| {
-                        anyhow!("execution worker dropped a command before completion")
-                    })?;
+                Some(WorkerEvent::Completed(reply)) => break *reply,
+                None => {
+                    return Err(anyhow!(
+                        "execution worker dropped a command before completion"
+                    ));
                 }
             }
         };
-        if !first_token_channel_done && let Ok(ttft_ns) = first_token_rx.try_recv() {
-            on_first_token(ttft_ns);
-        }
-        if let Some(responses) = responses {
-            while let Ok(response) = response_rx.try_recv() {
-                poll_fn(|context| responses.poll_ready(context)).await?;
-                responses.start_send(response)?;
-            }
-        }
         cancellation_guard.disarm();
         Ok(reply)
     }
@@ -918,8 +1170,17 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
     worker_id: usize,
     started: std::sync::mpsc::SyncSender<std::result::Result<(), String>>,
 ) -> Result<()> {
+    // IO + time only: this runtime needs no signal handling. Note this does
+    // NOT avoid tokio's child-process orphan sweep, which a profile put at
+    // 4-6% of client CPU -- on Unix the IO stack is IoDriver -> SignalDriver
+    // -> ProcessDriver, so enabling IO enables the sweep whenever tokio is
+    // compiled with its `process` feature (the workspace uses
+    // features = ["full"]). Removing that cost means gating the two
+    // tokio::process users -- the cell launcher and the accuracy worker --
+    // behind a Cargo feature, not changing this builder.
     let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+        .enable_io()
+        .enable_time()
         .build()
     {
         Ok(runtime) => runtime,
@@ -936,17 +1197,28 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
             return Err(error).context("constructing worker-local transport sink");
         }
     };
+    let materializer = match builder.build_credit_materializer() {
+        Ok(materializer) => materializer.map(Rc::new),
+        Err(error) => {
+            let _ = started.send(Err(error.to_string()));
+            return Err(error).context("constructing worker-local credit materializer");
+        }
+    };
     if started.send(Ok(())).is_err() {
         return Ok(());
     }
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, run_worker(receiver, sink, clock, worker_id));
+    local.block_on(
+        &runtime,
+        run_worker(receiver, sink, materializer, clock, worker_id),
+    );
     Ok(())
 }
 
 async fn run_worker<S: WorkerSink + 'static>(
     mut receiver: mpsc::Receiver<WorkerMessage>,
     sink: Rc<S>,
+    materializer: Option<Rc<WorkerMaterializer>>,
     clock: Rc<dyn Clock>,
     worker_id: usize,
 ) {
@@ -984,6 +1256,23 @@ async fn run_worker<S: WorkerSink + 'static>(
                         let observer = observer.clone();
                         jobs.spawn_local(async move {
                             execute_worker_command(sink, observer, *command).await;
+                        });
+                    }
+                    Some(WorkerMessage::Credit(command)) => {
+                        let sink = sink.clone();
+                        let observer = observer.clone();
+                        // Materialization runs INLINE, before the job is spawned:
+                        // a conversation's session is stateful, so its turns must
+                        // be built in routed order, not raced by concurrent tasks.
+                        let command = match materialize_credit(materializer.as_deref(), *command) {
+                            Ok(command) => command,
+                            Err(report) => {
+                                let _ = report.events.try_send(report.failure);
+                                continue;
+                            }
+                        };
+                        jobs.spawn_local(async move {
+                            execute_worker_credit(sink, observer, command).await;
                         });
                     }
                     Some(WorkerMessage::Prewarm { turn, done }) => {
@@ -1035,11 +1324,11 @@ async fn run_worker<S: WorkerSink + 'static>(
 /// Relays a worker's streamed parsed responses back to the coordinator dispatch
 /// future over a bounded channel.
 struct WorkerResponseObserver {
-    sender: RefCell<PollSender<ParsedResponse>>,
+    sender: RefCell<PollSender<WorkerEvent>>,
 }
 
 impl WorkerResponseObserver {
-    fn new(sender: mpsc::Sender<ParsedResponse>) -> Self {
+    fn new(sender: mpsc::Sender<WorkerEvent>) -> Self {
         Self {
             sender: RefCell::new(PollSender::new(sender)),
         }
@@ -1059,6 +1348,7 @@ impl TurnResponseObserver for WorkerResponseObserver {
     }
 
     fn start_send(&self, response: ParsedResponse) -> Result<()> {
+        let response = WorkerEvent::Response(response);
         self.sender
             .borrow_mut()
             .send_item(response)
@@ -1074,19 +1364,21 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
     let WorkerCommand {
         turn,
         context,
-        first_token,
-        responses,
-        completed,
+        events,
+        wants_responses,
         cancellation,
     } = command;
     let uuid = turn.request.uuid;
-    let first_token = RefCell::new(Some(first_token));
+    let first_token_sent = Cell::new(false);
     let on_first_token = |ttft_ns| {
-        if let Some(sender) = first_token.borrow_mut().take() {
-            let _ = sender.send(ttft_ns);
+        // TTFT precedes every response frame for its request and the channel
+        // reserves room for it, so this cannot displace a queued frame.
+        // `try_send` keeps the callback synchronous, as the sink requires.
+        if !first_token_sent.replace(true) {
+            let _ = events.try_send(WorkerEvent::FirstToken(ttft_ns));
         }
     };
-    let response_observer = responses.map(WorkerResponseObserver::new);
+    let response_observer = wants_responses.then(|| WorkerResponseObserver::new(events.clone()));
     let reply = match &worker_observer {
         Some(observer) => {
             let dispatch = sink.dispatch_measured(
@@ -1125,17 +1417,166 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
             }
         }
         None => {
-            let _ = completed.send(WorkerReply {
-                result: Err(anyhow!(
-                    "worker-local measurement was not configured before a measured command"
-                )),
-                live_record: None,
-            });
+            let _ = events
+                .send(WorkerEvent::Completed(Box::new(WorkerReply {
+                    result: Err(anyhow!(
+                        "worker-local measurement was not configured before a measured command"
+                    )),
+                    live_record: None,
+                })))
+                .await;
             return;
         }
     };
-    drop(first_token.borrow_mut().take());
-    let _ = completed.send(reply);
+    // Completion is always the last event for this request; the coordinator
+    // breaks its receive loop on it.
+    let _ = events.send(WorkerEvent::Completed(Box::new(reply))).await;
+}
+
+/// A credit this worker could not materialize, plus the return it owes for it.
+struct CreditMaterializationFailure {
+    events: mpsc::Sender<WorkerCreditReport>,
+    failure: WorkerCreditReport,
+}
+
+/// Rebuild an identity-only credit's request on this worker.
+///
+/// A credit that already carries its body passes straight through, so a run
+/// with no worker-side materializer is untouched. Failure returns the credit
+/// with an error terminal rather than dropping it: the issuer holds a pending
+/// entry that only a return can close.
+fn materialize_credit(
+    materializer: Option<&WorkerMaterializer>,
+    mut command: CreditCommand,
+) -> std::result::Result<CreditCommand, CreditMaterializationFailure> {
+    let Some(identity) = command.turn.deferred.clone() else {
+        return Ok(command);
+    };
+    let uuid = command.turn.request.uuid;
+    let worker = command.worker;
+    let fail = |command: CreditCommand, message: String| CreditMaterializationFailure {
+        events: command.events,
+        failure: WorkerCreditReport {
+            uuid,
+            worker,
+            kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(message)))),
+        },
+    };
+    let Some(materializer) = materializer else {
+        return Err(fail(
+            command,
+            "a credit was routed unmaterialized to a worker with no materializer".to_string(),
+        ));
+    };
+    let turn = match materializer.materialize(&identity) {
+        Ok(turn) => turn,
+        Err(error) => return Err(fail(command, format!("{error:#}"))),
+    };
+    // Keep the issuer's identity — the uuid the whole measurement plane keys on,
+    // and the issuance-time policy scalars — and take everything the body
+    // determines from what this worker actually built.
+    let mut prepared = PreparedTurn::from_turn(turn, &command.turn.model);
+    prepared.request.uuid = uuid;
+    prepared.request.cancel_after_ns = command.turn.request.cancel_after_ns;
+    prepared.request.url_index = command.turn.request.url_index;
+    prepared.request.is_final_turn = command.turn.request.is_final_turn;
+    // The worker's count is authoritative now, so the observer's arrival facts
+    // must come from it rather than from the issuer's authored estimate.
+    command.context.input_length = prepared.request.input_length;
+    command.context.requested_output_length = prepared.request.max_output_tokens;
+    command.turn = prepared;
+    Ok(command)
+}
+
+/// Drive one routed credit to terminal and return it on the shared stream.
+///
+/// The worker owns the whole request here — no coordinator future is parked on
+/// it — so every report it makes is tagged with the request `uuid`. Live
+/// response streaming is deliberately absent: the credit path is selected only
+/// for runs with no live response observer (see
+/// [`ScheduledRuntime`](crate::scheduled::ScheduledRuntime)'s issuance split),
+/// because forwarding frames would put the coordinator back in the request's
+/// lifetime and undo the entire point of the mode.
+async fn execute_worker_credit<S: WorkerSink + 'static>(
+    sink: Rc<S>,
+    worker_observer: Option<Rc<NativeMetricsObserver>>,
+    command: CreditCommand,
+) {
+    let CreditCommand {
+        turn,
+        context,
+        worker,
+        events,
+        cancellation,
+    } = command;
+    let uuid = turn.request.uuid;
+    let Some(observer) = worker_observer else {
+        let _ = events
+            .send(WorkerCreditReport {
+                uuid,
+                worker,
+                kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
+                    "worker-local measurement was not configured before a routed credit"
+                )))),
+            })
+            .await;
+        return;
+    };
+    let first_token_sent = Cell::new(false);
+    let on_first_token = |ttft_ns| {
+        // `try_send` keeps the callback synchronous, as the sink requires. A
+        // dropped first-token report costs the issuer an early prefill release,
+        // never a lost credit: the return below is sent with backpressure.
+        if !first_token_sent.replace(true) {
+            let _ = events.try_send(WorkerCreditReport {
+                uuid,
+                worker,
+                kind: CreditReportKind::FirstToken(ttft_ns),
+            });
+        }
+    };
+    let dispatch = sink.dispatch_measured(&observer, turn, &context, &on_first_token, None);
+    tokio::pin!(dispatch);
+    let result = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => {
+            Err(anyhow!("execution command cancelled by its coordinator"))
+        }
+        result = &mut dispatch => result,
+    };
+    let live_record = context
+        .wants_live_record
+        .then(|| {
+            if context.consume_record {
+                observer.drain_terminal_record(uuid, 0)
+            } else {
+                observer.snapshot_record(uuid, 0)
+            }
+        })
+        .flatten();
+    let outcome = result.map(|mut result| {
+        // Nothing downstream reads the raw exchange unless a raw artifact was
+        // requested, so release it HERE rather than shipping a ~ISL-sized body
+        // and a transport record to the coordinator only for it to drop them on
+        // the one thread that bounds the run.
+        if !context.wants_http_exchange {
+            result.request_payload = bytes::Bytes::new();
+            result.record = crate::transport::core::RequestRecord::default();
+        }
+        MeasuredOutcome {
+            result,
+            live_record,
+        }
+    });
+    // Returning the credit is what releases the issuer's admission slot, so it
+    // is sent with backpressure rather than dropped on a full stream.
+    let _ = events
+        .send(WorkerCreditReport {
+            uuid,
+            worker,
+            kind: CreditReportKind::CreditReturn(Box::new(outcome)),
+        })
+        .await;
 }
 
 fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {
@@ -1155,6 +1596,45 @@ fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {
             errors.len(),
             errors.join("; ")
         ))
+    }
+}
+
+#[cfg(test)]
+mod raw_retention_tests {
+    use super::*;
+    use crate::clock::RealClock;
+
+    fn builder(raw_enabled: bool) -> HttpSinkBuilder {
+        HttpSinkBuilder {
+            base_urls: vec!["http://127.0.0.1:1".to_string()],
+            model: "m".to_string(),
+            transport: TransportSinkConfig::default(),
+            prepared_endpoints: None,
+            credit_materializer: None,
+            raw_enabled,
+        }
+    }
+
+    /// A run configured for a raw HTTP-exchange artifact must keep the response
+    /// bodies: the worker-side release is what feeds that artifact, so an
+    /// inverted flag would empty it while every summary metric still looked
+    /// correct.
+    #[test]
+    fn raw_artifact_run_retains_response_bodies() {
+        let sink = builder(true)
+            .build_sink(RealClock::new(), 0)
+            .expect("sink builds");
+        assert!(sink.retains_raw_responses());
+    }
+
+    /// Without a raw artifact nothing reads them, so they are released on the
+    /// worker rather than on whichever thread later drops the record.
+    #[test]
+    fn run_without_raw_artifact_releases_response_bodies() {
+        let sink = builder(false)
+            .build_sink(RealClock::new(), 0)
+            .expect("sink builds");
+        assert!(!sink.retains_raw_responses());
     }
 }
 
@@ -1486,6 +1966,7 @@ mod tests {
             requested_output_length: 4,
             metadata: RequestMetricMetadata::default(),
             wants_live_record: false,
+            wants_http_exchange: false,
             consume_record: false,
         }
     }
@@ -1552,6 +2033,7 @@ mod tests {
                 raw_enabled: false,
                 inputs_enabled: false,
                 prepared_endpoints: Some(table_factory),
+                credit_materializer: None,
                 hop_routing: HopRouting::RoundRobin,
                 virtual_worker_width: None,
             })
@@ -1599,6 +2081,7 @@ mod tests {
             }),
             endpoint_aware: true,
             data_policy: crate::multiturn::TurnDataPolicy::ordinary(),
+            deferred: None,
         }
     }
 

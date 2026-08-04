@@ -851,6 +851,337 @@ mod tests {
             sorted_data_keys(&hop),
             "GlobalHop merge order must be deterministic across runs"
         );
+
+        // `GlobalPush` makes the SAME exactly-once and deterministic-merge
+        // promises from a different mechanism: the issuer routes a credit and
+        // returns, and the worker returns that credit out of band. A lost
+        // credit, a doubly-routed one, or a merge ordered by completion timing
+        // would each break one of the three assertions below.
+        let push = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            push.len(),
+            requests as usize,
+            "GlobalPush must produce exactly one record per routed credit \
+             (every credit routed once and returned once — no loss, no duplicate)"
+        );
+        assert_eq!(
+            sorted_data_keys(&push),
+            baseline_keys,
+            "GlobalPush's merged record stream must carry the same per-request multiset \
+             the single dispatcher does (exactly-once, deterministically merged)"
+        );
+        let push_again = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            sorted_data_keys(&push_again),
+            sorted_data_keys(&push),
+            "GlobalPush merge order must be deterministic across runs"
+        );
+    }
+
+    /// The prepared endpoint table factory the credit-materialization tests
+    /// resolve through, built exactly as `compose_sidecars` builds it.
+    fn prepared_table_factory(
+        registry: &AIPerfRegistry,
+    ) -> Arc<crate::engine::execute::NativePreparedEndpointTableFactory> {
+        Arc::new(
+            crate::engine::execute::NativePreparedEndpointTableFactory::new(
+                registry.endpoints().clone(),
+                endpoint_profile("http://127.0.0.1:1"),
+            ),
+        )
+    }
+
+    /// A worker rebuilding an identity-only credit must produce the SAME request
+    /// the issuer would have.
+    ///
+    /// This is the invariant the whole thin-credit split rests on, and the one
+    /// that fails silently: a worker materializing from a differently-seeded or
+    /// differently-partitioned source would still emit valid requests, just with
+    /// the wrong prompts and the wrong ISL, and every summary metric would look
+    /// plausible. Compared byte-for-byte on the serialized body, plus the
+    /// derived length and model, against the issuer's own `build_first_turn`.
+    #[test]
+    fn a_worker_rebuilds_a_deferred_credit_byte_identically() {
+        use crate::multiturn::{
+            ConversationSource, CreditIdentity, NativeDatasetConversationSource,
+        };
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let prepared = build_dataset(&registry, 8, 1);
+        let endpoints = prepared_table_factory(&registry);
+
+        let source = || {
+            NativeDatasetConversationSource::sequential_with_prepared_resolver(
+                prepared.dataset.clone(),
+                "mock-model",
+                FIXED_OSL,
+                endpoints.coordinator_resolver().unwrap(),
+            )
+            .unwrap()
+        };
+
+        // The issuer's eager path, and a worker's replay of the same credit.
+        let mut issuer = source();
+        let materializer = source()
+            .worker_recipe()
+            .build(endpoints.coordinator_resolver().unwrap());
+
+        for _ in 0..8 {
+            let sampled = issuer.next(None).unwrap();
+            let eager = sampled.build_first_turn(None).unwrap();
+            let rebuilt = materializer
+                .materialize(&CreditIdentity {
+                    conversation_id: eager.conversation_id.clone(),
+                    x_correlation_id: eager.x_correlation_id.clone(),
+                    turn_index: eager.turn_index,
+                    num_turns: eager.num_turns,
+                })
+                .expect("the worker can rebuild every credit the issuer can draw");
+            assert_eq!(
+                rebuilt.request_body, eager.request_body,
+                "worker-rebuilt body differs from the issuer's for conversation {:?}",
+                eager.conversation_id
+            );
+            assert_eq!(
+                rebuilt.input_length, eager.input_length,
+                "worker-rebuilt ISL differs for conversation {:?}",
+                eager.conversation_id
+            );
+            assert_eq!(rebuilt.max_output_tokens, eager.max_output_tokens);
+            assert_eq!(rebuilt.effective_model, eager.effective_model);
+        }
+    }
+
+    /// The issuer's identity-only turn must carry the accounting facts admission
+    /// and arrival depend on, even though it carries no body.
+    ///
+    /// If these came out zero the run would still complete and still report the
+    /// worker's ISL, but concurrency admission and the coordinator's arrival
+    /// facts would have been computed against nothing.
+    #[test]
+    fn a_deferred_turn_still_carries_its_scheduling_identity() {
+        use crate::multiturn::{ConversationSource, NativeDatasetConversationSource};
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let prepared = build_dataset(&registry, 4, 1);
+        let endpoints = prepared_table_factory(&registry);
+        let mut source = NativeDatasetConversationSource::sequential_with_prepared_resolver(
+            prepared.dataset.clone(),
+            "mock-model",
+            FIXED_OSL,
+            endpoints.coordinator_resolver().unwrap(),
+        )
+        .unwrap();
+
+        let sampled = source.next(None).unwrap();
+        // Deferred FIRST: the assertion below is that this path leaves the
+        // walking state unbuilt, which an earlier eager build would mask.
+        let deferred = sampled.build_deferred_turn(0, None).unwrap();
+
+        assert!(deferred.deferred_body, "the turn must be marked deferred");
+        assert!(
+            !sampled.has_walking_state(),
+            "an identity-only credit must not build the conversation-walking state —              that state is the worker's job, and constructing it on the issuer is              exactly the per-request cost the deferred path exists to avoid"
+        );
+        // The eager path is what legitimately needs it, on the same session.
+        let eager = sampled.build_first_turn(None).unwrap();
+        assert!(
+            sampled.has_walking_state(),
+            "materializing on the issuer must still build the walking state"
+        );
+        assert!(
+            deferred.request_body.is_none(),
+            "a deferred turn must not carry a body"
+        );
+        assert_eq!(deferred.conversation_id, eager.conversation_id);
+        assert_eq!(deferred.x_correlation_id, eager.x_correlation_id);
+        assert_eq!(deferred.turn_index, eager.turn_index);
+        assert_eq!(deferred.num_turns, eager.num_turns);
+        assert_eq!(
+            deferred.input_length, eager.input_length,
+            "authored ISL must match what materialization derives, or admission \
+             and arrival accounting drift from the record"
+        );
+        assert_eq!(deferred.max_output_tokens, eager.max_output_tokens);
+    }
+
+    /// `GlobalPush` aggregate-concurrency exactness.
+    ///
+    /// The property most at risk in a credit router: the issuer no longer holds
+    /// a future per in-flight request, so the ONLY thing bounding aggregate
+    /// concurrency is that the admission slot is released when the worker
+    /// RETURNS the credit. Release it anywhere earlier — at routing, at the
+    /// queue hand-off, at first token — and the wire peak blows straight past
+    /// the authored cap while every summary metric still looks plausible.
+    /// Measured server-side, across all 4 worker threads combined.
+    #[test]
+    fn global_push_enforces_true_aggregate_concurrency_cap() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 24;
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 24u64,
+            "concurrency": 3,
+        }))
+        .unwrap();
+
+        mock.reset_peak();
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(rows.len(), 24, "every request must produce one record");
+        let peak = mock.peak_concurrent();
+        assert!(
+            peak <= 3,
+            "GlobalPush must enforce the true aggregate concurrency cap (3) across all \
+             4 worker threads combined — the credit's admission slot is released only \
+             on credit return (observed wire peak: {peak})"
+        );
+        assert_eq!(
+            peak, 3,
+            "the cap must actually be reached (proves real cross-thread contention, \
+             not an under-subscribed run); got {peak}"
+        );
+    }
+
+    /// `GlobalPush` aggregate-rate exactness.
+    ///
+    /// One issuer paces the FULL global rate through the local per-phase
+    /// interval grid, exactly as `GlobalHop` does and without consuming
+    /// `GlobalAdmission`. Routing credits instead of awaiting replies must not
+    /// let issuance run `W ×` too fast.
+    #[test]
+    fn global_push_paces_true_aggregate_rate() {
+        const WORKERS: usize = 4;
+        const RATE_PER_SEC: f64 = 200.0;
+        const REQUESTS: u64 = 40;
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "constant",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": REQUESTS,
+            "rate": RATE_PER_SEC,
+        }))
+        .unwrap();
+
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            WORKERS,
+            build_dataset(&registry, REQUESTS as usize, 1),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            rows.len(),
+            REQUESTS as usize,
+            "every issued request must produce one profiling record"
+        );
+        let mut issued: Vec<i64> = rows
+            .iter()
+            .map(|row| {
+                row.get("metadata")
+                    .and_then(|m| m.get("credit_issued_ns"))
+                    .and_then(Value::as_i64)
+                    .expect("record carries credit_issued_ns for a rate phase")
+            })
+            .collect();
+        issued.sort_unstable();
+        let span_ns = (issued.last().unwrap() - issued.first().unwrap()).max(1);
+        let push_rate = (REQUESTS as f64 - 1.0) / (span_ns as f64 / 1e9);
+        eprintln!(
+            "global-push aggregate rate across {WORKERS} threads: {push_rate:.1}/s \
+             (configured global rate {RATE_PER_SEC}/s)"
+        );
+        assert!(
+            push_rate < RATE_PER_SEC * 1.35,
+            "GlobalPush must pace the AGGREGATE rate across all {WORKERS} worker threads \
+             at the global {RATE_PER_SEC}/s, NOT ~{WORKERS}x too fast; measured {push_rate:.1}/s"
+        );
+        assert!(
+            push_rate > RATE_PER_SEC * 0.65,
+            "GlobalPush aggregate rate must actually reach the configured {RATE_PER_SEC}/s \
+             (proves the run is rate-bound, not stalled); measured {push_rate:.1}/s"
+        );
+    }
+
+    /// A multi-turn `GlobalPush` run must complete every turn of every session.
+    ///
+    /// Continuations are the case a credit router can silently break: the next
+    /// turn is scheduled from the completion callback, which the credit-return
+    /// loop runs INLINE. If that loop parked, dropped an entry, or settled a
+    /// credit twice, sessions would stall short of their turn count and the
+    /// phase would hang on its drain barrier rather than fail loudly.
+    #[test]
+    fn global_push_completes_every_turn_of_a_multi_turn_session() {
+        const SESSIONS: usize = 6;
+        const TURNS: usize = 3;
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": (SESSIONS * TURNS) as u64,
+            "concurrency": 3,
+        }))
+        .unwrap();
+
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, SESSIONS, TURNS),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            rows.len(),
+            SESSIONS * TURNS,
+            "every turn of every session must reach a record under GlobalPush"
+        );
+        let mut turn_indices: Vec<u64> = rows
+            .iter()
+            .map(|row| {
+                row.get("metadata")
+                    .and_then(|m| m.get("turn_index"))
+                    .and_then(Value::as_u64)
+                    .expect("record carries its turn index")
+            })
+            .collect();
+        turn_indices.sort_unstable();
+        let mut expected: Vec<u64> = (0..SESSIONS).flat_map(|_| 0..TURNS as u64).collect();
+        expected.sort_unstable();
+        assert_eq!(
+            turn_indices, expected,
+            "GlobalPush must dispatch each session's turns 0..{TURNS} exactly once"
+        );
     }
 
     /// `GlobalHop` aggregate-concurrency exactness — the counterpart of

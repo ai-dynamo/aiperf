@@ -32,8 +32,12 @@ pub trait Clock {
     /// overrides this with deterministic event-by-event advancement; a
     /// [`RunOutcome::deadlocked`] result means no virtual event can make progress.
     fn drive(self: Rc<Self>, body: Pin<Box<dyn Future<Output = ()> + '_>>) -> RunOutcome {
+        // IO + time only: this driver needs no signal handling. See
+        // turn_execution::run_worker_thread for why this does not remove
+        // tokio's child-process orphan sweep from the park path.
         let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
+            .enable_io()
+            .enable_time()
             .build()
             .expect("current-thread runtime for real-clock run driver");
         tokio::task::LocalSet::new().block_on(&runtime, body);

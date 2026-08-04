@@ -1205,6 +1205,7 @@ mod tests {
                 raw_enabled: false,
                 inputs_enabled: false,
                 prepared_endpoints: None,
+                credit_materializer: None,
                 hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
                 virtual_worker_width: None,
             })
@@ -1244,6 +1245,7 @@ mod tests {
             }),
             endpoint_aware: false,
             data_policy: TurnDataPolicy::ordinary(),
+            deferred: None,
         }
     }
 
@@ -1254,6 +1256,7 @@ mod tests {
             requested_output_length: osl,
             metadata: crate::metrics::RequestMetricMetadata::default(),
             wants_live_record: false,
+            wants_http_exchange: false,
             consume_record: false,
         }
     }

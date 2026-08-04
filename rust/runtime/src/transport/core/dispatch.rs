@@ -16,7 +16,9 @@ use crate::dispatch::sink::{Dispatchable, RequestObserver};
 
 use crate::metrics::RequestMetricMetadata;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy, TurnEndpoint, TurnToSend};
+use crate::multiturn::{
+    CreditIdentity, PreparedEndpointReference, TurnDataPolicy, TurnEndpoint, TurnToSend,
+};
 use crate::scheduled::{TurnDispatchOutcome, TurnResponseObserver};
 use crate::transport::core::record::RequestRecord;
 
@@ -142,6 +144,14 @@ pub struct MeasuredContext {
     /// Whether a live-results sink is attached and the worker must return a
     /// non-consuming cloned record for live emission.
     pub wants_live_record: bool,
+    /// Whether an artifact will consume this request's raw HTTP exchange.
+    ///
+    /// Only the raw artifact reads it. When nothing does, a worker that returns
+    /// a credit releases the request payload and transport record locally
+    /// instead of shipping both to the coordinator to be dropped there --
+    /// dropping them was measured at ~7% of the single issuer's CPU, on the one
+    /// thread that bounds the run.
+    pub wants_http_exchange: bool,
     /// Whether the returned record should be *moved out* of the worker observer
     /// (freeing its token storage) rather than cloned. Set in metrics-only
     /// (sketch) mode, where the coordinator folds each record into a bounded
@@ -183,6 +193,11 @@ pub struct PreparedTurn {
     pub endpoint_aware: bool,
     /// Content retention/cache/diagnostic policy fixed by materialization.
     pub data_policy: TurnDataPolicy,
+    /// Present when the issuer routed this credit WITHOUT materializing its
+    /// body. Every body-bearing field above is then a placeholder and the
+    /// receiving worker rebuilds the request from the resident dataset, the way
+    /// Python's `Credit` carries ids and lets the worker build the request.
+    pub deferred: Option<CreditIdentity>,
 }
 
 impl fmt::Debug for PreparedTurn {
@@ -220,6 +235,14 @@ impl PreparedTurn {
     /// Remove scheduler-local session state and build one owned execution command.
     pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
         let is_final_turn = turn.is_final_turn();
+        let deferred = turn.deferred_body.then(|| CreditIdentity {
+            conversation_id: turn.conversation_id.clone(),
+            x_correlation_id: turn.x_correlation_id.clone(),
+            turn_index: turn.turn_index,
+            num_turns: turn.num_turns,
+        });
+        // A deferred credit has no body yet; the worker's materialization sets
+        // this from what it actually builds.
         let endpoint_aware = turn.request_body.is_some();
         let data_policy = turn.data_policy;
         let model = turn
@@ -252,8 +275,41 @@ impl PreparedTurn {
             endpoint,
             endpoint_aware,
             data_policy,
+            deferred,
         }
     }
+}
+
+/// One worker's out-of-band report about a credit the issuer sent it.
+///
+/// The Rust counterpart of Python's `WorkerToRouterMessage`. `--dispatch
+/// global-push` sends a credit to a worker and returns; the worker owns the
+/// whole round-trip and reports back on the placement's single shared return
+/// stream, tagged by `uuid` because the reports of every in-flight credit are
+/// interleaved on it. Per-credit ordering is preserved by that stream, so
+/// `FirstToken` still precedes `CreditReturn`.
+pub struct WorkerCreditReport {
+    /// Request this report belongs to.
+    pub uuid: Uuid,
+    /// Index of the reporting worker within its placement.
+    ///
+    /// Echoed back because a returned credit has to release the in-flight depth
+    /// of the worker that held it, and the coordinator deliberately keeps no
+    /// per-request routing table to look that up in.
+    pub worker: usize,
+    /// What the worker observed.
+    pub kind: CreditReportKind,
+}
+
+/// The kinds of report a worker sends back about a credit.
+pub enum CreditReportKind {
+    /// First token observed, in nanoseconds since dispatch start. Releases the
+    /// issuer's prefill slot while the request keeps decoding.
+    FirstToken(i64),
+    /// The credit is returned: terminal outcome, always the last report for a
+    /// given `uuid`. Returning it is what releases the issuer's admission slot
+    /// and the worker's in-flight depth.
+    CreditReturn(Box<Result<MeasuredOutcome>>),
 }
 
 /// Pluggable execution placement behind the one logical turn dispatcher.
@@ -314,6 +370,39 @@ pub trait RequestExecutor {
             "selected HTTP execution placement does not support worker-local measurement"
         ))
     }
+
+    /// Whether this placement accepts credits and returns them out of band
+    /// (`--dispatch global-push`).
+    fn supports_credit_dispatch(&self) -> bool {
+        false
+    }
+
+    /// Route one credit to its worker and return WITHOUT awaiting the
+    /// round-trip, after Python's `StickyCreditRouter::send_credit`.
+    ///
+    /// Synchronous on purpose: the issuer calls this from the single
+    /// coordinator scheduling loop, and the whole point of the mode is that no
+    /// coordinator future stays resident for the request's lifetime. A
+    /// placement that cannot accept a credit immediately must queue it in
+    /// routed order rather than block.
+    fn send_credit(&self, _turn: PreparedTurn, _context: MeasuredContext) -> Result<()> {
+        Err(anyhow!(
+            "selected execution placement does not accept dispatched credits"
+        ))
+    }
+
+    /// Receive the next out-of-band worker report, or `None` once no worker can
+    /// report again.
+    async fn next_credit_report(&self) -> Option<WorkerCreditReport> {
+        None
+    }
+
+    /// Ask every worker to abandon the credit it is driving.
+    ///
+    /// Each abandoned credit is still RETURNED with a cancelled terminal, so the
+    /// issuer's accounting closes normally instead of being fabricated
+    /// coordinator-side.
+    fn cancel_credits(&self) {}
 
     /// Warm each worker's dispatch path before timed issuance.
     ///
