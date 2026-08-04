@@ -2784,6 +2784,67 @@ mod tests {
         }
     }
 
+    /// An extractor that owns its dialect's image count must be believed when it
+    /// reports zero, not just when it reports some. `kserve_v2_vlm` omits the
+    /// image tensor entirely when every image content is empty, so the wire
+    /// carries no image and the count is exactly zero — while
+    /// `composed_image_count` would say one, because `handles.len()` cannot see
+    /// the formatter's `!content.is_empty()` filter.
+    #[test]
+    fn an_extractor_owning_its_count_is_believed_when_it_reports_zero() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let empty_image = pool
+            .intern_media(None, MediaKind::Image, Bytes::from_static(b""))
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+        conversation.turns = vec![content_turn(text, Some(empty_image))];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap();
+        let endpoint = prepare_endpoint("kserve_v2_vlm");
+        dataset
+            .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "primary-model")
+            .unwrap();
+
+        assert_eq!(
+            dataset.cached_image_count(&SessionId::from("session"), 0),
+            Some(0),
+            "an empty image content sends no image, so the count is exactly zero"
+        );
+    }
+
+    /// The concatenation capability must follow the dialect, not its descriptor
+    /// id: `kserve_chat` and `sagemaker` wrap `ChatEndpoint` under their own ids
+    /// and would otherwise send every continuation turn back to the parse.
+    #[test]
+    fn chat_wrapping_dialects_report_that_they_render_all_turns() {
+        for id in ["chat", "responses", "messages", "kserve_chat", "sagemaker"] {
+            assert!(
+                prepare_endpoint(id).renders_all_turns(),
+                "{id} concatenates every turn and must say so"
+            );
+        }
+        for id in ["kserve_v2_vlm", "kserve_v2_infer", "completions"] {
+            assert!(
+                !prepare_endpoint(id).renders_all_turns(),
+                "{id} selects turns and must not be prefix-summed"
+            );
+        }
+    }
+
     fn prepare_endpoint(id: &str) -> Box<dyn PreparedEndpoint> {
         EndpointRegistry::builtin()
             .unwrap()
