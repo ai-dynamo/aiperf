@@ -2600,6 +2600,91 @@ mod tests {
         assert_eq!(turns[0].body[0], turns[1].body[0]);
     }
 
+    /// Resolves every turn to the one endpoint under test.
+    struct SingleEndpointLookup<'a>(&'a dyn PreparedEndpoint);
+
+    impl crate::dataset::TurnEndpointLookup for SingleEndpointLookup<'_> {
+        fn endpoint_for(&self, _name: Option<&str>) -> Option<&dyn PreparedEndpoint> {
+            Some(self.0)
+        }
+    }
+
+    /// The optimization itself, not just its answer: after precompute, a
+    /// continuation turn of the default live-chat context mode must carry an
+    /// established `image_count`, so dispatch never deserializes the body it
+    /// just built. Asserting only the value would pass on the parse fallback.
+    #[test]
+    fn continuation_turns_carry_an_established_image_count() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let image = pool
+            .intern_media(
+                None,
+                MediaKind::Image,
+                Bytes::from_static(b"http://example/a.png"),
+            )
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::DeltasWithoutResponses);
+        // One image in turn 0; the deltas resend it under every later turn.
+        conversation.turns = vec![
+            content_turn(text, Some(image)),
+            content_turn(text, None),
+            content_turn(text, None),
+        ];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap();
+        let endpoint = prepared_chat();
+        let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        dataset
+            .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "primary-model")
+            .unwrap();
+        let dataset = Arc::new(dataset);
+
+        let mut session = ConversationSession::new(dataset, SessionId::from("session")).unwrap();
+        for turn_index in 0..3 {
+            session.advance_to(turn_index).unwrap();
+            let request = session
+                .materialize_prepared(
+                    &EndpointRequestMaterializer,
+                    endpoint.as_ref(),
+                    "primary-model",
+                    CreditPhase::Profiling,
+                    &Overrides::new(),
+                )
+                .unwrap();
+            let body = request.body.clone().to_wire().unwrap();
+            let parsed: Value = serde_json::from_slice(&body).unwrap();
+            let on_the_wire = endpoint.extract_payload_inputs(&parsed).image_count;
+            assert_eq!(
+                request.image_count,
+                Some(on_the_wire),
+                "turn {turn_index} must establish the count the body actually carries"
+            );
+            let reply = EndpointTurn {
+                role: Some("assistant".into()),
+                texts: vec![Media::new(vec!["reply".to_string()])],
+                ..EndpointTurn::default()
+            };
+            let images = reply_image_count(&reply, endpoint.as_ref());
+            assert_eq!(images, Some(0), "a text-only reply carries no image");
+            session.capture_response(reply, 4, images).unwrap();
+        }
+    }
+
     fn prepare_endpoint(id: &str) -> Box<dyn PreparedEndpoint> {
         EndpointRegistry::builtin()
             .unwrap()
