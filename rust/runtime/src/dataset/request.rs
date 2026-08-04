@@ -1445,9 +1445,9 @@ pub(crate) fn dataset_turn_image_count(
         // The extractor established nothing: the body is not JSON, or it is a
         // flat shape whose dialect carries images somewhere no wire walk can see
         // (image edit posts the turn's image as multipart form data). Fall back
-        // to the media the
-        // turn composed, which is what the pre-existing first-turn path
-        // reported. Sound only with nothing preformatted in play — reaching here
+        // to the media the turn composed, which is what the pre-existing
+        // first-turn path reported. Sound only with nothing preformatted in play
+        // — reaching here
         // means `is_provably_image_free` found media groups or array-content raw
         // messages, and the latter can hide an image the content groups do not
         // enumerate.
@@ -2843,6 +2843,83 @@ mod tests {
                 "{id} selects turns and must not be prefix-summed"
             );
         }
+    }
+
+    /// `MessageArrayWithoutResponses` is the one mode where turn 0 is not a
+    /// single-turn request: `merge_message_array_snapshots` emits
+    /// `split_snapshot(t0)`, which fans a turn holding N authored `raw_messages`
+    /// into N formatter turns. A selecting dialect then renders one of those N
+    /// while a count built from the unsplit turn covers all N, so the slot must
+    /// stay unestablished and let dispatch parse.
+    ///
+    /// `template` is the reachable case: its body is user-authored and can put
+    /// the whole `raw_messages` array into a counted item array, so unlike the
+    /// other selectors its count is established rather than `None` by accident.
+    #[test]
+    fn a_selecting_dialect_describes_no_turn_under_split_snapshots() {
+        let messages = serde_json::json!([
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "http://example/a.png"}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "http://example/b.png"}}
+            ]},
+        ]);
+        let mut pool = SegmentPool::new();
+        let raw_messages = pool
+            .intern_raw(None, Bytes::from(serde_json::to_vec(&messages).unwrap()))
+            .unwrap();
+        let turn = Turn {
+            role: Some(Role::from("user")),
+            raw_messages: Some(raw_messages),
+            input_tokens: Some(2),
+            ..Turn::default()
+        };
+        // Renders every authored message into a counted `messages` array, which
+        // is exactly what `split_snapshot` then splits apart at dispatch.
+        let template = r#"{"model":"m","messages":{{ turn.raw_messages | tojson }}}"#;
+        let endpoint = EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &EndpointId::new("template").unwrap(),
+                RawEndpointConfig {
+                    template: Some(template.to_string()),
+                    ..RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+
+        let counts = |mode: ConversationContextMode| {
+            let mut conversation = Conversation::new("session");
+            conversation.context_mode = Some(mode);
+            conversation.turns = vec![turn.clone()];
+            let mut dataset = Dataset::new(
+                vec![conversation],
+                Arc::new(pool.clone().freeze()),
+                "sequential",
+                mode,
+            )
+            .unwrap();
+            dataset
+                .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "m")
+                .unwrap();
+            dataset.cached_image_count(&SessionId::from("session"), 0)
+        };
+
+        // Control: the same turn under a mode that does not split establishes a
+        // count, so the assertion below is about the splitting, not about the
+        // fixture failing to produce one.
+        assert_eq!(
+            counts(ConversationContextMode::MessageArrayWithResponses),
+            Some(2),
+            "an unsplit turn 0 is one formatter turn and is describable"
+        );
+        assert_eq!(
+            counts(ConversationContextMode::MessageArrayWithoutResponses),
+            None,
+            "split snapshots hand a selecting dialect one of N messages, so a \
+             count over all N describes a body that is never sent"
+        );
     }
 
     fn prepare_endpoint(id: &str) -> Box<dyn PreparedEndpoint> {
