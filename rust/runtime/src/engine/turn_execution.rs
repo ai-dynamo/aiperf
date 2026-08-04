@@ -800,7 +800,19 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             .ok_or_else(|| anyhow!("execution run origin is not configured"))
     }
 
-    async fn execute_command(
+    /// Receive from an optional channel, parking forever when it is absent.
+///
+/// The `select!` arm that uses this is gated on a live response observer, so
+/// the `None` branch is unreachable; parking rather than resolving keeps the
+/// arm from completing spuriously if that gate ever changes.
+async fn recv_optional<T>(rx: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
+    match rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn execute_command(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -840,7 +852,18 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             (senders[index].clone(), guard)
         };
         let (first_token_tx, mut first_token_rx) = oneshot::channel();
-        let (response_tx, mut response_rx) = mpsc::channel(WORKER_RESPONSE_CAPACITY);
+        // Only build the response channel when something consumes it. A run
+        // without a live response observer -- the ordinary benchmark shape --
+        // was allocating a 256-slot mpsc per request and dropping it unread, on
+        // the single coordinator thread that this mode's throughput is bounded
+        // by.
+        let (response_tx, mut response_rx) = match responses {
+            Some(_) => {
+                let (tx, rx) = mpsc::channel(WORKER_RESPONSE_CAPACITY);
+                (Some(tx), Some(rx))
+            }
+            None => (None, None),
+        };
         let (completed_tx, mut completed_rx) = oneshot::channel();
         let cancellation = PlacementCancellation::new();
         let mut cancellation_guard = PlacementCancellationGuard::new(cancellation.clone());
@@ -849,7 +872,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                 turn,
                 context,
                 first_token: first_token_tx,
-                responses: responses.map(|_| response_tx),
+                responses: response_tx,
                 completed: completed_tx,
                 cancellation,
             })))
@@ -867,7 +890,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                         on_first_token(ttft_ns);
                     }
                 }
-                response = response_rx.recv(), if !response_channel_done => {
+                response = Self::recv_optional(&mut response_rx), if !response_channel_done => {
                     match response {
                         Some(response) => {
                             let responses = responses
@@ -888,8 +911,10 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         if !first_token_channel_done && let Ok(ttft_ns) = first_token_rx.try_recv() {
             on_first_token(ttft_ns);
         }
-        if let Some(responses) = responses {
-            while let Ok(response) = response_rx.try_recv() {
+        if let Some(responses) = responses
+            && let Some(rx) = response_rx.as_mut()
+        {
+            while let Ok(response) = rx.try_recv() {
                 poll_fn(|context| responses.poll_ready(context)).await?;
                 responses.start_send(response)?;
             }
