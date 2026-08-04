@@ -21,7 +21,8 @@ use crate::dataset::request::{
 };
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::{
-    CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn, TurnMessageLowerer,
+    CreditPhase, PreparedEndpoint, PreparedRequest, ShapeLowerer, Turn as EndpointTurn,
+    TurnMessageLowerer,
 };
 use smallvec::SmallVec;
 
@@ -412,8 +413,18 @@ impl Dataset {
     /// `*WithoutResponses` modes splice are runtime-determined, and the session
     /// accumulates those separately as it captures them.
     ///
-    /// Per turn index the stored value is the count over the authored turns that
-    /// index's body carries:
+    /// Composing per-turn counts into a body's count is only valid for a dialect
+    /// whose body is the concatenation of every turn's items — the message-array
+    /// shapes, which [`ShapeLowerer::for_descriptor_id`] identifies exactly. A
+    /// dialect that instead SELECTS one turn out of the list renders only that
+    /// turn: KServe V2 VLM formats `request.turns().first()`, so under a delta
+    /// mode the wire carries turn 0's images no matter which turn is current, and
+    /// a prefix sum would over-report every later turn. Those dialects therefore
+    /// describe only turn 0 — the one index where every context mode hands the
+    /// endpoint exactly `[turn 0]` — and leave later turns to the parse.
+    ///
+    /// For a concatenating dialect, per turn index the stored value is the count
+    /// over the authored turns that index's body carries:
     ///
     /// - `MessageArrayWithResponses` sends only the current turn, and
     ///   `MessageArrayWithoutResponses` sends the current turn's snapshot (which
@@ -446,28 +457,33 @@ impl Dataset {
                             | ConversationContextMode::DeltasWithoutResponses
                     );
                     let mut running = Some(0_u32);
-                    for (turn, slot) in conversation.turns.iter().zip(turn_counts.iter_mut()) {
+                    for (turn_index, (turn, slot)) in conversation
+                        .turns
+                        .iter()
+                        .zip(turn_counts.iter_mut())
+                        .enumerate()
+                    {
                         // Count through the dialect that renders this turn, which
                         // an authored per-turn override can change.
-                        let count =
-                            endpoints
-                                .endpoint_for(turn.endpoint.as_deref())
-                                .and_then(|endpoint| {
-                                    dataset_turn_image_count(
-                                        store,
-                                        endpoint,
-                                        primary_model_name,
-                                        turn,
-                                    )
-                                });
-                        if cumulative {
-                            running = running
-                                .zip(count)
-                                .and_then(|(total, turn)| total.checked_add(turn));
-                            *slot = running;
+                        let endpoint = endpoints.endpoint_for(turn.endpoint.as_deref());
+                        let count = endpoint.and_then(|endpoint| {
+                            dataset_turn_image_count(store, endpoint, primary_model_name, turn)
+                        });
+                        running = running
+                            .zip(count)
+                            .and_then(|(total, turn)| total.checked_add(turn));
+                        // Whether this turn's body is the concatenation of every
+                        // turn handed to the formatter, or a selection from them.
+                        let concatenates = endpoint.is_some_and(|endpoint| {
+                            ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).is_some()
+                        });
+                        *slot = if !concatenates {
+                            (turn_index == 0).then_some(count).flatten()
+                        } else if cumulative {
+                            running
                         } else {
-                            *slot = count;
-                        }
+                            count
+                        };
                     }
                 }
                 counts.push(turn_counts);

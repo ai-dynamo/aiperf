@@ -1371,20 +1371,18 @@ fn trace_identity_image_count(current: &Turn, turn_index: usize) -> Option<u32> 
 /// - a non-text content group (`images`/`audios`/`videos` on the resolved turn),
 ///   which the endpoint renders into media content parts;
 /// - an authored `raw_messages` item spliced verbatim, whose `content` may be an
-///   array of arbitrary parts;
-/// - an authored `extra_body` that itself supplies a `messages`/`input` array.
+///   array of arbitrary parts.
 ///
 /// Text content groups render text parts, and `raw_tools`/`raw_system` land in
-/// `tools`/`system`, which `extract_inputs` does not walk. When none of the three
-/// applies the count is provably zero and this returns `Some(0)` without building
+/// `tools`/`system`, which `extract_inputs` does not walk. When neither applies
+/// the count is provably zero and this returns `Some(0)` without building
 /// anything. Otherwise it builds this one turn's body through the same endpoint
 /// and counts it with the same extractor dispatch would use, so the answer is
 /// exact by construction rather than by enumerating render paths.
 ///
-/// Per-turn attribution is sound because `rendered_turn_messages` maps each turn
-/// independently (a turn's lowered wire or raw messages are spliced positionally)
-/// and the extractor sums `image_count` per item, so the whole-body count is the
-/// sum of the per-turn counts plus the captured replies.
+/// This describes ONE turn in isolation. Composing per-turn counts into a body's
+/// count is only valid for a dialect that concatenates every turn's items; see
+/// [`Dataset::precompute_image_counts`], which owns that decision.
 pub(crate) fn dataset_turn_image_count(
     store: &dyn SegmentStore,
     endpoint: &dyn PreparedEndpoint,
@@ -1395,7 +1393,24 @@ pub(crate) fn dataset_turn_image_count(
     if raw_body_handle(turn, store).ok().flatten().is_some() {
         return None;
     }
+    // Establish the ordinary text-only answer without resolving the turn. This
+    // runs over every turn of every conversation, once per conversation source,
+    // and `resolve_turn` materializes every text handle into a fresh `String`.
+    if authored_turn_is_text_only(turn) {
+        return Some(0);
+    }
     let resolved = resolve_turn(store, turn).ok()?;
+    // Only the LAST turn's `extra_body` is merged into a message-array body
+    // (`merge_extra(&mut payload, last.extra_body…)`), and `split_snapshot` drops
+    // it entirely, so whether an item-bearing `extra_body` reaches the wire
+    // depends on position and mode rather than on the turn alone. Fail closed.
+    if resolved
+        .extra_body
+        .as_ref()
+        .is_some_and(|extra| extra.contains_key("messages") || extra.contains_key("input"))
+    {
+        return None;
+    }
     if is_provably_image_free(&resolved) {
         return Some(0);
     }
@@ -1418,21 +1433,51 @@ pub(crate) fn dataset_turn_image_count(
         .ok()
         .map(|payload| endpoint.extract_payload_inputs(&payload));
     match extracted {
-        // `messages` is populated exactly when the extractor found the
-        // `messages`/`input` item array its one `image_count` increment lives
-        // under, so its count then describes the dispatched body exactly.
-        Some(extracted) if extracted.messages.is_some() => Some(extracted.image_count),
-        // No item array in the dispatched body: the media dialects post a flat
-        // JSON object or multipart/form-data, so the wire walk has nothing to
-        // count and the turn's own composed media is the count. Sound only with
-        // nothing preformatted in play — reaching here means
-        // `is_provably_image_free` found media groups, array-content raw
-        // messages, or an item-bearing `extra_body`, and the latter two can hide
-        // an image the content groups do not enumerate.
-        _ => (resolved.raw_messages.is_none() && resolved.extra_body.is_none())
+        // The endpoint's own extractor is the function dispatch would run on
+        // this same body, so its answer is authoritative wherever it actually
+        // established one: either it found the `messages`/`input` item array its
+        // one increment lives under (`messages` is populated exactly then), or
+        // it counted images by its own dialect-specific rule (image retrieval
+        // counts `input[].type == "image_url"`, the KServe VLM tensor extractor
+        // counts the image tensor). Both of those are exact where
+        // `composed_image_count` is not: the formatters drop empty content
+        // strings, `handles.len()` does not.
+        Some(extracted) if extracted.messages.is_some() || extracted.image_count > 0 => {
+            Some(extracted.image_count)
+        }
+        // The extractor established nothing: either the body is not JSON, or it
+        // is a flat shape with no item array and no images the dialect
+        // recognises (image edit posts the turn's image as multipart form data,
+        // which is not visible to any wire walk). Fall back to the media the
+        // turn composed, which is what the pre-existing first-turn path
+        // reported. Sound only with nothing preformatted in play — reaching here
+        // means `is_provably_image_free` found media groups or array-content raw
+        // messages, and the latter can hide an image the content groups do not
+        // enumerate.
+        _ => resolved
+            .raw_messages
+            .is_none()
             .then(|| composed_image_count(turn))
             .flatten(),
     }
+}
+
+/// Cheap authored-turn test establishing a zero without resolving the turn.
+///
+/// Sound because a turn whose content groups are all text, with no preformatted
+/// message array and no per-turn extras, can only render text parts: its lowered
+/// body wires are `resolve_turn`'s render of that same all-text content, and
+/// nothing else reaches the counted roots. `content` must be non-empty — an empty
+/// one means any `Message` body handles become `raw_messages` at resolve instead
+/// of being this turn's own lowered text.
+fn authored_turn_is_text_only(turn: &Turn) -> bool {
+    !turn.content.is_empty()
+        && turn
+            .content
+            .iter()
+            .all(|group| group.kind == MediaKind::Text)
+        && turn.raw_messages.is_none()
+        && turn.extra_body.is_none()
 }
 
 /// Number of image content items one authored turn composed, independent of how
@@ -1506,10 +1551,6 @@ fn is_provably_image_free(resolved: &EndpointTurn) -> bool {
             .raw_messages
             .as_ref()
             .is_none_or(|items| items.iter().all(|item| !has_array_content(item)))
-        && resolved
-            .extra_body
-            .as_ref()
-            .is_none_or(|extra| !extra.contains_key("messages") && !extra.contains_key("input"))
 }
 
 /// Whether a message-array item carries a content-part array, the only shape the
