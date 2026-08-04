@@ -2893,7 +2893,10 @@ mod tests {
     /// A partitioned shard's sampler is a fixed giver over its authored-index
     /// residue only. Recycle wraps inside that set (never into a foreign
     /// session), which is what `--request-count` recycling with `workers > 1`
-    /// requires when `conversation_count % grid != 0`.
+    /// requires when `conversation_count % grid != 0` — under the `Sharded`
+    /// dispatch contract. `Global` shards draw absolute corpus positions
+    /// instead; see
+    /// `position_addressed_shards_reproduce_the_unpartitioned_draw_sequence`.
     #[tokio::test]
     async fn partitioned_sequential_recycle_stays_inside_owned_raw_payloads() {
         let dataset = raw_payload_jsonl_dataset(3).await;
@@ -2922,6 +2925,10 @@ mod tests {
 
     /// Both shards of a 2-wide grid own disjoint residues whose union is the
     /// full raw_payload corpus, and each recycles only inside its own giver.
+    ///
+    /// Disjoint givers are the `DrawMode::Owned` property, not a property of
+    /// every partitioned source: a position-addressed shard resolves outside its
+    /// residue class by design.
     #[tokio::test]
     async fn partitioned_raw_payload_givers_are_disjoint_and_cover_the_corpus() {
         let dataset = raw_payload_jsonl_dataset(3).await;
@@ -2962,6 +2969,44 @@ mod tests {
             assert!(owned1.contains(&session.conversation_id));
             session.build_first_turn(None).unwrap();
         }
+    }
+
+    /// Two shards drawing position-addressed over the full corpus must, in
+    /// union, reproduce exactly one unpartitioned source's draw sequence —
+    /// including its recycle wrap. This is the property that makes `Global`
+    /// equivalent to a single issuer without any shared state.
+    #[tokio::test]
+    async fn position_addressed_shards_reproduce_the_unpartitioned_draw_sequence() {
+        let dataset = raw_payload_jsonl_dataset(3).await;
+        let draws = 8;
+
+        // `cell_count == 1` is the identity partition, which `for_partition`
+        // resolves to no ownership — one source over the whole corpus.
+        let mut single = position_addressed_source(dataset.clone(), 0, 1).await;
+        let expected: Vec<String> = (0..draws)
+            .map(|_| single.next(None).unwrap().conversation_id)
+            .collect();
+
+        let mut cell0 = position_addressed_source(dataset.clone(), 0, 2).await;
+        let mut cell1 = position_addressed_source(dataset, 1, 2).await;
+        // Shard `c` owns the positions congruent to `c`, so interleaving the two
+        // shards round-robin rebuilds the global position order.
+        let merged: Vec<String> = (0..draws)
+            .map(|position| {
+                let shard = if position % 2 == 0 {
+                    &mut cell0
+                } else {
+                    &mut cell1
+                };
+                shard.next(None).unwrap().conversation_id
+            })
+            .collect();
+
+        assert_eq!(
+            merged, expected,
+            "the union of position-addressed shards must be the unpartitioned \
+             draw sequence, in order — including its recycle wrap"
+        );
     }
 
     /// A partitioned shard must be able to RESOLVE a conversation it does not
@@ -3018,6 +3063,10 @@ mod tests {
 
     /// Preferred (shuffle) sampling under a partition still recycles only the
     /// shard's owned corpus — the fixed giver, not a full-corpus draw filter.
+    ///
+    /// `shuffle` has no closed-form position addressing (its draw depends on RNG
+    /// stream history), so it keeps the owned walk in EVERY dispatch mode. This
+    /// test is the regression guard for that fallback.
     #[tokio::test]
     async fn partitioned_preferred_shuffle_recycles_only_owned_raw_payloads() {
         let jsonl = (0..5)
@@ -3146,6 +3195,25 @@ mod tests {
         cell_id: u32,
         cell_count: u32,
     ) -> NativeDatasetConversationSource {
+        partitioned_sequential_source_with_mode(dataset, cell_id, cell_count, false).await
+    }
+
+    /// A sequential source that draws absolute corpus positions rather than
+    /// recycling its own residue class — the `Global` dispatch behaviour.
+    async fn position_addressed_source(
+        dataset: NativeDataset,
+        cell_id: u32,
+        cell_count: u32,
+    ) -> NativeDatasetConversationSource {
+        partitioned_sequential_source_with_mode(dataset, cell_id, cell_count, true).await
+    }
+
+    async fn partitioned_sequential_source_with_mode(
+        dataset: NativeDataset,
+        cell_id: u32,
+        cell_count: u32,
+        position_addressed: bool,
+    ) -> NativeDatasetConversationSource {
         let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
         let endpoint_id = EndpointId::new("chat").unwrap();
         let endpoint = registry
@@ -3172,6 +3240,7 @@ mod tests {
             4,
             resolver,
             Some(ModuloCellPartition::new(cell_id, cell_count).unwrap()),
+            position_addressed,
         )
         .unwrap()
     }
