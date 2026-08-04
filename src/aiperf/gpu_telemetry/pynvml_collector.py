@@ -473,7 +473,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                 if telemetry_data.model_fields_set:
                     record = TelemetryRecord(
                         timestamp_ns=current_timestamp,
-                        dcgm_url=PYNVML_SOURCE_IDENTIFIER,
+                        telemetry_source_url=PYNVML_SOURCE_IDENTIFIER,
                         **gpu.metadata.model_dump(),
                         telemetry_data=telemetry_data,
                     )

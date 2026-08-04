@@ -147,6 +147,8 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Adaptive Scale](docs/tutorials/adaptive-scale.md) - Single-run SLA boundary discovery and sustain
 - [Gradual Ramping](docs/tutorials/ramping.md) - Smooth ramp-up of concurrency and request rate
 - [Warmup Phase](docs/tutorials/warmup.md) - Eliminate cold-start effects
+- [Benchmark Control Hooks](docs/tutorials/benchmark-control-hooks.md) - KV-cache reset and server profiler around profiling phases
+- [Control Hooks by Server](docs/tutorials/control-hooks-by-server.md) - vLLM, SGLang, and TensorRT-LLM path mappings
 - [User-Centric Timing](docs/tutorials/user-centric-timing.md) - Per-user rate limiting for KV cache benchmarking
 - [Request Cancellation](docs/tutorials/request-cancellation.md) - Timeout and resilience testing
 - [Multi-URL Load Balancing](docs/tutorials/multi-url-load-balancing.md) - Distribute across servers
@@ -167,12 +169,15 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [VisionArena Dataset](docs/tutorials/vision-arena.md) - Profile with real-world vision conversations from Chatbot Arena
 - [LLaVA-OneVision Dataset](docs/tutorials/llava-onevision.md) - Profile with diverse multimodal instruction-following data
 - [SPEED-Bench Dataset](docs/tutorials/speed-bench.md) - Profile speculative decoding with SPEED-Bench
+- [Per-Request Spec-Decode Metrics](docs/tutorials/spec-decode-metrics.md) - Inline per-request acceptance length, draft rate, and pooled histogram from a normal profile run
 - [InstructCoder Dataset](docs/tutorials/instruct-coder.md) - Profile with InstructCoder code generation dataset
 - [SpecBench Dataset](docs/tutorials/spec-bench.md) - Profile with SpecBench speculative decoding dataset
 - [Blazedit Dataset](docs/tutorials/blazedit.md) - Profile with Blazedit code editing dataset
 - [ASR Datasets](docs/tutorials/asr.md) - Profile ASR models with LibriSpeech, VoxPopuli, GigaSpeech, AMI, and SPGISpeech
 - [Synthetic Dataset Generation](docs/tutorials/synthetic-dataset.md) - Generate synthetic datasets
 - [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
+- [Weka Traces](docs/tutorials/weka-trace.md) - Replay real agentic coding sessions with KV-cache-aware Weka traces
+- [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis AgentX-MVP submission benchmark (`--scenario inferencex-agentx-mvp`)
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
 - [Sequence Distributions](docs/tutorials/sequence-distributions.md) - Mixed ISL/OSL pairings

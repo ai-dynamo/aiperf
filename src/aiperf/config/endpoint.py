@@ -27,6 +27,12 @@ from aiperf.common.enums import (
     RequestContentType,
 )
 from aiperf.config.base import BaseConfig
+from aiperf.config.control_hooks import (
+    ResetKvCacheConfig,
+    ServerProfilerConfig,
+    parse_enabled_or_config,
+    require_relative_path,
+)
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
@@ -199,6 +205,8 @@ class EndpointConfig(BaseConfig):
             "Server must support streaming for this to work.",
         ),
     ]
+
+    _streaming_explicitly_set: bool = False
 
     transport: Annotated[
         TransportType | None,
@@ -374,6 +382,28 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    reset_kv_cache: Annotated[
+        ResetKvCacheConfig | None,
+        parse_enabled_or_config(ResetKvCacheConfig),
+        Field(
+            default=None,
+            description="When enabled, POST a KV-cache reset once per logical "
+            "benchmark cell before warmup/profiling. Accepts false | true | "
+            "{timeout_seconds?, path?}.",
+        ),
+    ] = None
+
+    server_profiler: Annotated[
+        ServerProfilerConfig | None,
+        parse_enabled_or_config(ServerProfilerConfig),
+        Field(
+            default=None,
+            description="When enabled, start/stop the server profiler around "
+            "each profiling phase. Accepts false | true | "
+            "{timeout_seconds?, start_path?, stop_path?}.",
+        ),
+    ] = None
+
     @model_validator(mode="before")
     @classmethod
     def normalize_before_validation(cls, data: Any) -> Any:
@@ -423,6 +453,18 @@ class EndpointConfig(BaseConfig):
                 pass
 
         return data
+
+    @model_validator(mode="after")
+    def _record_streaming_explicit_set_flag(self) -> Self:
+        """Snapshot whether the user explicitly set ``streaming``.
+
+        Scenario validation distinguishes "user explicitly passed
+        --streaming/--no-streaming" (raise on conflict) from "streaming is at
+        default; auto-fill from the scenario spec" (info log). Surface a stable
+        underscore flag for the scenario resolver's defensive ``getattr``.
+        """
+        self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
 
     @model_validator(mode="after")
     def _validate_endpoint_boundaries(self) -> Self:
@@ -548,5 +590,33 @@ class EndpointConfig(BaseConfig):
                 f"request_content_type={self.request_content_type} is only supported for "
                 f"endpoint types that accept form-data (e.g. image_edit, "
                 f"video_generation); endpoint type {self.type} does not."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_control_hook_paths(self) -> Self:
+        if self.reset_kv_cache is not None:
+            self.reset_kv_cache.path = require_relative_path(
+                self.reset_kv_cache.path, "endpoint.reset_kv_cache.path"
+            )
+        if self.server_profiler is not None:
+            self.server_profiler.start_path = require_relative_path(
+                self.server_profiler.start_path, "endpoint.server_profiler.start_path"
+            )
+            self.server_profiler.stop_path = require_relative_path(
+                self.server_profiler.stop_path, "endpoint.server_profiler.stop_path"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_control_hooks_require_http(self) -> Self:
+        if self.reset_kv_cache is None and self.server_profiler is None:
+            return self
+        # Transport None means auto-detect HTTP from URL — allowed.
+        if self.transport is not None and self.transport != TransportType.HTTP:
+            raise ValueError(
+                "endpoint.reset_kv_cache and endpoint.server_profiler require "
+                "HTTP transport; unsupported transport "
+                f"{self.transport!r}"
             )
         return self

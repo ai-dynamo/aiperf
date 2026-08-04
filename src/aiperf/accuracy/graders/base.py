@@ -67,3 +67,13 @@ class BaseGrader(AIPerfLoggerMixin):
             The extracted answer string.
         """
         raise NotImplementedError
+
+    async def aclose(self) -> None:
+        """Release any external resources the grader owns (e.g. a subprocess).
+
+        Called on graceful shutdown via the owning record processor's ``@on_stop``.
+        Default is a no-op — in-process graders hold nothing to release; graders
+        backed by an external resource (e.g. the LCB code-execution worker
+        subprocess) override this.
+        """
+        return

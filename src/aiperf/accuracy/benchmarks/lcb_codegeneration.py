@@ -89,28 +89,6 @@ _STDIN_INSTRUCTIONS = (
 _STDIN_SCAFFOLD = "```python\n# YOUR CODE HERE\n```\n\n"
 
 
-def _datasets_version_hint() -> str:
-    """Return a version-aware diagnostic suffix for the load-failure
-    remap, naming the installed ``datasets`` version when it crosses
-    the v4 cutoff where script-based dataset loaders were removed.
-
-    Returns an empty string when the version is fine or can't be
-    determined, so the surrounding error message degrades cleanly.
-    """
-    try:
-        import datasets
-
-        major = int(datasets.__version__.split(".", 1)[0])
-    except Exception:  # diagnostic helper for an already-failing load; never mask the original error with a parser crash
-        return ""
-    if major >= 4:
-        return (
-            f"Detected datasets=={datasets.__version__} which dropped "
-            f"script-based dataset support; LCB's loader is a script. "
-        )
-    return ""
-
-
 def _prepare_prompt(row: dict[str, Any]) -> str:
     """Render the LCB prompt byte-equal to lighteval's ``prepare_prompt``."""
     question_content = row.get(QUESTION_CONTENT_FIELD, "")
@@ -200,55 +178,43 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
         """Load the pinned LCB release, remapping any failure to a
         ``RuntimeError`` with an actionable hint.
 
-        ``load_dataset`` here selects an LCB HuggingFace config (e.g.
-        ``"v4_v5"``, ``"v6"``) by passing ``Environment.ACCURACY.LCB_RELEASE_TAG``
-        as the **positional ``name`` arg** — the standard HF
-        config-name selector — alongside ``trust_remote_code=True`` so
-        LCB's dataset-loading script can execute on ``datasets`` v4+
-        (which dropped the implicit-trust default). Both mirror
-        lighteval's reference (``hf_subset=subset`` +
-        ``trust_remote_code=True`` on ``get_dataset_config_names`` +
-        ``trust_dataset=True`` on the task config). The release tag is
-        overridable via ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` (e.g. when
-        the team rebaselines against a newer monthly snapshot) without
-        source edits. Failures can still come from a couple of
-        independent sources — the HF ``datasets`` library
-        no longer recognising the upstream config name, the pinned
-        subset being renamed or removed upstream, or the user explicitly
-        disabling remote-code execution at the env level — so we don't
-        try to enumerate the specific exception class. A broad
-        ``except`` keeps the surface small while preserving the
-        original cause via ``__cause__``.
+        Selects the HuggingFace config by passing
+        ``Environment.ACCURACY.LCB_RELEASE_TAG`` as the positional
+        ``name`` arg (e.g. ``"v4_v5"``, ``"v6"``), matching lighteval's
+        ``hf_subset=`` usage. ``trust_remote_code=True`` is required
+        because ``livecodebench/code_generation_lite`` still ships a
+        repository loading script; ``datasets<4`` runs the script
+        normally. ``datasets>=4`` dropped loading-script support entirely
+        and raises ``RuntimeError: Dataset scripts are no longer
+        supported`` — the loader catches that specific error and surfaces
+        ``uv pip install 'datasets<4'`` as the recovery step. This
+        intentionally diverges from lighteval's ``trust_dataset=True``
+        opt-in (which is only needed for the task-config layer, not the
+        raw ``load_dataset`` call). The release tag is overridable via
+        ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` without source edits.
         """
         release_tag = Environment.ACCURACY.LCB_RELEASE_TAG
         try:
-            # Pass the release as positional ``name`` (the standard HF
-            # config-name selector), matching the trt-llm/lighteval
-            # reference's ``hf_subset=`` usage. ``trust_remote_code=True``
-            # opts in to executing LCB's dataset-loading script — which
-            # is what defines the configs and the test-case payload
-            # schema — and is required on ``datasets`` v4+ where remote
-            # code execution is no longer the default. The reference
-            # makes the same opt-in (``get_dataset_config_names(...,
-            # trust_remote_code=True)`` plus ``trust_dataset=True`` on
-            # the LightevalTaskConfig), so we mirror the contract.
             return load_dataset(
                 DATASET_NAME, release_tag, split="test", trust_remote_code=True
             )
         except Exception as e:
+            if "Dataset scripts are no longer supported" in str(e):
+                raise RuntimeError(
+                    f"{TASK_NAME}: cannot load {DATASET_NAME!r} on "
+                    f"``datasets>=4`` — LCB still ships a repository loading "
+                    f"script that ``datasets>=4`` no longer executes. "
+                    f"Pin to an earlier release: "
+                    f"``uv pip install 'datasets<4'``. "
+                    f"Original error: {type(e).__name__}: {e}"
+                ) from e
             raise RuntimeError(
                 f"{TASK_NAME}: failed to load {DATASET_NAME!r} subset "
                 f"{release_tag!r}. "
-                f"{_datasets_version_hint()}"
-                f"This typically means either "
-                f"(a) the installed ``datasets`` package no longer supports "
-                f"the LCB config layout (try "
-                f"``uv pip install 'datasets<4'`` or use the upstream "
-                f"parquet snapshot directly), or (b) the pinned subset "
-                f"name was renamed/removed upstream (set "
-                f"``AIPERF_ACCURACY_LCB_RELEASE_TAG`` to a current "
-                f"subset such as ``v4_v5`` or ``v6``). Original error: "
-                f"{type(e).__name__}: {e}"
+                f"The pinned subset name may have been renamed or removed "
+                f"upstream; set ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` to a "
+                f"current subset such as ``v4_v5`` or ``v6``. "
+                f"Original error: {type(e).__name__}: {e}"
             ) from e
 
     def _build_problems(self, ds: Dataset) -> list[BenchmarkProblem]:

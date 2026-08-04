@@ -15,6 +15,7 @@ from aiperf.common.accumulator_protocols import (
     StreamExporterProtocol,
     SummaryContext,
 )
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
@@ -46,6 +47,7 @@ from aiperf.common.messages import (
     StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
 )
+from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     BranchStats,
@@ -73,6 +75,10 @@ from aiperf.credit.messages import (
 )
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
+from aiperf.metrics.cache_reporting_hint import (
+    CACHE_REPORTING_HINT,
+    usage_without_cache_in_record,
+)
 from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -206,6 +212,7 @@ def _render_realtime_block(
           isl     p50= 67,234  p75= 97,141  p90= 179,564  p99= 384,325  (tokens)
           osl     p50=    443  p75=    967  p90=   2,034  p99=   4,396  (tokens)
           tot     in=53,555,186  out=509,605
+          trace   theoretical_prefix_cache_hit=97.5%
 
     The header sits on its own line and the summary counters drop to the
     first indented row so the line no longer wraps in narrow terminals; each
@@ -322,6 +329,15 @@ def _render_realtime_block(
         out_str = f"{int(round(total_osl)):,}" if total_osl is not None else "-"
         rows.append(f"{indent}{'tot':<{label_w}}  in={in_str}  out={out_str}")
 
+    theoretical_prefix_mr = by_tag.get("theoretical_prefix_cache_hit")
+    theoretical_prefix_hit = getattr(theoretical_prefix_mr, "current", None)
+    if theoretical_prefix_hit is None:
+        theoretical_prefix_hit = getattr(theoretical_prefix_mr, "avg", None)
+    if theoretical_prefix_hit is not None:
+        rows.append(
+            f"{indent}{'trace':<{label_w}} theoretical_prefix_cache_hit={theoretical_prefix_hit:.1f}%"
+        )
+
     # Server-side row — cumulative cache hit rate, KV usage, and scheduler
     # queue depth from the live ServerMetricsAccumulator snapshot. Sourced
     # from the /metrics scrape, so populates only when server-metrics
@@ -380,6 +396,38 @@ class ErrorTrackingState:
     )
 
 
+_logger = AIPerfLogger(__name__)
+
+
+def _pooled_spec_decode_histogram(
+    summary_ctx: SummaryContext,
+) -> dict[int, int] | None:
+    """Pull the pooled acceptance histogram off the metric_records summary.
+
+    The dict rides on ``AccumulatorMetricsSummary`` (not in ``records``) because
+    it is a dict aggregate outside the scalar/list metric machinery. Only the
+    ``metric_results`` accumulator pools one, so exactly one populated histogram
+    is expected; if more than one accumulator populates one the single-source
+    assumption has broken, so warn and use the first rather than silently
+    picking a dict-ordering winner. None when spec decode was off for the
+    exported phase. A module-level function (not a method) so mocked
+    RecordsManager instances in unit tests cannot shadow it with an auto-mock.
+    """
+    populated = [
+        summary.pooled_spec_decode_acceptance_histogram
+        for summary in summary_ctx.accumulator_outputs.values()
+        if isinstance(summary, AccumulatorMetricsSummary)
+        and summary.pooled_spec_decode_acceptance_histogram
+    ]
+    if len(populated) > 1:
+        _logger.warning(
+            f"Expected one accumulator to pool a spec-decode acceptance "
+            f"histogram, found {len(populated)}; using the first. Reconciliation "
+            "with total_spec_decode_steps may be unreliable."
+        )
+    return populated[0] if populated else None
+
+
 class RecordsManager(PullClientMixin, BaseComponentService):
     """Collects and processes benchmark results from workers.
 
@@ -389,6 +437,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     a final_completed_count, the RecordsManager waits until it has processed that
     many records before finalizing results.
     """
+
+    def _has_multiple_phase_instances(self, phase: CreditPhase) -> bool:
+        """Return whether this run has more than one concrete phase of a kind."""
+        try:
+            phases = self.run.cfg.phases
+        except AttributeError:
+            return False
+        phase_kind = "warmup" if phase == CreditPhase.WARMUP else "profiling"
+        return sum(1 for cfg_phase in phases if cfg_phase.kind == phase_kind) > 1
+
+    def _has_multiple_profiling_phases(self) -> bool:
+        """Return whether this run has more than one profiling-kind phase."""
+        return self._has_multiple_phase_instances(CreditPhase.PROFILING)
+
+    def _check_all_records_received(self, phase: CreditPhase) -> bool:
+        """Check record completion for a phase kind."""
+        return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
 
     def __init__(
         self,
@@ -461,6 +526,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
+        self._skipped_context_overflow_counts_by_phase: dict[CreditPhase, int] = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
 
         self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None
         self._server_metrics_accumulator: ServerMetricsAccumulatorProtocol | None = None
@@ -486,6 +555,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._analyzers: list[LoadedAnalyzer] = load_analyzers(self)
         self._routing_table = self._build_routing_table()
         self._warned_unrouted_record_types: set[str] = set()
+        self._warned_missing_cache_reporting: bool = False
         self._log_routing_table()
 
         # Single-flight guard for _process_results: the background finalize task,
@@ -506,6 +576,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             AccumulatorType.SERVER_METRICS
         )
         self._accuracy_accumulator = self._accumulators.get(AccumulatorType.ACCURACY)
+
+        # Failed-request abort threshold (AGENTIC_REPLAY, A5 #7): abort the run
+        # once the profiling failure ratio exceeds the configured threshold.
+        profiling_phases = self.run.cfg.get_profiling_phases()
+        profiling_phase = profiling_phases[0] if profiling_phases else None
+        self._failed_request_threshold: float | None = (
+            profiling_phase.failed_request_threshold if profiling_phase else None
+        )
+        conc_val = profiling_phase.concurrency if profiling_phase else None
+        self._failed_request_grace_floor = max(
+            int(conc_val) if isinstance(conc_val, (int, float)) else 1, 10
+        )
+        self._failed_request_abort_triggered = False
 
     def _build_routing_table(self) -> dict[str, list[Any]]:
         """Build record_type string -> handler mapping from plugin metadata."""
@@ -605,22 +688,64 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
-    def _has_multiple_phase_instances(self, phase: CreditPhase) -> bool:
-        """Return whether this run has more than one concrete phase of a kind."""
+    async def _maybe_trigger_failed_request_abort(self, phase: CreditPhase) -> None:
+        """Abort the run when the PROFILING failure rate exceeds the threshold.
+
+        No-op when ``--failed-request-threshold`` is unset, when this method
+        already fired once for this run, or when the total record count has
+        not yet crossed the grace floor (``max(concurrency, 10)``). Otherwise
+        broadcasts ProfileCancelCommand on the message bus -- the existing
+        cancel-path handlers in timing_manager, server_metrics manager, and
+        gpu_telemetry manager stop their work; this manager's own
+        _on_profile_cancel_command marks the phase cancelled and finalizes
+        results with cancelled=True.
+        """
+        if self._failed_request_threshold is None:
+            return
+        if self._failed_request_abort_triggered:
+            return
+        if phase != CreditPhase.PROFILING:
+            return
+
+        total = self._records_tracker.total_records_for_phase(phase)
+        if total < self._failed_request_grace_floor:
+            return
+
+        error_records = self._records_tracker.error_records_for_phase(phase)
+        rate = error_records / total if total > 0 else 0.0
+        if rate <= self._failed_request_threshold:
+            return
+
+        self._failed_request_abort_triggered = True
+        self.warning(
+            f"--failed-request-threshold exceeded: "
+            f"{error_records}/{total} = {rate:.3f} > "
+            f"{self._failed_request_threshold:.3f} "
+            f"(grace floor {self._failed_request_grace_floor}). "
+            "Broadcasting ProfileCancelCommand to terminate the run."
+        )
         try:
-            phases = self.run.cfg.phases
-        except AttributeError:
-            return False
-        phase_kind = "warmup" if phase == CreditPhase.WARMUP else "profiling"
-        return sum(1 for cfg_phase in phases if cfg_phase.kind == phase_kind) > 1
+            await self.publish(ProfileCancelCommand(service_id=self.service_id))
+        except Exception as exc:
+            self.warning(
+                f"Failed to publish ProfileCancelCommand for threshold abort: {exc!r}"
+            )
+            self._failed_request_abort_triggered = False
 
-    def _has_multiple_profiling_phases(self) -> bool:
-        """Return whether this run has more than one profiling-kind phase."""
-        return self._has_multiple_phase_instances(CreditPhase.PROFILING)
-
-    def _check_all_records_received(self, phase: CreditPhase) -> bool:
-        """Check record completion for a phase kind."""
-        return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
+    def _maybe_hint_missing_cache_reporting(
+        self, record_data: MetricRecordsData
+    ) -> None:
+        """Warn once, mid-run, when the server reports token usage but no prompt-cache
+        reads — the signature of a cache-capable server that hasn't been told to
+        report ``cached_tokens``. Fires on the first qualifying record so a long run
+        can be aborted and re-launched with the flag set; the end-of-run console
+        exporter emits the same hint for anyone who only reads the final summary.
+        """
+        if self._warned_missing_cache_reporting:
+            return
+        if usage_without_cache_in_record(record_data.metrics):
+            self._warned_missing_cache_reporting = True
+            self.warning(CACHE_REPORTING_HINT)
 
     @on_pull_message(MessageType.RECORDS)
     async def _on_records(self, message: RecordsMessage) -> None:
@@ -637,11 +762,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received records: {message}")
 
+        phase = message.metadata.benchmark_phase
+
+        # Context-overflow records in AGENTIC_REPLAY scenarios bypass normal
+        # user-facing per-record processing but still advance the records-side
+        # success counter so the completion barrier converges. Keep only a
+        # narrow aggregate side-channel count for runtime submission validation.
+        if getattr(message.metadata, "context_overflow_skip", False):
+            await self._handle_context_overflow_skip(message, phase)
+            return
+
         dispatch_errors: list[BaseException] = []
         for record in message.records:
+            if isinstance(record, MetricRecordsData):
+                self._maybe_hint_missing_cache_reporting(record)
             dispatch_errors.extend(await self._dispatch_record(record))
 
-        phase = message.metadata.benchmark_phase
         self._records_tracker.update_from_request(message.metadata, message.error)
         if message.error:
             self._error_tracker.increment_error_count_for_phase(
@@ -657,6 +793,30 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_index=message.metadata.phase_index,
             )
 
+        await self._maybe_trigger_failed_request_abort(phase)
+
+        if (
+            phase in self._complete_credit_phases
+            and (
+                phase != CreditPhase.PROFILING
+                or not self._has_multiple_profiling_phases()
+                or self._credits_complete_received
+            )
+            and self._check_all_records_received(phase)
+        ):
+            await self._handle_all_records_received_once(phase)
+
+    async def _handle_context_overflow_skip(
+        self, message: RecordsMessage, phase: CreditPhase
+    ) -> None:
+        """Advance the records-side success counter for a skipped-overflow record."""
+        self._skipped_context_overflow_counts_by_phase[phase] = (
+            self._skipped_context_overflow_counts_by_phase.get(phase, 0) + 1
+        )
+        # Intentional skip: count as success so --failed-request-threshold and
+        # console error counts stay honest. message.error (if any) describes
+        # the overflow classification, not a failed request.
+        self._records_tracker.update_from_request(message.metadata, None)
         if (
             phase in self._complete_credit_phases
             and (
@@ -1640,6 +1800,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             for error in error_results:
                 self.error(f"Warmup metric summary error: {error}")
 
+        warmup_context_overflow_count = (
+            self._skipped_context_overflow_counts_by_phase.get(CreditPhase.WARMUP, 0)
+        )
+        if warmup_context_overflow_count:
+            records_results.append(
+                MetricResult(
+                    tag="context_overflow_count",
+                    header="Context Overflow Count",
+                    unit="requests",
+                    avg=float(warmup_context_overflow_count),
+                    count=1,
+                )
+            )
+
         return records_results or None
 
     async def _finalize_stream_exporters(self) -> None:
@@ -1808,7 +1982,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 branch_stats=self._latest_branch_stats
                 if phase == CreditPhase.PROFILING
                 else None,
+                context_overflow_count=self._skipped_context_overflow_counts_by_phase.get(
+                    phase, 0
+                ),
                 phase_records=phase_records,
+                pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(
+                    summary_ctx
+                ),
             ),
             errors=error_results,
         )

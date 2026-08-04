@@ -44,12 +44,17 @@ class TestGpuTelemetry:
         assert result.json.telemetry_data.endpoints is not None
         assert len(result.json.telemetry_data.endpoints) > 0
 
-        for dcgm_url in result.json.telemetry_data.endpoints:
-            assert result.json.telemetry_data.endpoints[dcgm_url].gpus is not None
-            assert len(result.json.telemetry_data.endpoints[dcgm_url].gpus) > 0
+        for telemetry_source_url in result.json.telemetry_data.endpoints:
+            assert (
+                result.json.telemetry_data.endpoints[telemetry_source_url].gpus
+                is not None
+            )
+            assert (
+                len(result.json.telemetry_data.endpoints[telemetry_source_url].gpus) > 0
+            )
 
             for gpu_data in result.json.telemetry_data.endpoints[
-                dcgm_url
+                telemetry_source_url
             ].gpus.values():
                 assert gpu_data.metrics is not None
                 assert len(gpu_data.metrics) > 0
@@ -110,7 +115,7 @@ class TestGpuTelemetry:
 
             # Verify required fields are present
             assert record.timestamp_ns > 0
-            assert record.dcgm_url is not None
+            assert record.telemetry_source_url is not None
             assert record.gpu_index >= 0
             assert record.gpu_uuid is not None
             assert record.gpu_model_name is not None
@@ -157,7 +162,7 @@ class TestGpuTelemetry:
             # Validate first record
             first_record = TelemetryRecord.model_validate_json(lines[0])
             assert first_record.timestamp_ns > 0
-            assert first_record.dcgm_url is not None
+            assert first_record.telemetry_source_url is not None
 
     async def test_gpu_telemetry_disabled(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer

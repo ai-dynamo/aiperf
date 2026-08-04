@@ -16,7 +16,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.models import DatasetMetadata, TurnPrerequisite
 from aiperf.common.models.branch import ConversationBranchInfo
-from aiperf.common.models.dataset_models import Conversation, Turn
+from aiperf.common.models.dataset_models import Conversation, ThinkTimeSpec, Turn
 from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v1
 from aiperf.dataset.loader._dag_jsonl_helpers import (
     DagLoadError,
@@ -27,6 +27,7 @@ from aiperf.dataset.loader._dag_jsonl_helpers import (
     normalize_fork_entry,
     validate_branch_targets_and_collect_parents,
     validate_explicit_join_at,
+    validate_fork_targets_not_payload_isolated,
     validate_non_terminal_branches,
     validate_pre_session_spawns_disjoint_from_forks,
     validate_system_message_placement,
@@ -75,9 +76,11 @@ class DagJsonlLoader(BaseFileLoader):
       context and sticky-route to the parent's worker. Bare-string entries
       terminate the parent; object entries with ``background=True`` keep
       the parent running its remaining turns.
-    - ``spawns``: SPAWN branches. Children start fresh and route freely;
-      bare-string auto-joins on the next turn, ``DagSpawn`` objects carry
-      an explicit ``join_at``.
+    - ``spawns``: SPAWN branches. Children start fresh; while the parent's
+      sticky entry is live they co-locate on that worker (no sticky
+      refcount bump), and route least-loaded once it is gone. Bare-string
+      auto-joins on the next turn, ``DagSpawn`` objects carry an explicit
+      ``join_at``.
 
     Both keywords may appear on the same turn; they desugar into separate
     ``ConversationBranchInfo`` entries with distinct ``branch_id``s.
@@ -194,7 +197,13 @@ class DagJsonlLoader(BaseFileLoader):
             self._resolve_and_validate()
             self._roots = self._compute_roots()
             for sid, conv in self._conversations.items():
-                conv.context_mode = ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+                # Respect an author-declared context mode (e.g.
+                # MESSAGE_ARRAY_WITH_RESPONSES for payload-isolated turns that
+                # send each turn's authored message array as-is, with no
+                # accumulation of prior turns or live responses). Default to the
+                # accumulating multi-turn-chat mode when unset.
+                if conv.context_mode is None:
+                    conv.context_mode = ConversationContextMode.DELTAS_WITHOUT_RESPONSES
                 conv.is_root = sid in self._roots
             # v1 orchestrator capability check - surface any unsupported
             # prereq/branch shapes before any credit is issued.
@@ -248,6 +257,46 @@ class DagJsonlLoader(BaseFileLoader):
                 "parsed); supply at least one conversation line"
             )
 
+    def _build_think_time_spec(
+        self, dag_conv: DagConversation, cap_ms: float | None
+    ) -> ThinkTimeSpec | None:
+        """Build the sampled think-time spec, folding the delay cap into its
+        bounds. Both bounds are clamped so ``min <= max`` holds even when an
+        authored bound already exceeds the cap. None when no distribution."""
+        if dag_conv.think_time_sigma is None:
+            return None
+        spec_min = dag_conv.think_time_min_ms
+        spec_max = dag_conv.think_time_max_ms
+        if cap_ms is not None:
+            spec_max = cap_ms if spec_max is None else min(spec_max, cap_ms)
+            if spec_min is not None:
+                spec_min = min(spec_min, cap_ms)
+        return ThinkTimeSpec(
+            sigma=dag_conv.think_time_sigma, min_ms=spec_min, max_ms=spec_max
+        )
+
+    @staticmethod
+    def _build_round_plans(
+        dag_conv: DagConversation,
+    ) -> list[tuple[list[str], float]]:
+        """Normalize both ``rounds`` forms to a per-round ``(spawns, think_ms)``
+        plan. INT form re-fires the shared conversation-level ``spawns``; LIST
+        form authors each round's own ``spawns`` (and optional think-time)."""
+        default_think_ms = dag_conv.think_time_ms or 0.0
+        if isinstance(dag_conv.rounds, list):
+            return [
+                (
+                    list(r.spawns),
+                    r.think_time_ms
+                    if r.think_time_ms is not None
+                    else default_think_ms,
+                )
+                for r in dag_conv.rounds
+            ]
+        return [
+            (list(dag_conv.spawns), default_think_ms) for _ in range(dag_conv.rounds)
+        ]
+
     def _parse_one_line(self, lineno: int, raw: bytes) -> None:
         prefix = f"failed to parse DAG JSONL '{self._path}'"
         try:
@@ -264,11 +313,59 @@ class DagJsonlLoader(BaseFileLoader):
         turns: list[Turn] = []
         inline_forks_per_turn: list[list[DagFork]] = []
         inline_spawns_per_turn: list[list[tuple[list[str], int | None]]] = []
-        for t in dag_conv.turns:
-            turns.append(self._build_turn(t))
-            inline_forks_per_turn.append([normalize_fork_entry(e) for e in t.forks])
-            inline_spawns_per_turn.append(group_spawn_entries(t.spawns))
-        self._conversations[sid] = Conversation(session_id=sid, turns=turns)
+        # The configured inter-turn delay cap (``--inter-turn-delay-cap-seconds``)
+        # bounds orchestrator think-time exactly as it bounds trace-replay delays.
+        # Apply it at load time: fold it into the sampled distribution's clamps
+        # AND onto each stamped fixed delay below, so neither a fixed nor a
+        # sampled think-time can exceed the cap.
+        cap_seconds = self._delay_cap_tracker.cap_seconds
+        cap_ms = cap_seconds * 1000.0 if cap_seconds is not None else None
+        think_time_spec = self._build_think_time_spec(dag_conv, cap_ms)
+        if dag_conv.orchestrator and dag_conv.rounds is not None:
+            # Gated spine: N request-free rounds. Each round-k turn spawns the
+            # conversation-level ``spawns`` children with an explicit
+            # ``join_at=k+1`` so the NEXT turn AND-waits (join=all) for all of
+            # round k's branches before firing -- a chained conversation paced
+            # by per-round waiting. Turn N is a terminal request-free gate that
+            # waits on round N's branches and then completes the session. All
+            # turns are ``no_request`` (the spine sends no HTTP itself).
+            # Per-round think-time: the wait the coordinator applies before
+            # releasing each round. It rides ONLY the N spawning turns (0..N-1) --
+            # turn 0 via the normal strategy delay and turns 1..N-1 via the gated
+            # ``_release_blocked_join``. The terminal gate (turn N) spawns no
+            # further round, so it carries NO think-time: stamping it would delay
+            # session completion by one spurious think interval per spine.
+            for k, (round_spawns, round_think_ms) in enumerate(
+                self._build_round_plans(dag_conv)
+            ):
+                # Clamp the stamped (fixed / median) think-time to the delay cap.
+                capped_delay = self._delay_cap_tracker.clamp(round_think_ms)
+                turns.append(Turn(no_request=True, delay=capped_delay))
+                inline_forks_per_turn.append([])
+                inline_spawns_per_turn.append([(round_spawns, k + 1)])
+            turns.append(Turn(no_request=True))
+            inline_forks_per_turn.append([])
+            inline_spawns_per_turn.append([])
+        elif dag_conv.orchestrator:
+            # Synthesize a single no-op turn (no messages, no_request=True). Its
+            # conversation-level ``spawns`` desugar into a post-timing SPAWN
+            # branch via the normal ``_apply_spawns`` path (see _desugar_forks),
+            # so the orchestrator re-fires on every sampled iteration.
+            turns.append(Turn(no_request=True))
+            inline_forks_per_turn.append([])
+            inline_spawns_per_turn.append(group_spawn_entries(list(dag_conv.spawns)))
+        else:
+            for t in dag_conv.turns:
+                turns.append(self._build_turn(t))
+                inline_forks_per_turn.append([normalize_fork_entry(e) for e in t.forks])
+                inline_spawns_per_turn.append(group_spawn_entries(t.spawns))
+        self._conversations[sid] = Conversation(
+            session_id=sid,
+            turns=turns,
+            is_orchestrator=dag_conv.orchestrator,
+            think_time=think_time_spec,
+            context_mode=dag_conv.context_mode,
+        )
         self._inline_forks[sid] = inline_forks_per_turn
         self._inline_spawns[sid] = inline_spawns_per_turn
         self._inline_pre_session_spawns[sid] = self._check_pre_session_duplicates(
@@ -376,7 +473,11 @@ class DagJsonlLoader(BaseFileLoader):
                 dispatch_timing="pre",
             )
         )
-        conv.turns[0].branch_ids.append(branch_id)
+        # Orchestrator conversations have no turns; the pre-session branch lives at
+        # the conversation level only. Non-orchestrators still record turn-0 membership
+        # so the validator/dispatch turn-0 checks keep working.
+        if conv.turns:
+            conv.turns[0].branch_ids.append(branch_id)
 
     def _apply_forks(
         self,
@@ -400,7 +501,7 @@ class DagJsonlLoader(BaseFileLoader):
                 branch_id=branch_id,
                 child_conversation_ids=[f.child for f in forks],
                 mode=ConversationBranchMode.FORK,
-                background=background,
+                is_background=background,
             )
         )
         conv.turns[idx].branch_ids.append(branch_id)
@@ -463,6 +564,7 @@ class DagJsonlLoader(BaseFileLoader):
             self._inline_pre_session_spawns, parent_of
         )
         validate_system_message_placement(self._conversations, parent_of)
+        validate_fork_targets_not_payload_isolated(self._conversations)
         self._stamp_topology(parent_of)
 
     def _stamp_topology(self, parent_of: dict[str, tuple[str, int]]) -> None:

@@ -388,6 +388,16 @@ class ResolvedConfig(BaseModel):
         description="Pre-built ZMQ communication config. "
         "Avoids rebuilding in every service's CommunicationMixin.",
     )
+    scenario_outcome: Any = Field(
+        default=None,
+        description="Result of applying the named benchmark-scenario invariant "
+        "lock (set by ScenarioResolver). None when no --scenario was set; "
+        "carries applied locks, any --unsafe-override violations, and "
+        "submission_valid for downstream reporting. Runtime type: "
+        "aiperf.common.scenario.ScenarioOutcome | None. Typed ``Any`` to break "
+        "the import cycle aiperf.common.scenario.base -> common.models -> "
+        "config.config -> config.resolution.plan.",
+    )
 
 
 class BenchmarkRun(BaseModel):

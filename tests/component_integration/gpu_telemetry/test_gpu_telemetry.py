@@ -51,10 +51,10 @@ class TestGPUTelemetryBasic:
         )
 
         # Verify each endpoint has correct GPU data structure
-        for dcgm_url, endpoint_data in endpoints.items():
+        for telemetry_source_url, endpoint_data in endpoints.items():
             assert endpoint_data.gpus is not None
             assert len(endpoint_data.gpus) == 2, (
-                f"Endpoint {dcgm_url}: expected 2 GPUs, got {len(endpoint_data.gpus)}"
+                f"Endpoint {telemetry_source_url}: expected 2 GPUs, got {len(endpoint_data.gpus)}"
             )
 
             # Verify each GPU has valid metrics with all required fields

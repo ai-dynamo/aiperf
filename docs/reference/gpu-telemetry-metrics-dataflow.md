@@ -34,7 +34,7 @@ flowchart LR
     subgraph converge["2 · Converge (shared store)"]
         direction TB
         process["GPUTelemetryAccumulator<br/>.process_telemetry_record()"]
-        hierarchy["TelemetryHierarchy<br/><small>dcgm_url → gpu_uuid → GpuTelemetryData series<br/>holds BOTH vendors, tagged by metadata.platform</small>"]
+        hierarchy["TelemetryHierarchy<br/><small>telemetry_source_url → gpu_uuid → GpuTelemetryData series<br/>holds BOTH vendors, tagged by metadata.platform</small>"]
         process --> hierarchy
     end
 

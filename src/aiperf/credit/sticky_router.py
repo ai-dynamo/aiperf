@@ -28,7 +28,7 @@ from aiperf.common.protocols import (
     StreamingPullClientProtocol,
     StreamingRouterClientProtocol,
 )
-from aiperf.config.comm import ZMQDualBindConfig
+from aiperf.config.comm import BaseZMQCommunicationConfig, ZMQDualBindConfig
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -45,6 +45,22 @@ if TYPE_CHECKING:
 # =============================================================================
 # Data Models
 # =============================================================================
+
+
+@dataclass(slots=True)
+class _StickyEntry:
+    """Sticky-routing state for a root correlation id.
+
+    Tracks which worker owns the session and a refcount so DAG children that
+    pin themselves to the parent's worker can keep the entry alive past the
+    parent's own final turn. ``parent_final_seen`` records whether the owning
+    session has finished its final turn; the entry is popped only once both
+    ``ref_count`` hits zero and that flag is set.
+    """
+
+    worker_id: str
+    ref_count: int = 1
+    parent_final_seen: bool = False
 
 
 @dataclass(slots=True)
@@ -201,7 +217,9 @@ class StickyCreditRouter(CommunicationMixin):
         - credit cancellation is O(n × k) where n = number of workers, k = average in-flight credits per worker
     """
 
-    def _init_credit_channels(self, comm_config) -> None:
+    def _init_credit_channels(
+        self, comm_config: BaseZMQCommunicationConfig | None
+    ) -> None:
         """Bind the credit dispatch ROUTER and the dedicated credit-return PULL.
 
         Dispatch (Credit/CancelCredits) goes router->worker over CREDIT_ROUTER;
@@ -263,11 +281,14 @@ class StickyCreditRouter(CommunicationMixin):
         self._on_first_token_callback: (
             Callable[[FirstToken], Awaitable[None]] | None
         ) = None
+        self._on_fatal_error: Callable[[BaseException], None] | None = None
 
-        # Sticky sessions: x_correlation_id -> worker_id
-        # Routes all turns of a conversation to the same worker. Required because
-        # workers cache UserSession state by x_correlation_id.
-        self._sticky_sessions: dict[str, str] = {}
+        # Sticky sessions: routing_key -> _StickyEntry
+        # Routes all turns of a conversation (and DAG children pinned to it) to the
+        # same worker. Required because workers cache UserSession state by
+        # x_correlation_id. The routing key is ``parent_correlation_id or
+        # x_correlation_id`` so FORK-mode children co-locate with their parent.
+        self._sticky_sessions: dict[str, _StickyEntry] = {}
 
         self._cancellation_pending: bool = False
         self._credits_complete: bool = False
@@ -295,6 +316,17 @@ class StickyCreditRouter(CommunicationMixin):
     ) -> None:
         """Set callback for credit returns (enables concurrency control)."""
         self._on_return_callback = callback
+
+    def set_fatal_error_callback(
+        self, callback: Callable[[BaseException], None]
+    ) -> None:
+        """Register a sink for fatal request-free control-node failures.
+
+        Called (synchronously) when a detached virtual-return callback raises,
+        so the failure can be recorded on the phase and surfaced instead of
+        being logged and swallowed.
+        """
+        self._on_fatal_error = callback
 
     def set_first_token_callback(
         self, callback: Callable[[FirstToken], Awaitable[None]]
@@ -327,6 +359,27 @@ class StickyCreditRouter(CommunicationMixin):
                 "(tunable via AIPERF_SERVICE_START_TIMEOUT); cannot start credit issuance"
             ) from exc
 
+    async def _fire_virtual_return(self, credit_return: CreditReturn) -> None:
+        """Deliver a synthesized no_request CreditReturn to the return consumer.
+
+        Runs as a detached task (scheduled via ``execute_async``). On failure the
+        error is logged AND forwarded to the fatal-error sink so it surfaces to
+        the phase (which re-raises it) instead of only reaching asyncio's default
+        "Task exception was never retrieved" handler -- otherwise a failure on the
+        spawn-dispatch path (``intercept``) would become an opaque phase-timeout
+        hang with the graph silently stuck.
+        """
+        try:
+            await self._on_return_callback("", credit_return)
+        except Exception as e:
+            self.exception(
+                lambda: f"virtual no_request return callback failed for credit "
+                f"{credit_return.credit.id} (x_correlation_id="
+                f"{credit_return.credit.x_correlation_id})"
+            )
+            if self._on_fatal_error is not None:
+                self._on_fatal_error(e)
+
     async def send_credit(self, credit: Credit) -> None:
         """Determine the worker based on sticky sessions or least-loaded and send the credit to the worker.
 
@@ -335,14 +388,41 @@ class StickyCreditRouter(CommunicationMixin):
         - Updates the worker load and sticky sessions
         - Sends the credit to the worker
         """
-        if not self._workers:
-            raise RuntimeError("No workers available for routing")
-
         if not credit.x_correlation_id:
             raise RuntimeError("x_correlation_id must be set in Credit")
 
-        x_correlation_id = credit.x_correlation_id
-        sticky_worker_id = self._sticky_sessions.get(x_correlation_id)
+        if credit.no_request:
+            credit_return = CreditReturn(
+                credit=credit, cancelled=False, error=None, first_token_sent=False
+            )
+            # Virtual orchestrator credit: never goes to a worker. Synthesize the
+            # return in-process and hand it to the same return consumer a worker
+            # return would hit, so slot release + BranchOrchestrator.intercept
+            # (spawn firing) run identically. No _track_credit_sent/_returned here:
+            # this credit never touches per-worker load, so tracking it would
+            # desync in_flight_credits and trip the return-underflow error.
+            #
+            # Schedule DECOUPLED (not awaited inline): if this send_credit is
+            # reached from inside BranchOrchestrator.intercept (which holds
+            # _parent_locks[corr]), awaiting the callback here would re-enter
+            # on_credit_return -> intercept and can deadlock the non-reentrant
+            # asyncio.Lock when correlations collide, and risks unbounded
+            # synchronous recursion. Deferring to a later event-loop turn matches
+            # the exact semantics of the ZMQ worker round-trip we are replacing.
+            if self._on_return_callback is None:
+                raise RuntimeError(
+                    "return callback not set; cannot short-circuit no_request credit"
+                )
+            self.execute_async(self._fire_virtual_return(credit_return))
+            return
+
+        if not self._workers:
+            raise RuntimeError("No workers available for routing")
+
+        # DAG children pin to their parent's worker; otherwise pin to self.
+        routing_key = credit.parent_correlation_id or credit.x_correlation_id
+        sticky_entry = self._sticky_sessions.get(routing_key)
+        sticky_worker_id = sticky_entry.worker_id if sticky_entry is not None else None
 
         # Use existing sticky session if worker still valid
         if sticky_worker_id and sticky_worker_id in self._workers:
@@ -381,20 +461,53 @@ class StickyCreditRouter(CommunicationMixin):
 
                 worker_id = best_worker_id
 
-            # Only create sticky session if there are more turns coming. Single-turn
-            # conversations don't need routing state since there's no next turn.
-            if not credit.is_final_turn:
-                self._sticky_sessions[x_correlation_id] = worker_id
-                load = self._workers[worker_id]
-                load.active_sessions += 1
-                load.active_session_ids.add(x_correlation_id)
+            # Create or rebind the sticky entry for non-final turns; also create
+            # it when the final turn declares DAG spawns so the orchestrator's
+            # register_child_routing can find it.
+            #
+            # DAG branch-children (parent_correlation_id set — FORK or SPAWN)
+            # must not auto-create when the parent's sticky entry is already
+            # gone. The auto-create path would mint a fresh entry keyed by the
+            # parent's id, bumping ``active_sessions`` with no path to evict it
+            # (final-turn eviction is gated on parent_correlation_id is None;
+            # release_child_routing only decrements an existing entry). That
+            # leaks active_sessions and biases load balancing. When the parent
+            # entry still exists, both FORK and SPAWN children co-locate via
+            # the sticky hit above (routing_key = parent_correlation_id).
+            # SPAWN differs only in refcount: the orchestrator does not call
+            # register_child_routing for SPAWN. When the parent entry is gone,
+            # children fall through to least-loaded without minting a leak.
+            is_dag_child = credit.parent_correlation_id is not None
+            if not credit.is_final_turn or credit.has_forks:
+                if sticky_entry is None and not is_dag_child:
+                    sticky_entry = _StickyEntry(worker_id=worker_id)
+                    self._sticky_sessions[routing_key] = sticky_entry
+                    load = self._workers[worker_id]
+                    load.active_sessions += 1
+                    load.active_session_ids.add(routing_key)
+                elif (
+                    sticky_entry is not None
+                    and sticky_entry.worker_id not in self._workers
+                ):
+                    sticky_entry.worker_id = worker_id
+                    load = self._workers[worker_id]
+                    load.active_sessions += 1
+                    load.active_session_ids.add(routing_key)
 
-        # Cleanup on final turn - only decrement if session was actually tracked
-        # (single-turn sessions never get added to _sticky_sessions)
-        if credit.is_final_turn and self._sticky_sessions.pop(x_correlation_id, None):
-            load = self._workers[worker_id]
-            load.active_sessions -= 1
-            load.active_session_ids.discard(x_correlation_id)
+        # Owning session's final turn: mark parent_final_seen and decrement the
+        # reservation. DAG children never touch the parent entry (managed via
+        # release_child_routing). If this turn has DAG spawns, leave the entry
+        # in place so register_child_routing lands on the same _StickyEntry.
+        if credit.is_final_turn and credit.parent_correlation_id is None:
+            entry = sticky_entry or self._sticky_sessions.get(routing_key)
+            if entry is not None:
+                entry.parent_final_seen = True
+                entry.ref_count -= 1
+                if entry.ref_count <= 0 and not credit.has_forks:
+                    self._sticky_sessions.pop(routing_key, None)
+                    load = self._workers[worker_id]
+                    load.active_sessions -= 1
+                    load.active_session_ids.discard(routing_key)
 
         self._track_credit_sent(worker_id, credit.id)
 
@@ -440,6 +553,67 @@ class StickyCreditRouter(CommunicationMixin):
     def mark_credits_complete(self) -> None:
         """Mark credits complete - suppresses orphan warnings during shutdown."""
         self._credits_complete = True
+
+    def register_child_routing(self, parent_correlation_id: str) -> None:
+        """Increment the sticky-routing refcount for a parent's entry.
+
+        Called by ``BranchOrchestrator`` before dispatching each DAG child so
+        the parent's sticky entry survives past its own final turn until every
+        descendant child session has terminated. If the parent has no active
+        sticky entry we log a warning and continue without raising - the
+        child will route via least-loaded selection rather than co-locating
+        with the parent's worker, losing prefix-cache locality but not
+        breaking correctness.
+        """
+        entry = self._sticky_sessions.get(parent_correlation_id)
+        if entry is not None:
+            entry.ref_count += 1
+        else:
+            self.warning(
+                lambda: f"register_child_routing: parent "
+                f"{parent_correlation_id!r} has no sticky entry; "
+                f"child will not co-locate with parent's worker"
+            )
+
+    def release_child_routing(self, parent_correlation_id: str) -> None:
+        """Decrement the sticky-routing refcount when a DAG child terminates.
+
+        Called by ``BranchOrchestrator`` when a child session reaches a leaf
+        or errors out. If the refcount reaches zero and the parent's own final
+        turn has already been observed, the sticky entry is evicted.
+        """
+        entry = self._sticky_sessions.get(parent_correlation_id)
+        if entry is None:
+            return
+        entry.ref_count -= 1
+        if entry.ref_count <= 0 and entry.parent_final_seen:
+            worker_id = entry.worker_id
+            self._sticky_sessions.pop(parent_correlation_id, None)
+            load = self._workers.get(worker_id)
+            if load is not None:
+                load.active_sessions -= 1
+                load.active_session_ids.discard(parent_correlation_id)
+
+    def evict_unclaimed_sticky(self, parent_correlation_id: str) -> None:
+        """Force-pop a sticky entry retained for FORK children that never registered.
+
+        Parent final turns with ``has_forks=True`` keep the sticky entry alive
+        (``parent_final_seen=True``, ``ref_count`` already decremented) so
+        ``register_child_routing`` can find it. When every child fails before
+        that register (e.g. ``start_branch_child`` raises), nothing else
+        decrements ``active_sessions``. Called from
+        ``BranchOrchestrator._finalize_failed_dispatches``; safe no-op when
+        children hold refs or the parent final has not been seen.
+        """
+        entry = self._sticky_sessions.get(parent_correlation_id)
+        if entry is None or not entry.parent_final_seen or entry.ref_count > 0:
+            return
+        worker_id = entry.worker_id
+        self._sticky_sessions.pop(parent_correlation_id, None)
+        load = self._workers.get(worker_id)
+        if load is not None:
+            load.active_sessions -= 1
+            load.active_session_ids.discard(parent_correlation_id)
 
     # =============================================================================
     # Private Methods

@@ -605,8 +605,12 @@ class TestMLflowDataExporter:
             cfg=mlflow_cfg,
             telemetry_results=None,
         )
+        # Generous ceiling: the child exits fast (os._exit right after import),
+        # so join() returns as soon as it dies -- but under `pytest -n auto` load
+        # the spawned child's re-import can exceed a tight 10s window, tripping the
+        # timeout path and masking the exitcode warning this test asserts on.
         await mlflow_export_subprocess.export_with_timeout(
-            config, export_timeout=10.0, warn=_collect
+            config, export_timeout=60.0, warn=_collect
         )
 
         assert any(

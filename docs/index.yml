@@ -84,6 +84,8 @@ navigation:
       path: tutorials/spec-bench.md
     - page: Profile with SPEED-Bench Dataset
       path: tutorials/speed-bench.md
+    - page: Per-Request Speculative-Decoding Metrics
+      path: tutorials/spec-decode-metrics.md
     - page: Profile with Bailian Traces
       path: tutorials/bailian-trace.md
     - page: Profile with BurstGPT Traces
@@ -102,6 +104,10 @@ navigation:
       path: tutorials/prefix-synthesis.md
     - page: Agentic Code Dataset Generator
       path: tutorials/agentic-code-generator.md
+    - page: Replay Weka Agentic Coding Traces
+      path: tutorials/weka-trace.md
+    - page: InferenceX AgentX MVP Benchmark
+      path: tutorials/agentx-mvp.md
   - section: Load Patterns & Scheduling
     collapsed: true
     contents:
@@ -127,6 +133,10 @@ navigation:
       path: tutorials/request-cancellation.md
     - page: Warmup Phase Configuration
       path: tutorials/warmup.md
+    - page: Benchmark Control Hooks
+      path: tutorials/benchmark-control-hooks.md
+    - page: Control Hooks by Server (vLLM / SGLang / TRT-LLM)
+      path: tutorials/control-hooks-by-server.md
   - section: Metrics & Analysis
     collapsed: true
     contents:
@@ -193,6 +203,8 @@ navigation:
     path: tutorials/baseten-trace.md
   - page: Conversation DAG Benchmarks
     path: benchmark-modes/dag.md
+  - page: "SemiAnalysis AgentX: How the Benchmark Works (FAQ)"
+    path: benchmark-modes/semianalysis-agentx-faq.md
 
 - section: Accuracy
   collapsed: true
@@ -215,12 +227,22 @@ navigation:
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
     path: reference/tokenizer-auto-detection.md
+  - page: Input Sequence Length (ISL) Tokenization
+    path: reference/isl-tokenization.md
+  - page: Prompt Corpus Selection
+    path: reference/prompt-corpus.md
+  - page: ISL Budget Compensation Derivation
+    path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
     path: reference/list-metric-aggregation.md
+  - page: Effective vs Active Metrics
+    path: reference/effective-vs-active-metrics.md
   - page: Vendor Usage Field Reference
     path: reference/vendor-usage-fields.md
+  - page: Per-Request Speculative-Decoding Acceptance
+    path: reference/spec-decode-acceptance.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
   - page: HTTP API Endpoints

@@ -9,7 +9,6 @@ dispatched using delay_ms or timestamp_ms from metadata.
 
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING, NamedTuple
 
 from aiperf.common.constants import MILLIS_PER_SECOND
@@ -52,7 +51,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         lifecycle: PhaseLifecycle,
         stop_checker: StopConditionChecker,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize fixed schedule timing strategy with all dependencies."""
         super().__init__(logger_name="FixedScheduleTiming")
         self._config = config
@@ -92,15 +91,16 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                     f"First turn of {conv.conversation_id} missing timestamp_ms"
                 )
 
+            # Route through the source rather than building TurnToSend inline so
+            # the session carries the cache-bust marker minted for it.
+            sampled = self._conversation_source.session_for_conversation(
+                conv.conversation_id,
+                x_correlation_id=f"fixed-schedule-{conv.conversation_id}",
+            )
             self._absolute_schedule.append(
                 ScheduleEntry(
                     timestamp_ms=conv.turns[0].timestamp_ms,
-                    turn=TurnToSend(
-                        conversation_id=conv.conversation_id,
-                        x_correlation_id=str(uuid.uuid4()),
-                        turn_index=0,
-                        num_turns=len(conv.turns),
-                    ),
+                    turn=sampled.build_first_turn(),
                 )
             )
 
@@ -142,8 +142,12 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(
         self,
         credit: Credit,
+        *,
+        error: str | None = None,
     ) -> None:
         """Handle credit return: dispatch next turn based on trace timing.
+
+        ``error`` is accepted for protocol parity and ignored here.
 
         Calculates delay from timestamp_ms or delay_ms metadata, then issues
         credit immediately (delay=0) or schedules for later (delay>0).

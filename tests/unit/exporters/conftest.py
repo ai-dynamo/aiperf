@@ -78,7 +78,7 @@ def sample_telemetry_record():
     """Create a sample TelemetryRecord for testing."""
     return TelemetryRecord(
         timestamp_ns=1000000000,
-        dcgm_url="http://localhost:9400/metrics",
+        telemetry_source_url="http://localhost:9400/metrics",
         gpu_index=0,
         gpu_model_name="NVIDIA H100",
         gpu_uuid="GPU-12345678-1234-1234-1234-123456789abc",

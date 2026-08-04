@@ -388,6 +388,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    scenario: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is "
+            "applied by the ScenarioResolver step in the pre-bootstrap resolver "
+            "chain (auto-fills defaults, validates, raises ScenarioLockError on "
+            "conflict). Distinct from the sweep ``scenarios`` strategy "
+            "(SweepConfig), which expands hand-picked named runs -- this field "
+            "is a single invariant LOCK, not a sweep.",
+        ),
+    ]
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the resolved scenario outcome. No-op "
+            "without ``scenario``. Plain data; consumed by the ScenarioResolver.",
+        ),
+    ]
+
     # ==========================================================================
     # VALIDATORS
     # ==========================================================================
@@ -515,6 +539,81 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             errors = check_phase_dataset_compatibility(phase, ds, phase.name, ds.name)
             if errors:
                 raise ValueError(errors[0])
+        return self
+
+    @model_validator(mode="after")
+    def validate_cache_bust_compatibility(self) -> Self:
+        """Refuse cache-bust when endpoint metadata does not support it.
+
+        Cache-bust markers are minted by every timing strategy and injected by
+        the worker into structured endpoint turns. Endpoint plugins opt in via
+        ``supports_cache_bust`` metadata; timing mode is not a restriction.
+        """
+        from aiperf.common.enums import CacheBustTarget
+        from aiperf.plugin import plugins
+
+        if self.get_cache_bust_target() == CacheBustTarget.NONE:
+            return self
+
+        endpoint_metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        if not endpoint_metadata.supports_cache_bust:
+            raise ValueError(
+                "cache-bust is not supported by endpoint "
+                f"{self.endpoint.type}; select an endpoint whose plugin metadata "
+                "sets supports_cache_bust=true"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_agentic_cache_warmup(self) -> Self:
+        """Restrict accelerated cache warmup to the agentic_replay timing mode.
+
+        ``--agentic-cache-warmup-duration`` is consumed solely by
+        ``aiperf.timing.config._build_agentic_warmup_config``, which only runs
+        when the profiling phases resolve to AGENTIC_REPLAY. On any other run
+        the value is silently dropped, so an unguarded flag is a no-op the user
+        cannot see. This guard raises instead.
+
+        A scenario governs the timing_mode: ``apply_scenario`` stamps
+        ``spec.timing_mode`` onto the profiling phases POST-construction, so the
+        phase ``timing_mode`` is not yet set here. Rather than defer (which would
+        leave the flag unchecked -- ``apply_scenario`` never re-runs this gate),
+        we resolve the scenario's declared ``timing_mode`` from its
+        :class:`ScenarioSpec` and reject when it is not AGENTIC_REPLAY. When no
+        scenario is present the phases are final, so we resolve them with the
+        same ``_is_agentic_replay``/``_phase_timing_mode`` logic the timing
+        builder uses (explicit ``timing_mode`` override, else the phase-type
+        mapping) and reject the flag when nothing resolves to AGENTIC_REPLAY.
+        """
+        from aiperf.plugin.enums import TimingMode
+        from aiperf.timing.config import _is_agentic_replay
+
+        profiling_phases = self.get_profiling_phases()
+        if not any(
+            getattr(phase, "agentic_cache_warmup_duration", None) is not None
+            for phase in profiling_phases
+        ):
+            return self
+
+        if self.scenario is not None:
+            from aiperf.common.scenario.registry import get_scenario
+
+            scenario_timing_mode = get_scenario(self.scenario).timing_mode
+            if scenario_timing_mode != TimingMode.AGENTIC_REPLAY:
+                raise ValueError(
+                    "--agentic-cache-warmup-duration requires the agentic_replay "
+                    f"timing mode; scenario {self.scenario!r} locks "
+                    f"timing_mode={scenario_timing_mode}."
+                )
+            return self
+
+        if not _is_agentic_replay(profiling_phases):
+            raise ValueError(
+                "--agentic-cache-warmup-duration requires the agentic_replay "
+                "timing mode (set today by --scenario inferencex-agentx-mvp); "
+                "the profiling phase(s) are not agentic_replay."
+            )
         return self
 
 
@@ -712,6 +811,41 @@ class AIPerfConfig(BaseConfig):
         new_data = dict(data)
         new_data["plot"] = envelope
         return new_data
+
+    @model_validator(mode="after")
+    def _reject_scenario_with_sweep(self) -> Self:
+        """Reject a parameter sweep when a fixed-spec scenario is locked.
+
+        A ``--scenario`` lock describes ONE fixed configuration; a sweep would
+        fan it into N variations with diverging settings, each individually
+        satisfying the lock while collectively falsifying the "one scenario =
+        one spec" contract. This is the v2 successor to the v1
+        ``validate_scenario`` check that rejected a list-shaped ``--concurrency``
+        (a parameter sweep): in v2 list-shaped magic-list flags are hoisted to a
+        top-level ``sweep:`` block by the CLI converter
+        (``_promote_magic_lists_to_sweep_block``) BEFORE this config is built, so
+        the rejection lives here at the envelope level where ``scenario`` (under
+        ``benchmark``) and ``sweep`` are sibling concerns -- not in
+        ``apply_scenario``, which only ever sees one already-expanded variation.
+
+        ``benchmark.unsafe_override`` downgrades the hard error to a warning,
+        matching how the scenario resolver treats every other invariant
+        violation.
+        """
+        if self.benchmark.scenario is None or self.sweep is None:
+            return self
+        message = (
+            f"scenario {self.benchmark.scenario!r} does not support parameter "
+            "sweeps; "
+            "a scenario locks one fixed configuration, so a sweep would "
+            "multiply it into diverging runs. Pass a single value for each "
+            "swept flag (e.g. one --concurrency value, not a list) or drop "
+            "the sweep / --scenario."
+        )
+        if self.benchmark.unsafe_override:
+            _logger.warning("Scenario violation (override active): %s", message)
+            return self
+        raise ValueError(message)
 
     @model_validator(mode="after")
     def validate_sweep_no_dashboard_ui(self) -> Self:

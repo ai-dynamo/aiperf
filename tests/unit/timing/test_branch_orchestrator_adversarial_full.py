@@ -37,6 +37,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import (
+    CacheBustTarget,
     ConversationBranchMode,
     PrerequisiteKind,
 )
@@ -55,6 +56,7 @@ from aiperf.timing.branch_orchestrator import (
     PendingBranchJoin,
     PrereqState,
 )
+from tests.unit.timing._shared_helpers import _mk_issuer
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -120,14 +122,6 @@ def _mk_credit(conv_id: str, corr_id: str, turn_index: int, agent_depth: int = 0
     )
 
 
-def _mk_issuer():
-    issuer = MagicMock()
-    issuer.dispatch_first_turn = AsyncMock(return_value=True)
-    issuer.dispatch_join_turn = AsyncMock(return_value=True)
-    issuer.abort_session = AsyncMock()
-    return issuer
-
-
 def _fan_in_metadata() -> list[ConversationMetadata]:
     """Reused: turn 0 spawns A (2 children); turn 2 spawns B (3 children); turn 5 gates on both."""
     branch_a = ConversationBranchInfo(
@@ -175,9 +169,11 @@ def _fan_in_metadata() -> list[ConversationMetadata]:
 @pytest.mark.asyncio
 async def test_race_children_complete_before_parent_arrives_pops_silently():
     """All children complete first; parent then arrives at the gated turn.
-    Future gate is satisfied -> popped silently -> intercept returns False.
-    No dispatch_join_turn fires (parent will dispatch the gated turn via the
-    strategy's normal path)."""
+    This is a NORMAL DAG gate (no request-free think-time), so a gate satisfied
+    before the parent arrives is popped silently and the parent breezes through
+    the strategy path -- intercept returns False and no dispatch_join_turn fires.
+    (Spine gates, which carry think-time, take the retain-and-dispatch path
+    instead; see the branch-orchestrator delayed tests.)"""
     cs = _mk_source(_fan_in_metadata())
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -190,15 +186,10 @@ async def test_race_children_complete_before_parent_arrives_pops_silently():
     for cid in ("a1", "a2", "b1", "b2", "b3"):
         await orch.on_child_leaf_reached(f"corr-{cid}")
 
-    # Future gate at T=5 should be popped (satisfied before parent arrived).
-    # Parent arrives at T=4 return -> next is T=5 -> already satisfied -> False.
-    pending_5 = orch._future_joins.get("corr-root", {}).get(5)
-    # Either popped already by _satisfy_prerequisite, or still present and
-    # is_satisfied (popped on next intercept). Both are valid.
-    if pending_5 is not None:
-        assert pending_5.is_satisfied
+    # Normal gate satisfied before the parent arrived -> popped immediately.
+    assert orch._future_joins.get("corr-root", {}).get(5) is None
 
-    # Parent reaches T=4 return.
+    # Parent reaches T=4 return -> next is T=5, already gone -> breeze through.
     suspended = await orch.intercept(_mk_credit("root", "corr-root", 4))
     assert suspended is False
     issuer.dispatch_join_turn.assert_not_called()
@@ -441,9 +432,7 @@ def test_cleanup_clears_pre_dispatched_and_logs_leak(caplog):
     orch._descendant_counts["ghost-parent"] = 3
     orch._pre_dispatched_branches.add(("conv-x", "branch-y"))
 
-    with caplog.at_level(
-        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
-    ):
+    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
         orch.cleanup()
 
     leak_warnings = [r for r in caplog.records if "leaked state" in r.getMessage()]
@@ -958,6 +947,8 @@ async def test_multi_consumer_single_branch_three_gates_all_advance():
     # Single child completion -> all 3 gates' counters advance.
     await orch.on_child_leaf_reached("corr-c1")
     # T=1 fires; T=2 and T=3 are popped from future_joins (satisfied early).
+    # These are normal DAG gates (no think-time), so early-satisfied future
+    # gates breeze through rather than being retained for a pre-join wait.
     assert issuer.dispatch_join_turn.await_count == 1
     assert "corr-root" not in orch._active_joins
     assert orch._future_joins.get("corr-root", {}) == {}
@@ -1457,7 +1448,9 @@ async def test_pre_session_child_runs_its_own_second_level_dag():
 
     await orch.dispatch_pre_session_branches()
     # Pre child fired.
-    cs.start_pre_session_child.assert_called_once_with("middle")
+    cs.start_pre_session_child.assert_called_once_with(
+        "middle", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
+    )
     assert issuer.dispatch_first_turn.await_count == 1
 
     # Pre child's turn 0 returns at agent_depth=1. The orchestrator's
@@ -1592,7 +1585,9 @@ async def test_pre_session_mixed_roots_only_root_pre_fires():
 
     await orch.dispatch_pre_session_branches()
 
-    cs.start_pre_session_child.assert_called_once_with("child_a")
+    cs.start_pre_session_child.assert_called_once_with(
+        "child_a", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
+    )
     cs.start_pre_session_child.assert_called_once()
     assert ("root", "root:pre") in orch._pre_dispatched_branches
     assert ("rogue", "rogue:pre") not in orch._pre_dispatched_branches
