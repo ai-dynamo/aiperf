@@ -946,4 +946,3 @@ pub enum PlaidEndpoint {
     /// `text_completion` frames with `choices[].text`.
     Completions,
 }
-

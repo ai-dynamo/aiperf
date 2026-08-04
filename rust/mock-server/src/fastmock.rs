@@ -94,11 +94,7 @@ fn build_responses(endpoint: PlaidEndpoint) -> Responses {
 /// Parses and answers every complete request found in `chunk` starting at
 /// offset 0. Returns the byte offset past the last complete request handled
 /// (== chunk.len() when nothing is left over).
-fn drain_requests<S: Write>(
-    chunk: &[u8],
-    stream: &mut S,
-    resp: &Responses,
-) -> Result<usize, ()> {
+fn drain_requests<S: Write>(chunk: &[u8], stream: &mut S, resp: &Responses) -> Result<usize, ()> {
     let mut off = 0usize;
     loop {
         let rest = &chunk[off..];

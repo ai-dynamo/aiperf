@@ -85,7 +85,9 @@ async fn accumulated_history_images_are_counted_on_every_continuation_turn() {
     );
     assert_eq!(
         turn_image_counts(&records),
-        (0..TURNS as u64).map(|turn| (turn, Some(1.0))).collect::<Vec<_>>(),
+        (0..TURNS as u64)
+            .map(|turn| (turn, Some(1.0)))
+            .collect::<Vec<_>>(),
         "turn 0's image is resent as accumulated history, so every continuation \
          turn must report it too"
     );
@@ -125,10 +127,16 @@ async fn a_text_only_multi_turn_run_records_no_image_metric() {
     assert!(r.success(), "text-only multi-turn run failed: {}", r.stderr);
 
     let records = r.artifacts.jsonl();
-    assert_eq!(records.len(), TURNS, "expected one record per authored turn");
+    assert_eq!(
+        records.len(),
+        TURNS,
+        "expected one record per authored turn"
+    );
     assert_eq!(
         turn_image_counts(&records),
-        (0..TURNS as u64).map(|turn| (turn, None)).collect::<Vec<_>>(),
+        (0..TURNS as u64)
+            .map(|turn| (turn, None))
+            .collect::<Vec<_>>(),
         "a text-only conversation must not report any images"
     );
     assert!(

@@ -66,7 +66,11 @@ async fn continuation_turn_body_interleaves_every_captured_reply() {
         ),
         300,
     );
-    assert!(r.success(), "multi-turn continuation run failed: {}", r.stderr);
+    assert!(
+        r.success(),
+        "multi-turn continuation run failed: {}",
+        r.stderr
+    );
 
     let mut records = r.artifacts.raw_records();
     assert_eq!(
@@ -93,7 +97,8 @@ async fn continuation_turn_body_interleaves_every_captured_reply() {
         for (index, message) in messages.iter().enumerate() {
             if index % 2 == 0 {
                 assert_eq!(
-                    message["role"], "user",
+                    message["role"],
+                    "user",
                     "turn {turn} message {index} should be the authored turn {}: {messages:?}",
                     index / 2
                 );
@@ -106,7 +111,8 @@ async fn continuation_turn_body_interleaves_every_captured_reply() {
                 // The reply's text is server-generated, so only its shape and
                 // its position are contractual here.
                 assert_eq!(
-                    message["role"], "assistant",
+                    message["role"],
+                    "assistant",
                     "turn {turn} message {index} should be the reply captured after \
                      authored turn {}: {messages:?}",
                     index / 2

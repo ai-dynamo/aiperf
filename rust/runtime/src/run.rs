@@ -788,11 +788,6 @@ pub(crate) async fn run_user_centric_adaptive_with_backend(
     Ok(runtime.finish(workload.name(), workload.user_control_snapshot()))
 }
 
-
-
-
-
-
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_single_turn_dataset_online(
@@ -830,12 +825,9 @@ pub(crate) async fn run_single_turn_dataset_online(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    
+
     use crate::clock::SimClock;
     use crate::graph::runtime::drive_sim;
-    
-    
 
     #[test]
     fn phase_ramps_drive_the_live_slot_and_interval_actuators() {
@@ -893,11 +885,4 @@ mod tests {
         assert_eq!(prefill_slots.current_limit(), 3);
         assert_eq!(intervals.borrow().rate(), 40.0);
     }
-
-
-
-
-
-
-
 }

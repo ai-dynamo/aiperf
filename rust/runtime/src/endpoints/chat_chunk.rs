@@ -107,10 +107,7 @@ impl ChatChunk {
             .or(delta.reasoning)
             .filter(|value| !value.is_empty())
         {
-            return Some(ResponseData::Reasoning {
-                content,
-                reasoning,
-            });
+            return Some(ResponseData::Reasoning { content, reasoning });
         }
         let mut parts: Vec<String> = Vec::new();
         for call in delta.tool_calls {
@@ -307,7 +304,8 @@ mod tests {
     /// keep flowing through the generic extractor.
     #[test]
     fn typed_response_data_declines_non_chunk_objects() {
-        let non_streaming = r#"{"object":"chat.completion","choices":[{"index":0,"message":{"content":"hi"}}]}"#;
+        let non_streaming =
+            r#"{"object":"chat.completion","choices":[{"index":0,"message":{"content":"hi"}}]}"#;
         assert_eq!(parse(non_streaming).into_stream_response_data(), None);
     }
 
