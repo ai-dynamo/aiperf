@@ -522,7 +522,10 @@ pub struct ScheduledRuntime {
 struct OutstandingCredit {
     credit: IssuedCredit,
     record_index: usize,
-    on_first_token: FirstTokenHandler,
+    /// Shared rather than owned so the return loop can clone it out and drop the
+    /// map borrow before calling it — the handler releases a prefill slot, which
+    /// re-enters the runtime.
+    on_first_token: Rc<dyn Fn(i64)>,
     on_complete: CompletionHandler,
     /// Keeps this credit inside the scheduler's drain accounting for as long as
     /// a worker holds it. Without it the phase's `wait_idle` barrier would see
@@ -656,11 +659,16 @@ impl ScheduledRuntime {
         while let Some(report) = self.dispatcher.next_credit_report().await {
             match report.kind {
                 TurnCreditReportKind::FirstToken(ttft_ns) => {
+                    let Some(record_index) = self
+                        .outstanding_credits
+                        .borrow()
+                        .get(&report.uuid)
+                        .map(|outstanding| outstanding.record_index)
+                    else {
+                        continue;
+                    };
                     self.recorder.borrow_mut().first_token(
-                        match self.outstanding_credits.borrow().get(&report.uuid) {
-                            Some(outstanding) => outstanding.record_index,
-                            None => continue,
-                        },
+                        record_index,
                         self.clock.now_ns(),
                         self.start_ns,
                         ttft_ns,
@@ -668,12 +676,16 @@ impl ScheduledRuntime {
                     if let Some(observer) = self.turn_lifecycle_observer.borrow().as_ref() {
                         observer.on_first_token(report.uuid);
                     }
-                    // Borrowed separately from the callback invocation: the
-                    // callback releases a prefill slot, which can re-enter the
-                    // runtime.
-                    let outstanding = self.outstanding_credits.borrow();
-                    if let Some(outstanding) = outstanding.get(&report.uuid) {
-                        (outstanding.on_first_token)(ttft_ns);
+                    // Cloned out (one `Rc` bump) so the map borrow ends before
+                    // the callback runs: releasing a prefill slot re-enters the
+                    // runtime and would otherwise hit a live borrow.
+                    let on_first_token = self
+                        .outstanding_credits
+                        .borrow()
+                        .get(&report.uuid)
+                        .map(|outstanding| outstanding.on_first_token.clone());
+                    if let Some(on_first_token) = on_first_token {
+                        on_first_token(ttft_ns);
                     }
                 }
                 TurnCreditReportKind::CreditReturn(result) => {
@@ -1139,7 +1151,7 @@ impl ScheduledRuntime {
             let outstanding = OutstandingCredit {
                 credit,
                 record_index,
-                on_first_token,
+                on_first_token: Rc::from(on_first_token),
                 on_complete,
                 _enrolment: self.scheduler.begin_external_task(),
             };

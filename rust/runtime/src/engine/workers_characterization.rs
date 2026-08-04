@@ -851,6 +851,212 @@ mod tests {
             sorted_data_keys(&hop),
             "GlobalHop merge order must be deterministic across runs"
         );
+
+        // `GlobalPush` makes the SAME exactly-once and deterministic-merge
+        // promises from a different mechanism: the issuer routes a credit and
+        // returns, and the worker returns that credit out of band. A lost
+        // credit, a doubly-routed one, or a merge ordered by completion timing
+        // would each break one of the three assertions below.
+        let push = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            push.len(),
+            requests as usize,
+            "GlobalPush must produce exactly one record per routed credit \
+             (every credit routed once and returned once — no loss, no duplicate)"
+        );
+        assert_eq!(
+            sorted_data_keys(&push),
+            baseline_keys,
+            "GlobalPush's merged record stream must carry the same per-request multiset \
+             the single dispatcher does (exactly-once, deterministically merged)"
+        );
+        let push_again = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            sorted_data_keys(&push_again),
+            sorted_data_keys(&push),
+            "GlobalPush merge order must be deterministic across runs"
+        );
+    }
+
+    /// `GlobalPush` aggregate-concurrency exactness.
+    ///
+    /// The property most at risk in a credit router: the issuer no longer holds
+    /// a future per in-flight request, so the ONLY thing bounding aggregate
+    /// concurrency is that the admission slot is released when the worker
+    /// RETURNS the credit. Release it anywhere earlier — at routing, at the
+    /// queue hand-off, at first token — and the wire peak blows straight past
+    /// the authored cap while every summary metric still looks plausible.
+    /// Measured server-side, across all 4 worker threads combined.
+    #[test]
+    fn global_push_enforces_true_aggregate_concurrency_cap() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 24;
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 24u64,
+            "concurrency": 3,
+        }))
+        .unwrap();
+
+        mock.reset_peak();
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(rows.len(), 24, "every request must produce one record");
+        let peak = mock.peak_concurrent();
+        assert!(
+            peak <= 3,
+            "GlobalPush must enforce the true aggregate concurrency cap (3) across all \
+             4 worker threads combined — the credit's admission slot is released only \
+             on credit return (observed wire peak: {peak})"
+        );
+        assert_eq!(
+            peak, 3,
+            "the cap must actually be reached (proves real cross-thread contention, \
+             not an under-subscribed run); got {peak}"
+        );
+    }
+
+    /// `GlobalPush` aggregate-rate exactness.
+    ///
+    /// One issuer paces the FULL global rate through the local per-phase
+    /// interval grid, exactly as `GlobalHop` does and without consuming
+    /// `GlobalAdmission`. Routing credits instead of awaiting replies must not
+    /// let issuance run `W ×` too fast.
+    #[test]
+    fn global_push_paces_true_aggregate_rate() {
+        const WORKERS: usize = 4;
+        const RATE_PER_SEC: f64 = 200.0;
+        const REQUESTS: u64 = 40;
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "constant",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": REQUESTS,
+            "rate": RATE_PER_SEC,
+        }))
+        .unwrap();
+
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            WORKERS,
+            build_dataset(&registry, REQUESTS as usize, 1),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            rows.len(),
+            REQUESTS as usize,
+            "every issued request must produce one profiling record"
+        );
+        let mut issued: Vec<i64> = rows
+            .iter()
+            .map(|row| {
+                row.get("metadata")
+                    .and_then(|m| m.get("credit_issued_ns"))
+                    .and_then(Value::as_i64)
+                    .expect("record carries credit_issued_ns for a rate phase")
+            })
+            .collect();
+        issued.sort_unstable();
+        let span_ns = (issued.last().unwrap() - issued.first().unwrap()).max(1);
+        let push_rate = (REQUESTS as f64 - 1.0) / (span_ns as f64 / 1e9);
+        eprintln!(
+            "global-push aggregate rate across {WORKERS} threads: {push_rate:.1}/s \
+             (configured global rate {RATE_PER_SEC}/s)"
+        );
+        assert!(
+            push_rate < RATE_PER_SEC * 1.35,
+            "GlobalPush must pace the AGGREGATE rate across all {WORKERS} worker threads \
+             at the global {RATE_PER_SEC}/s, NOT ~{WORKERS}x too fast; measured {push_rate:.1}/s"
+        );
+        assert!(
+            push_rate > RATE_PER_SEC * 0.65,
+            "GlobalPush aggregate rate must actually reach the configured {RATE_PER_SEC}/s \
+             (proves the run is rate-bound, not stalled); measured {push_rate:.1}/s"
+        );
+    }
+
+    /// A multi-turn `GlobalPush` run must complete every turn of every session.
+    ///
+    /// Continuations are the case a credit router can silently break: the next
+    /// turn is scheduled from the completion callback, which the credit-return
+    /// loop runs INLINE. If that loop parked, dropped an entry, or settled a
+    /// credit twice, sessions would stall short of their turn count and the
+    /// phase would hang on its drain barrier rather than fail loudly.
+    #[test]
+    fn global_push_completes_every_turn_of_a_multi_turn_session() {
+        const SESSIONS: usize = 6;
+        const TURNS: usize = 3;
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": (SESSIONS * TURNS) as u64,
+            "concurrency": 3,
+        }))
+        .unwrap();
+
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, SESSIONS, TURNS),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        );
+        assert_eq!(
+            rows.len(),
+            SESSIONS * TURNS,
+            "every turn of every session must reach a record under GlobalPush"
+        );
+        let mut turn_indices: Vec<u64> = rows
+            .iter()
+            .map(|row| {
+                row.get("metadata")
+                    .and_then(|m| m.get("turn_index"))
+                    .and_then(Value::as_u64)
+                    .expect("record carries its turn index")
+            })
+            .collect();
+        turn_indices.sort_unstable();
+        let mut expected: Vec<u64> = (0..SESSIONS)
+            .flat_map(|_| (0..TURNS as u64))
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(
+            turn_indices, expected,
+            "GlobalPush must dispatch each session's turns 0..{TURNS} exactly once"
+        );
     }
 
     /// `GlobalHop` aggregate-concurrency exactness — the counterpart of
