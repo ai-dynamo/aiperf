@@ -542,8 +542,12 @@ Transports:
 
 Inputs, endpoints, and graph:
 
-- [`docs/specs/dataset.md`](docs/specs/dataset.md) — the content-addressed segment store and
-  the loader→compose→store→sampler→materializer pipeline.
+- [`docs/specs/content-to-wire.md`](docs/specs/content-to-wire.md) — the end-to-end request
+  dataplane: nine stages from dataset fetch to outbound bytes, the two freeze boundaries,
+  the serialization budget, per-dispatch cost accounting, and the cross-stage invariants.
+- [`docs/specs/dataset.md`](docs/specs/dataset.md) — the content-addressed segment store,
+  its pool/freeze/thaw write side, and the
+  loader→compose→store→sampler→materializer pipeline.
 - [`docs/specs/prompt-corpus.md`](docs/specs/prompt-corpus.md) — the shared `prompts.corpus`
   seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over
   the `sonnet`, `coding`, and exact-length `random` corpora.
