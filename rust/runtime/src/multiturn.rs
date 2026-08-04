@@ -1295,12 +1295,19 @@ impl NativeSessionBackend {
 /// Native handle-only dataset source used by online scheduled workloads.
 pub struct NativeDatasetConversationSource {
     dataset: Arc<NativeDataset>,
-    /// This shard's fixed giver corpus: the sampleable conversations it owns.
-    /// Under a multi-worker/cell partition that is the authored-index residue
-    /// class; the sampler recycles only within this set. Unpartitioned sources
-    /// hold every sampleable conversation.
+    /// Every sampleable conversation, in authored order — the RESOLUTION table.
+    /// A position-addressed draw reaches outside this shard's residue class by
+    /// design, so resolution must be total even when enumeration is not.
     metadata: Arc<Vec<ConversationMetadata>>,
+    /// Resolution index over `metadata`, so it is likewise total.
     metadata_by_id: HashMap<String, usize>,
+    /// This shard's ENUMERATION corpus: the authored-index residue class it
+    /// owns. Backs `conversations()`, which fixed-schedule replay and the
+    /// single-turn-per-conversation workload use to enumerate their work, and
+    /// the per-session `inputs.json` projection each cell contributes to the
+    /// controller's round-robin merge. Equal to `metadata` when the source is
+    /// unpartitioned.
+    owned_metadata: Vec<ConversationMetadata>,
     sampler: Box<dyn Sampler>,
     endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
@@ -1501,8 +1508,12 @@ impl NativeDatasetConversationSource {
             );
         }
         let sampler = make_sampler(&owned_model)?;
-        let metadata = owned_model
-            .iter()
+        // Resolution is total; enumeration is the residue class. Building
+        // `metadata` over the full corpus is what lets a position-addressed
+        // draw resolve a conversation this shard does not own — the gap that
+        // sank the earlier `PartitionedSampler` attempt.
+        let metadata = dataset
+            .sampleable_metadata()
             .map(|conversation| {
                 let authored = dataset
                     .get(&conversation.conversation_id)
@@ -1531,15 +1542,26 @@ impl NativeDatasetConversationSource {
                 }
             })
             .collect::<Vec<_>>();
-        let metadata_by_id = metadata
+        let metadata_by_id: HashMap<String, usize> = metadata
             .iter()
             .enumerate()
             .map(|(index, metadata)| (metadata.conversation_id.clone(), index))
+            .collect();
+        let owned_metadata: Vec<ConversationMetadata> = metadata
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                ownership
+                    .map(|partition| partition.owns(*index as u64))
+                    .unwrap_or(true)
+            })
+            .map(|(_, conversation)| conversation.clone())
             .collect();
         Ok(Self {
             dataset,
             metadata: Arc::new(metadata),
             metadata_by_id,
+            owned_metadata,
             sampler,
             endpoint,
             materializer,
@@ -1674,7 +1696,11 @@ impl NativeDatasetConversationSource {
         // Sort by conversation id so the emitted session order matches the capture
         // path's `BTreeMap<conversation_id, …>` iteration exactly.
         let mut sessions: BTreeMap<String, Vec<Bytes>> = BTreeMap::new();
-        for metadata in self.metadata.iter() {
+        // The ENUMERATION corpus, not the resolution table: a cell's inputs.json
+        // holds only the slice that cell owns, which the controller unions and
+        // re-interleaves round-robin (`shard_artifacts::merge_cell_inputs_json`).
+        // Projecting the full corpus here would duplicate every session per cell.
+        for metadata in self.owned_metadata.iter() {
             let conversation_id = metadata.conversation_id.as_str();
             let id = crate::dataset::SessionId::from(conversation_id);
             let conversation = self.dataset.get(&id)?;
@@ -1733,7 +1759,7 @@ impl NativeDatasetConversationSource {
 
 impl ConversationSource for NativeDatasetConversationSource {
     fn conversations(&self) -> &[ConversationMetadata] {
-        &self.metadata
+        &self.owned_metadata
     }
 
     fn materialize_input_payloads(&self) -> Result<Option<Vec<UpFrontInputSession>>> {
