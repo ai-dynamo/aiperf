@@ -1644,7 +1644,6 @@ impl NativeDatasetConversationSource {
             .ok_or_else(|| {
                 anyhow!("native dataset session {conversation_id:?} is not sampleable")
             })?;
-        let metadata = self.metadata[metadata_index].clone();
         let x_correlation_id = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let backend = NativeSessionBackend {
             session: RefCell::new(None),
