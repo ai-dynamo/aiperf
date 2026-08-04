@@ -14,9 +14,14 @@
 //! [`build_message_body_from_wires`](crate::dataset::materialize::build_message_body_from_wires),
 //! and a [`BodyPlan::Raw`] plan preserves a complete `raw_payload`. The endpoint
 //! declares shape with segment slots; it never touches commas, brackets, or content
-//! serialization. Protobuf-wire endpoints (KServe V2 / Riva) read the same
-//! segments through their codec rather than splicing bytes — see
-//! `transport::grpc` — so this materializer is intentionally JSON-only.
+//! serialization.
+//!
+//! Materialization is a push: [`emit`] plays a plan into a [`BodyEmitter`], one
+//! implementation per wire format, and [`JsonEmitter`] is the JSON one. That is
+//! the seam a transport which does not speak JSON uses to consume the plan's
+//! structure directly — protobuf-wire endpoints (KServe V2 / Riva) read the same
+//! segments through their codec rather than splicing bytes, see
+//! `transport::grpc` — instead of assembling JSON only to parse it back.
 
 use std::borrow::Cow;
 
@@ -570,43 +575,143 @@ impl Default for BodyPlan {
     }
 }
 
-/// The shared JSON splicer: `BodyPlan` + dispatch [`Overrides`] → one `Bytes`.
+/// What the driver knows about a body's finished length before it is emitted.
 ///
-/// Walks the plan in field order, concatenating literal bytes and pre-serialized
-/// segment bytes from the store, then appends the small per-dispatch override
-/// tail (`model`/`max_tokens`/`stream`/…). Content is never re-serialized; only [`Literal`](FieldValue::Literal)
-/// scalars and the override tail are serialized (both small, once).
-pub struct JsonBodyMaterializer;
+/// A byte-buffer emitter reserves from this and allocates exactly once; an
+/// emitter that builds a structured value ignores it entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SizeHint {
+    /// The exact serialized byte length of the finished body, override tail
+    /// included. A JSON emitter that reserves this never reallocates and
+    /// retains no slack, and can assert the finished buffer against it.
+    Exact(usize),
+    /// A rough guess, used when a store-dependent
+    /// [`Segment`](FieldValue::Segment) value makes the exact length
+    /// unknowable without resolving the store.
+    Estimated(usize),
+}
 
-impl JsonBodyMaterializer {
-    /// Materialize a plan against a store into the single request body buffer.
-    pub fn materialize<S: SegmentStore + ?Sized>(
-        plan: &BodyPlan,
-        store: &S,
-        overrides: &Overrides,
-    ) -> Result<Bytes> {
-        match plan {
-            BodyPlan::Raw(handle) => match store.get(*handle)? {
-                Payload::Raw { wire } => splice_raw_object(wire, overrides),
-                payload => Err(DatasetError::PayloadKind {
-                    handle: *handle,
-                    expected: "raw",
-                    actual: payload.kind_name(),
-                }),
-            },
-            BodyPlan::Fields(program) => materialize_fields(program, store, overrides),
-            // Already a complete object; splice applies any (rare) override tail
-            // and otherwise clones the prebuilt bytes without a store lookup.
-            BodyPlan::Prebuilt(bytes) => splice_raw_object(bytes, overrides),
+impl SizeHint {
+    /// The byte count to reserve, exact or estimated.
+    pub fn capacity(self) -> usize {
+        match self {
+            Self::Exact(bytes) | Self::Estimated(bytes) => bytes,
+        }
+    }
+
+    /// The exact length when known, for a post-write assertion.
+    pub fn exact(self) -> Option<usize> {
+        match self {
+            Self::Exact(bytes) => Some(bytes),
+            Self::Estimated(_) => None,
         }
     }
 }
 
-fn materialize_fields<S: SegmentStore + ?Sized>(
+/// A wire-format sink a [`BodyPlan`] is played into.
+///
+/// One implementation per wire format. [`emit`] drives the plan through it in
+/// field order, pushing each value exactly once; nothing intermediate is
+/// buffered, so a transport that does not speak JSON never assembles JSON it
+/// will not send. Statically dispatched — no vtable on the dispatch path.
+///
+/// The call protocol is one of two shapes, and an implementation may rely on
+/// that:
+///
+/// - **Named fields.** [`begin`](BodyEmitter::begin), then per declared field a
+///   [`field`](BodyEmitter::field) naming it followed by exactly one of
+///   [`literal`](BodyEmitter::literal), [`wire`](BodyEmitter::wire), or
+///   [`array`](BodyEmitter::array); then [`overrides`](BodyEmitter::overrides);
+///   then [`finish`](BodyEmitter::finish).
+/// - **Whole body.** [`whole`](BodyEmitter::whole) alone, then
+///   [`finish`](BodyEmitter::finish). No `begin`, no fields.
+pub trait BodyEmitter {
+    /// What this emitter produces — request bytes, a decoded value, protobuf
+    /// message parts, multipart form parts.
+    type Output;
+
+    /// Start a named-field body. Called once, before any field.
+    fn begin(&mut self, size: SizeHint) -> Result<()>;
+
+    /// Open the field `name`; exactly one value call follows.
+    fn field(&mut self, name: &str) -> Result<()>;
+
+    /// An endpoint-generated value bound to the open field. Both forms are
+    /// offered because they cost different things to different emitters: a JSON
+    /// emitter splices [`LiteralValue::wire`] verbatim, while an emitter
+    /// building a structured value clones [`LiteralValue::value`] and parses
+    /// nothing.
+    fn literal(&mut self, literal: &LiteralValue) -> Result<()>;
+
+    /// One complete pre-serialized JSON value occupying the open field.
+    fn wire(&mut self, wire: &Bytes) -> Result<()>;
+
+    /// An ordered array of pre-serialized object wires occupying the open
+    /// field. The iterator resolves store handles lazily, so a handle-addressed
+    /// plan never materializes an intermediate `Vec<Bytes>`, and it borrows
+    /// inline wires rather than bumping a refcount per message per dispatch.
+    fn array<'wire>(
+        &mut self,
+        elements: &mut dyn Iterator<Item = Result<Cow<'wire, Bytes>>>,
+    ) -> Result<()>;
+
+    /// A complete authored object occupying the whole body
+    /// ([`BodyPlan::Raw`], [`BodyPlan::Prebuilt`]).
+    ///
+    /// `overrides` is passed here rather than folded into
+    /// [`overrides`](BodyEmitter::overrides) because raw override semantics —
+    /// always-append tail, authored whitespace preserved, a duplicate key
+    /// permitted — are not the in-place-or-append semantics of a named-field
+    /// program. Collapsing the two rewrites authored bytes.
+    fn whole(&mut self, wire: &Bytes, overrides: &Overrides) -> Result<()>;
+
+    /// Per-dispatch top-level fields, appended after the program's own fields.
+    ///
+    /// `inner_wire` is `overrides.inner_bytes()` serialized once by the driver
+    /// (the driver needs its length for the [`SizeHint`] regardless): the
+    /// enclosing braces are stripped, so it splices directly into an open
+    /// object. A JSON emitter appends it; an emitter that builds a structured
+    /// value reads `overrides.fields()` and ignores it.
+    fn overrides(&mut self, overrides: &Overrides, inner_wire: &[u8]) -> Result<()>;
+
+    /// Complete the body.
+    fn finish(self) -> Result<Self::Output>;
+}
+
+/// Play `plan` into `emitter`, resolving segment handles against `store` and
+/// applying the per-dispatch `overrides`.
+pub fn emit<E: BodyEmitter, S: SegmentStore + ?Sized>(
+    plan: &BodyPlan,
+    store: &S,
+    overrides: &Overrides,
+    mut emitter: E,
+) -> Result<E::Output> {
+    match plan {
+        BodyPlan::Raw(handle) => match store.get(*handle)? {
+            Payload::Raw { wire } => emitter.whole(wire, overrides)?,
+            payload => {
+                return Err(DatasetError::PayloadKind {
+                    handle: *handle,
+                    expected: "raw",
+                    actual: payload.kind_name(),
+                });
+            }
+        },
+        // Already a complete object; the emitter applies any (rare) override
+        // tail and otherwise takes the prebuilt bytes without a store lookup.
+        BodyPlan::Prebuilt(bytes) => emitter.whole(bytes, overrides)?,
+        BodyPlan::Fields(program) => emit_fields(program, store, overrides, &mut emitter)?,
+    }
+    emitter.finish()
+}
+
+/// Play one named-field program, field by field.
+fn emit_fields<E: BodyEmitter, S: SegmentStore + ?Sized>(
     program: &FieldProgram,
     store: &S,
     overrides: &Overrides,
-) -> Result<Bytes> {
+    emitter: &mut E,
+) -> Result<()> {
     let fields = program.fields();
     let override_inner = overrides.inner_bytes()?;
     // The tail is per-dispatch, so the program's hint does not cover it.
@@ -616,52 +721,30 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
         override_inner.len() + usize::from(!fields.is_empty())
     };
     // An exact hint makes the body one allocation with no slack; without one
-    // (a store-dependent segment value) fall back to the old rough guess.
-    let capacity = match program.exact_len() {
-        Some(exact) => exact + tail,
-        None => fields.len() * 32 + override_inner.len() + 2,
+    // (a store-dependent segment value) fall back to a rough guess.
+    let size = match program.exact_len() {
+        Some(exact) => SizeHint::Exact(exact + tail),
+        None => SizeHint::Estimated(fields.len() * 32 + override_inner.len() + 2),
     };
-    let mut body = BytesMut::with_capacity(capacity);
-    body.put_u8(b'{');
-    for (index, (name, value)) in fields.iter().enumerate() {
-        if index > 0 {
-            body.put_u8(b',');
-        }
-        body.put_u8(b'"');
-        body.put_slice(name.as_bytes());
-        body.put_slice(b"\":");
+    emitter.begin(size)?;
+    for (name, value) in fields {
+        emitter.field(name)?;
         match value {
-            // Spliced from the wire bound with the value; the fallback re-attempts
-            // the serialization that failed at bind time so the error surfaces here.
-            FieldValue::Literal(literal) => match literal.wire() {
-                Some(wire) => body.put_slice(wire),
-                None => serde_json::to_writer((&mut body).writer(), literal.value())?,
-            },
-            FieldValue::Segment(handle) => body.put_slice(&segment_field_wire(store, *handle)?),
+            FieldValue::Literal(literal) => emitter.literal(literal)?,
+            FieldValue::Segment(handle) => emitter.wire(&segment_field_wire(store, *handle)?)?,
             FieldValue::Segments(handles) => {
-                body.put_u8(b'[');
-                for (element, handle) in handles.iter().enumerate() {
-                    if element > 0 {
-                        body.put_u8(b',');
-                    }
-                    let wire = message_wire(store, *handle)?;
-                    push_message(&mut body, &wire, element)?;
-                }
-                body.put_u8(b']');
+                let mut elements = handles
+                    .iter()
+                    .map(|handle| message_wire(store, *handle).map(Cow::Owned));
+                emitter.array(&mut elements)?;
             }
             FieldValue::Wires(wires) => {
-                body.put_u8(b'[');
-                for (element, wire) in wires.iter().enumerate() {
-                    if element > 0 {
-                        body.put_u8(b',');
-                    }
-                    push_message(&mut body, wire, element)?;
-                }
-                body.put_u8(b']');
+                let mut elements = wires.iter().map(|wire| Ok(Cow::Borrowed(wire)));
+                emitter.array(&mut elements)?;
             }
-            // The partially-written buffer is dropped with the error, so an
-            // unfilled slot yields no body at all rather than a body missing
-            // the field the endpoint meant to put here.
+            // Whatever the emitter has written so far is dropped with the
+            // error, so an unfilled slot yields no body at all rather than a
+            // body missing the field the endpoint meant to put here.
             FieldValue::Reserved => {
                 return Err(DatasetError::ReservedField(format!(
                     "field {name:?} was reserved but never filled; the endpoint must \
@@ -670,29 +753,127 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
             }
         }
     }
-    if !override_inner.is_empty() {
-        if !fields.is_empty() {
-            body.put_u8(b',');
-        }
-        body.put_slice(&override_inner);
-    }
-    body.put_u8(b'}');
-    if let Some(exact) = program.exact_len() {
-        debug_assert_eq!(
-            exact + tail,
-            body.len(),
-            "exact_len drifted; a mutator failed to update it"
-        );
-    }
-    Ok(body.freeze())
+    emitter.overrides(overrides, &override_inner)
 }
 
-/// Append one validated message-object wire as an array element.
-fn push_message(body: &mut BytesMut, wire: &[u8], index: usize) -> Result<()> {
-    validate_object_slice(wire)
-        .map_err(|error| DatasetError::InvalidWire(format!("message at index {index}: {error}")))?;
-    body.put_slice(wire);
-    Ok(())
+/// The JSON [`BodyEmitter`]: concatenates literal bytes, pre-serialized segment
+/// bytes, and message wires into the one contiguous request body, then appends
+/// the small per-dispatch override tail. Content is never re-serialized.
+#[derive(Debug, Default)]
+pub struct JsonEmitter {
+    buf: BytesMut,
+    /// Set by [`BodyEmitter::whole`] instead of `buf`, so a whole-body plan with
+    /// no overrides hands back the authored bytes as a refcount clone rather
+    /// than copying them through the buffer. Mutually exclusive with the
+    /// named-field path by the call protocol.
+    whole: Option<Bytes>,
+    /// The exact finished length when the program knew it, checked against the
+    /// buffer before it is frozen.
+    expected: Option<usize>,
+    fields_written: usize,
+}
+
+impl BodyEmitter for JsonEmitter {
+    type Output = Bytes;
+
+    fn begin(&mut self, size: SizeHint) -> Result<()> {
+        self.buf = BytesMut::with_capacity(size.capacity());
+        self.expected = size.exact();
+        self.buf.put_u8(b'{');
+        Ok(())
+    }
+
+    fn field(&mut self, name: &str) -> Result<()> {
+        if self.fields_written > 0 {
+            self.buf.put_u8(b',');
+        }
+        self.fields_written += 1;
+        self.buf.put_u8(b'"');
+        self.buf.put_slice(name.as_bytes());
+        self.buf.put_slice(b"\":");
+        Ok(())
+    }
+
+    fn literal(&mut self, literal: &LiteralValue) -> Result<()> {
+        // Spliced from the wire bound with the value; the fallback re-attempts
+        // the serialization that failed at bind time so the error surfaces here.
+        match literal.wire() {
+            Some(wire) => self.buf.put_slice(wire),
+            None => serde_json::to_writer((&mut self.buf).writer(), literal.value())?,
+        }
+        Ok(())
+    }
+
+    fn wire(&mut self, wire: &Bytes) -> Result<()> {
+        self.buf.put_slice(wire);
+        Ok(())
+    }
+
+    fn array<'wire>(
+        &mut self,
+        elements: &mut dyn Iterator<Item = Result<Cow<'wire, Bytes>>>,
+    ) -> Result<()> {
+        self.buf.put_u8(b'[');
+        for (index, element) in elements.enumerate() {
+            if index > 0 {
+                self.buf.put_u8(b',');
+            }
+            let wire = element?;
+            validate_object_slice(&wire).map_err(|error| {
+                DatasetError::InvalidWire(format!("message at index {index}: {error}"))
+            })?;
+            self.buf.put_slice(&wire);
+        }
+        self.buf.put_u8(b']');
+        Ok(())
+    }
+
+    fn whole(&mut self, wire: &Bytes, overrides: &Overrides) -> Result<()> {
+        self.whole = Some(splice_raw_object(wire, overrides)?);
+        Ok(())
+    }
+
+    fn overrides(&mut self, _overrides: &Overrides, inner_wire: &[u8]) -> Result<()> {
+        if !inner_wire.is_empty() {
+            if self.fields_written > 0 {
+                self.buf.put_u8(b',');
+            }
+            self.buf.put_slice(inner_wire);
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<Bytes> {
+        if let Some(whole) = self.whole {
+            return Ok(whole);
+        }
+        self.buf.put_u8(b'}');
+        if let Some(expected) = self.expected {
+            debug_assert_eq!(
+                expected,
+                self.buf.len(),
+                "exact_len drifted; a mutator failed to update it"
+            );
+        }
+        Ok(self.buf.freeze())
+    }
+}
+
+/// The shared JSON splicer: `BodyPlan` + dispatch [`Overrides`] → one `Bytes`.
+///
+/// A thin driver over [`JsonEmitter`], retained as the name every materializing
+/// caller already uses.
+pub struct JsonBodyMaterializer;
+
+impl JsonBodyMaterializer {
+    /// Materialize a plan against a store into the single request body buffer.
+    pub fn materialize<S: SegmentStore + ?Sized>(
+        plan: &BodyPlan,
+        store: &S,
+        overrides: &Overrides,
+    ) -> Result<Bytes> {
+        emit(plan, store, overrides, JsonEmitter::default())
+    }
 }
 
 /// Resolve one non-array content segment to its exact wire bytes. Message and
@@ -1186,5 +1367,240 @@ mod tests {
         let store = pool.freeze();
         let plan = BodyPlan::new().segment("field", tokens);
         assert!(JsonBodyMaterializer::materialize(&plan, &store, &Overrides::new()).is_err());
+    }
+
+    /// The pre-emitter materializer, frozen verbatim as the other side of the
+    /// byte-identity differential below.
+    ///
+    /// Do not evolve this to track new behavior: a divergence from it is
+    /// precisely what the differential exists to report. A new
+    /// [`FieldValue`] variant makes its `match` non-exhaustive, which is the
+    /// intended prompt to decide deliberately what the reference should say.
+    fn reference_materialize<S: SegmentStore + ?Sized>(
+        plan: &BodyPlan,
+        store: &S,
+        overrides: &Overrides,
+    ) -> Result<Bytes> {
+        let program = match plan {
+            BodyPlan::Raw(handle) => {
+                return match store.get(*handle)? {
+                    Payload::Raw { wire } => splice_raw_object(wire, overrides),
+                    payload => Err(DatasetError::PayloadKind {
+                        handle: *handle,
+                        expected: "raw",
+                        actual: payload.kind_name(),
+                    }),
+                };
+            }
+            BodyPlan::Prebuilt(bytes) => return splice_raw_object(bytes, overrides),
+            BodyPlan::Fields(program) => program,
+        };
+        let fields = program.fields();
+        let override_inner = overrides.inner_bytes()?;
+        let tail = if override_inner.is_empty() {
+            0
+        } else {
+            override_inner.len() + usize::from(!fields.is_empty())
+        };
+        let capacity = match program.exact_len() {
+            Some(exact) => exact + tail,
+            None => fields.len() * 32 + override_inner.len() + 2,
+        };
+        let mut body = BytesMut::with_capacity(capacity);
+        body.put_u8(b'{');
+        for (index, (name, value)) in fields.iter().enumerate() {
+            if index > 0 {
+                body.put_u8(b',');
+            }
+            body.put_u8(b'"');
+            body.put_slice(name.as_bytes());
+            body.put_slice(b"\":");
+            match value {
+                FieldValue::Literal(literal) => match literal.wire() {
+                    Some(wire) => body.put_slice(wire),
+                    None => serde_json::to_writer((&mut body).writer(), literal.value())?,
+                },
+                FieldValue::Segment(handle) => body.put_slice(&segment_field_wire(store, *handle)?),
+                FieldValue::Segments(handles) => {
+                    body.put_u8(b'[');
+                    for (element, handle) in handles.iter().enumerate() {
+                        if element > 0 {
+                            body.put_u8(b',');
+                        }
+                        let wire = message_wire(store, *handle)?;
+                        reference_push_message(&mut body, &wire, element)?;
+                    }
+                    body.put_u8(b']');
+                }
+                FieldValue::Wires(wires) => {
+                    body.put_u8(b'[');
+                    for (element, wire) in wires.iter().enumerate() {
+                        if element > 0 {
+                            body.put_u8(b',');
+                        }
+                        reference_push_message(&mut body, wire, element)?;
+                    }
+                    body.put_u8(b']');
+                }
+                FieldValue::Reserved => {
+                    return Err(DatasetError::ReservedField(format!(
+                        "field {name:?} was reserved but never filled; the endpoint must \
+                         call fill_reserved before the body is materialized"
+                    )));
+                }
+            }
+        }
+        if !override_inner.is_empty() {
+            if !fields.is_empty() {
+                body.put_u8(b',');
+            }
+            body.put_slice(&override_inner);
+        }
+        body.put_u8(b'}');
+        Ok(body.freeze())
+    }
+
+    fn reference_push_message(body: &mut BytesMut, wire: &[u8], index: usize) -> Result<()> {
+        validate_object_slice(wire).map_err(|error| {
+            DatasetError::InvalidWire(format!("message at index {index}: {error}"))
+        })?;
+        body.put_slice(wire);
+        Ok(())
+    }
+
+    #[test]
+    fn emitter_is_byte_identical_to_the_pre_emitter_materializer() {
+        let mut pool = SegmentPool::new();
+        let system = message(&mut pool, None, br#"{"role":"system","content":"S"}"#);
+        let user = message(
+            &mut pool,
+            Some(system),
+            br#"{"content":"hi","role":"user","x":1}"#,
+        );
+        let tools = pool
+            .intern_raw(None, Bytes::from_static(br#"[{"type":"function"}]"#))
+            .unwrap();
+        let raw = pool
+            .intern_raw(None, Bytes::from_static(b" \t{\"z\":1, \"messages\":[]}\n"))
+            .unwrap();
+        let tokens = pool.intern_token_ids(None, [1_u32, 2]).unwrap();
+        let store = pool.freeze();
+
+        let wire = |bytes: &'static [u8]| Bytes::from_static(bytes);
+        let plans: Vec<(&str, BodyPlan)> = vec![
+            ("empty", BodyPlan::new()),
+            (
+                "literals only",
+                BodyPlan::new()
+                    .str("model", "a \"quoted\" \u{2028} model")
+                    .int("max_tokens", 1024)
+                    .bool("stream", false)
+                    .literal("stream_options", serde_json::json!({"include_usage": true})),
+            ),
+            (
+                "wire array plus literals",
+                BodyPlan::new()
+                    .wire_array(
+                        "messages",
+                        [
+                            wire(br#"{"role":"system","content":"S"}"#),
+                            wire(br#"{"role":"user","content":"hi"}"#),
+                        ],
+                    )
+                    .str("model", "m")
+                    .bool("stream", true),
+            ),
+            (
+                "empty wire array",
+                BodyPlan::new().wire_array("messages", []).str("model", "m"),
+            ),
+            (
+                "stored segments",
+                BodyPlan::new()
+                    .array("messages", [system, user])
+                    .str("model", "m"),
+            ),
+            (
+                "mixed segment, array, and literals",
+                BodyPlan::new()
+                    .str("model", "gpt")
+                    .array("messages", [user])
+                    .segment("tools", tools)
+                    .int("max_tokens", 7)
+                    .bool("stream", false),
+            ),
+            ("raw", BodyPlan::raw(raw)),
+            (
+                "prebuilt",
+                BodyPlan::new()
+                    .wire_array("input", [wire(br#"{"type":"image_url","url":"x"}"#)])
+                    .prebuilt_if_static(false),
+            ),
+            (
+                "unfilled reserved slot",
+                BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap(),
+            ),
+            ("non-spliceable segment", BodyPlan::new().segment("f", tokens)),
+        ];
+
+        let mut tail = Overrides::new();
+        tail.set_model("a-much-longer-model-name");
+        tail.set_stream(false);
+        tail.insert("seed", Value::from(7));
+
+        for (name, plan) in &plans {
+            for (variant, overrides) in [("no overrides", &Overrides::new()), ("tail", &tail)] {
+                let expected = reference_materialize(plan, &store, overrides);
+                let actual = JsonBodyMaterializer::materialize(plan, &store, overrides);
+                match (expected, actual) {
+                    (Ok(expected), Ok(actual)) => assert_eq!(
+                        actual, expected,
+                        "emitter diverged from the reference for {name} / {variant}"
+                    ),
+                    (Err(_), Err(_)) => {}
+                    (expected, actual) => panic!(
+                        "emitter and reference disagreed on failure for {name} / {variant}: \
+                         reference={expected:?} emitter={actual:?}"
+                    ),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raw_and_prebuilt_bodies_are_handed_over_without_copying() {
+        // The whole-body plans exist to make dispatch a refcount bump; routing
+        // them through the emitter's buffer would still be byte-identical, so
+        // only pointer identity catches the regression.
+        let authored = Bytes::from_static(br#"{"messages":[],"z":1}"#);
+        let mut pool = SegmentPool::new();
+        let raw = pool.intern_raw(None, authored.clone()).unwrap();
+        let store = pool.freeze();
+
+        let from_raw =
+            JsonBodyMaterializer::materialize(&BodyPlan::raw(raw), &store, &Overrides::new())
+                .unwrap();
+        assert_eq!(from_raw.as_ptr(), authored.as_ptr());
+
+        let prebuilt = BodyPlan::Prebuilt(authored.clone());
+        let from_prebuilt =
+            JsonBodyMaterializer::materialize(&prebuilt, &store, &Overrides::new()).unwrap();
+        assert_eq!(from_prebuilt.as_ptr(), authored.as_ptr());
+    }
+
+    #[test]
+    fn exact_hint_reserves_the_body_without_slack() {
+        // The emitter's whole reason for taking a `SizeHint::Exact` is one
+        // allocation with nothing retained; `BytesMut::from` reclaims a unique
+        // buffer without copying, so its capacity reports what was retained.
+        let plan = BodyPlan::new()
+            .wire_array(
+                "messages",
+                [Bytes::from_static(br#"{"role":"user","content":"hi"}"#)],
+            )
+            .str("model", "m")
+            .bool("stream", true);
+        let body = plan.materialize_standalone().unwrap();
+        assert_eq!(BytesMut::from(body.clone()).capacity(), body.len());
     }
 }
