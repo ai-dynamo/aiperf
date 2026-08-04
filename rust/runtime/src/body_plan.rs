@@ -143,8 +143,9 @@ pub enum FieldValue {
 /// An ordered named-field program plus the exact serialized length of the body
 /// it materializes to.
 ///
-/// `exact_len` lets [`materialize_fields`] reserve the finished body in one
-/// allocation instead of growing a guessed buffer per dispatch. It counts the
+/// `exact_len` becomes the [`SizeHint`] that lets [`JsonEmitter`] reserve the
+/// finished body in one allocation instead of growing a guessed buffer per
+/// dispatch. It counts the
 /// enclosing braces, every `"name":` frame, every separating comma, and each
 /// value's serialized bytes — but **not** the per-dispatch override tail, which
 /// is not part of the program.
@@ -829,6 +830,13 @@ impl BodyEmitter for JsonEmitter {
     }
 
     fn whole(&mut self, wire: &Bytes, overrides: &Overrides) -> Result<()> {
+        // `finish` prefers the whole body over the buffer, so a driver that
+        // mixed the two shapes would ship the authored object and silently drop
+        // every field it emitted. Nothing about the resulting body looks wrong.
+        debug_assert_eq!(
+            self.fields_written, 0,
+            "whole-body and named-field emission were mixed; the fields are being discarded"
+        );
         self.whole = Some(splice_raw_object(wire, overrides)?);
         Ok(())
     }
@@ -1594,8 +1602,15 @@ mod tests {
     #[test]
     fn exact_hint_reserves_the_body_without_slack() {
         // The emitter's whole reason for taking a `SizeHint::Exact` is one
-        // allocation with nothing retained; `BytesMut::from` reclaims a unique
-        // buffer without copying, so its capacity reports what was retained.
+        // allocation with nothing retained; `BytesMut::from` reclaims the buffer
+        // without copying, so its capacity reports what was retained.
+        //
+        // That reclaim happens **only while `ref_cnt == 1`**. A second live
+        // handle — `BytesMut::from(body.clone())`, keeping `body` alive — sends
+        // it down the non-unique branch instead, which copies into a fresh
+        // right-sized `Vec` and reports `capacity() == len()` for any input.
+        // The probe must own the sole handle, so measure the length first and
+        // move the body in.
         let plan = BodyPlan::new()
             .wire_array(
                 "messages",
@@ -1604,6 +1619,19 @@ mod tests {
             .str("model", "m")
             .bool("stream", true);
         let body = plan.materialize_standalone().unwrap();
-        assert_eq!(BytesMut::from(body.clone()).capacity(), body.len());
+        let len = body.len();
+        assert_eq!(BytesMut::from(body).capacity(), len);
+
+        // And the probe must be able to see slack, or the assertion above is
+        // vacuous for a different reason: an over-reserved buffer of the same
+        // shape has to report its retained capacity through this measurement.
+        let mut over_reserved = BytesMut::with_capacity(4096);
+        over_reserved.put_slice(br#"{"model":"m"}"#);
+        let over_reserved = over_reserved.freeze();
+        let over_reserved_len = over_reserved.len();
+        assert!(
+            BytesMut::from(over_reserved).capacity() > over_reserved_len,
+            "the capacity probe can no longer tell a right-sized buffer from an over-reserved one"
+        );
     }
 }
