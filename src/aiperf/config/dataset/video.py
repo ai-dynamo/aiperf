@@ -19,15 +19,14 @@ from pydantic import (
 )
 
 from aiperf.common.enums import (
-    VideoAudioCodec,
     VideoFormat,
     VideoSynthType,
 )
 from aiperf.config.base import BaseConfig
 
-VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, VideoAudioCodec] = {
-    VideoFormat.WEBM: VideoAudioCodec.LIBVORBIS,
-    VideoFormat.MP4: VideoAudioCodec.LIBOPUS,
+VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, str] = {
+    VideoFormat.WEBM: "libvorbis",
+    VideoFormat.MP4: "libopus",
 }
 
 
@@ -86,14 +85,16 @@ class VideoAudioConfig(BaseConfig):
     ]
 
     codec: Annotated[
-        VideoAudioCodec | None,
+        str | None,
         Field(
             default=None,
             description="Audio codec for the embedded audio track. "
             "If not specified, auto-selects based on video format: "
             "libopus for MP4, libvorbis for WebM. "
-            "Options: libvorbis, libopus. "
-            "libopus always encodes at 48 kHz, so a different "
+            "Any codec the local FFmpeg supports can be used, but the AIPerf "
+            "container ships only libvorbis and libopus; others such as aac "
+            "require a system FFmpeg built with them. "
+            "libopus always encodes at 48 kHz, so any "
             "--video-audio-sample-rate is resampled during muxing.",
         ),
     ]

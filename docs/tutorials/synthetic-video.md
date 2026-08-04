@@ -200,10 +200,14 @@ Features:
 Choose encoding codec based on your hardware and requirements.
 
 > [!IMPORTANT]
-> The AIPerf container ships a minimal FFmpeg build that supports only VP8/VP9
-> video with Vorbis or Opus audio. Codecs such as `libx264`, `libx265`,
-> `h264_nvenc` and `hevc_nvenc` are not included; using them requires running
-> AIPerf from PyPI against a system FFmpeg built with those encoders.
+> `--video-codec` and `--video-audio-codec` accept any codec name; AIPerf passes
+> it straight to FFmpeg. What limits you is the FFmpeg you run against.
+>
+> The AIPerf container ships a minimal build supporting only VP8/VP9 video with
+> Vorbis or Opus audio, so `libx264`, `libx265`, `h264_nvenc`, `hevc_nvenc` and
+> `aac` all fail there. To use them, run AIPerf from PyPI against a system
+> FFmpeg built with those encoders, or rebuild the container's FFmpeg with them
+> enabled.
 
 #### CPU Encoding (Default)
 
@@ -288,7 +292,7 @@ This generates videos with a mono audio track using an auto-selected codec (libv
 |---|---|---|---|
 | `--video-audio-num-channels` | `int` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `float` | `44.1` | Sample rate in kHz (8-96) |
-| `--video-audio-codec` | `string` | auto | Audio codec (`libvorbis`, `libopus`) |
+| `--video-audio-codec` | `string` | auto | Audio codec (any FFmpeg audio encoder; the container ships `libvorbis` and `libopus`) |
 | `--video-audio-depth` | `int` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 #### Audio Codec Selection
@@ -609,7 +613,7 @@ All video-related parameters at a glance:
 |---|---|---|
 | `--video-audio-num-channels` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `44.1` | Sample rate in kHz (8-96) |
-| `--video-audio-codec` | auto | Audio codec (`libvorbis`, `libopus`) |
+| `--video-audio-codec` | auto | Audio codec (any FFmpeg audio encoder; container ships `libvorbis`, `libopus`) |
 | `--video-audio-depth` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 ## Summary

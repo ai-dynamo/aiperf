@@ -947,14 +947,7 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus. libopus always encodes at 48 kHz, so a different --video-audio-sample-rate is resampled during muxing.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `libvorbis` |  | Vorbis codec. Default for WebM containers. |
-| `libopus` |  | Opus codec. Default for MP4 containers, alternative for WebM. Always encodes at 48 kHz regardless of the requested sample rate. |
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Any codec the local FFmpeg supports can be used, but the AIPerf container ships only libvorbis and libopus; others such as aac require a system FFmpeg built with them. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
 
 #### `--video-audio-depth` `<str>`
 
@@ -2508,14 +2501,7 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus. libopus always encodes at 48 kHz, so a different --video-audio-sample-rate is resampled during muxing.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `libvorbis` |  | Vorbis codec. Default for WebM containers. |
-| `libopus` |  | Opus codec. Default for MP4 containers, alternative for WebM. Always encodes at 48 kHz regardless of the requested sample rate. |
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Any codec the local FFmpeg supports can be used, but the AIPerf container ships only libvorbis and libopus; others such as aac require a system FFmpeg built with them. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
 
 #### `--video-audio-depth` `<str>`
 

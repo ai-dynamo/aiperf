@@ -657,17 +657,6 @@ class VideoJobStatus(CaseInsensitiveStrEnum):
     """Job failed with an error."""
 
 
-class VideoAudioCodec(CaseInsensitiveStrEnum):
-    """Audio codecs for embedding audio in synthetic video files."""
-
-    LIBVORBIS = "libvorbis"
-    """Vorbis codec. Default for WebM containers."""
-
-    LIBOPUS = "libopus"
-    """Opus codec. Default for MP4 containers, alternative for WebM. Always
-    encodes at 48 kHz regardless of the requested sample rate."""
-
-
 class VideoSynthType(CaseInsensitiveStrEnum):
     MOVING_SHAPES = "moving_shapes"
     """Generate videos with animated geometric shapes moving across the frame"""

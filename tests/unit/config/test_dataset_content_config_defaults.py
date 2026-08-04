@@ -12,7 +12,6 @@ from aiperf.common.enums import (
     CacheBustTarget,
     ImageFormat,
     ImageSource,
-    VideoAudioCodec,
     VideoFormat,
     VideoSynthType,
 )
@@ -146,10 +145,10 @@ class TestVideoAudioConfigDefaults:
 
     @pytest.mark.parametrize(
         "codec",
-        [VideoAudioCodec.LIBVORBIS, VideoAudioCodec.LIBOPUS],
+        ["libvorbis", "libopus", "aac"],
     )
     def test_video_audio_config_valid_codec(self, codec):
-        """All VideoAudioCodec values are valid when channels > 0."""
+        """Any codec string is accepted when channels > 0."""
         config = VideoAudioConfig(codec=codec, channels=1)
         assert config.codec == codec
 
@@ -161,12 +160,12 @@ class TestVideoAudioConfigDefaults:
     def test_video_audio_config_codec_without_channels_raises(self):
         """Setting codec with channels=0 raises ValidationError."""
         with pytest.raises(ValidationError, match="--video-audio-num-channels is 0"):
-            VideoAudioConfig(codec=VideoAudioCodec.LIBOPUS, channels=0)
+            VideoAudioConfig(codec="libopus", channels=0)
 
     def test_video_audio_config_codec_with_channels_valid(self):
         """Setting codec with channels>0 is accepted."""
-        config = VideoAudioConfig(codec=VideoAudioCodec.LIBOPUS, channels=1)
-        assert config.codec == VideoAudioCodec.LIBOPUS
+        config = VideoAudioConfig(codec="libopus", channels=1)
+        assert config.codec == "libopus"
 
 
 class TestVideoConfigDefaults:

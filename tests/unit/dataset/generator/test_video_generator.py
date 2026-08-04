@@ -11,7 +11,7 @@ import pytest
 import soundfile as sf
 from PIL import Image
 
-from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.common.enums import VideoFormat, VideoSynthType
 from aiperf.config.dataset.video import VideoAudioConfig, VideoConfig
 from aiperf.dataset.generator.video import VideoGenerator
 
@@ -376,8 +376,8 @@ class TestVideoGeneratorAudio:
     @pytest.mark.parametrize(
         "video_format,expected_codec",
         [
-            (VideoFormat.WEBM, VideoAudioCodec.LIBVORBIS),
-            (VideoFormat.MP4, VideoAudioCodec.LIBOPUS),
+            (VideoFormat.WEBM, "libvorbis"),
+            (VideoFormat.MP4, "libopus"),
         ],
     )
     def test_resolve_audio_codec_auto_select(self, video_format, expected_codec):
@@ -413,9 +413,7 @@ class TestVideoGeneratorAudio:
         with pytest.raises(ValueError, match="No default audio codec"):
             generator._resolve_audio_codec()
 
-    @pytest.mark.parametrize(
-        "explicit_codec", [VideoAudioCodec.LIBOPUS, VideoAudioCodec.LIBVORBIS]
-    )
+    @pytest.mark.parametrize("explicit_codec", ["libopus", "libvorbis", "aac"])
     def test_resolve_audio_codec_explicit_override(self, explicit_codec):
         """Explicit codec beats auto-select."""
         config = VideoConfig(
