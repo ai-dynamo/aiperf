@@ -1,0 +1,161 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Concurrency and resource-lifetime tests for MemoryMapDatasetClient.
+
+``get_conversation`` used to read through the mmap's shared file position
+(``seek()`` then ``read()``). Any two readers sharing one client could
+interleave those calls and serve each other's bytes, surfacing either as a
+spurious ``MemoryMapSerializationError`` on a random conversation or, when the
+foreign slice happened to parse, as silently wrong data.
+
+The reads are now position-free slices, so no reader depends on the shared
+position.
+"""
+
+import mmap
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+from aiperf.common.enums import MemoryMapFormat
+from aiperf.common.models import Conversation, Text, Turn
+from aiperf.dataset.memory_map_utils import (
+    MemoryMapDatasetBackingStore,
+    MemoryMapDatasetClient,
+)
+
+# Wildly varying sizes so a cross-read lands mid-record and is caught either as
+# a decode error or as a mismatched session_id.
+_CONVERSATION_COUNT = 24
+_THREADS = 8
+_LOOKUPS_PER_THREAD = 150
+
+
+def _make_conversation(index: int) -> Conversation:
+    """Conversation whose size grows with ``index`` and whose text encodes it."""
+    text = f"conv-{index}:" + ("x" * (64 * (index + 1)))
+    return Conversation(
+        session_id=f"conv-{index}",
+        turns=[Turn(role="user", texts=[Text(contents=[text])])],
+    )
+
+
+async def _build_client(
+    tmp_path, benchmark_id: str, count: int
+) -> MemoryMapDatasetClient:
+    """Write ``count`` conversations and open a client over them."""
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id=benchmark_id, format=MemoryMapFormat.CONVERSATION
+    )
+    await store.initialize()
+    for i in range(count):
+        await store.add_conversation(f"conv-{i}", _make_conversation(i))
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    return MemoryMapDatasetClient(
+        metadata.data_file_path,
+        metadata.index_file_path,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_concurrent_readers_returns_own_bytes(
+    tmp_path, monkeypatch
+) -> None:
+    """Concurrent get_conversation() calls must not read each other's bytes."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    client = await _build_client(tmp_path, "test_conv_concurrency", _CONVERSATION_COUNT)
+
+    def _read_many(thread_index: int) -> None:
+        for n in range(_LOOKUPS_PER_THREAD):
+            # Stagger the starting id per thread so the interleaving covers many
+            # (offset, size) pairs rather than repeatedly hitting one record.
+            i = (thread_index + n) % _CONVERSATION_COUNT
+            conv = client.get_conversation(f"conv-{i}")
+            assert conv.session_id == f"conv-{i}"
+
+    try:
+        with ThreadPoolExecutor(max_workers=_THREADS) as pool:
+            # list() resolves every future so exceptions propagate.
+            list(pool.map(_read_many, range(_THREADS)))
+    finally:
+        client.close()
+
+
+class _InterleavingMmap:
+    """mmap wrapper that moves the shared position between seek() and read().
+
+    This is the race, made deterministic. Merely leaving a stale position
+    behind proves nothing: a ``seek()`` + ``read()`` reader overwrites it on
+    the way in and still returns the right record. The bug needs a competing
+    seek to land *after* this reader seeks and *before* it reads.
+
+    A position-free reader goes through ``__getitem__`` and is unaffected.
+    """
+
+    def __init__(self, real: mmap.mmap, foreign_offset: int) -> None:
+        self._real = real
+        self._foreign_offset = foreign_offset
+
+    def seek(self, pos: int) -> None:
+        self._real.seek(pos)
+
+    def read(self, size: int) -> bytes:
+        # The competing reader lands here, between our seek and our read.
+        self._real.seek(self._foreign_offset)
+        return self._real.read(size)
+
+    def __getitem__(self, item):
+        return self._real[item]
+
+    def __len__(self) -> int:
+        return len(self._real)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_ignores_competing_seek_between_seek_and_read(
+    tmp_path, monkeypatch
+) -> None:
+    """An interleaved foreign seek must not change what get_conversation reads.
+
+    Fails against a ``seek()`` + ``read()`` implementation, which serves the
+    foreign record's bytes.
+    """
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    client = await _build_client(tmp_path, "test_conv_position", 3)
+
+    try:
+        foreign = client.index.offsets["conv-2"].offset
+        client.data_mmap = _InterleavingMmap(client.data_mmap, foreign)
+
+        conversation = client.get_conversation("conv-0")
+
+        assert conversation.session_id == "conv-0"
+        assert conversation.turns[0].texts[0].contents[0].startswith("conv-0:")
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefault", [True, False])  # fmt: skip
+async def test_get_conversation_matches_written_data_under_prefault_setting(
+    tmp_path, monkeypatch, prefault: bool
+) -> None:
+    """Reads are identical whether or not pages were prefaulted at open."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    monkeypatch.setattr(
+        "aiperf.common.environment.Environment.DATASET.MMAP_PREFAULT", prefault
+    )
+    client = await _build_client(tmp_path, f"test_conv_prefault_{prefault}", 5)
+
+    try:
+        for i in range(5):
+            conv = client.get_conversation(f"conv-{i}")
+            assert conv.session_id == f"conv-{i}"
+            assert conv.turns[0].texts[0].contents[0].startswith(f"conv-{i}:")
+    finally:
+        client.close()

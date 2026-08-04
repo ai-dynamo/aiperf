@@ -403,12 +403,10 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         self._data_path: Path = client_metadata.data_file_path
         self._index_path: Path = client_metadata.index_file_path
         self._client: MemoryMapDatasetClient | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
 
     @on_init
     async def _setup(self) -> None:
         """Open memory-mapped files (read-only)."""
-        self._loop = asyncio.get_running_loop()
         self.debug(
             lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
         )
@@ -421,7 +419,9 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
     async def get_conversation(self, conversation_id: str) -> Conversation:
         """Retrieve conversation from memory-mapped file.
 
-        Runs in executor since mmap reads can block on page faults.
+        No executor hop: pages are prefaulted at open (when MMAP_PREFAULT is
+        enabled) so reads don't trigger major faults. Remains async-callable
+        for API parity with other dataset clients.
 
         Args:
             conversation_id: Session ID of the conversation
@@ -432,11 +432,9 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         Raises:
             KeyError: If conversation_id not found
         """
-        if self._client is None or self._loop is None:
+        if self._client is None:
             raise RuntimeError("Client store not initialized. Call initialize() first.")
-        return await self._loop.run_in_executor(
-            None, self._client.get_conversation, conversation_id
-        )
+        return self._client.get_conversation(conversation_id)
 
     async def get_payload_bytes(
         self, conversation_id: str, turn_index: int
@@ -451,11 +449,9 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
             Pre-encoded JSON bytes, or None when the dataset is not in
             PAYLOAD_BYTES format or the turn has no payload.
         """
-        if self._client is None or self._loop is None:
+        if self._client is None:
             raise RuntimeError("Client store not initialized. Call initialize() first.")
-        return await self._loop.run_in_executor(
-            None, self._client.get_payload_bytes, conversation_id, turn_index
-        )
+        return self._client.get_payload_bytes(conversation_id, turn_index)
 
     async def get_payload_turn(
         self, conversation_id: str, turn_index: int
@@ -470,11 +466,9 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
             ``PayloadTurnData`` or None when the dataset is not in
             PAYLOAD_BYTES format or the turn has no payload.
         """
-        if self._client is None or self._loop is None:
+        if self._client is None:
             raise RuntimeError("Client store not initialized. Call initialize() first.")
-        return await self._loop.run_in_executor(
-            None, self._client.get_payload_turn, conversation_id, turn_index
-        )
+        return self._client.get_payload_turn(conversation_id, turn_index)
 
     @on_stop
     async def _cleanup(self) -> None:
@@ -673,6 +667,15 @@ class MemoryMapDatasetClient:
 
             index_data = self.index_mmap.read()
             self.index = MemoryMapDatasetIndex.model_validate_json(index_data)
+            # Flatten to a plain dict[str, tuple[int, int]] to avoid per-lookup
+            # Pydantic attribute overhead on the hot path. Wire format unchanged;
+            # self.index stays for callers that iterate index.conversation_ids.
+            self._offsets: dict[str, tuple[int, int]] = {
+                cid: (o.offset, o.size) for cid, o in self.index.offsets.items()
+            }
+
+            if Environment.DATASET.MMAP_PREFAULT:
+                self._prefault_data_mmap()
 
         except OSError as e:
             self._cleanup_resources()
@@ -735,6 +738,19 @@ class MemoryMapDatasetClient:
                 with suppress(Exception):
                     obj.close()
 
+    def _prefault_data_mmap(self) -> None:
+        """Advise WILLNEED and touch every page to populate the page cache.
+
+        Without this, the first read of each page takes a major fault whose
+        latency lands inside a measured request. Workers share the kernel page
+        cache, so N workers cost one disk read rather than N serialized ones.
+        """
+        # madvise is unavailable on some platforms; the page walk still works.
+        with suppress(OSError, AttributeError):
+            self.data_mmap.madvise(mmap.MADV_WILLNEED)
+        for offset in range(0, len(self.data_mmap), mmap.PAGESIZE):
+            _ = self.data_mmap[offset]
+
     def _deserialize_conversation(self, data: bytes) -> Conversation:
         """Deserialize a single conversation from bytes.
 
@@ -774,17 +790,19 @@ class MemoryMapDatasetClient:
                 "format. Use get_payload_bytes() instead."
             )
 
-        if conversation_id not in self.index.offsets:
+        if conversation_id not in self._offsets:
             raise KeyError(f"Conversation '{conversation_id}' not found in dataset")
 
-        offset_info = self.index.offsets[conversation_id]
+        offset, size = self._offsets[conversation_id]
 
         try:
-            self.data_mmap.seek(offset_info.offset)
-            conv_bytes = self.data_mmap.read(offset_info.size)
+            # Slice rather than seek()+read(): the mmap file position is shared
+            # state, so two concurrent readers can interleave a seek between
+            # another's seek and read and serve foreign bytes.
+            conv_bytes = self.data_mmap[offset : offset + size]
 
             _logger.debug(
-                lambda: f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"
+                lambda: f"Loading conversation '{conversation_id}': offset={offset}, size={size} bytes"
             )
 
             return self._deserialize_conversation(conv_bytes)
