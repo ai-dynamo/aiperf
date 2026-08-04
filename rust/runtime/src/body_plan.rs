@@ -464,9 +464,9 @@ impl BodyPlan {
                 "cannot fill reserved field {name:?}: this plan carries no named fields"
             )));
         };
-        let index = program.position(name).filter(|index| {
-            matches!(program.fields()[*index], (_, FieldValue::Reserved))
-        });
+        let index = program
+            .position(name)
+            .filter(|index| matches!(program.fields()[*index], (_, FieldValue::Reserved)));
         let Some(index) = index else {
             return Err(DatasetError::ReservedField(format!(
                 "cannot fill {name:?}: the plan reserved no slot under that name"
@@ -1126,7 +1126,8 @@ mod tests {
         assert!(filled.fill_reserved("messages", wires(1)).is_err());
 
         // An empty fill is the second silent no-op the old splice had.
-        let mut empty = BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
+        let mut empty =
+            BodyPlan::from_object_reserving(&reserving_payload(), &["messages"]).unwrap();
         assert!(empty.fill_reserved("messages", SmallVec::new()).is_err());
     }
 
