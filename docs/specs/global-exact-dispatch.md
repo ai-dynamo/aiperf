@@ -102,27 +102,27 @@ requests.
     `rust/runtime/src/engine/global_hop.rs`).
   - Conversation **enumeration** is unaffected by `Global` for both
     `fixed_schedule` and `user_centric`: `ConversationSource::conversations()`
-    returns `owned_metadata` (`rust/runtime/src/multiturn.rs:1837`), which is
+    returns `owned_metadata` (`rust/runtime/src/multiturn.rs:1855-1857`), which is
     built from the partition alone and never from the position-addressing
     flag, so each thread still enumerates only its residue class.
     - `fixed_schedule` is unaffected outright — it only enumerates
       (`rust/runtime/src/fixed_schedule.rs:85`) and continues turns by
       conversation id; it never takes a sampler draw.
     - `user_centric` **draws** through `source.next(…)`
-      (`rust/runtime/src/user_centric.rs:415`) from the same source, so under
+      (`rust/runtime/src/user_centric.rs:416`) from the same source, so under
       `Global` at `workers > 1` its draws are position-addressed like any
       other. It therefore shapes its plan from
       `ConversationSource::sampled_conversations()` — the DRAW corpus — rather
       than from `conversations()`: the native source returns the full corpus
       under `DrawMode::Position` and the residue class under `DrawMode::Owned`
-      (`rust/runtime/src/multiturn.rs:1855-1866`), so a `Global` shard averages
+      (`rust/runtime/src/multiturn.rs:1859-1869`), so a `Global` shard averages
       what it samples while a `Sharded` shard keeps its self-contained
       sub-corpus. Enumeration itself (`conversations()`) is untouched in both
       modes.
       - That mean is the only thing the two bases could disagree on:
         `sampled_conversations()` feeds the empty-dataset bail, the
         `average turns >= 2` admission, and the mean turn count
-        (`user_centric.rs:379-402`), and the mean reaches `plan_user_centric`
+        (`user_centric.rs:389-403`), and the mean reaches `plan_user_centric`
         solely as `avg_session_turns`, which sets the virtual-history depth
         `session_lifetime` and the coprime `spacing_step`
         (`rust/runtime/src/timing/user_centric.rs:105-114`) — never
@@ -138,10 +138,10 @@ requests.
         (`rust/runtime/src/multiturn.rs`) pins both directions.
       - Per-user turn accounting is re-derived from the concrete draw
         regardless of basis: `num_turns = min(planned.max_turns,
-        actual_turns).max(1)` (`rust/runtime/src/multiturn.rs:1049-1052`), and
-        the pool records that actual (`user_centric.rs:424-425`). Resolution is
+        actual_turns).max(1)` (`rust/runtime/src/multiturn.rs:1042-1045`), and
+        the pool records that actual (`user_centric.rs:425-426`). Resolution is
         total — `metadata` and `metadata_by_id` are built over the full corpus
-        unconditionally (`multiturn.rs:1602-1636`) — so drawing a conversation
+        unconditionally (`multiturn.rs:1605-1639`) — so drawing a conversation
         this thread does not own resolves correctly.
   - Only concurrency/rate admission moves to the shared gate; the dataset
     change above is the one other behavioural difference `Global` carries.
