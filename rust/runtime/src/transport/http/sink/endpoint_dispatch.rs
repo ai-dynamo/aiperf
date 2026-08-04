@@ -594,6 +594,16 @@ impl TransportSink {
             completion_tokens,
             http: http_trace(&record),
         };
+        // `http_trace` above already took the trace facts, and the only other
+        // reader (RunCapture::record_http_exchange) drops these behind its own
+        // raw-artifact guard. Release them on this worker so they are not freed
+        // on whichever thread later consumes the record -- under GlobalHop that
+        // is the single coordinator, which serializes every request's response
+        // strings through one allocator.
+        let mut record = record;
+        if !self.retain_raw_responses.get() {
+            record.responses = Vec::new();
+        }
         Ok(HttpCollectedDispatch {
             result,
             request_payload,
