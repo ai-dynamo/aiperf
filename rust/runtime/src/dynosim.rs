@@ -4853,7 +4853,11 @@ mod tests {
             turn.raw_token_ids.as_ref().unwrap().resolve().unwrap(),
             &[11, 22, 33]
         );
-        assert!(turn.request_body.as_ref().is_some_and(Bytes::is_empty));
+        assert!(
+            turn.request_body
+                .as_ref()
+                .is_some_and(|body| matches!(body, RequestBody::Wire(wire) if wire.is_empty()))
+        );
 
         let clock = Rc::new(SimClock::new());
         let host = EngineHost::new(clock.clone(), &OfflineEngineConfig::default()).unwrap();
