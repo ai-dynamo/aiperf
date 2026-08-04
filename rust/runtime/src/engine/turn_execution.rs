@@ -161,6 +161,7 @@ pub struct HttpSinkBuilder {
     model: String,
     transport: TransportSinkConfig,
     prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+    raw_enabled: bool,
 }
 
 impl HttpSinkBuilder {
@@ -170,6 +171,7 @@ impl HttpSinkBuilder {
             model: config.model.clone(),
             transport: config.transport.clone(),
             prepared_endpoints: config.prepared_endpoints.clone(),
+            raw_enabled: config.raw_enabled,
         }
     }
 }
@@ -189,6 +191,7 @@ impl ExecutionSinkBuilder for HttpSinkBuilder {
             self.model.clone(),
             self.transport.clone(),
             self.prepared_endpoints.as_deref(),
+            self.raw_enabled,
         )
     }
 }
@@ -263,8 +266,12 @@ fn prepare_transport_sink(
     model: String,
     transport: TransportSinkConfig,
     prepared_endpoints: Option<&dyn PreparedEndpointTableFactory>,
+    raw_enabled: bool,
 ) -> Result<TransportSink> {
     let sink = TransportSink::new_multi_configured(clock, start_ns, base_urls, model, transport)?;
+    // Without a raw artifact nothing reads the retained responses, so release
+    // them on this worker instead of on whichever thread consumes the record.
+    sink.set_retain_raw_responses(raw_enabled);
     match prepared_endpoints {
         Some(factory) => Ok(sink.with_prepared_endpoints(Rc::new(factory.prepare_worker()?))),
         None => Ok(sink),

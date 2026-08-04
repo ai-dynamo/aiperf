@@ -186,6 +186,20 @@ pub struct TransportSink {
     /// Only successful renders are memoized, so template validation still fails
     /// closed on every request that would have failed before.
     url_memo: RefCell<Option<(usize, Option<Box<str>>, String)>>,
+    /// Whether a raw HTTP-exchange artifact will consume the retained responses.
+    ///
+    /// When false the responses are released on the worker that produced them,
+    /// because the only consumer — `RunCapture::record_http_exchange` — drops
+    /// them behind its own `raw_enabled` guard. Under `GlobalHop` that consumer
+    /// runs on the single coordinator thread, so leaving them attached funnels
+    /// every request's response strings (151 per request at OSL 150) through
+    /// one thread's allocator; a profile put `mi_free` + `_mi_page_malloc_zero`
+    /// at 17.5% there versus 5.4% under `global`. The gRPC sink already skips
+    /// building this record for the same reason.
+    ///
+    /// Defaults to true so every other construction site keeps today's
+    /// behavior; only the worker builder opts out.
+    retain_raw_responses: Cell<bool>,
 }
 
 impl TransportSink {
@@ -279,7 +293,16 @@ impl TransportSink {
             prepared_endpoints: None,
             measurement: WorkerMeasurement::default(),
             url_memo: RefCell::new(None),
+            retain_raw_responses: Cell::new(true),
         })
+    }
+
+    /// Declare whether a raw artifact will consume retained responses.
+    ///
+    /// See [`Self::retain_raw_responses`]. Called by the worker sink builder
+    /// once per worker; the default keeps responses attached.
+    pub fn set_retain_raw_responses(&self, retain: bool) {
+        self.retain_raw_responses.set(retain);
     }
 
     /// Install worker-local prepared endpoint bindings.
@@ -535,6 +558,14 @@ impl TransportSink {
             completion_tokens,
             http,
         };
+        // `http_trace` above already took everything the result needs, and the
+        // only other reader drops these behind its own raw-artifact guard.
+        // Releasing here frees them on this worker rather than on whichever
+        // thread later consumes the record.
+        let mut rec = rec;
+        if !self.retain_raw_responses.get() {
+            rec.responses = Vec::new();
+        }
         Ok(HttpCollectedDispatch {
             result,
             request_payload,
