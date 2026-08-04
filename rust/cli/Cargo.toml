@@ -22,10 +22,16 @@ path = "src/main.rs"
 # multi-process, carried over the `velo` git dependency — no sibling needed) are
 # default; only `dynosim` (needs the sibling checkout) is opt-in. `cargo build -p
 # aiperf-cli` and the shipped wheel — built with
-# `--features parquet`, which does NOT disable defaults — keeps it; a lean
-# HTTP-only binary drops it with `--no-default-features`. The Makefile builds the
-# wheel binary with the feature set an image needs (default: `parquet`).
-default = ["grpc", "cellular"]
+# `--features full` — keeps them; a lean HTTP-only binary drops them with
+# `--no-default-features`. The Makefile builds the wheel binary with the feature
+# set an image needs (default: `--features full`).
+#
+# `parquet` is default so a plain `cargo build -p aiperf-cli` produces a binary
+# with the same artifact surface as the shipped one. It was opt-in, which meant a
+# dev build silently omitted `profile_export.parquet` and any test driving the
+# real binary — the e2e suite does — failed on a missing artifact that looked
+# like a code bug. Only `dynosim` stays opt-in (heaviest dependency surface).
+default = ["grpc", "cellular", "parquet"]
 
 # Base: embed a CPython interpreter (pyo3 `auto-initialize`). Enables in-process
 # delegation of every non-profile/config subcommand (chat/plot/plugins/service/
