@@ -1004,11 +1004,10 @@ impl RequestExecutor for FakeRequestExecutor {
         // delay, so start == arrival and request_latency == ttft + (osl-1)*itl.
         let start_abs =
             self.core.origin_ns.get() + (context.arrival_ms * 1_000_000.0).round() as i64;
-        let request_payload = turn
-            .request
-            .request_body_bytes
-            .clone()
-            .unwrap_or_else(Bytes::new);
+        let request_payload = match &turn.request.body {
+            Some(body) => body.to_wire()?,
+            None => Bytes::new(),
+        };
         // The scheduled seam owns arrival/metadata/record_response around the
         // shared fabrication.
         let mut metadata = context.metadata.clone();
@@ -1113,11 +1112,10 @@ impl crate::transport::core::Dispatcher for FakeDispatcher {
         let isl = turn.request.input_length as u64;
         let osl = turn.request.max_output_tokens;
         let start_abs = self.core.clock.now_ns();
-        let request_payload = turn
-            .request
-            .request_body_bytes
-            .clone()
-            .unwrap_or_else(Bytes::new);
+        let request_payload = match &turn.request.body {
+            Some(body) => body.to_wire()?,
+            None => Bytes::new(),
+        };
         let recorded = RecordedLatency {
             api_time_ns: turn.request.recorded_api_time_ns,
             ttft_ns: turn.request.recorded_ttft_ns,
@@ -1228,8 +1226,7 @@ mod tests {
                 input_length: isl,
                 max_output_tokens: osl,
                 prompt_text: None,
-                request_body: None,
-                request_body_bytes: None,
+                body: None,
                 headers: BTreeMap::new(),
                 parameters: BTreeMap::new(),
                 endpoint_path: None,

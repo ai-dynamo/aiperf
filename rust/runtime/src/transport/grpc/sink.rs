@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::body_plan::RequestBody;
 use crate::clock::Clock;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{
@@ -304,8 +305,7 @@ impl GrpcTransportSink {
     ) -> Result<DispatchResult> {
         let Request {
             uuid,
-            request_body,
-            request_body_bytes,
+            body,
             headers,
             parameters,
             endpoint_path,
@@ -337,18 +337,15 @@ impl GrpcTransportSink {
                 "gRPC binding ignores only the selected dialect's HTTP path; authored per-turn endpoint_path {endpoint_path:?} is unsupported"
             );
         }
-        ensure!(
-            request_body.is_none() || request_body_bytes.is_none(),
-            "a gRPC request cannot supply both JSON and serialized canonical bodies"
-        );
-        let body = match (request_body, request_body_bytes) {
-            (Some(value), None) => value,
-            (None, Some(bytes)) => serde_json::from_slice(&bytes)
+        // gRPC serializes from structure, not bytes. A decoded body is taken as
+        // it stands; any other form is assembled and parsed back once here.
+        let body: Value = match body {
+            Some(RequestBody::Value(value)) => *value,
+            Some(body) => serde_json::from_slice(&body.to_wire()?)
                 .context("decoding prepared endpoint JSON before gRPC serialization")?,
-            (None, None) => anyhow::bail!(
+            None => anyhow::bail!(
                 "gRPC protocol-v2 execution requires a canonical prepared endpoint body"
             ),
-            (Some(_), Some(_)) => unreachable!("exclusivity checked above"),
         };
         observer.on_admit(uuid, self.ms(self.clock.now_ns()), 0);
         let mut endpoint_metrics = ObservedEndpointMetrics {

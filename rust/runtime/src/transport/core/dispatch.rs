@@ -9,9 +9,9 @@ use std::fmt;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
-use serde_json::Value;
 use uuid::Uuid;
 
+use crate::body_plan::RequestBody;
 use crate::dispatch::sink::{Dispatchable, RequestObserver};
 
 use crate::metrics::RequestMetricMetadata;
@@ -31,14 +31,10 @@ pub struct Request {
     pub max_output_tokens: usize,
     /// Prompt text placed on the wire.
     pub prompt_text: Option<String>,
-    /// Optional prebuilt JSON request body. Accuracy benchmarks use this to
-    /// preserve benchmark-specific messages, sampling settings, and stop strings;
-    /// normal synthetic requests leave it absent and use the shared chat builder.
-    pub request_body: Option<Value>,
-    /// Optional already-serialized request body. Unified dataset materializers
-    /// use this byte-exact fast path; it is mutually exclusive with
-    /// [`request_body`](Self::request_body).
-    pub request_body_bytes: Option<Bytes>,
+    /// The request body, in whichever form the dataset seam produced. Absent
+    /// for a synthetic request that carries only `prompt_text` and lets the
+    /// transport build a body from the shared chat builder.
+    pub body: Option<RequestBody>,
     /// Per-request HTTP headers supplied by the dataset/endpoint seam.
     pub headers: BTreeMap<String, String>,
     /// Per-request URL query parameters supplied by the dataset/endpoint seam.
@@ -79,10 +75,15 @@ impl fmt::Debug for Request {
             .field("input_length", &self.input_length)
             .field("max_output_tokens", &self.max_output_tokens)
             .field("has_prompt_text", &self.prompt_text.is_some())
-            .field("has_request_body", &self.request_body.is_some())
+            // Summarized, never rendered: a multimodal body runs to megabytes,
+            // and this `Debug` is reached from tracing.
             .field(
-                "request_body_bytes_len",
-                &self.request_body_bytes.as_ref().map(Bytes::len),
+                "body",
+                &self.body.as_ref().map(|body| match body {
+                    RequestBody::Wire(bytes) => format!("wire({} bytes)", bytes.len()),
+                    RequestBody::Plan(_) => "plan".to_string(),
+                    RequestBody::Value(_) => "value".to_string(),
+                }),
             )
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("parameters", &self.parameters)
@@ -234,8 +235,7 @@ impl PreparedTurn {
                 input_length: turn.input_length,
                 max_output_tokens: turn.max_output_tokens,
                 prompt_text: None,
-                request_body: None,
-                request_body_bytes: turn.request_body,
+                body: turn.request_body,
                 headers: turn.request_headers,
                 parameters: turn.request_parameters,
                 endpoint_path: turn.endpoint_path,
@@ -365,5 +365,22 @@ pub trait Dispatcher {
     /// completion.
     fn supports_response_streaming(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    /// `Dispatchable` is `Send + Sync` and `Request` implements it, so anything
+    /// reachable from a `Request` field must be too. A body form carrying
+    /// interior mutability (a `OnceCell` materialization cache, say) breaks this
+    /// as a compile error rather than a lint, which is what this pins.
+    #[test]
+    fn request_stays_send_and_sync() {
+        assert_send_sync::<Request>();
+        assert_send_sync::<RequestBody>();
     }
 }

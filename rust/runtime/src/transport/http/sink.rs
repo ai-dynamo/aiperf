@@ -364,8 +364,7 @@ impl TransportSink {
             uuid,
             max_output_tokens,
             prompt_text,
-            request_body,
-            request_body_bytes,
+            body,
             headers,
             parameters,
             endpoint_path,
@@ -380,17 +379,12 @@ impl TransportSink {
         let admit_ms = self.ms(self.clock.now_ns());
         obs.on_admit(uuid, admit_ms, 0);
 
-        anyhow::ensure!(
-            request_body.is_none() || request_body_bytes.is_none(),
-            "an HTTP request cannot supply both JSON and serialized bodies"
-        );
-        let body = match request_body_bytes {
-            Some(body) => body,
+        let body = match body {
+            Some(body) => body.to_wire()?,
             None => {
-                let payload = request_body.unwrap_or_else(|| {
-                    let prompt = prompt_text.unwrap_or_default();
-                    chat_request_body(&self.model, &[("user", prompt.as_str())], max_output_tokens)
-                });
+                let prompt = prompt_text.unwrap_or_default();
+                let payload =
+                    chat_request_body(&self.model, &[("user", prompt.as_str())], max_output_tokens);
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };
@@ -1343,8 +1337,7 @@ mod tests {
                     image_count: None,
                     recorded_api_time_ns: None,
                     recorded_ttft_ns: None,
-                    request_body: None,
-                    request_body_bytes: None,
+                    body: None,
                     headers: BTreeMap::new(),
                     parameters: BTreeMap::new(),
                     endpoint_path: None,

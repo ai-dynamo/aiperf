@@ -199,8 +199,7 @@ impl TransportSink {
             input_length,
             max_output_tokens,
             prompt_text,
-            request_body,
-            request_body_bytes,
+            body,
             headers,
             parameters,
             endpoint_path,
@@ -214,21 +213,15 @@ impl TransportSink {
         } = req;
         obs.on_admit(uuid, self.ms(self.clock.now_ns()), 0);
 
-        ensure!(
-            request_body.is_none() || request_body_bytes.is_none(),
-            "an HTTP request cannot supply both JSON and serialized bodies"
-        );
-        let body = match request_body_bytes {
-            Some(body) => body,
+        let body = match body {
+            Some(body) => body.to_wire()?,
             None => {
-                let payload = request_body.unwrap_or_else(|| {
-                    let prompt = prompt_text.unwrap_or_default();
-                    crate::endpoints::chat_request_body(
-                        &self.model,
-                        &[("user", prompt.as_str())],
-                        max_output_tokens,
-                    )
-                });
+                let prompt = prompt_text.unwrap_or_default();
+                let payload = crate::endpoints::chat_request_body(
+                    &self.model,
+                    &[("user", prompt.as_str())],
+                    max_output_tokens,
+                );
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };

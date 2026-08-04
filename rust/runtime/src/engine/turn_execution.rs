@@ -1565,14 +1565,15 @@ mod tests {
                 input_length: 1,
                 max_output_tokens: 4,
                 prompt_text: None,
-                request_body: Some(serde_json::json!({
-                    "model": "fixture-model",
-                    "messages": [{"role": "user", "content": "hello"}],
-                    "max_tokens": 4,
-                    "stream": true,
-                    "stream_options": {"include_usage": true}
-                })),
-                request_body_bytes: None,
+                body: Some(crate::body_plan::RequestBody::Value(Box::new(
+                    serde_json::json!({
+                        "model": "fixture-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "max_tokens": 4,
+                        "stream": true,
+                        "stream_options": {"include_usage": true}
+                    }),
+                ))),
                 headers: BTreeMap::new(),
                 parameters: BTreeMap::new(),
                 endpoint_path: None,
