@@ -146,7 +146,7 @@ class TestVideoAudioConfigDefaults:
 
     @pytest.mark.parametrize(
         "codec",
-        [VideoAudioCodec.LIBVORBIS, VideoAudioCodec.LIBOPUS, VideoAudioCodec.AAC],
+        [VideoAudioCodec.AAC, VideoAudioCodec.LIBVORBIS, VideoAudioCodec.LIBOPUS],
     )
     def test_video_audio_config_valid_codec(self, codec):
         """All VideoAudioCodec values are valid when channels > 0."""
@@ -161,12 +161,12 @@ class TestVideoAudioConfigDefaults:
     def test_video_audio_config_codec_without_channels_raises(self):
         """Setting codec with channels=0 raises ValidationError."""
         with pytest.raises(ValidationError, match="--video-audio-num-channels is 0"):
-            VideoAudioConfig(codec=VideoAudioCodec.LIBOPUS, channels=0)
+            VideoAudioConfig(codec=VideoAudioCodec.AAC, channels=0)
 
     def test_video_audio_config_codec_with_channels_valid(self):
         """Setting codec with channels>0 is accepted."""
-        config = VideoAudioConfig(codec=VideoAudioCodec.LIBOPUS, channels=1)
-        assert config.codec == VideoAudioCodec.LIBOPUS
+        config = VideoAudioConfig(codec=VideoAudioCodec.AAC, channels=1)
+        assert config.codec == VideoAudioCodec.AAC
 
 
 class TestVideoConfigDefaults:

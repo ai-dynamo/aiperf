@@ -102,7 +102,7 @@ class TestVideoAudio:
         "video_format,video_codec,expected_audio_codec,expected_sample_rate",
         [
             param("webm", "libvpx-vp9", "vorbis", 44100, id="webm-vorbis"),
-            # libopus only accepts 48/24/16/12/8 kHz, so 44.1 kHz is resampled.
+            # libopus always encodes at 48 kHz, whatever rate is requested.
             param("mp4", "libvpx-vp9", "opus", 48000, id="mp4-opus"),
         ],
     )  # fmt: skip
