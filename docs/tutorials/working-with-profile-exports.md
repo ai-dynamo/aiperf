@@ -88,8 +88,9 @@ The JSONL output contains one record per line, for each request sent during the 
     "request_start_ns": 1759813207532900363,
     "request_ack_ns": 1759813207650730976,
     "request_end_ns": 1759813207838764604,
-    "worker_id": "worker_359d423a",
-    "record_processor_id": "record_processor_1fa47cd7",
+    "worker_id": "rust-3",
+    "global_dispatch_index": 45,
+    "record_processor_id": "aiperf runner",
     "benchmark_phase": "profiling",
     "was_cancelled": false,
     "cancellation_time_ns": null
@@ -120,7 +121,10 @@ The JSONL output contains one record per line, for each request sent during the 
 - `request_start_ns`: Epoch time in nanoseconds when request was initiated by AIPerf.
 - `request_ack_ns`: Epoch time in nanoseconds when server acknowledged the request. This is only applicable to streaming requests.
 - `request_end_ns`: Epoch time in nanoseconds when the last response was received from the endpoint.
-- `worker_id`: ID of the AIPerf worker that executed the request against the endpoint.
+- `worker_id`: The AIPerf worker thread that executed the request against the endpoint, spelled `rust-{n}`. A single-worker run always reports `rust-0`. With `runtime.workers > 1` the id identifies one point of the `(cell × thread)` grid, so it stays unique when a run is split across cells. What the id tells you depends on `runtime.dispatch`:
+  - `sharded` / `global`: the worker *owns* this request — it drew it from its own slice of the dataset and issued it. Its records are exactly one residue class of `global_dispatch_index` modulo `cells × workers`.
+  - `global-hop` / `global-push`: one coordinator issues everything and *places* each request on a worker, so the id says where the request ran and carries no dataset-ownership meaning. Any alignment with `global_dispatch_index` is a property of the routing policy, not a guarantee.
+- `global_dispatch_index`: Dense global dispatch ordinal — the request's position in the single issuance order that every worker thread and cell tiles together, `0..N`. Sort by this to recover the order a single issuer would have produced; it is the only field that recovers it exactly under `global` (see below). Omitted for records that were assigned no ordinal.
 - `record_processor_id`: ID of the AIPerf record processor that processed the results from the server.
 - `benchmark_phase`: Phase of the benchmark. Currently only `profiling` is supported.
 - `was_cancelled`: Whether the request was cancelled during execution (such as when `--request-cancellation-rate` is enabled).
@@ -128,6 +132,14 @@ The JSONL output contains one record per line, for each request sent during the 
 
 **Metrics:**
 See the [Complete Metrics Reference](../metrics-reference.md) page for a list of all metrics and their descriptions. Will always be null for failed requests.
+
+**Recovering issuance order:** sort by `global_dispatch_index`, not by a timestamp.
+Under `--dispatch global` the `W` worker threads each stamp `credit_issued_ns` from
+their own clock read at issuance, so sorting by it returns wake order, not issuance
+order — measured at 16 workers, under 5% of records land in their true position. The
+single-coordinator modes (`global-hop`, `global-push`) do timestamp in issuance order,
+but `global_dispatch_index` is exact in every mode. See
+[global-exact-dispatch.md](../specs/global-exact-dispatch.md).
 
 #### Failed Request Record
 
@@ -142,8 +154,9 @@ See the [Complete Metrics Reference](../metrics-reference.md) page for a list of
     "request_start_ns": 1759879161119147826,
     "request_ack_ns": null,
     "request_end_ns": 1759879161119772754,
-    "worker_id": "worker_6006099d",
-    "record_processor_id": "record_processor_fdeeec8f",
+    "worker_id": "rust-1",
+    "global_dispatch_index": 80,
+    "record_processor_id": "aiperf runner",
     "benchmark_phase": "profiling",
     "was_cancelled": true,
     "cancellation_time_ns": 1759879161119772754

@@ -93,7 +93,11 @@ per-request cross-thread contention. The measured seam
 (`configure_measurement` / `execute_turn_measured` / `drain_records`) is the sole
 dispatch path and returns a flat `Vec<(Uuid, RecordIngest)>`; the static-accuracy
 adapter uses it too. The global `request_index` is `RunCapture::begin` order;
-phase/session/admit fields are patched at finish. Records re-ingest in global
+phase/session/admit fields are patched at finish. `request_index` is the
+accumulator ROW, which a fold-and-drop shard keeps dense per store (`0..N_shard`)
+so the shard stores concatenate; the run-wide ordinal is the separate
+`global_dispatch_index`, assigned by the `IssuanceAuthority` and the field the
+per-record artifacts export. Records re-ingest in global
 dispatch-index order, so `worker_count` 1-vs-N is byte-identical
 (`worker_local_accumulation_parity.rs`).
 

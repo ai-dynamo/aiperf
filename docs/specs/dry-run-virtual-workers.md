@@ -56,8 +56,11 @@ transport:
 ```
 
 `enabled: false` is the default and retains the current one-fabricator behavior,
-including its treatment of `runtime.workers`. It always emits the existing
-`worker_id: "rust-0"` record metadata.
+including its treatment of `runtime.workers`. It emits no *virtual* worker
+identity: `worker_id` then names the real executing worker (`rust-{n}` over the
+`(cell × thread)` grid), which is `rust-0` for a single-worker run and one id per
+worker thread otherwise. A virtual run replaces that with its modeled
+`dry-run-{n}` placement.
 
 Virtual workers require `clock: sim`. Config resolution must capture explicit
 `width` or the authored `runtime.workers` into a new virtual placement-width
@@ -185,12 +188,13 @@ assignment metadata for every terminal record:
 }
 ```
 
-`worker_id` remains present and equals `"rust-0"` when virtual workers are
-disabled; only `worker_assignment_index` is omitted. `RecordIngest` already has
-an optional `worker_id`; the change adds `worker_assignment_index` and updates
-the JSONL projection to use the stored worker ID rather than hardcoding
-`"rust-0"`. Tests assert only this per-record export, never the raw-record
-artifact.
+`worker_id` remains present when virtual workers are disabled — it then names the
+real executing worker rather than a modeled one — and only
+`worker_assignment_index` is omitted. `RecordIngest` already has an optional
+`worker_id`; the change adds `worker_assignment_index` and updates the JSONL
+projection to use the stored worker ID. `"rust-0"` survives only as the projection's
+fallback for a record no executing worker attributed. Tests assert only this
+per-record export, never the raw-record artifact.
 
 Cancellation stays scheduler-owned. The scheduler's selected
 `turn.cancel_after_ns` is delivered to the assigned worker, which emits the

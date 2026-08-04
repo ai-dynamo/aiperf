@@ -101,8 +101,9 @@ admission and completion; virtual placement never returns graph credits.
 
 Each dispatched graph-node record exports `worker_id` and
 `worker_assignment_index`. This requires DTO additions plus normal and raw JSONL
-projection changes; the current projections hardcode `"rust-0"`, and neither
-JSONL nor `RecordIngest` currently contains assignment index. The worker identity
+projection changes; the projections carry the record's own stored `worker_id` and
+fall back to `"rust-0"` only when nothing attributed it, and neither JSONL nor
+`RecordIngest` currently contains assignment index. The worker identity
 is the selected virtual worker, not the inline reactor. Parquet projection policy
 must be decided alongside the record-schema change. No raw-record assertions are
 required for the integration contract.

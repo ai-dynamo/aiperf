@@ -473,11 +473,14 @@ Execution and scheduling:
   user-centric, and fixed-schedule workloads over one `Clock`-backed runtime, and
   how each partitions across sub-cells.
 - [`docs/specs/global-exact-dispatch.md`](docs/specs/global-exact-dispatch.md) — the
-  built `runtime.dispatch` selector (`sharded` | `global` | `global-hop`)
-  replacing the static per-thread partition with a shared per-cell
+  built `runtime.dispatch` selector (`sharded` | `global` | `global-hop` |
+  `global-push`) replacing the static per-thread partition with a shared per-cell
   `GlobalAdmission` gate (`global`, the `workers>1` default) or a
-  single-coordinator hop dispatcher (`global-hop`) so `workers>1` runs are
-  byte-exact against Python's single global concurrency/rate limiter.
+  single-coordinator dispatcher (`global-hop`/`global-push`) so `workers>1` runs are
+  byte-exact against Python's single global concurrency/rate limiter; records which
+  modes deliver exact `admit_ns` issuance ordering (measured: single-coordinator
+  only, because `global`'s per-thread issuers each stamp their own clock read) and
+  the measured `global-push` vs `global-hop` throughput comparison.
 - [`docs/specs/phase-orchestration.md`](docs/specs/phase-orchestration.md) — one
   `Clock`-native warmup→profiling lifecycle: escalation ladder, cancellation
   latch, and the seam scheduled and graph runs share.

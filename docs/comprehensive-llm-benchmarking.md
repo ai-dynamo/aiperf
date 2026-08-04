@@ -262,8 +262,9 @@ AIPerf outputs detailed per-request data in `profile_export.jsonl`. Each line is
     "turn_index": 0,
     "request_start_ns": 1763066701865462000,
     "request_end_ns": 1763066703082535666,
-    "worker_id": "worker_b431129c",
-    "record_processor_id": "record_processor_a1b2c3d4",
+    "worker_id": "rust-5",
+    "global_dispatch_index": 87,
+    "record_processor_id": "aiperf runner",
     "benchmark_phase": "profiling"
   },
   "metrics": {

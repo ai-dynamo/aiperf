@@ -235,6 +235,65 @@ requests.
   sub-cells, with deterministic TTFT/ITL and raw per-record assertions per
   the CLAUDE.md generated-token-timing test requirements.
 
+### Which mode delivers exact issuance ordering
+
+Exact `admit_ns` ordering — sorting the per-record artifact by `credit_issued_ns`
+and recovering the sequential corpus walk — **requires a single-coordinator mode**.
+Measured on a 144-core rig, 997 conversations / 3,323 requests / `workers = 16`,
+comparing the `credit_issued_ns` sort against the corpus walk:
+
+| mode | exact | notes |
+| --- | --- | --- |
+| `global-push` | **100.00%** | both `constant`-rate and `concurrency` phases |
+| `global-hop` | **100.00%** | both phase shapes |
+| `global` | 4.42% | median offset 7 positions; 91.5% within 16 positions (was 0.75% before slot-addressed draws) |
+
+`global` **cannot** reach exactness, and this is structural rather than a tuning
+gap. `admit_ns` is derived from `credit.issued_ns`, which is `clock.now_ns()`
+sampled *by whichever of the `W` threads issues the request* — `ScheduledRuntime`
+is built per phase per shard, and each shard's issuer loop reads the clock on its
+own thread (`let issued_ns = self.clock.now_ns()` in
+`ScheduledRuntime::issue_turn_internal`, `rust/runtime/src/scheduled.rs`; the capture
+converts it at `RunCapture::snapshot_live`/`fold_streaming`,
+`rust/runtime/src/engine/execute/capture.rs`). Two threads that claim adjacent
+global slots stamp them in whatever order the OS wakes them, so the sort key
+carries per-thread wake skew that no amount of admission coordination removes.
+The shared gate makes `global` exact in *what* is admitted and *how many*; it
+cannot make the timestamps totally ordered. Removing the skew would take either
+virtual time (single-reactor, and `SimClock` forces `workers = 1` — see the next
+section) or funnelling every stamp through one thread, which is precisely what the
+single-coordinator modes already are.
+
+`global`'s near-ordering is configuration-dependent, so treat the 4.42% as one
+measurement rather than a constant: an independent run on the same rig at
+`concurrency = 64` with multi-turn sessions measured 0.06% exact and 5.1% within
+16 positions. What is stable is the shape — `global` clusters near the true
+position without hitting it, and the single-coordinator modes hit it every time.
+
+For consumers that need the order and not the timestamps, the per-record artifacts
+now carry `metadata.global_dispatch_index`, the dense global dispatch ordinal.
+Sorting by it recovers exact issuance order in **every** mode, `global` included,
+because it is assigned by the issuance authority rather than read from a clock.
+
+### Measured: `global-push` vs `global-hop`
+
+Both deliver the same 100% ordering, so the choice between them is throughput.
+Measured this session on the same rig:
+
+| workload | `global-push` | `global-hop` | ratio |
+| --- | --- | --- | --- |
+| single-turn | 91,945 rps | 51,464 rps | **1.79×** |
+| multi-turn | 60,448 rps | 43,508 rps | **1.39×** |
+| run-to-run variance | ±3% | ±13% | — |
+
+The mechanism is the one `global_push.rs` documents: `global-hop` holds a
+coordinator-side future and a worker slot from send *through reply*, so the single
+issuer sits inside every request's lifetime; `global-push` routes an identity-only
+credit the worker materializes and returns out of band, keeping the issuer in
+neither the request lifetime nor its body construction.
+
+This is a measurement, not a recommendation to retire `global-hop`.
+
 ### Boundary: `SimClock` is single-worker and Graph-only
 
 `SimClock` unconditionally forces `workers = 1`
