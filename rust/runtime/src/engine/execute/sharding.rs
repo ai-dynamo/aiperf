@@ -317,6 +317,9 @@ pub(crate) async fn execute_scheduled_shard(
         // `workers == 1` co-located sink: no hop, so routing is inert.
         hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
         virtual_worker_width: None,
+        // A `workers == 1` co-located sink runs on this shard's own thread; the
+        // shard labels its records itself through the capture below.
+        worker_labels: None,
     })?;
     // Each `Sharded`/`Global` worker thread slices the authored phases into its
     // own `1/W` share (see `slice_phase_for_thread`); the pipeline below is shared

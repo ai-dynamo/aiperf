@@ -69,12 +69,14 @@ impl RequestExecutorFactory for GrpcExecutionFactory {
         let coordinator_clock = config.coordinator_clock.clone();
         let anchor = config.real_clock_anchor;
         let hop_routing = config.hop_routing;
+        let worker_labels = config.worker_labels.clone();
         build_native(
             GrpcSinkBuilder::from_config(&config, bindings),
             workers,
             coordinator_clock,
             anchor,
             hop_routing,
+            worker_labels,
         )
     }
 }

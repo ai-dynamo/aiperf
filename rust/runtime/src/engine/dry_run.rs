@@ -1207,6 +1207,7 @@ mod tests {
                 credit_materializer: None,
                 hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
                 virtual_worker_width: None,
+                worker_labels: None,
             })
             .expect("build fake executor");
         let origin_ns = clock.now_ns();

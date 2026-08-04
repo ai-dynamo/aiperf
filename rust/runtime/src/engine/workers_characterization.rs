@@ -2561,6 +2561,81 @@ mod tests {
         }
     }
 
+    /// The single-coordinator modes must name their executing worker too, under
+    /// the DEFAULT fold path.
+    ///
+    /// The hop worker's only stamp used to sit in its drain reply, which is the
+    /// retained-record path. Exact-fold returns each record to the coordinator per
+    /// turn and never reaches that reply, so a `global-hop`/`global-push` run with
+    /// per-record artifacts — the default — reported the unattributed `rust-0` for
+    /// every request, and the attribution appeared only under
+    /// `AIPERF_RUNTIME_EXACT_FOLD=0`.
+    ///
+    /// The id means something different here than under `Sharded`/`Global`: it
+    /// names the worker the coordinator PLACED the request on, not the owner of a
+    /// dataset residue class. So this asserts distinct real workers and dense
+    /// ordinals, and deliberately does NOT assert the residue-class relation the
+    /// shard test pins — under a hop, placement and ordinal are independent.
+    #[test]
+    fn single_coordinator_modes_name_their_executing_worker_under_exact_fold() {
+        const WORKERS: usize = 4;
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let requests = 24u64;
+        let phase = || -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "concurrency": 4,
+            }))
+            .unwrap()
+        };
+
+        for mode in [
+            crate::engine::protocol::DispatchMode::GlobalHop,
+            crate::engine::protocol::DispatchMode::GlobalPush,
+        ] {
+            let records = run_dispatch_records(
+                &registry,
+                &mock,
+                WORKERS,
+                build_dataset(&registry, requests as usize, 1),
+                phase(),
+                mode,
+            );
+            assert_eq!(records.len(), requests as usize);
+
+            let ids: std::collections::BTreeSet<&str> = records.iter().map(worker_id).collect();
+            assert!(
+                ids.len() > 1,
+                "{mode:?} must report the worker each request was placed on; a single \
+                 id means the fold path never attributed it. Saw: {ids:?}"
+            );
+            for id in &ids {
+                let index: usize = id
+                    .strip_prefix("rust-")
+                    .and_then(|suffix| suffix.parse().ok())
+                    .unwrap_or_else(|| {
+                        panic!("{mode:?} must spell worker_id as rust-{{n}}, got {id}")
+                    });
+                assert!(
+                    index < WORKERS,
+                    "{mode:?} reported worker_id {id}, outside the 0..{WORKERS} grid"
+                );
+            }
+
+            let ordinals: std::collections::BTreeSet<u64> =
+                records.iter().map(dispatch_index).collect();
+            assert_eq!(
+                ordinals,
+                (0..requests).collect::<std::collections::BTreeSet<u64>>(),
+                "{mode:?} must carry dense unique dispatch ordinals 0..{requests}"
+            );
+        }
+    }
+
     #[test]
     fn static_accuracy_workers_gt_1_shards_and_tally_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();

@@ -302,6 +302,10 @@ pub(crate) async fn execute_native_inner(
                 crate::engine::protocol::HopRouting::RoundRobin
             },
             virtual_worker_width: request.virtual_worker_width,
+            // `workers == 1`: the co-located sink runs on the coordinator's own
+            // reactor, so there is no distinct worker to name and the export's
+            // one-worker `rust-0` is the truthful identity.
+            worker_labels: None,
         })?;
         let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
         // Env-gated single-process cellular heartbeat lane; the controller merges

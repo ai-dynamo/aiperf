@@ -75,6 +75,16 @@ pub struct ExecutionBackendConfig {
     /// Worker-assignment policy applied by the `workers > 1` hop executor. Inert
     /// for `workers == 1` (co-located sink, no hop).
     pub hop_routing: HopRouting,
+    /// Per-worker record identities, indexed by hop-executor worker id.
+    ///
+    /// The single-coordinator modes place each request on a worker the
+    /// coordinator picks, so only the worker knows who ran it; these labels let
+    /// it stamp that on the record without formatting a string per request.
+    /// Built once at `(cell × thread)` grid coordinates so an id is unique across
+    /// the whole run, matching the shard path's spelling. `None` leaves the
+    /// worker unattributed (`workers == 1` has no hop, and virtual dry-run
+    /// placement names its own modeled workers).
+    pub worker_labels: Option<Arc<[Arc<str>]>>,
     /// Logical dry-run placement width captured before physical worker caps.
     pub virtual_worker_width: Option<usize>,
 }
@@ -274,9 +284,12 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
     coordinator_clock: Rc<dyn Clock>,
     real_clock_anchor: RealClockAnchor,
     hop_routing: HopRouting,
+    worker_labels: Option<Arc<[Arc<str>]>>,
 ) -> Result<Rc<dyn RequestExecutor>> {
     ensure!(workers > 0, "execution workers must be positive");
     if workers == 1 {
+        // A co-located sink runs on the caller's own thread, so the caller — not a
+        // worker — attributes the record; see `run_single_coordinator`.
         return Ok(Rc::new(builder.build_sink(coordinator_clock, 0)?));
     }
     Ok(Rc::new(ThreadPerCoreExecutor::new(
@@ -285,6 +298,7 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
         coordinator_clock,
         real_clock_anchor,
         hop_routing,
+        worker_labels,
     )?))
 }
 
@@ -298,12 +312,14 @@ impl RequestExecutorFactory for HttpExecutionFactory {
         let coordinator_clock = config.coordinator_clock.clone();
         let anchor = config.real_clock_anchor;
         let hop_routing = config.hop_routing;
+        let worker_labels = config.worker_labels.clone();
         build_native(
             HttpSinkBuilder::from_config(&config),
             workers,
             coordinator_clock,
             anchor,
             hop_routing,
+            worker_labels,
         )
     }
 }
@@ -698,6 +714,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         coordinator_clock: Rc<dyn Clock>,
         real_clock_anchor: RealClockAnchor,
         routing: HopRouting,
+        worker_labels: Option<Arc<[Arc<str>]>>,
     ) -> Result<Self> {
         ensure!(
             workers > 1,
@@ -713,6 +730,11 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             let (sender, receiver) = mpsc::channel::<WorkerMessage>(WORKER_QUEUE_CAPACITY);
             let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
             let builder = builder.clone();
+            // This worker's record identity, moved in once; every request it runs
+            // clones the handle rather than formatting an id.
+            let record_label = worker_labels
+                .as_ref()
+                .and_then(|labels| labels.get(worker_id).cloned());
             let thread = match std::thread::Builder::new()
                 .name(format!("aiperf-{label}-{worker_id}"))
                 .spawn(move || {
@@ -721,6 +743,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                         real_clock_anchor,
                         builder,
                         worker_id,
+                        record_label,
                         started_tx,
                     );
                     if let Err(error) = &result {
@@ -1162,6 +1185,7 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
     anchor: RealClockAnchor,
     builder: Arc<B>,
     worker_id: usize,
+    record_label: Option<Arc<str>>,
     started: std::sync::mpsc::SyncSender<std::result::Result<(), String>>,
 ) -> Result<()> {
     // IO + time only: this runtime needs no signal handling. Note this does
@@ -1204,7 +1228,7 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
     let local = tokio::task::LocalSet::new();
     local.block_on(
         &runtime,
-        run_worker(receiver, sink, materializer, clock, worker_id),
+        run_worker(receiver, sink, materializer, clock, record_label),
     );
     Ok(())
 }
@@ -1214,7 +1238,7 @@ async fn run_worker<S: WorkerSink + 'static>(
     sink: Rc<S>,
     materializer: Option<Rc<WorkerMaterializer>>,
     clock: Rc<dyn Clock>,
-    worker_id: usize,
+    record_label: Option<Arc<str>>,
 ) {
     let mut jobs = JoinSet::new();
     let mut accepting = true;
@@ -1248,8 +1272,9 @@ async fn run_worker<S: WorkerSink + 'static>(
                     Some(WorkerMessage::Command(command)) => {
                         let sink = sink.clone();
                         let observer = observer.clone();
+                        let record_label = record_label.clone();
                         jobs.spawn_local(async move {
-                            execute_worker_command(sink, observer, *command).await;
+                            execute_worker_command(sink, observer, *command, record_label).await;
                         });
                     }
                     Some(WorkerMessage::Credit(command)) => {
@@ -1265,8 +1290,9 @@ async fn run_worker<S: WorkerSink + 'static>(
                                 continue;
                             }
                         };
+                        let record_label = record_label.clone();
                         jobs.spawn_local(async move {
-                            execute_worker_credit(sink, observer, command).await;
+                            execute_worker_credit(sink, observer, command, record_label).await;
                         });
                     }
                     Some(WorkerMessage::Prewarm { turn, done }) => {
@@ -1303,12 +1329,18 @@ async fn run_worker<S: WorkerSink + 'static>(
             .unwrap_or_default();
         // Stamp the executing worker identity into records the coordinator did
         // not already attribute. In the hop path the worker-local observer holds
-        // exactly this thread's requests, so `worker_id` here is authoritative:
+        // exactly this thread's requests, so the identity here is authoritative:
         // it makes per-worker routing (e.g. `HopRouting::Sticky` session
         // affinity) observable at the record boundary.
-        for (_uuid, ingest) in &mut records {
-            if ingest.worker_id.is_none() {
-                ingest.worker_id = Some(worker_id.to_string());
+        //
+        // This is the RETAINED-record path only. Fold-and-drop returns each record
+        // to the coordinator per turn instead, and never reaches this drain reply,
+        // so the two per-turn paths stamp it themselves.
+        if let Some(label) = &record_label {
+            for (_uuid, ingest) in &mut records {
+                if ingest.worker_id.is_none() {
+                    ingest.worker_id = Some(label.to_string());
+                }
             }
         }
         let _ = reply.send(records);
@@ -1354,6 +1386,7 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
     sink: Rc<S>,
     worker_observer: Option<Rc<NativeMetricsObserver>>,
     command: WorkerCommand,
+    record_label: Option<Arc<str>>,
 ) {
     let WorkerCommand {
         turn,
@@ -1392,7 +1425,7 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
                 }
                 result = &mut dispatch => result,
             };
-            let live_record = context
+            let mut live_record = context
                 .wants_live_record
                 .then(|| {
                     // Metrics-only (sketch) mode moves the record out of the
@@ -1405,6 +1438,10 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
                     }
                 })
                 .flatten();
+            // A returned record leaves this thread now and never reaches the drain
+            // reply, so attribute it here — this is the ONLY point at which the
+            // thread that ran the request is still known.
+            attribute_worker(live_record.as_mut(), record_label.as_deref());
             // Same economics as the credit path: nothing reads the raw exchange
             // unless a raw artifact was requested, so release it HERE rather than
             // shipping an ~ISL-sized body and a transport record to the coordinator
@@ -1502,10 +1539,22 @@ fn materialize_credit(
 /// [`ScheduledRuntime`](crate::scheduled::ScheduledRuntime)'s issuance split),
 /// because forwarding frames would put the coordinator back in the request's
 /// lifetime and undo the entire point of the mode.
+/// Name the worker that executed a record the coordinator did not already
+/// attribute, leaving an existing identity (e.g. a virtual dry-run placement)
+/// untouched. A no-op when this worker has no label.
+fn attribute_worker(record: Option<&mut RecordIngest>, label: Option<&str>) {
+    if let (Some(record), Some(label)) = (record, label)
+        && record.worker_id.is_none()
+    {
+        record.worker_id = Some(label.to_string());
+    }
+}
+
 async fn execute_worker_credit<S: WorkerSink + 'static>(
     sink: Rc<S>,
     worker_observer: Option<Rc<NativeMetricsObserver>>,
     command: CreditCommand,
+    record_label: Option<Arc<str>>,
 ) {
     let CreditCommand {
         turn,
@@ -1549,7 +1598,7 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
         }
         result = &mut dispatch => result,
     };
-    let live_record = context
+    let mut live_record = context
         .wants_live_record
         .then(|| {
             if context.consume_record {
@@ -1559,6 +1608,9 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
             }
         })
         .flatten();
+    // A returned credit carries its record straight back to the coordinator and
+    // never reaches this worker's drain reply; attribute it here.
+    attribute_worker(live_record.as_mut(), record_label.as_deref());
     let outcome = result.map(|mut result| {
         // Nothing downstream reads the raw exchange unless a raw artifact was
         // requested, so release it HERE rather than shipping a ~ISL-sized body
@@ -2040,6 +2092,7 @@ mod tests {
                 credit_materializer: None,
                 hop_routing: HopRouting::RoundRobin,
                 virtual_worker_width: None,
+                worker_labels: None,
             })
             .unwrap();
         let origin_ns = clock.now_ns();

@@ -123,6 +123,25 @@ pub(crate) async fn run_single_coordinator(
         })
         .collect();
 
+    // One record identity per worker thread, at the same `(cell × thread)` grid
+    // coordinates the shard path labels with, so an id is unique across the whole
+    // run and both paths spell it the same way. Under a hop the id names the
+    // worker the coordinator PLACED the request on; it carries none of the shard
+    // path's dataset-ownership meaning, because this pipeline owns the whole
+    // cell's partition (see the module docs).
+    let worker_labels: Arc<[Arc<str>]> = (0..workers)
+        .map(|thread_id| {
+            crate::engine::sharded_scheduled::two_level_partition(
+                shared.cell_id,
+                shared.cells,
+                thread_id,
+                workers as u32,
+            )
+            .map(|partition| Arc::from(format!("rust-{}", partition.cell_id())))
+        })
+        .collect::<Result<Vec<Arc<str>>>>()?
+        .into();
+
     // The hop backend: `workers > 1` builds the cross-thread `ThreadPerCoreExecutor`
     // (bounded mpsc + oneshot per turn); `workers == 1` degrades to a co-located
     // sink (a lone-worker GlobalHop is just a single-thread run, still correct).
@@ -139,6 +158,7 @@ pub(crate) async fn run_single_coordinator(
         credit_materializer,
         hop_routing: shared.hop_routing,
         virtual_worker_width: None,
+        worker_labels: Some(worker_labels.clone()),
     })?;
 
     // Sidecars span the whole coordinator window, matching `run_sharded_scheduled`.
@@ -160,11 +180,13 @@ pub(crate) async fn run_single_coordinator(
         sliced_phases,
         clock,
         execution_backend,
-        // No shard-level worker label: this loop dispatches across `W` threads it
-        // does not run on, so its own partition index would name the coordinator,
-        // not the executor. The hop worker loop stamps each record with the thread
-        // that actually ran it.
-        None,
+        // Normally no pipeline-level label: this loop dispatches across `W` threads
+        // it does not run on, so its own index would name the coordinator, not the
+        // executor, and the hop worker stamps the thread that actually ran each
+        // request. The exception is `workers == 1`, where `build_native` gives this
+        // loop a co-located sink and there is no worker to do the stamping — the
+        // coordinator IS the executor.
+        (workers == 1).then(|| worker_labels[0].clone()),
     )
     .await;
 
