@@ -423,6 +423,11 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         enabled) so reads don't trigger major faults. Remains async-callable
         for API parity with other dataset clients.
 
+        When MMAP_PREFAULT is disabled, reads may still take major faults, and
+        those now land on the event loop thread rather than an executor thread.
+        That is deliberate: CPython's mmap slice holds the GIL while copying,
+        so an executor relocates the stall instead of removing it.
+
         Args:
             conversation_id: Session ID of the conversation
 
