@@ -905,9 +905,10 @@ fn node_known_image_count(node: &LlmNode, prepared: &PreparedNodeMetadata) -> Op
         .items
         .iter()
         .any(|item| matches!(item, PromptItem::RawMessages { .. }));
-    let overrides_content_root = prepared.extra_body.as_ref().is_some_and(|extra| {
-        extra.contains_key("messages") || extra.contains_key("input")
-    });
+    let overrides_content_root = prepared
+        .extra_body
+        .as_ref()
+        .is_some_and(|extra| extra.contains_key("messages") || extra.contains_key("input"));
     (!has_raw_messages && prepared.raw_system.is_none() && !overrides_content_root).then_some(0)
 }
 

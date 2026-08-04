@@ -120,9 +120,13 @@ async fn authored_raw_messages_carrying_images_are_still_counted() {
     const IMAGES: usize = 2;
 
     let h = AIPerfHarness::new().await;
-    let input = write_jsonl(h.artifact_path(), "images.dag.jsonl", &[image_session(IMAGES)])
-        .display()
-        .to_string();
+    let input = write_jsonl(
+        h.artifact_path(),
+        "images.dag.jsonl",
+        &[image_session(IMAGES)],
+    )
+    .display()
+    .to_string();
     let r = h.run_timeout(
         &format!(
             "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --input-file {input} \
