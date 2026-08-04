@@ -497,7 +497,7 @@ impl GrpcTransportSink {
             completion_tokens,
             http: grpc_metrics_trace(&record),
         };
-        // `request_payload` has exactly two consumers, each already gated:
+        // `request_payload` has three read sites, each already gated:
         // `record_input_payload` early-returns unless `inputs.json` is requested, and
         // `record_http_exchange`/graph execution retain it only under raw artifacts.
         // On a run with neither, this re-serialize was pure per-request waste.

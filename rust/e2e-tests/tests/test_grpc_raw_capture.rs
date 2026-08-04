@@ -14,10 +14,12 @@
 //!     one record per request, each with its full `responses[]` array and its
 //!     `payload` object — proving both gates keep their output byte-populated
 //!     when raw capture is on.
-//!   * **records, raw OFF** (`--export-level records`): per-record artifacts force
-//!     the retain path, so `inputs.json` is captured during dispatch rather than
-//!     generated up front. Its payloads must still be populated — this is the case
-//!     a payload gate on `capture_raw` alone would break.
+//!   * **raw OFF, gate open vs closed** (`AIPERF_RUNTIME_EXACT_FOLD=0` against the
+//!     default): the retain path captures `inputs.json` from each dispatch, so the
+//!     payload gate is open with raw capture off — the case a gate on `capture_raw`
+//!     alone would break. Its payloads must be byte-identical to the exact-fold
+//!     run's up-front-generated ones. Both runs assert the retention marker, so
+//!     neither can silently drift off the branch it pins.
 //!   * **raw OFF** (default): the run's per-record metrics are unchanged and no
 //!     raw artifact is emitted — proving skipping the (discarded) record and
 //!     payload does not perturb observable output.
@@ -29,6 +31,8 @@ const CONCURRENCY: u32 = 2;
 const REQUEST_COUNT: u32 = 8;
 const ISL: u32 = 32;
 const OSL: u32 = 16;
+/// Pinned run seed so repeated runs of the same config are byte-comparable.
+const SEED: u32 = 4242;
 
 /// A deterministic KServe gRPC streaming benchmark. The harness appends
 /// `--artifact-dir` and `--tokenizer`, overriding the corresponding fields.
@@ -62,10 +66,23 @@ fn grpc_config(grpc_url: &str) -> String {
     )
 }
 
-/// Run the shared gRPC config at `export_level` (unset for the default summary
-/// run). Returns the harness (to keep the artifact `TempDir` alive) and the run
-/// result.
+/// Run the shared gRPC config at `export_level` (unset for the CLI default).
+/// Returns the harness (to keep the artifact `TempDir` alive) and the run result.
 async fn run_grpc_at(export_level: Option<&str>) -> (AIPerfHarness, RunResult) {
+    run_grpc_on(export_level, true).await
+}
+
+/// Run the shared gRPC config, selecting the record-retention path.
+///
+/// `exact_fold` picks the default fold-and-drop path (`true`), where `inputs.json`
+/// is generated up front from the resident dataset and the sink's payload gate is
+/// therefore CLOSED, or retained-record execution (`false`, via
+/// `AIPERF_RUNTIME_EXACT_FOLD=0` as `test_exact_fold_ab_parity` does), where
+/// `inputs.json` is captured from each dispatch and the gate is OPEN.
+///
+/// `--ui simple` plus `AIPERF_LOG=aiperf=info` are required for the
+/// `record retention path selected` marker the callers assert on.
+async fn run_grpc_on(export_level: Option<&str>, exact_fold: bool) -> (AIPerfHarness, RunResult) {
     let h = AIPerfHarness::new_with_grpc().await;
     let grpc_url = h
         .mock
@@ -76,16 +93,77 @@ async fn run_grpc_at(export_level: Option<&str>) -> (AIPerfHarness, RunResult) {
     let cfg_file = tmp.path().join("grpc_raw.yaml");
     std::fs::write(&cfg_file, grpc_config(&grpc_url)).unwrap();
 
+    let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "aiperf=info")];
+    if !exact_fold {
+        env.push(("AIPERF_RUNTIME_EXACT_FOLD", "0"));
+    }
     let extra = export_level.map_or_else(String::new, |level| format!(" --export-level {level}"));
-    let r = h.run(&format!("--config {}{extra}", cfg_file.display()));
+    // Pinned so two runs of the same config generate identical synthetic prompts;
+    // the A/B below compares their artifacts byte for byte.
+    let r = h.run_env(
+        &format!(
+            "--config {}{extra} --random-seed {SEED} --ui simple",
+            cfg_file.display()
+        ),
+        &env,
+    );
     assert!(
         r.success(),
-        "grpc run (export_level={export_level:?}) failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        "grpc run (export_level={export_level:?}, exact_fold={exact_fold}) failed (exit {}):\n\
+         stdout:\n{}\nstderr:\n{}",
         r.exit_code,
         r.stdout,
         r.stderr
     );
     (h, r)
+}
+
+/// The `record retention path selected` log line, which reports the `exact_fold`
+/// the run actually chose. Asserted so these tests fail loudly if a future
+/// eligibility change silently moves them off the branch they mean to pin.
+fn retention_marker(r: &RunResult) -> String {
+    let path = r
+        .artifacts
+        .find_file("**/aiperf.log")
+        .expect("logs/aiperf.log should exist");
+    std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .lines()
+        .find(|line| line.contains("record retention path selected"))
+        .unwrap_or("<no retention marker>")
+        .to_string()
+}
+
+/// Every `inputs.json` payload, flattened across sessions, each asserted to carry
+/// its KServe v2 input tensors. An empty canonical payload could not reach here:
+/// `write_inputs_json` parses each retained body and fails the export instead.
+fn inputs_payloads(r: &RunResult) -> Vec<String> {
+    let inputs = r.artifacts.inputs();
+    let sessions = inputs
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("inputs.json missing data array: {inputs}"))
+        .clone();
+    assert!(!sessions.is_empty(), "inputs.json captured no sessions");
+    let mut payloads = Vec::new();
+    for session in &sessions {
+        let entries = session
+            .get("payloads")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("inputs.json session missing payloads: {session}"));
+        for payload in entries {
+            assert!(
+                payload
+                    .get("inputs")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|inputs| !inputs.is_empty()),
+                "inputs.json payload lost its KServe v2 input tensors: {payload}"
+            );
+            payloads.push(payload.to_string());
+        }
+    }
+    payloads.sort();
+    payloads
 }
 
 /// With raw capture ON, the gate builds the compatibility record: every request
@@ -135,49 +213,59 @@ async fn test_grpc_raw_capture_records_responses() {
     }
 }
 
-/// Per-record artifacts force the retain path, so `inputs.json` is captured from
-/// each dispatch rather than generated up front from the resident dataset. The
-/// canonical payload must therefore still be built even though raw capture is
-/// off — a payload gated on `capture_raw` alone would empty every entry here
-/// (in practice: abort the export, since an empty payload does not parse).
+/// The `inputs_enabled` half of the payload gate, A/B against the branch that
+/// closes it — the only test here that opens the gate with raw capture off.
+///
+/// A records-level request does NOT by itself reach this branch:
+/// `wants_per_record_artifacts` (`engine/execute/plan.rs`) ignores `records_path`
+/// entirely (records stream through `RecordArtifactLane`), and this single-turn
+/// synthetic dataset satisfies `dataset_supports_up_front_inputs`, so exact-fold
+/// stays eligible and `inputs.json` is generated up front with the gate CLOSED.
+/// `AIPERF_RUNTIME_EXACT_FOLD=0` is what forces the retain path, where the payload
+/// is captured from each dispatch and the gate is OPEN. Both runs assert the
+/// retention marker so this cannot silently stop testing what it claims.
+///
+/// The gate-open run is the case a payload gated on `capture_raw` alone would
+/// break: it would retain an empty `Bytes`, which `write_inputs_json` cannot parse,
+/// aborting the export. Byte-identity between the two runs is the acceptance
+/// oracle — gating the payload must not change the artifact.
 #[tokio::test]
-async fn test_grpc_records_run_retains_inputs_payloads_without_raw() {
-    let (_h, r) = run_grpc_at(Some("records")).await;
-    assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
+async fn test_grpc_retained_inputs_payloads_match_up_front_without_raw() {
+    let (_h_open, open) = run_grpc_on(Some("records"), false).await;
+    let (_h_closed, closed) = run_grpc_on(Some("records"), true).await;
+
+    let open_marker = retention_marker(&open);
     assert!(
-        r.artifacts.raw_records().is_empty(),
-        "a records-level run must not emit a raw artifact"
+        open_marker.contains("exact_fold=false"),
+        "the gate-open run must select the retain path (inputs captured from \
+         dispatch); marker was: {open_marker}"
+    );
+    let closed_marker = retention_marker(&closed);
+    assert!(
+        closed_marker.contains("exact_fold=true"),
+        "the gate-closed run must select exact-fold (inputs generated up front); \
+         marker was: {closed_marker}"
     );
 
-    let inputs = r.artifacts.inputs();
-    let sessions = inputs
-        .get("data")
-        .and_then(serde_json::Value::as_array)
-        .unwrap_or_else(|| panic!("inputs.json missing data array: {inputs}"));
-    assert!(!sessions.is_empty(), "inputs.json captured no sessions");
-    let mut payload_count = 0;
-    for session in sessions {
-        let payloads = session
-            .get("payloads")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("inputs.json session missing payloads: {session}"));
-        for payload in payloads {
-            let payload = payload
-                .as_object()
-                .unwrap_or_else(|| panic!("inputs.json payload is not an object: {payload}"));
-            assert!(
-                payload
-                    .get("inputs")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|inputs| !inputs.is_empty()),
-                "inputs.json payload lost its KServe v2 input tensors: {payload:?}"
-            );
-            payload_count += 1;
-        }
+    for r in [&open, &closed] {
+        assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
+        assert!(
+            r.artifacts.raw_records().is_empty(),
+            "a records-level run must not emit a raw artifact"
+        );
     }
+
+    let open_payloads = inputs_payloads(&open);
     assert_eq!(
-        payload_count, REQUEST_COUNT,
-        "inputs.json must retain one canonical payload per dispatched turn"
+        open_payloads.len() as u32,
+        REQUEST_COUNT,
+        "the retain path must capture one canonical payload per dispatched turn"
+    );
+    assert_eq!(
+        open_payloads,
+        inputs_payloads(&closed),
+        "gating the canonical payload changed inputs.json: the dispatch-captured \
+         payloads must be byte-identical to the up-front-generated ones"
     );
 }
 
