@@ -1613,6 +1613,15 @@ mod tests {
 
     use super::*;
 
+    /// The wire bytes a built turn dispatches.
+    fn dispatched_body(turn: &TurnToSend) -> Bytes {
+        turn.request_body
+            .as_ref()
+            .expect("a built turn carries a request body")
+            .to_wire()
+            .expect("the request body materializes")
+    }
+
     struct FixedTemplateTokenizer;
 
     #[derive(Default)]
@@ -1801,8 +1810,8 @@ mod tests {
             .build_first_turn(None)
             .unwrap();
         assert_eq!(
-            sessions[0].payloads[0].as_ref(),
-            dispatch_turn.request_body.as_deref().unwrap()
+            sessions[0].payloads[0],
+            dispatched_body(&dispatch_turn)
         );
     }
 
@@ -1848,8 +1857,8 @@ mod tests {
             .build_first_turn(None)
             .unwrap();
         assert_eq!(
-            sessions[0].payloads[0].as_ref(),
-            dispatch_turn0.request_body.as_deref().unwrap()
+            sessions[0].payloads[0],
+            dispatched_body(&dispatch_turn0)
         );
     }
 
@@ -1883,23 +1892,23 @@ mod tests {
         assert_eq!(jump_turn1.turn_index, 1);
         assert_eq!(jump_turn1.num_turns, seq_turn1.num_turns);
         assert_eq!(
-            jump_turn1.request_body.as_deref().unwrap(),
-            seq_turn1.request_body.as_deref().unwrap(),
+            dispatched_body(&jump_turn1),
+            dispatched_body(&seq_turn1),
             "jump-resume to turn 1 is byte-identical to sequential advance to turn 1"
         );
 
         // The reconstructed context reflects turns 0..=1: the recorded message array
         // carries the current turn's content (q1) and is distinct from turn 0 (q0).
         let jump_body: Value =
-            serde_json::from_slice(jump_turn1.request_body.as_deref().unwrap()).unwrap();
+            serde_json::from_slice(&dispatched_body(&jump_turn1)).unwrap();
         let messages = jump_body["messages"].to_string();
         assert!(
             messages.contains("q1"),
             "turn-1 context carries q1: {messages}"
         );
         assert_ne!(
-            jump_turn1.request_body.as_deref().unwrap(),
-            seq_turn0.request_body.as_deref().unwrap(),
+            dispatched_body(&jump_turn1),
+            dispatched_body(&seq_turn0),
             "turn-1 body differs from turn-0 body"
         );
 
@@ -1911,8 +1920,8 @@ mod tests {
             .unwrap();
         assert_eq!(jump_turn0.turn_index, 0);
         assert_eq!(
-            jump_turn0.request_body.as_deref().unwrap(),
-            seq_turn0.request_body.as_deref().unwrap(),
+            dispatched_body(&jump_turn0),
+            dispatched_body(&seq_turn0),
         );
     }
 
@@ -2137,7 +2146,7 @@ mod tests {
             .build_first_turn(None)
             .unwrap();
         let first_body: Value =
-            serde_json::from_slice(first.request_body.as_ref().unwrap()).unwrap();
+            serde_json::from_slice(&dispatched_body(&first)).unwrap();
         assert_eq!(first_body["messages"][0]["content"], "first question");
         let next = source
             .next_turn(
@@ -2151,7 +2160,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let next_body: Value = serde_json::from_slice(next.request_body.as_ref().unwrap()).unwrap();
+        let next_body: Value = serde_json::from_slice(&dispatched_body(&next)).unwrap();
         assert_eq!(
             next_body["messages"]
                 .as_array()
@@ -2219,8 +2228,8 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let body1: Value = serde_json::from_slice(turn1.request_body.as_ref().unwrap()).unwrap();
-        let body2: Value = serde_json::from_slice(turn2.request_body.as_ref().unwrap()).unwrap();
+        let body1: Value = serde_json::from_slice(&dispatched_body(&turn1)).unwrap();
+        let body2: Value = serde_json::from_slice(&dispatched_body(&turn2)).unwrap();
         // reply-0 is message[1] in both dispatch bodies and must be identical.
         assert_eq!(body1["messages"][1], body2["messages"][1]);
         assert_eq!(body1["messages"][1]["content"], "reply-0");
@@ -2273,7 +2282,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let body: Value = serde_json::from_slice(next.request_body.as_ref().unwrap()).unwrap();
+        let body: Value = serde_json::from_slice(&dispatched_body(&next)).unwrap();
         assert_eq!(body["messages"][1], assistant);
         assert_eq!(
             body["messages"][2],
@@ -2298,7 +2307,7 @@ mod tests {
             .unwrap();
         let mut source = prepared_chat_source(dataset, "model", 4);
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
-        assert_eq!(turn.request_body.unwrap(), authored);
+        assert_eq!(dispatched_body(&turn), authored);
         assert!(turn.streaming);
     }
 
@@ -2345,10 +2354,10 @@ mod tests {
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
         let repeated = source.next(None).unwrap().build_first_turn(None).unwrap();
 
+        let body: Value = serde_json::from_slice(&dispatched_body(&turn)).unwrap();
         let TurnEndpoint::Prepared(reference) = turn.endpoint;
         assert_eq!(reference.key, key);
         assert_eq!(reference.endpoint_id, endpoint_id);
-        let body: Value = serde_json::from_slice(turn.request_body.as_ref().unwrap()).unwrap();
         assert_eq!(body["model"], "prepared-model");
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["stream"], true);

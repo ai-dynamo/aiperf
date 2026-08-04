@@ -1369,7 +1369,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            request.body,
+            request.body.to_wire().unwrap(),
             b"{ \"prompt\" : \"x\", \"max_tokens\":2 }"[..]
         );
 

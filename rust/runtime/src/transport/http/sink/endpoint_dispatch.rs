@@ -11,7 +11,7 @@
 use std::cell::Cell;
 use std::task::{Context, Poll};
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use bytes::Bytes;
 use serde_json::Value;
 

@@ -1594,7 +1594,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        assert_eq!(exact.body, wire);
+        assert_eq!(exact.body.to_wire().unwrap(), wire);
         assert_eq!(exact.input_tokens, Some(7));
 
         let mut overrides = Overrides::new();
@@ -1609,7 +1609,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            spliced.body,
+            spliced.body.to_wire().unwrap(),
             b"{ \"messages\" : [ ], \"model\":\"authored\" ,\"stream\":true}\n"[..]
         );
     }
@@ -1645,7 +1645,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(request.body.is_empty());
+        assert!(request.body.to_wire().unwrap().is_empty());
         assert_eq!(request.model, "trace-model");
         assert_eq!(request.max_tokens, Some(9));
         assert!(request.streaming);
@@ -1723,7 +1723,7 @@ mod tests {
         assert_eq!(jump_turn1.input_tokens, seq_turn1.input_tokens);
 
         // The reconstructed context contains the recorded prior turns 0..=1.
-        let body: Value = serde_json::from_slice(&jump_turn1.body).unwrap();
+        let body: Value = serde_json::from_slice(&jump_turn1.body.to_wire().unwrap()).unwrap();
         let messages = body["messages"].to_string();
         assert!(
             messages.contains("q0"),
@@ -1838,7 +1838,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(request.body.is_empty());
+        assert!(request.body.to_wire().unwrap().is_empty());
         assert_eq!(request.raw_token_ids, Some(raw_token_ids));
         assert_eq!(request.model, "token-model");
         assert_eq!(request.max_tokens, Some(9));
@@ -1887,7 +1887,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(request.body, wire);
+        assert_eq!(request.body.to_wire().unwrap(), wire);
         assert_eq!(request.raw_token_ids, None);
         assert_eq!(request.input_tokens, Some(3));
     }
@@ -1944,7 +1944,7 @@ mod tests {
             )
             .unwrap();
 
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["model"], "direct-model");
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["max_completion_tokens"], 7);
@@ -2002,7 +2002,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["messages"][0]["content"], "q0");
         assert_eq!(body["messages"][1]["content"], "a0");
         assert_eq!(body["messages"][2]["content"], "q1");
@@ -2055,7 +2055,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["messages"].as_array().unwrap().len(), 3);
         assert_eq!(body["messages"][0]["content"], "q0");
         assert_eq!(body["messages"][1]["content"], "a0");
@@ -2111,7 +2111,7 @@ mod tests {
             .unwrap();
         assert_eq!(request.headers["x-custom"], "yes");
         assert_eq!(request.parameters["api-version"], "2026-01");
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["stream"], false);
         assert!(!request.streaming);
@@ -2160,7 +2160,7 @@ mod tests {
                 &overrides,
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["model"], "dispatch-model");
         assert_eq!(body["max_completion_tokens"], 13);
         assert_eq!(body["stream"], false);
@@ -2217,7 +2217,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["model"], "body-model");
         assert_eq!(body["stream"], false);
         assert_eq!(body["max_completion_tokens"], 15);
@@ -2272,7 +2272,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert!(body.get("messages").is_none());
         assert_eq!(body["input"][0]["content"], "hello responses");
         assert_eq!(body["max_output_tokens"], 9);
@@ -2329,6 +2329,8 @@ mod tests {
             )
             .unwrap()
             .body
+            .to_wire()
+            .unwrap()
     }
 
     fn one_content_turn_dataset(text: Handle, image: Option<Handle>, pool: SegmentPool) -> Dataset {
@@ -2481,6 +2483,8 @@ mod tests {
             )
             .unwrap()
             .body
+            .to_wire()
+            .unwrap()
     }
 
     #[test]
@@ -2621,7 +2625,7 @@ mod tests {
                             &overrides,
                         )
                         .unwrap();
-                    let body: Value = serde_json::from_slice(&request.body).unwrap();
+                    let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
                     let case = format!(
                         "endpoint={endpoint_id} max_tokens={with_max_tokens} overrides={overrides_variant}"
                     );
@@ -2723,7 +2727,9 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap()
-            .body;
+            .body
+            .to_wire()
+            .unwrap();
         let profiling_body = dispatch_turn(dataset, endpoint.as_ref(), 0, &Overrides::new());
         // Warmup folds the conversation system prompt into the first message;
         // profiling (the cached plan) does not — the two must diverge.

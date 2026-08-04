@@ -1243,7 +1243,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["model"], "turn-model");
         assert_eq!(body["stream"], false);
         assert_eq!(body["max_output_tokens"], 7);
@@ -1299,7 +1299,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert!(body.get("stream").is_none());
         assert!(request.streaming);
         assert_eq!(request.endpoint_path.as_deref(), Some("/generate_stream"));
