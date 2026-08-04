@@ -524,25 +524,24 @@ class TestTelemetryVendorIsolation:
             assert endpoint_data.gpus, f"No GPUs reported for {source_url}"
             for gpu_uuid, gpu_data in endpoint_data.gpus.items():
                 gpu_platform = gpu_data.platform
-                expected_prefix = _PLATFORM_EXPECTED_PREFIX.get(gpu_platform)
-                forbidden_prefix = _PLATFORM_FORBIDDEN_PREFIX.get(gpu_platform)
+                assert gpu_platform in _PLATFORM_EXPECTED_PREFIX, (
+                    f"GPU {gpu_uuid[:12]} at {source_url!r} has unexpected "
+                    f"platform={gpu_platform!r}; expected one of "
+                    f"{sorted(_PLATFORM_EXPECTED_PREFIX)}"
+                )
+                expected_prefix = _PLATFORM_EXPECTED_PREFIX[gpu_platform]
+                forbidden_prefix = _PLATFORM_FORBIDDEN_PREFIX[gpu_platform]
 
-                if expected_prefix is not None:
-                    present = [
-                        k for k in gpu_data.metrics if k.startswith(expected_prefix)
-                    ]
-                    assert present, (
-                        f"GPU {gpu_uuid[:12]} (platform={gpu_platform!r}) at "
-                        f"{source_url!r} has no '{expected_prefix}' metrics — "
-                        f"vendor URL present but no matching data collected"
-                    )
+                present = [k for k in gpu_data.metrics if k.startswith(expected_prefix)]
+                assert present, (
+                    f"GPU {gpu_uuid[:12]} (platform={gpu_platform!r}) at "
+                    f"{source_url!r} has no '{expected_prefix}' metrics — "
+                    f"vendor URL present but no matching data collected"
+                )
 
-                if forbidden_prefix is not None:
-                    leaked = [
-                        k for k in gpu_data.metrics if k.startswith(forbidden_prefix)
-                    ]
-                    assert not leaked, (
-                        f"GPU {gpu_uuid[:12]} (platform={gpu_platform!r}) at "
-                        f"{source_url!r} contains forbidden '{forbidden_prefix}' "
-                        f"metrics: {leaked}"
-                    )
+                leaked = [k for k in gpu_data.metrics if k.startswith(forbidden_prefix)]
+                assert not leaked, (
+                    f"GPU {gpu_uuid[:12]} (platform={gpu_platform!r}) at "
+                    f"{source_url!r} contains forbidden '{forbidden_prefix}' "
+                    f"metrics: {leaked}"
+                )
