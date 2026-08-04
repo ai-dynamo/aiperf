@@ -47,6 +47,7 @@ fn content_length(head: &[u8]) -> usize {
 
 struct Responses {
     chat: Arc<Vec<u8>>,
+    completions: Arc<Vec<u8>>,
     models: Arc<Vec<u8>>,
 }
 
@@ -58,6 +59,17 @@ fn build_responses() -> Responses {
     );
     let chat: Arc<Vec<u8>> = Arc::new([head.as_bytes(), body].concat());
 
+    // Completions streams `choices[].text` under `object: text_completion`,
+    // not `choices[].delta.content` -- the runtime's CompletionsEndpoint
+    // refuses any other `object`, and an empty `text` parses to no response
+    // data at all.
+    let completions_body = b"data: {\"id\":\"x\",\"object\":\"text_completion\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"text\":\"x\",\"finish_reason\":null}]}\n\ndata: {\"id\":\"x\",\"object\":\"text_completion\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"text\":\"\",\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    let chead = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        completions_body.len()
+    );
+    let completions: Arc<Vec<u8>> = Arc::new([chead.as_bytes(), completions_body].concat());
+
     let models = b"{\"object\":\"list\",\"data\":[{\"id\":\"mock-model\",\"object\":\"model\"}]}";
     let mhead = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
@@ -67,8 +79,19 @@ fn build_responses() -> Responses {
 
     Responses {
         chat,
+        completions,
         models: models_resp,
     }
+}
+
+/// True when the request line targets the OpenAI completions path.
+///
+/// Scans the request line only: a header value (`Referer`, say) could otherwise
+/// carry the path and mis-route the reply. `/v1/chat/completions` does not
+/// contain `/v1/completions` as a substring, so the two paths never collide.
+fn is_completions(head: &[u8]) -> bool {
+    let line = head.split(|&b| b == b'\n').next().unwrap_or(head);
+    find(line, b"/v1/completions").is_some()
 }
 
 /// Parses and answers every complete request found in `chunk` starting at
@@ -77,8 +100,7 @@ fn build_responses() -> Responses {
 fn drain_requests<S: Write>(
     chunk: &[u8],
     stream: &mut S,
-    chat: &Arc<Vec<u8>>,
-    models: &Arc<Vec<u8>>,
+    resp: &Responses,
 ) -> Result<usize, ()> {
     let mut off = 0usize;
     loop {
@@ -96,12 +118,14 @@ fn drain_requests<S: Write>(
         if rest.len() < total {
             break;
         }
-        let resp = if head.starts_with(b"GET") {
-            models
+        let reply = if head.starts_with(b"GET") {
+            &resp.models
+        } else if is_completions(head) {
+            &resp.completions
         } else {
-            chat
+            &resp.chat
         };
-        if stream.write_all(resp).is_err() {
+        if stream.write_all(reply).is_err() {
             return Err(());
         }
         off += total;
@@ -109,7 +133,7 @@ fn drain_requests<S: Write>(
     Ok(off)
 }
 
-fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8>>) {
+fn handle<S: Read + Write>(mut stream: S, resp: Arc<Responses>) {
     let mut buf = vec![0u8; 65536];
     // Only populated when a request spans more than one `read()` call (rare
     // at pipeline depth 1: the client waits for a response before sending
@@ -124,7 +148,7 @@ fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8
             Err(_) => break,
         };
         if acc.is_empty() {
-            let off = match drain_requests(&buf[..n], &mut stream, &chat, &models) {
+            let off = match drain_requests(&buf[..n], &mut stream, &resp) {
                 Ok(off) => off,
                 Err(()) => return,
             };
@@ -133,7 +157,7 @@ fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8
             }
         } else {
             acc.extend_from_slice(&buf[..n]);
-            let off = match drain_requests(&acc, &mut stream, &chat, &models) {
+            let off = match drain_requests(&acc, &mut stream, &resp) {
                 Ok(off) => off,
                 Err(()) => return,
             };
@@ -179,14 +203,13 @@ impl FastListener for std::os::unix::net::UnixListener {
 }
 
 /// The kernel serializes concurrent `accept` calls on the shared listener.
-fn accept_loop<L: FastListener>(listener: Arc<L>, resp: &Responses) {
+fn accept_loop<L: FastListener>(listener: Arc<L>, resp: Arc<Responses>) {
     loop {
         let Ok(stream) = listener.accept_conn() else {
             continue;
         };
-        let chat = resp.chat.clone();
-        let models = resp.models.clone();
-        thread::spawn(move || handle(stream, chat, models));
+        let resp = resp.clone();
+        thread::spawn(move || handle(stream, resp));
     }
 }
 
@@ -198,7 +221,7 @@ fn serve<L: FastListener>(listener: L, threads: usize) {
     for _ in 0..threads {
         let l = listener.clone();
         let r = resp.clone();
-        handles.push(thread::spawn(move || accept_loop(l, &r)));
+        handles.push(thread::spawn(move || accept_loop(l, r)));
     }
     for h in handles {
         let _ = h.join();
@@ -269,4 +292,39 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
     );
     serve(listener, threads);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completions_path_routes_separately_from_chat() {
+        assert!(is_completions(b"POST /v1/completions HTTP/1.1\r\n"));
+        assert!(!is_completions(b"POST /v1/chat/completions HTTP/1.1\r\n"));
+    }
+
+    /// The scan is confined to the request line, so a header that happens to
+    /// carry the completions path cannot steal a chat reply.
+    #[test]
+    fn a_header_carrying_the_path_does_not_misroute() {
+        let head = b"POST /v1/chat/completions HTTP/1.1\r\nReferer: http://h/v1/completions\r\n";
+        assert!(!is_completions(head));
+    }
+
+    /// Each payload must carry the `object` its runtime parser demands:
+    /// CompletionsEndpoint accepts only `completion`/`text_completion` and
+    /// reads `choices[].text`, while chat reads `choices[].delta.content`.
+    /// A swapped discriminator parses to zero response data, which shows up as
+    /// a run with no output tokens rather than as an error.
+    #[test]
+    fn each_payload_carries_the_object_its_parser_requires() {
+        let responses = build_responses();
+        let completions = String::from_utf8_lossy(&responses.completions).into_owned();
+        assert!(completions.contains(r#""object":"text_completion""#));
+        assert!(completions.contains(r#""text":"x""#));
+
+        let chat = String::from_utf8_lossy(&responses.chat).into_owned();
+        assert!(chat.contains(r#""object":"chat.completion.chunk""#));
+    }
 }
