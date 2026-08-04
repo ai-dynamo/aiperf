@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import orjson
 import pytest
 from aiperf_mock_server.accuracy import (
     AccuracyDataset,
@@ -154,6 +155,61 @@ def test_wrong_answers_differ_from_gold() -> None:
 )  # fmt: skip
 def test_gsm8k_wrong_is_a_different_number(raw: str, expected: str) -> None:
     assert bump_number(raw) == expected
+
+
+def _fenced(code: str) -> str:
+    return f"```python\n{code}\n```"
+
+
+def _extract_code(answer: str) -> str:
+    """Mirror how code-execution graders slice a fenced block: between the last
+    two fence lines. Anything after the closing fence is discarded."""
+    lines = answer.split("\n")
+    fences = [i for i, line in enumerate(lines) if "```" in line]
+    if len(fences) < 2:
+        return ""
+    return "\n".join(lines[fences[-2] + 1 : fences[-1]])
+
+
+def test_passthrough_wrong_answer_changes_the_fenced_program() -> None:
+    """A wrong answer must change the code a grader actually runs.
+
+    Regression: the wrong-answer path used to append a suffix AFTER the closing
+    fence. Graders slice between the last two fence lines and drop trailing
+    text, so the extracted program stayed byte-identical to the gold and still
+    graded correct -- making correct_rate a silent no-op for every
+    code-execution grader.
+    """
+    gold = _fenced("import sys\nprint(42)")
+    body = orjson.dumps({"prompt": "q", "answer": gold}).decode()
+    ds = _dataset(body, default_format=AccuracyFormat.PASSTHROUGH, correct_rate=0.0)
+    decision = ds.decide(ds.lookup("q"))  # type: ignore[arg-type]
+
+    assert not decision.correct
+    assert _extract_code(decision.content) != _extract_code(gold)
+
+
+def test_passthrough_wrong_answer_keeps_a_usable_code_block() -> None:
+    """The wrong answer stays a well-formed fenced block, so it grades as a
+    genuine wrong answer rather than an unparsable response."""
+    gold = _fenced("import sys\nprint(42)")
+    body = orjson.dumps({"prompt": "q", "answer": gold}).decode()
+    ds = _dataset(body, default_format=AccuracyFormat.PASSTHROUGH, correct_rate=0.0)
+    decision = ds.decide(ds.lookup("q"))  # type: ignore[arg-type]
+
+    assert decision.content.startswith("```python\n")
+    assert decision.content.rstrip().endswith("```")
+    assert _extract_code(decision.content).strip() != ""
+
+
+def test_passthrough_wrong_answer_unchanged_for_non_code_gold() -> None:
+    """Non-fenced gold keeps the original suffix behaviour."""
+    body = '{"prompt":"q","answer":"Paris"}'
+    ds = _dataset(body, default_format=AccuracyFormat.PASSTHROUGH, correct_rate=0.0)
+    decision = ds.decide(ds.lookup("q"))  # type: ignore[arg-type]
+
+    assert not decision.correct
+    assert decision.content == "Paris_wrong"
 
 
 def test_decision_is_deterministic_per_prompt() -> None:

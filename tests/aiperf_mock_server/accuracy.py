@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -418,7 +419,36 @@ def _format_wrong(fmt: AccuracyFormat, entry: Entry, rng: random.Random) -> str:
         return f"#### {bump_number(g)}"
     if fmt is AccuracyFormat.MATH:
         return rf"\boxed{{{bump_number(g)}}}"
+    if fmt in {AccuracyFormat.PASSTHROUGH, AccuracyFormat.EXACT_MATCH}:
+        block = _wrong_code_block(g)
+        if block is not None:
+            return block
     return f"{g}_wrong"
+
+
+# A gold that is a fenced code block belongs to a code-execution grader, which
+# runs the extracted program. Corrupt INSIDE the fence: appending after the
+# closing fence is invisible, because extractors slice between the last two
+# fence lines and discard trailing text, so the extracted program stays
+# byte-identical to the gold and still grades correct. That made
+# --accuracy-correct-rate a silent no-op for every code-execution grader.
+_FENCED_CODE_RE = re.compile(
+    r"\A(?P<open>```[^\n]*\n)(?P<body>.*)(?P<close>\n```)\Z", re.DOTALL
+)
+
+# Runs cleanly and produces output no test case expects, so the grade is a
+# genuine wrong answer rather than a crash or an unparsable response.
+_WRONG_CODE_BODY = "import sys\nsys.stdout.write('__MOCK_WRONG_ANSWER__')\n"
+
+
+def _wrong_code_block(gold: str) -> str | None:
+    """Return ``gold`` with its fenced body replaced by a deliberately wrong
+    program, preserving the fence and its language tag. ``None`` when ``gold``
+    is not a single fenced code block."""
+    match = _FENCED_CODE_RE.match(gold)
+    if match is None:
+        return None
+    return f"{match['open']}{_WRONG_CODE_BODY}{match['close']}"
 
 
 def _wrong_letter(fmt: AccuracyFormat, entry: Entry, rng: random.Random) -> str:

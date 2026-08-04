@@ -199,6 +199,8 @@ Ground truth never crosses the wire in AIPerf (it lives only in the accuracy wor
 | `exact_match` (aliases `exact` / `hellaswag` / `bigbench`) | gold verbatim |
 | `passthrough` | gold verbatim |
 
+**Wrong answers:** `--accuracy-correct-rate` below `1.0` serves a deliberately wrong answer for the corresponding share of prompts. When a `passthrough` / `exact_match` gold is a fenced code block (code-execution graders such as `lcb_codegeneration`), the wrong answer replaces the code *inside* the fence rather than appending after it — graders slice between the last two fence lines and discard trailing text, so an appended suffix would leave the extracted program identical to the gold and still grade correct.
+
 **Matching:** all modes whitespace-normalize. `substring` (default) falls back to the longest row key contained in the request (few-shot / system-prompt wrapping). Per-row `match_key` matches a stable fragment. Verdicts are deterministic in `(--random-seed, key_norm)`.
 
 **Adversarial shapes** (`--accuracy-adversarial-rate`): leading whitespace, trailing prose, wrong case, reasoning-only content, `\boxed{}` wrap, multiple conflicting answers, unicode suffix, and a streaming `"object": null` SSE frame before `[DONE]`.
