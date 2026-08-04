@@ -50,7 +50,7 @@
 //! the run near 54k requests/sec with a single thread pegged at ~1.06 cores and
 //! the other 144 idle, while `sharded` ran the same workload at 277k.
 //!
-//! This mode reaches 93k -- +72% over the hop -- but does NOT approach
+//! This mode reaches 96k -- +76% over the hop -- but does NOT approach
 //! `sharded`, and the profile says why. Removing the coordinator from the
 //! request's lifetime was worth only ~6%: the awaited future was never the cost.
 //! Routing and enqueue are ~5% of the pegged thread. The cost is that ONE thread

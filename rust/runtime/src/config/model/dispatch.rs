@@ -58,8 +58,8 @@ pub enum DispatchMode {
     /// # It still does NOT reach `Sharded`
     ///
     /// Measured on 144 cores against `aiperf-mock-server --fast` at ISL 550 /
-    /// OSL 1 / concurrency 512: 93.4k requests/sec against `GlobalHop`'s 54.4k
-    /// (+72%) and `Sharded`'s 277.1k. Removing the coordinator from each
+    /// OSL 1 / concurrency 512: 95.6k requests/sec against `GlobalHop`'s 54.4k
+    /// (+76%) and `Sharded`'s 276.8k. Removing the coordinator from each
     /// request's lifetime accounts for only a sixth of that gain, because the
     /// awaited future was never the cost; the rest came from a profile of the
     /// pegged issuer thread, which attributed its per-request CPU to dataset
