@@ -1305,9 +1305,9 @@ pub struct NativeDatasetConversationSource {
     /// owns. Backs `conversations()`, which fixed-schedule replay and the
     /// single-turn-per-conversation workload use to enumerate their work, and
     /// the per-session `inputs.json` projection each cell contributes to the
-    /// controller's round-robin merge. Equal to `metadata` when the source is
-    /// unpartitioned.
-    owned_metadata: Vec<ConversationMetadata>,
+    /// controller's round-robin merge. Shares `metadata`'s allocation outright
+    /// when the source is unpartitioned, which is every single-process run.
+    owned_metadata: Arc<Vec<ConversationMetadata>>,
     sampler: Box<dyn Sampler>,
     endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
@@ -1547,19 +1547,23 @@ impl NativeDatasetConversationSource {
             .enumerate()
             .map(|(index, metadata)| (metadata.conversation_id.clone(), index))
             .collect();
-        let owned_metadata: Vec<ConversationMetadata> = metadata
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                ownership
-                    .map(|partition| partition.owns(*index as u64))
-                    .unwrap_or(true)
-            })
-            .map(|(_, conversation)| conversation.clone())
-            .collect();
+        let metadata = Arc::new(metadata);
+        // An unpartitioned source enumerates exactly what it resolves, so it
+        // shares the one allocation rather than deep-cloning every turn vector.
+        let owned_metadata = match ownership {
+            None => metadata.clone(),
+            Some(partition) => Arc::new(
+                metadata
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| partition.owns(*index as u64))
+                    .map(|(_, conversation)| conversation.clone())
+                    .collect::<Vec<_>>(),
+            ),
+        };
         Ok(Self {
             dataset,
-            metadata: Arc::new(metadata),
+            metadata,
             metadata_by_id,
             owned_metadata,
             sampler,
@@ -2986,16 +2990,30 @@ mod tests {
             2,
             "cell 0 of 2 enumerates the even authored indices only, got {enumerated:?}"
         );
-        let unowned = all_ids
+        let (unowned_index, unowned) = all_ids
             .iter()
-            .find(|id| !enumerated.contains(id))
+            .enumerate()
+            .find(|(_, id)| !enumerated.contains(id))
             .expect("a 3-conversation corpus split 2 ways leaves cell 0 one unowned id");
 
+        let session = source.session_for(unowned, "corr-1".to_string()).expect(
+            "a shard must RESOLVE an unowned conversation even though it does not \
+             ENUMERATE it; rejecting it as 'not sampleable' is what sank the earlier \
+             full-corpus draw attempt",
+        );
+        // The dispatched body, not the echoed conversation id, is what pins the
+        // `metadata_by_id` -> `template_index` -> `metadata[..]` index basis this
+        // task rebased: an off-by-one there still resolves Ok, but materializes a
+        // neighbouring row's payload.
+        let turn = session
+            .build_first_turn(None)
+            .expect("an unowned conversation materializes from the shared dataset");
+        let body = String::from_utf8(dispatched_body(&turn).to_vec())
+            .expect("the raw_payload fixture body is UTF-8");
         assert!(
-            source.session_for(unowned, "corr-1".to_string()).is_ok(),
-            "a shard must RESOLVE an unowned conversation ({unowned}) even though it \
-             does not ENUMERATE it; rejecting it as 'not sampleable' is what sank the \
-             earlier full-corpus draw attempt"
+            body.contains(&format!(r#""p{unowned_index}""#)),
+            "the resolved session must materialize authored row {unowned_index} \
+             ({unowned}), got {body}"
         );
     }
 

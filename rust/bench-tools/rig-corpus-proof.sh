@@ -20,7 +20,7 @@
 #   partitioned (pre-change)  : spread (a 63-conversation shard draws 1250/63,
 #                               a 62-conversation shard draws 1250/62)
 #   position-addressed (post) : exactly 20 -- identical to the single issuer
-set -uo pipefail
+set -euo pipefail
 
 PORT=${PORT:-8152}
 BIN=${BIN:-/work/target/release/aiperf}
@@ -97,9 +97,12 @@ run_one() { # $1 = label, $2 = workers, $3 = dispatch
   rm -rf "$art"
   start_mock || exit 1
   write_cfg "$2" "$3" "$OUT/cfg-$TAG-$1.yaml"
+  # `|| rc=$?` rather than a bare `$?` capture: the profile run's non-zero exit
+  # is inspected below, and this keeps that intentional under `set -e` without
+  # depending on the caller invoking `run_one` in a condition context.
+  local rc=0
   timeout 1800 "$BIN" profile --config "$OUT/cfg-$TAG-$1.yaml" --random-seed 42 \
-    --export-level records --artifact-dir "$art" > "$OUT/run-$TAG-$1.log" 2>&1
-  local rc=$?
+    --export-level records --artifact-dir "$art" > "$OUT/run-$TAG-$1.log" 2>&1 || rc=$?
   if [ $rc -ne 0 ]; then
     echo "FATAL: $1 exited $rc; see $OUT/run-$TAG-$1.log" >&2
     tail -20 "$OUT/run-$TAG-$1.log" >&2
@@ -125,7 +128,11 @@ if diff -q "$OUT/hist-$TAG-single-issuer.txt" "$OUT/hist-$TAG-global-w$WORKERS.t
 else
   echo "RESULT [$TAG]: DIVERGENT - global w$WORKERS differs from the single issuer"
   echo "  conversations whose draw count differs:"
+  # `diff` exits 1 here BY DEFINITION (this is the divergent branch), and
+  # `pipefail` propagates that through the pipe, so both reports need `|| true`
+  # to survive `set -e` -- without it the script would abort at the exact moment
+  # it is supposed to explain the divergence.
   diff "$OUT/hist-$TAG-single-issuer.txt" "$OUT/hist-$TAG-global-w$WORKERS.txt" \
-    | grep -c '^[<>]' | xargs printf '    %s differing lines\n'
-  diff "$OUT/hist-$TAG-single-issuer.txt" "$OUT/hist-$TAG-global-w$WORKERS.txt" | head -10
+    | grep -c '^[<>]' | xargs printf '    %s differing lines\n' || true
+  diff "$OUT/hist-$TAG-single-issuer.txt" "$OUT/hist-$TAG-global-w$WORKERS.txt" | head -10 || true
 fi
