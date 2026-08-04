@@ -3091,7 +3091,9 @@ mod tests {
     /// the resolution map stayed narrow.
     #[tokio::test]
     async fn a_partitioned_shard_resolves_a_conversation_it_does_not_enumerate() {
-        let dataset = raw_payload_jsonl_dataset(3).await;
+        // The middle row carries 3 turns; its neighbours carry 1. That asymmetry
+        // is what makes the turn-count assertion below discriminating.
+        let dataset = uneven_turn_count_dataset().await;
         let all_ids: Vec<String> = dataset
             .conversations()
             .iter()
@@ -3110,26 +3112,33 @@ mod tests {
             .enumerate()
             .find(|(_, id)| !enumerated.contains(id))
             .expect("a 3-conversation corpus split 2 ways leaves cell 0 one unowned id");
+        assert_eq!(unowned_index, 1, "the unowned row must be the 3-turn one");
 
         let session = source.session_for(unowned, "corr-1".to_string()).expect(
             "a shard must RESOLVE an unowned conversation even though it does not \
              ENUMERATE it; rejecting it as 'not sampleable' is what sank the earlier \
              full-corpus draw attempt",
         );
-        // The dispatched body, not the echoed conversation id, is what pins the
-        // `metadata_by_id` -> `template_index` -> `metadata[..]` index basis this
-        // task rebased: an off-by-one there still resolves Ok, but materializes a
-        // neighbouring row's payload.
-        let turn = session
+        // Resolving is only half the property; the session must also carry the
+        // RIGHT row's metadata. `available_turns` is the only observable that
+        // discriminates, because it reads `metadata[template_index].turns.len()`
+        // directly -- whereas the dispatched body is built from `session_id`,
+        // which `session()` copies from the argument, so no body assertion can
+        // detect a wrong `template_index`.
+        //
+        // Concretely this fails the natural mis-wiring of pointing the backend's
+        // `metadata` at `owned_metadata` while `metadata_by_id` stays full-corpus:
+        // `template_index` 1 would then index the 2-element owned vec IN BOUNDS
+        // and return authored row 2, whose turn count is 1, not 3.
+        assert_eq!(
+            session.available_turns(),
+            3,
+            "the resolved session must carry authored row {unowned_index} ({unowned})'s \
+             own metadata, so `template_index` must index the FULL corpus"
+        );
+        session
             .build_first_turn(None)
             .expect("an unowned conversation materializes from the shared dataset");
-        let body = String::from_utf8(dispatched_body(&turn).to_vec())
-            .expect("the raw_payload fixture body is UTF-8");
-        assert!(
-            body.contains(&format!(r#""p{unowned_index}""#)),
-            "the resolved session must materialize authored row {unowned_index} \
-             ({unowned}), got {body}"
-        );
     }
 
     /// Preferred (shuffle) sampling under a partition still recycles only the
@@ -3241,6 +3250,34 @@ mod tests {
             assert!(owned.contains(&session.conversation_id));
             session.build_first_turn(None).unwrap();
         }
+    }
+
+    /// Three conversations whose MIDDLE row carries 3 turns while its neighbours
+    /// carry 1 — the shape a test needs to tell `metadata[template_index]` apart
+    /// from a same-length lookup against a different table.
+    ///
+    /// Deliberately NOT `raw_payload`: that loader hardcodes
+    /// `group_key = row:{index}` (`loader/raw_payload.rs`), so every row becomes
+    /// its own single-turn conversation and turn counts there are uniformly 1.
+    async fn uneven_turn_count_dataset() -> NativeDataset {
+        LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("multi_turn"),
+                &LoadConfig::new(DatasetSource::Inline(json!([
+                    {"session_id": "c0", "turns": [{"text": "c0 t0", "output_length": 4}]},
+                    {"session_id": "c1", "turns": [
+                        {"text": "c1 t0", "output_length": 4},
+                        {"text": "c1 t1", "output_length": 4, "delay": 0},
+                        {"text": "c1 t2", "output_length": 4, "delay": 0},
+                    ]},
+                    {"session_id": "c2", "turns": [{"text": "c2 t0", "output_length": 4}]},
+                ]))),
+                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap()
     }
 
     async fn raw_payload_jsonl_dataset(rows: usize) -> NativeDataset {
