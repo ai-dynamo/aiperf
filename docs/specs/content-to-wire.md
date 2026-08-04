@@ -184,9 +184,9 @@ sequenceDiagram
         ST-->>DS: Bytes (refcount clone, no copy)
         DS->>DS: splice captured assistant replies
         DS->>EP: format_payload(PreparedRequest)
-        EP->>EP: assemble wires; empty-array placeholder<br/>fixes field position
-        EP->>EP: from_object → Literal + Wires
-        EP->>EP: splice_message_wires replaces placeholder
+        EP->>EP: assemble wires; position marker<br/>fixes field position
+        EP->>EP: from_object_reserving → Literal + Wires + Reserved
+        EP->>EP: fill_reserved fills the reserved slot
         EP-->>MZ: BodyPlan::Fields
     end
 

@@ -186,27 +186,31 @@ flowchart LR
 
 ### How an endpoint builds a plan
 
-Every dialect follows one pattern (`endpoints/endpoints.rs:340-385` is the
+Every dialect follows one pattern (`endpoints/endpoints.rs:341-385` is the
 reference implementation for chat):
 
 1. Assemble message wires — `format_chat_message_wires` resolves each turn to
    `RenderedMessage::Wire(bytes)` when the turn carries a lowered wire, or
    `RenderedMessage::Value(v)` when it must be rendered live. Only the latter is
    serialized (`endpoints/endpoints.rs:830-842`).
-2. Build the scalar payload as a `serde_json::Map`, inserting an **empty-array
-   placeholder** for the message field purely to fix its ordinal position
-   (`endpoints/endpoints.rs:351-352`).
-3. Bridge the map to a plan with `BodyPlan::from_object`, which turns non-empty
-   arrays-of-objects into `Wires` and everything else into `Literal`
-   (`body_plan.rs:166-184`).
-4. Replace the placeholder with the real wires via `splice_message_wires`, which
-   preserves the field's position (`body_plan.rs:188-197`).
+2. Build the scalar payload as a `serde_json::Map`, inserting a **position
+   marker** (`Value::Null`) for the message field purely to fix its ordinal
+   position (`endpoints/endpoints.rs:351-353`).
+3. Bridge the map to a plan with `BodyPlan::from_object_reserving`, which turns
+   non-empty arrays-of-objects into `Wires`, everything else into `Literal`, and
+   each named field into an unfilled `FieldValue::Reserved` slot. A reserved name
+   the payload never declared is an error here.
+4. Fill the slot with the real wires via `fill_reserved`, which preserves the
+   field's position and errors on an unreserved name or an empty wire list.
 
-The placeholder is load-bearing: because it is empty, `from_object` classifies it
-as a `Literal` and never serializes a message array, so step 4's replacement costs
-nothing. Three call sites use this pattern — `messages` for chat
-(`endpoints.rs:383`) and Anthropic (`anthropic.rs:248`), `input` for Responses
-(`endpoints.rs:597`).
+The marker's *value* is discarded — only its key position matters, which is why
+`Value::Null` is as good as any array. Both halves are fallible on purpose: an
+unfilled `Reserved` slot fails at materialization rather than emitting `[]`, and a
+fill under an undeclared name fails immediately, so the two ways the older
+empty-array-placeholder convention shipped a body with no message array are now
+loud. Three call sites share the `build_reserved_plan` helper
+(`endpoints.rs:754-765`) — `messages` for chat (`endpoints.rs:382`) and Anthropic
+(`anthropic.rs:247`), `input` for Responses (`endpoints.rs:594`).
 
 **The endpoint declares shape only.** It chooses field names, field order, and
 which slot is a literal versus content. It never emits commas or brackets, and
@@ -444,8 +448,8 @@ Explicitly planned, not built. Implementation plan:
 
 - `rust/runtime/src/body_plan.rs` — plan vocabulary (`BodyPlan`, `FieldValue`), the
   JSON materializer (`JsonBodyMaterializer`), the object bridge
-  (`BodyPlan::from_object`), the live-content splice (`splice_message_wires`),
-  override folding (`set_literal` / `merge_overrides`), and the unfired static
+  (`BodyPlan::from_object`), the reserved-slot pair (`from_object_reserving` /
+  `fill_reserved`), override folding (`set_literal` / `merge_overrides`), and the unfired static
   collapse (`prebuilt_if_static`, `PER_DISPATCH_LITERALS`).
 - `rust/runtime/src/dataset/materialize.rs` — the override set (`Overrides`), the
   zero-copy store read (`message_wire`), and verbatim raw splicing
@@ -459,7 +463,8 @@ Explicitly planned, not built. Implementation plan:
   (`materialize`, `materialize_prepared`), turn resolution (`resolve_turn`,
   `endpoint_turns`) including the live-reply splice, and `effective_from_plan`.
 - `rust/runtime/src/endpoints/endpoints.rs` — the reference dialect pattern
-  (placeholder → `from_object` → `splice_message_wires`), wire assembly
+  (position marker → `from_object_reserving` → `fill_reserved`, via
+  `build_reserved_plan`), wire assembly
   (`rendered_turn_messages`, `serialize_rendered_messages`), and the load-time
   lowering seam (`ShapeLowerer`, `TurnMessageLowerer`).
 - `rust/runtime/src/endpoints/registry.rs` — the `format_payload → BodyPlan`
