@@ -210,6 +210,25 @@ impl RequestRateWorkload {
         session_slots: Option<Rc<SlotPool>>,
         prefill_slots: Option<Rc<SlotPool>>,
     ) -> Result<Self> {
+        // Both checks read `conversations()` — this shard's residue class — even
+        // though a position-addressed shard DRAWS the full corpus through
+        // `next_at_position`. That narrower basis is exact, not an oversight, so
+        // do not widen it to `sampled_conversations()`:
+        //
+        // - A turn-less conversation cannot reach any source. `Dataset::new`
+        //   rejects one for EVERY conversation at construction, before a
+        //   partition exists (`dataset/dataset.rs`, `validate_conversation_handles`),
+        //   so no residue can hide a row the full corpus would have caught.
+        // - An empty residue cannot reach here either: a partitioned source bails
+        //   with "partition owns no sampleable sessions" and an unpartitioned one
+        //   bails with `DatasetError::EmptySampler`, both inside the source
+        //   constructor. This bail guards a non-native `ConversationSource`, whose
+        //   default `sampled_conversations()` is `conversations()` anyway.
+        // - Widening would scan the whole corpus on each of `W` shards — O(W x
+        //   corpus) startup for a check that provably cannot fire.
+        //
+        // The invariant the narrow basis rests on is pinned by
+        // `multiturn::tests::request_rate_zero_turn_validation_cannot_miss_a_row_outside_the_residue`.
         if conversations.conversations().is_empty() {
             bail!("request-rate conversation dataset cannot be empty");
         }

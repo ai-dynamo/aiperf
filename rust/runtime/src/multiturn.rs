@@ -3435,6 +3435,72 @@ mod tests {
         );
     }
 
+    /// `request_rate` validates "no conversation has zero turns" over
+    /// `conversations()` — the residue class — while a position-addressed shard
+    /// draws the FULL corpus. That narrow basis is exact rather than lossy, and
+    /// this pins the invariant it rests on plus both draw modes.
+    ///
+    /// The invariant: a turn-less conversation cannot reach ANY source, because
+    /// `Dataset::new` rejects one for every conversation before a partition
+    /// exists. If that ever stops holding, this test fails and the narrow basis
+    /// in `request_rate.rs` must be revisited — which is the whole point of
+    /// asserting it here rather than trusting the comment.
+    #[tokio::test]
+    async fn request_rate_zero_turn_validation_cannot_miss_a_row_outside_the_residue() {
+        use crate::dataset::model::Conversation;
+        use crate::request_rate::{RequestRateConfig, RequestRateWorkload};
+        use crate::timing::ArrivalPattern;
+
+        let dataset = uneven_turn_count_dataset().await;
+
+        // A turn-less row cannot survive construction, so no partition of any
+        // dataset can hide one from a residue-basis scan.
+        let error = NativeDataset::new(
+            vec![Conversation::new("no-turns")],
+            dataset.segments().clone(),
+            "sequential",
+            dataset.metadata().default_context_mode,
+        )
+        .err()
+        .expect("a turn-less conversation must not construct a dataset");
+        assert!(
+            error.to_string().contains("contains no turns"),
+            "unexpected rejection: {error}"
+        );
+
+        let config = RequestRateConfig {
+            arrival_pattern: ArrivalPattern::Constant,
+            request_rate: Some(10.0),
+            arrival_smoothness: None,
+            session_concurrency: None,
+            prefill_concurrency: None,
+            seed: 1,
+        };
+
+        // Position-addressed: the drawn corpus is wider than the enumerated one,
+        // and the wider one holds nothing the narrow scan would have rejected.
+        let addressed = position_addressed_source(dataset.clone(), 0, 2).await;
+        assert_eq!(addressed.conversations().len(), 2);
+        assert_eq!(addressed.sampled_conversations().len(), 3);
+        assert!(
+            addressed
+                .sampled_conversations()
+                .iter()
+                .all(|conversation| !conversation.turns.is_empty()),
+            "the full draw corpus must hold no turn-less row for the residue-basis \
+             scan in request_rate.rs to be exact"
+        );
+        RequestRateWorkload::new(config, Box::new(addressed))
+            .expect("a position-addressed shard builds over its residue-basis scan");
+
+        // Sharded: draw and enumeration are the same corpus, so the scan is
+        // trivially total over what this shard can reach.
+        let owned = partitioned_sequential_source(dataset, 0, 2).await;
+        assert_eq!(owned.sampled_conversations().len(), 2);
+        RequestRateWorkload::new(config, Box::new(owned))
+            .expect("a Sharded shard builds over its own sub-corpus");
+    }
+
     /// Three conversations whose MIDDLE row carries 3 turns while its neighbours
     /// carry 1 — the shape a test needs to tell `metadata[template_index]` apart
     /// from a same-length lookup against a different table.
