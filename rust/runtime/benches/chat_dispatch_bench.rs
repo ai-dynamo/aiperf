@@ -37,7 +37,7 @@ use serde_json::Value;
 use smallvec::smallvec;
 
 use aiperf_runtime::body_plan::RequestBody;
-use aiperf_runtime::dataset::Dataset;
+use aiperf_runtime::dataset::{Dataset, TurnEndpointLookup};
 use aiperf_runtime::dataset::materialize::Overrides;
 use aiperf_runtime::dataset::model::{
     ContentGroup, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
@@ -243,6 +243,15 @@ fn prepared_chat_endpoint() -> Box<dyn PreparedEndpoint> {
         .expect("prepare chat endpoint")
 }
 
+/// Every turn resolves to the one endpoint under measurement.
+struct SingleEndpointLookup<'a>(&'a dyn PreparedEndpoint);
+
+impl TurnEndpointLookup for SingleEndpointLookup<'_> {
+    fn endpoint_for(&self, _name: Option<&str>) -> Option<&dyn PreparedEndpoint> {
+        Some(self.0)
+    }
+}
+
 fn build_dataset(
     mode: ConversationContextMode,
     turns: Vec<Turn>,
@@ -270,6 +279,11 @@ fn build_dataset(
             .precompute_body_plans(endpoint, "primary-model")
             .expect("precompute body plans");
     }
+    // Always established, independent of body-plan caching: this is what makes a
+    // continuation turn's `image_count` known so dispatch never re-parses.
+    dataset
+        .precompute_image_counts(&SingleEndpointLookup(endpoint), "primary-model")
+        .expect("precompute image counts");
     Arc::new(dataset)
 }
 
@@ -283,7 +297,8 @@ fn session_at(dataset: Arc<Dataset>, turn_index: usize, reply_len: usize) -> Con
         if index < turn_index && session.should_capture_response() {
             let reply = endpoint_assistant_turn(filler(reply_len, 200 + index as u8));
             session
-                .capture_response(reply, 64)
+                // A text-only assistant reply contributes no wire image part.
+                .capture_response(reply, 64, Some(0))
                 .expect("capture response");
         }
     }
@@ -315,6 +330,35 @@ fn dispatch_body(
         .body
         .to_wire()
         .expect("to_wire")
+}
+
+/// What `endpoint_dispatch.rs` actually runs: materialize the body, then take
+/// the established image count when there is one and parse the body only when
+/// there is not.
+fn dispatch_body_and_image_count(
+    session: &ConversationSession,
+    endpoint: &dyn PreparedEndpoint,
+    overrides: &Overrides,
+) -> (Bytes, usize) {
+    let request = session
+        .materialize_prepared(
+            &EndpointRequestMaterializer,
+            endpoint,
+            "primary-model",
+            CreditPhase::Profiling,
+            overrides,
+        )
+        .expect("materialize");
+    let known = request.image_count;
+    let body = request.body.to_wire().expect("to_wire");
+    let count = known.map_or_else(
+        || {
+            let value = serde_json::from_slice::<Value>(&body).expect("parse");
+            endpoint.extract_payload_inputs(&value).image_count as usize
+        },
+        |count| count as usize,
+    );
+    (body, count)
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +541,15 @@ fn chat_dispatch_body_path_profile() {
             len,
             ITERS,
             || dispatch_body(&session, endpoint.as_ref(), &overrides),
+        ));
+
+        // The real dispatch decision, end to end: whatever the runtime
+        // establishes up front decides whether the body is parsed here.
+        parse_samples.push(measure(
+            format!("[{size_label}] TOTAL t3 dispatch, REAL image-count path"),
+            len,
+            ITERS,
+            || dispatch_body_and_image_count(&session, endpoint.as_ref(), &overrides),
         ));
     }
     for sample in &parse_samples {
