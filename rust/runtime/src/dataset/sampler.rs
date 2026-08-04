@@ -389,6 +389,43 @@ mod tests {
         );
     }
 
+    /// The whole point of `at_position`: it must agree, element for element,
+    /// with walking the sampler statefully — including across recycle wraps.
+    /// That agreement is what lets W threads each compute their own slice of
+    /// one draw sequence with no shared state.
+    #[test]
+    fn at_position_agrees_with_walking_the_sequential_sampler() {
+        let mut walked = SequentialSampler::new(ids()).unwrap();
+        let addressed = SequentialSampler::new(ids()).unwrap();
+        // `ids()` has 4 entries; 10 draws exercises two full wraps.
+        for position in 0..10u64 {
+            assert_eq!(
+                addressed.at_position(position),
+                Some(walked.next()),
+                "position {position} must equal the {position}th stateful draw"
+            );
+        }
+    }
+
+    /// RNG-stateful strategies have no closed form, and must say so rather than
+    /// guess: the caller falls back to the stateful draw on `None`.
+    #[test]
+    fn rng_stateful_samplers_report_no_position_addressing() {
+        let root = RngRoot::new(Some(7));
+        assert!(
+            RandomSampler::new(ids(), root)
+                .unwrap()
+                .at_position(0)
+                .is_none()
+        );
+        assert!(
+            ShuffleSampler::new(ids(), root)
+                .unwrap()
+                .at_position(0)
+                .is_none()
+        );
+    }
+
     #[test]
     fn partitioned_sampler_yields_disjoint_owned_positions() {
         // Over a sequential inner (position == instance index), the two cells of a
