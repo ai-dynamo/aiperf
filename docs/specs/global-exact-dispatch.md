@@ -39,7 +39,10 @@ requests.
   (`rust/runtime/src/engine/sharded_scheduled.rs`) slice concurrency, rate,
   and request budget `1/W` up front per worker thread, retained as an
   explicit throughput-oriented opt-in where byte-exact parity does not
-  matter.
+  matter. The same `two_level_partition` also slices the **dataset**: each
+  thread narrows the corpus to its own authored-index residue class and
+  recycles inside it, so `W` threads walk `W` interleaved short cycles rather
+  than one long one.
 - `Global` (default for `workers>1`) keeps each worker thread's own
   transport, capture, and measurement, but draws concurrency and
   request-rate admission from a shared `GlobalAdmission` gate
@@ -61,6 +64,18 @@ requests.
     **not** reproduce true Poisson/Gamma arrival-process statistics (the
     resulting inter-arrival times are grid-plus-offset, not a renewal
     process); exact arrival-*pattern* parity is `global-hop`'s job.
+  - Dataset sampling is **position-addressed** over the full corpus
+    (`rust/runtime/src/multiturn.rs` `DrawMode::Position`,
+    `rust/runtime/src/dataset/sampler.rs` `Sampler::at_position`): each worker
+    thread draws the absolute corpus positions its `two_level_partition`
+    residue owns, so the union across threads is exactly one unpartitioned
+    sampler's draw sequence and the cell recycles once at the end of the whole
+    corpus. Closed form — no lock, atomic, or cross-thread state. Applies to
+    strategies whose draw is a pure function of position (`sequential`, the
+    default); RNG-stateful strategies (`random`, `shuffle`) have no closed form
+    and keep the per-shard owned-corpus walk. `Sharded` keeps the owned-corpus
+    walk in every case: it is the throughput opt-in where byte-exact parity
+    does not matter.
   - `GlobalAdmission` is `Some` only under `Global`; `None` under `Sharded`
     (per-thread `1/W` slicing needs no shared gate) and under
     `GlobalHop`/`GlobalPush` (their single coordinator loop enforces the full
