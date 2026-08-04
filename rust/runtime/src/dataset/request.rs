@@ -1789,7 +1789,12 @@ pub(crate) fn reply_image_count(
         "messages".to_string(),
         Value::Array(messages.clone()),
     )]));
-    Some(endpoint.extract_payload_inputs(&payload).image_count)
+    // Same guard `dataset_turn_image_count` applies to the same extractor: take
+    // the count only where the dialect reports it is the authoritative answer.
+    // Without it a dialect whose extractor found nothing in this shape reports an
+    // exact zero, and every later turn's count is silently short.
+    let extracted = endpoint.extract_payload_inputs(&payload);
+    extracted.owns_image_count.then_some(extracted.image_count)
 }
 
 /// Whether a resolved turn provably contributes no wire image part. See
