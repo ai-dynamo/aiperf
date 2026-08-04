@@ -182,8 +182,9 @@ fn user_turn(pool: &mut SegmentPool, text: String) -> Turn {
 
 /// A recorded self-contained message-array snapshot for turn `index`: every
 /// prior user message, every prior authored assistant reply, then this turn's
-/// user message. This is the `MessageArrayWithResponses` shape, and the only
-/// shape whose non-zero turns are served from the precomputed plan cache.
+/// user message. This is the `MessageArrayWithResponses` shape, whose every turn
+/// is response-independent and so caches outright — the reference the live
+/// `DeltasWithoutResponses` row below is measured against.
 fn snapshot_turn(pool: &mut SegmentPool, index: usize, per_message: usize) -> Turn {
     let mut handles = smallvec![];
     for prior in 0..index {
@@ -459,8 +460,10 @@ fn chat_dispatch_body_path_profile() {
 
         // --- Turn 3, live multi-turn chat: 3 prior user turns + 3 captured
         // assistant replies. `DeltasWithoutResponses` is the default context
-        // mode and the ordinary chat case; only its turn 0 is ever cached, so
-        // this always runs the live format_payload path. ---
+        // mode and the ordinary chat case. Its continuation turns cache the
+        // authored half of the body and splice the captured replies in at
+        // dispatch, so this row measures a cached plan plus a live splice — it
+        // was a full per-dispatch `format_payload` before that landed. ---
         {
             let mut pool = SegmentPool::new();
             let turns: Vec<Turn> = (0..4)
@@ -476,7 +479,7 @@ fn chat_dispatch_body_path_profile() {
             let session = session_at(dataset, endpoint.as_ref(), 3, per_message);
             let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
             samples.push(measure(
-                format!("[{size_label}] turn 3  LIVE chat (always uncached)"),
+                format!("[{size_label}] turn 3  LIVE chat (cached plan + reply splice)"),
                 len,
                 ITERS,
                 || dispatch_body(&session, endpoint.as_ref(), &overrides),
