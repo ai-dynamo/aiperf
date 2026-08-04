@@ -568,6 +568,97 @@ impl BodyPlan {
         let store = crate::dataset::segment::InMemorySegmentStore::default();
         JsonBodyMaterializer::materialize(self, &store, &Overrides::new())
     }
+
+    /// Whether materializing this plan needs no segment store.
+    ///
+    /// A store-free plan can be carried past the point where the store is no
+    /// longer reachable — the dispatch boundary — and still materialize, which
+    /// is what [`RequestBody::planned`] checks before admitting one.
+    /// [`Raw`](Self::Raw) addresses its body by handle and so is never
+    /// store-free; [`Prebuilt`](Self::Prebuilt) already holds its bytes; a
+    /// [`Fields`](Self::Fields) program is store-free exactly when no field
+    /// value resolves through a handle.
+    pub fn is_store_free(&self) -> bool {
+        match self {
+            Self::Raw(_) => false,
+            Self::Prebuilt(_) => true,
+            Self::Fields(program) => program.fields().iter().all(|(_, value)| {
+                !matches!(value, FieldValue::Segment(_) | FieldValue::Segments(_))
+            }),
+        }
+    }
+}
+
+/// One request body crossing the dataset → transport boundary.
+///
+/// Replaces the mutually-exclusive pair `Request.request_body: Option<Value>`
+/// and `Request.request_body_bytes: Option<Bytes>`, deleting the two runtime
+/// exclusivity checks the HTTP and gRPC sinks used to carry: the illegal state
+/// is no longer representable.
+///
+/// `Send + Sync` by construction — every member is. That is load-bearing:
+/// [`Dispatchable`](crate::dispatch::sink::Dispatchable) is `Send + Sync` and
+/// [`Request`](crate::transport::core::Request) implements it. There is no
+/// interior mutability here.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RequestBody {
+    /// Assembled wire bytes. Every JSON-over-HTTP transport, every raw-payload
+    /// replay, every [`Prebuilt`](BodyPlan::Prebuilt) plan, dynosim, dry-run,
+    /// and the cellular request fan-out see only this.
+    Wire(Bytes),
+    /// A store-free field program retained for a transport that consumes
+    /// structure rather than bytes (gRPC KServe/Riva, multipart form
+    /// endpoints). Produced only via [`RequestBody::planned`], which rejects
+    /// handle-bearing plans, so no [`Handle`] ever crosses the boundary without
+    /// its store.
+    Plan(std::sync::Arc<BodyPlan>),
+    /// A decoded body supplied by a caller that never had a plan (accuracy
+    /// benchmarks, the skeleton workload). Boxed to keep the enum small;
+    /// `size_of::<serde_json::Value>()` is several times a `Bytes`.
+    Value(Box<Value>),
+}
+
+impl RequestBody {
+    /// Wrap assembled bytes.
+    pub fn wire(bytes: Bytes) -> Self {
+        Self::Wire(bytes)
+    }
+
+    /// Wrap a store-free plan, rejecting any plan that would need a segment
+    /// store the transport does not have.
+    pub fn planned(plan: std::sync::Arc<BodyPlan>) -> Result<Self> {
+        if !plan.is_store_free() {
+            return Err(DatasetError::Validation(
+                "a handle-addressed plan cannot cross the dispatch boundary".into(),
+            ));
+        }
+        Ok(Self::Plan(plan))
+    }
+
+    /// The retained program, when this body kept one.
+    pub fn plan(&self) -> Option<&BodyPlan> {
+        match self {
+            Self::Plan(plan) => Some(plan),
+            _ => None,
+        }
+    }
+
+    /// Assemble JSON bytes. [`Wire`](Self::Wire) returns a refcount clone;
+    /// [`Plan`](Self::Plan) runs the JSON emitter against the empty store its
+    /// store-freeness guarantees. Used by dispatch, record capture,
+    /// `inputs.json`, and dry-run fabrication.
+    pub fn to_wire(&self) -> Result<Bytes> {
+        match self {
+            Self::Wire(bytes) => Ok(bytes.clone()),
+            Self::Plan(plan) => plan.materialize_standalone(),
+            // Right-sized before `Bytes::from` for the same reason
+            // `LiteralValue::new` does it: the `Vec` path otherwise retains the
+            // doubling slack and pays a `Shared` allocation.
+            Self::Value(value) => Ok(Bytes::from(
+                serde_json::to_vec(value.as_ref())?.into_boxed_slice(),
+            )),
+        }
+    }
 }
 
 impl Default for BodyPlan {
@@ -1633,5 +1724,41 @@ mod tests {
             BytesMut::from(over_reserved).capacity() > over_reserved_len,
             "the capacity probe can no longer tell a right-sized buffer from an over-reserved one"
         );
+    }
+
+    #[test]
+    fn a_handle_addressed_plan_is_refused_at_the_dispatch_boundary() {
+        let mut pool = SegmentPool::default();
+        let handle = message(&mut pool, None, br#"{"role":"user","content":"hi"}"#);
+
+        // A `Raw` plan resolves its whole body through the store, and a `Fields`
+        // program with a segment value resolves that field through it; neither
+        // can materialize once the store is out of reach.
+        assert!(RequestBody::planned(std::sync::Arc::new(BodyPlan::raw(handle))).is_err());
+        assert!(
+            RequestBody::planned(std::sync::Arc::new(
+                BodyPlan::new().array("messages", [handle])
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_retained_plan_materializes_the_body_it_would_have_dispatched() {
+        let plan = BodyPlan::new()
+            .wire_array(
+                "messages",
+                [Bytes::from_static(br#"{"role":"user","content":"hi"}"#)],
+            )
+            .str("model", "m");
+        let direct = plan.materialize_standalone().unwrap();
+
+        let body = RequestBody::planned(std::sync::Arc::new(plan)).unwrap();
+        assert_eq!(body.to_wire().unwrap(), direct);
+        assert!(body.plan().is_some());
+
+        // And the wire form hands the same bytes straight back.
+        assert_eq!(RequestBody::wire(direct.clone()).to_wire().unwrap(), direct);
+        assert!(RequestBody::wire(direct).plan().is_none());
     }
 }
