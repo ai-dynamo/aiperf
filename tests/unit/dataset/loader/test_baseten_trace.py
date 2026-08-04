@@ -132,7 +132,6 @@ class TestBasetenTraceDatasetLoader:
         assert list(dataset.keys()) == ["42", "99"]
         assert [trace.timestamp for trace in dataset["42"]] == [0, 150]
         assert dataset["42"][0].text_input == "first prompt"
-        assert dataset["42"][0].request_canceled == 1
         # No "prompt" override: the completions endpoint emits single-prompt
         # payloads as bare strings itself.
         assert dataset["42"][0].request_body == {
@@ -428,7 +427,7 @@ class TestBasetenTraceDatasetLoader:
         assert first == second
         assert first, "mid-ratio sampling should keep at least one session"
 
-    def test_trace_session_sampling_skips_when_no_effective_session_key(
+    def test_trace_session_sampling_uses_provided_session_id_fallback(
         self, tmp_path: Path
     ):
         path = _write_parquet(
@@ -458,13 +457,10 @@ class TestBasetenTraceDatasetLoader:
 
         dataset = loader.load_dataset()
 
-        assert len(dataset) == 2
+        assert list(dataset) == ["unique-1"]
         assert sorted(
             trace.text_input for traces in dataset.values() for trace in traces
-        ) == [
-            "row-1",
-            "row-2",
-        ]
+        ) == ["row-1"]
 
     def test_trace_session_sampling_falls_back_to_poor_man_session_id(
         self, tmp_path: Path
@@ -819,23 +815,34 @@ class TestBasetenTraceDatasetLoader:
         assert turns["canceled row"].max_tokens == 1
         assert turns["normal row"].max_tokens == 7
 
-    def test_load_dataset_populates_dataset_version_from_version_column(
-        self, tmp_path: Path
+    def test_load_dataset_validates_sample_and_skips_unused_columns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        # The parquet column is named __version__; the pydantic alias must
-        # populate dataset_version instead of stranding it in model_extra.
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
                 {
-                    "timestamp_start_unix_ms": 100,
-                    "prompt": "versioned",
+                    "timestamp_start_unix_ms": index,
+                    "prompt": f"prompt-{index}",
                     "input_tokens": 5,
                     "output_tokens": 1,
-                    "__version__": "0.0.11",
+                    "output_text": "unused completion",
+                    "model_name": "unused model",
+                    "request_canceled": 1,
+                    "__version__": "unused version",
                 }
+                for index in range(12)
             ],
         )
+        original_validate = BasetenTrace.model_validate
+        validation_calls = 0
+
+        def count_validation_calls(row: dict) -> BasetenTrace:
+            nonlocal validation_calls
+            validation_calls += 1
+            return original_validate(row)
+
+        monkeypatch.setattr(BasetenTrace, "model_validate", count_validation_calls)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
             run=_make_run(),
@@ -843,9 +850,14 @@ class TestBasetenTraceDatasetLoader:
         )
 
         dataset = loader.load_dataset()
+        traces = [trace for session in dataset.values() for trace in session]
 
-        trace = next(iter(dataset.values()))[0]
-        assert trace.dataset_version == "0.0.11"
+        assert validation_calls == 10
+        assert len(traces) == 12
+        assert all(not hasattr(trace, "output_text") for trace in traces)
+        assert all(not hasattr(trace, "model_name") for trace in traces)
+        assert all(not hasattr(trace, "request_canceled") for trace in traces)
+        assert all(not hasattr(trace, "dataset_version") for trace in traces)
 
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
@@ -972,14 +984,10 @@ class TestBasetenTraceModel:
             output_tokens=20,
             total_hashes=None,
             provided_session_id=42,
-            request_canceled=1,
-            org_id=7,
         )
 
         assert trace.total_hashes == []
         assert trace.provided_session_id == 42
-        assert trace.request_canceled == 1
-        assert trace.org_id == 7
 
 
 class TestSynthesisHooks:
@@ -1017,7 +1025,6 @@ class TestSynthesisHooks:
                 poor_man_session_id=7,
                 total_hashes=[1, 2],
                 block_size=64,
-                __version__="0.0.11",
             )
         ]
         synth_dicts = [
@@ -1035,9 +1042,6 @@ class TestSynthesisHooks:
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
-        # The model_dump()/model_validate round-trip must not strand aliased
-        # fields in model_extra.
-        assert result[0].dataset_version == "0.0.11"
 
     def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
         self, tmp_path: Path

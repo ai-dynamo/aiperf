@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -22,7 +23,7 @@ except ImportError:  # pragma: no cover - platform-dependent
     pc = None
     pq = None
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode
@@ -37,11 +38,8 @@ from aiperf.dataset.loader.base_trace_loader import (
 METADATA_COLUMNS_TIME = "timestamp_start_unix_ms"
 METADATA_COLUMNS_SESSION = "provided_session_id"
 METADATA_COLUMNS_POOR_MAN_SESSION = "poor_man_session_id"
-METADATA_COLUMNS = {
-    METADATA_COLUMNS_TIME,
-    METADATA_COLUMNS_SESSION,
-    METADATA_COLUMNS_POOR_MAN_SESSION,
-}
+_VALIDATION_SAMPLE_ROWS = 10
+_PARQUET_BATCH_SIZE = 128
 
 _REQUIRED_COLUMNS = {
     METADATA_COLUMNS_TIME,
@@ -53,15 +51,10 @@ _REQUIRED_COLUMNS = {
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
 NonNegativeFloat = Annotated[float, Field(ge=0)]
-RequestCanceledInt = Annotated[int, Field(ge=0, le=1)]
 
 
 class BasetenTrace(AIPerfBaseModel):
     """Schema for Baseten completion traces exported as Parquet."""
-
-    # populate_by_name lets the model_dump()/model_validate round-trip used by
-    # synthesis reconstruction repopulate aliased fields (dataset_version).
-    model_config = ConfigDict(populate_by_name=True)
 
     timestamp_start_unix_ms: NonNegativeInt = Field(
         description="Recorded request start timestamp in Unix milliseconds."
@@ -87,47 +80,9 @@ class BasetenTrace(AIPerfBaseModel):
         default=None,
         description="Recorded end-to-end request duration in milliseconds.",
     )
-    duration_ttft_ms: NonNegativeInt | None = Field(
-        default=None,
-        description="Recorded time to first token in milliseconds.",
-    )
-    request_canceled: RequestCanceledInt | None = Field(
-        default=None,
-        description="Whether the source request was canceled.",
-    )
-    cached_tokens_reference: NonNegativeInt | None = Field(
-        default=None,
-        description="Recorded reference cached-token count.",
-    )
-    model_name: str | None = Field(
-        default=None,
-        description="Model name recorded in the source trace.",
-    )
-    org_id: str | NonNegativeInt | None = Field(
-        default=None,
-        description="Organization identifier recorded in the source trace.",
-    )
     block_size: PositiveInt | None = Field(
         default=None,
         description="KV-cache block size associated with total_hashes.",
-    )
-    features: str | None = Field(default=None, description="Opaque feature metadata.")
-    speculation_ratio: NonNegativeFloat | None = Field(
-        default=None,
-        description="Average tokens per decode iteration.",
-    )
-    output_text: str | None = Field(
-        default=None,
-        description="Recorded completion text retained for offline validation.",
-    )
-    dataset_version: str | None = Field(
-        default=None,
-        alias="__version__",
-        description="Source dataset version.",
-    )
-    total_hashes_len: NonNegativeInt | None = Field(
-        default=None,
-        description="Recorded total_hashes length, when exported separately.",
     )
 
     timestamp: NonNegativeInt | NonNegativeFloat | None = Field(
@@ -168,29 +123,30 @@ class BasetenTrace(AIPerfBaseModel):
         return value
 
 
-def _score_session_groups(
-    session_ids: list[str | int | None],
-) -> tuple[int, int]:
-    counts = Counter(session_id for session_id in session_ids if session_id is not None)
-    repeated_group_sizes = [count for count in counts.values() if count > 1]
-    return (sum(repeated_group_sizes), len(repeated_group_sizes))
-
-
-def choose_baseten_session_key(
-    provided_session_ids: list[str | int | None],
-    poor_man_session_ids: list[int | None],
-) -> str | None:
-    """Return the session column with the strongest repeated-session signal."""
-    provided_score = _score_session_groups(provided_session_ids)
-    poor_score = _score_session_groups(poor_man_session_ids)
-
-    if provided_score > poor_score and provided_score[0] > 0:
-        return METADATA_COLUMNS_SESSION
-    if poor_score > provided_score and poor_score[0] > 0:
+def _baseten_session_key_from_schema(schema_names: set[str]) -> str | None:
+    """Choose the canonical session column without scanning trace rows."""
+    if METADATA_COLUMNS_POOR_MAN_SESSION in schema_names:
         return METADATA_COLUMNS_POOR_MAN_SESSION
-    if provided_score == poor_score and provided_score[0] > 0:
+    if METADATA_COLUMNS_SESSION in schema_names:
         return METADATA_COLUMNS_SESSION
     return None
+
+
+def _parquet_min_timestamp(parquet_file: pq.ParquetFile) -> int | None:
+    """Return the minimum timestamp from row-group statistics when available."""
+    timestamp_index = parquet_file.schema.names.index(METADATA_COLUMNS_TIME)
+    minimum: int | None = None
+    for row_group_index in range(parquet_file.metadata.num_row_groups):
+        statistics = (
+            parquet_file.metadata.row_group(row_group_index)
+            .column(timestamp_index)
+            .statistics
+        )
+        if statistics is None or not statistics.has_min_max:
+            return None
+        value = int(statistics.min)
+        minimum = value if minimum is None else min(minimum, value)
+    return minimum
 
 
 def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int]:
@@ -200,28 +156,20 @@ def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int
     try:
         parquet_file = pq.ParquetFile(file_path)
         row_count = parquet_file.metadata.num_rows
-        schema_names = set(pq.read_schema(file_path).names)
-        session_columns = {
-            METADATA_COLUMNS_SESSION,
-            METADATA_COLUMNS_POOR_MAN_SESSION,
-        } & schema_names
-        if not session_columns:
+        session_key = _baseten_session_key_from_schema(
+            set(parquet_file.schema_arrow.names)
+        )
+        if session_key is None:
             return row_count, row_count
-
-        table = pq.read_table(file_path, columns=sorted(session_columns))
+        table = pq.read_table(file_path, columns=[session_key])
     except (OSError, pa.ArrowException):
         return 0, 0
 
-    rows = table.to_pylist()
-    session_key = choose_baseten_session_key(
-        [row.get(METADATA_COLUMNS_SESSION) for row in rows],
-        [row.get(METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows],
+    session_column = table[session_key]
+    session_count = (
+        pc.count_distinct(session_column).as_py() + session_column.null_count
     )
-    if session_key is None:
-        return row_count, row_count
-
-    values = {str(row[session_key]) for row in rows if row.get(session_key) is not None}
-    return row_count, len(values) if values else row_count
+    return row_count, session_count or row_count
 
 
 class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
@@ -376,7 +324,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if not items:
             return {}
 
-        session_key = self._sampled_session_key or self._choose_session_key(items)
+        session_key = self._sampled_session_key
         if session_key is None:
             self.info(
                 "No repeated Baseten trace session key found; generating session IDs."
@@ -421,32 +369,35 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         session_entries.sort(key=lambda item: (item[0], item[1]))
         return {session_id: traces for _, session_id, traces in session_entries}
 
-    def _read_metadata_table(self) -> pa.Table:
-        schema = pq.read_schema(self.filename)
-        metadata_columns = [
-            column for column in METADATA_COLUMNS if column in set(schema.names)
-        ]
-        return pq.read_table(self.filename, columns=metadata_columns)
-
-    def _choose_session_key_from_metadata_rows(
-        self, rows: list[dict[str, Any]]
-    ) -> str | None:
-        return choose_baseten_session_key(
-            [row.get(METADATA_COLUMNS_SESSION) for row in rows],
-            [row.get(METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows],
-        )
+    def _read_metadata_table(
+        self, parquet_file: pq.ParquetFile, session_key: str | None
+    ) -> pa.Table:
+        metadata_columns = [METADATA_COLUMNS_TIME]
+        if session_key is not None:
+            metadata_columns.append(session_key)
+        return parquet_file.read(columns=metadata_columns)
 
     def _sample_session_ids(
         self,
     ) -> tuple[int | None, str | None, set[str | int] | None, set[int] | None]:
-        metadata_table = self._read_metadata_table()
+        parquet_file = pq.ParquetFile(self.filename)
+        session_key = _baseten_session_key_from_schema(
+            set(parquet_file.schema_arrow.names)
+        )
+        self._sampled_session_key = session_key
+        if self._session_sample_ratio is None or self._session_sample_ratio >= 1.0:
+            min_timestamp = _parquet_min_timestamp(parquet_file)
+            if min_timestamp is None:
+                timestamp_table = parquet_file.read(columns=[METADATA_COLUMNS_TIME])
+                min_timestamp = pc.min(timestamp_table[METADATA_COLUMNS_TIME]).as_py()
+            return min_timestamp, session_key, None, None
+
+        metadata_table = self._read_metadata_table(parquet_file, session_key)
 
         if metadata_table.num_rows == 0:
             return None, None, None, None
 
         metadata_rows = metadata_table.to_pylist()
-        session_key = self._choose_session_key_from_metadata_rows(metadata_rows)
-
         min_timestamp: int | None = None
         session_first_ts: dict[str | int, int] = {}
         null_row_count = 0
@@ -468,9 +419,6 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             session_first_ts[session_id] = min(
                 timestamp, session_first_ts.get(session_id, timestamp)
             )
-
-        if self._session_sample_ratio is None or self._session_sample_ratio >= 1.0:
-            return min_timestamp, session_key, None, None
 
         if session_key is None:
             self.warning(
@@ -508,7 +456,6 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             f"using {session_key} with "
             f"trace_session_sample_ratio={self._session_sample_ratio}"
         )
-        self._sampled_session_key = session_key
         return (
             min_timestamp,
             session_key,
@@ -562,23 +509,27 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     ) -> list[BasetenTrace]:
         """Read, sample, normalize, and filter trace rows from the Parquet file."""
         sampling = session_key is not None and session_ids is not None
-        table_kwargs: dict[str, Any] = {}
-        if sampling:
-            table_kwargs["filters"] = (
-                pc.field(session_key).isin(sorted(session_ids))
-                | pc.field(session_key).is_null()
-            )
+        projected_columns = self._projected_trace_columns(session_key)
 
         items: list[BasetenTrace] = []
         null_ordinal = 0
-        for row in pq.read_table(self.filename, **table_kwargs).to_pylist():
+        validated_rows = 0
+        for row in self._iter_trace_rows(
+            projected_columns,
+            session_key if sampling else None,
+            session_ids,
+        ):
             if sampling and row.get(session_key) is None:
                 kept = null_ordinal in null_rows
                 null_ordinal += 1
                 if not kept:
                     continue
 
-            trace = BasetenTrace.model_validate(row)
+            if validated_rows < _VALIDATION_SAMPLE_ROWS:
+                trace = BasetenTrace.model_validate(row)
+                validated_rows += 1
+            else:
+                trace = BasetenTrace.model_construct(**row)
             self._preprocess_trace(trace)
             normalized = min_timestamp is not None and trace.timestamp is not None
             if normalized:
@@ -599,6 +550,51 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 self._floored_zero_osl += 1
             items.append(trace)
         return items
+
+    def _projected_trace_columns(self, session_key: str | None) -> list[str]:
+        """Return source columns needed by the configured replay behavior."""
+        schema_names = set(pq.read_schema(self.filename).names)
+        columns = {
+            METADATA_COLUMNS_TIME,
+            "prompt",
+            "input_tokens",
+            "output_tokens",
+        }
+        if session_key is not None:
+            columns.add(session_key)
+        if not self._omit_kv_hints:
+            columns.update(("total_hashes", "block_size"))
+        if not self._open_loop:
+            columns.add("duration_e2e_ms")
+        return sorted(columns & schema_names)
+
+    def _iter_trace_rows(
+        self,
+        projected_columns: list[str],
+        session_key: str | None,
+        session_ids: set[str | int] | None,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield projected rows after applying sampling in bounded Arrow batches."""
+        parquet_file = pq.ParquetFile(self.filename)
+        sampled_ids = (
+            pa.array(
+                sorted(session_ids),
+                type=parquet_file.schema_arrow.field(session_key).type,
+            )
+            if session_key is not None and session_ids is not None
+            else None
+        )
+        batches = parquet_file.iter_batches(
+            columns=projected_columns,
+            batch_size=_PARQUET_BATCH_SIZE,
+            use_threads=True,
+        )
+        for batch in batches:
+            if session_key is not None and sampled_ids is not None:
+                session_column = batch.column(batch.schema.get_field_index(session_key))
+                selected = pc.is_in(session_column, value_set=sampled_ids)
+                batch = batch.filter(pc.or_(selected, pc.is_null(session_column)))
+            yield from batch.to_pylist()
 
     def _apply_idle_gap_cap(self, items: list[BasetenTrace]) -> None:
         """Collapse global idle gaps so a sparse (sampled) trace does not idle
@@ -683,27 +679,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 prev_ts = ts
                 prev_e2e_ms = float(trace.duration_e2e_ms or 0) / self._speedup
 
-    def _choose_session_key(self, items: list[BasetenTrace]) -> str | None:
-        return choose_baseten_session_key(
-            [trace.provided_session_id for trace in items],
-            [trace.poor_man_session_id for trace in items],
-        )
-
     def _synthesis_exclude_fields(self) -> frozenset[str]:
         return frozenset(
             {
                 "duration_e2e_ms",
-                "duration_ttft_ms",
-                "request_canceled",
-                "cached_tokens_reference",
-                "model_name",
-                "org_id",
                 "block_size",
-                "features",
-                "speculation_ratio",
-                "output_text",
-                "dataset_version",
-                "total_hashes_len",
                 "provided_session_id",
                 "poor_man_session_id",
                 "request_body",

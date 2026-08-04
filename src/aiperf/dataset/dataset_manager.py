@@ -282,8 +282,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             if isinstance(default_dataset, PublicDataset)
             else None
         )
-        return mmap_cache.is_trace_or_verbatim_dataset(
-            self._detected_dataset_type, public_dataset
+        return (
+            self._detected_dataset_type == CustomDatasetType.BASETEN_TRACE
+            or mmap_cache.is_trace_or_verbatim_dataset(
+                self._detected_dataset_type, public_dataset
+            )
         )
 
     def _lookup_under_lock(self) -> mmap_cache.CacheHit | None:
