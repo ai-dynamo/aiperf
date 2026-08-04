@@ -207,10 +207,14 @@ sequenceDiagram
 
 Stage 7 is the only place captured replies enter. A conversation in a
 `WithoutResponses` context mode splices the server's actual prior reply into the
-turn list (`dataset/request.rs:1020-1022`); warmup additionally re-renders turn 0
-as a mutable value to fold the system prompt. Both produce content the frozen
-store never held, which is why the plan vocabulary carries inline bytes as a
-first-class kind rather than addressing everything by handle.
+turn list (`dataset/request.rs:1020-1022`) — content the frozen store never held,
+which is why the plan vocabulary carries inline bytes as a first-class kind
+rather than addressing everything by handle.
+
+Graph predecessor outputs are the second such case, though on the fast path they
+arrive already serialized as `Vec<Bytes>` rather than as values needing
+serialization. A third, warmup's system-prompt fold, is written but unreachable —
+see [endpoint-body-construction.md](endpoint-body-construction.md) for why.
 
 ## The serialization budget
 
@@ -226,12 +230,20 @@ even if the resulting bytes are identical.
 | Endpoint literals (`model`, `stream`, cap) | stage 8, per dispatch | `serde_json::to_writer` into the body buffer | transient |
 | Override tail | stage 8, per dispatch | `Overrides::inner_bytes` | transient |
 | **Captured assistant reply** | stage 8, per dispatch | `serialize_rendered_messages` | transient |
-| **Warmup system-prompt fold** | stage 8, per dispatch | `serialize_rendered_messages` | transient |
-| **Graph predecessor output** | stage 8, per dispatch | `serialize_rendered_messages` | transient |
+| **Graph predecessor output** | stage 8, per dispatch — only on the value path (warmup / cache-bust); the fast path arrives as `Bytes` | `serialize_rendered_messages` | transient |
+| Warmup system-prompt fold | unreachable in the shipped product | — | — |
 
-The three bolded rows are the irreducible per-dispatch content serializations.
-They exist because the content did not exist at freeze time. Everything else on
-the hot path is a `Bytes` refcount clone or a small literal.
+The two bolded rows are the irreducible per-dispatch content serializations. They
+exist because the content did not exist at freeze time. Everything else on the hot
+path is a `Bytes` refcount clone or a small literal.
+
+Four further per-dispatch parses exist that this table does not excuse, because
+they re-derive structure the runtime already had rather than producing new
+content: input-token counting (`multiturn.rs:1018-1022`), multipart form
+re-encoding (`transport/http/transport/endpoint_binding.rs:305-315`),
+content-URL tagging (`transport/http/sink.rs:1068-1081`, a parse *and* a full
+re-serialize), and the gRPC round trip. They are defects, tracked under
+[Future requirements](#future-requirements).
 
 ### Per-dispatch cost accounting
 
@@ -317,17 +329,33 @@ verification requirement.
 Tracked against this path; details and sequencing in
 `~/.aiperf/docs/superpowers/plans/2026-08-03-body-plan-consolidation.md`.
 
-- **Stage 9 (gRPC) re-parses stage 8's output.** The sink parses materialized JSON
-  bytes back into a `serde_json::Value` for a tree-walking codec, paying a full
-  serialize and a full parse for structure the runtime already had. The target is
-  a plan-aware encoder proven byte-equivalent before the sink switches over.
+- **Six consumers re-derive structure stage 8 discarded.** `MaterializedRequest`
+  carries `body: Bytes` and drops the `BodyPlan`, so every consumer needing
+  structure parses the bytes back: the gRPC sink (`transport/grpc/sink.rs:336`,
+  plus a second full re-serialize at `:489` that is *not* gated by `capture_raw`
+  even though the next line gates the record on exactly that), input-token
+  counting on the issuance path (`multiturn.rs:1018-1022`), multipart form
+  re-encoding (`transport/http/transport/endpoint_binding.rs:305-315`),
+  content-URL tagging (`transport/http/sink.rs:1068-1081`), and the agentic-replay
+  cache-bust rewrite (`agentic_replay.rs:109-136`). The fix is a boundary type
+  that can carry either assembled bytes or a store-free program, with each
+  transport emitting the form it wants.
 - **Stage 8 carries an unreachable vocabulary.** `FieldValue::Segment` and
-  `Segments` address content by handle at materialize time; nothing constructs
-  them, and live content could not use them. Slated for removal once the gRPC
-  work settles whether token tensors reclaim them.
-- **A stage-5 collapse that never fires.** `BodyPlan::Prebuilt` and
-  `prebuilt_if_static` collapse a fully-static plan into one cloneable buffer, but
-  no dialect satisfies the gates. To be deleted or made reachable.
+  `Segments` address content by handle at materialize time, but every Fields plan
+  materializes against an empty store, so constructing one is a runtime
+  `UnknownHandle` on every dispatch. Either resolve them to bytes before the
+  boundary or remove them; leaving a public builder that cannot work is the
+  hazard.
+- **Graph dispatch forfeits the image-count fast path.** `image_count: None`
+  (`engine/graph_execution.rs`) forces a full body reparse at
+  `transport/http/sink/endpoint_dispatch.rs:250-257` on every multimodal graph
+  node, though the count is derivable at materialize time.
+- **A stage-5 collapse that reaches one dialect.** `BodyPlan::Prebuilt` and
+  `prebuilt_if_static` collapse a fully-static plan into one cloneable buffer.
+  Only `image_retrieval` satisfies the gates today (`endpoints/tier2.rs:931-959`
+  emits no `model`; `tier2.rs:227` is non-streaming). Widening it to the other
+  inline-media dialects requires moving `model` into the override tail, which
+  changes field order on the wire.
 
 ## Source anchors
 

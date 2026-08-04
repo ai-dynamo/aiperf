@@ -30,11 +30,20 @@ frozen.** Three cases produce content mid-run:
    `WithoutResponses` context mode splices the server's actual reply into the
    next request's message array (`dataset/request.rs:1020-1022`). The reply is
    whatever the endpoint under test returned milliseconds earlier.
-2. **Warmup's system-prompt fold.** Warmup re-renders turn 0 as a mutable value
-   so the system prompt can be prepended in place (`endpoints/endpoints.rs:869-877`),
-   producing a message the store never held.
-3. **Graph node outputs.** A graph node's turn is built per dispatch from its
-   predecessors' outputs (`engine/graph_execution.rs:980-992`).
+2. **Graph node outputs.** A graph node's turn is built per dispatch from its
+   predecessors' outputs (`engine/graph_execution.rs:980-992`). On the fast path
+   those arrive already serialized as `Vec<Bytes>`; the mutable-value path is
+   entered only for warmup and cache-bust rewriting.
+
+A third case, **warmup's system-prompt fold** (`endpoints/endpoints.rs:866-877`),
+is written to work this way but is unreachable in the shipped product:
+`CreditPhase::Warmup` is produced in exactly one place
+(`engine/graph_execution.rs:528`), the scheduled path hardcodes
+`CreditPhase::Profiling` (`multiturn.rs:981`), and the graph's `PreparedRequest`
+passes `system_message: None` (`graph_execution.rs:461-468`), so the fold's
+`if let Some(system)` guard never enters. Treat `render_first`,
+`prepend_system_into_object`, and the completions warmup prefix
+(`endpoints.rs:650-656`) as dead until a caller reaches them.
 
 So the plan vocabulary must carry **inline pre-serialized bytes** as a
 first-class content kind, not as a fallback. That is what `FieldValue::Wires` is,
@@ -416,14 +425,15 @@ Explicitly planned, not built. Implementation plan:
   over. Scoped by measurement: the reparse cost is benchmarked before the work is
   committed to, and the payoff concentrates in `vllm_generate`, which is
   token-native and opts out of plan caching.
-- **Resolve the static collapse.** A third plan shape, `BodyPlan::Prebuilt(Bytes)`,
-  and its gate `prebuilt_if_static` were added to collapse a fully-static Fields
-  plan into one cloneable buffer. It cannot fire: streaming dialects fail the
-  `supports_streaming` gate, and every non-streaming dialect emits `model`, which
-  the per-dispatch-literal gate refuses to freeze. It is to be deleted, unless a
-  measurement shows the multi-MB inline-media dialects justify moving `model` into
-  the override tail so the static remainder collapses — a change that would alter
-  field order on the wire and needs sign-off.
+- **Widen the static collapse.** `prebuilt_if_static` fires today for exactly one
+  dialect: `image_retrieval`, whose payload is `input` plus user extras with no
+  `model`, `stream`, or token cap (`endpoints/tier2.rs:931-959`) and whose
+  descriptor is non-streaming (`tier2.rs:227`). Every other dialect is excluded —
+  streaming ones by the `supports_streaming` gate, the rest because they emit
+  `model` as a plan literal, which the per-dispatch-literal gate refuses to
+  freeze. Widening it to the other inline-media dialects (`image_edit`,
+  `video_generation`) means moving `model` out of plan-literal space into the
+  override tail, which changes field order on the wire and needs sign-off.
 - **Enforce the collapse-gate / effective-field agreement.** `PER_DISPATCH_LITERALS`
   (`body_plan.rs:213-219`) and the fields `effective_from_plan` reads back
   (`dataset/request.rs:730-756`) must cover the same names. They agree today by
