@@ -85,12 +85,16 @@ impl ChatChunk {
     /// pins them together, because a divergence here silently changes exported
     /// records rather than failing.
     ///
-    /// Returns `None` for anything that is not a `chat.completion.chunk`, which
-    /// routes non-streaming and unknown bodies back to the generic path instead
-    /// of guessing at a shape this type does not model.
-    pub fn response_data(&self) -> Option<ResponseData> {
-        if self.object.as_deref() != Some("chat.completion.chunk") {
-            return None;
+    /// An absent `object` is accepted as a chunk, matching the compatibility
+    /// shim the dispatch path applies for the chat endpoint: a body with a
+    /// `choices` envelope and no `object` is treated as a
+    /// `chat.completion.chunk` while streaming. Any other `object` value is
+    /// declined so non-streaming and unknown bodies keep using the generic
+    /// extractor rather than being guessed at.
+    pub fn stream_response_data(&self) -> Option<ResponseData> {
+        match self.object.as_deref() {
+            Some("chat.completion.chunk") | None => {}
+            Some(_) => return None,
         }
         let delta = &self.choices.first()?.delta;
         let content = delta.content.clone();
@@ -266,15 +270,37 @@ mod tests {
         r#"{"choices":[{"index":0,"delta":{"content":"hi"}}]}"#,
     ];
 
+    /// The generic result a streamed chat body actually produces, which is the
+    /// extractor PLUS the dispatch shim: for the chat endpoint, a `choices`
+    /// envelope with no `object` is read as a chunk while streaming. Comparing
+    /// against the bare extractor would assert the wrong contract -- that
+    /// mistake shipped once and dropped every delta from servers that omit
+    /// `object`.
+    fn generic_stream_response_data(payload: &str) -> Option<ResponseData> {
+        let value: serde_json::Value =
+            serde_json::from_str(payload).expect("corpus payload is valid JSON");
+        let mut object = value
+            .as_object()
+            .expect("corpus payload is an object")
+            .clone();
+        if !object.contains_key("object") && object.contains_key("choices") {
+            object.insert(
+                "object".into(),
+                serde_json::Value::String("chat.completion.chunk".into()),
+            );
+        }
+        crate::endpoints::endpoints::extract_chat_response_data(&object)
+    }
+
     #[test]
     fn typed_response_data_matches_the_generic_value_extractor() {
         for payload in DIFFERENTIAL_CORPUS {
-            let value: serde_json::Value =
-                serde_json::from_str(payload).expect("corpus payload is valid JSON");
-            let object = value.as_object().expect("corpus payload is an object");
-            let generic = crate::endpoints::endpoints::extract_chat_response_data(object);
-            let typed = parse(payload).response_data();
-            assert_eq!(typed, generic, "typed path diverged for payload: {payload}");
+            let typed = parse(payload).stream_response_data();
+            assert_eq!(
+                typed,
+                generic_stream_response_data(payload),
+                "typed path diverged for payload: {payload}"
+            );
         }
     }
 
@@ -283,7 +309,20 @@ mod tests {
     #[test]
     fn typed_response_data_declines_non_chunk_objects() {
         let non_streaming = r#"{"object":"chat.completion","choices":[{"index":0,"message":{"content":"hi"}}]}"#;
-        assert_eq!(parse(non_streaming).response_data(), None);
+        assert_eq!(parse(non_streaming).stream_response_data(), None);
+    }
+
+    /// The regression the first cut shipped: servers that omit `object` had
+    /// every delta silently dropped.
+    #[test]
+    fn typed_response_data_accepts_a_chunk_without_an_object_field() {
+        let no_object = r#"{"id":"response","choices":[{"index":0,"delta":{"content":"hel"}}]}"#;
+        assert_eq!(
+            parse(no_object).stream_response_data(),
+            Some(ResponseData::Text {
+                text: "hel".to_string()
+            })
+        );
     }
 
     #[test]
