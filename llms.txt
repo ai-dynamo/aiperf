@@ -179,11 +179,16 @@ selector (`sharded` | `global` | `global-hop`; `global` is the default — see
 self-contained sub-cells with no cross-thread per-request hop
 (`sharded_scheduled::run_sharded_scheduled`); `global` keeps that same tiling but
 admits concurrency/rate from a shared per-cell gate for byte-exact aggregate
-parity; `global-hop` revives a cross-thread per-request hop dispatcher
+parity AND draws the dataset by absolute corpus position
+(`multiturn::DrawMode::Position`, `Sampler::at_position`) so its `W` shards
+sample the corpus as one issuer would instead of each recycling its own residue
+class; `global-hop` revives a cross-thread per-request hop dispatcher
 (`turn_execution::ThreadPerCoreExecutor`, `global_hop::run_global_hop`) for exact
 global issuance order. Every workload shape shards (rate/concurrency by budget
-under `sharded`/by shared gate under `global`, user_centric/fixed_schedule per
-conversation, static-accuracy by per-shard capture graded once at finalize;
+under `sharded`/by shared gate under `global`, user_centric/fixed_schedule
+enumerate per conversation — `user_centric` also draws, so under `global` its
+draws are position-addressed while its enumeration stays the residue class,
+static-accuracy by per-shard capture graded once at finalize;
 `shardable` is just `workers > 1`). A transport contributes only a
 `WorkerSink` via an `ExecutionSinkBuilder`, never its own worker loop/measurement
 (`transport::reduce`/`transport::measure` are shared) — gRPC has no parallel
