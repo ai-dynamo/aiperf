@@ -48,7 +48,7 @@ pub use ramping::{
     ExponentialRamp, LinearRamp, PoissonRamp, RampConfigError, RampDriver, RampHandle,
     RampStrategy, RampTaskError, RamperConfig,
 };
-pub use rate_gate::GlobalRateGate;
+pub use rate_gate::{ClaimedSlot, GlobalRateGate};
 pub use slots::{
     ConcurrencyManager, ConcurrencyStats, GlobalSlotGuard, GlobalSlotPool, SlotGuard, SlotPool,
 };

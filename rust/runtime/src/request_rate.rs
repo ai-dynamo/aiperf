@@ -17,7 +17,7 @@
 //! deterministic under `SimClock`. This linear policy owns only root
 //! conversation chains.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -150,6 +150,17 @@ pub struct RequestRateWorkload {
     /// `intervals` is still consulted for the mean-zero Poisson/Gamma jitter
     /// offset added to each claimed base slot.
     rate_gate: Option<Arc<GlobalRateGate>>,
+    /// Whether each new session is drawn at the corpus position of the rate slot
+    /// it will be admitted on, instead of from the source's own draw cursor.
+    ///
+    /// Selected by [`Self::with_rate_gate`] when the phase can support it; see
+    /// [`Self::can_address_draws_by_slot`].
+    slot_addressed_draws: bool,
+    /// Base-grid offset of the slot the cached `next_new_turn` was drawn for.
+    /// `Some` exactly when `slot_addressed_draws` holds and a sample is cached,
+    /// so a tick that cannot admit retries the SAME slot and position rather
+    /// than abandoning the position it already claimed.
+    pending_slot_offset_ns: Cell<Option<i64>>,
     state: Rc<RequestRateState>,
     on_failure: OnFailure,
     /// Whether this phase routes credits whose request body the WORKER builds
@@ -220,6 +231,8 @@ impl RequestRateWorkload {
             session_slots,
             prefill_slots,
             rate_gate: None,
+            slot_addressed_draws: false,
+            pending_slot_offset_ns: Cell::new(None),
             state: Rc::new(RequestRateState::default()),
             // Transport failures are recorded and issuance continues by default.
             on_failure: OnFailure::for_scheduled_default(),
@@ -275,9 +288,67 @@ impl RequestRateWorkload {
     /// `Arc<GlobalRateGate>`; each `execute` tick claims one distinct base slot
     /// from it, so the `W` threads together emit exactly the configured global
     /// rate instead of `W` independent full-rate streams.
+    /// A gate also carries the only cell-wide ordering this phase has, so
+    /// attaching one selects slot-addressed draws when the phase supports them
+    /// ([`Self::can_address_draws_by_slot`]): the conversation admitted on slot
+    /// `n` becomes corpus position `n`, so sorting records by their admission
+    /// time recovers the sequential corpus walk.
     pub fn with_rate_gate(mut self, rate_gate: Option<Arc<GlobalRateGate>>) -> Self {
+        self.slot_addressed_draws = rate_gate.is_some() && self.can_address_draws_by_slot();
+        if self.slot_addressed_draws {
+            // The constructor's cached sample came from the source's own cursor
+            // with no claimed slot behind it. Drop it so the first tick draws at
+            // the slot it claims; `slot_addressed_offset_ns` refills the cache
+            // before any tick can consume it.
+            *self.next_new_turn.borrow_mut() = None;
+            self.pending_slot_offset_ns.set(None);
+        }
         self.rate_gate = rate_gate;
         self
+    }
+
+    /// Whether every new-session draw can be tied to the rate slot it is
+    /// admitted on.
+    ///
+    /// Two properties are required, and both are decidable here:
+    ///
+    /// - The source addresses absolute corpus positions (`workers > 1` under
+    ///   `global` dispatch with a closed-form sampler). Otherwise a position is
+    ///   not a conversation.
+    /// - Every sampleable conversation is single-turn. A multi-turn corpus
+    ///   admits continuations, and a continuation consumes a rate slot without
+    ///   drawing a new conversation — so slot indices would stop enumerating the
+    ///   corpus densely and conversations at the skipped positions would never
+    ///   be drawn at all.
+    fn can_address_draws_by_slot(&self) -> bool {
+        let conversations = self.conversations.borrow();
+        conversations.is_position_addressed()
+            && conversations
+                .sampled_conversations()
+                .iter()
+                .all(|conversation| conversation.turns.len() == 1)
+    }
+
+    /// Base-grid offset of the slot the next new session is drawn for, claiming
+    /// a fresh slot — and drawing at its corpus position — when none is pending.
+    ///
+    /// The claim and the draw happen together so `admit_ns` order and corpus
+    /// order are two pure functions of one `fetch_add`. A pending slot is
+    /// retained across a tick that could not admit, which keeps the claimed
+    /// position sequence dense: nothing is drawn and then thrown away.
+    fn slot_addressed_offset_ns(&self, gate: &Arc<GlobalRateGate>) -> Result<i64> {
+        if let Some(offset_ns) = self.pending_slot_offset_ns.get() {
+            return Ok(offset_ns);
+        }
+        let slot = gate.claim_slot();
+        let sampled = self
+            .conversations
+            .borrow_mut()
+            .next_at_position(slot.index, None)?;
+        let turn = self.build_new_session_turn(&sampled)?;
+        *self.next_new_turn.borrow_mut() = Some(turn);
+        self.pending_slot_offset_ns.set(Some(slot.offset_ns));
+        Ok(slot.offset_ns)
     }
 
     /// Live interval generator used by the issuer and rate actuators.
@@ -363,6 +434,10 @@ impl RequestRateWorkload {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("request-rate issuer lost its cached new session"))?;
+        // The claimed slot is consumed with the sample it was drawn for; the
+        // next tick claims a fresh one. Every early return above happens before
+        // the take, so a tick that could not admit leaves both in place.
+        self.pending_slot_offset_ns.set(None);
         if let Some(guard) = session_guard {
             self.state
                 .hold_session(turn.x_correlation_id.clone(), guard)?;
@@ -383,9 +458,13 @@ impl RequestRateWorkload {
 
         // Cache the next sample only after successful issuance. Sequential and
         // shuffle samplers therefore do not advance on a skipped interval.
-        let sampled = self.conversations.borrow_mut().next(None)?;
-        let next = self.build_new_session_turn(&sampled)?;
-        *self.next_new_turn.borrow_mut() = Some(next);
+        // A slot-addressed phase instead draws at the next tick's claimed slot,
+        // so pre-drawing here would materialize a body that tick discards.
+        if !self.slot_addressed_draws {
+            let sampled = self.conversations.borrow_mut().next(None)?;
+            let next = self.build_new_session_turn(&sampled)?;
+            *self.next_new_turn.borrow_mut() = Some(next);
+        }
         Ok(NewSessionOutcome::Issued)
     }
 
@@ -476,10 +555,28 @@ impl Workload for RequestRateWorkload {
                     .borrow_mut()
                     .next_interval_ns()
                     .saturating_sub(gate.interval_ns());
+                // A slot-addressed phase claims the slot AND draws this tick's
+                // conversation at that slot's corpus position together, so
+                // `admit_ns` order and corpus order coincide by construction.
+                // Nonzero jitter still reorders adjacent slots, which is why
+                // exact admission order holds for `constant` arrival only.
+                let base_offset_ns = if self.slot_addressed_draws {
+                    match self.slot_addressed_offset_ns(gate) {
+                        Ok(offset_ns) => offset_ns,
+                        Err(error) => {
+                            self.state.fail(format!(
+                                "request-rate slot-addressed draw failed: {error:#}"
+                            ));
+                            break;
+                        }
+                    }
+                } else {
+                    gate.claim_offset_ns()
+                };
                 runtime
                     .start_ns()
                     .saturating_add(gate.interval_ns())
-                    .saturating_add(gate.claim_offset_ns())
+                    .saturating_add(base_offset_ns)
                     .saturating_add(jitter_ns)
             } else {
                 if next_target_ns < now_ns {
@@ -888,6 +985,140 @@ mod tests {
         assert!(
             result.is_ok(),
             "resilient policy records failed requests and completes the run"
+        );
+    }
+
+    /// Records `(admission time, conversation id)` for every dispatched turn
+    /// into one shared log, so a multi-worker cell's admission ORDER is
+    /// observable without a real transport.
+    struct OrderRecordingDispatcher {
+        clock: Rc<dyn Clock>,
+        admissions: Rc<RefCell<Vec<(i64, String)>>>,
+    }
+
+    #[async_trait(?Send)]
+    impl TurnDispatcher for OrderRecordingDispatcher {
+        async fn dispatch_turn(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            // Under `SimClock` no virtual time passes between the issuer's
+            // `now_ns()` admission stamp and this entry, so this reading IS the
+            // record's `admit_ns`.
+            self.admissions
+                .borrow_mut()
+                .push((self.clock.now_ns(), turn.conversation_id.clone()));
+            self.clock.clone().sleep(1).await;
+            observer.on_terminal(turn.uuid, ReplayTerminalStatus::Completed);
+            Ok(TurnDispatchOutcome {
+                start_ns: self.clock.now_ns().saturating_sub(1),
+                end_ns: self.clock.now_ns(),
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: String::new(),
+                model_response: ModelResponseMetadata::default(),
+                prompt_tokens: None,
+                completion_tokens: None,
+                http: Default::default(),
+            })
+        }
+    }
+
+    /// `Global` at `workers > 1` on a rate-paced phase must admit conversations
+    /// in sequential corpus order: sorting the run's records by admission time
+    /// reproduces the single issuer's walk `ids[k % entries]`.
+    ///
+    /// Every worker shares one [`GlobalRateGate`], so a worker's fire time and
+    /// the conversation it draws come from the same claim. The fixture is
+    /// deliberately awkward for a static per-worker partition: `5 % 4 == 1`, so
+    /// the residue classes are uneven, and 12 requests over 5 conversations is
+    /// 2.4 passes, so the final pass is partial. Both are exactly the conditions
+    /// under which independent per-worker cursors diverge from the global walk.
+    ///
+    /// `SimClock` makes the assertion exact — a worker wakes at precisely its
+    /// claimed slot. On a real clock the same tie holds on the claim, but
+    /// per-thread wake-up skew scatters stamps within roughly one wake interval
+    /// of their slot.
+    #[test]
+    fn global_rate_paced_admission_order_is_the_sequential_corpus_walk() {
+        const WORKERS: u32 = 4;
+        const ENTRIES: usize = 5;
+        const PER_WORKER_REQUESTS: u64 = 3;
+        const TOTAL_REQUESTS: usize = WORKERS as usize * PER_WORKER_REQUESTS as usize;
+
+        let boot = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let sources: Vec<Box<dyn ConversationSource>> = (0..WORKERS)
+            .map(|cell_id| {
+                boot.block_on(crate::test_util::partitioned_single_turn_source(
+                    ENTRIES, cell_id, WORKERS, "m",
+                ))
+            })
+            .collect();
+
+        let clock = Rc::new(SimClock::new());
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let admissions = Rc::new(RefCell::new(Vec::new()));
+        let recorded = admissions.clone();
+        // One shared gate across the cell, exactly as `GlobalAdmission` hands it
+        // to every worker thread of a `global`-dispatch phase.
+        let gate = GlobalRateGate::new(1_000.0);
+        drive_sim(clock, move |_handle| async move {
+            let mut running = Vec::new();
+            for source in sources {
+                let workload = RequestRateWorkload::with_components(
+                    source,
+                    Rc::new(RefCell::new(make_interval_generator(
+                        ArrivalPattern::Constant,
+                        Some(1_000.0),
+                        None,
+                        0,
+                    ))),
+                    None,
+                    None,
+                )
+                .unwrap()
+                .with_rate_gate(Some(gate.clone()));
+                let runtime = ScheduledRuntime::new(
+                    runtime_clock.clone(),
+                    0,
+                    Rc::new(OrderRecordingDispatcher {
+                        clock: runtime_clock.clone(),
+                        admissions: recorded.clone(),
+                    }),
+                    StopConfig {
+                        total_expected_requests: Some(PER_WORKER_REQUESTS),
+                        ..StopConfig::default()
+                    },
+                    true,
+                );
+                running.push(tokio::task::spawn_local(
+                    async move { workload.execute(runtime).await },
+                ));
+            }
+            for task in running {
+                task.await.unwrap().unwrap();
+            }
+        });
+
+        let mut observed = admissions.borrow().clone();
+        assert_eq!(
+            observed.len(),
+            TOTAL_REQUESTS,
+            "every worker must issue its whole request budget"
+        );
+        observed.sort_by_key(|(admit_ns, _)| *admit_ns);
+        let by_admission: Vec<String> = observed.into_iter().map(|(_, id)| id).collect();
+        let expected: Vec<String> = (0..TOTAL_REQUESTS)
+            .map(|position| format!("session_{:04}", position % ENTRIES))
+            .collect();
+        assert_eq!(
+            by_admission, expected,
+            "sorting a global rate-paced run by admission time must give the \
+             sequential corpus walk"
         );
     }
 

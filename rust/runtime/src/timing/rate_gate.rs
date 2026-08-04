@@ -22,21 +22,49 @@
 //! job) are the byte-exactness guarantees `Global` mode makes; full
 //! Poisson/Gamma arrival-*pattern* parity requires `global-hop`. See
 //! [`GlobalRateGate::claim_offset_ns`].
+//!
+//! The claim is also the only cell-wide *ordering* a `global` phase has.
+//! [`GlobalRateGate::claim_slot`] returns the claimed slot's index alongside its
+//! offset, so a caller can make both the fire time and the conversation it
+//! admits pure functions of one `fetch_add` — see [`ClaimedSlot`].
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::clock::Clock;
+
+/// One atomically claimed fire slot: its cell-wide index and the base-grid
+/// offset that index denotes.
+///
+/// The index is dense (`0`, `1`, `2`, ...) across every worker thread in the
+/// cell, and its order is exactly the order of the fire times it maps to. A
+/// `global`-dispatch rate phase therefore uses it as the absolute corpus
+/// position of the conversation admitted on this slot, which makes the drawn
+/// conversation and the admission time two pure functions of one claim. Without
+/// that tie the two are separately correct but unrelated sequences: a worker
+/// holding slot `n` draws from its own private cursor rather than from corpus
+/// position `n`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClaimedSlot {
+    /// Zero-based, gapless index in the cell-wide claim order.
+    pub index: u64,
+    /// Relative base-grid offset for this slot (`index * interval_ns`).
+    pub offset_ns: i64,
+}
 
 /// A shared, clock-driven admission gate enforcing one global request rate
 /// across every worker thread in a `global`-dispatch cell.
 pub struct GlobalRateGate {
     /// Nanoseconds between successive fires (`1e9 / rate_per_sec`).
     interval_ns: i64,
-    /// The next unclaimed fire time, in run-clock nanoseconds. Claimed via an
-    /// atomic fetch-add so concurrent callers on different threads each get a
-    /// distinct slot.
-    next_fire_ns: AtomicI64,
+    /// The next unclaimed slot index. Claimed via an atomic fetch-add so
+    /// concurrent callers on different threads each get a distinct slot.
+    ///
+    /// Counting slots rather than nanoseconds keeps the index — which callers
+    /// also read as a corpus position — exact without dividing by an
+    /// `interval_ns` that rounds to zero above `1e9` requests per second. The
+    /// claimed offsets are unchanged: they are exactly `index * interval_ns`.
+    next_slot: AtomicU64,
 }
 
 impl GlobalRateGate {
@@ -47,7 +75,7 @@ impl GlobalRateGate {
         assert!(rate_per_sec > 0.0, "GlobalRateGate rate must be positive");
         Arc::new(Self {
             interval_ns: (1e9 / rate_per_sec).round() as i64,
-            next_fire_ns: AtomicI64::new(0),
+            next_slot: AtomicU64::new(0),
         })
     }
 
@@ -68,8 +96,23 @@ impl GlobalRateGate {
     /// gate's origin; the caller anchors it to phase start and optionally adds a
     /// mean-zero jitter offset before pacing to it on its own `Clock`.
     pub fn claim_offset_ns(self: &Arc<Self>) -> i64 {
-        self.next_fire_ns
-            .fetch_add(self.interval_ns, Ordering::SeqCst)
+        self.claim_slot().offset_ns
+    }
+
+    /// Atomically claim the next slot, returning its cell-wide index and its
+    /// base-grid offset from the same `fetch_add`.
+    ///
+    /// Callers that need only the fire time use [`Self::claim_offset_ns`]; a
+    /// caller that must order something else by the same claim — `global`
+    /// dispatch orders its corpus draw — reads `index`. See [`ClaimedSlot`].
+    pub fn claim_slot(self: &Arc<Self>) -> ClaimedSlot {
+        let index = self.next_slot.fetch_add(1, Ordering::SeqCst);
+        // Saturating on both steps: no run reaches 2^63 ns of grid, and
+        // freezing on the last representable slot beats wrapping into the past.
+        let offset_ns = i64::try_from(index)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(self.interval_ns);
+        ClaimedSlot { index, offset_ns }
     }
 
     /// Claim the next fire slot and wait for it via `clock`.
@@ -225,13 +268,28 @@ mod tests {
 
         // The shared atomic itself: after `EXPECTED_TOTAL` successful
         // `fetch_add` claims from racing OS threads, it must land at
-        // precisely `EXPECTED_TOTAL * interval_ns` with no lost updates.
-        let final_next_fire_ns = gate.next_fire_ns.load(Ordering::SeqCst);
+        // precisely `EXPECTED_TOTAL` with no lost updates.
+        let final_next_slot = gate.next_slot.load(Ordering::SeqCst);
         assert_eq!(
-            final_next_fire_ns,
-            EXPECTED_TOTAL as i64 * INTERVAL_NS,
+            final_next_slot, EXPECTED_TOTAL as u64,
             "shared counter must reflect exactly one fetch_add per wait_turn call \
              across all threads, with no lost updates"
         );
+    }
+
+    /// The index and the offset must come from ONE claim and agree, because
+    /// `global` dispatch reads the index as a corpus position and the offset as
+    /// the fire time of the very same request.
+    #[test]
+    fn claim_slot_indexes_the_grid_it_offsets() {
+        let gate = GlobalRateGate::new(400.0); // interval_ns == 2_500_000
+        let claims: Vec<ClaimedSlot> = (0..4).map(|_| gate.claim_slot()).collect();
+        for (expected_index, claim) in claims.iter().enumerate() {
+            assert_eq!(claim.index, expected_index as u64);
+            assert_eq!(claim.offset_ns, expected_index as i64 * gate.interval_ns());
+        }
+        // Interleaving the two entry points must not desynchronize them.
+        assert_eq!(gate.claim_offset_ns(), 4 * gate.interval_ns());
+        assert_eq!(gate.claim_slot().index, 5);
     }
 }

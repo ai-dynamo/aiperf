@@ -108,6 +108,79 @@ async fn build_prepared_source(
     )
 }
 
+/// Single-turn corpus of `entries` conversations (`session_0000`..) wired the way
+/// ONE thread of a `workers > 1` `global`-dispatch cell is: the source owns the
+/// `cell_id`-mod-`cell_count` residue class for enumeration but addresses
+/// absolute corpus positions when drawing.
+pub async fn partitioned_single_turn_source(
+    entries: usize,
+    cell_id: u32,
+    cell_count: u32,
+    model: &str,
+) -> Box<dyn ConversationSource> {
+    use crate::cellular::ModuloCellPartition;
+    use crate::dataset::{
+        ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
+    };
+    use crate::endpoints::EndpointId;
+    use crate::multiturn::{NativeDatasetConversationSource, PreparedEndpointReference};
+    use crate::rng::RngRoot;
+    let conversations = (0..entries)
+        .map(|index| {
+            serde_json::json!({
+                "session_id": format!("session_{index:04}"),
+                "turns": [{
+                    "text": format!("prompt {index}"),
+                    "input_length": 4,
+                    "output_length": 1,
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
+    let dataset = LoaderRegistry::with_builtin_formats()
+        .unwrap()
+        .build_dataset(
+            Some("multi_turn"),
+            &LoadConfig::new(DatasetSource::Inline(serde_json::json!(conversations))),
+            &ComposeConfig::new(model, RngRoot::new(Some(1))),
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        .unwrap();
+    let endpoint_id = EndpointId::new("chat").unwrap();
+    let prepared = crate::endpoints::EndpointRegistry::builtin()
+        .unwrap()
+        .prepare(
+            &endpoint_id,
+            crate::endpoints::RawEndpointConfig {
+                streaming: true,
+                use_server_token_count: true,
+                ..crate::endpoints::RawEndpointConfig::default()
+            },
+        )
+        .unwrap();
+    let mut table = crate::endpoints::PreparedEndpointTable::new();
+    let key = table.push(prepared).unwrap();
+    let resolver: std::rc::Rc<dyn crate::multiturn::PreparedTurnEndpointResolver> = std::rc::Rc::new(
+        crate::multiturn::PreparedEndpointTableResolver::single(
+            std::rc::Rc::new(table),
+            PreparedEndpointReference { key, endpoint_id },
+        )
+        .unwrap(),
+    );
+    Box::new(
+        NativeDatasetConversationSource::sequential_with_prepared_resolver_for_partition(
+            dataset,
+            model,
+            1,
+            resolver,
+            Some(ModuloCellPartition::new(cell_id, cell_count).unwrap()),
+            true,
+        )
+        .unwrap(),
+    )
+}
+
 /// Synthetic multi-turn source with `turns` `input_tokens`-word prompts.
 pub async fn synthetic_prepared_source(
     turns: usize,

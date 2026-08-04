@@ -895,6 +895,32 @@ pub trait ConversationSource {
     /// correlation id (user-centric uses the monotonically assigned user id).
     fn next(&mut self, x_correlation_id: Option<String>) -> Result<SampledSession>;
 
+    /// Whether [`Self::next_at_position`] really addresses absolute corpus
+    /// positions rather than degrading to [`Self::next`].
+    ///
+    /// A caller that owns its own globally ordered position sequence must probe
+    /// this before relying on the mapping: a source with no closed-form
+    /// position addressing answers `false` and keeps its own draw cursor.
+    fn is_position_addressed(&self) -> bool {
+        false
+    }
+
+    /// Draw the conversation at absolute corpus `position`, leaving this
+    /// source's own draw cursor untouched.
+    ///
+    /// The caller owns the position sequence, so advancing the cursor here too
+    /// would double-advance it. The default ignores `position` and defers to
+    /// [`Self::next`], which is why callers must gate on
+    /// [`Self::is_position_addressed`].
+    fn next_at_position(
+        &mut self,
+        position: u64,
+        x_correlation_id: Option<String>,
+    ) -> Result<SampledSession> {
+        let _ = position;
+        self.next(x_correlation_id)
+    }
+
     /// Build a runtime session for a specific template. Fixed-schedule replay
     /// uses this instead of the sampler so every trace entry is replayed once.
     fn session_for(
@@ -1893,6 +1919,31 @@ impl ConversationSource for NativeDatasetConversationSource {
                     None => self.sampler.next(),
                 }
             }
+        };
+        self.session(id.as_str(), x_correlation_id)
+    }
+
+    fn is_position_addressed(&self) -> bool {
+        matches!(self.draw, DrawMode::Position { .. })
+    }
+
+    fn next_at_position(
+        &mut self,
+        position: u64,
+        x_correlation_id: Option<String>,
+    ) -> Result<SampledSession> {
+        let id = match self.draw {
+            // The `Position` cursor is deliberately NOT advanced: the caller's
+            // position sequence replaces it, and advancing both would consume
+            // two positions per draw.
+            DrawMode::Position { .. } => match self.sampler.at_position(position) {
+                Some(id) => id,
+                // The constructor selects `Position` only after probing
+                // `at_position`, so this is unreachable; degrade to the
+                // stateful draw rather than panic on the issue path.
+                None => self.sampler.next(),
+            },
+            DrawMode::Owned => self.sampler.next(),
         };
         self.session(id.as_str(), x_correlation_id)
     }
