@@ -14,9 +14,7 @@ use aiperf_runtime::transport::core::ErrorKind;
 use aiperf_runtime::transport::http::config::ClientConfig;
 use aiperf_runtime::transport::http::models::RequestConfig;
 use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
-use axum::{
-    Router, body::Bytes, http::header, routing::post,
-};
+use axum::{Router, body::Bytes, http::header, routing::post};
 
 mod common;
 
@@ -88,7 +86,6 @@ async fn round_robin_resolves_to_real_endpoints_and_keeps_sessions_sticky() {
         })
         .await;
 }
-
 
 #[tokio::test]
 async fn positive_disconnect_delay_is_measured_from_send_completion() {

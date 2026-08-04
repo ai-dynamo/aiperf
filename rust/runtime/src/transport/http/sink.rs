@@ -51,7 +51,6 @@ mod endpoint_dispatch;
 
 use endpoint_dispatch::EndpointDispatchHooks;
 
-
 /// Generated response returned by the response-capturing dispatch path.
 #[derive(Debug, Clone)]
 pub struct HttpDispatchResult {
@@ -406,13 +405,13 @@ impl TransportSink {
                 anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
             }
         };
-        *self.url_memo.borrow_mut() =
-            Some((selected_index, endpoint_path.map(Box::from), rendered.clone()));
+        *self.url_memo.borrow_mut() = Some((
+            selected_index,
+            endpoint_path.map(Box::from),
+            rendered.clone(),
+        ));
         Ok(rendered)
     }
-
-
-
 }
 
 /// Follow a fixed JSON path without [`Value::pointer`].
@@ -437,9 +436,6 @@ fn dig<'v>(value: &'v Value, path: &[&str]) -> Option<&'v Value> {
     }
     Some(current)
 }
-
-
-
 
 pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelResponseMetadata) {
     if let Some(response_id) = value
@@ -510,7 +506,6 @@ pub(super) fn absorb_transport_error(
     ));
 }
 
-
 fn normalize_finish_reason(value: &str) -> String {
     match value {
         "max_output_tokens" | "max_tokens" => "length".to_string(),
@@ -528,7 +523,6 @@ fn error_kind_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Other => "transport_error",
     }
 }
-
 
 #[async_trait(?Send)]
 impl Dispatcher for TransportSink {
@@ -889,10 +883,10 @@ fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> (Bytes,
 #[cfg(test)]
 mod tests {
     use crate::dispatch::sink::ObservedUsage;
-    use crate::transport::http::sse::ChatChunk;
     use crate::endpoints::chat_request_body;
     use crate::transport::core::Response;
     use crate::transport::http::models::RequestConfig;
+    use crate::transport::http::sse::ChatChunk;
     use std::cell::Cell;
 
     use super::*;
@@ -1026,7 +1020,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn vllm_request_id_and_finish_reason_enter_normalized_metadata() {
         let mut metadata = ModelResponseMetadata::default();
@@ -1124,5 +1117,4 @@ mod tests {
             })
             .await;
     }
-
 }
