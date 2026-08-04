@@ -208,9 +208,15 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
             credit_materializer: None,
             hop_routing: routing,
             virtual_worker_width: None,
-            // This fixture drives the executor directly and asserts on connection
-            // reuse, not on record attribution.
-            worker_labels: None,
+            // This fixture reads `worker_id` back off the drained records to observe
+            // routing, so it needs the labels a real single-coordinator run builds.
+            // One cell, so the grid index is just the thread id.
+            worker_labels: Some(
+                (0..WORKERS)
+                    .map(|thread_id| std::sync::Arc::from(format!("rust-{thread_id}")))
+                    .collect::<Vec<std::sync::Arc<str>>>()
+                    .into(),
+            ),
         })
         .unwrap();
     let origin_ns = clock.now_ns();
