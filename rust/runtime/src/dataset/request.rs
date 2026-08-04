@@ -13,10 +13,10 @@ use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
     EmbeddingsEndpoint, Endpoint, ExtractedPayload, HfTeiRankingsEndpoint,
     HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
-    ImageRetrievalEndpoint, Media, MessagesEndpoint, ModelEndpoint, NimEmbeddingsEndpoint,
-    NimRankingsEndpoint, PreparedEndpoint, PreparedRequest, RawEndpoint, RequestInfo,
-    ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
-    VideoGenerationEndpoint,
+    EndpointDescriptor, ImageRetrievalEndpoint, Media, MessagesEndpoint, ModelEndpoint,
+    NimEmbeddingsEndpoint, NimRankingsEndpoint, PreparedEndpoint, PreparedRequest, RawEndpoint,
+    RequestInfo, ResponsesEndpoint, ShapeLowerer, SolidoRagEndpoint, TemplateEndpoint,
+    Turn as EndpointTurn, VideoGenerationEndpoint,
 };
 use bytes::Bytes;
 use serde_json::{Map, Value};
@@ -373,7 +373,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             )?;
             let mut effective_model_endpoint = model_endpoint.clone();
             effective_model_endpoint.endpoint.streaming = streaming;
-            let turns = session.endpoint_turns(store)?;
+            // The legacy `Endpoint` path keeps every turn's composed media; only
+            // the prepared dispatch path is hot enough to justify the narrower
+            // spliced resolution.
+            let turns = session.endpoint_turns(store, false)?;
             let request_info = RequestInfo {
                 model_endpoint: effective_model_endpoint,
                 turns,
@@ -485,7 +488,8 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 // straight off the dataset's plan.
                 Some(cached) => Arc::clone(cached),
                 None => {
-                    let turns = session.endpoint_turns(store)?;
+                    let turns = session
+                        .endpoint_turns(store, splices_lowered_wires(endpoint.descriptor(), phase))?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
                     let conversation_id = session.conversation_id().as_str().to_string();
@@ -1030,9 +1034,15 @@ impl ConversationSession {
     /// bodies (see [`reply_image_count`]); `None` means it could not be
     /// established, which makes every later turn's count unknown so dispatch
     /// falls back to parsing.
+    ///
+    /// A reply the caller already lowered (`turn.lowered` is set) is retained as
+    /// those wires alone: every later turn splices them verbatim, so the reply's
+    /// composed media would only be deep-cloned once per later dispatch and then
+    /// discarded by the formatter. Dropping it here bounds a session's retained
+    /// reply state to the bytes it actually sends.
     pub fn capture_response(
         &mut self,
-        turn: EndpointTurn,
+        mut turn: EndpointTurn,
         tokens: u64,
         images: Option<u32>,
     ) -> Result<()> {
@@ -1059,6 +1069,13 @@ impl ConversationSession {
             .reply_images
             .zip(images)
             .and_then(|(total, added)| total.checked_add(added));
+        if turn.lowered.is_some() {
+            turn.texts.clear();
+            turn.images.clear();
+            turn.audios.clear();
+            turn.videos.clear();
+            turn.raw_messages = None;
+        }
         self.replies.push(CapturedReply {
             after_turn,
             turn,
@@ -1123,13 +1140,25 @@ impl ConversationSession {
         Ok((conversation, turn, turn_index))
     }
 
-    fn endpoint_turns(&self, store: &dyn SegmentStore) -> Result<Vec<EndpointTurn>> {
+    /// Assemble the ordered endpoint turns this dispatch's body carries.
+    ///
+    /// `spliced` selects [`resolve_turn_spliced`] for the authored turns, which
+    /// the caller sets only when the bound dialect renders lowered wires and the
+    /// phase is not warmup.
+    fn endpoint_turns(&self, store: &dyn SegmentStore, spliced: bool) -> Result<Vec<EndpointTurn>> {
         let (conversation, _, current) = self.current()?;
+        let resolve = |turn: &Turn| {
+            if spliced {
+                resolve_turn_spliced(store, turn)
+            } else {
+                resolve_turn(store, turn)
+            }
+        };
         match self.context_mode {
             ConversationContextMode::DeltasWithoutResponses => {
-                let mut out = Vec::new();
+                let mut out = Vec::with_capacity(current + 1 + self.replies.len());
                 for index in 0..=current {
-                    out.push(resolve_turn(store, &conversation.turns[index])?);
+                    out.push(resolve(&conversation.turns[index])?);
                     if let Some(reply) = self.replies.iter().find(|reply| reply.after_turn == index)
                     {
                         out.push(reply.turn.clone());
@@ -1139,13 +1168,13 @@ impl ConversationSession {
             }
             ConversationContextMode::DeltasWithResponses => conversation.turns[..=current]
                 .iter()
-                .map(|turn| resolve_turn(store, turn))
+                .map(resolve)
                 .collect(),
             ConversationContextMode::MessageArrayWithResponses => {
-                Ok(vec![resolve_turn(store, &conversation.turns[current])?])
+                Ok(vec![resolve(&conversation.turns[current])?])
             }
             ConversationContextMode::MessageArrayWithoutResponses => {
-                self.merge_message_array_snapshots(store, conversation, current)
+                self.merge_message_array_snapshots(store, conversation, current, spliced)
             }
         }
     }
@@ -1155,11 +1184,18 @@ impl ConversationSession {
         store: &dyn SegmentStore,
         conversation: &Conversation,
         current: usize,
+        spliced: bool,
     ) -> Result<Vec<EndpointTurn>> {
         let mut previous = Vec::<EndpointTurn>::new();
         let mut out = Vec::new();
         for index in 0..=current {
-            let snapshot = split_snapshot(resolve_turn(store, &conversation.turns[index])?);
+            let turn = &conversation.turns[index];
+            let resolved = if spliced {
+                resolve_turn_spliced(store, turn)?
+            } else {
+                resolve_turn(store, turn)?
+            };
+            let snapshot = split_snapshot(resolved);
             if !snapshot.starts_with(&previous) {
                 return Err(DatasetError::Validation(format!(
                     "conversation {:?} turn {index} is not a prefix-extending message-array snapshot",
@@ -1281,7 +1317,53 @@ pub(crate) fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
     }
 }
 
+/// Whether this dispatch renders its message array by splicing lowered wires,
+/// making a turn's composed media unreachable from the formatter.
+///
+/// True exactly for the dialects [`ShapeLowerer`] can lower — the same predicate
+/// [`Dataset::lower_messages_for_endpoint`](crate::dataset::Dataset::lower_messages_for_endpoint)
+/// used to produce those wires, so a turn carrying `lowered` bytes under a
+/// `true` answer is guaranteed to be rendered through `rendered_turn_messages`.
+/// Warmup is excluded: it re-renders the first turn from its media so the system
+/// prompt can be folded into that message.
+fn splices_lowered_wires(descriptor: &EndpointDescriptor, phase: CreditPhase) -> bool {
+    phase != CreditPhase::Warmup && ShapeLowerer::for_descriptor_id(descriptor.id).is_some()
+}
+
+/// Resolve one authored dataset turn into the endpoint-facing turn, including
+/// its composed media content.
 pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
+    resolve_turn_inner(store, turn, false)
+}
+
+/// Resolve one authored dataset turn for a dialect that splices lowered message
+/// wires, skipping the composed media a spliced turn cannot reach.
+///
+/// A turn whose content was lowered at load carries its rendered messages in
+/// [`EndpointTurn::lowered`], and `rendered_turn_messages` splices those bytes
+/// and never looks at `texts`/`images`/`audios`/`videos`. Re-resolving the
+/// composed content therefore copies every prompt string out of the segment
+/// store — the whole accumulated history, on every dispatch — to build media
+/// the formatter discards.
+///
+/// Two conditions make the skip exact, and the caller owns both (see
+/// [`splices_lowered_wires`]): the dialect must be one that renders through
+/// `rendered_turn_messages`, and the phase must not be warmup, whose
+/// `render_first` re-renders the first turn from its media so the system prompt
+/// can be folded into it. A turn that was never lowered keeps its content
+/// regardless, since there is no wire to splice.
+pub(crate) fn resolve_turn_spliced(
+    store: &dyn SegmentStore,
+    turn: &Turn,
+) -> Result<EndpointTurn> {
+    resolve_turn_inner(store, turn, true)
+}
+
+fn resolve_turn_inner(
+    store: &dyn SegmentStore,
+    turn: &Turn,
+    skip_lowered_content: bool,
+) -> Result<EndpointTurn> {
     // Lowered content uses stored message wires; authored message arrays continue
     // through raw_messages. Validation guarantees the representations do not coexist.
     let message_handles = body_message_handles(turn, store)?;
@@ -1322,6 +1404,9 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
         lowered,
         ..EndpointTurn::default()
     };
+    if skip_lowered_content && resolved.lowered.is_some() {
+        return Ok(resolved);
+    }
     for group in &turn.content {
         let contents = group
             .handles

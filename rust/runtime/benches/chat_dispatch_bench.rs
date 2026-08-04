@@ -289,13 +289,26 @@ fn build_dataset(
 
 /// Drive a session to `turn_index`, splicing a synthetic assistant reply after
 /// each prior turn when the mode captures live replies.
-fn session_at(dataset: Arc<Dataset>, turn_index: usize, reply_len: usize) -> ConversationSession {
+///
+/// The reply is lowered through the endpoint's [`ShapeLowerer`] before capture,
+/// exactly as `multiturn::NativeSessionBackend::build_next_turn` does. Capturing
+/// an unlowered reply here would measure a re-render the runtime never performs.
+fn session_at(
+    dataset: Arc<Dataset>,
+    endpoint: &dyn PreparedEndpoint,
+    turn_index: usize,
+    reply_len: usize,
+) -> ConversationSession {
+    let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id);
     let mut session =
         ConversationSession::new(dataset, SessionId::from("session")).expect("session");
     for index in 0..=turn_index {
         session.advance_to(index).expect("advance");
         if index < turn_index && session.should_capture_response() {
-            let reply = endpoint_assistant_turn(filler(reply_len, 200 + index as u8));
+            let mut reply = endpoint_assistant_turn(filler(reply_len, 200 + index as u8));
+            if let Some(lowerer) = &lowerer {
+                reply.lowered = Some(lowerer.lower_turn(&reply).expect("lower reply"));
+            }
             session
                 // A text-only assistant reply contributes no wire image part.
                 .capture_response(reply, 64, Some(0))
@@ -390,7 +403,7 @@ fn chat_dispatch_body_path_profile() {
                 endpoint.as_ref(),
                 true,
             );
-            let session = session_at(dataset, 0, 0);
+            let session = session_at(dataset, endpoint.as_ref(), 0, 0);
             let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
             samples.push(measure(
                 format!("[{size_label}] turn 0  CACHED plan"),
@@ -411,7 +424,7 @@ fn chat_dispatch_body_path_profile() {
                 endpoint.as_ref(),
                 false,
             );
-            let session = session_at(dataset, 0, 0);
+            let session = session_at(dataset, endpoint.as_ref(), 0, 0);
             let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
             samples.push(measure(
                 format!("[{size_label}] turn 0  UNCACHED format_payload"),
@@ -434,7 +447,7 @@ fn chat_dispatch_body_path_profile() {
                 endpoint.as_ref(),
                 true,
             );
-            let session = session_at(dataset, 3, 0);
+            let session = session_at(dataset, endpoint.as_ref(), 3, 0);
             let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
             samples.push(measure(
                 format!("[{size_label}] turn 3  CACHED plan (recorded)"),
@@ -460,7 +473,7 @@ fn chat_dispatch_body_path_profile() {
                 endpoint.as_ref(),
                 true,
             );
-            let session = session_at(dataset, 3, per_message);
+            let session = session_at(dataset, endpoint.as_ref(), 3, per_message);
             let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
             samples.push(measure(
                 format!("[{size_label}] turn 3  LIVE chat (always uncached)"),
@@ -492,7 +505,7 @@ fn chat_dispatch_body_path_profile() {
             endpoint.as_ref(),
             true,
         );
-        let session = session_at(dataset, 3, per_message);
+        let session = session_at(dataset, endpoint.as_ref(), 3, per_message);
         let body = dispatch_body(&session, endpoint.as_ref(), &overrides);
         let len = body.len();
 
@@ -643,7 +656,7 @@ fn chat_dispatch_wire_ownership_profile() {
             endpoint.as_ref(),
             true,
         );
-        let session = session_at(dataset, 0, 0);
+        let session = session_at(dataset, endpoint.as_ref(), 0, 0);
         let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
         assert_eq!(
             dispatch_body(&session, endpoint.as_ref(), &overrides),
