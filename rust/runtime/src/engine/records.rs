@@ -460,7 +460,9 @@ pub(crate) fn per_record_parquet_row(
         request_ack_ns: record.first_token_ns,
         request_end_ns: record.end_ns,
         worker_id: record_worker_id(record),
-        global_dispatch_index: record.request_index.and_then(|index| i64::try_from(index).ok()),
+        global_dispatch_index: record
+            .global_dispatch_index
+            .and_then(|index| i64::try_from(index).ok()),
         benchmark_phase: phase_str(record.phase),
         was_cancelled: record.canceled,
         cancellation_time_ns: record.canceled.then_some(record.end_ns),
@@ -939,7 +941,7 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             request_ack_ns: record.first_token_ns,
             request_end_ns: record.end_ns,
             worker_id: record_worker_id(record),
-            global_dispatch_index: record.request_index,
+            global_dispatch_index: record.global_dispatch_index,
             worker_assignment_index: record.worker_assignment_index,
             record_processor_id: "aiperf runner",
             benchmark_phase: record.phase,
@@ -985,7 +987,7 @@ fn raw_record_row<'a>(
             request_ack_ns: ingest.first_token_ns,
             request_end_ns: ingest.end_ns,
             worker_id: record_worker_id(ingest),
-            global_dispatch_index: ingest.request_index,
+            global_dispatch_index: ingest.global_dispatch_index,
             worker_assignment_index: ingest.worker_assignment_index,
             record_processor_id: "aiperf runner",
             benchmark_phase: ingest.phase,

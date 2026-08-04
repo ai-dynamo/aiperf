@@ -115,7 +115,20 @@ pub struct RequestTrace {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordIngest {
     /// Absolute zero-based request slot assigned by the workload.
+    ///
+    /// This is the accumulator ROW the record is placed at, which is dense per
+    /// store: a fold-and-drop shard numbers its own records `0..N_shard` so the
+    /// shard stores concatenate. Use [`Self::global_dispatch_index`] for the
+    /// run-wide ordinal.
     pub request_index: Option<usize>,
+    /// Dense global dispatch ordinal over the whole run: the record's position in
+    /// the single issuance order every cell and worker thread tiles together.
+    ///
+    /// Distinct from `request_index`, which a fold-and-drop shard keeps store-local.
+    /// `None` for a path that assigns no global ordinal — absent rather than
+    /// fabricated, since a duplicated ordinal is worse than a missing one.
+    #[serde(default)]
+    pub global_dispatch_index: Option<usize>,
     /// Request correlation id.
     pub correlation_id: String,
     /// Session sequence number within the run.
@@ -186,6 +199,7 @@ impl RecordIngest {
     pub fn minimal(start_ns: i64, end_ns: i64, phase: Phase) -> Self {
         Self {
             request_index: None,
+            global_dispatch_index: None,
             correlation_id: format!("record-{start_ns}-{end_ns}"),
             session_num: 0,
             turn_index: 0,

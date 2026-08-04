@@ -635,7 +635,7 @@ impl RunCapture {
     /// O(records) and defeat the goal.
     pub(crate) fn fold_streaming(
         &self,
-        ingest: RecordIngest,
+        mut ingest: RecordIngest,
         phase: MetricsPhase,
         identity: &PhaseIdentity,
         has_credit_timestamp: bool,
@@ -644,6 +644,26 @@ impl RunCapture {
     ) -> Result<()> {
         let admit_ns =
             has_credit_timestamp.then(|| credit.issued_ns.saturating_sub(self.origin_ns));
+        // The run-wide dispatch ordinal, which `request_index` deliberately is NOT on
+        // this path: a shard numbers its own store rows `0..N_shard` so the shard
+        // stores concatenate, and `W` shards would each claim ordinal 0. The issuer
+        // maps this shard's phase-local dispatch index onto its own residue class of
+        // the run's `0..total` slot space, so the union over shards (and cells) is
+        // dense and collision-free.
+        //
+        // `credit.id` is that phase-local index: each phase builds its own
+        // `CreditCounter`, which numbers the phase's credits in issue order, so it is
+        // the dispatch-ordered counterpart of the `within` the retained-record join
+        // counts at finish. Only exact-fold has the cumulative `flat_local`
+        // (`request_index`) the single-cell issuer needs, so sketch — which publishes
+        // no per-record artifact at all — leaves the ordinal absent rather than
+        // guessing one.
+        if let Some(flat_local) = request_index {
+            let phase_base = self.phase_ordinal_bases.get(&phase).copied().unwrap_or(0);
+            ingest.global_dispatch_index = usize::try_from(credit.id)
+                .ok()
+                .map(|within| self.issuance.global_ordinal(flat_local, phase_base, within));
+        }
         self.fold_record(
             ingest,
             credit.turn.uuid,
@@ -918,7 +938,11 @@ impl RunCapture {
             .get(&ingest.phase)
             .copied()
             .unwrap_or(0);
-        ingest.request_index = Some(self.issuance.global_ordinal(ordinal, phase_base, within));
+        let global = self.issuance.global_ordinal(ordinal, phase_base, within);
+        // On the retained-record path the store row IS the global slot, so the two
+        // ordinals coincide; the fold path keeps them distinct (see `fold_streaming`).
+        ingest.request_index = Some(global);
+        ingest.global_dispatch_index = Some(global);
         ingest.admit_ns = if has_credit_timestamp {
             Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
                 anyhow!("captured request {} has no issuer timestamp", identity.uuid)

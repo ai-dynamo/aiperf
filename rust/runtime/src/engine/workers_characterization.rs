@@ -2462,6 +2462,104 @@ mod tests {
         );
     }
 
+    /// A record's `metadata.worker_id`, and the `rust-{n}` suffix parsed out of it.
+    fn worker_id(row: &Value) -> &str {
+        row.get("metadata")
+            .and_then(|metadata| metadata.get("worker_id"))
+            .and_then(Value::as_str)
+            .expect("every record carries metadata.worker_id")
+    }
+
+    /// A record's exported global dispatch ordinal.
+    fn dispatch_index(row: &Value) -> u64 {
+        row.get("metadata")
+            .and_then(|metadata| metadata.get("global_dispatch_index"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("every dispatched record carries a global ordinal: {row}"))
+    }
+
+    /// Every per-record row must name the worker thread that actually executed it,
+    /// and carry its dense global dispatch ordinal.
+    ///
+    /// `Sharded`/`Global` give each worker thread a co-located sink, so nothing on
+    /// that path reaches the cross-thread hop worker loop that stamps `worker_id`.
+    /// The export substituted a literal `rust-0`, and a 4-thread run therefore
+    /// asserted that one worker had executed all of it.
+    ///
+    /// The ordinal is the load-bearing half: it is the only field that recovers
+    /// global issuance order from a `Global` run, whose `W` independent threads each
+    /// stamp their own wall-clock `credit_issued_ns` with nothing ordering those
+    /// relative to each other. Asserting the ordinals are exactly `0..N` is what
+    /// makes sorting by them meaningful — and it pins the two fields against each
+    /// other, since a worker's ordinals are exactly its own residue class.
+    #[test]
+    fn global_records_name_their_executing_worker_and_carry_dense_dispatch_ordinals() {
+        const WORKERS: usize = 4;
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let requests = 24u64;
+        let records = run_dispatch_records(
+            &registry,
+            &mock,
+            WORKERS,
+            build_dataset(&registry, requests as usize, 1),
+            serde_json::from_value(json!({
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "concurrency": 4,
+            }))
+            .unwrap(),
+            crate::engine::protocol::DispatchMode::Global,
+        );
+        assert_eq!(records.len(), requests as usize);
+
+        let ids: std::collections::BTreeSet<&str> = records.iter().map(worker_id).collect();
+        assert!(
+            ids.len() > 1,
+            "a {WORKERS}-thread Global run must report more than one executing \
+             worker; reporting a single id means the field names a constant rather \
+             than the thread that ran each request. Saw: {ids:?}"
+        );
+        for id in &ids {
+            let index: usize = id
+                .strip_prefix("rust-")
+                .and_then(|suffix| suffix.parse().ok())
+                .unwrap_or_else(|| panic!("worker_id must be spelled rust-{{n}}, got {id}"));
+            assert!(
+                index < WORKERS,
+                "worker_id {id} names index {index}, outside the run's 0..{WORKERS} \
+                 worker grid"
+            );
+        }
+
+        // Dense and unique over 0..N: the property the shard merge already relies
+        // on, and what makes an ordinal sort equal the global issuance order. This
+        // single-phase run has a zero phase base, so the range is zero-based.
+        let ordinals: std::collections::BTreeSet<u64> =
+            records.iter().map(dispatch_index).collect();
+        assert_eq!(
+            ordinals,
+            (0..requests).collect::<std::collections::BTreeSet<u64>>(),
+            "the exported global dispatch ordinals must be exactly 0..{requests} — \
+             dense, unique, no gaps — across every shard"
+        );
+
+        // The two fields must agree: a shard draws the residue class of its own
+        // two-level partition index, so `ordinal % workers` is its worker index.
+        for row in &records {
+            let id = worker_id(row);
+            let expected = format!("rust-{}", dispatch_index(row) % WORKERS as u64);
+            assert_eq!(
+                id, expected,
+                "worker {id} reported ordinal {} — every shard issues exactly its \
+                 own residue class modulo the worker count",
+                dispatch_index(row)
+            );
+        }
+    }
+
     #[test]
     fn static_accuracy_workers_gt_1_shards_and_tally_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
