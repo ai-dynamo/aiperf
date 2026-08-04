@@ -810,7 +810,7 @@ function PageBodyPlan({ t }: { t: Theme }) {
         <CardBody>
           <pre style={{ margin: 0, fontSize: 12, lineHeight: "18px", color: t.text.secondary, overflowX: "auto" }}>
 {`pub enum FieldValue {
-    Literal(Value),                    // serialized on the hot path
+    Literal(LiteralValue),             // value + wire, serialized once when bound
     Segment(Handle),                   // one wire cloned from the store
     Segments(SmallVec<[Handle; 1]>),   // [ wire, wire, ... ] joined
     Wires(SmallVec<[Bytes; 1]>),       // dynamic content, no store lookup

@@ -27,7 +27,9 @@ pub mod segment;
 pub mod synthesis;
 pub mod tokenizer;
 
-pub use crate::body_plan::{BodyPlan, FieldName, FieldValue, JsonBodyMaterializer};
+pub use crate::body_plan::{
+    BodyPlan, FieldName, FieldProgram, FieldValue, JsonBodyMaterializer, LiteralValue,
+};
 pub use corpus::{
     MAX_CHARS_PER_CHUNK, SHAKESPEARE_CORPUS, tokenize_corpus_chunked, tokenize_sonnet_corpus,
 };

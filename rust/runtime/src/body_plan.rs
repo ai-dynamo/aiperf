@@ -34,6 +34,59 @@ use crate::dataset::segment::{Handle, Payload, SegmentStore};
 /// free while a runtime decompose can carry owned keys (user `extra_body`).
 pub type FieldName = Cow<'static, str>;
 
+/// An endpoint-generated literal paired with its serialized wire bytes.
+///
+/// The wire is produced once when the value is *bound to a field*, not once per
+/// dispatch: the materializer splices it verbatim, exactly as it splices segment
+/// and message wires. That keeps literal serialization off the dispatch path for
+/// a cached plan entirely, and makes it exactly one pass for a plan rebuilt per
+/// dispatch (`precomputable_body() == false` endpoints, graph nodes, warmup) —
+/// the same count as re-serializing at materialization, but the bytes are then
+/// also free to measure, which is what lets [`FieldProgram`] reserve exactly.
+///
+/// This matters most where a literal is large: `vllm_generate` binds an
+/// ISL-sized `token_ids` integer array, whose serialization dwarfs the memcpy
+/// that splicing the cached wire costs.
+///
+/// The wire is absent only when the value would not serialize, in which case
+/// materialization re-attempts it and surfaces the error.
+#[derive(Debug, Clone)]
+pub struct LiteralValue {
+    value: Value,
+    wire: Option<Bytes>,
+}
+
+impl LiteralValue {
+    /// Bind a value, serializing its wire once.
+    pub fn new(value: Value) -> Self {
+        let wire = serde_json::to_vec(&value).ok().map(Bytes::from);
+        Self { value, wire }
+    }
+
+    /// Borrow the bound value.
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    /// The pre-serialized wire, absent only for a value that will not serialize.
+    pub fn wire(&self) -> Option<&Bytes> {
+        self.wire.as_ref()
+    }
+}
+
+/// Two literals are equal when they bind the same value; the wire is derived.
+impl PartialEq for LiteralValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl From<Value> for LiteralValue {
+    fn from(value: Value) -> Self {
+        Self::new(value)
+    }
+}
+
 /// The value bound to one [`BodyPlan`] field.
 ///
 /// Content values are *segment references*, never inline bytes: the endpoint
@@ -44,8 +97,8 @@ pub type FieldName = Cow<'static, str>;
 /// [`Literal`]: FieldValue::Literal
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldValue {
-    /// An endpoint-generated scalar or struct, serialized once (small).
-    Literal(Value),
+    /// An endpoint-generated scalar or struct, serialized once when bound.
+    Literal(LiteralValue),
     /// One pre-serialized content segment (system block, tools, a nested body).
     Segment(Handle),
     /// An ordered array of message segments, comma-joined inside `[` `]`.
@@ -184,9 +237,9 @@ fn entry_len(name: &FieldName, value: &FieldValue) -> Option<usize> {
 /// depends on a segment store this program does not hold.
 fn value_len(value: &FieldValue) -> Option<usize> {
     match value {
-        // Serializing is the only way to know a literal's exact length: escaping
-        // and number formatting are the serializer's business, not ours.
-        FieldValue::Literal(literal) => serde_json::to_vec(literal).ok().map(|bytes| bytes.len()),
+        // The wire was serialized when the value was bound, so its exact length
+        // is free here and the write path splices it rather than re-serializing.
+        FieldValue::Literal(literal) => literal.wire().map(Bytes::len),
         FieldValue::Segment(_) | FieldValue::Segments(_) => None,
         FieldValue::Wires(wires) => Some(array_len(wires.iter().map(Bytes::len), wires.len())),
     }
@@ -281,7 +334,7 @@ impl BodyPlan {
 
     /// Declare a literal endpoint-generated value.
     pub fn literal(self, name: impl Into<FieldName>, value: Value) -> Self {
-        self.push(name.into(), FieldValue::Literal(value))
+        self.push(name.into(), FieldValue::Literal(LiteralValue::new(value)))
     }
 
     /// Declare a literal string field.
@@ -317,7 +370,7 @@ impl BodyPlan {
                         .collect::<std::result::Result<SmallVec<[Bytes; 1]>, _>>()?;
                     plan = plan.push(name, FieldValue::Wires(wires));
                 }
-                _ => plan = plan.push(name, FieldValue::Literal(value.clone())),
+                _ => plan = plan.push(name, FieldValue::Literal(LiteralValue::new(value.clone()))),
             }
         }
         Ok(plan)
@@ -343,7 +396,7 @@ impl BodyPlan {
                 .fields
                 .iter()
                 .find_map(|(field, value)| match value {
-                    FieldValue::Literal(literal) if field == name => Some(literal),
+                    FieldValue::Literal(literal) if field == name => Some(literal.value()),
                     _ => None,
                 }),
             Self::Raw(_) | Self::Prebuilt(_) => None,
@@ -392,7 +445,7 @@ impl BodyPlan {
     /// of `serde_json::Map::insert`, so dispatch overrides fold in byte-for-byte.
     pub fn set_literal(&mut self, name: impl Into<FieldName>, value: Value) {
         if let Self::Fields(program) = self {
-            program.set(name.into(), FieldValue::Literal(value));
+            program.set(name.into(), FieldValue::Literal(LiteralValue::new(value)));
         }
     }
 
@@ -480,9 +533,12 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
         body.put_slice(name.as_bytes());
         body.put_slice(b"\":");
         match value {
-            // Endpoint-generated scalars/structs serialize straight into the
-            // buffer — the only serialization on this path, and small.
-            FieldValue::Literal(literal) => serde_json::to_writer((&mut body).writer(), literal)?,
+            // Spliced from the wire bound with the value; the fallback re-attempts
+            // the serialization that failed at bind time so the error surfaces here.
+            FieldValue::Literal(literal) => match literal.wire() {
+                Some(wire) => body.put_slice(wire),
+                None => serde_json::to_writer((&mut body).writer(), literal.value())?,
+            },
             FieldValue::Segment(handle) => body.put_slice(&segment_field_wire(store, *handle)?),
             FieldValue::Segments(handles) => {
                 body.put_u8(b'[');
@@ -831,6 +887,39 @@ mod tests {
         )
         .unwrap();
         assert!(hint(&with_wires).unwrap() < dispatched.len());
+    }
+
+    #[test]
+    fn literal_wire_is_bound_once_and_matches_the_serializer() {
+        // The wire is spliced verbatim at materialization, so it must be exactly
+        // what `to_writer` would have emitted — escaping, float and large-integer
+        // formatting included.
+        for value in [
+            Value::String("esc \"q\" \\ \n \u{2028} \u{1f600}".into()),
+            Value::from(1.0e-7_f64),
+            Value::from(u64::MAX),
+            serde_json::json!({"include_usage": true, "nested": [1, 2, 3]}),
+            serde_json::json!((0..4096).collect::<Vec<u32>>()),
+        ] {
+            let literal = LiteralValue::new(value.clone());
+            assert_eq!(
+                literal.wire().map(|wire| wire.as_ref()),
+                Some(serde_json::to_vec(&value).unwrap().as_slice()),
+                "cached literal wire drifted from the serializer"
+            );
+        }
+
+        // And the spliced body matches a whole-object serialization.
+        let object = serde_json::json!({
+            "token_ids": (0..2048).collect::<Vec<u32>>(),
+            "sampling_params": {"max_tokens": 16},
+            "stream": false
+        });
+        let plan = BodyPlan::from_object(object.as_object().unwrap()).unwrap();
+        assert_eq!(
+            plan.materialize_standalone().unwrap(),
+            Bytes::from(serde_json::to_vec(&object).unwrap())
+        );
     }
 
     #[test]
