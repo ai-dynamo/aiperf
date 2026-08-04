@@ -208,6 +208,9 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
             credit_materializer: None,
             hop_routing: routing,
             virtual_worker_width: None,
+            // This fixture drives the executor directly and asserts on connection
+            // reuse, not on record attribution.
+            worker_labels: None,
         })
         .unwrap();
     let origin_ns = clock.now_ns();
