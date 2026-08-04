@@ -1066,20 +1066,18 @@ fn continuation_turn_plan(
     }
     // The markers contribute nothing but their wires, so exactly one field —
     // the message array — may differ between the two plans.
-    let mut differing = fields
-        .iter()
-        .zip(probe_fields)
-        .enumerate()
-        .filter(|(_, (field, probe_field))| field != probe_field);
-    let Some((field, (_, (_, FieldValue::Wires(base_wires))))) = differing.next() else {
-        return Ok(None);
-    };
-    let FieldValue::Wires(probe_wires) = &probe_fields[field].1 else {
+    let mut differing = (0..fields.len()).filter(|index| fields[*index] != probe_fields[*index]);
+    let Some(field) = differing.next() else {
         return Ok(None);
     };
     if differing.next().is_some() {
         return Ok(None);
     }
+    let (FieldValue::Wires(base_wires), FieldValue::Wires(probe_wires)) =
+        (&fields[field].1, &probe_fields[field].1)
+    else {
+        return Ok(None);
+    };
 
     // Walk the probe array against the authored one: every element is either the
     // next marker, in order, or the next authored wire. Anything else means the
