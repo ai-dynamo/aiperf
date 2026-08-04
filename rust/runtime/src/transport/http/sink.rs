@@ -25,20 +25,18 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
-use crate::endpoints::chat_request_body;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
-use crate::transport::http::sse::ChatChunk;
 
 use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
+use crate::dispatch::sink::{RequestObserver, RequestSink};
 use crate::metrics::NativeMetricsObserver;
 use crate::transport::core::{
     ConnectionReuseStrategy, DispatchResult, Dispatcher, ErrorDetails, ErrorKind, MeasuredContext,
     MeasuredOutcome, PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor,
-    RequestRecord, Response, SseMessage,
+    RequestRecord,
 };
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{HttpVersion, RequestConfig};
+use crate::transport::http::models::HttpVersion;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::measure::{self, WorkerMeasurement};
 use serde_json::Value;
@@ -53,15 +51,6 @@ mod endpoint_dispatch;
 
 use endpoint_dispatch::EndpointDispatchHooks;
 
-/// Return true only for an SSE message that releases prefill capacity.
-///
-/// Role-only, usage-only, finish-only, malformed, and `[DONE]` messages do not.
-fn is_meaningful_chat_token(message: &SseMessage) -> bool {
-    let Some(data) = message.data() else {
-        return false;
-    };
-    serde_json::from_str::<ChatChunk>(data).is_ok_and(|chunk| !chunk.delta_text().is_empty())
-}
 
 /// Generated response returned by the response-capturing dispatch path.
 #[derive(Debug, Clone)]
@@ -376,208 +365,8 @@ impl TransportSink {
         Ok(rendered)
     }
 
-    /// Dispatch `req`, invoking `on_first_token` once when the transport observes
-    /// TTFT. Request-rate scheduling uses this to release prefill capacity before
-    /// the full stream reaches terminal.
-    pub async fn dispatch_with_hooks(
-        &self,
-        req: Request,
-        obs: &dyn RequestObserver,
-        on_first_token: impl FnMut(i64),
-    ) -> Result<()> {
-        self.dispatch_collect_with_hooks(req, obs, on_first_token)
-            .await
-            .map(|_| ())
-    }
 
-    /// Dispatch and retain generated text plus authoritative usage for consumers
-    /// such as the external accuracy response collector. Measurement events are identical to
-    /// [`dispatch_with_hooks`](Self::dispatch_with_hooks).
-    pub async fn dispatch_collect_with_hooks(
-        &self,
-        req: Request,
-        obs: &dyn RequestObserver,
-        on_first_token: impl FnMut(i64),
-    ) -> Result<HttpDispatchResult> {
-        self.dispatch_collect_record_with_hooks(req, obs, on_first_token)
-            .await
-            .map(|collected| collected.result)
-    }
 
-    async fn dispatch_collect_record_with_hooks(
-        &self,
-        req: Request,
-        obs: &dyn RequestObserver,
-        mut on_first_token: impl FnMut(i64),
-    ) -> Result<HttpCollectedDispatch> {
-        let Request {
-            uuid,
-            max_output_tokens,
-            prompt_text,
-            request_body,
-            request_body_bytes,
-            headers,
-            parameters,
-            endpoint_path,
-            streaming,
-            x_correlation_id,
-            is_final_turn,
-            cancel_after_ns,
-            url_index,
-            ..
-        } = req;
-        // No scheduler admission on the HTTP path; admit == dispatch time.
-        let admit_ms = self.ms(self.clock.now_ns());
-        obs.on_admit(uuid, admit_ms, 0);
-
-        anyhow::ensure!(
-            request_body.is_none() || request_body_bytes.is_none(),
-            "an HTTP request cannot supply both JSON and serialized bodies"
-        );
-        let body = match request_body_bytes {
-            Some(body) => body,
-            None => {
-                let payload = request_body.unwrap_or_else(|| {
-                    let prompt = prompt_text.unwrap_or_default();
-                    chat_request_body(&self.model, &[("user", prompt.as_str())], max_output_tokens)
-                });
-                Bytes::from(serde_json::to_vec(&payload)?)
-            }
-        };
-        let request_payload = body.clone();
-
-        let selected_url = self.selected_url(url_index, endpoint_path.as_deref())?;
-        let mut cfg = RequestConfig::new(selected_url);
-        cfg.headers = headers;
-        cfg.params = parameters;
-        cfg.correlation_id = x_correlation_id;
-        cfg.request_id = Some(uuid.to_string());
-        cfg.is_final_turn = is_final_turn;
-        cfg.cancel_after_ns = cancel_after_ns;
-        cfg.reuse = self.connection_reuse;
-        let first_token_released = Cell::new(false);
-        let rec = self
-            .transport
-            .send_request_bytes_with_first_token_filter(
-                &cfg,
-                body,
-                streaming,
-                |ttft_ns, message| {
-                    if !is_meaningful_chat_token(message) {
-                        return false;
-                    }
-                    if !first_token_released.replace(true) {
-                        on_first_token(ttft_ns);
-                    }
-                    true
-                },
-            )
-            .await;
-
-        let mut done = false;
-        let mut response_text = String::new();
-        let mut model_response = ModelResponseMetadata::default();
-        let mut prompt_tokens = None;
-        let mut completion_tokens = None;
-        for resp in &rec.responses {
-            match resp {
-                Response::Sse(msg) => {
-                    if msg.is_done() {
-                        done = true;
-                        continue;
-                    }
-                    let Some(data) = msg.data() else { continue };
-                    let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
-                        continue;
-                    };
-                    absorb_chat_chunk_metadata(&chunk, &mut model_response);
-                    if let Some(usage) = &chunk.usage {
-                        prompt_tokens = Some(usage.prompt_tokens);
-                        completion_tokens = Some(usage.completion_tokens);
-                        model_response.cached_prompt_tokens = usage.cached_tokens().map(u64::from);
-                    }
-                    let delta = chunk.delta_text();
-                    if !delta.is_empty() {
-                        response_text.push_str(&delta);
-                        let kind = if chunk.has_output_delta() {
-                            ObservedTokenKind::Output
-                        } else {
-                            ObservedTokenKind::Reasoning
-                        };
-                        obs.on_classified_token(uuid, self.ms(msg.perf_ns), kind);
-                    }
-                }
-                Response::Text(response) => {
-                    done = true;
-                    if let Some(value) = response.json() {
-                        let parsed = parse_non_streaming_response(&value);
-                        response_text.push_str(&parsed.0);
-                        prompt_tokens = parsed.1;
-                        completion_tokens = parsed.2;
-                        absorb_wire_response_metadata(&value, &mut model_response);
-                        absorb_non_streaming_content(&value, &mut model_response);
-                        if !response_text.is_empty() {
-                            if !first_token_released.replace(true) {
-                                on_first_token(response.perf_ns.saturating_sub(rec.start_ns));
-                            }
-                            obs.on_classified_token(
-                                uuid,
-                                self.ms(response.perf_ns),
-                                ObservedTokenKind::Output,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        let terminal = match rec.error.as_ref().map(|error| error.kind) {
-            Some(ErrorKind::Cancelled) => ReplayTerminalStatus::Canceled,
-            Some(_) => ReplayTerminalStatus::Failed,
-            None if done && rec.status == Some(200) => ReplayTerminalStatus::Completed,
-            None => ReplayTerminalStatus::Failed,
-        };
-        absorb_transport_error(
-            rec.error.as_ref(),
-            terminal,
-            rec.status,
-            &mut model_response,
-        );
-        obs.on_usage(
-            uuid,
-            ObservedUsage {
-                prompt_tokens: prompt_tokens.map(|value| value as usize),
-                completion_tokens: completion_tokens.map(|value| value as usize),
-                ..ObservedUsage::default()
-            },
-        );
-        obs.on_terminal(uuid, terminal);
-        let http = endpoint_dispatch::http_trace(&rec);
-        let result = HttpDispatchResult {
-            start_ns: rec.start_ns,
-            end_ns: rec.end_ns.unwrap_or_else(|| self.clock.now_ns()),
-            status: rec.status,
-            terminal,
-            response_text,
-            model_response,
-            prompt_tokens,
-            completion_tokens,
-            http,
-        };
-        // `http_trace` above already took everything the result needs, and the
-        // only other reader drops these behind its own raw-artifact guard.
-        // Releasing here frees them on this worker rather than on whichever
-        // thread later consumes the record.
-        let mut rec = rec;
-        if !self.retain_raw_responses.get() {
-            rec.responses = Vec::new();
-        }
-        Ok(HttpCollectedDispatch {
-            result,
-            request_payload,
-            record: rec,
-        })
-    }
 }
 
 /// Follow a fixed JSON path without [`Value::pointer`].
@@ -603,91 +392,8 @@ fn dig<'v>(value: &'v Value, path: &[&str]) -> Option<&'v Value> {
     Some(current)
 }
 
-fn parse_non_streaming_response(value: &Value) -> (String, Option<u32>, Option<u32>) {
-    let text = dig(value, &["choices", "0", "message", "reasoning_content"])
-        .or_else(|| dig(value, &["choices","0","message","content"]))
-        .or_else(|| dig(value, &["choices", "0", "text"]))
-        .or_else(|| value.get("output_text"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            let output = value
-                .get("output")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .flat_map(|item| {
-                    item.get("content")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                })
-                .filter_map(|content| content.get("text").and_then(Value::as_str))
-                .fold(String::new(), |mut output, text| {
-                    output.push_str(text);
-                    output
-                });
-            (!output.is_empty()).then_some(output)
-        })
-        .unwrap_or_default();
-    let usage = value.get("usage");
-    let prompt = usage
-        .and_then(|usage| {
-            usage
-                .get("prompt_tokens")
-                .or_else(|| usage.get("input_tokens"))
-        })
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok());
-    let completion = usage
-        .and_then(|usage| {
-            usage
-                .get("completion_tokens")
-                .or_else(|| usage.get("output_tokens"))
-        })
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok());
-    (text, prompt, completion)
-}
 
-fn absorb_chat_chunk_metadata(chunk: &ChatChunk, metadata: &mut ModelResponseMetadata) {
-    if let Some(response_id) = chunk.id.as_ref().filter(|value| !value.is_empty()) {
-        metadata.response_id = Some(response_id.clone());
-    }
-    for choice in &chunk.choices {
-        if let Some(content) = &choice.delta.content {
-            append_optional_text(&mut metadata.content, content);
-        }
-        if let Some(reasoning) = &choice.delta.reasoning_content {
-            metadata.content.get_or_insert_with(String::new);
-            append_optional_text(&mut metadata.reasoning, reasoning);
-        }
-        if let Some(finish_reason) = choice
-            .finish_reason
-            .as_ref()
-            .filter(|value| !value.is_empty())
-        {
-            metadata.finish_reason = Some(normalize_finish_reason(finish_reason));
-        }
-    }
-}
 
-fn absorb_non_streaming_content(value: &Value, metadata: &mut ModelResponseMetadata) {
-    let reasoning = dig(value, &["choices", "0", "message", "reasoning_content"])
-        .or_else(|| dig(value, &["choices","0","message","reasoning"]))
-        .and_then(Value::as_str);
-    if let Some(reasoning) = reasoning {
-        metadata.content.get_or_insert_with(String::new);
-        append_optional_text(&mut metadata.reasoning, reasoning);
-    }
-    let content = dig(value, &["choices", "0", "message", "content"])
-        .or_else(|| dig(value, &["choices", "0", "text"]))
-        .or_else(|| value.get("output_text"))
-        .and_then(Value::as_str);
-    if let Some(content) = content {
-        append_optional_text(&mut metadata.content, content);
-    }
-}
 
 pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelResponseMetadata) {
     if let Some(response_id) = value
@@ -758,9 +464,6 @@ pub(super) fn absorb_transport_error(
     ));
 }
 
-fn append_optional_text(target: &mut Option<String>, text: &str) {
-    target.get_or_insert_with(String::new).push_str(text);
-}
 
 fn normalize_finish_reason(value: &str) -> String {
     match value {
@@ -780,34 +483,6 @@ fn error_kind_name(kind: ErrorKind) -> &'static str {
     }
 }
 
-#[async_trait(?Send)]
-impl RequestSink<Request> for TransportSink {
-    async fn dispatch(&self, req: Request, obs: &dyn RequestObserver) -> Result<()> {
-        self.dispatch_with_hooks(req, obs, |_ttft_ns| {}).await
-    }
-}
-
-#[async_trait(?Send)]
-impl HttpRequestDispatcher for TransportSink {
-    fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
-        InferenceDimensions {
-            endpoint_url: self
-                .selected_url(request.url_index, request.endpoint_path.as_deref())
-                .ok(),
-            model: Some(self.model.clone()),
-        }
-    }
-
-    async fn dispatch_collect(
-        &self,
-        req: Request,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpDispatchResult> {
-        self.dispatch_collect_with_hooks(req, observer, on_first_token)
-            .await
-    }
-}
 
 #[async_trait(?Send)]
 impl Dispatcher for TransportSink {
@@ -821,7 +496,12 @@ impl Dispatcher for TransportSink {
     }
 
     fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
-        <Self as HttpRequestDispatcher>::inference_dimensions(self, request)
+        InferenceDimensions {
+            endpoint_url: self
+                .selected_url(request.url_index, request.endpoint_path.as_deref())
+                .ok(),
+            model: Some(self.model.clone()),
+        }
     }
 
     fn supports_response_streaming(&self) -> bool {
@@ -1053,7 +733,7 @@ impl TransportSink {
             mut request,
             model,
             endpoint,
-            endpoint_aware,
+            endpoint_aware: _,
             data_policy,
         } = turn;
         if !data_policy.allow_result_cache() {
@@ -1064,7 +744,11 @@ impl TransportSink {
                 .headers
                 .insert("pragma".to_string(), "no-cache".to_string());
         }
-        let collected = if endpoint_aware {
+        // Every product turn carries a prebuilt request body, so `PreparedTurn`
+        // always reports endpoint_aware (see PreparedTurn::from_turn). The
+        // non-endpoint-aware alternative this used to branch to was reachable
+        // only from tests.
+        let collected = {
             match endpoint {
                 PreparedEndpointBinding::Prepared(reference) => {
                     let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
@@ -1095,13 +779,6 @@ impl TransportSink {
                     .await?
                 }
             }
-        } else {
-            anyhow::ensure!(
-                responses.is_none(),
-                "true response streaming requires a prepared endpoint binding"
-            );
-            self.dispatch_collect_record_with_hooks(request, observer, on_first_token)
-                .await?
         };
         let HttpCollectedDispatch {
             result,
