@@ -32,6 +32,20 @@ pub trait Sampler {
     fn advance(&mut self) {
         let _ = self.next();
     }
+
+    /// The identifier at an absolute corpus position, without stepping state.
+    ///
+    /// `Some` only when this strategy's draw is a pure function of position, so
+    /// that `at_position(i)` equals the `i`th [`Self::next`] of a fresh sampler
+    /// for every `i`. That purity is what lets `W` worker threads each draw
+    /// their own subset of one global sequence with no shared state and no
+    /// cross-thread coordination.
+    ///
+    /// The default is `None`: an RNG-stateful strategy has no closed form, and
+    /// callers must fall back to the stateful draw rather than approximate one.
+    fn at_position(&self, _position: u64) -> Option<SessionId> {
+        None
+    }
 }
 
 /// Factory for one named sampler strategy.
@@ -253,6 +267,13 @@ impl Sampler for SequentialSampler {
             self.index = 0;
         }
         self.index += 1;
+    }
+
+    fn at_position(&self, position: u64) -> Option<SessionId> {
+        // Wraparound is the same recycle rule `next` applies; the constructor
+        // rejects an empty corpus, so the modulus is non-zero.
+        let index = (position % self.ids.len() as u64) as usize;
+        Some(self.ids[index].clone())
     }
 }
 
