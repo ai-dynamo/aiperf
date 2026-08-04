@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::body_plan::RequestBody;
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::dataset::{Handle, Payload, SegmentStore};
 use crate::dispatch::collector::ReplayTerminalStatus;
@@ -23,7 +24,7 @@ use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::ExecutorFlags;
 use crate::graph::materialize::SegmentItemsMaterializer;
-use crate::graph::model::{GraphTracePlan, LlmNode};
+use crate::graph::model::{GraphTracePlan, LlmNode, PromptItem};
 use crate::graph::placement::{
     GraphPlacementError, LocalTracePlacement, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
@@ -269,6 +270,9 @@ pub(crate) struct GraphEndpointRequest {
     cancel_after_ns: Option<i64>,
     session_num: u64,
     phase: Phase,
+    /// Exact wire image count established by the node's authored shape, or `None`
+    /// to let dispatch derive it by parsing the serialized body.
+    known_image_count: Option<u32>,
 }
 
 pub(crate) struct GraphEndpointDispatch {
@@ -358,6 +362,9 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                     connection_reuse: profile.connection_reuse,
                     session_header: profile.session_header.clone(),
                     content_server_base: self.content_server_base.clone(),
+                    // `build_graph_dispatcher` stamps the request-payload
+                    // capture flag from this run's raw-artifact selection.
+                    ..TransportSinkConfig::default()
                 },
                 url_count: profile.config.urls.len(),
             });
@@ -492,8 +499,7 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             input_length: usize::try_from(input_tokens).unwrap_or(usize::MAX),
             max_output_tokens: input.max_output_tokens,
             prompt_text: None,
-            request_body: None,
-            request_body_bytes: Some(payload),
+            body: Some(RequestBody::wire(payload)),
             headers,
             parameters: input.parameters,
             endpoint_path,
@@ -502,7 +508,7 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             is_final_turn: input.is_final_turn,
             cancel_after_ns: input.cancel_after_ns,
             url_index: Some(session_url_index(input.session_num, profile.url_count)),
-            image_count: None,
+            image_count: input.known_image_count,
             recorded_api_time_ns: None,
             recorded_ttft_ns: None,
         };
@@ -873,6 +879,63 @@ struct PreparedNodeMetadata {
     raw_system: Option<Vec<Value>>,
     extra_body: Option<Map<String, Value>>,
     parameters: BTreeMap<String, String>,
+    /// Wire image count this node's body is known to carry, or `None` when it
+    /// cannot be established without parsing the serialized body. See
+    /// [`node_known_image_count`].
+    known_image_count: Option<u32>,
+}
+
+/// The exact wire image count of a graph node's request body, when the node's
+/// authored prompt program makes it knowable without parsing the serialized body.
+///
+/// Two of the four [`PromptItem`] variants are text-only, and the invariant is
+/// held by their *producers*, not by any check on this path:
+///
+/// - `Seg` resolves to a `Payload::Message` wire. That payload is explicitly
+///   allowed to be multimodal in general (see `dataset::segment`, which folds
+///   the wire into the message identity for exactly that reason), so the
+///   guarantee here is only that every graph `Seg` handle is interned from a
+///   string-content message: `graph::recorded::trie` serializes `MessageWire {
+///   role, content: &str }` and `graph::conditional::fold` serializes
+///   `OpenAiChatMessage`, whose `content` is a `String`.
+/// - `Text` renders `{"role", "content": <utf8>}` from a `Payload::Text`.
+///
+/// A new graph adapter that mints a `Seg` from a lowered multimodal turn (the
+/// shape `dataset::dataset` interns for the scheduled path) would break this and
+/// must extend the fallback below. Note that `graph::lowering`'s `MediaKind`
+/// rejection does *not* cover it: that guards `turn.content`, while the
+/// `turn.messages` loop that emits `Seg` items only checks the payload variant
+/// and never inspects the wire.
+///
+/// The other two variants carry authored JSON that nothing on the graph path
+/// inspects for content kind:
+///
+/// - `RawMessages`: `graph::materialize::raw_message_wires` splits an authored
+///   `dag_jsonl` array into per-object wires and validates only object-ness.
+/// - `Splice`: resolves against channel state, which a trace's authored
+///   `initial_state`/`replay_outputs` seeds verbatim
+///   (`graph::channel_store::channel_value` builds `EncodedMessages` straight
+///   from the authored array). A splice of a *reply* is text-only, but the node
+///   program cannot tell a seeded channel from a produced one without the
+///   trace's state, which is not available here — so any splice falls back.
+///
+/// `Some(0)` lets the dispatch path skip a full body reparse whose only consumer
+/// is `num_images`; `None` preserves that reparse.
+///
+/// Endpoint field assembly does not reintroduce images for the dialects a graph
+/// node can reach: `extra_body`/`extra` merge into the payload map, but the
+/// message-array dialects (chat, responses, anthropic) reserve the content root,
+/// so the merged value is discarded and refilled from the rendered wires
+/// (`BodyPlan::fill_reserved`). `raw_system` renders to Anthropic's top-level
+/// `system` key, which the payload extractor does not walk.
+fn node_known_image_count(node: &LlmNode) -> Option<u32> {
+    let carries_authored_json = node.items.iter().any(|item| {
+        matches!(
+            item,
+            PromptItem::RawMessages { .. } | PromptItem::Splice { .. }
+        )
+    });
+    (!carries_authored_json).then_some(0)
 }
 
 struct EngineGraphSink {
@@ -1005,6 +1068,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             cancel_after_ns: options.cancel_after_ns,
             session_num: self.session_num,
             phase: self.phase,
+            known_image_count: prepared.known_image_count,
         })?;
         let GraphEndpointDispatch {
             transport,
@@ -1181,6 +1245,7 @@ impl EngineGraphSink {
             raw_system: self.raw_array(node, "raw_system_handle")?,
             extra_body: self.raw_object(node, "extra_body_handle")?,
             parameters: self.raw_string_map(node, "request_parameters_handle")?,
+            known_image_count: node_known_image_count(node),
         });
         self.prepared_metadata
             .borrow_mut()
@@ -1298,6 +1363,58 @@ mod tests {
     use crate::multiturn::AuthoredInputTokenCounter;
     use crate::transport::core::ConnectionReuseStrategy;
 
+    fn node_with_items(items: Vec<PromptItem>) -> LlmNode {
+        LlmNode {
+            output: "out".into(),
+            streaming: true,
+            inputs: Vec::new(),
+            min_start_delay_us: None,
+            max_tokens: None,
+            items,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_text_only_prompt_program_reports_a_known_zero_image_count() {
+        let node = node_with_items(vec![
+            PromptItem::Seg {
+                seg: Handle::new(0),
+            },
+            PromptItem::Text {
+                text: Handle::new(1),
+                role: "user".into(),
+            },
+        ]);
+        assert_eq!(
+            node_known_image_count(&node),
+            Some(0),
+            "lowering rejects non-text media, so a Seg/Text program carries no images"
+        );
+    }
+
+    #[test]
+    fn an_authored_raw_message_array_falls_back_to_parsing_the_body() {
+        // `raw_message_wires` validates only object-ness, so an authored
+        // `image_url` part rides through unseen: the count stays unknown here.
+        let node = node_with_items(vec![PromptItem::RawMessages {
+            raw_messages: Handle::new(0),
+        }]);
+        assert_eq!(node_known_image_count(&node), None);
+    }
+
+    #[test]
+    fn a_splice_falls_back_because_a_seeded_channel_can_carry_media() {
+        // `channel_value` seeds a messages-typed channel from a trace's authored
+        // `initial_state` verbatim, so `@messages` can splice in `image_url`
+        // parts. A splice of a reply would be text-only, but the prompt program
+        // alone cannot tell the two apart.
+        let node = node_with_items(vec![PromptItem::Splice {
+            splice: "messages".into(),
+        }]);
+        assert_eq!(node_known_image_count(&node), None);
+    }
+
     #[derive(Debug)]
     struct PreparedOnlyChatFactory;
 
@@ -1373,9 +1490,11 @@ mod tests {
                 cancel_after_ns: None,
                 session_num: 0,
                 phase: Phase::Profiling,
+                known_image_count: Some(0),
             })
             .unwrap();
         assert_eq!(dispatch.input_tokens, 4);
+        assert_eq!(dispatch.request.image_count, Some(0));
         let crate::transport::core::PreparedEndpointBinding::Prepared(reference) =
             dispatch.endpoint;
         assert_eq!(reference.endpoint_id.as_str(), "chat");

@@ -810,15 +810,21 @@ function PageBodyPlan({ t }: { t: Theme }) {
         <CardBody>
           <pre style={{ margin: 0, fontSize: 12, lineHeight: "18px", color: t.text.secondary, overflowX: "auto" }}>
 {`pub enum FieldValue {
-    Literal(Value),                    // serialized on the hot path
+    Literal(LiteralValue),             // value + wire, serialized once when bound
     Segment(Handle),                   // one wire cloned from the store
     Segments(SmallVec<[Handle; 1]>),   // [ wire, wire, ... ] joined
     Wires(SmallVec<[Bytes; 1]>),       // dynamic content, no store lookup
 }
 
+pub struct FieldProgram {
+    fields: SmallVec<[(FieldName, FieldValue); 8]>,
+    exact_len: Option<usize>,          // exact body length; None if store-dependent
+}
+
 pub enum BodyPlan {
-    Raw(Handle),                                   // whole body passthrough
-    Fields(SmallVec<[(FieldName, FieldValue); 8]>),
+    Raw(Handle),           // whole body passthrough
+    Fields(FieldProgram),  // ordered named-field object
+    Prebuilt(Bytes),       // collapsed static body, cloned at dispatch
 }`}
           </pre>
         </CardBody>

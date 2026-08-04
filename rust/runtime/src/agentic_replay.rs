@@ -110,7 +110,10 @@ fn rewrite_first_turn_marker(turn: &mut crate::multiturn::TurnToSend, marker: &s
     let Some(body) = &turn.request_body else {
         return;
     };
-    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+    let Ok(wire) = body.to_wire() else {
+        return;
+    };
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&wire) else {
         return;
     };
     let Some(content) = value
@@ -131,7 +134,7 @@ fn rewrite_first_turn_marker(turn: &mut crate::multiturn::TurnToSend, marker: &s
     {
         msg.insert("content".into(), serde_json::Value::String(new_content));
         if let Ok(bytes) = serde_json::to_vec(&value) {
-            turn.request_body = Some(bytes.into());
+            turn.request_body = Some(crate::body_plan::RequestBody::wire(bytes.into()));
         }
     }
 }
@@ -1068,14 +1071,35 @@ fn schedule_agentic_turn(
                         }
                         let (delay_ms, next_turn) = {
                             let src = source_c.borrow();
+                            // A truncated chain is invisible downstream — the lane
+                            // just stops producing turns — so a failure here must
+                            // say so. `Ok(None)` is the ordinary end of a recorded
+                            // conversation and stays silent.
                             let meta = match src.next_turn_metadata(&credit) {
                                 Ok(meta) => meta,
-                                Err(_) => return,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = %error,
+                                        conversation = %credit.turn.conversation_id,
+                                        turn_index = credit.turn.turn_index,
+                                        "agentic continuation metadata failed; chain truncated"
+                                    );
+                                    return;
+                                }
                             };
                             let mut next = match src.next_turn(&credit, outcome.to_turn_response())
                             {
                                 Ok(Some(turn)) => turn,
-                                _ => return,
+                                Ok(None) => return,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = %error,
+                                        conversation = %credit.turn.conversation_id,
+                                        turn_index = credit.turn.turn_index,
+                                        "agentic continuation failed; chain truncated"
+                                    );
+                                    return;
+                                }
                             };
                             // Force the pressure output cap on every chained credit.
                             apply_max_tokens_override(&mut next, accel_c.max_tokens_override);

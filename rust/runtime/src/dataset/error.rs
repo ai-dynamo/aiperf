@@ -38,6 +38,10 @@ pub enum DatasetError {
     EmptySampler,
     /// A dynamic assembly program referenced an unresolved splice key.
     MissingSplice(String),
+    /// A [`BodyPlan`](crate::body_plan::BodyPlan) reserved field slot was left
+    /// unfilled at materialization, or a fill named a slot the plan never
+    /// reserved.
+    ReservedField(String),
     /// A tokenizer could not encode, decode, or initialize.
     Tokenizer(String),
     /// A parsed or composed dataset row violates its format contract.
@@ -75,6 +79,9 @@ impl Display for DatasetError {
             Self::UnknownSession(id) => write!(f, "unknown dataset session id {id:?}"),
             Self::EmptySampler => write!(f, "dataset sampler requires at least one conversation"),
             Self::MissingSplice(key) => write!(f, "unresolved dynamic message splice {key:?}"),
+            Self::ReservedField(message) => {
+                write!(f, "invalid body-plan field reservation: {message}")
+            }
             Self::Tokenizer(message) => write!(f, "tokenizer error: {message}"),
             Self::Validation(message) => write!(f, "invalid dataset: {message}"),
             Self::LoaderNotFound(source) => {

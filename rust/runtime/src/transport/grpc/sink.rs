@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::body_plan::RequestBody;
 use crate::clock::Clock;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{
@@ -294,8 +295,7 @@ impl GrpcTransportSink {
     ) -> Result<DispatchResult> {
         let Request {
             uuid,
-            request_body,
-            request_body_bytes,
+            body,
             headers,
             parameters,
             endpoint_path,
@@ -327,18 +327,15 @@ impl GrpcTransportSink {
                 "gRPC binding ignores only the selected dialect's HTTP path; authored per-turn endpoint_path {endpoint_path:?} is unsupported"
             );
         }
-        ensure!(
-            request_body.is_none() || request_body_bytes.is_none(),
-            "a gRPC request cannot supply both JSON and serialized canonical bodies"
-        );
-        let body = match (request_body, request_body_bytes) {
-            (Some(value), None) => value,
-            (None, Some(bytes)) => serde_json::from_slice(&bytes)
+        // gRPC serializes from structure, not bytes. A decoded body is taken as
+        // it stands; any other form is assembled and parsed back once here.
+        let body: Value = match body {
+            Some(RequestBody::Value(value)) => *value,
+            Some(body) => serde_json::from_slice(&body.into_wire()?)
                 .context("decoding prepared endpoint JSON before gRPC serialization")?,
-            (None, None) => anyhow::bail!(
+            None => anyhow::bail!(
                 "gRPC protocol-v2 execution requires a canonical prepared endpoint body"
             ),
-            (Some(_), Some(_)) => unreachable!("exclusivity checked above"),
         };
         observer.on_admit(uuid, self.ms(self.clock.now_ns()), 0);
         let mut endpoint_metrics = ObservedEndpointMetrics {
@@ -487,7 +484,20 @@ impl GrpcTransportSink {
             completion_tokens,
             http: grpc_metrics_trace(&record),
         };
-        let request_payload = Bytes::from(serde_json::to_vec(&body)?);
+        // `request_payload` has three read sites, each already gated:
+        // `record_http_exchange`/graph execution retain this only under raw
+        // artifacts, the payload's only consumer. On a run without them, the
+        // re-serialize was pure per-request waste.
+        //
+        // Kept as `to_vec` of the decoded `body` rather than passing the prepared
+        // bytes through: that round trip normalizes whitespace, and raw-payload turns
+        // retain their authored bytes verbatim, so passing through would change the
+        // raw artifact for them.
+        let request_payload = if self.capture_raw {
+            Bytes::from(serde_json::to_vec(&body)?)
+        } else {
+            Bytes::new()
+        };
         let compatibility_record = compatibility_record(&record, self.capture_raw);
         Ok(DispatchResult {
             outcome,
@@ -671,7 +681,6 @@ fn compatibility_http_record(record: &GrpcRequestRecord) -> RequestRecord {
     }
     RequestRecord {
         start_ns: record.start_ns,
-        request_body: record.request_body.clone(),
         request_headers: record.trace.request_metadata.clone(),
         end_ns: record.end_ns,
         recv_start_ns: record.trace.response_receive_start_ns,

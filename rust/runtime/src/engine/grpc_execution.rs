@@ -59,6 +59,8 @@ impl NativeTransportExecution for GrpcNativeExecution {
                 transport_config,
                 GrpcBindingRegistry::builtin()?,
                 endpoints,
+                // Graph execution retains the request payload only for raw
+                // artifacts (`EngineGraphSink` gates it on `raw_enabled`).
                 capture_raw,
             )?,
         ))

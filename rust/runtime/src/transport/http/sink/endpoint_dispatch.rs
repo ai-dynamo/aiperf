@@ -11,7 +11,7 @@
 use std::cell::Cell;
 use std::task::{Context, Poll};
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use bytes::Bytes;
 use serde_json::Value;
 
@@ -233,8 +233,7 @@ impl TransportSink {
             input_length,
             max_output_tokens,
             prompt_text,
-            request_body,
-            request_body_bytes,
+            body,
             headers,
             parameters,
             endpoint_path,
@@ -248,21 +247,15 @@ impl TransportSink {
         } = req;
         obs.on_admit(uuid, self.ms(self.clock.now_ns()), 0);
 
-        ensure!(
-            request_body.is_none() || request_body_bytes.is_none(),
-            "an HTTP request cannot supply both JSON and serialized bodies"
-        );
-        let body = match request_body_bytes {
-            Some(body) => body,
+        let body = match body {
+            Some(body) => body.into_wire()?,
             None => {
-                let payload = request_body.unwrap_or_else(|| {
-                    let prompt = prompt_text.unwrap_or_default();
-                    crate::endpoints::chat_request_body(
-                        &self.model,
-                        &[("user", prompt.as_str())],
-                        max_output_tokens,
-                    )
-                });
+                let prompt = prompt_text.unwrap_or_default();
+                let payload = crate::endpoints::chat_request_body(
+                    &self.model,
+                    &[("user", prompt.as_str())],
+                    max_output_tokens,
+                );
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };
@@ -285,12 +278,17 @@ impl TransportSink {
         // batches. Fall back to parsing only when the count is unknown (raw
         // payloads, history-accumulating turns) or content-server tagging already
         // produced the value for free.
-        let payload = parsed.or_else(|| {
-            known_image_count
-                .is_none()
-                .then(|| serde_json::from_slice::<Value>(&body).ok())
-                .flatten()
-        });
+        let payload = match parsed {
+            Some(parsed) => Some(parsed),
+            // Parsing anyway would produce the same `num_images`, so the skip is
+            // invisible to every artifact — see `BODY_PARSE_SKIPS`.
+            None if known_image_count.is_some() => {
+                #[cfg(test)]
+                BODY_PARSE_SKIPS.with(|count| count.set(count.get() + 1));
+                None
+            }
+            None => serde_json::from_slice::<Value>(&body).ok(),
+        };
         let mut endpoint_metrics = ObservedEndpointMetrics {
             num_images: known_image_count
                 .map(|count| count as usize)
@@ -319,7 +317,16 @@ impl TransportSink {
             },
         )
         .await?;
-        let request_payload = prepared.canonical_body().clone();
+        // The canonical body is read back only by the raw artifact. Taking the
+        // handle unconditionally promoted the assembled body —
+        // `BytesMut::freeze()`-derived, so `len == capacity` and the first clone
+        // heap-allocates a shared control block — on every dispatch of every
+        // run, including the runs that export no raw artifact.
+        let request_payload = if self.captures_request_payload() {
+            prepared.canonical_body().clone()
+        } else {
+            Bytes::new()
+        };
         let request_url = prepared.request_config().url.clone();
 
         let first_token_released = Cell::new(false);
@@ -688,8 +695,25 @@ pub(super) fn http_trace(record: &RequestRecord) -> RequestTrace {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Dispatches on this thread that skipped the body re-parse because
+    /// composition had already established the exact wire image count.
+    ///
+    /// Parsing anyway yields the same `num_images`, so the skip is invisible to
+    /// every artifact and to every metric: a build that lost it would export
+    /// byte-identical output and only pay a full `serde_json` deserialize of a
+    /// possibly multi-MB multimodal body on each timed dispatch. Without a count
+    /// there is no signal at all that the fast path is still taken.
+    ///
+    /// Thread-local rather than a global counter so concurrently running tests
+    /// cannot perturb each other's reading.
+    static BODY_PARSE_SKIPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::Clock;
     use crate::endpoints::PreparedEndpoint;
     use crate::transport::core::SseMessage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
@@ -707,6 +731,229 @@ mod tests {
                 },
             )
             .unwrap()
+    }
+
+    /// Discards every observation; these tests assert only the returned payload.
+    struct SilentObserver;
+
+    impl RequestObserver for SilentObserver {
+        fn on_arrival(&self, _: uuid::Uuid, _: f64, _: usize, _: usize) {}
+        fn on_admit(&self, _: uuid::Uuid, _: f64, _: usize) {}
+        fn on_token(&self, _: uuid::Uuid, _: f64) {}
+        fn on_usage(&self, _: uuid::Uuid, _: ObservedUsage) {}
+        fn on_terminal(&self, _: uuid::Uuid, _: ReplayTerminalStatus) {}
+    }
+
+    /// Dispatch one streaming chat turn through the real endpoint-aware path at
+    /// the given artifact-capture flags, returning the canonical request payload
+    /// the sink handed back.
+    async fn dispatch_payload_at(base: &str, capture_raw: bool) -> Bytes {
+        let clock = crate::clock::RealClock::new();
+        let sink = TransportSink::new_multi_configured(
+            clock.clone(),
+            clock.now_ns(),
+            std::slice::from_ref(&base.to_string()),
+            "m",
+            crate::transport::http::TransportSinkConfig {
+                capture_raw,
+                ..crate::transport::http::TransportSinkConfig::default()
+            },
+        )
+        .unwrap();
+        let endpoint = prepared_streaming("chat");
+        let request = Request {
+            uuid: uuid::Uuid::new_v4(),
+            input_length: 2,
+            max_output_tokens: 2,
+            prompt_text: Some("hello world".to_string()),
+            body: None,
+            headers: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::new(),
+            endpoint_path: None,
+            streaming: true,
+            x_correlation_id: None,
+            is_final_turn: true,
+            cancel_after_ns: None,
+            url_index: None,
+            image_count: None,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
+        };
+        let observer = SilentObserver;
+        let on_first_token = |_: i64| {};
+        sink.dispatch_prepared_endpoint_collect_record_with_hooks(
+            request,
+            endpoint.as_ref(),
+            "m",
+            EndpointDispatchHooks::new(
+                &observer,
+                &on_first_token,
+                None,
+                TurnDataPolicy::ordinary(),
+            ),
+        )
+        .await
+        .unwrap()
+        .request_payload
+    }
+
+    /// Pin BOTH directions of the canonical-payload gate at the seam that decides
+    /// it, which no product artifact can observe on its own.
+    ///
+    /// A wrongly-CLOSED gate loses an artifact and is caught downstream
+    /// (`test_exact_fold_ab_parity`, `test_http_raw_capture`). A wrongly-OPEN one
+    /// is silent: the artifacts are identical and only the per-dispatch
+    /// allocation returns. `TransportSinkConfig::default()` deliberately opens the
+    /// gate, so any future construction site that forgets to stamp the run's
+    /// artifact selection reverts the saving with no other signal — this assertion
+    /// is that signal.
+    #[tokio::test]
+    async fn request_payload_is_taken_only_when_an_artifact_consumes_it() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+
+                // Closed: the raw artifact is not selected, so nothing would read
+                // the payload and no handle is taken.
+                //
+                // `inputs.json` is deliberately NOT a second leg here. It is
+                // projected from the resident dataset at finalize
+                // (`compose_sidecars::build_up_front_input_sessions`) and a run
+                // that cannot be projected that way is rejected before any phase
+                // runs, so no dispatched payload reaches it. Re-introducing a
+                // payload-sourced `inputs.json` must reopen this gate — and this
+                // assertion is what fails if it does not.
+                assert!(
+                    dispatch_payload_at(&base, false).await.is_empty(),
+                    "no artifact consumes the canonical payload, so the gate must \
+                     not take a handle on the assembled body"
+                );
+
+                // Open: the raw artifact reads the payload back verbatim.
+                let raw = dispatch_payload_at(&base, true).await;
+                assert!(
+                    !raw.is_empty(),
+                    "the raw artifact consumes the canonical payload, so the gate \
+                     must capture it"
+                );
+
+                // And what is recorded is the canonical chat body actually sent.
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&raw).unwrap(),
+                    crate::endpoints::chat_request_body("m", &[("user", "hello world")], 2),
+                );
+            })
+            .await;
+    }
+
+    /// Records the endpoint metrics one dispatch observed.
+    #[derive(Default)]
+    struct ImageObserver {
+        num_images: Cell<Option<usize>>,
+    }
+
+    impl RequestObserver for ImageObserver {
+        fn on_arrival(&self, _: uuid::Uuid, _: f64, _: usize, _: usize) {}
+        fn on_admit(&self, _: uuid::Uuid, _: f64, _: usize) {}
+        fn on_token(&self, _: uuid::Uuid, _: f64) {}
+        fn on_endpoint_metrics(&self, _: uuid::Uuid, metrics: ObservedEndpointMetrics) {
+            self.num_images.set(metrics.num_images);
+        }
+        fn on_terminal(&self, _: uuid::Uuid, _: ReplayTerminalStatus) {}
+    }
+
+    /// Dispatch one multimodal chat body, optionally handing dispatch the image
+    /// count composition already established, and report what was observed.
+    async fn dispatch_images_at(base: &str, known: Option<u32>) -> (Option<usize>, u64) {
+        let clock = crate::clock::RealClock::new();
+        let sink = TransportSink::new_multi_configured(
+            clock.clone(),
+            clock.now_ns(),
+            std::slice::from_ref(&base.to_string()),
+            "m",
+            crate::transport::http::TransportSinkConfig::default(),
+        )
+        .unwrap();
+        let endpoint = prepared_streaming("chat");
+        let body = serde_json::json!({
+            "model": "m",
+            "stream": true,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "what is this"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AB=="}}
+            ]}]
+        });
+        let request = Request {
+            uuid: uuid::Uuid::new_v4(),
+            input_length: 2,
+            max_output_tokens: 2,
+            prompt_text: None,
+            body: Some(crate::body_plan::RequestBody::wire(Bytes::from(
+                serde_json::to_vec(&body).unwrap(),
+            ))),
+            headers: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::new(),
+            endpoint_path: None,
+            streaming: true,
+            x_correlation_id: None,
+            is_final_turn: true,
+            cancel_after_ns: None,
+            url_index: None,
+            image_count: known,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
+        };
+        let observer = ImageObserver::default();
+        let on_first_token = |_: i64| {};
+        let before = BODY_PARSE_SKIPS.get();
+        sink.dispatch_prepared_endpoint_collect_record_with_hooks(
+            request,
+            endpoint.as_ref(),
+            "m",
+            EndpointDispatchHooks::new(
+                &observer,
+                &on_first_token,
+                None,
+                TurnDataPolicy::ordinary(),
+            ),
+        )
+        .await
+        .unwrap();
+        (observer.num_images.get(), BODY_PARSE_SKIPS.get() - before)
+    }
+
+    /// Pin that a composed image count actually replaces the body re-parse, and
+    /// that it answers what the parse would have.
+    ///
+    /// Only the second half is observable from any artifact: both paths report the
+    /// same `num_images`, so a build that stopped trusting the composed count
+    /// would export identical output and silently pay a full multimodal-body
+    /// deserialize on every timed dispatch. The skip count is the only signal.
+    #[tokio::test]
+    async fn a_composed_image_count_replaces_the_body_reparse() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+
+                let (parsed_images, parsed_skips) = dispatch_images_at(&base, None).await;
+                assert_eq!(parsed_skips, 0, "an unknown count must parse the body");
+
+                let (known_images, known_skips) = dispatch_images_at(&base, Some(2)).await;
+                assert_eq!(
+                    known_skips, 1,
+                    "an established count must skip the body parse"
+                );
+
+                assert_eq!(
+                    known_images, parsed_images,
+                    "the composed count must equal what parsing the same body reports"
+                );
+                assert_eq!(known_images, Some(2));
+            })
+            .await;
     }
 
     #[test]

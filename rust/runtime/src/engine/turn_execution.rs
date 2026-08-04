@@ -197,10 +197,15 @@ pub struct HttpSinkBuilder {
 
 impl HttpSinkBuilder {
     pub fn from_config(config: &ExecutionBackendConfig) -> Self {
+        // The run's only request-payload consumer reaches the sink here, the
+        // same way `GrpcSinkBuilder` carries it: with it off the HTTP sink skips
+        // taking a second handle on the assembled body entirely.
+        let mut transport = config.transport.clone();
+        transport.capture_raw = config.raw_enabled;
         Self {
             base_urls: config.base_urls.clone(),
             model: config.model.clone(),
-            transport: config.transport.clone(),
+            transport,
             prepared_endpoints: config.prepared_endpoints.clone(),
             credit_materializer: config.credit_materializer.clone(),
             raw_enabled: config.raw_enabled,
@@ -2041,14 +2046,15 @@ mod tests {
                 input_length: 1,
                 max_output_tokens: 4,
                 prompt_text: None,
-                request_body: Some(serde_json::json!({
-                    "model": "fixture-model",
-                    "messages": [{"role": "user", "content": "hello"}],
-                    "max_tokens": 4,
-                    "stream": true,
-                    "stream_options": {"include_usage": true}
-                })),
-                request_body_bytes: None,
+                body: Some(crate::body_plan::RequestBody::Value(Box::new(
+                    serde_json::json!({
+                        "model": "fixture-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "max_tokens": 4,
+                        "stream": true,
+                        "stream_options": {"include_usage": true}
+                    }),
+                ))),
                 headers: BTreeMap::new(),
                 parameters: BTreeMap::new(),
                 endpoint_path: None,

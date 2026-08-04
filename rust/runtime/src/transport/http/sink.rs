@@ -51,7 +51,6 @@ mod endpoint_dispatch;
 
 use endpoint_dispatch::EndpointDispatchHooks;
 
-
 /// Generated response returned by the response-capturing dispatch path.
 #[derive(Debug, Clone)]
 pub struct HttpDispatchResult {
@@ -89,7 +88,6 @@ fn enforce_turn_data_policy(
 ) {
     if !data_policy.retain_raw_exchange() || !data_policy.allow_public_content_hash() {
         *request_payload = Bytes::new();
-        record.request_body = Bytes::new();
         record.request_headers.clear();
         record.response_headers.clear();
         record.responses.clear();
@@ -110,7 +108,7 @@ fn enforce_turn_data_policy(
 /// The client config owns Clock-enforced transport deadlines and protocol
 /// selection; reuse and affinity remain per-request policies applied when a
 /// materialized turn becomes a [`RequestConfig`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TransportSinkConfig {
     /// Low-level HTTP client policy.
     pub client: ClientConfig,
@@ -122,6 +120,34 @@ pub struct TransportSinkConfig {
     /// is enabled. Media URLs starting with it are tagged at dispatch with
     /// `?rid&mi&td`; `None` disables tagging.
     pub content_server_base: Option<Arc<str>>,
+    /// Whether a raw artifact will consume this run's per-dispatch request
+    /// payload.
+    /// This is the payload's ONLY consumer: `inputs.json` is projected from the
+    /// resident dataset at finalize and never reads a dispatched body.
+    ///
+    /// **Defaults to `true`, the opposite of the identically-named field on
+    /// [`GrpcTransportSinkConfig`], which defaults to `false`.** The asymmetry is
+    /// deliberate: this type is built by struct literals that inherit the rest of
+    /// their fields from [`Default`], so a site that has not been told the run's
+    /// artifact selection must fail toward capturing (losing the per-dispatch
+    /// saving) rather than toward silently emptying the raw artifact. The gRPC
+    /// config is only ever constructed field-complete, so it has no such site to
+    /// protect.
+    ///
+    /// [`GrpcTransportSinkConfig`]: crate::transport::grpc::GrpcTransportSinkConfig
+    pub capture_raw: bool,
+}
+
+impl Default for TransportSinkConfig {
+    fn default() -> Self {
+        Self {
+            client: ClientConfig::default(),
+            connection_reuse: ConnectionReuseStrategy::default(),
+            session_header: None,
+            content_server_base: None,
+            capture_raw: true,
+        }
+    }
 }
 
 /// Response-capturing request-dispatch seam used by the shared paced issuer.
@@ -158,6 +184,11 @@ pub struct TransportSink {
     start_ns: Cell<i64>,
     connection_reuse: ConnectionReuseStrategy,
     content_server_base: Option<Arc<str>>,
+    /// Whether any configured artifact consumes the canonical request payload.
+    /// With no consumer the dispatch paths below never take the handle, which
+    /// leaves the assembled body with a single live handle and so avoids
+    /// promoting it to a shared (heap-allocated) control block.
+    capture_request_payload: bool,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
     /// Worker-local metric accumulator for measured execution. Unset until
     /// [`configure_measurement`] is called.
@@ -279,6 +310,7 @@ impl TransportSink {
             start_ns: Cell::new(start_ns),
             connection_reuse: config.connection_reuse,
             content_server_base: config.content_server_base,
+            capture_request_payload: config.capture_raw,
             prepared_endpoints: None,
             measurement: WorkerMeasurement::default(),
             url_memo: RefCell::new(None),
@@ -307,6 +339,15 @@ impl TransportSink {
     pub fn with_prepared_endpoints(mut self, endpoints: Rc<PreparedEndpointTable>) -> Self {
         self.prepared_endpoints = Some(endpoints);
         self
+    }
+
+    /// Whether this run has any consumer for the canonical request payload.
+    ///
+    /// The raw artifact writes it verbatim and is its only consumer; without it
+    /// the payload handle is never taken, and the assembled body stays uniquely
+    /// owned through dispatch.
+    pub(super) fn captures_request_payload(&self) -> bool {
+        self.capture_request_payload
     }
 
     fn ms(&self, ns: i64) -> f64 {
@@ -360,13 +401,13 @@ impl TransportSink {
                 anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
             }
         };
-        *self.url_memo.borrow_mut() =
-            Some((selected_index, endpoint_path.map(Box::from), rendered.clone()));
+        *self.url_memo.borrow_mut() = Some((
+            selected_index,
+            endpoint_path.map(Box::from),
+            rendered.clone(),
+        ));
         Ok(rendered)
     }
-
-
-
 }
 
 /// Follow a fixed JSON path without [`Value::pointer`].
@@ -391,9 +432,6 @@ fn dig<'v>(value: &'v Value, path: &[&str]) -> Option<&'v Value> {
     }
     Some(current)
 }
-
-
-
 
 pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelResponseMetadata) {
     if let Some(response_id) = value
@@ -464,7 +502,6 @@ pub(super) fn absorb_transport_error(
     ));
 }
 
-
 fn normalize_finish_reason(value: &str) -> String {
     match value {
         "max_output_tokens" | "max_tokens" => "length".to_string(),
@@ -482,7 +519,6 @@ fn error_kind_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Other => "transport_error",
     }
 }
-
 
 #[async_trait(?Send)]
 impl Dispatcher for TransportSink {
@@ -843,10 +879,10 @@ fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> (Bytes,
 #[cfg(test)]
 mod tests {
     use crate::dispatch::sink::ObservedUsage;
-    use crate::transport::http::sse::ChatChunk;
     use crate::endpoints::chat_request_body;
     use crate::transport::core::Response;
     use crate::transport::http::models::RequestConfig;
+    use crate::transport::http::sse::ChatChunk;
     use std::cell::Cell;
 
     use super::*;
@@ -980,7 +1016,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn vllm_request_id_and_finish_reason_enter_normalized_metadata() {
         let mut metadata = ModelResponseMetadata::default();
@@ -1008,7 +1043,6 @@ mod tests {
 
         let mut request_payload = Bytes::from_static(SENTINEL.as_bytes());
         let mut record = RequestRecord {
-            request_body: Bytes::from_static(SENTINEL.as_bytes()),
             request_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             response_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             responses: vec![Response::Text(crate::transport::core::TextResponse {
@@ -1033,7 +1067,6 @@ mod tests {
         );
 
         assert!(request_payload.is_empty());
-        assert!(record.request_body.is_empty());
         assert!(record.request_headers.is_empty());
         assert!(record.response_headers.is_empty());
         assert!(record.responses.is_empty());
@@ -1080,5 +1113,4 @@ mod tests {
             })
             .await;
     }
-
 }

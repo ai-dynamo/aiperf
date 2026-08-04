@@ -227,14 +227,15 @@ fn streaming_turn(correlation_id: &str, is_final_turn: bool) -> PreparedTurn {
             input_length: 5,
             max_output_tokens: 2,
             prompt_text: None,
-            request_body: Some(serde_json::json!({
-                "model": "fixture-model",
-                "messages": [{"role": "user", "content": "hello"}],
-                "max_tokens": 2,
-                "stream": true,
-                "stream_options": {"include_usage": true}
-            })),
-            request_body_bytes: None,
+            body: Some(aiperf_runtime::body_plan::RequestBody::Value(Box::new(
+                serde_json::json!({
+                    "model": "fixture-model",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 2,
+                    "stream": true,
+                    "stream_options": {"include_usage": true}
+                }),
+            ))),
             headers: BTreeMap::new(),
             parameters: BTreeMap::new(),
             endpoint_path: None,

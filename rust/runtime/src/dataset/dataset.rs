@@ -9,20 +9,34 @@ use std::sync::Arc;
 
 use crate::endpoints::EndpointDescriptor;
 
-use crate::body_plan::BodyPlan;
+use crate::body_plan::{BodyPlan, FieldValue};
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::model::{
     Conversation, ConversationBranchMode, ConversationContextMode, ConversationMetadata,
     DispatchTiming, MediaKind, PrerequisiteKind, SessionId, Turn,
 };
 use crate::dataset::request::{
-    raw_body_handle, resolve_prompt, resolve_turn, split_snapshot, token_ids_handle,
+    dataset_turn_image_count, raw_body_handle, resolve_prompt, resolve_turn, split_snapshot,
+    token_ids_handle,
 };
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::{
     CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn, TurnMessageLowerer,
 };
+use bytes::Bytes;
 use smallvec::SmallVec;
+
+/// Resolve the prepared endpoint that will format one turn's body.
+///
+/// [`precompute_image_counts`](Dataset::precompute_image_counts) counts each
+/// turn through the dialect that actually renders it, so a turn carrying an
+/// authored per-turn endpoint override is counted through that override rather
+/// than through the run default.
+pub trait TurnEndpointLookup {
+    /// Binding for an authored per-turn override name, or the run default when
+    /// `name` is `None`. `None` means the turn's dialect is unresolvable here.
+    fn endpoint_for(&self, name: Option<&str>) -> Option<&dyn PreparedEndpoint>;
+}
 
 /// Media-free structural metadata for one frozen dataset.
 #[derive(Debug, Clone)]
@@ -41,6 +55,39 @@ pub struct DatasetMetadata {
     pub average_turn_count: f64,
 }
 
+/// One turn's precomputed profiling-phase body plan, plus where a continuation
+/// turn's live captured replies splice into it.
+#[derive(Debug, Clone)]
+pub(crate) struct CachedTurnPlan {
+    /// The plan itself, shared with every dispatch that reuses it.
+    pub(crate) plan: Arc<BodyPlan>,
+    /// `None` for a body that carries no live reply — every turn of a static
+    /// context mode, and turn 0 of `DeltasWithoutResponses`, which dispatches
+    /// before any reply exists.
+    pub(crate) replies: Option<ReplySlots>,
+}
+
+/// Where a continuation turn's live captured replies land in its cached plan.
+///
+/// A `DeltasWithoutResponses` turn *N* sends `t0 r0 t1 r1 … tN`. The `t`s are
+/// frozen dataset turns, so the plan holds them; the `r`s are captured at
+/// runtime and land in interior positions. Precompute establishes those
+/// positions once by formatting the same turn twice — once plainly, once with a
+/// one-wire marker standing in for each reply — and recording where the markers
+/// came out. That reads the positions off the dialect's own formatter rather
+/// than re-deriving them, so a dialect that renders a turn into some other
+/// number of messages needs nothing here.
+#[derive(Debug, Clone)]
+pub(crate) struct ReplySlots {
+    /// Index of the plan field holding the message array. An index, not a name,
+    /// so dispatch does no string comparison; dialects disagree on the name
+    /// (`messages` vs `input`) and precompute resolves it once.
+    pub(crate) field: usize,
+    /// For reply `i` (the one captured after authored turn `i`), the position in
+    /// that field's own wire list its wires are inserted before. Ascending.
+    pub(crate) positions: SmallVec<[u32; 4]>,
+}
+
 /// Immutable conversations plus their one shared segment store.
 #[derive(Clone)]
 pub struct Dataset {
@@ -54,7 +101,24 @@ pub struct Dataset {
     /// endpoint-bind lowering; a `None` slot (or an empty outer vector) means the
     /// turn falls back to per-dispatch formatting. Keyed by dense position so the
     /// hot-path lookup is two indexed reads, never a hash.
-    body_plans: Vec<Vec<Option<BodyPlan>>>,
+    ///
+    /// The outer [`Arc`] keeps [`Dataset::clone`] O(1) in plans — a `Dataset` is
+    /// cloned once per worker thread and again per phase, and no clone ever
+    /// writes the cache. The inner [`Arc`] lets dispatch share one plan instead
+    /// of deep-copying it, copying only when an override or a stream correction
+    /// actually mutates it.
+    body_plans: Arc<Vec<Vec<Option<CachedTurnPlan>>>>,
+    /// Precomputed wire image count per `[conversation position][turn index]`,
+    /// covering the authored turns the conversation's context mode puts on the
+    /// wire for that turn. Empty until
+    /// [`precompute_image_counts`](Dataset::precompute_image_counts) runs; a
+    /// `None` slot (or an empty outer vector) means dispatch derives the count by
+    /// parsing the body, which is always correct.
+    ///
+    /// Keyed by dense position for the same reason as `body_plans`: the hot-path
+    /// lookup is two indexed reads. Held behind an [`Arc`] so a per-worker
+    /// `Dataset` clone stays O(1).
+    image_counts: Arc<Vec<Vec<Option<u32>>>>,
 }
 
 impl fmt::Debug for Dataset {
@@ -124,7 +188,8 @@ impl Dataset {
             index,
             segments,
             metadata,
-            body_plans: Vec::new(),
+            body_plans: Arc::new(Vec::new()),
+            image_counts: Arc::new(Vec::new()),
         })
     }
 
@@ -256,8 +321,11 @@ impl Dataset {
     /// - the conversation is not a graph/DAG conversation, and either uses a
     ///   static context mode (`MessageArrayWithResponses` / `DeltasWithResponses`,
     ///   where no assembled turn depends on live replies — every turn caches) or a
-    ///   `WithoutResponses` mode, where only turn 0 is response-independent and
-    ///   caches while continuation turns take the live path;
+    ///   `WithoutResponses` mode, whose turn 0 is response-independent and caches
+    ///   outright. A `DeltasWithoutResponses` *continuation* turn caches the
+    ///   authored half of its body and records where the live replies splice in
+    ///   (see [`ReplySlots`]); `MessageArrayWithoutResponses` continuation turns
+    ///   stay on the live path;
     /// - the turn carries no per-turn `endpoint` override, no complete raw body,
     ///   and no token-native `raw_token_ids`.
     ///
@@ -286,15 +354,16 @@ impl Dataset {
         // as data URLs) out of the timed dispatch loop. Token-native dialects opt
         // out via `precomputable_body() == false`.
         if !endpoint.precomputable_body() {
-            self.body_plans = Vec::new();
+            self.body_plans = Arc::new(Vec::new());
             return Ok(());
         }
         let plans = {
             let store = self.segments.as_ref();
-            let mut plans: Vec<Vec<Option<BodyPlan>>> =
+            let mut plans: Vec<Vec<Option<CachedTurnPlan>>> =
                 Vec::with_capacity(self.conversations.len());
             for conversation in self.conversations.iter() {
-                let mut turn_plans: Vec<Option<BodyPlan>> = vec![None; conversation.turns.len()];
+                let mut turn_plans: Vec<Option<CachedTurnPlan>> =
+                    (0..conversation.turns.len()).map(|_| None).collect();
                 let mode = self.context_mode(conversation);
                 let static_mode = matches!(
                     mode,
@@ -322,9 +391,15 @@ impl Dataset {
                         .zip(turn_plans.iter_mut())
                         .enumerate()
                     {
-                        // In the precomputable dynamic mode, only the first turn is
-                        // response-independent; continuation deltas take the live path.
-                        if !static_mode && turn_index != 0 {
+                        // A continuation turn's body interleaves live replies, so
+                        // its plan holds only the authored turns and records where
+                        // the replies splice in. `MessageArrayWithoutResponses` is
+                        // excluded: its turns carry authored `raw_messages`, which
+                        // `turn_is_lowerable` keeps unlowered, and its snapshots are
+                        // assembled by prefix-diffing successive turns rather than
+                        // by concatenation — neither shape a marker can stand in for.
+                        let continuation = !static_mode && turn_index != 0;
+                        if continuation && mode != ConversationContextMode::DeltasWithoutResponses {
                             continue;
                         }
                         // Per-turn override, raw body, and token-native turns take
@@ -333,6 +408,19 @@ impl Dataset {
                             || raw_body_handle(turn, store)?.is_some()
                             || token_ids_handle(turn, store)?.is_some()
                         {
+                            continue;
+                        }
+                        if continuation {
+                            *slot = continuation_turn_plan(
+                                store,
+                                endpoint,
+                                conversation,
+                                &conversation_id,
+                                system.as_deref(),
+                                user_context.as_deref(),
+                                turn_index,
+                                primary_model_name,
+                            )?;
                             continue;
                         }
                         let turns = static_endpoint_turns(store, conversation, turn_index, mode)?;
@@ -355,9 +443,13 @@ impl Dataset {
                         // blob now so dispatch clones it instead of re-splicing a
                         // multi-MB buffer every request.
                         if let Ok(plan) = endpoint.format_payload(&request) {
-                            *slot = Some(
-                                plan.prebuilt_if_static(endpoint.descriptor().supports_streaming),
-                            );
+                            *slot =
+                                Some(CachedTurnPlan {
+                                    plan: Arc::new(plan.prebuilt_if_static(
+                                        endpoint.descriptor().supports_streaming,
+                                    )),
+                                    replies: None,
+                                });
                         }
                     }
                 }
@@ -366,14 +458,136 @@ impl Dataset {
             }
             plans
         };
-        self.body_plans = plans;
+        self.body_plans = Arc::new(plans);
         Ok(())
+    }
+
+    /// Establish the wire image count for every conversation turn up front, so a
+    /// dispatch reads a number instead of deserializing the body it just built.
+    ///
+    /// The count is a property of the dataset, not of a dispatch: the turns a
+    /// context mode puts on the wire are fixed by
+    /// [`ConversationContextMode`], and the image parts each authored turn
+    /// contributes are fixed by its composed content. Only the replies the
+    /// `*WithoutResponses` modes splice are runtime-determined, and the session
+    /// accumulates those separately as it captures them.
+    ///
+    /// Composing per-turn counts into a body's count is only valid for a dialect
+    /// that renders every turn handed to the formatter — see
+    /// [`PreparedEndpoint::renders_all_turns`]. A dialect that instead SELECTS
+    /// one turn renders only that one: KServe V2 VLM formats
+    /// `request.turns().first()`, so under a delta mode the wire carries turn 0's
+    /// images no matter which turn is current, and a prefix sum would over-report
+    /// every later turn.
+    ///
+    /// A selecting dialect therefore describes at most turn 0, and even that only
+    /// outside `MessageArrayWithoutResponses`. Under the other three modes turn 0
+    /// is exactly one authored turn — the deltas take `0..=0`, the message-array
+    /// mode takes the current turn, and no reply has been captured yet — so
+    /// whichever turn the dialect selects is that turn. `MessageArrayWithoutResponses`
+    /// is the exception: it emits `split_snapshot(t0)`, which fans a turn holding
+    /// N authored `raw_messages` into N `EndpointTurn`s, so a selecting dialect
+    /// sees one of N while a count built from the unsplit turn covers all N. The
+    /// built-in selectors do not render `raw_messages` (their extractor then
+    /// establishes nothing and the raw-messages guard already returns `None`),
+    /// but `template` renders a user-authored body that can expose `turns` or
+    /// `turn` into an item array, so the mode is excluded rather than relying on
+    /// that.
+    ///
+    /// For a concatenating dialect, per turn index the stored value is the count
+    /// over the authored turns that index's body carries:
+    ///
+    /// - `MessageArrayWithResponses` sends only the current turn, and
+    ///   `MessageArrayWithoutResponses` sends the current turn's snapshot (which
+    ///   subsumes every earlier one), so both store that turn's own count;
+    /// - both delta modes resend turns `0..=index`, so they store the prefix sum.
+    ///
+    /// A turn whose count is not establishable — a raw payload, an unrenderable
+    /// turn, an unresolvable per-turn endpoint override — stores `None`, and so
+    /// does every later delta turn that would include it. Graph conversations
+    /// dispatch through the graph path and are skipped entirely.
+    ///
+    /// Call after [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint)
+    /// and before sharing the dataset. Idempotent, and independent of
+    /// [`precompute_body_plans`](Dataset::precompute_body_plans): a dialect whose
+    /// body cannot be cached still has a knowable image count.
+    pub fn precompute_image_counts(
+        &mut self,
+        endpoints: &(impl TurnEndpointLookup + ?Sized),
+        primary_model_name: &str,
+    ) -> Result<()> {
+        let counts = {
+            let store = self.segments.as_ref();
+            let mut counts: Vec<Vec<Option<u32>>> = Vec::with_capacity(self.conversations.len());
+            for conversation in self.conversations.iter() {
+                let mut turn_counts: Vec<Option<u32>> = vec![None; conversation.turns.len()];
+                if conversation.dag.is_none() {
+                    let mode = self.context_mode(conversation);
+                    let cumulative = matches!(
+                        mode,
+                        ConversationContextMode::DeltasWithResponses
+                            | ConversationContextMode::DeltasWithoutResponses
+                    );
+                    // `split_snapshot` can fan turn 0 into several formatter
+                    // turns, so even index 0 is not a single-turn request here.
+                    let selecting_describes_turn_zero =
+                        mode != ConversationContextMode::MessageArrayWithoutResponses;
+                    let mut running = Some(0_u32);
+                    for (turn_index, (turn, slot)) in conversation
+                        .turns
+                        .iter()
+                        .zip(turn_counts.iter_mut())
+                        .enumerate()
+                    {
+                        // Count through the dialect that renders this turn, which
+                        // an authored per-turn override can change.
+                        let endpoint = endpoints.endpoint_for(turn.endpoint.as_deref());
+                        let count = endpoint.and_then(|endpoint| {
+                            dataset_turn_image_count(store, endpoint, primary_model_name, turn)
+                        });
+                        running = running
+                            .zip(count)
+                            .and_then(|(total, turn)| total.checked_add(turn));
+                        // Whether this turn's body is the concatenation of every
+                        // turn handed to the formatter, or a selection from them.
+                        let concatenates =
+                            endpoint.is_some_and(PreparedEndpoint::renders_all_turns);
+                        *slot = if !concatenates {
+                            (turn_index == 0 && selecting_describes_turn_zero)
+                                .then_some(count)
+                                .flatten()
+                        } else if cumulative {
+                            running
+                        } else {
+                            count
+                        };
+                    }
+                }
+                counts.push(turn_counts);
+                report_build_progress("image counts", counts.len(), self.conversations.len());
+            }
+            counts
+        };
+        self.image_counts = Arc::new(counts);
+        Ok(())
+    }
+
+    /// Read the precomputed authored-turn image count for one conversation turn.
+    /// `None` means fall back to parsing the dispatched body.
+    pub(crate) fn cached_image_count(&self, id: &SessionId, turn_index: usize) -> Option<u32> {
+        let position = *self.index.get(id)?;
+        *self.image_counts.get(position)?.get(turn_index)?
     }
 
     /// Borrow the cached profiling-phase [`BodyPlan`] for one conversation turn, if
     /// [`precompute_body_plans`](Dataset::precompute_body_plans) cached it. Dispatch
-    /// clones the returned plan instead of reformatting; a `None` means fall back.
-    pub(crate) fn cached_body_plan(&self, id: &SessionId, turn_index: usize) -> Option<&BodyPlan> {
+    /// shares the returned plan instead of reformatting, and copies it only when a
+    /// per-dispatch mutation applies; a `None` means fall back.
+    pub(crate) fn cached_body_plan(
+        &self,
+        id: &SessionId,
+        turn_index: usize,
+    ) -> Option<&CachedTurnPlan> {
         let position = *self.index.get(id)?;
         self.body_plans.get(position)?.get(turn_index)?.as_ref()
     }
@@ -757,6 +971,160 @@ fn static_endpoint_turns(
             "static_endpoint_turns called for a dynamic continuation turn".into(),
         )),
     }
+}
+
+/// The stand-in wire a precompute probe puts where captured reply `index` will
+/// land. Only ever compared for equality and never dispatched; its only
+/// requirement is to be a JSON object no authored message would equal.
+fn reply_marker_wire(index: usize) -> Bytes {
+    Bytes::from(format!(r#"{{"__aiperf_reply_slot__":{index}}}"#))
+}
+
+/// One live captured reply's stand-in during precompute.
+///
+/// A captured reply that has been lowered contributes its wires and nothing
+/// else — `capture_response` clears its media, role, and raw messages, and a
+/// reply never carries a model, a generation cap, tools, a system block, or an
+/// extra-body fragment (`reply_splices_only_wires` in `dataset::request` refuses
+/// one that does). So a turn holding a single lowered wire renders exactly where
+/// a real reply would, through the dialect's own formatter.
+///
+/// **The precondition the probe cannot check.** Reading one marker's position
+/// and then splicing an arbitrary reply there is only sound because a formatter
+/// renders a `lowered` turn *verbatim* — extending the array with its wires,
+/// whatever they contain and however many there are, inspecting neither. Every
+/// message-array dialect does (`rendered_turn_messages` in
+/// `endpoints::endpoints`), and the Responses replay-unsafe filter that might
+/// look like an exception runs at lowering time inside `ShapeLowerer::lower_turn`,
+/// so it is already baked into the wires before capture. But nothing enforces
+/// it: a future formatter that filtered or merged lowered wires by content would
+/// satisfy this probe on a one-wire marker and then produce a different array
+/// for a real reply. A dialect that wants to inspect lowered content must opt
+/// out of continuation caching.
+///
+/// The second unwritten invariant is that authored turn 0 renders at least one
+/// message, so a marker is never the array's first element. That is what keeps
+/// `rendered_first_is_system` — the only formatter step that reads a wire's
+/// bytes — from ever seeing a reply's.
+fn reply_marker_turn(wire: Bytes) -> EndpointTurn {
+    EndpointTurn {
+        lowered: Some(SmallVec::from_buf([wire])),
+        ..EndpointTurn::default()
+    }
+}
+
+/// Build the cached plan for one `DeltasWithoutResponses` continuation turn: the
+/// body its authored turns alone produce, plus the positions its live replies
+/// splice into.
+///
+/// Formats the turn twice — once over the authored turns, once with a marker
+/// standing in for each reply — and reads the splice positions off the
+/// difference. Nothing here re-derives how a turn becomes messages; the dialect's
+/// own formatter answers that, which is what makes the result exact for a turn
+/// that renders to several messages, to none, or through a shape this function
+/// has never heard of.
+///
+/// Returns `None` — cache nothing, dispatch formats live — whenever the two
+/// plans do not differ in exactly the one message-array field by exactly the
+/// markers. That covers a dialect that reorders or drops turns, a plan collapsed
+/// to a whole body, and an authored message that happens to equal a marker.
+#[allow(clippy::too_many_arguments)]
+fn continuation_turn_plan(
+    store: &dyn SegmentStore,
+    endpoint: &dyn PreparedEndpoint,
+    conversation: &Conversation,
+    conversation_id: &str,
+    system: Option<&str>,
+    user_context: Option<&str>,
+    current: usize,
+    primary_model_name: &str,
+) -> Result<Option<CachedTurnPlan>> {
+    let build = |turns: &[EndpointTurn]| {
+        endpoint.format_payload(&PreparedRequest::new(
+            primary_model_name,
+            turns,
+            system,
+            user_context,
+            CreditPhase::Profiling,
+            None,
+            None,
+            Some(conversation_id),
+        ))
+    };
+
+    let mut authored = Vec::with_capacity(current + 1);
+    for index in 0..=current {
+        authored.push(resolve_turn(store, &conversation.turns[index])?);
+    }
+    // Non-fatal, exactly as the static path is: an unformattable turn stays
+    // uncached and surfaces its identical error at dispatch.
+    let Ok(plan) = build(&authored) else {
+        return Ok(None);
+    };
+    let markers: Vec<Bytes> = (0..current).map(reply_marker_wire).collect();
+    // The authored turns move into the probe list, so the probe costs no copy of
+    // the resolved content.
+    let mut probed = Vec::with_capacity(current * 2 + 1);
+    for (index, turn) in authored.into_iter().enumerate() {
+        probed.push(turn);
+        if let Some(marker) = markers.get(index) {
+            probed.push(reply_marker_turn(marker.clone()));
+        }
+    }
+    let Ok(probe) = build(&probed) else {
+        return Ok(None);
+    };
+
+    let (BodyPlan::Fields(program), BodyPlan::Fields(probe_program)) = (&plan, &probe) else {
+        return Ok(None);
+    };
+    let fields = program.fields();
+    let probe_fields = probe_program.fields();
+    if fields.len() != probe_fields.len() {
+        return Ok(None);
+    }
+    // The markers contribute nothing but their wires, so exactly one field —
+    // the message array — may differ between the two plans.
+    let mut differing = (0..fields.len()).filter(|index| fields[*index] != probe_fields[*index]);
+    let Some(field) = differing.next() else {
+        return Ok(None);
+    };
+    if differing.next().is_some() {
+        return Ok(None);
+    }
+    let (FieldValue::Wires(base_wires), FieldValue::Wires(probe_wires)) =
+        (&fields[field].1, &probe_fields[field].1)
+    else {
+        return Ok(None);
+    };
+
+    // Walk the probe array against the authored one: every element is either the
+    // next marker, in order, or the next authored wire. Anything else means the
+    // dialect did not simply interleave, and the turn stays uncached.
+    let mut positions: SmallVec<[u32; 4]> = SmallVec::with_capacity(current);
+    let mut base_index = 0_usize;
+    for wire in probe_wires {
+        if markers.get(positions.len()) == Some(wire) {
+            let Ok(position) = u32::try_from(base_index) else {
+                return Ok(None);
+            };
+            positions.push(position);
+        } else if base_wires.get(base_index) == Some(wire) {
+            base_index += 1;
+        } else {
+            return Ok(None);
+        }
+    }
+    if positions.len() != current || base_index != base_wires.len() {
+        return Ok(None);
+    }
+
+    Ok(Some(CachedTurnPlan {
+        // Never offered to `prebuilt_if_static`: collapsing to a whole body would
+        // discard the field the replies splice into.
+        plan: Arc::new(plan),
+        replies: Some(ReplySlots { field, positions }),
+    }))
 }
 
 /// Lower one static content turn to pre-serialized `Message` segment(s) in

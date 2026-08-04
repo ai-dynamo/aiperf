@@ -43,10 +43,6 @@ fn facade_streams_a_chat_completion() {
         assert!(!rec.responses.is_empty());
         assert!(ttft.is_some());
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&rec.request_body).unwrap(),
-            payload()
-        );
-        assert_eq!(
             rec.request_headers.get("Accept").map(String::as_str),
             Some("text/event-stream")
         );

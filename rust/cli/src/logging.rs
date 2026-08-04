@@ -257,7 +257,10 @@ mod tests {
         ];
         assert_eq!(level_directive_from_argv(&spaced), "warn");
         let equals = vec!["profile".to_owned(), "--log-level=debug".to_owned()];
-        assert_eq!(level_directive_from_argv(&equals), scoped_directive("debug"));
+        assert_eq!(
+            level_directive_from_argv(&equals),
+            scoped_directive("debug")
+        );
     }
 
     /// The verbose flags must not raise dependency crates.

@@ -178,6 +178,9 @@ fn prepare_grpc_sink(
 
 /// Assemble a gRPC sink from a worker-local prepared endpoint table.
 ///
+/// `capture_raw` is the request payload's only consumer; with it off the sink
+/// skips building the canonical payload entirely.
+///
 /// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn grpc_sink_with_endpoints(

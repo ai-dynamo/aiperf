@@ -78,13 +78,13 @@ impl NativeTransportExecution for HttpNativeExecution {
         run_origin_ns: i64,
         urls: &[String],
         model: &str,
-        transport_config: crate::transport::http::TransportSinkConfig,
+        mut transport_config: crate::transport::http::TransportSinkConfig,
         endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
-        // The HTTP sink's compatibility record already carries `Bytes` bodies
-        // (cheap refcount clones), so it is built unconditionally regardless of
-        // raw capture; the flag only matters to the gRPC sink.
-        _capture_raw: bool,
+        capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
+        // The request payload's only consumer is the raw artifact
+        // (`CapturedHttpExchange`), so the handle is taken only under raw capture.
+        transport_config.capture_raw = capture_raw;
         Ok(Rc::new(
             crate::transport::http::TransportSink::new_multi_configured(
                 clock,

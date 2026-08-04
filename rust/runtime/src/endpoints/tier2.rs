@@ -910,19 +910,20 @@ impl Endpoint for ImageRetrievalEndpoint {
     }
 
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        // A body without this dialect's `input` array was never walked, so it
+        // establishes nothing — reporting an exact zero for it would let a caller
+        // skip its own accounting on a body no one inspected.
+        let Some(items) = body.get("input").and_then(Value::as_array) else {
+            return ExtractedPayload::default();
+        };
         ExtractedPayload {
-            image_count: body
-                .get("input")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter(|item| {
-                            item.get("type").and_then(Value::as_str) == Some("image_url")
-                        })
-                        .count() as u32
-                })
-                .unwrap_or(0),
+            image_count: items
+                .iter()
+                .filter(|item| item.get("type").and_then(Value::as_str) == Some("image_url"))
+                .count() as u32,
+            // Counted straight off the array this dialect posts, so an empty
+            // `input` is an exact zero rather than an absent answer.
+            owns_image_count: true,
             ..ExtractedPayload::default()
         }
     }

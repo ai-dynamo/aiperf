@@ -158,7 +158,8 @@ impl TurnDispatcher for SimDispatcher {
             roles: turn
                 .request_body
                 .as_ref()
-                .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
+                .and_then(|body| body.to_wire().ok())
+                .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
                 .and_then(|body| {
                     body.get("messages").and_then(|messages| {
                         messages.as_array().map(|messages| {

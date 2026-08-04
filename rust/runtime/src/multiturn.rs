@@ -17,7 +17,10 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::body_plan::RequestBody;
 use crate::cellular::partition::{CellPartition, ModuloCellPartition};
+use crate::dataset::TurnEndpointLookup;
+use crate::dataset::request::reply_image_count;
 use crate::dataset::{
     ConversationSession as NativeConversationSession, Dataset as NativeDataset,
     EndpointRequestMaterializer, Handle, Overrides, Payload, RequestMaterializer, Sampler,
@@ -62,6 +65,27 @@ pub trait InputTokenCounter: Send + Sync {
         authored_input_tokens: u64,
     ) -> Result<u64> {
         Ok(authored_input_tokens)
+    }
+
+    /// Count input tokens for a materialized dispatch that may already carry the
+    /// endpoint-reported input structure.
+    ///
+    /// `extracted` is `Some` only when the endpoint reported the structure of
+    /// this exact body through [`PreparedEndpoint::extracted`]. The default
+    /// ignores it and defers to [`Self::count_prepared_input_tokens`], which
+    /// parses the body and is always correct.
+    ///
+    /// An implementation overriding this must also override
+    /// [`Self::count_prepared_input_tokens`]: graph dispatch counts through that
+    /// method directly and never sees a [`crate::dataset::MaterializedRequest`].
+    fn count_materialized_input_tokens(
+        &self,
+        endpoint: &dyn PreparedEndpoint,
+        body: &[u8],
+        _extracted: Option<&crate::endpoints::ExtractedPayload>,
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        self.count_prepared_input_tokens(endpoint, body, authored_input_tokens)
     }
 
     /// Whether immutable first turns may reuse a previously computed count.
@@ -122,7 +146,7 @@ impl EndpointInputTokenCounter {
 
     fn count_extracted(
         &self,
-        extracted: crate::endpoints::ExtractedPayload,
+        extracted: &crate::endpoints::ExtractedPayload,
         authored_input_tokens: u64,
     ) -> Result<u64> {
         if self.apply_chat_template
@@ -174,7 +198,7 @@ impl InputTokenCounter for EndpointInputTokenCounter {
             return Ok(authored_input_tokens);
         };
         self.count_extracted(
-            endpoint.extract_payload_inputs(&body),
+            &endpoint.extract_payload_inputs(&body),
             authored_input_tokens,
         )
     }
@@ -189,9 +213,22 @@ impl InputTokenCounter for EndpointInputTokenCounter {
             return Ok(authored_input_tokens);
         };
         self.count_extracted(
-            endpoint.extract_payload_inputs(&body),
+            &endpoint.extract_payload_inputs(&body),
             authored_input_tokens,
         )
+    }
+
+    fn count_materialized_input_tokens(
+        &self,
+        endpoint: &dyn PreparedEndpoint,
+        body: &[u8],
+        extracted: Option<&crate::endpoints::ExtractedPayload>,
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        match extracted {
+            Some(extracted) => self.count_extracted(extracted, authored_input_tokens),
+            None => self.count_prepared_input_tokens(endpoint, body, authored_input_tokens),
+        }
     }
 
     fn caches_static_first_turns(&self) -> bool {
@@ -522,6 +559,14 @@ pub trait PreparedTurnEndpointResolver: fmt::Debug {
     fn resolve(&self, name: Option<&str>) -> Result<ResolvedPreparedEndpoint<'_>>;
 }
 
+/// Every prepared resolver is also the endpoint lookup dataset precompute needs,
+/// so image counting reaches per-turn overrides without a second seam.
+impl<T: PreparedTurnEndpointResolver + ?Sized> TurnEndpointLookup for T {
+    fn endpoint_for(&self, name: Option<&str>) -> Option<&dyn PreparedEndpoint> {
+        self.resolve(name).ok().map(|resolved| resolved.endpoint)
+    }
+}
+
 /// Dense-table prepared endpoint resolver used by local online execution.
 pub struct PreparedEndpointTableResolver {
     table: Rc<PreparedEndpointTable>,
@@ -556,6 +601,13 @@ impl PreparedEndpointTableResolver {
                 default.endpoint_id.as_str()
             );
         }
+        // Only the default endpoint's own id and aliases are registered, so a
+        // per-turn override can name this endpoint or fail — it can never route a
+        // turn to a *different* dialect. `ConversationSession::capture_response`
+        // depends on that: it drops a lowered reply's composed content knowing the
+        // only formatter that will ever see the reply is one that splices
+        // `lowered` verbatim. A resolver that registered other prepared profiles
+        // by name would turn that into silent data loss with every test green.
         let mut named = HashMap::new();
         for name in std::iter::once(endpoint.descriptor().id)
             .chain(endpoint.descriptor().aliases.iter().copied())
@@ -619,6 +671,11 @@ fn lower_static_messages(
     dataset
         .precompute_body_plans(resolved.endpoint, primary_model_name)
         .map_err(|error| anyhow!("failed to precompute body plans: {error}"))?;
+    // Establish each turn's wire image count here too, so dispatch never
+    // deserializes the body it just assembled to recover one number.
+    dataset
+        .precompute_image_counts(endpoint_resolver, primary_model_name)
+        .map_err(|error| anyhow!("failed to precompute image counts: {error}"))?;
     Ok(())
 }
 
@@ -715,7 +772,7 @@ pub struct TurnToSend {
     /// Full OpenAI message history, including captured prior replies.
     pub messages: Vec<OpenAiChatMessage>,
     /// Exact segment-backed request body, when the native dataset seam built it.
-    pub request_body: Option<Bytes>,
+    pub request_body: Option<RequestBody>,
     /// Per-turn HTTP headers.
     pub request_headers: BTreeMap<String, String>,
     /// Per-turn URL query parameters.
@@ -1051,14 +1108,12 @@ impl RuntimeSessionBackend for NativeSessionBackend {
             // Lower a completed reply once against the default prepared endpoint
             // so subsequent turns splice its stored wire. Dialects without message
             // arrays remain on the live rendering path.
-            let lowerer = match &self.endpoint {
+            let resolved = match &self.endpoint {
                 NativeSessionEndpoint::Prepared {
                     endpoint_resolver, ..
-                } => {
-                    let resolved = endpoint_resolver.resolve(None)?;
-                    ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id)
-                }
+                } => endpoint_resolver.resolve(None)?,
             };
+            let lowerer = ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id);
             let mut walker = self.walker()?;
             let session = walker.as_mut().expect("walker() populates the state");
             if session.should_capture_response() {
@@ -1081,7 +1136,10 @@ impl RuntimeSessionBackend for NativeSessionBackend {
                 if let Some(lowerer) = &lowerer {
                     reply.lowered = Some(lowerer.lower_turn(&reply)?);
                 }
-                session.capture_response(reply, tokens)?;
+                // Count this reply's own image parts now, so a later turn's
+                // image count stays known without inspecting its whole body.
+                let images = reply_image_count(&reply, resolved.endpoint);
+                session.capture_response(reply, tokens, images)?;
             }
         }
         self.materialize(owner, current.turn_index + 1, current.num_turns, false)
@@ -1163,9 +1221,10 @@ impl NativeSessionBackend {
             } else {
                 let (_, endpoint) = &prepared_endpoint;
                 // Opaque bodies report absent as 0 at the u64 counter boundary for now.
-                let counted = self.input_token_counter.count_prepared_input_tokens(
+                let counted = self.input_token_counter.count_materialized_input_tokens(
                     *endpoint,
-                    &materialized.body,
+                    &materialized.body.to_wire()?,
+                    materialized.extracted.as_ref(),
                     materialized.input_tokens.unwrap_or(0),
                 )?;
                 if let Some(key) = static_count_key {
@@ -1623,16 +1682,29 @@ impl NativeDatasetConversationSource {
             }
             let mut payloads = Vec::with_capacity(num_turns);
             let mut current = session.build_first_turn(None)?;
-            payloads.push(current.request_body.clone().ok_or_else(|| {
-                anyhow!("materialized turn for conversation {conversation_id:?} produced no body")
-            })?);
+            payloads.push(
+                current
+                    .request_body
+                    .as_ref()
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "materialized turn for conversation {conversation_id:?} produced no body"
+                        )
+                    })?
+                    .to_wire()?,
+            );
             for _ in 1..num_turns {
                 let next = session.build_next_turn(&current, no_capture_reply())?;
-                payloads.push(next.request_body.clone().ok_or_else(|| {
-                    anyhow!(
-                        "materialized turn for conversation {conversation_id:?} produced no body"
-                    )
-                })?);
+                payloads.push(
+                    next.request_body
+                        .as_ref()
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "materialized turn for conversation {conversation_id:?} produced no body"
+                            )
+                        })?
+                        .to_wire()?,
+                );
                 current = next;
             }
             sessions.insert(conversation_id.to_string(), payloads);
@@ -1880,12 +1952,21 @@ impl CreditCounter {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::dataset::{ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
+    use crate::dataset::{BodyPlan, ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
     use crate::endpoints::ChatEndpoint;
     use crate::rng::RngRoot;
     use serde_json::json;
 
     use super::*;
+
+    /// The wire bytes a built turn dispatches.
+    fn dispatched_body(turn: &TurnToSend) -> Bytes {
+        turn.request_body
+            .as_ref()
+            .expect("a built turn carries a request body")
+            .to_wire()
+            .expect("the request body materializes")
+    }
 
     struct FixedTemplateTokenizer;
 
@@ -2074,10 +2155,7 @@ mod tests {
             .unwrap()
             .build_first_turn(None)
             .unwrap();
-        assert_eq!(
-            sessions[0].payloads[0].as_ref(),
-            dispatch_turn.request_body.as_deref().unwrap()
-        );
+        assert_eq!(sessions[0].payloads[0], dispatched_body(&dispatch_turn));
     }
 
     /// Up-front generation of a static (authored-response) multi-turn conversation
@@ -2121,10 +2199,7 @@ mod tests {
             .unwrap()
             .build_first_turn(None)
             .unwrap();
-        assert_eq!(
-            sessions[0].payloads[0].as_ref(),
-            dispatch_turn0.request_body.as_deref().unwrap()
-        );
+        assert_eq!(sessions[0].payloads[0], dispatched_body(&dispatch_turn0));
     }
 
     /// Jump-resume: `build_turn_at(k)` on a fresh session yields the turn at `k`
@@ -2157,23 +2232,22 @@ mod tests {
         assert_eq!(jump_turn1.turn_index, 1);
         assert_eq!(jump_turn1.num_turns, seq_turn1.num_turns);
         assert_eq!(
-            jump_turn1.request_body.as_deref().unwrap(),
-            seq_turn1.request_body.as_deref().unwrap(),
+            dispatched_body(&jump_turn1),
+            dispatched_body(&seq_turn1),
             "jump-resume to turn 1 is byte-identical to sequential advance to turn 1"
         );
 
         // The reconstructed context reflects turns 0..=1: the recorded message array
         // carries the current turn's content (q1) and is distinct from turn 0 (q0).
-        let jump_body: Value =
-            serde_json::from_slice(jump_turn1.request_body.as_deref().unwrap()).unwrap();
+        let jump_body: Value = serde_json::from_slice(&dispatched_body(&jump_turn1)).unwrap();
         let messages = jump_body["messages"].to_string();
         assert!(
             messages.contains("q1"),
             "turn-1 context carries q1: {messages}"
         );
         assert_ne!(
-            jump_turn1.request_body.as_deref().unwrap(),
-            seq_turn0.request_body.as_deref().unwrap(),
+            dispatched_body(&jump_turn1),
+            dispatched_body(&seq_turn0),
             "turn-1 body differs from turn-0 body"
         );
 
@@ -2184,10 +2258,7 @@ mod tests {
             .build_turn_at(0, None)
             .unwrap();
         assert_eq!(jump_turn0.turn_index, 0);
-        assert_eq!(
-            jump_turn0.request_body.as_deref().unwrap(),
-            seq_turn0.request_body.as_deref().unwrap(),
-        );
+        assert_eq!(dispatched_body(&jump_turn0), dispatched_body(&seq_turn0),);
     }
 
     /// A live-reply-dependent multi-turn dataset (the default DeltasWithoutResponses
@@ -2228,6 +2299,213 @@ mod tests {
             bare.count_input_tokens(&ChatEndpoint, b"not-json", 99)
                 .unwrap(),
             99
+        );
+    }
+
+    /// A prepared endpoint whose reported structure deliberately disagrees with
+    /// the body it dispatches, by exactly one image part.
+    ///
+    /// The sweep below has no real [`PreparedEndpoint::extracted`] override to
+    /// run against — every built-in returns `None` — so without this the
+    /// differential would be skipped for every endpoint and could not fail at
+    /// all. This is the endpoint the differential is *for*: the first real
+    /// override that drifts from its own formatter.
+    #[derive(Debug)]
+    struct MisreportingEndpoint(Box<dyn PreparedEndpoint>);
+
+    impl PreparedEndpoint for MisreportingEndpoint {
+        fn descriptor(&self) -> &'static crate::endpoints::EndpointDescriptor {
+            self.0.descriptor()
+        }
+
+        fn config(&self) -> &crate::endpoints::EffectiveEndpointConfig {
+            self.0.config()
+        }
+
+        fn format_payload(
+            &self,
+            request: &crate::endpoints::PreparedRequest<'_>,
+        ) -> crate::endpoints::EndpointResult<BodyPlan> {
+            self.0.format_payload(request)
+        }
+
+        fn headers(&self) -> &std::collections::BTreeMap<String, String> {
+            self.0.headers()
+        }
+
+        fn readiness_policy(
+            &self,
+            model: &str,
+        ) -> crate::endpoints::EndpointResult<crate::endpoints::ReadinessPolicy> {
+            self.0.readiness_policy(model)
+        }
+
+        fn parse_response(
+            &self,
+            response: &crate::endpoints::ServerResponse,
+        ) -> crate::endpoints::EndpointResult<Option<crate::endpoints::ParsedResponse>> {
+            self.0.parse_response(response)
+        }
+
+        fn extract_payload_inputs(&self, body: &Value) -> crate::endpoints::ExtractedPayload {
+            self.0.extract_payload_inputs(body)
+        }
+
+        fn build_assistant_turn(
+            &self,
+            record: &crate::endpoints::RequestRecord,
+        ) -> crate::endpoints::EndpointResult<Option<crate::endpoints::Turn>> {
+            self.0.build_assistant_turn(record)
+        }
+
+        fn captures_assistant_turn(&self) -> bool {
+            self.0.captures_assistant_turn()
+        }
+
+        fn extracted(
+            &self,
+            _request: &crate::endpoints::PreparedRequest<'_>,
+            plan: &BodyPlan,
+        ) -> Option<crate::endpoints::ExtractedPayload> {
+            let dispatched = plan.materialize_standalone().ok()?;
+            let parsed: Value = serde_json::from_slice(&dispatched).ok()?;
+            let mut extracted = self.0.extract_payload_inputs(&parsed);
+            extracted.image_count += 1;
+            Some(extracted)
+        }
+    }
+
+    /// The structure an endpoint reports without parsing, against the body it
+    /// actually dispatches. `None` when the endpoint reports nothing.
+    fn extracted_differential(
+        prepared: &dyn PreparedEndpoint,
+        request: &crate::endpoints::PreparedRequest<'_>,
+        plan: &BodyPlan,
+    ) -> Option<(
+        crate::endpoints::ExtractedPayload,
+        crate::endpoints::ExtractedPayload,
+    )> {
+        let direct = prepared.extracted(request, plan)?;
+        let dispatched = plan.materialize_standalone().unwrap();
+        let parsed: Value = serde_json::from_slice(&dispatched).unwrap();
+        Some((direct, prepared.extract_payload_inputs(&parsed)))
+    }
+
+    /// The differential every [`PreparedEndpoint::extracted`] override owes,
+    /// swept across every built-in endpoint — and armed, so it cannot pass
+    /// vacuously.
+    ///
+    /// No built-in reports structure today, so the registry half of this sweep
+    /// establishes only that none has started to without a differential. The
+    /// [`MisreportingEndpoint`] half is what keeps the comparison itself honest:
+    /// it drifts from its own dispatched body by one image part and the sweep
+    /// must see it. Without that, the first real override could diverge silently
+    /// — an ISL shift no run surfaces.
+    #[test]
+    fn extracted_structure_matches_the_dispatched_body_for_every_endpoint() {
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let turns = [EndpointTurn {
+            role: Some("user".into()),
+            texts: vec![EndpointMedia::new(vec!["hello world".to_string()])],
+            ..EndpointTurn::default()
+        }];
+        let request = crate::endpoints::PreparedRequest::new(
+            "test-model",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+
+        let mut formatted = 0usize;
+        for id in registry.canonical_ids() {
+            let Ok(prepared) = registry.prepare(id, crate::endpoints::RawEndpointConfig::default())
+            else {
+                continue;
+            };
+            // A dialect that cannot express a bare text turn (media-only,
+            // token-native, raw) has nothing to compare here.
+            let Ok(plan) = prepared.format_payload(&request) else {
+                continue;
+            };
+            formatted += 1;
+            if let Some((direct, parsed)) =
+                extracted_differential(prepared.as_ref(), &request, &plan)
+            {
+                assert_eq!(
+                    direct, parsed,
+                    "endpoint {id} reports structure that diverges from its dispatched body"
+                );
+            }
+        }
+        // A floor, not the exact count: the sweep must keep covering the bulk of
+        // the catalog rather than silently narrowing to one dialect. This counts
+        // endpoints that formatted a bare text turn, not endpoints differentially
+        // checked — the arming below is what pins the check.
+        assert!(
+            formatted >= 10,
+            "the sweep covered only {formatted} endpoints; it must exercise the catalog"
+        );
+
+        let misreporting = MisreportingEndpoint(
+            registry
+                .prepare(
+                    &EndpointId::new("chat").unwrap(),
+                    crate::endpoints::RawEndpointConfig::default(),
+                )
+                .unwrap(),
+        );
+        let plan = misreporting.format_payload(&request).unwrap();
+        let (direct, parsed) = extracted_differential(&misreporting, &request, &plan)
+            .expect("the armed endpoint reports structure");
+        assert_ne!(
+            direct, parsed,
+            "the differential did not see a reported structure that disagrees with its body"
+        );
+    }
+
+    /// The counter honors a reported structure and falls back to parsing without
+    /// one. This pins the plumbing between `MaterializedRequest.extracted` and
+    /// the counter; the structure/body agreement itself is the sweep above.
+    #[test]
+    fn materialized_counter_prefers_the_reported_structure() {
+        let payload = json!({
+            "messages":[{"role":"user","content":"hello world"}],
+            "tools":[{"type":"function","function":{"name":"weather"}}]
+        });
+        let body = serde_json::to_vec(&payload).unwrap();
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let prepared = registry
+            .prepare(
+                &EndpointId::new("chat").unwrap(),
+                crate::endpoints::RawEndpointConfig::default(),
+            )
+            .unwrap();
+        let counter = EndpointInputTokenCounter::new(Arc::new(FixedTemplateTokenizer), false);
+
+        let parsed = counter
+            .count_prepared_input_tokens(prepared.as_ref(), &body, 99)
+            .unwrap();
+        assert_eq!(
+            counter
+                .count_materialized_input_tokens(prepared.as_ref(), &body, None, 99)
+                .unwrap(),
+            parsed
+        );
+        // A structure the body does not describe must reach the count, proving
+        // the reported value is used rather than silently re-derived.
+        let reported = crate::endpoints::ExtractedPayload {
+            texts: vec!["one two three four".into()],
+            ..crate::endpoints::ExtractedPayload::default()
+        };
+        assert_eq!(
+            counter
+                .count_materialized_input_tokens(prepared.as_ref(), &body, Some(&reported), 99)
+                .unwrap(),
+            4
         );
     }
 
@@ -2308,8 +2586,7 @@ mod tests {
             .unwrap()
             .build_first_turn(None)
             .unwrap();
-        let first_body: Value =
-            serde_json::from_slice(first.request_body.as_ref().unwrap()).unwrap();
+        let first_body: Value = serde_json::from_slice(&dispatched_body(&first)).unwrap();
         assert_eq!(first_body["messages"][0]["content"], "first question");
         let next = source
             .next_turn(
@@ -2323,7 +2600,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let next_body: Value = serde_json::from_slice(next.request_body.as_ref().unwrap()).unwrap();
+        let next_body: Value = serde_json::from_slice(&dispatched_body(&next)).unwrap();
         assert_eq!(
             next_body["messages"]
                 .as_array()
@@ -2391,8 +2668,8 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let body1: Value = serde_json::from_slice(turn1.request_body.as_ref().unwrap()).unwrap();
-        let body2: Value = serde_json::from_slice(turn2.request_body.as_ref().unwrap()).unwrap();
+        let body1: Value = serde_json::from_slice(&dispatched_body(&turn1)).unwrap();
+        let body2: Value = serde_json::from_slice(&dispatched_body(&turn2)).unwrap();
         // reply-0 is message[1] in both dispatch bodies and must be identical.
         assert_eq!(body1["messages"][1], body2["messages"][1]);
         assert_eq!(body1["messages"][1]["content"], "reply-0");
@@ -2445,7 +2722,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let body: Value = serde_json::from_slice(next.request_body.as_ref().unwrap()).unwrap();
+        let body: Value = serde_json::from_slice(&dispatched_body(&next)).unwrap();
         assert_eq!(body["messages"][1], assistant);
         assert_eq!(
             body["messages"][2],
@@ -2470,7 +2747,7 @@ mod tests {
             .unwrap();
         let mut source = prepared_chat_source(dataset, "model", 4);
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
-        assert_eq!(turn.request_body.unwrap(), authored);
+        assert_eq!(dispatched_body(&turn), authored);
         assert!(turn.streaming);
     }
 
@@ -2517,10 +2794,10 @@ mod tests {
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
         let repeated = source.next(None).unwrap().build_first_turn(None).unwrap();
 
+        let body: Value = serde_json::from_slice(&dispatched_body(&turn)).unwrap();
         let TurnEndpoint::Prepared(reference) = turn.endpoint;
         assert_eq!(reference.key, key);
         assert_eq!(reference.endpoint_id, endpoint_id);
-        let body: Value = serde_json::from_slice(turn.request_body.as_ref().unwrap()).unwrap();
         assert_eq!(body["model"], "prepared-model");
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["stream"], true);

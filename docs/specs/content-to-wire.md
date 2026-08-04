@@ -177,16 +177,17 @@ sequenceDiagram
     SC->>DS: next conversation + turn index
     DS->>DS: cached_body_plan(id, turn)?
 
-    alt cache hit (profiling phase, static turn)
-        DS-->>MZ: clone cached BodyPlan
+    alt cache hit (profiling phase)
+        DS-->>MZ: share cached BodyPlan (Arc, not a copy)
+        Note over DS,MZ: a DeltasWithoutResponses continuation plan<br/>holds only the authored turns; this dispatch's<br/>captured reply wires are bound to the splice<br/>positions the plan reserved
     else miss / warmup / live turn
         DS->>ST: resolve_turn — message_wire(handle)
         ST-->>DS: Bytes (refcount clone, no copy)
         DS->>DS: splice captured assistant replies
         DS->>EP: format_payload(PreparedRequest)
-        EP->>EP: assemble wires; empty-array placeholder<br/>fixes field position
-        EP->>EP: from_object → Literal + Wires
-        EP->>EP: splice_message_wires replaces placeholder
+        EP->>EP: assemble wires; position marker<br/>fixes field position
+        EP->>EP: from_object_reserving → Literal + Wires + Reserved
+        EP->>EP: fill_reserved fills the reserved slot
         EP-->>MZ: BodyPlan::Fields
     end
 
@@ -207,7 +208,9 @@ sequenceDiagram
 
 Stage 7 is the only place captured replies enter. A conversation in a
 `WithoutResponses` context mode splices the server's actual prior reply into the
-turn list (`dataset/request.rs:1020-1022`) — content the frozen store never held,
+turn list (`endpoint_turns`, `dataset/request.rs:1251-1254`) on the live path, or
+straight into the emitted body at the cached plan's reserved positions on the
+cached path — content the frozen store never held,
 which is why the plan vocabulary carries inline bytes as a first-class kind
 rather than addressing everything by handle.
 
@@ -329,31 +332,28 @@ verification requirement.
 Tracked against this path; details and sequencing in
 `~/.aiperf/docs/superpowers/plans/2026-08-03-body-plan-consolidation.md`.
 
-- **Six consumers re-derive structure stage 8 discarded.** `MaterializedRequest`
-  carries `body: Bytes` and drops the `BodyPlan`, so every consumer needing
-  structure parses the bytes back: the gRPC sink (`transport/grpc/sink.rs:336`,
-  plus a second full re-serialize at `:489` that is *not* gated by `capture_raw`
-  even though the next line gates the record on exactly that), input-token
-  counting on the issuance path (`multiturn.rs:1018-1022`), multipart form
-  re-encoding (`transport/http/transport/endpoint_binding.rs:305-315`),
-  content-URL tagging (`transport/http/sink.rs:1068-1081`), and the agentic-replay
-  cache-bust rewrite (`agentic_replay.rs:109-136`). The fix is a boundary type
-  that can carry either assembled bytes or a store-free program, with each
-  transport emitting the form it wants.
+- **Consumers that still re-derive structure stage 8 discarded.** The boundary
+  type shipped: `MaterializedRequest.body` is a `RequestBody`
+  (`dataset/request.rs:39`), which carries assembled bytes, a store-free program,
+  or a decoded value, so a transport can take the form it wants. What remains is
+  the consumers that have not been moved onto it. The gRPC sink takes a decoded
+  `RequestBody::Value` as it stands but still assembles-and-parses every other
+  form (`transport/grpc/sink.rs:349-355`); its second full re-serialize runs only
+  when a raw artifact or `inputs.json` will read it. Input-token counting on the
+  issuance path, multipart form re-encoding
+  (`transport/http/transport/endpoint_binding.rs`), content-URL tagging
+  (`transport/http/sink.rs`), and the agentic-replay cache-bust rewrite
+  (`agentic_replay.rs`) still parse the bytes back.
 - **Stage 8 carries an unreachable vocabulary.** `FieldValue::Segment` and
   `Segments` address content by handle at materialize time, but every Fields plan
   materializes against an empty store, so constructing one is a runtime
   `UnknownHandle` on every dispatch. Either resolve them to bytes before the
   boundary or remove them; leaving a public builder that cannot work is the
   hazard.
-- **Graph dispatch forfeits the image-count fast path.** `image_count: None`
-  (`engine/graph_execution.rs`) forces a full body reparse at
-  `transport/http/sink/endpoint_dispatch.rs:250-257` on every multimodal graph
-  node, though the count is derivable at materialize time.
 - **A stage-5 collapse that reaches one dialect.** `BodyPlan::Prebuilt` and
   `prebuilt_if_static` collapse a fully-static plan into one cloneable buffer.
-  Only `image_retrieval` satisfies the gates today (`endpoints/tier2.rs:931-959`
-  emits no `model`; `tier2.rs:227` is non-streaming). Widening it to the other
+  Only `image_retrieval` satisfies the gates today (`endpoints/tier2.rs:932`
+  emits no `model`; `tier2.rs:221` is non-streaming). Widening it to the other
   inline-media dialects requires moving `model` into the override tail, which
   changes field order on the wire.
 

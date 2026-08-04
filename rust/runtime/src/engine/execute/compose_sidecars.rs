@@ -92,6 +92,10 @@ pub(crate) async fn execute_native_inner(
                 // Tag content-server media URLs so served fetches correlate back
                 // to the request; only when the server publishes files.
                 content_server_base: content_server_media_base(&request)?,
+                // The request-payload capture flag is stamped per execution
+                // backend from `ExecutionBackendConfig`, which knows this run's
+                // raw-artifact selection; the default here captures.
+                ..TransportSinkConfig::default()
             },
             Some(table_factory),
             Box::new(PreparedNativeConversationSourceFactory {

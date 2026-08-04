@@ -11,17 +11,18 @@ use std::sync::Arc;
 
 use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
-    EmbeddingsEndpoint, Endpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint,
-    ImageEditEndpoint, ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, MessagesEndpoint,
-    ModelEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, PreparedEndpoint, PreparedRequest,
-    RawEndpoint, RequestInfo, ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint,
-    Turn as EndpointTurn, VideoGenerationEndpoint,
+    EmbeddingsEndpoint, Endpoint, ExtractedPayload, HfTeiRankingsEndpoint,
+    HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
+    ImageRetrievalEndpoint, Media, MessagesEndpoint, ModelEndpoint, NimEmbeddingsEndpoint,
+    NimRankingsEndpoint, PreparedEndpoint, PreparedRequest, RawEndpoint, RequestInfo,
+    ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
+    VideoGenerationEndpoint,
 };
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
-use crate::body_plan::{BodyPlan, JsonBodyMaterializer};
-use crate::dataset::dataset::Dataset;
+use crate::body_plan::{BodyPlan, JsonBodyMaterializer, RequestBody, WireSplice};
+use crate::dataset::dataset::{CachedTurnPlan, Dataset};
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::{Overrides, message_wire};
 use crate::dataset::model::{
@@ -33,9 +34,9 @@ use smallvec::SmallVec;
 /// One fully built dispatch request and its media-free accounting metadata.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterializedRequest {
-    /// Serialized request bytes. Raw payloads retain their authored bytes exactly
-    /// unless explicit dispatch overrides were supplied.
-    pub body: Bytes,
+    /// The request body crossing to the transport. Raw payloads retain their
+    /// authored bytes exactly unless explicit dispatch overrides were supplied.
+    pub body: RequestBody,
     /// Per-turn headers, after validating every value as a string.
     pub headers: BTreeMap<String, String>,
     /// Per-turn URL query parameters.
@@ -71,6 +72,11 @@ pub struct MaterializedRequest {
     pub turn_index: usize,
     /// Whether this is the final authored turn.
     pub is_final_turn: bool,
+    /// Input structure the endpoint reported for this exact body, when it can
+    /// supply one without re-parsing (see [`PreparedEndpoint::extracted`]).
+    ///
+    /// `None` means "derive it by parsing `body`", which is always correct.
+    pub extracted: Option<ExtractedPayload>,
 }
 
 /// Endpoint-independent request-materialization extension point.
@@ -367,7 +373,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             )?;
             let mut effective_model_endpoint = model_endpoint.clone();
             effective_model_endpoint.endpoint.streaming = streaming;
-            let turns = session.endpoint_turns(store)?;
+            // The legacy `Endpoint` path keeps every turn's composed media; only
+            // the prepared dispatch path is hot enough to justify the narrower
+            // spliced resolution.
+            let turns = session.endpoint_turns(store, false)?;
             let request_info = RequestInfo {
                 model_endpoint: effective_model_endpoint,
                 turns,
@@ -379,15 +388,15 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 conversation_id: Some(session.conversation_id().as_str().to_string()),
             };
             let mut plan = endpoint.format_payload(&request_info)?;
-            plan.merge_overrides(overrides);
-            let effective = effective_from_plan(
-                &mut plan,
+            let (effective, stream_fix) = effective_from_plan(
+                &plan,
                 current,
                 &model_endpoint.primary_model_name,
                 model_endpoint.endpoint.streaming,
                 endpoint.descriptor().supports_streaming,
                 overrides,
             )?;
+            apply_dispatch_mutations(&mut plan, overrides, stream_fix);
             (plan.materialize_standalone()?, effective)
         };
 
@@ -407,7 +416,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body,
+            body: RequestBody::wire(body),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
@@ -418,17 +427,14 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
-            image_count: raw_body_handle(current, store)
-                .ok()
-                .flatten()
-                .is_none()
-                .then(|| known_image_count(current, turn_index))
-                .flatten(),
+            // Established up front by dataset precompute over the same turn set
+            // this body assembles, plus the replies captured so far; `None`
+            // leaves dispatch to derive it by parsing the body.
+            image_count: session.known_image_count(turn_index, overrides),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted: None,
         })
     }
 
@@ -444,6 +450,10 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         let store = session.dataset.segments().as_ref();
         let configured_streaming = endpoint.config().streaming();
         let supports_streaming = endpoint.descriptor().supports_streaming;
+        // Endpoint-reported input structure, offered only for a body this call
+        // formatted itself with no dispatch override applied. Raw bodies, cached
+        // plans, and overridden plans leave it absent so the counter parses.
+        let mut extracted = None;
         let (body, effective) = if let Some(raw) = raw_body_handle(current, store)? {
             (
                 JsonBodyMaterializer::materialize(&BodyPlan::raw(raw), store, overrides)?,
@@ -461,7 +471,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         } else {
             // Reuse the cached profiling-phase plan when the dataset precomputed
             // one for this exact `(conversation, turn)`. The
-            // cache is only populated for the default endpoint, static context
+            // cache is only populated for the default endpoint, eligible context
             // modes, and eligible dialects, so a hit is byte-identical to a fresh
             // `format_payload` here; anything else returns `None` and falls back.
             // Warmup folds the system prompt inside the formatter, so it never
@@ -473,13 +483,30 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         .cached_body_plan(session.conversation_id(), turn_index)
                 })
                 .flatten();
+            // A continuation turn's cached plan holds only its authored turns;
+            // its captured replies are supplied here, borrowed from the session,
+            // and interleaved as the body is emitted. `reply_wire_groups`
+            // rejects a cache entry this dispatch's replies do not match, which
+            // drops the whole turn back to live formatting.
+            // Inline capacity is the conversation depth a continuation dispatch
+            // stays allocation-free to; past it the groups spill to the heap for
+            // one extra allocation per request. 16 covers the multi-turn depths
+            // benchmarks actually run.
+            let mut groups: SmallVec<[(u32, &[Bytes]); 16]> = SmallVec::new();
+            let cached = cached.filter(|cached| session.reply_wire_groups(cached, &mut groups));
             let mut plan = match cached {
-                Some(cached) => cached.clone(),
+                // Shared, not copied: a dispatch that mutates nothing dispatches
+                // straight off the dataset's plan.
+                Some(cached) => {
+                    #[cfg(test)]
+                    CACHE_HITS.with(|count| count.set(count.get() + 1));
+                    Arc::clone(&cached.plan)
+                }
                 None => {
-                    let turns = session.endpoint_turns(store)?;
+                    let turns =
+                        session.endpoint_turns(store, splices_lowered_wires(endpoint, phase))?;
                     let system_message = resolve_prompt(store, conversation.system)?;
                     let user_context_message = resolve_prompt(store, conversation.user_context)?;
-                    let conversation_id = session.conversation_id().as_str().to_string();
                     let request = PreparedRequest::new(
                         primary_model_name,
                         &turns,
@@ -488,21 +515,50 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         phase,
                         None,
                         None,
-                        Some(&conversation_id),
+                        // Borrowed from the session, which outlives `request`;
+                        // the identifier needs no per-dispatch copy.
+                        Some(session.conversation_id().as_str()),
                     );
-                    endpoint.format_payload(&request)?
+                    let plan = endpoint.format_payload(&request)?;
+                    if overrides.is_empty() {
+                        extracted = endpoint.extracted(&request, &plan);
+                    }
+                    Arc::new(plan)
                 }
             };
-            plan.merge_overrides(overrides);
-            let effective = effective_from_plan(
-                &mut plan,
+            let splice = cached
+                .and_then(|cached| cached.replies.as_ref())
+                .filter(|replies| !overrides_replace_field(&plan, replies.field, overrides))
+                .map(|replies| WireSplice::new(replies.field, &groups));
+            #[cfg(test)]
+            if splice.is_some() {
+                SPLICED_DISPATCHES.with(|count| count.set(count.get() + 1));
+            }
+            let (effective, stream_fix) = effective_from_plan(
+                &plan,
                 current,
                 primary_model_name,
                 configured_streaming,
                 supports_streaming,
                 overrides,
             )?;
-            (plan.materialize_standalone()?, effective)
+            // Copy the shared plan only for a dispatch that actually writes it.
+            // The scheduled path dispatches with neither an override nor a stream
+            // correction, so its normal case never copies.
+            if !overrides.is_empty() || stream_fix.is_some() {
+                apply_dispatch_mutations(Arc::make_mut(&mut plan), overrides, stream_fix);
+                // The structure was captured from the plan the endpoint
+                // formatted. A stream correction rewrites the `stream` literal
+                // independently of `overrides`, so the dispatched body can
+                // differ from the one described; drop the report rather than
+                // let it describe a body that was not sent. Clearing here
+                // rather than capturing later is forced: `request` is dropped
+                // at the end of the arm above. The branch is not taken on
+                // normal scheduled dispatch, so this costs the hot path
+                // nothing.
+                extracted = None;
+            }
+            (plan.materialize_spliced(splice.as_ref())?, effective)
         };
 
         let endpoint_path = endpoint.config().as_raw().path.clone().or_else(|| {
@@ -521,7 +577,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body,
+            body: RequestBody::wire(body),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
@@ -536,17 +592,14 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 None
             },
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
-            image_count: raw_body_handle(current, store)
-                .ok()
-                .flatten()
-                .is_none()
-                .then(|| known_image_count(current, turn_index))
-                .flatten(),
+            // Established up front by dataset precompute over the same turn set
+            // this body assembles, plus the replies captured so far; `None`
+            // leaves dispatch to derive it by parsing the body.
+            image_count: session.known_image_count(turn_index, overrides),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted,
         })
     }
 }
@@ -609,7 +662,7 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body: Bytes::new(),
+            body: RequestBody::wire(Bytes::new()),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
@@ -620,17 +673,18 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
+            // The dispatched body is empty here, so only a first turn's authored
+            // content is describable; later turns parse.
             image_count: raw_body_handle(current, store)
                 .ok()
                 .flatten()
                 .is_none()
-                .then(|| known_image_count(current, turn_index))
+                .then(|| trace_identity_image_count(current, turn_index))
                 .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted: None,
         })
     }
 
@@ -681,7 +735,7 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             "extra_headers",
         )?);
         Ok(MaterializedRequest {
-            body: Bytes::new(),
+            body: RequestBody::wire(Bytes::new()),
             headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
@@ -696,17 +750,18 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
                 None
             },
             audio_duration_seconds: current.audio_duration_seconds,
-            // Raw payloads have no structured content groups, so trust the
-            // authored count only for non-raw bodies; dispatch parses otherwise.
+            // The dispatched body is empty here, so only a first turn's authored
+            // content is describable; later turns parse.
             image_count: raw_body_handle(current, store)
                 .ok()
                 .flatten()
                 .is_none()
-                .then(|| known_image_count(current, turn_index))
+                .then(|| trace_identity_image_count(current, turn_index))
                 .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
+            extracted: None,
         })
     }
 }
@@ -717,17 +772,24 @@ struct EffectiveRequest {
     streaming: bool,
 }
 
-/// Read effective model/max-tokens/streaming from a merged [`BodyPlan`] and
-/// force `stream` off when the endpoint cannot stream.
+/// Read effective model/max-tokens/streaming for one dispatch without touching
+/// the plan, and report the `stream` literal the plan must be corrected to when
+/// the endpoint cannot stream (`None` when no correction applies).
+///
+/// This reads the plan as it *would* look once [`BodyPlan::merge_overrides`] has
+/// folded `overrides` in — see [`merged_literal`] — because the plan literal, not
+/// the override, is what the dispatched body carries. Reading before the merge
+/// rather than after keeps an unmutated plan shareable, so a dispatch with no
+/// override and no stream correction copies nothing.
 fn effective_from_plan(
-    plan: &mut BodyPlan,
+    plan: &BodyPlan,
     turn: &Turn,
     primary_model_name: &str,
     configured_streaming: bool,
     supports_streaming: bool,
     overrides: &Overrides,
-) -> Result<EffectiveRequest> {
-    let model = match plan.literal_field("model") {
+) -> Result<(EffectiveRequest, Option<bool>)> {
+    let model = match merged_literal(plan, overrides, "model") {
         Some(Value::String(model)) => model.clone(),
         Some(_) => {
             return Err(DatasetError::Validation(
@@ -738,11 +800,11 @@ fn effective_from_plan(
     };
     let mut max_tokens = effective_max_tokens(turn, overrides)?;
     for field in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
-        if let Some(value) = plan.literal_field(field) {
+        if let Some(value) = merged_literal(plan, overrides, field) {
             max_tokens = Some(positive_u32(value, field)?);
         }
     }
-    let requested_streaming = match plan.literal_field("stream") {
+    let requested_streaming = match merged_literal(plan, overrides, "stream") {
         Some(Value::Bool(streaming)) => *streaming,
         Some(_) => {
             return Err(DatasetError::Validation(
@@ -752,14 +814,54 @@ fn effective_from_plan(
         None => effective_streaming(turn, configured_streaming, supports_streaming, overrides)?,
     };
     let streaming = requested_streaming && supports_streaming;
-    if requested_streaming != streaming {
+    let stream_fix = (requested_streaming != streaming).then_some(streaming);
+    Ok((
+        EffectiveRequest {
+            model,
+            max_tokens,
+            streaming,
+        },
+        stream_fix,
+    ))
+}
+
+/// What [`BodyPlan::literal_field`] would return *after*
+/// [`BodyPlan::merge_overrides`] folded `overrides` into the plan.
+///
+/// `merge_overrides` writes every override name as a top-level literal and
+/// touches no other field, so the post-merge literal for a name is the override
+/// when the override set carries it and the plan's own literal otherwise. On a
+/// non-`Fields` plan the merge is a no-op and `literal_field` is always `None`,
+/// so the override is invisible here exactly as it is post-merge — a raw or
+/// prebuilt body applies its overrides as a spliced tail instead. The match is
+/// exhaustive so a new variant has to restate its answer rather than inherit a
+/// wrong one.
+fn merged_literal<'a>(
+    plan: &'a BodyPlan,
+    overrides: &'a Overrides,
+    name: &str,
+) -> Option<&'a Value> {
+    match plan {
+        BodyPlan::Fields(_) => overrides
+            .fields()
+            .get(name)
+            .or_else(|| plan.literal_field(name)),
+        BodyPlan::Raw(_) | BodyPlan::Prebuilt(_) => None,
+    }
+}
+
+/// Fold this dispatch's overrides and stream correction into the plan, in the
+/// order [`effective_from_plan`] read them: overrides first (in place for a name
+/// the plan already declares, appended otherwise), then the stream correction
+/// overwriting whatever `stream` ended up as.
+///
+/// A no-op exactly when `overrides` is empty and `stream_fix` is `None`, which
+/// is what lets a shared plan skip its copy on that dispatch.
+fn apply_dispatch_mutations(plan: &mut BodyPlan, overrides: &Overrides, stream_fix: Option<bool>) {
+    plan.merge_overrides(overrides);
+    if let Some(streaming) = stream_fix {
         plan.set_literal("stream", Value::Bool(streaming));
     }
-    Ok(EffectiveRequest {
-        model,
-        max_tokens,
-        streaming,
-    })
 }
 
 fn effective_model(turn: &Turn, primary_model_name: &str, overrides: &Overrides) -> Result<String> {
@@ -833,6 +935,10 @@ pub struct ConversationSession {
     context_mode: ConversationContextMode,
     current_turn: Option<usize>,
     replies: Vec<CapturedReply>,
+    /// Running number of wire image parts contributed by the replies captured so
+    /// far, or `None` once any reply's contribution could not be established.
+    /// Only the `*WithoutResponses` modes splice replies, so only they read it.
+    reply_images: Option<u32>,
 }
 
 impl std::fmt::Debug for ConversationSession {
@@ -857,6 +963,7 @@ impl ConversationSession {
             context_mode,
             current_turn: None,
             replies: Vec::new(),
+            reply_images: Some(0),
         })
     }
 
@@ -946,7 +1053,23 @@ impl ConversationSession {
     /// Store one endpoint-normalized assistant turn after the current request.
     /// `tokens` should be the server's authoritative completion count when
     /// available, so later request accounting needs no hot-path tokenization.
-    pub fn capture_response(&mut self, turn: EndpointTurn, tokens: u64) -> Result<()> {
+    ///
+    /// `images` is the number of wire image parts this reply adds to later turns'
+    /// bodies (see [`reply_image_count`]); `None` means it could not be
+    /// established, which makes every later turn's count unknown so dispatch
+    /// falls back to parsing.
+    ///
+    /// A reply the caller already lowered (`turn.lowered` is set) is retained as
+    /// those wires alone: every later turn splices them verbatim, so the reply's
+    /// composed media would only be deep-cloned once per later dispatch and then
+    /// discarded by the formatter. Dropping it here bounds a session's retained
+    /// reply state to the bytes it actually sends.
+    pub fn capture_response(
+        &mut self,
+        mut turn: EndpointTurn,
+        tokens: u64,
+        images: Option<u32>,
+    ) -> Result<()> {
         if !self.should_capture_response() {
             return Err(DatasetError::Validation(format!(
                 "context mode {:?} does not accept live assistant responses",
@@ -966,12 +1089,108 @@ impl ConversationSession {
                 self.conversation_id.as_str()
             )));
         }
+        self.reply_images = self
+            .reply_images
+            .zip(images)
+            .and_then(|(total, added)| total.checked_add(added));
+        // Dropping the composed content is sound only because nothing downstream
+        // can read it back, which rests on two invariants held elsewhere. Both
+        // are load-bearing and neither is enforced by a type:
+        //
+        // 1. No lowerable dialect's formatter inspects a reply's content. Every
+        //    dialect `ShapeLowerer` can lower splices `lowered` verbatim
+        //    (`rendered_turn_messages`, `endpoints.rs`), and every dialect that
+        //    does read `texts`/`role`/`raw_messages` directly either rejects
+        //    multiple turns or selects `first()`/`last()` — neither of which a
+        //    captured reply can ever be. A new lowerable id whose formatter
+        //    inspects content makes this silent data loss.
+        // 2. A per-turn endpoint override cannot route this reply to some other
+        //    dialect: the only `PreparedTurnEndpointResolver` registers just the
+        //    default endpoint's id and aliases (`multiturn.rs`,
+        //    `PreparedEndpointTableResolver::single`) and errors on any other
+        //    name. A second resolver that registered other profiles by name would
+        //    break this the same way.
+        if turn.lowered.is_some() {
+            turn.texts.clear();
+            turn.images.clear();
+            turn.audios.clear();
+            turn.videos.clear();
+            turn.raw_messages = None;
+            turn.role = None;
+        }
         self.replies.push(CapturedReply {
             after_turn,
             turn,
             tokens,
         });
         Ok(())
+    }
+
+    /// Bind this dispatch's captured replies to the splice positions a cached
+    /// continuation plan reserved for them, answering whether the cached plan
+    /// describes this dispatch at all.
+    ///
+    /// The plan fixes every field but the message array — model, generation cap,
+    /// tools, system block, extra-body tail — so reusing it is only sound when
+    /// the replies contribute nothing beyond wires at the recorded positions.
+    /// Each condition below is a way that could stop holding, and each answers
+    /// `false` so the turn reformats live rather than dispatching a body that
+    /// silently disagrees with its history:
+    ///
+    /// - a plan with no reserved positions paired with a session that captured
+    ///   replies (or the reverse) is describing a different turn shape;
+    /// - a reply captured after some turn other than the one its position was
+    ///   measured for would land in the wrong place;
+    /// - an unlowered reply has no wires to splice at all;
+    /// - a reply carrying a model, cap, tools, system block, or extra body would
+    ///   change a field the plan already fixed.
+    ///
+    /// `groups` is left empty on a `false` answer.
+    fn reply_wire_groups<'session>(
+        &'session self,
+        cached: &CachedTurnPlan,
+        groups: &mut SmallVec<[(u32, &'session [Bytes]); 16]>,
+    ) -> bool {
+        let Some(replies) = cached.replies.as_ref() else {
+            return self.replies.is_empty();
+        };
+        if replies.positions.len() != self.replies.len() {
+            return false;
+        }
+        for (index, (position, reply)) in replies.positions.iter().zip(&self.replies).enumerate() {
+            match reply.turn.lowered.as_deref() {
+                Some(wires)
+                    if reply.after_turn == index && reply_splices_only_wires(&reply.turn) =>
+                {
+                    groups.push((*position, wires));
+                }
+                _ => {
+                    groups.clear();
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Exact number of wire image parts the current turn's body carries, or
+    /// `None` when it is not established and dispatch must parse the body.
+    ///
+    /// This is the authored-dataset count the dataset precomputed for this
+    /// `(conversation, turn)` plus, for the modes that splice them, the replies
+    /// captured so far. Both halves are absent by default — an un-precomputed
+    /// dataset yields `None` and the parse fallback, which is always correct.
+    fn known_image_count(&self, turn_index: usize, overrides: &Overrides) -> Option<u32> {
+        if overrides_replace_items(overrides) {
+            return None;
+        }
+        let authored = self
+            .dataset
+            .cached_image_count(&self.conversation_id, turn_index)?;
+        if !self.should_capture_response() {
+            return Some(authored);
+        }
+        self.reply_images?.checked_add(authored)
     }
 
     /// Materialize the current request through an injected implementation.
@@ -1010,13 +1229,25 @@ impl ConversationSession {
         Ok((conversation, turn, turn_index))
     }
 
-    fn endpoint_turns(&self, store: &dyn SegmentStore) -> Result<Vec<EndpointTurn>> {
+    /// Assemble the ordered endpoint turns this dispatch's body carries.
+    ///
+    /// `spliced` selects [`resolve_turn_spliced`] for the authored turns, which
+    /// the caller sets only when the bound dialect renders lowered wires and the
+    /// phase is not warmup.
+    fn endpoint_turns(&self, store: &dyn SegmentStore, spliced: bool) -> Result<Vec<EndpointTurn>> {
         let (conversation, _, current) = self.current()?;
+        let resolve = |turn: &Turn| {
+            if spliced {
+                resolve_turn_spliced(store, turn)
+            } else {
+                resolve_turn(store, turn)
+            }
+        };
         match self.context_mode {
             ConversationContextMode::DeltasWithoutResponses => {
-                let mut out = Vec::new();
+                let mut out = Vec::with_capacity(current + 1 + self.replies.len());
                 for index in 0..=current {
-                    out.push(resolve_turn(store, &conversation.turns[index])?);
+                    out.push(resolve(&conversation.turns[index])?);
                     if let Some(reply) = self.replies.iter().find(|reply| reply.after_turn == index)
                     {
                         out.push(reply.turn.clone());
@@ -1024,15 +1255,14 @@ impl ConversationSession {
                 }
                 Ok(out)
             }
-            ConversationContextMode::DeltasWithResponses => conversation.turns[..=current]
-                .iter()
-                .map(|turn| resolve_turn(store, turn))
-                .collect(),
+            ConversationContextMode::DeltasWithResponses => {
+                conversation.turns[..=current].iter().map(resolve).collect()
+            }
             ConversationContextMode::MessageArrayWithResponses => {
-                Ok(vec![resolve_turn(store, &conversation.turns[current])?])
+                Ok(vec![resolve(&conversation.turns[current])?])
             }
             ConversationContextMode::MessageArrayWithoutResponses => {
-                self.merge_message_array_snapshots(store, conversation, current)
+                self.merge_message_array_snapshots(store, conversation, current, spliced)
             }
         }
     }
@@ -1042,11 +1272,18 @@ impl ConversationSession {
         store: &dyn SegmentStore,
         conversation: &Conversation,
         current: usize,
+        spliced: bool,
     ) -> Result<Vec<EndpointTurn>> {
         let mut previous = Vec::<EndpointTurn>::new();
         let mut out = Vec::new();
         for index in 0..=current {
-            let snapshot = split_snapshot(resolve_turn(store, &conversation.turns[index])?);
+            let turn = &conversation.turns[index];
+            let resolved = if spliced {
+                resolve_turn_spliced(store, turn)?
+            } else {
+                resolve_turn(store, turn)?
+            };
+            let snapshot = split_snapshot(resolved);
             if !snapshot.starts_with(&previous) {
                 return Err(DatasetError::Validation(format!(
                     "conversation {:?} turn {index} is not a prefix-extending message-array snapshot",
@@ -1168,7 +1405,130 @@ pub(crate) fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Dispatches on this thread that materialized through a cached continuation
+    /// plan's wire splice.
+    ///
+    /// Declining the cache is always *safe* — the turn reformats live and the
+    /// body is identical — which is exactly why the byte-identity matrix cannot
+    /// see it: a build that declined every splice would compare a live body
+    /// against a live body and pass. Without an observable count the entire
+    /// measured saving could regress to zero with every gate green.
+    ///
+    /// Thread-local rather than a global counter so concurrently running tests
+    /// cannot perturb each other's reading.
+    pub(crate) static SPLICED_DISPATCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
+    /// Dispatches on this thread that materialized through a precomputed plan
+    /// instead of formatting the turn live.
+    ///
+    /// The same blind spot as [`SPLICED_DISPATCHES`], one level up and wider: a
+    /// hit on turn 0, on a `*WithResponses` mode, or on a dialect that splices
+    /// nothing carries no splice, so the splice counter cannot see it, and
+    /// declining the cache reformats to identical bytes. The cache is what moves
+    /// `format_payload` out of the timed loop for the input-array dialects —
+    /// embeddings, rankings, image retrieval, where a single body inlines a whole
+    /// image batch as data URLs — so a build that declined every hit would give
+    /// the entire saving back with every byte assertion still passing.
+    pub(crate) static CACHE_HITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a dispatch override rewrites the very field a cached plan's captured
+/// replies splice into.
+///
+/// Such an override supersedes the entire array — the authored turns and the
+/// replies alike — exactly as it does on the live path, where `merge_overrides`
+/// runs after the array is fully assembled. So the splice is dropped rather than
+/// applied to a field the merge has already turned into a literal.
+///
+/// Compared against the plan's own field name rather than the message-array
+/// names the dialects use, since an override naming `input` must not cancel a
+/// splice into a `messages` field, or vice versa: that would dispatch a
+/// continuation body silently missing its history.
+fn overrides_replace_field(plan: &BodyPlan, field: usize, overrides: &Overrides) -> bool {
+    match plan {
+        BodyPlan::Fields(program) if !overrides.is_empty() => program
+            .fields()
+            .get(field)
+            .is_some_and(|(name, _)| overrides.fields().contains_key(name.as_ref())),
+        _ => false,
+    }
+}
+
+/// Whether a captured reply contributes nothing to the body but its own message
+/// wires — the precondition for splicing it into a cached plan, whose other
+/// fields were fixed without it.
+///
+/// The media, role, and raw-message fields are already cleared by
+/// [`ConversationSession::capture_response`] for a lowered reply and are checked
+/// anyway: this is the one place the assumption is load-bearing, and a reply
+/// reaching here by some future path must not depend on that clearing.
+fn reply_splices_only_wires(reply: &EndpointTurn) -> bool {
+    reply.model.is_none()
+        && reply.role.is_none()
+        && reply.max_tokens.is_none()
+        && reply.raw_tools.is_none()
+        && reply.raw_system.is_none()
+        && reply.extra_body.is_none()
+        && reply.raw_payload.is_none()
+        && reply.raw_token_ids.is_none()
+        && reply.raw_messages.is_none()
+        && reply.texts.is_empty()
+        && reply.images.is_empty()
+        && reply.audios.is_empty()
+        && reply.videos.is_empty()
+}
+
+/// Whether this dispatch renders its message array by splicing lowered wires,
+/// making a turn's composed media unreachable from the formatter.
+///
+/// The dialect half is the endpoint's own
+/// [`PreparedEndpoint::splices_lowered_wires`] answer rather than a list of ids
+/// kept here, so a new dialect declares its own capability where it is defined
+/// instead of being silently omitted from an enumeration in another module.
+/// `lowerable_dialects_declare_that_they_splice_lowered_wires` pins that answer
+/// against [`ShapeLowerer`], the predicate
+/// [`Dataset::lower_messages_for_endpoint`](crate::dataset::Dataset::lower_messages_for_endpoint)
+/// used to produce those wires.
+///
+/// Warmup is excluded: it re-renders the first turn from its media so the system
+/// prompt can be folded into that message.
+fn splices_lowered_wires(endpoint: &dyn PreparedEndpoint, phase: CreditPhase) -> bool {
+    phase != CreditPhase::Warmup && endpoint.splices_lowered_wires()
+}
+
+/// Resolve one authored dataset turn into the endpoint-facing turn, including
+/// its composed media content.
 pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
+    resolve_turn_inner(store, turn, false)
+}
+
+/// Resolve one authored dataset turn for a dialect that splices lowered message
+/// wires, skipping the composed media a spliced turn cannot reach.
+///
+/// A turn whose content was lowered at load carries its rendered messages in
+/// [`EndpointTurn::lowered`], and `rendered_turn_messages` splices those bytes
+/// and never looks at `texts`/`images`/`audios`/`videos`. Re-resolving the
+/// composed content therefore copies every prompt string out of the segment
+/// store — the whole accumulated history, on every dispatch — to build media
+/// the formatter discards.
+///
+/// Two conditions make the skip exact, and the caller owns both (see
+/// [`splices_lowered_wires`]): the dialect must be one that renders through
+/// `rendered_turn_messages`, and the phase must not be warmup, whose
+/// `render_first` re-renders the first turn from its media so the system prompt
+/// can be folded into it. A turn that was never lowered keeps its content
+/// regardless, since there is no wire to splice.
+pub(crate) fn resolve_turn_spliced(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
+    resolve_turn_inner(store, turn, true)
+}
+
+fn resolve_turn_inner(
+    store: &dyn SegmentStore,
+    turn: &Turn,
+    skip_lowered_content: bool,
+) -> Result<EndpointTurn> {
     // Lowered content uses stored message wires; authored message arrays continue
     // through raw_messages. Validation guarantees the representations do not coexist.
     let message_handles = body_message_handles(turn, store)?;
@@ -1209,6 +1569,13 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
         lowered,
         ..EndpointTurn::default()
     };
+    if skip_lowered_content && resolved.lowered.is_some() {
+        // `role` shares the media's fate: the only reader is
+        // `render_turn_message`, which a spliced turn never reaches, and the
+        // role is already baked into the lowered wire.
+        resolved.role = None;
+        return Ok(resolved);
+    }
     for group in &turn.content {
         let contents = group
             .handles
@@ -1230,25 +1597,229 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
     Ok(resolved)
 }
 
-/// Wire image count derivable from the composed turn content without re-parsing
-/// the serialized body.
+/// Wire image count for a trace-identity turn, derived from the composed turn
+/// content without re-parsing the serialized body.
 ///
-/// Sound only for the first turn of a conversation: later turns may carry
-/// accumulated history images on the wire that `current.content` (this turn's
-/// authored content) does not enumerate, so those return `None` and let dispatch
-/// fall back to parsing the body. Raw payloads are handled by the caller (they
-/// have no structured content groups) and also stay `None`.
-fn known_image_count(current: &Turn, turn_index: usize) -> Option<u32> {
+/// The trace-hash and token-native materializers dispatch an empty body, so this
+/// only ever describes the authored content of a first turn; later turns return
+/// `None`. It is deliberately separate from the precomputed dataset counts
+/// ([`Dataset::cached_image_count`]), which describe a real serialized wire body.
+fn trace_identity_image_count(current: &Turn, turn_index: usize) -> Option<u32> {
     if turn_index != 0 {
         return None;
     }
-    let count: usize = current
+    composed_image_count(current)
+}
+
+/// Exact number of wire image parts one authored dataset turn contributes to the
+/// `messages`/`input` array a dispatch body carries, or `None` when it cannot be
+/// established without parsing the dispatched body.
+///
+/// Called only from dataset precompute, never on the timed path.
+///
+/// `image_count` is incremented in exactly one place — the image arm of
+/// `walk_content_part` in `endpoints::extraction`, for a part inside an item's
+/// `content` array whose `type` names an image part for the dialect. So a turn's
+/// contribution is zero unless one of these reaches that arm:
+///
+/// - a non-text content group (`images`/`audios`/`videos` on the resolved turn),
+///   which the endpoint renders into media content parts;
+/// - an authored `raw_messages` item spliced verbatim, whose `content` may be an
+///   array of arbitrary parts.
+///
+/// Text content groups render text parts, and `raw_tools`/`raw_system` land in
+/// `tools`/`system`, which `extract_inputs` does not walk. When neither applies
+/// the count is provably zero and this returns `Some(0)` without building
+/// anything. Otherwise it builds this one turn's body through the same endpoint
+/// and counts it with the same extractor dispatch would use, so the answer is
+/// exact by construction rather than by enumerating render paths.
+///
+/// This describes ONE turn in isolation. Composing per-turn counts into a body's
+/// count is only valid for a dialect that concatenates every turn's items; see
+/// [`Dataset::precompute_image_counts`], which owns that decision.
+pub(crate) fn dataset_turn_image_count(
+    store: &dyn SegmentStore,
+    endpoint: &dyn PreparedEndpoint,
+    primary_model_name: &str,
+    turn: &Turn,
+) -> Option<u32> {
+    // A raw payload is dispatched verbatim and has no structured content groups.
+    if raw_body_handle(turn, store).ok().flatten().is_some() {
+        return None;
+    }
+    // Establish the ordinary text-only answer without resolving the turn. This
+    // runs over every turn of every conversation, once per conversation source,
+    // and `resolve_turn` materializes every text handle into a fresh `String`.
+    if authored_turn_is_text_only(turn) {
+        return Some(0);
+    }
+    let resolved = resolve_turn(store, turn).ok()?;
+    // Only the LAST turn's `extra_body` is merged into a message-array body
+    // (`merge_extra(&mut payload, last.extra_body…)`), and `split_snapshot` drops
+    // it entirely, so whether an item-bearing `extra_body` reaches the wire
+    // depends on position and mode rather than on the turn alone. Fail closed.
+    if resolved
+        .extra_body
+        .as_ref()
+        .is_some_and(|extra| extra.contains_key("messages") || extra.contains_key("input"))
+    {
+        return None;
+    }
+    if is_provably_image_free(&resolved) {
+        return Some(0);
+    }
+    let request = PreparedRequest::new(
+        primary_model_name,
+        std::slice::from_ref(&resolved),
+        None,
+        None,
+        CreditPhase::Profiling,
+        None,
+        None,
+        None,
+    );
+    let body = endpoint
+        .format_payload(&request)
+        .ok()?
+        .materialize_standalone()
+        .ok()?;
+    let extracted = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .map(|payload| endpoint.extract_payload_inputs(&payload));
+    match extracted {
+        // The endpoint's own extractor is the function dispatch would run on
+        // this same body, and it reports whether the count it produced is this
+        // dialect's authoritative answer. Take it whenever it is — INCLUDING an
+        // exact zero. Conflating "the extractor said zero" with "the extractor
+        // said nothing" is precisely what `composed_image_count` gets wrong: the
+        // formatters drop empty content strings (`!content.is_empty()`) and
+        // `handles.len()` does not, so a turn whose image contents are all empty
+        // sends no image and must report none.
+        Some(extracted) if extracted.owns_image_count => Some(extracted.image_count),
+        // The extractor established nothing: the body is not JSON, or it is a
+        // flat shape whose dialect carries images somewhere no wire walk can see
+        // (image edit posts the turn's image as multipart form data). Fall back
+        // to the media the turn composed, which is what the pre-existing
+        // first-turn path reported. Sound only with nothing preformatted in play
+        // — reaching here
+        // means `is_provably_image_free` found media groups or array-content raw
+        // messages, and the latter can hide an image the content groups do not
+        // enumerate.
+        _ => resolved
+            .raw_messages
+            .is_none()
+            .then(|| composed_image_count(turn))
+            .flatten(),
+    }
+}
+
+/// Cheap authored-turn test establishing a zero without resolving the turn.
+///
+/// Sound because a turn whose content groups are all text, with no preformatted
+/// message array and no per-turn extras, can only render text parts: its lowered
+/// body wires are `resolve_turn`'s render of that same all-text content, and
+/// nothing else reaches the counted roots. `content` must be non-empty — an empty
+/// one means any `Message` body handles become `raw_messages` at resolve instead
+/// of being this turn's own lowered text.
+fn authored_turn_is_text_only(turn: &Turn) -> bool {
+    !turn.content.is_empty()
+        && turn
+            .content
+            .iter()
+            .all(|group| group.kind == MediaKind::Text)
+        && turn.raw_messages.is_none()
+        && turn.extra_body.is_none()
+}
+
+/// Number of image content items one authored turn composed, independent of how
+/// a dialect renders them.
+fn composed_image_count(turn: &Turn) -> Option<u32> {
+    let count: usize = turn
         .content
         .iter()
         .filter(|group| group.kind == MediaKind::Image)
         .map(|group| group.handles.len())
         .sum();
     u32::try_from(count).ok()
+}
+
+/// Exact number of wire image parts one captured assistant reply contributes, or
+/// `None` when it cannot be established.
+///
+/// A reply is spliced into the same `messages`/`input` array as an authored turn
+/// and the extractor counts image parts in every item regardless of role, so a
+/// reply whose content is an array of parts must be inspected rather than assumed
+/// empty. It is already a decoded `Value` tree, so the common assistant shape
+/// (`content` is a string) resolves without touching the extractor at all.
+pub(crate) fn reply_image_count(
+    reply: &EndpointTurn,
+    endpoint: &dyn PreparedEndpoint,
+) -> Option<u32> {
+    if !reply.images.is_empty() || !reply.audios.is_empty() || !reply.videos.is_empty() {
+        return None;
+    }
+    // No preformatted items: the reply renders from its text media alone, which
+    // can only produce text parts.
+    let Some(messages) = reply
+        .raw_messages
+        .as_ref()
+        .filter(|items| !items.is_empty())
+    else {
+        return Some(0);
+    };
+    // The Responses lowerer drops replay-unsafe output items, so a lowered wire
+    // count below the item count means the dispatched array is a subset of what
+    // is inspected here and counting the items would over-report.
+    if reply
+        .lowered
+        .as_ref()
+        .is_some_and(|lowered| lowered.len() != messages.len())
+    {
+        return None;
+    }
+    if messages
+        .iter()
+        .all(|item| !matches!(item.get("content"), Some(Value::Array(_))))
+    {
+        return Some(0);
+    }
+    // `walk_items_arrays` walks both `messages` and `input`, so this reaches the
+    // items for every message-array dialect.
+    let payload = Value::Object(Map::from_iter([(
+        "messages".to_string(),
+        Value::Array(messages.clone()),
+    )]));
+    // Same guard `dataset_turn_image_count` applies to the same extractor: take
+    // the count only where the dialect reports it is the authoritative answer.
+    // Without it a dialect whose extractor found nothing in this shape reports an
+    // exact zero, and every later turn's count is silently short.
+    let extracted = endpoint.extract_payload_inputs(&payload);
+    extracted.owns_image_count.then_some(extracted.image_count)
+}
+
+/// Whether a resolved turn provably contributes no wire image part. See
+/// [`dataset_turn_image_count`] for the enumeration this encodes.
+fn is_provably_image_free(resolved: &EndpointTurn) -> bool {
+    resolved.images.is_empty()
+        && resolved.audios.is_empty()
+        && resolved.videos.is_empty()
+        && resolved
+            .raw_messages
+            .as_ref()
+            .is_none_or(|items| items.iter().all(|item| !has_array_content(item)))
+}
+
+/// Whether a message-array item carries a content-part array, the only shape the
+/// extractor can find an image part in.
+fn has_array_content(item: &Value) -> bool {
+    matches!(item.get("content"), Some(Value::Array(_)))
+}
+
+/// Whether a per-dispatch override set could rewrite the item array the image
+/// count was established over.
+fn overrides_replace_items(overrides: &Overrides) -> bool {
+    !overrides.is_empty()
+        && (overrides.fields().contains_key("messages") || overrides.fields().contains_key("input"))
 }
 
 fn raw_token_ids(store: &dyn SegmentStore, handle: Option<Handle>) -> Result<Option<Vec<u32>>> {
@@ -1512,7 +2083,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        assert_eq!(exact.body, wire);
+        assert_eq!(exact.body.to_wire().unwrap(), wire);
         assert_eq!(exact.input_tokens, Some(7));
 
         let mut overrides = Overrides::new();
@@ -1527,7 +2098,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            spliced.body,
+            spliced.body.to_wire().unwrap(),
             b"{ \"messages\" : [ ], \"model\":\"authored\" ,\"stream\":true}\n"[..]
         );
     }
@@ -1563,7 +2134,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(request.body.is_empty());
+        assert!(request.body.to_wire().unwrap().is_empty());
         assert_eq!(request.model, "trace-model");
         assert_eq!(request.max_tokens, Some(9));
         assert!(request.streaming);
@@ -1641,7 +2212,7 @@ mod tests {
         assert_eq!(jump_turn1.input_tokens, seq_turn1.input_tokens);
 
         // The reconstructed context contains the recorded prior turns 0..=1.
-        let body: Value = serde_json::from_slice(&jump_turn1.body).unwrap();
+        let body: Value = serde_json::from_slice(&jump_turn1.body.to_wire().unwrap()).unwrap();
         let messages = body["messages"].to_string();
         assert!(
             messages.contains("q0"),
@@ -1756,7 +2327,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(request.body.is_empty());
+        assert!(request.body.to_wire().unwrap().is_empty());
         assert_eq!(request.raw_token_ids, Some(raw_token_ids));
         assert_eq!(request.model, "token-model");
         assert_eq!(request.max_tokens, Some(9));
@@ -1805,7 +2376,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(request.body, wire);
+        assert_eq!(request.body.to_wire().unwrap(), wire);
         assert_eq!(request.raw_token_ids, None);
         assert_eq!(request.input_tokens, Some(3));
     }
@@ -1862,7 +2433,7 @@ mod tests {
             )
             .unwrap();
 
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["model"], "direct-model");
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["max_completion_tokens"], 7);
@@ -1908,6 +2479,7 @@ mod tests {
                     ..EndpointTurn::default()
                 },
                 11,
+                Some(0),
             )
             .unwrap();
         session.advance_to(1).unwrap();
@@ -1920,7 +2492,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["messages"][0]["content"], "q0");
         assert_eq!(body["messages"][1]["content"], "a0");
         assert_eq!(body["messages"][2]["content"], "q1");
@@ -1961,6 +2533,7 @@ mod tests {
                     ..EndpointTurn::default()
                 },
                 7,
+                Some(0),
             )
             .unwrap();
         session.advance_to(1).unwrap();
@@ -1973,7 +2546,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["messages"].as_array().unwrap().len(), 3);
         assert_eq!(body["messages"][0]["content"], "q0");
         assert_eq!(body["messages"][1]["content"], "a0");
@@ -2029,7 +2602,7 @@ mod tests {
             .unwrap();
         assert_eq!(request.headers["x-custom"], "yes");
         assert_eq!(request.parameters["api-version"], "2026-01");
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["stream"], false);
         assert!(!request.streaming);
@@ -2078,7 +2651,7 @@ mod tests {
                 &overrides,
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["model"], "dispatch-model");
         assert_eq!(body["max_completion_tokens"], 13);
         assert_eq!(body["stream"], false);
@@ -2135,7 +2708,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert_eq!(body["model"], "body-model");
         assert_eq!(body["stream"], false);
         assert_eq!(body["max_completion_tokens"], 15);
@@ -2190,7 +2763,7 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap();
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
         assert!(body.get("messages").is_none());
         assert_eq!(body["input"][0]["content"], "hello responses");
         assert_eq!(body["max_output_tokens"], 9);
@@ -2198,7 +2771,7 @@ mod tests {
         assert_eq!(request.endpoint_path.as_deref(), Some("/v1/responses"));
     }
 
-    use crate::endpoints::ShapeLowerer;
+    use crate::endpoints::{ShapeLowerer, TurnMessageLowerer};
 
     fn content_turn(text: Handle, image: Option<Handle>) -> Turn {
         let mut content = smallvec![ContentGroup {
@@ -2247,6 +2820,8 @@ mod tests {
             )
             .unwrap()
             .body
+            .to_wire()
+            .unwrap()
     }
 
     fn one_content_turn_dataset(text: Handle, image: Option<Handle>, pool: SegmentPool) -> Dataset {
@@ -2324,6 +2899,288 @@ mod tests {
         assert_eq!(turns[0].body[0], turns[1].body[0]);
     }
 
+    /// Resolves every turn to the one endpoint under test.
+    struct SingleEndpointLookup<'a>(&'a dyn PreparedEndpoint);
+
+    impl crate::dataset::TurnEndpointLookup for SingleEndpointLookup<'_> {
+        fn endpoint_for(&self, _name: Option<&str>) -> Option<&dyn PreparedEndpoint> {
+            Some(self.0)
+        }
+    }
+
+    /// The optimization itself, not just its answer: after precompute, a
+    /// continuation turn of the default live-chat context mode must carry an
+    /// established `image_count`, so dispatch never deserializes the body it
+    /// just built. Asserting only the value would pass on the parse fallback.
+    #[test]
+    fn continuation_turns_carry_an_established_image_count() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let image = pool
+            .intern_media(
+                None,
+                MediaKind::Image,
+                Bytes::from_static(b"http://example/a.png"),
+            )
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::DeltasWithoutResponses);
+        // One image in turn 0; the deltas resend it under every later turn.
+        conversation.turns = vec![
+            content_turn(text, Some(image)),
+            content_turn(text, None),
+            content_turn(text, None),
+        ];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap();
+        let endpoint = prepared_chat();
+        let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        dataset
+            .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "primary-model")
+            .unwrap();
+        let dataset = Arc::new(dataset);
+
+        let mut session = ConversationSession::new(dataset, SessionId::from("session")).unwrap();
+        for turn_index in 0..3 {
+            session.advance_to(turn_index).unwrap();
+            let request = session
+                .materialize_prepared(
+                    &EndpointRequestMaterializer,
+                    endpoint.as_ref(),
+                    "primary-model",
+                    CreditPhase::Profiling,
+                    &Overrides::new(),
+                )
+                .unwrap();
+            let body = request.body.clone().to_wire().unwrap();
+            let parsed: Value = serde_json::from_slice(&body).unwrap();
+            let on_the_wire = endpoint.extract_payload_inputs(&parsed).image_count;
+            assert_eq!(
+                request.image_count,
+                Some(on_the_wire),
+                "turn {turn_index} must establish the count the body actually carries"
+            );
+            let reply = EndpointTurn {
+                role: Some("assistant".into()),
+                texts: vec![Media::new(vec!["reply".to_string()])],
+                ..EndpointTurn::default()
+            };
+            let images = reply_image_count(&reply, endpoint.as_ref());
+            assert_eq!(images, Some(0), "a text-only reply carries no image");
+            session.capture_response(reply, 4, images).unwrap();
+        }
+    }
+
+    /// A dialect that selects one turn out of the list rather than concatenating
+    /// them all must not be prefix-summed: `kserve_v2_vlm` formats
+    /// `request.turns().first()`, so under a delta mode the wire always carries
+    /// turn 0's images and a sum would over-report every later turn. Those turns
+    /// must stay unestablished so dispatch parses the body and gets the truth.
+    #[test]
+    fn a_turn_selecting_dialect_is_never_prefix_summed() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let image = pool
+            .intern_media(
+                None,
+                MediaKind::Image,
+                Bytes::from_static(b"http://example/a.png"),
+            )
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::DeltasWithoutResponses);
+        // Every turn carries an image, so a prefix sum would report 1, 2, 3
+        // while the wire only ever carries turn 0's one image.
+        conversation.turns = vec![
+            content_turn(text, Some(image)),
+            content_turn(text, Some(image)),
+            content_turn(text, Some(image)),
+        ];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap();
+        let endpoint = prepare_endpoint("kserve_v2_vlm");
+        dataset
+            .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "primary-model")
+            .unwrap();
+
+        let id = SessionId::from("session");
+        assert_eq!(
+            dataset.cached_image_count(&id, 0),
+            Some(1),
+            "turn 0 is the one index every context mode renders in full"
+        );
+        for turn_index in 1..3 {
+            assert_eq!(
+                dataset.cached_image_count(&id, turn_index),
+                None,
+                "turn {turn_index} must fall back to the parse, not a sum"
+            );
+        }
+    }
+
+    /// An extractor that owns its dialect's image count must be believed when it
+    /// reports zero, not just when it reports some. `kserve_v2_vlm` omits the
+    /// image tensor entirely when every image content is empty, so the wire
+    /// carries no image and the count is exactly zero — while
+    /// `composed_image_count` would say one, because `handles.len()` cannot see
+    /// the formatter's `!content.is_empty()` filter.
+    #[test]
+    fn an_extractor_owning_its_count_is_believed_when_it_reports_zero() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let empty_image = pool
+            .intern_media(None, MediaKind::Image, Bytes::from_static(b""))
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+        conversation.turns = vec![content_turn(text, Some(empty_image))];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap();
+        let endpoint = prepare_endpoint("kserve_v2_vlm");
+        dataset
+            .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "primary-model")
+            .unwrap();
+
+        assert_eq!(
+            dataset.cached_image_count(&SessionId::from("session"), 0),
+            Some(0),
+            "an empty image content sends no image, so the count is exactly zero"
+        );
+    }
+
+    /// The concatenation capability must follow the dialect, not its descriptor
+    /// id: `kserve_chat` and `sagemaker` wrap `ChatEndpoint` under their own ids
+    /// and would otherwise send every continuation turn back to the parse.
+    #[test]
+    fn chat_wrapping_dialects_report_that_they_render_all_turns() {
+        for id in ["chat", "responses", "messages", "kserve_chat", "sagemaker"] {
+            assert!(
+                prepare_endpoint(id).renders_all_turns(),
+                "{id} concatenates every turn and must say so"
+            );
+        }
+        for id in ["kserve_v2_vlm", "kserve_v2_infer", "completions"] {
+            assert!(
+                !prepare_endpoint(id).renders_all_turns(),
+                "{id} selects turns and must not be prefix-summed"
+            );
+        }
+    }
+
+    /// `MessageArrayWithoutResponses` is the one mode where turn 0 is not a
+    /// single-turn request: `merge_message_array_snapshots` emits
+    /// `split_snapshot(t0)`, which fans a turn holding N authored `raw_messages`
+    /// into N formatter turns. A selecting dialect then renders one of those N
+    /// while a count built from the unsplit turn covers all N, so the slot must
+    /// stay unestablished and let dispatch parse.
+    ///
+    /// `template` is the reachable case: its body is user-authored and can put
+    /// the whole `raw_messages` array into a counted item array, so unlike the
+    /// other selectors its count is established rather than `None` by accident.
+    #[test]
+    fn a_selecting_dialect_describes_no_turn_under_split_snapshots() {
+        let messages = serde_json::json!([
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "http://example/a.png"}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "http://example/b.png"}}
+            ]},
+        ]);
+        let mut pool = SegmentPool::new();
+        let raw_messages = pool
+            .intern_raw(None, Bytes::from(serde_json::to_vec(&messages).unwrap()))
+            .unwrap();
+        let turn = Turn {
+            role: Some(Role::from("user")),
+            raw_messages: Some(raw_messages),
+            input_tokens: Some(2),
+            ..Turn::default()
+        };
+        // Renders every authored message into a counted `messages` array, which
+        // is exactly what `split_snapshot` then splits apart at dispatch.
+        let template = r#"{"model":"m","messages":{{ turn.raw_messages | tojson }}}"#;
+        let endpoint = EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &EndpointId::new("template").unwrap(),
+                RawEndpointConfig {
+                    template: Some(template.to_string()),
+                    ..RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+
+        let counts = |mode: ConversationContextMode| {
+            let mut conversation = Conversation::new("session");
+            conversation.context_mode = Some(mode);
+            conversation.turns = vec![turn.clone()];
+            let mut dataset = Dataset::new(
+                vec![conversation],
+                Arc::new(pool.clone().freeze()),
+                "sequential",
+                mode,
+            )
+            .unwrap();
+            dataset
+                .precompute_image_counts(&SingleEndpointLookup(endpoint.as_ref()), "m")
+                .unwrap();
+            dataset.cached_image_count(&SessionId::from("session"), 0)
+        };
+
+        // Control: the same turn under a mode that does not split establishes a
+        // count, so the assertion below is about the splitting, not about the
+        // fixture failing to produce one.
+        assert_eq!(
+            counts(ConversationContextMode::MessageArrayWithResponses),
+            Some(2),
+            "an unsplit turn 0 is one formatter turn and is describable"
+        );
+        assert_eq!(
+            counts(ConversationContextMode::MessageArrayWithoutResponses),
+            None,
+            "split snapshots hand a selecting dialect one of N messages, so a \
+             count over all N describes a body that is never sent"
+        );
+    }
+
     fn prepare_endpoint(id: &str) -> Box<dyn PreparedEndpoint> {
         EndpointRegistry::builtin()
             .unwrap()
@@ -2379,6 +3236,20 @@ mod tests {
         .unwrap()
     }
 
+    /// A captured assistant reply, lowered before capture exactly as
+    /// `multiturn::NativeSessionBackend::build_next_turn` lowers one.
+    fn captured_reply(endpoint: &dyn PreparedEndpoint, index: usize) -> EndpointTurn {
+        let mut reply = EndpointTurn {
+            role: Some("assistant".into()),
+            texts: vec![Media::new(vec![format!("reply {index}")])],
+            ..EndpointTurn::default()
+        };
+        if let Some(lowerer) = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id) {
+            reply.lowered = Some(lowerer.lower_turn(&reply).unwrap());
+        }
+        reply
+    }
+
     fn dispatch_turn(
         dataset: Arc<Dataset>,
         endpoint: &dyn PreparedEndpoint,
@@ -2388,6 +3259,14 @@ mod tests {
         let mut session = ConversationSession::new(dataset, SessionId::from("session")).unwrap();
         for index in 0..=turn_index {
             session.advance_to(index).unwrap();
+            // A mode that splices live replies gets one after every turn but the
+            // current, which is what makes a continuation body more than its
+            // authored turns.
+            if index < turn_index && session.should_capture_response() {
+                session
+                    .capture_response(captured_reply(endpoint, index), 3, Some(0))
+                    .unwrap();
+            }
         }
         session
             .materialize_prepared(
@@ -2399,20 +3278,30 @@ mod tests {
             )
             .unwrap()
             .body
+            .to_wire()
+            .unwrap()
     }
 
     #[test]
     fn cached_plan_is_byte_identical_to_per_dispatch_format_across_matrix() {
         // Cache and per-dispatch formatting must remain byte-identical across the
         // endpoint, context, override, max-token, and extra-body matrix.
+        //
+        // `DeltasWithoutResponses` is here for its *continuation* turns, whose
+        // cached plan holds only the authored turns and splices the live replies
+        // in at dispatch. Byte identity against the fully formatted body is the
+        // only thing that establishes those splice positions are right; the
+        // per-turn assertions below additionally establish that the spliced path
+        // is the one being compared, since a cache miss would also compare equal.
         for endpoint_id in ["chat", "responses", "messages"] {
             for mode in [
                 ConversationContextMode::MessageArrayWithResponses,
                 ConversationContextMode::DeltasWithResponses,
+                ConversationContextMode::DeltasWithoutResponses,
             ] {
                 for with_max_tokens in [false, true] {
                     for with_extra_body in [false, true] {
-                        for overrides_variant in 0..2 {
+                        for overrides_variant in 0..4 {
                             let mut pool = SegmentPool::new();
                             let turns = vec![
                                 text_turn(
@@ -2424,6 +3313,12 @@ mod tests {
                                 text_turn(
                                     &mut pool,
                                     b"second turn",
+                                    with_max_tokens,
+                                    with_extra_body,
+                                ),
+                                text_turn(
+                                    &mut pool,
+                                    b"third turn",
                                     with_max_tokens,
                                     with_extra_body,
                                 ),
@@ -2445,27 +3340,93 @@ mod tests {
                             let cached = Arc::new(cached_ds);
                             let uncached = Arc::new(uncached_ds);
 
-                            let overrides = if overrides_variant == 0 {
-                                Overrides::new()
-                            } else {
-                                let mut overrides = Overrides::new();
+                            let mut overrides = Overrides::new();
+                            if overrides_variant > 0 {
                                 overrides.set_stream(true);
                                 overrides.set_model("override-model");
-                                overrides
+                            }
+                            // This dialect's message-array field name, and the
+                            // one a *different* dialect would use.
+                            let (own, other) = if endpoint_id == "responses" {
+                                ("input", "messages")
+                            } else {
+                                ("messages", "input")
                             };
-
-                            for turn_index in 0..2 {
-                                assert!(
-                                    cached
-                                        .cached_body_plan(&SessionId::from("session"), turn_index)
-                                        .is_some(),
-                                    "expected cached plan: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
+                            if overrides_variant == 2 {
+                                // Naming this plan's own array field replaces the
+                                // whole array, replies included, so the splice
+                                // must stand down rather than be applied to a
+                                // field `merge_overrides` rewrote to a literal.
+                                overrides.insert(
+                                    own,
+                                    serde_json::json!([{"role": "user", "content": "replaced"}]),
                                 );
+                            }
+                            if overrides_variant == 3 {
+                                // Naming only the *other* dialect's field must
+                                // NOT stand the splice down: that field is an
+                                // ordinary appended extra here. An implementation
+                                // testing a set of known array names instead of
+                                // this plan's own field would decline, and
+                                // dispatch a continuation body with no history at
+                                // all — which variant 2 cannot catch, since there
+                                // the splice is meant to stand down either way.
+                                overrides.insert(other, Value::from(7));
+                            }
+
+                            for turn_index in 0..3 {
+                                let entry = cached
+                                    .cached_body_plan(&SessionId::from("session"), turn_index)
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "expected cached plan: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
+                                        )
+                                    });
+                                let splices = mode
+                                    == ConversationContextMode::DeltasWithoutResponses
+                                    && turn_index > 0;
+                                assert_eq!(
+                                    entry
+                                        .replies
+                                        .as_ref()
+                                        .map(|replies| replies.positions.len()),
+                                    splices.then_some(turn_index),
+                                    "wrong splice reservation: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
+                                );
+                                // Declining the cache is safe and invisible to the
+                                // comparison below — a build that spliced nothing
+                                // would reformat live and still agree — so count
+                                // the dispatches that actually took the spliced
+                                // path. Without this the whole saving could be
+                                // gone with every assertion still passing.
+                                let before = SPLICED_DISPATCHES.get();
+                                // The splice counter above is blind to the hits
+                                // that splice nothing — turn 0, and every turn of
+                                // the static modes — which is most of this matrix
+                                // and all of the input-array dialects' saving.
+                                // Count the cache hit itself so declining is
+                                // visible on its own.
+                                let hits_before = CACHE_HITS.get();
                                 let from_cache = dispatch_turn(
                                     cached.clone(),
                                     endpoint.as_ref(),
                                     turn_index,
                                     &overrides,
+                                );
+                                assert_eq!(
+                                    CACHE_HITS.get() - hits_before,
+                                    1,
+                                    "dispatch did not take the precomputed plan: \
+                                     endpoint={endpoint_id} mode={mode:?} \
+                                     overrides={overrides_variant} ti={turn_index}"
+                                );
+                                assert_eq!(
+                                    SPLICED_DISPATCHES.get() - before,
+                                    // Everything but an override replacing this
+                                    // plan's own array field must splice.
+                                    u64::from(splices && overrides_variant != 2),
+                                    "spliced-dispatch count: endpoint={endpoint_id} mode={mode:?} \
+                                     overrides={overrides_variant} ti={turn_index}"
                                 );
                                 let from_format = dispatch_turn(
                                     uncached.clone(),
@@ -2477,8 +3438,109 @@ mod tests {
                                     from_cache, from_format,
                                     "byte divergence: endpoint={endpoint_id} mode={mode:?} max_tokens={with_max_tokens} extra_body={with_extra_body} overrides={overrides_variant} turn={turn_index}"
                                 );
+                                // The cached plan on its own carries only the
+                                // authored turns, so a continuation body that
+                                // equals it never spliced anything and the row
+                                // above would have compared two unspliced bodies.
+                                // Not asserted for the array-replacing override,
+                                // which is meant to leave nothing to splice.
+                                if splices && overrides_variant != 2 {
+                                    assert_ne!(
+                                        entry.plan.materialize_standalone().unwrap().len(),
+                                        from_cache.len(),
+                                        "continuation body was not spliced: endpoint={endpoint_id} ti={turn_index}"
+                                    );
+                                }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reported_metadata_matches_the_dispatched_body_across_overrides() {
+        // `effective_from_plan` reports what the *plan* carries once overrides are
+        // folded in, not what the override set asked for — the two differ whenever
+        // a later cap name shadows an earlier one, or the plan declares a field the
+        // overrides do not. Reading the override set instead would make the runtime
+        // dispatch one body and record different metadata, silently.
+        for endpoint_id in ["chat", "responses", "messages"] {
+            for with_max_tokens in [false, true] {
+                for overrides_variant in 0..3 {
+                    let mut pool = SegmentPool::new();
+                    let turns = vec![text_turn(&mut pool, b"hello", with_max_tokens, false)];
+                    let mut data = single_conversation_dataset(
+                        ConversationContextMode::MessageArrayWithResponses,
+                        turns,
+                        pool,
+                    );
+                    let endpoint = prepare_endpoint(endpoint_id);
+                    let lowerer =
+                        ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+                    data.lower_messages_for_endpoint(&lowerer).unwrap();
+                    data.precompute_body_plans(endpoint.as_ref(), "primary-model")
+                        .unwrap();
+
+                    let overrides = match overrides_variant {
+                        0 => Overrides::new(),
+                        1 => {
+                            let mut overrides = Overrides::new();
+                            overrides.set_model("override-model");
+                            overrides.set_stream(true);
+                            overrides
+                        }
+                        // `max_tokens` is read before `max_completion_tokens`, so a
+                        // plan carrying the latter shadows this override.
+                        _ => {
+                            let mut overrides = Overrides::new();
+                            overrides.set_max_tokens("max_tokens", 99);
+                            overrides
+                        }
+                    };
+
+                    let mut session =
+                        ConversationSession::new(Arc::new(data), SessionId::from("session"))
+                            .unwrap();
+                    session.advance_to(0).unwrap();
+                    let request = session
+                        .materialize_prepared(
+                            &EndpointRequestMaterializer,
+                            endpoint.as_ref(),
+                            "primary-model",
+                            CreditPhase::Profiling,
+                            &overrides,
+                        )
+                        .unwrap();
+                    let body: Value =
+                        serde_json::from_slice(&request.body.to_wire().unwrap()).unwrap();
+                    let case = format!(
+                        "endpoint={endpoint_id} max_tokens={with_max_tokens} overrides={overrides_variant}"
+                    );
+
+                    if let Some(model) = body.get("model") {
+                        assert_eq!(
+                            *model,
+                            Value::String(request.model.clone()),
+                            "model: {case}"
+                        );
+                    }
+                    if let Some(stream) = body.get("stream") {
+                        assert_eq!(*stream, Value::Bool(request.streaming), "stream: {case}");
+                    }
+                    // The reported cap is the last of these the body declares.
+                    let dispatched_cap =
+                        ["max_tokens", "max_completion_tokens", "max_output_tokens"]
+                            .iter()
+                            .filter_map(|field| body.get(*field))
+                            .next_back();
+                    if let Some(cap) = dispatched_cap {
+                        assert_eq!(
+                            *cap,
+                            Value::from(request.max_tokens.unwrap()),
+                            "max tokens: {case}"
+                        );
                     }
                 }
             }
@@ -2554,7 +3616,9 @@ mod tests {
                 &Overrides::new(),
             )
             .unwrap()
-            .body;
+            .body
+            .to_wire()
+            .unwrap();
         let profiling_body = dispatch_turn(dataset, endpoint.as_ref(), 0, &Overrides::new());
         // Warmup folds the conversation system prompt into the first message;
         // profiling (the cached plan) does not — the two must diverge.
@@ -2774,5 +3838,153 @@ mod tests {
         let turns = &dataset.conversations()[0].turns;
         // Same text, different media must not mis-dedup to one wire.
         assert_ne!(turns[0].body[0], turns[1].body[0]);
+    }
+
+    /// Build a `*WithoutResponses` continuation body, optionally with the
+    /// dataset (and the captured reply) lowered to spliceable wires.
+    ///
+    /// `lower == false` is the reference: nothing carries `lowered`, so every
+    /// turn — authored and captured alike — is rendered from its composed media
+    /// on the live path, which is what the spliced path must reproduce byte for
+    /// byte.
+    ///
+    /// `expect_lowered` is the control. `lower_messages_for_endpoint` answers
+    /// `Ok` however many turns it actually lowered — including none — so without
+    /// pinning the authored turn's post-lowering state, both arms could be the
+    /// same unlowered path and every comparison below would hold vacuously.
+    fn continuation_body(
+        endpoint: &dyn PreparedEndpoint,
+        mode: ConversationContextMode,
+        turns: Vec<Turn>,
+        pool: SegmentPool,
+        phase: CreditPhase,
+        lower: bool,
+        expect_lowered: bool,
+    ) -> Bytes {
+        let mut dataset = single_conversation_dataset(mode, turns, pool);
+        let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+        if lower {
+            dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+            assert_eq!(
+                !dataset.conversations()[0].turns[0].body.is_empty(),
+                expect_lowered,
+                "lowering left the authored turn in the wrong state, so this \
+                 fixture is not exercising the path it names"
+            );
+        }
+        let mut session =
+            ConversationSession::new(Arc::new(dataset), SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+        let mut reply = EndpointTurn {
+            role: Some("assistant".into()),
+            texts: vec![Media::new(vec!["prior reply".to_string()])],
+            ..EndpointTurn::default()
+        };
+        if lower {
+            reply.lowered = Some(lowerer.lower_turn(&reply).unwrap());
+        }
+        session.capture_response(reply, 3, Some(0)).unwrap();
+        session.advance_to(1).unwrap();
+        session
+            .materialize_prepared(
+                &EndpointRequestMaterializer,
+                endpoint,
+                "primary-model",
+                phase,
+                &Overrides::new(),
+            )
+            .unwrap()
+            .body
+            .to_wire()
+            .unwrap()
+    }
+
+    /// The spliced resolution drops a lowered turn's composed media and role
+    /// because the formatter cannot reach them. If that were ever untrue the
+    /// dispatched body would silently differ from the rendered one, so pin the
+    /// two against each other across the message-array dialects, both phases,
+    /// and both authored-turn shapes.
+    ///
+    /// Warmup is the load-bearing half: it re-renders the first turn from its
+    /// media to fold the system prompt in, so it must stay off the spliced path.
+    #[test]
+    fn spliced_continuation_body_matches_the_rendered_one() {
+        for endpoint_id in ["chat", "responses", "messages"] {
+            let endpoint = prepare_endpoint(endpoint_id);
+            for phase in [CreditPhase::Profiling, CreditPhase::Warmup] {
+                for with_max_tokens in [false, true] {
+                    let build = |lower: bool| {
+                        let mut pool = SegmentPool::new();
+                        let turns = vec![
+                            text_turn(&mut pool, b"hello world", with_max_tokens, false),
+                            text_turn(&mut pool, b"second turn", with_max_tokens, false),
+                        ];
+                        continuation_body(
+                            endpoint.as_ref(),
+                            ConversationContextMode::DeltasWithoutResponses,
+                            turns,
+                            pool,
+                            phase,
+                            lower,
+                            true,
+                        )
+                    };
+                    assert_eq!(
+                        build(true),
+                        build(false),
+                        "spliced/rendered divergence: endpoint={endpoint_id} phase={phase:?} \
+                         max_tokens={with_max_tokens}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `MessageArrayWithoutResponses` carries authored `raw_messages` snapshots,
+    /// which `turn_is_lowerable` excludes from lowering — so its continuation
+    /// turns never reach the spliced resolution and `merge_message_array_snapshots`
+    /// still prefix-diffs the same rendered turns it always did.
+    #[test]
+    fn authored_snapshot_turns_are_unaffected_by_lowering() {
+        let endpoint = prepare_endpoint("chat");
+        let build = |lower: bool| {
+            let mut pool = SegmentPool::new();
+            let mut snapshot = |messages: Value| {
+                let handle = pool
+                    .intern_raw(None, Bytes::from(serde_json::to_vec(&messages).unwrap()))
+                    .unwrap();
+                Turn {
+                    role: Some(Role::from("user")),
+                    raw_messages: Some(handle),
+                    input_tokens: Some(2),
+                    ..Turn::default()
+                }
+            };
+            let turns = vec![
+                snapshot(serde_json::json!([{"role": "user", "content": "first"}])),
+                snapshot(serde_json::json!([
+                    {"role": "user", "content": "first"},
+                    {"role": "user", "content": "second"},
+                ])),
+            ];
+            continuation_body(
+                endpoint.as_ref(),
+                ConversationContextMode::MessageArrayWithoutResponses,
+                turns,
+                pool,
+                CreditPhase::Profiling,
+                lower,
+                // The control, inverted: these authored `raw_messages` snapshots
+                // must come through the lowering pass untouched, which is the
+                // whole claim this test makes.
+                false,
+            )
+        };
+        let body = build(true);
+        assert_eq!(body, build(false));
+        let parsed: Value = serde_json::from_slice(&body).unwrap();
+        // Turn 0's snapshot, the captured reply, then turn 1's one-message delta.
+        assert_eq!(parsed["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(parsed["messages"][1]["content"], "prior reply");
     }
 }

@@ -309,6 +309,16 @@ pub trait PreparedEndpointBehavior: Endpoint {
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
     ) -> EndpointResult<BodyPlan>;
+
+    /// See [`PreparedEndpoint::renders_all_turns`].
+    fn renders_all_turns(&self) -> bool {
+        false
+    }
+
+    /// See [`PreparedEndpoint::splices_lowered_wires`].
+    fn splices_lowered_wires(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) fn format_legacy_payload<E>(
@@ -382,6 +392,20 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// Build a request-body plan the shared materializer splices into wire bytes.
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
 
+    /// Whether the body is the concatenation of every turn handed to the
+    /// formatter, rather than a selection from them.
+    ///
+    /// A dialect that renders `request.turns()` in full lets a caller compose a
+    /// per-turn property of the body (see
+    /// [`Dataset::precompute_image_counts`](crate::dataset::Dataset::precompute_image_counts))
+    /// by summing over the turns. A dialect that instead formats one chosen turn
+    /// — KServe V2 formats `turns().first()` — does not, and a sum over its turns
+    /// describes a body it never sends. Defaults to `false`, so a dialect that
+    /// does not opt in is treated as selecting.
+    fn renders_all_turns(&self) -> bool {
+        false
+    }
+
     /// Whether static bind-time inputs fully determine the body, allowing the
     /// [`BodyPlan`] to be cached.
     ///
@@ -389,6 +413,24 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// `false`. This runtime property is absent from the capability wire.
     fn precomputable_body(&self) -> bool {
         true
+    }
+
+    /// Whether this dialect renders its message array by splicing each turn's
+    /// pre-lowered wire bytes, rather than reading the turn's composed media.
+    ///
+    /// True exactly for the dialects
+    /// [`ShapeLowerer`](crate::endpoints::ShapeLowerer) can lower — the predicate
+    /// [`Dataset::lower_messages_for_endpoint`](crate::dataset::Dataset::lower_messages_for_endpoint)
+    /// used to produce those wires. Answering `true` lets dispatch skip resolving
+    /// composed content the formatter would discard; answering `false` resolves
+    /// it, which is always correct and merely slower. Defaults to `false`, so a
+    /// new dialect is correct before it is fast.
+    ///
+    /// This is *not* [`Self::renders_all_turns`]: `sagemaker` and `kserve_chat`
+    /// render every turn but compose their own message parts, so they render all
+    /// turns and splice no lowered wires. The two capabilities are independent.
+    fn splices_lowered_wires(&self) -> bool {
+        false
     }
 
     /// Borrow endpoint-owned request headers prepared once per worker/profile.
@@ -402,6 +444,26 @@ pub trait PreparedEndpoint: fmt::Debug {
 
     /// Extract tokenizable input and media counts from a built body.
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload;
+
+    /// Structure this endpoint can report without parsing its own body.
+    ///
+    /// `None` means the caller falls back to parsing, which is always correct.
+    /// An endpoint overriding this MUST be covered by a differential test against
+    /// the parse-derived path — a divergence is a silent ISL shift.
+    ///
+    /// Callers only offer this for a body the endpoint just formatted from
+    /// `request` with no dispatch override applied; a cached plan and an
+    /// override-mutated plan are not passed here. A report is discarded when a
+    /// later dispatch mutation rewrites the plan, so the structure returned
+    /// here always describes the body that is dispatched.
+    fn extracted(
+        &self,
+        request: &PreparedRequest<'_>,
+        plan: &BodyPlan,
+    ) -> Option<ExtractedPayload> {
+        let _ = (request, plan);
+        None
+    }
 
     /// Parse every response in a request record.
     ///
@@ -496,6 +558,14 @@ where
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         self.endpoint
             .format_prepared_payload(request, self.config.as_raw())
+    }
+
+    fn renders_all_turns(&self) -> bool {
+        self.endpoint.renders_all_turns()
+    }
+
+    fn splices_lowered_wires(&self) -> bool {
+        self.endpoint.splices_lowered_wires()
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {

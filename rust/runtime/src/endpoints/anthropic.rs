@@ -9,8 +9,8 @@ use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::endpoints::{
-    build_plain_assistant_turn, format_messages_array_wires, latest_turn_attr, merge_extra,
-    non_empty_field, require_prepared_turns,
+    build_plain_assistant_turn, build_reserved_plan, format_messages_array_wires, latest_turn_attr,
+    merge_extra, non_empty_field, require_prepared_turns,
 };
 use crate::endpoints::extraction::{PartTypes, extract_inputs};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
@@ -222,9 +222,9 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
                     .unwrap_or_else(|| request.primary_model_name().to_string()),
             ),
         );
-        // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition.
-        payload.insert("messages".into(), Value::Array(Vec::new()));
+        // Reserved slot: the value is discarded, the key fixes the field's
+        // insertion position, and `fill_reserved` supplies the real wires.
+        payload.insert("messages".into(), Value::Null);
         payload.insert(
             "max_tokens".into(),
             Value::from(last.max_tokens.unwrap_or(1_024)),
@@ -244,9 +244,15 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
 
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
-        let mut plan = BodyPlan::from_object(&payload)?;
-        plan.splice_message_wires("messages", message_wires);
-        Ok(plan)
+        build_reserved_plan(&payload, "messages", message_wires)
+    }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
+
+    fn splices_lowered_wires(&self) -> bool {
+        true
     }
 }
 

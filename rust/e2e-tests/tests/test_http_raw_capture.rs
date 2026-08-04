@@ -1,27 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Product-level proof for the gRPC dispatch-capture gates.
+//! Product-level proof for the HTTP dispatch-capture gate.
 //!
-//! `GrpcTransportSink::dispatch_collect` skips two pieces of per-request work
-//! whose output no configured artifact would read: the HTTP-compatibility
-//! `RequestRecord` (which re-serializes every decoded response) and the canonical
-//! `request_payload`. Both are gated on `capture_raw`, the raw artifact being the
-//! only consumer of either — `inputs.json` is projected from the resident dataset
-//! at finalize and never reads a dispatched body. This test pins every side of
-//! both gates against a deterministic `aiperf-mock-server` KServe gRPC endpoint:
+//! The HTTP counterpart of `test_grpc_raw_capture`. `TransportSink` takes the
+//! canonical `request_payload` handle only when an artifact will read it back —
+//! `capture_raw` — because the assembled body is a promotable `Bytes`
+//! (`BytesMut::freeze()`-derived, `len == capacity`), so an unconditional second
+//! handle heap-allocates a shared control block on every dispatch of every run,
+//! including the runs that export no raw artifact.
 //!
-//!   * **raw ON** (`--export-level raw`): `profile_export_raw.jsonl` still carries
-//!     one record per request, each with its full `responses[]` array and its
-//!     `payload` object — proving both gates keep their output byte-populated
-//!     when raw capture is on.
+//! The raw artifact is the payload's only consumer: it writes the payload verbatim
+//! (`engine/records.rs::write_raw_record_jsonl_row`), while `inputs.json` is
+//! projected from the resident dataset at finalize
+//! (`engine/execute/compose_sidecars.rs::build_up_front_input_sessions`) and never
+//! reads a dispatched body. This test pins every side against a deterministic
+//! `aiperf-mock-server` chat endpoint:
+//!
+//!   * **raw ON** (`--export-level raw`): every `profile_export_raw.jsonl` record
+//!     carries a populated `payload` object — the gate keeps its output
+//!     byte-populated when raw capture is on.
 //!   * **raw OFF, exact-fold A/B** (`AIPERF_RUNTIME_EXACT_FOLD=0` against the
 //!     default): `inputs.json` must be byte-identical on the retain path and the
-//!     exact-fold path, neither of which reads a dispatched payload. Both runs
-//!     assert the retention marker, so neither can silently drift off the branch
-//!     it pins.
-//!   * **raw OFF** (default): the run's per-record metrics are unchanged and no
-//!     raw artifact is emitted — proving skipping the (discarded) record and
-//!     payload does not perturb observable output.
+//!     exact-fold path, with the payload gate CLOSED on both. Both runs assert the
+//!     retention marker so neither can silently drift off the branch it pins.
+//!   * **default**: no raw artifact, unchanged per-record metrics, and an
+//!     `inputs.json` byte-identical to the raw run's — closing the gate perturbs
+//!     no observable output.
+//!
+//! Scope note: these three cases catch a wrongly-CLOSED gate (artifact loss). A
+//! wrongly-OPEN gate produces byte-identical artifacts and is therefore invisible
+//! to any product test; it is pinned at the seam that decides it, by
+//! `request_payload_is_taken_only_when_an_artifact_consumes_it` in
+//! `runtime/src/transport/http/sink/endpoint_dispatch.rs`.
 
 mod common;
 use common::*;
@@ -31,23 +41,26 @@ const REQUEST_COUNT: u32 = 8;
 const ISL: u32 = 32;
 const OSL: u32 = 16;
 /// Pinned run seed so repeated runs of the same config are byte-comparable.
-const SEED: u32 = 4242;
+const SEED: u32 = 4243;
 
-/// A deterministic KServe gRPC streaming benchmark. The harness appends
+/// A deterministic single-turn streaming chat benchmark. The harness appends
 /// `--artifact-dir` and `--tokenizer`, overriding the corresponding fields.
-fn grpc_config(grpc_url: &str) -> String {
+///
+/// `workers: 1` forces the single-thread scheduled path, the only path exact-fold
+/// is eligible on — the `AIPERF_RUNTIME_EXACT_FOLD=0` A/B below depends on it.
+fn http_config(url: &str) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\
          benchmark:\n\
         \x20 models: [{DEFAULT_MODEL}]\n\
         \x20 endpoint:\n\
-        \x20   urls: [\"{grpc_url}\"]\n\
-        \x20   type: kserve_v2_infer\n\
+        \x20   urls: [\"{url}\"]\n\
+        \x20   type: chat\n\
         \x20   streaming: true\n\
-        \x20   waitForModelTimeout: 0.0\n\
         \x20 dataset:\n\
         \x20   type: synthetic\n\
         \x20   entries: {REQUEST_COUNT}\n\
+        \x20   random_seed: {SEED}\n\
         \x20   prompts:\n\
         \x20     isl: {ISL}\n\
         \x20     osl: {OSL}\n\
@@ -58,20 +71,18 @@ fn grpc_config(grpc_url: &str) -> String {
         \x20     concurrency: {CONCURRENCY}\n\
         \x20 gpuTelemetry: {{enabled: false}}\n\
         \x20 serverMetrics: {{enabled: false}}\n\
-        \x20 transport:\n\
-        \x20   type: grpc\n\
-        \x20 runtime:\n\
-        \x20   ui: none\n"
+         runtime:\n\
+        \x20 ui: none\n\
+        \x20 workers: 1\n"
     )
 }
 
-/// Run the shared gRPC config at `export_level` (unset for the CLI default).
-/// Returns the harness (to keep the artifact `TempDir` alive) and the run result.
-async fn run_grpc_at(export_level: Option<&str>) -> (AIPerfHarness, RunResult) {
-    run_grpc_on(export_level, true).await
+/// Run the shared chat config at `export_level` (unset for the CLI default).
+async fn run_http_at(export_level: Option<&str>) -> (AIPerfHarness, RunResult) {
+    run_http_on(export_level, true).await
 }
 
-/// Run the shared gRPC config, selecting the record-retention path.
+/// Run the shared chat config, selecting the record-retention path.
 ///
 /// `exact_fold` picks the default fold-and-drop path (`true`), where `inputs.json`
 /// is generated up front from the resident dataset and the sink's payload gate is
@@ -81,24 +92,18 @@ async fn run_grpc_at(export_level: Option<&str>) -> (AIPerfHarness, RunResult) {
 ///
 /// `--ui simple` plus `AIPERF_LOG=aiperf=info` are required for the
 /// `record retention path selected` marker the callers assert on.
-async fn run_grpc_on(export_level: Option<&str>, exact_fold: bool) -> (AIPerfHarness, RunResult) {
-    let h = AIPerfHarness::new_with_grpc().await;
-    let grpc_url = h
-        .mock
-        .grpc_url
-        .clone()
-        .expect("mock started with grpc listener");
+async fn run_http_on(export_level: Option<&str>, exact_fold: bool) -> (AIPerfHarness, RunResult) {
+    let h = AIPerfHarness::new().await;
+    let url = h.mock.url.clone();
     let tmp = tempfile::TempDir::new().unwrap();
-    let cfg_file = tmp.path().join("grpc_raw.yaml");
-    std::fs::write(&cfg_file, grpc_config(&grpc_url)).unwrap();
+    let cfg_file = tmp.path().join("http_raw.yaml");
+    std::fs::write(&cfg_file, http_config(&url)).unwrap();
 
     let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "aiperf=info")];
     if !exact_fold {
         env.push(("AIPERF_RUNTIME_EXACT_FOLD", "0"));
     }
     let extra = export_level.map_or_else(String::new, |level| format!(" --export-level {level}"));
-    // Pinned so two runs of the same config generate identical synthetic prompts;
-    // the A/B below compares their artifacts byte for byte.
     let r = h.run_env(
         &format!(
             "--config {}{extra} --random-seed {SEED} --ui simple",
@@ -108,7 +113,7 @@ async fn run_grpc_on(export_level: Option<&str>, exact_fold: bool) -> (AIPerfHar
     );
     assert!(
         r.success(),
-        "grpc run (export_level={export_level:?}, exact_fold={exact_fold}) failed (exit {}):\n\
+        "http run (export_level={export_level:?}, exact_fold={exact_fold}) failed (exit {}):\n\
          stdout:\n{}\nstderr:\n{}",
         r.exit_code,
         r.stdout,
@@ -134,7 +139,7 @@ fn retention_marker(r: &RunResult) -> String {
 }
 
 /// Every `inputs.json` payload, flattened across sessions, each asserted to carry
-/// its KServe v2 input tensors. An empty canonical payload could not reach here:
+/// its chat message array. An empty canonical payload could not reach here:
 /// `write_inputs_json` parses each retained body and fails the export instead.
 fn inputs_payloads(r: &RunResult) -> Vec<String> {
     let inputs = r.artifacts.inputs();
@@ -153,10 +158,10 @@ fn inputs_payloads(r: &RunResult) -> Vec<String> {
         for payload in entries {
             assert!(
                 payload
-                    .get("inputs")
+                    .get("messages")
                     .and_then(serde_json::Value::as_array)
-                    .is_some_and(|inputs| !inputs.is_empty()),
-                "inputs.json payload lost its KServe v2 input tensors: {payload}"
+                    .is_some_and(|messages| !messages.is_empty()),
+                "inputs.json payload lost its chat messages: {payload}"
             );
             payloads.push(payload.to_string());
         }
@@ -165,13 +170,11 @@ fn inputs_payloads(r: &RunResult) -> Vec<String> {
     payloads
 }
 
-/// With raw capture ON, the gate builds the compatibility record: every request
-/// appears in `profile_export_raw.jsonl` carrying a non-empty `responses[]` array
-/// (a streamed KServe run yields multiple decoded responses per record — exactly
-/// the per-response re-serialization path the gate governs).
+/// With raw capture ON the gate takes the payload: every request appears in
+/// `profile_export_raw.jsonl` carrying a populated `payload` object.
 #[tokio::test]
-async fn test_grpc_raw_capture_records_responses() {
-    let (_h, r) = run_grpc_at(Some("raw")).await;
+async fn test_http_raw_capture_records_request_payloads() {
+    let (_h, r) = run_http_at(Some("raw")).await;
     assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
 
     let raw = r.artifacts.raw_records();
@@ -181,15 +184,6 @@ async fn test_grpc_raw_capture_records_responses() {
         "raw capture must emit one raw record per request"
     );
     for (i, record) in raw.iter().enumerate() {
-        let responses = record
-            .get("responses")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("raw record {i} missing responses array: {record}"));
-        assert!(
-            !responses.is_empty(),
-            "raw record {i} has an empty responses array — the gRPC compatibility \
-             record dropped its responses: {record}"
-        );
         // The `payload` column is the sink's canonical `request_payload`. An empty
         // one would have aborted the export (the writer parses it as JSON), so this
         // pins the populated shape rather than merely a present key.
@@ -204,16 +198,16 @@ async fn test_grpc_raw_capture_records_responses() {
         );
         assert!(
             payload
-                .get("inputs")
+                .get("messages")
                 .and_then(serde_json::Value::as_array)
-                .is_some_and(|inputs| !inputs.is_empty()),
-            "raw record {i} request payload lost its KServe v2 input tensors: {record}"
+                .is_some_and(|messages| !messages.is_empty()),
+            "raw record {i} request payload lost its chat messages: {record}"
         );
     }
 }
 
 /// `inputs.json` on a run with the payload gate CLOSED, A/B across the two record
-/// retention paths — the only test here that runs with raw capture off on both
+/// retention paths — the only case here that runs with raw capture OFF on both
 /// sides.
 ///
 /// A records-level request does NOT by itself disqualify exact-fold:
@@ -227,9 +221,9 @@ async fn test_grpc_raw_capture_records_responses() {
 /// acceptance oracle — skipping the canonical payload must not change the
 /// artifact, on either retention path.
 #[tokio::test]
-async fn test_grpc_inputs_match_across_retention_paths_without_raw() {
-    let (_h_open, open) = run_grpc_on(Some("records"), false).await;
-    let (_h_closed, closed) = run_grpc_on(Some("records"), true).await;
+async fn test_http_inputs_match_across_retention_paths_without_raw() {
+    let (_h_open, open) = run_http_on(Some("records"), false).await;
+    let (_h_closed, closed) = run_http_on(Some("records"), true).await;
 
     let open_marker = retention_marker(&open);
     assert!(
@@ -264,28 +258,39 @@ async fn test_grpc_inputs_match_across_retention_paths_without_raw() {
     );
 }
 
-/// With raw capture OFF (the default), the gate skips building the discarded
-/// record. The run still completes and reports the same per-record metrics, and
-/// no raw artifact is written.
+/// With the gate fully CLOSED (the default: no raw artifact, and exact-fold
+/// generates `inputs.json` up front), the run still reports the same per-record
+/// metrics and the same `inputs.json` the raw run produced with the gate open.
 #[tokio::test]
-async fn test_grpc_default_run_skips_raw_but_keeps_metrics() {
-    let (_h, r) = run_grpc_at(None).await;
-    assert_eq!(
-        r.artifacts.request_count() as u32,
-        REQUEST_COUNT,
-        "skipping the compatibility record must not perturb the request metrics"
+async fn test_http_default_run_closes_the_gate_without_changing_artifacts() {
+    let (_h_default, default) = run_http_at(None).await;
+    let (_h_raw, raw) = run_http_at(Some("raw")).await;
+
+    let marker = retention_marker(&default);
+    assert!(
+        marker.contains("exact_fold=true"),
+        "the default run must select exact-fold, which is what closes the payload \
+         gate (inputs.json generated up front, no raw artifact); marker was: {marker}"
     );
-    // Streaming metrics still derive from the native response loop, not the
-    // (now-skipped) compatibility record.
-    let json = r.artifacts.json();
+    assert!(
+        default.artifacts.raw_records().is_empty(),
+        "no raw artifact should be produced on the default (no-raw) run"
+    );
+    assert_eq!(
+        default.artifacts.request_count() as u32,
+        REQUEST_COUNT,
+        "skipping the canonical payload must not perturb the request metrics"
+    );
+    let json = default.artifacts.json();
     assert!(
         json.get("time_to_first_token")
-            .map(|v| !v.is_null())
+            .map(|value| !value.is_null())
             .unwrap_or(false),
-        "streaming gRPC run should still report time_to_first_token without raw capture"
+        "streaming run should still report time_to_first_token with the gate closed"
     );
-    assert!(
-        r.artifacts.raw_records().is_empty(),
-        "no raw artifact should be produced on the default (no-raw) run"
+    assert_eq!(
+        inputs_payloads(&default),
+        inputs_payloads(&raw),
+        "closing the payload gate changed inputs.json"
     );
 }

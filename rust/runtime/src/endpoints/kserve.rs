@@ -249,6 +249,10 @@ where
             .format_prepared_payload(request, self.config.as_raw())
     }
 
+    fn renders_all_turns(&self) -> bool {
+        self.endpoint.renders_all_turns()
+    }
+
     fn headers(&self) -> &BTreeMap<String, String> {
         &self.headers
     }
@@ -1019,6 +1023,11 @@ fn extract_tensor_texts(
     let Some(inputs) = body.get("inputs").and_then(Value::as_array) else {
         return extracted;
     };
+    // Knowing the image tensor's name is what makes a zero here exact: the
+    // formatter omits the tensor entirely when every image content is empty.
+    // Claimed only once the input array is in hand — a body carrying no `inputs`
+    // was never walked, so it establishes no count to own.
+    extracted.owns_image_count = image_name.is_some();
     for input in inputs.iter().filter_map(Value::as_object) {
         let Some(name) = input.get("name").and_then(Value::as_str) else {
             continue;

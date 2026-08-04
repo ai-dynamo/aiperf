@@ -348,9 +348,9 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         let message_wires = format_chat_message_wires(request, turns)?;
         let last = turns.last().expect("non-empty turns");
         let mut payload = Map::new();
-        // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition.
-        payload.insert("messages".into(), Value::Array(Vec::new()));
+        // Reserved slot: the value is discarded, the key fixes the field's
+        // insertion position, and `fill_reserved` supplies the real wires.
+        payload.insert("messages".into(), Value::Null);
         payload.insert(
             "model".into(),
             Value::String(
@@ -379,9 +379,15 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        let mut plan = BodyPlan::from_object(&payload)?;
-        plan.splice_message_wires("messages", message_wires);
-        Ok(plan)
+        build_reserved_plan(&payload, "messages", message_wires)
+    }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
+
+    fn splices_lowered_wires(&self) -> bool {
+        true
     }
 }
 
@@ -567,9 +573,9 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         let last = turns.last().expect("non-empty turns");
         let input_wires = format_responses_input_wires(request, turns)?;
         let mut payload = Map::new();
-        // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition.
-        payload.insert("input".into(), Value::Array(Vec::new()));
+        // Reserved slot: the value is discarded, the key fixes the field's
+        // insertion position, and `fill_reserved` supplies the real wires.
+        payload.insert("input".into(), Value::Null);
         payload.insert(
             "model".into(),
             Value::String(
@@ -593,9 +599,15 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        let mut plan = BodyPlan::from_object(&payload)?;
-        plan.splice_message_wires("input", input_wires);
-        Ok(plan)
+        build_reserved_plan(&payload, "input", input_wires)
+    }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
+
+    fn splices_lowered_wires(&self) -> bool {
+        true
     }
 }
 
@@ -745,6 +757,35 @@ impl PreparedEndpointBehavior for ChatEmbeddingsEndpoint {
     ) -> EndpointResult<BodyPlan> {
         ChatEndpoint.format_prepared_payload(request, config)
     }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
+
+    fn splices_lowered_wires(&self) -> bool {
+        true
+    }
+}
+
+/// Build a message-array body plan: reserve `field` at the position its payload
+/// key holds, then fill it with the assembled wires.
+///
+/// Both halves are fallible on purpose. Reserving a name the payload never
+/// declared, and filling a name the plan never reserved, are the two ways the
+/// old empty-array-placeholder convention shipped a body with no message array
+/// and no error; here each is an [`EndpointError::InvalidRequest`] naming the
+/// field.
+pub(crate) fn build_reserved_plan(
+    payload: &Map<String, Value>,
+    field: &str,
+    wires: SmallVec<[Bytes; 1]>,
+) -> EndpointResult<BodyPlan> {
+    let build = || -> crate::dataset::error::Result<BodyPlan> {
+        let mut plan = BodyPlan::from_object_reserving(payload, &[field])?;
+        plan.fill_reserved(field, wires)?;
+        Ok(plan)
+    };
+    build().map_err(|error| EndpointError::InvalidRequest(error.to_string()))
 }
 
 pub(crate) fn require_prepared_turns<'a>(
@@ -945,12 +986,20 @@ pub struct ShapeLowerer {
 }
 
 impl ShapeLowerer {
-    /// Select the lowerer for a registered endpoint descriptor id, or `None` for
-    /// dialects whose body is not a per-turn message array (embeddings,
-    /// completions, rankings, media, …) and therefore is never lowered.
+    /// Select the lowerer for a registered endpoint's **canonical** descriptor
+    /// id, or `None` for dialects whose body is not a per-turn message array
+    /// (embeddings, completions, rankings, media, …) and therefore is never
+    /// lowered.
+    ///
+    /// Aliases are not matched: every caller passes `descriptor().id`, and an
+    /// arm for one (`chat_completions`, an alias of `chat`) was unreachable.
+    /// The dialects answering `Some` here are exactly those whose
+    /// [`PreparedEndpoint::splices_lowered_wires`](crate::endpoints::PreparedEndpoint::splices_lowered_wires)
+    /// is `true`; `lowerable_dialects_declare_that_they_splice_lowered_wires`
+    /// holds the two in agreement.
     pub fn for_descriptor_id(id: &str) -> Option<Self> {
         let shape = match id {
-            "chat" | "chat_completions" | "chat_embeddings" => PartShape::Chat,
+            "chat" | "chat_embeddings" => PartShape::Chat,
             "responses" => PartShape::Responses,
             "messages" => PartShape::Messages,
             _ => return None,
@@ -1858,6 +1907,61 @@ mod lowering_tests {
     fn non_message_array_dialects_have_no_lowerer() {
         assert!(ShapeLowerer::for_descriptor_id("embeddings").is_none());
         assert!(ShapeLowerer::for_descriptor_id("completions").is_none());
+    }
+
+    /// The two halves of "this dialect splices lowered wires" must agree for
+    /// every registered endpoint: the load-time predicate that *produces* the
+    /// wires ([`ShapeLowerer`]) and the dispatch-time capability that consumes
+    /// them. A dialect that lowers but does not declare it would re-resolve
+    /// content the formatter discards; one that declares it but never lowers
+    /// would skip resolving content it still needs.
+    ///
+    /// This is also the forcing function the old id list lacked: a new dialect
+    /// that adds itself to one side alone fails here rather than silently
+    /// falling out of an enumeration in another module.
+    #[test]
+    fn lowerable_dialects_declare_that_they_splice_lowered_wires() {
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let mut lowerable = Vec::new();
+        for id in registry.canonical_ids() {
+            // A dialect that cannot bind without authored configuration (the
+            // template endpoint needs one) is not a message-array shape and has
+            // no lowerer either way.
+            let Ok(prepared) = registry.prepare(id, crate::endpoints::RawEndpointConfig::default())
+            else {
+                continue;
+            };
+            let descriptor_id = prepared.descriptor().id;
+            let lowers = ShapeLowerer::for_descriptor_id(descriptor_id).is_some();
+            assert_eq!(
+                lowers,
+                prepared.splices_lowered_wires(),
+                "endpoint {descriptor_id} disagrees with its lowerer"
+            );
+            if lowers {
+                lowerable.push(descriptor_id);
+            }
+        }
+        lowerable.sort_unstable();
+        assert_eq!(
+            lowerable,
+            ["chat", "chat_embeddings", "messages", "responses"]
+        );
+        // Rendering every turn is a different capability: these two compose their
+        // own message parts and must never be treated as splicing lowered wires.
+        for id in ["sagemaker", "kserve_chat"] {
+            let prepared = registry
+                .prepare(
+                    &crate::endpoints::EndpointId::new(id).unwrap(),
+                    crate::endpoints::RawEndpointConfig::default(),
+                )
+                .unwrap();
+            assert!(prepared.renders_all_turns(), "{id} renders all turns");
+            assert!(
+                !prepared.splices_lowered_wires(),
+                "{id} must not splice lowered wires"
+            );
+        }
     }
 
     #[test]

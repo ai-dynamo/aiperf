@@ -19,6 +19,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll, Waker};
 
+use crate::body_plan::RequestBody;
 use crate::clock::{Clock, SimClock};
 use crate::dataset::{Handle, TextTokenizer, TiktokenTokenizer};
 use crate::dispatch::collector::ReplayTerminalStatus;
@@ -1980,23 +1981,24 @@ impl OpenAiRequestEncoder {
 
 impl OfflineRequestEncoder<Request> for OpenAiRequestEncoder {
     fn encode(&self, request: &Request) -> Result<Vec<u32>> {
-        if let Some(bytes) = &request.request_body_bytes {
-            let tokens = match serde_json::from_slice(bytes) {
+        if let Some(body) = &request.body {
+            if let RequestBody::Value(value) = body {
+                let wire = serde_json::to_vec(value.as_ref())?;
+                return Ok(Self::fit_encoded_tokens(
+                    self.encode_json(value)?,
+                    request.input_length,
+                    fnv1a64(&wire),
+                ));
+            }
+            let bytes = body.to_wire()?;
+            let tokens = match serde_json::from_slice(&bytes) {
                 Ok(value) => self.encode_json(&value),
-                Err(_) => Ok(self.tokenizer.encode(&String::from_utf8_lossy(bytes))?),
+                Err(_) => Ok(self.tokenizer.encode(&String::from_utf8_lossy(&bytes))?),
             }?;
             return Ok(Self::fit_encoded_tokens(
                 tokens,
                 request.input_length,
-                fnv1a64(bytes),
-            ));
-        }
-        if let Some(value) = &request.request_body {
-            let wire = serde_json::to_vec(value)?;
-            return Ok(Self::fit_encoded_tokens(
-                self.encode_json(value)?,
-                request.input_length,
-                fnv1a64(&wire),
+                fnv1a64(&bytes),
             ));
         }
         self.fit_synthetic_prompt(
@@ -2335,19 +2337,21 @@ impl TurnDispatcher for DynosimSink {
             )
             .await?
         } else {
-            let request_body = if turn.request_body.is_none() {
-                let messages = turn
-                    .messages
-                    .iter()
-                    .map(|message| (message.role.as_str(), message.content.as_str()))
-                    .collect::<Vec<_>>();
-                Some(chat_request_body(
-                    &self.model,
-                    &messages,
-                    turn.max_output_tokens,
-                ))
-            } else {
-                None
+            // A turn the native dataset seam did not build a body for falls back
+            // to the shared chat builder. The encoder reads structure back out
+            // of the assembled bytes, so this is the same body it saw before.
+            let body = match turn.request_body {
+                Some(body) => Some(body),
+                None => {
+                    let messages = turn
+                        .messages
+                        .iter()
+                        .map(|message| (message.role.as_str(), message.content.as_str()))
+                        .collect::<Vec<_>>();
+                    let payload = chat_request_body(&self.model, &messages, turn.max_output_tokens);
+                    let wire = serde_json::to_vec(&payload)?;
+                    Some(RequestBody::wire(Bytes::from(wire)))
+                }
             };
             self.dispatch_collect(
                 &Request {
@@ -2355,8 +2359,7 @@ impl TurnDispatcher for DynosimSink {
                     input_length: turn.input_length,
                     max_output_tokens: turn.max_output_tokens,
                     prompt_text: None,
-                    request_body,
-                    request_body_bytes: turn.request_body,
+                    body,
                     headers: turn.request_headers,
                     parameters: turn.request_parameters,
                     endpoint_path: turn.endpoint_path,
@@ -4850,7 +4853,11 @@ mod tests {
             turn.raw_token_ids.as_ref().unwrap().resolve().unwrap(),
             &[11, 22, 33]
         );
-        assert!(turn.request_body.as_ref().is_some_and(Bytes::is_empty));
+        assert!(
+            turn.request_body
+                .as_ref()
+                .is_some_and(|body| matches!(body, RequestBody::Wire(wire) if wire.is_empty()))
+        );
 
         let clock = Rc::new(SimClock::new());
         let host = EngineHost::new(clock.clone(), &OfflineEngineConfig::default()).unwrap();
