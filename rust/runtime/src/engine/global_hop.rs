@@ -157,13 +157,11 @@ pub(crate) async fn run_global_hop(
     let mut outcome = outcome?;
     // The single-coordinator pipeline already carries this cell's globally-unique
     // two-level ordinals; apply the same deterministic finalization ordering
-    // `merge_shards` applies for the multi-shard paths so retained record and
-    // input-session order is independent of completion timing.
+    // `merge_shards` applies for the multi-shard paths so retained record order is
+    // independent of completion timing. inputs.json is no longer ordered here: it is
+    // projected from the resident dataset up front, not harvested from replies.
     if let ShardRecords::Retained(records) = &mut outcome.records {
         records.sort_by_key(|record| record.ingest.request_index);
     }
-    outcome
-        .input_sessions
-        .sort_by(|a, b| a.session_id.cmp(&b.session_id));
     Ok(outcome)
 }

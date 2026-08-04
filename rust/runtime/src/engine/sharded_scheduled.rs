@@ -419,9 +419,6 @@ fn merge_shards(
     if let ShardRecords::Retained(records) = &mut combined.records {
         records.sort_by_key(|record| record.ingest.request_index);
     }
-    combined
-        .input_sessions
-        .sort_by(|a, b| a.session_id.cmp(&b.session_id));
     Ok(combined)
 }
 

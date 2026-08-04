@@ -193,11 +193,16 @@ pub(crate) async fn execute_native_inner(
     // pick the finalize, the sharded arm's gate rejects it (`shardable`), and the
     // cellular-shipping guard reads it below. Heartbeat presence is probed from the env
     // rather than the (file-truncating) lane so this stays a pre-branch decision.
-    // inputs.json is generated up front from the resident dataset unless the
-    // dataset is a live-reply multi-turn shape, or a fixed-schedule phase filters the
-    // dispatched conversations to a first-turn window (an up-front full-dataset pass
-    // would then over-include). Either case keeps inputs.json on the during-run capture
-    // path, which still disqualifies exact-fold.
+    // inputs.json is ALWAYS generated up front from the resident dataset at finalize,
+    // never harvested from dispatched replies — that harvest put every request's
+    // canonical body on the reply path, which under `GlobalHop` funnels through the
+    // single coordinator thread. Two shapes cannot be projected up front: a multi-turn
+    // conversation whose context mode splices the live model reply into a later turn
+    // (the body is not knowable until the previous response lands), and a
+    // fixed-schedule or agentic-replay phase, which filters the dispatched
+    // conversations to a first-turn window an up-front full-dataset pass would
+    // over-include. Reject the artifact for those, before any phase runs, rather than
+    // writing a file that does not match what went on the wire.
     let inputs_up_front_ok = dataset_supports_up_front_inputs(&dataset)
         && !request.phases.iter().any(|phase| {
             matches!(
@@ -205,7 +210,13 @@ pub(crate) async fn execute_native_inner(
                 PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
             )
         });
-    let inputs_need_retain = request.artifacts.inputs_path.is_some() && !inputs_up_front_ok;
+    ensure!(
+        request.artifacts.inputs_path.is_none() || inputs_up_front_ok,
+        "inputs.json cannot be generated for this run: it is a projection of the \
+         resident dataset, and either a multi-turn conversation splices live model \
+         replies into later turns or a fixed-schedule/agentic-replay phase dispatches \
+         only part of the dataset. Drop the inputs artifact to run this configuration."
+    );
     let exact_fold = exact_fold_enabled_by_env()
         && exact_fold_eligible(ExactFoldInputs {
             sketch_mode,
@@ -215,10 +226,7 @@ pub(crate) async fn execute_native_inner(
             wants_adaptive_record,
             has_live_sink: live_sink.is_some(),
             has_heartbeat: HeartbeatLane::enabled_by_env(),
-            wants_per_record_artifacts: wants_per_record_artifacts(
-                &request.artifacts,
-                inputs_need_retain,
-            ),
+            wants_per_record_artifacts: wants_per_record_artifacts(&request.artifacts),
         });
     // Expose the selected memory path for operational diagnostics. Artifact bytes do
     // not depend on this choice.
@@ -309,9 +317,7 @@ pub(crate) async fn execute_native_inner(
         } else {
             None
         };
-        // Under exact-fold, inputs.json is generated up front from the resident dataset
-        // and the during-run capture is disabled; the retain path keeps the
-        // during-run capture. outputs.json streams through the lane, so exact-fold folds
+        // outputs.json streams through the lane, so exact-fold folds
         // and drops the model output text at completion rather than retaining it.
         let capture = Rc::new(
             RunCapture::new(
@@ -319,7 +325,6 @@ pub(crate) async fn execute_native_inner(
                 start_ns,
                 metrics_config.clone(),
                 request.artifacts.raw_path.is_some(),
-                request.artifacts.inputs_path.is_some() && !exact_fold,
                 live_sink.is_some() || heartbeat_lane.is_some(),
                 wants_adaptive_record,
                 exact_fold,
@@ -512,24 +517,12 @@ pub(crate) async fn execute_native_inner(
             }
             captured
         };
-        // Exact-fold generates inputs.json up front from the resident dataset:
-        // a pure export the benchmark never read, formatted through the same session
-        // materializer dispatch uses, so it is byte-identical to the disabled during-run
-        // capture. The retain path keeps the during-run capture (`take_input_sessions`).
-        let input_sessions = if exact_fold && request.artifacts.inputs_path.is_some() {
-            // Exact-fold emits a FULL-dataset inputs.json (every conversation in the
-            // resident dataset), whereas the during-run capture records ONLY the conversations a run
-            // actually dispatched. The two agree for a full-coverage run, but a
-            // partial-coverage run (a request-bounded phase that stops before touching
-            // every conversation) yields a strictly larger inputs.json under exact-fold.
-            // Surface that cross-mode difference once rather than leaving it silent — it
-            // runs exactly once per run (single-thread finalize).
-            tracing::info!(
-                "exact-fold inputs.json is generated up front from the full resident \
-                 dataset (Python-aligned), not the dispatched-only capture; a \
-                 partial-coverage run therefore lists every conversation, not just the \
-                 dispatched subset"
-            );
+        // inputs.json is a projection of the resident dataset, formatted through the
+        // same session materializer dispatch uses. Generating it here — rather than
+        // harvesting each dispatched turn's canonical payload off the reply path —
+        // keeps the request body from crossing the execution hop on every request,
+        // where under `GlobalHop` it lands on the single coordinator thread.
+        let input_sessions = if request.artifacts.inputs_path.is_some() {
             build_up_front_input_sessions(
                 &dataset,
                 source_factory.as_ref(),
@@ -540,7 +533,7 @@ pub(crate) async fn execute_native_inner(
                 input_token_counter.clone(),
             )?
         } else {
-            capture.take_input_sessions()
+            Vec::new()
         };
         let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
         let has_warmup = phased
@@ -614,7 +607,7 @@ pub(crate) async fn execute_native_inner(
         // `global_hop::run_global_hop` — "one loop, one full-cap local pool").
         let global_admission = match request.dispatch_mode {
             DispatchMode::Global => Some(Arc::new(GlobalAdmission::build(&request.phases)?)),
-            DispatchMode::Sharded | DispatchMode::GlobalHop => None,
+            DispatchMode::Sharded | DispatchMode::GlobalHop | DispatchMode::GlobalPush => None,
         };
         let shared = Arc::new(ShardedShared {
             transport_factory: transport_factory.clone(),
@@ -636,7 +629,6 @@ pub(crate) async fn execute_native_inner(
             benchmark_id: request.benchmark_id.clone(),
             artifact_dir: request.artifact_dir.clone(),
             raw_enabled: request.artifacts.raw_path.is_some(),
-            inputs_enabled: request.artifacts.inputs_path.is_some(),
             // per-shard artifact lanes: the shards stream these when exact-fold
             // is selected; the coordinator concatenates them at finalize.
             records_path: request.artifacts.records_path.clone(),
@@ -688,7 +680,7 @@ pub(crate) async fn execute_native_inner(
         // `GlobalHop` runs one coordinator loop hopping turns to worker threads;
         // `Sharded`/`Global` run `W` independent per-thread scheduling loops.
         let outcome = match request.dispatch_mode {
-            DispatchMode::GlobalHop => {
+            DispatchMode::GlobalHop | DispatchMode::GlobalPush => {
                 crate::engine::global_hop::run_global_hop(shared, profiling_sidecars, clock.clone())
                     .await?
             }
@@ -736,30 +728,27 @@ pub(crate) async fn execute_native_inner(
         // artifact now that every shard has finished, and remove the temp dirs. The
         // finalize tail below skips the batch writers under `exact_fold`, so this is the
         // sole writer of those artifacts on the sharded exact-fold path.
-        let input_sessions = if exact_fold {
+        if exact_fold {
             crate::engine::shard_artifacts::concatenate_shard_artifacts(
                 &request.artifact_dir,
                 &request.artifacts,
                 request.workers,
             )?;
-            // inputs.json is generated once at the coordinator from the resident
-            // dataset; shards disable their during-run capture. Absent an
-            // `inputs.json` request this yields an unused empty list.
-            if request.artifacts.inputs_path.is_some() {
-                build_up_front_input_sessions(
-                    &dataset,
-                    source_factory.as_ref(),
-                    &primary_model,
-                    default_output_tokens,
-                    rng_root,
-                    tokenizer.clone(),
-                    input_token_counter.clone(),
-                )?
-            } else {
-                outcome.input_sessions
-            }
+        }
+        // Generated once at the coordinator from the resident dataset, exactly as on
+        // the unsharded path above: no shard captures request payloads during dispatch.
+        let input_sessions = if request.artifacts.inputs_path.is_some() {
+            build_up_front_input_sessions(
+                &dataset,
+                source_factory.as_ref(),
+                &primary_model,
+                default_output_tokens,
+                rng_root,
+                tokenizer.clone(),
+                input_token_counter.clone(),
+            )?
         } else {
-            outcome.input_sessions
+            Vec::new()
         };
         (
             captured,

@@ -39,17 +39,6 @@ pub(crate) struct RunCapture {
     pub(crate) outputs: RefCell<HashMap<Uuid, CapturedModelOutput>>,
     pub(crate) raw_enabled: bool,
     pub(crate) raw_exchanges: RefCell<HashMap<Uuid, CapturedHttpExchange>>,
-    /// Whether `inputs.json` is requested; gates canonical-payload retention.
-    pub(crate) inputs_enabled: bool,
-    /// Per-conversation canonical request bodies keyed by turn index. Retained
-    /// only when `inputs_enabled`; deduplicated per `(conversation_id, turn)`
-    /// (first write wins) so dataset recycling under `--request-count` collapses
-    /// to one payload per dataset turn, matching `inputs.json` semantics.
-    /// Sessions are emitted in conversation-id order — a stable ordering that is
-    /// independent of run-to-run worker dispatch races and, for the
-    /// deterministic synthetic session ids (`session_000000`, …), reproduces
-    /// dataset composition order.
-    pub(crate) input_sessions: RefCell<BTreeMap<String, BTreeMap<usize, bytes::Bytes>>>,
     /// Non-consuming cloned records for the live-results sink, keyed by uuid;
     /// the authoritative record stays in the worker observer for the drain.
     pub(crate) live_records: RefCell<HashMap<Uuid, RecordIngest>>,
@@ -132,7 +121,6 @@ impl RunCapture {
         origin_ns: i64,
         config: MetricsConfig,
         raw_enabled: bool,
-        inputs_enabled: bool,
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
         exact_fold: bool,
@@ -144,7 +132,6 @@ impl RunCapture {
             origin_ns,
             config,
             raw_enabled,
-            inputs_enabled,
             wants_live_sink_record,
             wants_adaptive_record,
             exact_fold,
@@ -165,7 +152,6 @@ impl RunCapture {
         origin_ns: i64,
         config: MetricsConfig,
         raw_enabled: bool,
-        inputs_enabled: bool,
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
         exact_fold: bool,
@@ -178,7 +164,6 @@ impl RunCapture {
             origin_ns,
             config,
             raw_enabled,
-            inputs_enabled,
             wants_live_sink_record,
             wants_adaptive_record,
             exact_fold,
@@ -203,7 +188,6 @@ impl RunCapture {
         origin_ns: i64,
         config: MetricsConfig,
         raw_enabled: bool,
-        inputs_enabled: bool,
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
         exact_fold: bool,
@@ -231,8 +215,6 @@ impl RunCapture {
             outputs: RefCell::new(HashMap::new()),
             raw_enabled,
             raw_exchanges: RefCell::new(HashMap::new()),
-            inputs_enabled,
-            input_sessions: RefCell::new(BTreeMap::new()),
             live_records: RefCell::new(HashMap::new()),
             adaptive_records: RefCell::new(HashMap::new()),
             wants_live_sink_record,
@@ -299,45 +281,6 @@ impl RunCapture {
             Some(lane) => lane.finish(),
             None => Ok(()),
         }
-    }
-
-    /// Retain one turn's canonical request body for `inputs.json`.
-    ///
-    /// Called on the coordinator thread for every dispatched turn (independent
-    /// of raw-artifact capture). Deduplicates per `(conversation_id, turn_index)`
-    /// so recycled dataset turns collapse to a single payload, and remembers
-    /// first-dispatch conversation order for deterministic session ordering.
-    pub(crate) fn record_input_payload(
-        &self,
-        conversation_id: &str,
-        turn_index: usize,
-        payload: bytes::Bytes,
-    ) -> Result<()> {
-        if !self.inputs_enabled {
-            return Ok(());
-        }
-        let mut sessions = self.input_sessions.borrow_mut();
-        let turns = sessions.entry(conversation_id.to_string()).or_default();
-        if let std::collections::btree_map::Entry::Vacant(slot) = turns.entry(turn_index) {
-            // Retain the shared body handle verbatim (a refcount, never a copy);
-            // it is validated once into a borrowed RawValue at write time.
-            slot.insert(payload);
-        }
-        Ok(())
-    }
-
-    /// Consume the retained payloads into conversation-id-ordered
-    /// `inputs.json` sessions. The `BTreeMap` iteration yields sorted keys, so
-    /// ordering is identical across same-seed runs regardless of worker races.
-    pub(crate) fn take_input_sessions(&self) -> Vec<InputSession> {
-        self.input_sessions
-            .take()
-            .into_iter()
-            .map(|(session_id, turns)| InputSession {
-                session_id,
-                payloads: turns.into_values().collect(),
-            })
-            .collect()
     }
 
     /// Whether the worker should return a per-turn record: a non-consuming
@@ -1094,10 +1037,6 @@ impl TurnDispatcher for ConfiguredDispatcher {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let uuid = turn.uuid;
-        // Retain the conversation identity for `inputs.json` session grouping
-        // before `turn` is consumed by request preparation below.
-        let inputs_conversation_id = turn.conversation_id.clone();
-        let inputs_turn_index = turn.turn_index;
         // `begin` runs on the coordinator thread before backend dispatch, so its
         // push order is the worker-count-independent global dispatch ordinal.
         // It returns the measured context the worker registers locally; the
@@ -1116,11 +1055,6 @@ impl TurnDispatcher for ConfiguredDispatcher {
                 live_record,
             }) => {
                 let outcome = collected.outcome;
-                self.capture.record_input_payload(
-                    &inputs_conversation_id,
-                    inputs_turn_index,
-                    collected.request_payload.clone(),
-                )?;
                 self.capture.record_http_exchange(
                     uuid,
                     collected.request_payload,
@@ -1270,70 +1204,6 @@ mod tests {
         )
     }
 
-    /// inputs.json parity: the during-run capture path (fed in arbitrary
-    /// dispatch order, with a recycled duplicate turn) and the up-front, dataset-ordered
-    /// generation both funnel through the same `write_inputs_json`, so the two files are
-    /// byte-identical — dedup per `(conversation_id, turn)` and the conversation-id sort
-    /// are order-independent.
-    #[test]
-    fn inputs_json_up_front_matches_capture_regardless_of_dispatch_order() {
-        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let capture = RunCapture::new(
-            clock,
-            0,
-            MetricsConfig::default(),
-            false,
-            true, // inputs_enabled
-            false,
-            false,
-            false,
-        );
-        // Distinct canonical bodies per (conversation, turn). "conv-b" is a two-turn
-        // conversation; "conv-a" is single-turn.
-        let body = |tag: &str| bytes::Bytes::from(format!(r#"{{"model":"m","tag":"{tag}"}}"#));
-        // Feed the during-run capture out of conversation order, with a recycled
-        // duplicate (conv-b turn 0 dispatched twice, e.g. via --request-count recycling);
-        // the second write must be ignored (first-write-wins dedup).
-        capture
-            .record_input_payload("conv-b", 0, body("b0"))
-            .unwrap();
-        capture
-            .record_input_payload("conv-a", 0, body("a0"))
-            .unwrap();
-        capture
-            .record_input_payload("conv-b", 1, body("b1"))
-            .unwrap();
-        capture
-            .record_input_payload("conv-b", 0, body("b0-recycled"))
-            .unwrap();
-        let capture_sessions = capture.take_input_sessions();
-
-        // The up-front generator emits sessions conversation-id-sorted, each with its
-        // turns in order — build the equivalent list directly.
-        let up_front = vec![
-            InputSession {
-                session_id: "conv-a".into(),
-                payloads: vec![body("a0")],
-            },
-            InputSession {
-                session_id: "conv-b".into(),
-                payloads: vec![body("b0"), body("b1")],
-            },
-        ];
-
-        let dir = tempfile::tempdir().unwrap();
-        let capture_path = dir.path().join("inputs_capture.json");
-        let up_front_path = dir.path().join("inputs_up_front.json");
-        write_inputs_json(&capture_path, &capture_sessions).unwrap();
-        write_inputs_json(&up_front_path, &up_front).unwrap();
-
-        assert_eq!(
-            std::fs::read(&capture_path).unwrap(),
-            std::fs::read(&up_front_path).unwrap(),
-            "up-front inputs.json must be byte-identical to the capture-based output"
-        );
-    }
-
     /// Worker records arrive per worker, not in global dispatch
     /// order. `RunCapture::finish` must key each record to its identity by uuid,
     /// emit rows in dispatch order, and stamp each record's `request_index` to its
@@ -1347,7 +1217,6 @@ mod tests {
             clock.clone(),
             0,
             MetricsConfig::default(),
-            false,
             false,
             false,
             false,
@@ -1433,7 +1302,6 @@ mod tests {
                 false,
                 false,
                 false,
-                false,
             );
             let (a, b, c) = facts();
             register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
@@ -1514,7 +1382,6 @@ mod tests {
             clock.clone(),
             0,
             MetricsConfig::default(),
-            false,
             false,
             false,
             false,
@@ -1675,7 +1542,6 @@ mod tests {
                 false,
                 false,
                 false,
-                false,
                 true,
             );
             assert!(
@@ -1778,7 +1644,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             true,
         )
         .with_otel(true);
@@ -1848,7 +1713,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             true,
         );
         assert!(
@@ -1871,7 +1735,7 @@ mod tests {
         assert_eq!(capture.take_fold_ordinal(c), Some(2));
 
         // The default exact (retain) capture folds nothing and needs no live record.
-        let retain = RunCapture::new(clock, 0, config, false, false, false, false, false);
+        let retain = RunCapture::new(clock, 0, config, false, false, false, false);
         assert!(!retain.folds_records());
         assert!(!retain.wants_live_record());
     }

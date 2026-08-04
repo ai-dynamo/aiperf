@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 ///   against a single global limiter.
 /// - `GlobalHop` additionally routes every individual request through one
 ///   coordinator-owned dispatcher, for exact request-to-thread assignment order.
+///
+/// That single dispatcher is a serialization point: measured against a fast
+/// target it saturated near 50k requests/sec, roughly 5.6x below `Sharded` and
+/// `Global`, which stayed within ~2% of each other. The ordering guarantee is
+/// therefore nearly free below that rate and dominant above it. A target that
+/// cannot serve the offered load hides the difference completely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DispatchMode {
@@ -25,6 +31,26 @@ pub enum DispatchMode {
     #[default]
     Global,
     GlobalHop,
+    /// One issuer stamps global order and PUSHES to workers without awaiting any
+    /// individual request, after the Python `StickyCreditRouter`: credits go out
+    /// on a queue and workers report `FirstToken`/`CreditReturn` back
+    /// out-of-band.
+    ///
+    /// Shares `GlobalHop`'s worker selection (sticky session binding, else
+    /// least-loaded) and, like it, needs no cross-thread admission gate: a single
+    /// issuer enforces the full cell-local cap directly, so aggregate concurrency
+    /// and rate stay exact. Placement is as deterministic as `GlobalHop`'s: this
+    /// is a router, not a shared queue workers pull from -- the issuer picks a
+    /// specific worker and routes to it, exactly as `send_credit` does. The one
+    /// behavioural difference is WHEN the load signal moves: `GlobalHop` holds a
+    /// worker's in-flight slot from send through reply, while a push issuer
+    /// releases it on credit-return, so `LeastLoaded` can break ties
+    /// differently. Under `RoundRobin`/`Sticky` the assignment is identical.
+    ///
+    /// Exists because the hop's coordinator is a serialization point --
+    /// measured near 50k requests/sec against a target the other modes push
+    /// past 290k on, with one thread at 1.08 cores and the other 144 idle.
+    GlobalPush,
 }
 
 /// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]
@@ -53,4 +79,33 @@ pub enum HopRouting {
     RoundRobin,
     Sticky,
     LeastLoaded,
+}
+
+#[cfg(test)]
+mod dispatch_mode_tests {
+    use super::DispatchMode;
+
+    /// The wire spelling is what users type and what protocol-v2 round-trips.
+    /// A rename here silently changes a public CLI surface, so pin all four.
+    #[test]
+    fn every_mode_round_trips_its_kebab_case_spelling() {
+        for (mode, spelling) in [
+            (DispatchMode::Sharded, "\"sharded\""),
+            (DispatchMode::Global, "\"global\""),
+            (DispatchMode::GlobalHop, "\"global-hop\""),
+            (DispatchMode::GlobalPush, "\"global-push\""),
+        ] {
+            let encoded = serde_json::to_string(&mode).expect("mode serializes");
+            assert_eq!(encoded, spelling);
+            let decoded: DispatchMode =
+                serde_json::from_str(spelling).expect("mode deserializes");
+            assert_eq!(decoded, mode);
+        }
+    }
+
+    /// Omitting the selector must keep the parity-preserving default.
+    #[test]
+    fn default_is_global() {
+        assert_eq!(DispatchMode::default(), DispatchMode::Global);
+    }
 }

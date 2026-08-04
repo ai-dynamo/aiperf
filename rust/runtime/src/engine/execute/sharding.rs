@@ -126,8 +126,6 @@ pub(crate) struct ShardedShared {
     pub(crate) artifact_dir: PathBuf,
     /// Whether raw HTTP exchanges are retained.
     pub(crate) raw_enabled: bool,
-    /// Whether `inputs.json` canonical payloads are retained.
-    pub(crate) inputs_enabled: bool,
     /// Final (relative) per-record artifact paths for the per-shard lanes.
     /// When this sharded run selected exact-fold AND any of these is requested, each
     /// worker opens its OWN [`RecordArtifactLane`] to a per-shard temp file derived
@@ -250,9 +248,6 @@ pub(crate) struct ScheduledShardOutcome {
     /// This thread's records — retained (retain path) or folded-and-dropped (sketch
     /// or exact-fold).
     pub(crate) records: ShardRecords,
-    /// This thread's `inputs.json` sessions (disjoint conversation ids across
-    /// threads, so the union needs only a re-sort by session id).
-    pub(crate) input_sessions: Vec<InputSession>,
     /// This thread's static-accuracy terminal captures (empty for a non-accuracy
     /// run). Disjoint across shards (each stamps globally-unique dispatch
     /// sequences), so the coordinator concatenates them and grades once.
@@ -265,11 +260,10 @@ pub(crate) struct ScheduledShardOutcome {
 
 impl ScheduledShardOutcome {
     /// Fold another thread's shard into this one: merge records (mode-aware), union
-    /// input sessions and accuracy captures, OR the phase flags. Record ordering is
-    /// applied once after all shards are absorbed (retained records only).
+    /// accuracy captures, OR the phase flags. Record ordering is applied once after
+    /// all shards are absorbed (retained records only).
     pub(crate) fn absorb(&mut self, other: ScheduledShardOutcome) -> Result<()> {
         self.records.absorb(other.records)?;
-        self.input_sessions.extend(other.input_sessions);
         self.accuracy_captures.extend(other.accuracy_captures);
         self.was_cancelled |= other.was_cancelled;
         self.has_warmup |= other.has_warmup;
@@ -406,11 +400,6 @@ pub(crate) async fn execute_scheduled_pipeline(
             start_ns,
             shared.metrics_config.clone(),
             shared.raw_enabled,
-            // Under exact-fold, inputs.json is generated once at the coordinator
-            // from the resident dataset, so the
-            // shard never captures it during dispatch (which would double-count across
-            // shards). The retain path keeps the per-shard during-run capture.
-            shared.inputs_enabled && !shared.exact_fold,
             // Worker threads never feed the live sink or heartbeat lane (D5); those are
             // driven once-per-cell on the main thread.
             false,
@@ -584,7 +573,6 @@ pub(crate) async fn execute_scheduled_pipeline(
     } else {
         ShardRecords::Retained(capture.finish(&issued_times, drained)?)
     };
-    let input_sessions = capture.take_input_sessions();
     // Drain this shard's static-accuracy captures (empty for a non-accuracy run);
     // the coordinator concatenates every shard's captures and grades once.
     let accuracy_captures = shard_accuracy_processor
@@ -597,7 +585,6 @@ pub(crate) async fn execute_scheduled_pipeline(
         .any(|report| report.kind == PhaseKind::Warmup);
     Ok(ScheduledShardOutcome {
         records,
-        input_sessions,
         accuracy_captures,
         was_cancelled,
         has_warmup,
@@ -704,23 +691,15 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_shard_outcome_absorb_unions_sessions_and_ors_flags() {
+    fn scheduled_shard_outcome_absorb_concatenates_records_and_ors_flags() {
         let mut left = ScheduledShardOutcome {
             records: ShardRecords::Retained(vec![retained_record(0)]),
-            input_sessions: vec![InputSession {
-                session_id: "conv-a".into(),
-                payloads: Vec::new(),
-            }],
             accuracy_captures: Vec::new(),
             was_cancelled: false,
             has_warmup: true,
         };
         let right = ScheduledShardOutcome {
             records: ShardRecords::Retained(vec![retained_record(1)]),
-            input_sessions: vec![InputSession {
-                session_id: "conv-b".into(),
-                payloads: Vec::new(),
-            }],
             accuracy_captures: Vec::new(),
             // Cancellation on any shard must propagate; warmup ORs to true.
             was_cancelled: true,
@@ -729,7 +708,6 @@ mod tests {
         left.absorb(right).unwrap();
         assert!(left.was_cancelled, "cancellation ORs across shards");
         assert!(left.has_warmup, "warmup presence ORs across shards");
-        assert_eq!(left.input_sessions.len(), 2, "sessions are unioned");
         let ShardRecords::Retained(records) = left.records else {
             panic!("retained shards stay retained through outcome absorb");
         };
