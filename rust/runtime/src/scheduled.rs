@@ -510,6 +510,7 @@ pub struct ScheduledRuntime {
     record_processor_errors: RefCell<Vec<String>>,
     parallel_report_reduction: Cell<bool>,
     credit_dispatch: Cell<bool>,
+    discard_local_measurement: Cell<bool>,
     outstanding_credits: RefCell<FxHashMap<Uuid, OutstandingCredit>>,
 }
 
@@ -626,6 +627,7 @@ impl ScheduledRuntime {
             record_processor_errors: RefCell::new(Vec::new()),
             parallel_report_reduction: Cell::new(false),
             credit_dispatch: Cell::new(false),
+            discard_local_measurement: Cell::new(false),
             outstanding_credits: RefCell::new(FxHashMap::default()),
         })
     }

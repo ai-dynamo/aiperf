@@ -272,7 +272,10 @@ fn measured_context(correlation_id: &str, turn_index: u32) -> MeasuredContext {
             ..RequestMetricMetadata::default()
         },
         wants_live_record: false,
-        wants_http_exchange: false,
+        // This suite asserts on `record.status` to prove the server answered, so it
+        // IS a consumer of the raw exchange. Declaring that keeps the worker from
+        // releasing the record locally, which is what it does when nothing reads it.
+        wants_http_exchange: true,
         consume_record: false,
     }
 }

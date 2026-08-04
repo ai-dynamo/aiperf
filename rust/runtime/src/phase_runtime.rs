@@ -344,6 +344,12 @@ pub struct ScheduledPhasePlan {
     /// request. Rejected at build time when the dispatcher cannot return
     /// credits.
     pub credit_dispatch: bool,
+    /// Whether this phase's own collector / native-metrics planes are read by
+    /// anyone. The pipelines that build their report from DRAINED WORKER records
+    /// set this, so the per-request work of populating planes nothing reads is
+    /// skipped — on a single issuer that waste lands entirely on the one thread
+    /// that bounds the run.
+    pub discard_local_measurement: bool,
     /// Run-wide observers that receive the exact phase-local measurement
     /// stream in addition to the phase's own collector and native metrics.
     ///
@@ -378,6 +384,7 @@ impl ScheduledPhasePlan {
             capture_timing_records: true,
             parallel_report_reduction: false,
             credit_dispatch: false,
+            discard_local_measurement: false,
             additional_observers: Vec::new(),
         }
     }
@@ -385,6 +392,13 @@ impl ScheduledPhasePlan {
     /// Route this phase's issued turns as credits returned out of band.
     pub fn with_credit_dispatch(mut self, credit_dispatch: bool) -> Self {
         self.credit_dispatch = credit_dispatch;
+        self
+    }
+
+    /// Declare that nothing reads this phase's own collector / native-metrics
+    /// planes (the report is built from drained worker records).
+    pub fn with_discarded_local_measurement(mut self, discard: bool) -> Self {
+        self.discard_local_measurement = discard;
         self
     }
 

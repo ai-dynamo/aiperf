@@ -1405,6 +1405,17 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
                     }
                 })
                 .flatten();
+            // Same economics as the credit path: nothing reads the raw exchange
+            // unless a raw artifact was requested, so release it HERE rather than
+            // shipping an ~ISL-sized body and a transport record to the coordinator
+            // only for it to drop them.
+            let result = result.map(|mut result| {
+                if !context.wants_http_exchange {
+                    result.request_payload = bytes::Bytes::new();
+                    result.record = crate::transport::core::RequestRecord::default();
+                }
+                result
+            });
             WorkerReply {
                 result,
                 live_record,

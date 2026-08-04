@@ -530,7 +530,13 @@ pub(crate) async fn execute_scheduled_pipeline(
                 // out of band; every other mode awaits one dispatch future per
                 // request. Selected per phase because the phase runtime owns the
                 // credit-return loop's lifetime.
-                .with_credit_dispatch(credit_dispatch);
+                .with_credit_dispatch(credit_dispatch)
+                // This pipeline builds its report from the DRAINED WORKER records
+                // and reads only the timing recorder off the phase report
+                // (`issued_times` below), so the phase's own compatibility and
+                // native-metric planes are computed per request and thrown away.
+                // True for every dispatch mode here, not just credit dispatch.
+                .with_discarded_local_measurement(true);
             plans.push(plan);
         }
 
