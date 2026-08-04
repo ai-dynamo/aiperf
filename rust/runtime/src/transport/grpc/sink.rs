@@ -341,7 +341,7 @@ impl GrpcTransportSink {
         // it stands; any other form is assembled and parsed back once here.
         let body: Value = match body {
             Some(RequestBody::Value(value)) => *value,
-            Some(body) => serde_json::from_slice(&body.to_wire()?)
+            Some(body) => serde_json::from_slice(&body.into_wire()?)
                 .context("decoding prepared endpoint JSON before gRPC serialization")?,
             None => anyhow::bail!(
                 "gRPC protocol-v2 execution requires a canonical prepared endpoint body"

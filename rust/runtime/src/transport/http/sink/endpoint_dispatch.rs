@@ -214,7 +214,7 @@ impl TransportSink {
         obs.on_admit(uuid, self.ms(self.clock.now_ns()), 0);
 
         let body = match body {
-            Some(body) => body.to_wire()?,
+            Some(body) => body.into_wire()?,
             None => {
                 let prompt = prompt_text.unwrap_or_default();
                 let payload = crate::endpoints::chat_request_body(

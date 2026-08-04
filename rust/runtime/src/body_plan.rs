@@ -659,6 +659,27 @@ impl RequestBody {
             )),
         }
     }
+
+    /// Assemble the wire bytes, consuming the body. Byte-identical to
+    /// [`to_wire`](Self::to_wire) for every arm; only the ownership differs.
+    ///
+    /// The [`Wire`](Self::Wire) arm returns its `Bytes` by move — no clone, and
+    /// so no `Shared` promotion. That promotion is a heap allocation, not a
+    /// refcount bump: a `BytesMut::freeze()`-derived body has `len == capacity`
+    /// and therefore sits on the promotable vtable until something clones it.
+    /// Prefer this at call sites that own the [`Request`] they destructured;
+    /// [`to_wire`](Self::to_wire) stays for borrowed callers.
+    ///
+    /// [`Request`]: crate::transport::core::Request
+    pub fn into_wire(self) -> Result<Bytes> {
+        match self {
+            Self::Wire(bytes) => Ok(bytes),
+            Self::Plan(plan) => plan.materialize_standalone(),
+            Self::Value(value) => Ok(Bytes::from(
+                serde_json::to_vec(value.as_ref())?.into_boxed_slice(),
+            )),
+        }
+    }
 }
 
 impl Default for BodyPlan {
@@ -1760,5 +1781,24 @@ mod tests {
         // And the wire form hands the same bytes straight back.
         assert_eq!(RequestBody::wire(direct.clone()).to_wire().unwrap(), direct);
         assert!(RequestBody::wire(direct).plan().is_none());
+    }
+
+    #[test]
+    fn consuming_the_body_yields_the_same_wire_bytes_as_borrowing_it() {
+        let plan = BodyPlan::new()
+            .wire_array(
+                "messages",
+                [Bytes::from_static(br#"{"role":"user","content":"hi"}"#)],
+            )
+            .str("model", "m");
+        let bodies = [
+            RequestBody::wire(Bytes::from_static(br#"{"model":"m"}"#)),
+            RequestBody::planned(std::sync::Arc::new(plan)).unwrap(),
+            RequestBody::Value(Box::new(serde_json::json!({"model": "m", "n": 1}))),
+        ];
+        for body in bodies {
+            let borrowed = body.to_wire().unwrap();
+            assert_eq!(body.into_wire().unwrap(), borrowed);
+        }
     }
 }
