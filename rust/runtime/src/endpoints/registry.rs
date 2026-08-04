@@ -410,8 +410,14 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// the parse-derived path — a divergence is a silent ISL shift.
     ///
     /// Callers only offer this for a body the endpoint just formatted from
-    /// `request` with no dispatch override applied; a cached or mutated plan
-    /// is not passed here.
+    /// `request` with no dispatch override applied; a cached plan and an
+    /// override-mutated plan are not passed here.
+    ///
+    /// One correction still lands after this call: a run that requested
+    /// streaming from a dialect that does not support it has `stream` set to the
+    /// corrected literal on the dispatched body. An override reading `stream`
+    /// must therefore derive it from `plan`/`request`, not assume the body it
+    /// described is byte-identical to the one dispatched.
     fn extracted(
         &self,
         request: &PreparedRequest<'_>,

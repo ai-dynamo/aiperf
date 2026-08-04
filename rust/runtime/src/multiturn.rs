@@ -71,6 +71,10 @@ pub trait InputTokenCounter: Send + Sync {
     /// this exact body through [`PreparedEndpoint::extracted`]. The default
     /// ignores it and defers to [`Self::count_prepared_input_tokens`], which
     /// parses the body and is always correct.
+    ///
+    /// An implementation overriding this must also override
+    /// [`Self::count_prepared_input_tokens`]: graph dispatch counts through that
+    /// method directly and never sees a [`crate::dataset::MaterializedRequest`].
     fn count_materialized_input_tokens(
         &self,
         endpoint: &dyn PreparedEndpoint,
@@ -1939,12 +1943,65 @@ mod tests {
         );
     }
 
-    /// The differential every `PreparedEndpoint::extracted` override owes: a
-    /// reported structure must count identically to the parse-derived one, and
-    /// an absent report must fall back to parsing. A divergence here is a silent
-    /// ISL shift, not a failure the run surfaces.
+    /// The differential every [`PreparedEndpoint::extracted`] override owes,
+    /// swept across every built-in endpoint.
+    ///
+    /// This arms itself: today no endpoint reports structure, so the inner
+    /// assertion is skipped and the sweep only pins that fact. The first
+    /// override makes the assertion live against the body that endpoint actually
+    /// dispatches — `format_payload` through `materialize_standalone`, not a
+    /// hand-written payload. A divergence is a silent ISL shift, not a failure
+    /// the run surfaces.
     #[test]
-    fn materialized_counter_matches_the_parse_derived_path() {
+    fn extracted_structure_matches_the_dispatched_body_for_every_endpoint() {
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let turns = [EndpointTurn {
+            role: Some("user".into()),
+            texts: vec![EndpointMedia::new(vec!["hello world".to_string()])],
+            ..EndpointTurn::default()
+        }];
+        let request = crate::endpoints::PreparedRequest::new(
+            "test-model",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+
+        let mut swept = 0usize;
+        for id in registry.canonical_ids() {
+            let Ok(prepared) = registry.prepare(id, crate::endpoints::RawEndpointConfig::default())
+            else {
+                continue;
+            };
+            // A dialect that cannot express a bare text turn (media-only,
+            // token-native, raw) has nothing to compare here.
+            let Ok(plan) = prepared.format_payload(&request) else {
+                continue;
+            };
+            swept += 1;
+            let Some(direct) = prepared.extracted(&request, &plan) else {
+                continue;
+            };
+            let dispatched = plan.materialize_standalone().unwrap();
+            let parsed: Value = serde_json::from_slice(&dispatched).unwrap();
+            assert_eq!(
+                direct,
+                prepared.extract_payload_inputs(&parsed),
+                "endpoint {id} reports structure that diverges from its dispatched body"
+            );
+        }
+        assert!(swept > 0, "the sweep must exercise at least one endpoint");
+    }
+
+    /// The counter honors a reported structure and falls back to parsing without
+    /// one. This pins the plumbing between `MaterializedRequest.extracted` and
+    /// the counter; the structure/body agreement itself is the sweep above.
+    #[test]
+    fn materialized_counter_prefers_the_reported_structure() {
         let payload = json!({
             "messages":[{"role":"user","content":"hello world"}],
             "tools":[{"type":"function","function":{"name":"weather"}}]
@@ -1962,49 +2019,24 @@ mod tests {
         let parsed = counter
             .count_prepared_input_tokens(prepared.as_ref(), &body, 99)
             .unwrap();
-        let reported = prepared.extract_payload_inputs(&payload);
-        assert_eq!(
-            counter
-                .count_materialized_input_tokens(prepared.as_ref(), &body, Some(&reported), 99)
-                .unwrap(),
-            parsed
-        );
         assert_eq!(
             counter
                 .count_materialized_input_tokens(prepared.as_ref(), &body, None, 99)
                 .unwrap(),
             parsed
         );
-    }
-
-    /// No built-in endpoint reports its own structure yet, so every dispatch
-    /// still counts through the parse-derived path.
-    #[test]
-    fn built_in_endpoints_report_no_extracted_structure() {
-        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
-        let prepared = registry
-            .prepare(
-                &EndpointId::new("chat").unwrap(),
-                crate::endpoints::RawEndpointConfig::default(),
-            )
-            .unwrap();
-        let turns = [EndpointTurn {
-            role: Some("user".into()),
-            texts: vec![EndpointMedia::new(vec!["hello world".to_string()])],
-            ..EndpointTurn::default()
-        }];
-        let request = crate::endpoints::PreparedRequest::new(
-            "test-model",
-            &turns,
-            None,
-            None,
-            CreditPhase::Profiling,
-            None,
-            None,
-            None,
+        // A structure the body does not describe must reach the count, proving
+        // the reported value is used rather than silently re-derived.
+        let reported = crate::endpoints::ExtractedPayload {
+            texts: vec!["one two three four".into()],
+            ..crate::endpoints::ExtractedPayload::default()
+        };
+        assert_eq!(
+            counter
+                .count_materialized_input_tokens(prepared.as_ref(), &body, Some(&reported), 99)
+                .unwrap(),
+            4
         );
-        let plan = prepared.format_payload(&request).unwrap();
-        assert!(prepared.extracted(&request, &plan).is_none());
     }
 
     #[tokio::test]
