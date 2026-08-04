@@ -1019,10 +1019,12 @@ fn extract_tensor_texts(
     text_names: &[&str],
     image_name: Option<&str>,
 ) -> ExtractedPayload {
-    let mut extracted = ExtractedPayload::default();
-    // Knowing the image tensor's name is what makes a zero here exact: the
-    // formatter omits the tensor entirely when every image content is empty.
-    extracted.owns_image_count = image_name.is_some();
+    let mut extracted = ExtractedPayload {
+        // Knowing the image tensor's name is what makes a zero here exact: the
+        // formatter omits the tensor entirely when every image content is empty.
+        owns_image_count: image_name.is_some(),
+        ..ExtractedPayload::default()
+    };
     let Some(inputs) = body.get("inputs").and_then(Value::as_array) else {
         return extracted;
     };
