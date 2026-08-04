@@ -973,7 +973,12 @@ struct NativeSessionBackend {
     session_id: crate::dataset::SessionId,
     dataset: Arc<NativeDataset>,
     template_index: usize,
-    metadata: ConversationMetadata,
+    /// The shard's whole metadata table, shared. Was an owned per-session clone of
+    /// one entry — a `ConversationMetadata` carries a `Vec<TurnMetadata>`, so every
+    /// sampled session deep-copied it, and under a single-issuer dispatch mode that
+    /// copy lands on the one thread that bounds the run. Indexed by `template_index`,
+    /// which the backend already tracks.
+    metadata: Arc<Vec<ConversationMetadata>>,
     endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
@@ -986,8 +991,8 @@ struct NativeSessionBackend {
 impl fmt::Debug for NativeSessionBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NativeSessionBackend")
-            .field("conversation_id", &self.metadata.conversation_id)
-            .field("turns", &self.metadata.turns.len())
+            .field("conversation_id", &self.meta().conversation_id)
+            .field("turns", &self.meta().turns.len())
             .finish()
     }
 }
@@ -999,7 +1004,7 @@ impl RuntimeSessionBackend for NativeSessionBackend {
     }
 
     fn available_turns(&self) -> usize {
-        self.metadata.turns.len()
+        self.meta().turns.len()
     }
 
     fn build_first_turn(
@@ -1016,12 +1021,12 @@ impl RuntimeSessionBackend for NativeSessionBackend {
         start_index: usize,
         max_turns: Option<usize>,
     ) -> Result<TurnToSend> {
-        if self.metadata.turns.is_empty() {
+        if self.meta().turns.is_empty() {
             bail!("conversation {} has no turns", owner.conversation_id);
         }
         let num_turns = max_turns
-            .unwrap_or(self.metadata.turns.len())
-            .min(self.metadata.turns.len())
+            .unwrap_or(self.meta().turns.len())
+            .min(self.meta().turns.len())
             .max(1);
         // Turn 0 uses the strictly sequential advance so the existing first-turn path
         // is unchanged; a non-zero frontier jump-resumes via `seek_to`.
@@ -1034,16 +1039,16 @@ impl RuntimeSessionBackend for NativeSessionBackend {
         index: usize,
         max_turns: Option<usize>,
     ) -> Result<TurnToSend> {
-        let timing = self.metadata.turns.get(index).ok_or_else(|| {
+        let timing = self.meta().turns.get(index).ok_or_else(|| {
             anyhow!(
                 "no turn {index} in conversation {} (only {} turns exist)",
-                self.metadata.conversation_id,
-                self.metadata.turns.len()
+                self.meta().conversation_id,
+                self.meta().turns.len()
             )
         })?;
         let num_turns = max_turns
-            .unwrap_or(self.metadata.turns.len())
-            .min(self.metadata.turns.len())
+            .unwrap_or(self.meta().turns.len())
+            .min(self.meta().turns.len())
             .max(1);
         // The endpoint here is a routing placeholder: the worker resolves the
         // authoritative one (including any per-turn override) when it
@@ -1089,11 +1094,11 @@ impl RuntimeSessionBackend for NativeSessionBackend {
 
     fn next_metadata(&self, turn_index: usize) -> Result<TurnMetadata> {
         let next_index = turn_index + 1;
-        self.metadata.turns.get(next_index).cloned().ok_or_else(|| {
+        self.meta().turns.get(next_index).cloned().ok_or_else(|| {
             anyhow!(
                 "no turn {next_index} in conversation {} (only {} turns exist)",
-                self.metadata.conversation_id,
-                self.metadata.turns.len()
+                self.meta().conversation_id,
+                self.meta().turns.len()
             )
         })
     }
@@ -1147,6 +1152,11 @@ impl RuntimeSessionBackend for NativeSessionBackend {
 }
 
 impl NativeSessionBackend {
+    /// This session's authored metadata within the shared table.
+    fn meta(&self) -> &ConversationMetadata {
+        &self.metadata[self.template_index]
+    }
+
     /// Borrow the conversation-walking state, building it on first use.
     fn walker(&self) -> Result<std::cell::RefMut<'_, Option<NativeConversationSession>>> {
         let mut session = self.session.borrow_mut();
@@ -1196,7 +1206,7 @@ impl NativeSessionBackend {
             }
         };
         let timing = self
-            .metadata
+            .meta()
             .turns
             .get(turn_index)
             .ok_or_else(|| anyhow!("missing native turn metadata {turn_index}"))?;
@@ -1289,7 +1299,7 @@ pub struct NativeDatasetConversationSource {
     /// Under a multi-worker/cell partition that is the authored-index residue
     /// class; the sampler recycles only within this set. Unpartitioned sources
     /// hold every sampleable conversation.
-    metadata: Vec<ConversationMetadata>,
+    metadata: Arc<Vec<ConversationMetadata>>,
     metadata_by_id: HashMap<String, usize>,
     sampler: Box<dyn Sampler>,
     endpoint: NativeSessionEndpoint,
@@ -1528,7 +1538,7 @@ impl NativeDatasetConversationSource {
             .collect();
         Ok(Self {
             dataset,
-            metadata,
+            metadata: Arc::new(metadata),
             metadata_by_id,
             sampler,
             endpoint,
@@ -1584,7 +1594,7 @@ impl NativeDatasetConversationSource {
         } = &self.endpoint;
         WorkerMaterializationRecipe {
             dataset: self.dataset.clone(),
-            metadata: Arc::new(self.metadata.clone()),
+            metadata: self.metadata.clone(),
             metadata_by_id: Arc::new(self.metadata_by_id.clone()),
             primary_model_name: primary_model_name.clone(),
             materializer: self.materializer.clone(),
@@ -1615,7 +1625,7 @@ impl NativeDatasetConversationSource {
             session_id: id,
             dataset: self.dataset.clone(),
             template_index: metadata_index,
-            metadata,
+            metadata: self.metadata.clone(),
             endpoint: self.endpoint.clone(),
             materializer: self.materializer.clone(),
             response_tokenizer: self.response_tokenizer.clone(),
@@ -1664,7 +1674,7 @@ impl NativeDatasetConversationSource {
         // Sort by conversation id so the emitted session order matches the capture
         // path's `BTreeMap<conversation_id, …>` iteration exactly.
         let mut sessions: BTreeMap<String, Vec<Bytes>> = BTreeMap::new();
-        for metadata in &self.metadata {
+        for metadata in self.metadata.iter() {
             let conversation_id = metadata.conversation_id.as_str();
             let id = crate::dataset::SessionId::from(conversation_id);
             let conversation = self.dataset.get(&id)?;
@@ -1851,7 +1861,7 @@ impl WorkerMaterializer {
             session_id: id,
             dataset: self.recipe.dataset.clone(),
             template_index,
-            metadata: self.recipe.metadata[template_index].clone(),
+            metadata: self.recipe.metadata.clone(),
             endpoint: self.endpoint.clone(),
             materializer: self.recipe.materializer.clone(),
             response_tokenizer: self.recipe.response_tokenizer.clone(),
