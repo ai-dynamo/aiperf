@@ -114,15 +114,18 @@ class CodegenGradingWorker:
         try:
             proc.stdin.write(orjson.dumps(req) + b"\n")
             await asyncio.wait_for(proc.stdin.drain(), max(0.0, deadline - loop.time()))
+        except TimeoutError as exc:
+            # TimeoutError is an OSError subclass (PEP 3151), so it must be caught
+            # before the OSError clause below or it is silently misrouted there and
+            # _handle_fault() never runs, leaving the wedged worker alive.
+            self._pending.pop(req_id, None)
+            await self._handle_fault(count_start_failure=False)
+            raise CodegenWorkerError(f"grading worker timed out: {exc!r}") from exc
         except (OSError, ConnectionError) as exc:
             self._pending.pop(req_id, None)
             raise CodegenWorkerError(
                 f"failed to submit grading request: {exc}"
             ) from exc
-        except TimeoutError as exc:
-            self._pending.pop(req_id, None)
-            await self._handle_fault(count_start_failure=False)
-            raise CodegenWorkerError(f"grading worker timed out: {exc!r}") from exc
         except asyncio.CancelledError:
             self._pending.pop(req_id, None)
             raise
