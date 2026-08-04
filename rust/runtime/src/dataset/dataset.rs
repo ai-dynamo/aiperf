@@ -449,11 +449,17 @@ impl Dataset {
                     for (turn, slot) in conversation.turns.iter().zip(turn_counts.iter_mut()) {
                         // Count through the dialect that renders this turn, which
                         // an authored per-turn override can change.
-                        let count = endpoints
-                            .endpoint_for(turn.endpoint.as_deref())
-                            .and_then(|endpoint| {
-                                dataset_turn_image_count(store, endpoint, primary_model_name, turn)
-                            });
+                        let count =
+                            endpoints
+                                .endpoint_for(turn.endpoint.as_deref())
+                                .and_then(|endpoint| {
+                                    dataset_turn_image_count(
+                                        store,
+                                        endpoint,
+                                        primary_model_name,
+                                        turn,
+                                    )
+                                });
                         if cumulative {
                             running = running
                                 .zip(count)

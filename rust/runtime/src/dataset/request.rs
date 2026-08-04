@@ -1466,7 +1466,11 @@ pub(crate) fn reply_image_count(
     }
     // No preformatted items: the reply renders from its text media alone, which
     // can only produce text parts.
-    let Some(messages) = reply.raw_messages.as_ref().filter(|items| !items.is_empty()) else {
+    let Some(messages) = reply
+        .raw_messages
+        .as_ref()
+        .filter(|items| !items.is_empty())
+    else {
         return Some(0);
     };
     // The Responses lowerer drops replay-unsafe output items, so a lowered wire
