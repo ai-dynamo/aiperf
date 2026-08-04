@@ -558,6 +558,84 @@ fn chat_dispatch_body_path_profile() {
 }
 
 // ---------------------------------------------------------------------------
+// L2b: borrowed vs consumed wire assembly
+// ---------------------------------------------------------------------------
+
+/// The same body path as [`dispatch_body`], consuming the materialized
+/// `Request` the way the three owned-destructure dispatch sites do.
+fn dispatch_body_consumed(
+    session: &ConversationSession,
+    endpoint: &dyn PreparedEndpoint,
+    overrides: &Overrides,
+) -> Bytes {
+    session
+        .materialize_prepared(
+            &EndpointRequestMaterializer,
+            endpoint,
+            "primary-model",
+            CreditPhase::Profiling,
+            overrides,
+        )
+        .expect("materialize")
+        .body
+        .into_wire()
+        .expect("into_wire")
+}
+
+/// `RequestBody::to_wire(&self)` against `RequestBody::into_wire(self)` on a
+/// freshly materialized body, which is what dispatch holds.
+///
+/// A `BytesMut::freeze()`-derived body has `len == capacity` and so rides the
+/// promotable vtable: the borrowed accessor's clone heap-allocates a `Shared`
+/// block instead of bumping a refcount. Each iteration materializes a new body,
+/// so the first-clone promotion is paid every time, exactly as in a run.
+#[test]
+fn chat_dispatch_wire_ownership_profile() {
+    println!("\n=== L2b: to_wire(&self) vs into_wire(self) on an owned request ===");
+    let endpoint = prepared_chat_endpoint();
+    let overrides = Overrides::new();
+    let mut samples = Vec::new();
+
+    for (size_label, per_message) in SIZES {
+        // Turn 0 with a cached plan: the ordinary-chat fast path, where the
+        // clone is the largest share of what is left.
+        let mut pool = SegmentPool::new();
+        let turns = vec![user_turn(&mut pool, filler(per_message * 7, 0))];
+        let dataset = build_dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            turns,
+            pool,
+            endpoint.as_ref(),
+            true,
+        );
+        let session = session_at(dataset, 0, 0);
+        let len = dispatch_body(&session, endpoint.as_ref(), &overrides).len();
+        assert_eq!(
+            dispatch_body(&session, endpoint.as_ref(), &overrides),
+            dispatch_body_consumed(&session, endpoint.as_ref(), &overrides),
+            "into_wire must be byte-identical to to_wire"
+        );
+
+        samples.push(measure(
+            format!("[{size_label}] turn 0 dispatch, BORROWED to_wire (before)"),
+            len,
+            ITERS,
+            || dispatch_body(&session, endpoint.as_ref(), &overrides),
+        ));
+        samples.push(measure(
+            format!("[{size_label}] turn 0 dispatch, CONSUMED into_wire (after)"),
+            len,
+            ITERS,
+            || dispatch_body_consumed(&session, endpoint.as_ref(), &overrides),
+        ));
+    }
+
+    for sample in &samples {
+        sample.print();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // L3/L4: full turn build and the IssuedCredit deep clone
 // ---------------------------------------------------------------------------
 
