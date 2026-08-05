@@ -126,9 +126,18 @@ pub(crate) async fn execute_native_inner(
                 samplers: registry.samplers(),
                 // Coordinator and cell-entry paths read the process-global partition.
                 cell_partition: None,
-                // A single coordinator already walks the whole corpus, so
-                // position addressing would be inert here.
-                position_addressed: false,
+                // Same rule as the thread-per-core factory (`sharding.rs`), and
+                // for the same reason: `Global` promises parity with one global
+                // issuer, and drawing absolute positions extends that promise
+                // from admission to the dataset. This factory serves BOTH the
+                // lone unpartitioned coordinator — where it is inert, since
+                // there is no partition for `addressing` to be `Some` of — and
+                // a `--cells N` cell process at `workers == 1`, which DOES read
+                // an `AIPERF_CELL_ID` residue class and would otherwise recycle
+                // inside it. A cell at `workers > 1` already gets this through
+                // the two-level partition, so gating here keeps the two cell
+                // shapes drawing the same way.
+                position_addressed: matches!(request.dispatch_mode, DispatchMode::Global),
             }),
         )
     };

@@ -182,7 +182,10 @@ admits concurrency/rate from a shared per-cell gate for byte-exact aggregate
 parity AND draws the dataset by absolute corpus position
 (`multiturn::DrawMode::Position`, `Sampler::at_position`) so its `W` shards
 sample the corpus as one issuer would instead of each recycling its own residue
-class — on a rate-paced single-turn phase that position is the index of the rate
+class. The same absolute-position draw is selected for a `--cells N` cell
+process at `workers==1` (`execute::compose_sidecars`), whose residue class is
+its `AIPERF_CELL_ID` rather than a thread index, so both cell shapes draw alike
+— on a rate-paced single-turn phase that position is the index of the rate
 slot the request is admitted on (`GlobalRateGate::claim_slot`,
 `request_rate::slot_addressed_draws`), so per-record output sorted by admission
 time is the sequential corpus walk; `global-hop` revives a cross-thread per-request hop dispatcher

@@ -84,6 +84,20 @@ requests.
       draw the conversations at the skipped positions.
     - A tick that cannot admit retains its claimed slot, so a drawn sample is
       never discarded and the claimed position sequence stays dense.
+    - That retention also changes **pacing**, and the two `global` rate
+      sub-paths diverge here. Slot-addressed
+      (`request_rate::slot_addressed_offset_ns`): a `NoSlot` tick keeps its
+      `pending_slot_offset_ns`, so the rate grid does **not** advance and the
+      blocked arrival is re-attempted at the same target time. Non-addressed
+      `global` (`GlobalRateGate::claim_offset_ns` on every tick): a `NoSlot`
+      tick has already consumed a slot, so the grid advances and the retry
+      lands at the next slot's target. Under sustained admission backpressure
+      the slot-addressed path therefore issues its backlog against the
+      original grid while the non-addressed path skips grid positions. Both
+      emit the configured aggregate rate once admission is not the binding
+      constraint; the difference is confined to the backpressured interval,
+      and the slot-addressed behaviour is what keeps the drawn positions dense
+      (a skipped grid position would mean a skipped corpus position).
     - Exact admission order additionally requires `constant` arrival (the
       mean-zero jitter offset is nonzero for `poisson`/`gamma` and reorders
       adjacent slots) and, because `admit_ns` is each worker's own
@@ -127,6 +141,23 @@ requests.
       probe, and keep the per-shard owned-corpus walk. `Sharded` keeps the
       owned-corpus walk in every case: it is the throughput opt-in where
       byte-exact parity does not matter.
+    - A `--cells N` cell process at `workers == 1` selects the same draw
+      (`rust/runtime/src/engine/execute/compose_sidecars.rs`). Its residue
+      class comes from `AIPERF_CELL_ID`/`_COUNT`
+      (`ModuloCellPartition::from_env`) rather than a thread index, so the
+      `next`/`stride` pair is `(cell_id, cells)` and the union across cells is
+      the same corpus prefix the `W`-thread union is. A cell at `workers > 1`
+      already reached this through `two_level_partition`; gating both on
+      `Global` keeps the two cell shapes drawing alike instead of leaving the
+      residue-recycle defect alive at cell granularity. Enumeration is
+      unaffected: `conversations()` and the per-cell `inputs.json` projection
+      still walk only the cell's own residue, which is what
+      `shard_artifacts::merge_cell_inputs_json` un-partitions.
+    - The resolution table (`multiturn.rs` `metadata`/`metadata_by_id`) is
+      sized to the draw: `DrawMode::Position` needs a total table because it
+      reaches outside the residue, while `DrawMode::Owned` keeps the residue
+      basis so a `W`-thread run stays `O(corpus)` resident rather than
+      `O(W × corpus)`.
   - `GlobalAdmission` is `Some` only under `Global`; `None` under `Sharded`
     (per-thread `1/W` slicing needs no shared gate) and under
     `GlobalHop`/`GlobalPush` (their single coordinator loop enforces the full
