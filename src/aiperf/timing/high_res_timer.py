@@ -81,6 +81,7 @@ class TimerFdPacer:
         self._tick = asyncio.Event()
         self._loop.add_reader(self._fd, self._on_readable)
         self._closed = False
+        self._active_waiter = False
 
     def _on_readable(self) -> None:
         with contextlib.suppress(BlockingIOError):
@@ -93,18 +94,23 @@ class TimerFdPacer:
         Returns immediately if the deadline is already in the past (the kernel
         fires expired absolute timers right away).
         """
-        deadline_ns = int(deadline_perf_s * _NANOS_PER_SECOND)
-        spec = _Itimerspec()
-        spec.it_value.tv_sec = deadline_ns // _NANOS_PER_SECOND
-        spec.it_value.tv_nsec = deadline_ns % _NANOS_PER_SECOND or 1
-        self._tick.clear()
-        rc = self._libc.timerfd_settime(
-            self._fd, _TFD_TIMER_ABSTIME, ctypes.byref(spec), None
-        )
-        if rc != 0:
-            errno = ctypes.get_errno()
-            raise OSError(errno, f"timerfd_settime failed: {os.strerror(errno)}")
-        await self._tick.wait()
+        assert not self._active_waiter, "TimerFdPacer supports only one concurrent waiter"
+        self._active_waiter = True
+        try:
+            deadline_ns = int(deadline_perf_s * _NANOS_PER_SECOND)
+            spec = _Itimerspec()
+            spec.it_value.tv_sec = deadline_ns // _NANOS_PER_SECOND
+            spec.it_value.tv_nsec = deadline_ns % _NANOS_PER_SECOND or 1
+            self._tick.clear()
+            rc = self._libc.timerfd_settime(
+                self._fd, _TFD_TIMER_ABSTIME, ctypes.byref(spec), None
+            )
+            if rc != 0:
+                errno = ctypes.get_errno()
+                raise OSError(errno, f"timerfd_settime failed: {os.strerror(errno)}")
+            await self._tick.wait()
+        finally:
+            self._active_waiter = False
 
     def close(self) -> None:
         if self._closed:
@@ -137,6 +143,7 @@ class ThreadPacer:
         self._generation = 0
         self._waiting_generation: int | None = None
         self._closed = False
+        self._active_waiter = False
         self._thread = threading.Thread(
             target=self._run, name="aiperf-rate-pacer", daemon=True
         )
@@ -178,7 +185,7 @@ class ThreadPacer:
                     self._condition.wait(timeout=remaining)
                     if self._waiting_generation == generation:
                         self._waiting_generation = None
-                else:
+                if self._closed:
                     return
 
             # The loop may already be closing during teardown. Check the
@@ -192,21 +199,26 @@ class ThreadPacer:
 
         Returns immediately if the deadline is already in the past.
         """
-        with self._condition:
-            self._generation += 1
-            generation = self._generation
-            self._deadline = deadline_perf_s
-            self._tick.clear()
-            self._condition.notify()
+        assert not self._active_waiter, "ThreadPacer supports only one concurrent waiter"
+        self._active_waiter = True
         try:
-            await self._tick.wait()
-        except asyncio.CancelledError:
             with self._condition:
-                if self._generation == generation:
-                    self._generation += 1
-                    self._deadline = None
-                    self._condition.notify()
-            raise
+                self._generation += 1
+                generation = self._generation
+                self._deadline = deadline_perf_s
+                self._tick.clear()
+                self._condition.notify()
+            try:
+                await self._tick.wait()
+            except asyncio.CancelledError:
+                with self._condition:
+                    if self._generation == generation:
+                        self._generation += 1
+                        self._deadline = None
+                        self._condition.notify()
+                raise
+        finally:
+            self._active_waiter = False
 
     def close(self) -> None:
         with self._condition:
