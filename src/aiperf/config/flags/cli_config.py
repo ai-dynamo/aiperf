@@ -2331,10 +2331,27 @@ class CLIConfig(BaseConfig):
             "After the normal snapshot warmup drains, AIPerf continues the live "
             "trajectories without recorded idle delays and with one-token outputs, "
             "then drains and resumes profiling from the resulting trajectory state "
-            "using each live stream's residual next-turn delay.",
+            "using each live stream's residual next-turn delay. Mutually exclusive "
+            "with --warmup-requests-per-lane.",
         ),
         CLIParameter(
             name=("--agentic-cache-warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            gt=0,
+            description="Deterministic agentic cache-pressure warmup request "
+            "budget per concurrency lane, additional to mandatory snapshot "
+            "primers. For example, 10 with concurrency 16 sends 160 additional "
+            "cache-pressure requests after the primers. Mutually exclusive with "
+            "--agentic-cache-warmup-duration.",
+        ),
+        CLIParameter(
+            name=("--warmup-requests-per-lane",),
             group=Groups.WARMUP,
         ),
     ] = None
