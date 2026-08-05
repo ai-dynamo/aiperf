@@ -1119,7 +1119,7 @@ AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within
 
 #### `--burst-phase-starts`
 
-AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp, synchronized start), e.g. for a throughput-oriented run rather than a faithful arrival replay.
+AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of preserving recorded spacing. By default (False), WARMUP requests are aligned globally so every trajectory reaches t* together. PROFILING subtracts one phase-wide minimum from every first request offset: the earliest request starts immediately and all other trajectories retain their recorded spacing. Pass --burst-phase-starts to subtract a separate minimum per lane, making every lane start immediately. Subsequent inter-turn delays are timing-faithful in either mode.
 <br/>_Flag (no value required)_
 
 #### `--trace-idle-gap-cap-seconds` `<float>`
@@ -2686,7 +2686,7 @@ AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within
 
 #### `--burst-phase-starts`
 
-AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp, synchronized start), e.g. for a throughput-oriented run rather than a faithful arrival replay.
+AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of preserving recorded spacing. By default (False), WARMUP requests are aligned globally so every trajectory reaches t* together. PROFILING subtracts one phase-wide minimum from every first request offset: the earliest request starts immediately and all other trajectories retain their recorded spacing. Pass --burst-phase-starts to subtract a separate minimum per lane, making every lane start immediately. Subsequent inter-turn delays are timing-faithful in either mode.
 <br/>_Flag (no value required)_
 
 #### `--trace-idle-gap-cap-seconds` `<float>`

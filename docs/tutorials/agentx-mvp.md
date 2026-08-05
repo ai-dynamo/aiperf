@@ -419,7 +419,9 @@ AIPerf continues the same live session trees for that duration with recorded
 idle delays removed and every request limited to one output token. When the
 duration expires, it stops issuing new requests, drains requests already on
 the wire, snapshots each live root, subagent, and unresolved join, and starts
-profiling from that exact state.
+profiling from that exact state. Each stream's full next-turn delay is carried
+across the phase boundary; time spent waiting for the global warmup drain does
+not consume it.
 
 For repeatable warmup depth, use
 `--warmup-requests-per-lane REQUESTS` instead. After the mandatory snapshot
@@ -427,6 +429,13 @@ primers complete, each concurrency lane sends exactly that many additional
 warmup wire requests. For example, `--concurrency 16` with
 `--warmup-requests-per-lane 10` adds 160 cache-pressure requests after the
 primers, with a strict 10-additional-request quota on every lane.
+
+At handoff, timestamped root, subagent, and background streams are restored to
+their next request's position on one shared per-trajectory dataset clock. The
+earliest pending request starts profiling immediately; the remaining streams
+retain their flattened cross-stream order and relative start spacing. For a
+timestamp-less dataset, AIPerf falls back to each stream's recorded
+end-to-start delay.
 
 `--agentic-cache-warmup-duration` and `--warmup-requests-per-lane` are mutually
 exclusive: choose a time-bounded warmup or a deterministic request-bounded
@@ -440,7 +449,10 @@ request metrics.
 After warmup, the profiling phase opens. Now you're measuring. Each trajectory
 keeps replaying its conversation from turn `k_i + 1` onward, honoring the
 original recorded inter-turn gaps as end-to-start delays counted from the
-moment the previous turn completes. With
+moment the previous turn completes. At the phase boundary, AIPerf subtracts
+one global minimum from the pending first-request offsets: the earliest
+request starts immediately, while every other trajectory keeps the same
+relative spacing. With
 `--trace-idle-gap-cap-seconds S`, a per-trajectory watchdog covers initial
 future work and restarts when the last in-flight request across the root and
 all descendant streams completes.
