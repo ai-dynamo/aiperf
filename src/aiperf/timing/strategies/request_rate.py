@@ -171,6 +171,8 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         """Wait for a high-resolution deadline or a request-rate update."""
         if self._pacer is None:
             return False
+        if self._rate_update_event.is_set():
+            return True
 
         pacer_task = asyncio.create_task(self._pacer.sleep_until(deadline_perf_s))
         rate_update_task = asyncio.create_task(self._rate_update_event.wait())
