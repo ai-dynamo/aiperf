@@ -179,6 +179,8 @@ const UNATTRIBUTED_WORKER_ID: &str = "rust-0";
 /// Kept here so the fallback constant and the live labels cannot drift apart;
 /// `unattributed_id_is_the_zero_partition_label` pins that they agree.
 pub(crate) fn worker_label(partition: crate::cellular::ModuloCellPartition) -> std::sync::Arc<str> {
+    use crate::cellular::CellPartition;
+
     std::sync::Arc::from(format!("rust-{}", partition.cell_id()))
 }
 

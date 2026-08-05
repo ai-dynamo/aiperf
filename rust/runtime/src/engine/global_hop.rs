@@ -43,7 +43,6 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, ensure};
 
-use crate::cellular::CellPartition;
 use crate::clock::Clock;
 use crate::engine::protocol::PhaseSpec;
 use crate::engine::turn_execution::{ExecutionBackendConfig, PreparedEndpointTableFactory};
