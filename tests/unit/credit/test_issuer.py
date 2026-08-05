@@ -912,3 +912,153 @@ class TestDispatchJoinTurnNoRequest:
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.no_request is False
+
+
+# =============================================================================
+# Test: WARMUP_ISOLATION_* cache-bust target phase-aware marker emission
+# =============================================================================
+
+
+def _make_warmup_isolation_issuer(
+    phase,
+    cache_bust_target,
+    mock_stop_checker,
+    mock_progress,
+    mock_concurrency,
+    mock_router,
+    mock_cancellation,
+    mock_lifecycle,
+) -> CreditIssuer:
+    """Build a CreditIssuer with explicit phase and cache_bust_target."""
+    return CreditIssuer(
+        phase=phase,
+        cache_bust_target=cache_bust_target,
+        stop_checker=mock_stop_checker,
+        progress=mock_progress,
+        concurrency_manager=mock_concurrency,
+        credit_router=mock_router,
+        cancellation_policy=mock_cancellation,
+        lifecycle=mock_lifecycle,
+    )
+
+
+class TestWarmupIsolationMarkerEmission:
+    """CreditIssuer emits WARMUP_ISOLATION_MARKER during WARMUP and None during PROFILING."""
+
+    @pytest.mark.asyncio
+    async def test_credit_issuer_warmup_isolation_system_sets_marker_in_warmup(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_concurrency,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """WARMUP_ISOLATION_SYSTEM credits carry the marker during WARMUP phase."""
+        from aiperf.common.enums import CacheBustTarget, CreditPhase
+        from aiperf.timing.strategies.cache_bust import WARMUP_ISOLATION_MARKER
+
+        issuer = _make_warmup_isolation_issuer(
+            phase=CreditPhase.WARMUP,
+            cache_bust_target=CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+            mock_stop_checker=mock_stop_checker,
+            mock_progress=mock_progress,
+            mock_concurrency=mock_concurrency,
+            mock_router=mock_router,
+            mock_cancellation=mock_cancellation,
+            mock_lifecycle=mock_lifecycle,
+        )
+        await issuer.issue_credit(make_turn())
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.cache_bust_marker == WARMUP_ISOLATION_MARKER
+        assert sent_credit.cache_bust_target == CacheBustTarget.WARMUP_ISOLATION_SYSTEM
+
+    @pytest.mark.asyncio
+    async def test_credit_issuer_warmup_isolation_system_clears_marker_in_profiling(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_concurrency,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """WARMUP_ISOLATION_SYSTEM credits carry no marker during PROFILING phase."""
+        from aiperf.common.enums import CacheBustTarget, CreditPhase
+
+        issuer = _make_warmup_isolation_issuer(
+            phase=CreditPhase.PROFILING,
+            cache_bust_target=CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+            mock_stop_checker=mock_stop_checker,
+            mock_progress=mock_progress,
+            mock_concurrency=mock_concurrency,
+            mock_router=mock_router,
+            mock_cancellation=mock_cancellation,
+            mock_lifecycle=mock_lifecycle,
+        )
+        await issuer.issue_credit(make_turn())
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.cache_bust_marker is None
+
+    @pytest.mark.asyncio
+    async def test_credit_issuer_warmup_isolation_first_turn_sets_marker_in_warmup(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_concurrency,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """WARMUP_ISOLATION_FIRST_TURN credits carry the marker during WARMUP phase."""
+        from aiperf.common.enums import CacheBustTarget, CreditPhase
+        from aiperf.timing.strategies.cache_bust import WARMUP_ISOLATION_MARKER
+
+        issuer = _make_warmup_isolation_issuer(
+            phase=CreditPhase.WARMUP,
+            cache_bust_target=CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+            mock_stop_checker=mock_stop_checker,
+            mock_progress=mock_progress,
+            mock_concurrency=mock_concurrency,
+            mock_router=mock_router,
+            mock_cancellation=mock_cancellation,
+            mock_lifecycle=mock_lifecycle,
+        )
+        await issuer.issue_credit(make_turn())
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.cache_bust_marker == WARMUP_ISOLATION_MARKER
+        assert (
+            sent_credit.cache_bust_target == CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN
+        )
+
+    @pytest.mark.asyncio
+    async def test_credit_issuer_non_warmup_isolation_target_unchanged(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_concurrency,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """Non-WARMUP_ISOLATION targets are unaffected by the new param."""
+        from aiperf.common.enums import CacheBustTarget, CreditPhase
+
+        issuer = _make_warmup_isolation_issuer(
+            phase=CreditPhase.WARMUP,
+            cache_bust_target=CacheBustTarget.NONE,
+            mock_stop_checker=mock_stop_checker,
+            mock_progress=mock_progress,
+            mock_concurrency=mock_concurrency,
+            mock_router=mock_router,
+            mock_cancellation=mock_cancellation,
+            mock_lifecycle=mock_lifecycle,
+        )
+        await issuer.issue_credit(make_turn())
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.cache_bust_marker is None

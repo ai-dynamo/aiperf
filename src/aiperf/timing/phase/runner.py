@@ -230,6 +230,11 @@ class PhaseRunner(TaskManagerMixin):
                 or self._cache_warmup_enabled
             ),
             replay_barrier=self._replay_barrier,
+            cache_bust_target=(
+                self._run.cfg.get_cache_bust_target()
+                if self._run is not None
+                else CacheBustTarget.NONE
+            ),
         )
 
     def _maybe_construct_branch_orchestrator(
@@ -451,8 +456,10 @@ class PhaseRunner(TaskManagerMixin):
         fatal = self._progress.fatal_error or task_exc
         if fatal is not None:
             self.error(
-                lambda: "fatal request-free control-node failure in seamless "
-                f"phase {self._config.phase}: {fatal!r}"
+                lambda: (
+                    "fatal request-free control-node failure in seamless "
+                    f"phase {self._config.phase}: {fatal!r}"
+                )
             )
             if self._on_phase_error is not None:
                 self._on_phase_error(fatal)
@@ -577,11 +584,13 @@ class PhaseRunner(TaskManagerMixin):
             return
         released = self._session_tree_registry.release_all(self._phase_key)
         self.info(
-            lambda: f"Session-tree slots for phase {self._config.phase}: "
-            f"peak_open={self._session_tree_registry.peak_open} "
-            f"(target concurrency {self._config.concurrency}); "
-            f"released {released} still-open at teardown; "
-            f"late_events={self._session_tree_registry.late_events}"
+            lambda: (
+                f"Session-tree slots for phase {self._config.phase}: "
+                f"peak_open={self._session_tree_registry.peak_open} "
+                f"(target concurrency {self._config.concurrency}); "
+                f"released {released} still-open at teardown; "
+                f"late_events={self._session_tree_registry.late_events}"
+            )
         )
 
     async def _run_strategy(
