@@ -1349,18 +1349,22 @@ enum DrawMode {
 /// Native handle-only dataset source used by online scheduled workloads.
 pub struct NativeDatasetConversationSource {
     dataset: Arc<NativeDataset>,
-    /// Every sampleable conversation, in authored order — the RESOLUTION table.
-    /// A position-addressed draw reaches outside this shard's residue class by
-    /// design, so resolution must be total even when enumeration is not.
+    /// The RESOLUTION table, in authored order — as wide as `draw` and no
+    /// wider. Under [`DrawMode::Position`] that is every sampleable
+    /// conversation, because such a draw reaches outside this shard's residue
+    /// class by design; under [`DrawMode::Owned`] it is the residue class,
+    /// which is everything the shard can reach and keeps a `W`-thread run at
+    /// `O(corpus)` resident rather than `O(W x corpus)`.
     metadata: Arc<Vec<ConversationMetadata>>,
-    /// Resolution index over `metadata`, so it is likewise total.
+    /// Resolution index over `metadata`, so it spans the same basis.
     metadata_by_id: HashMap<String, usize>,
     /// This shard's ENUMERATION corpus: the authored-index residue class it
     /// owns. Backs `conversations()`, which fixed-schedule replay and the
     /// single-turn-per-conversation workload use to enumerate their work, and
     /// the per-session `inputs.json` projection each cell contributes to the
     /// controller's round-robin merge. Shares `metadata`'s allocation outright
-    /// when the source is unpartitioned, which is every single-process run.
+    /// whenever the two bases coincide — an unpartitioned source (every
+    /// single-process run) and every [`DrawMode::Owned`] shard.
     owned_metadata: Arc<Vec<ConversationMetadata>>,
     sampler: Box<dyn Sampler>,
     /// The VARIANT is selected once at construction and pins which corpus
@@ -1563,41 +1567,42 @@ impl NativeDatasetConversationSource {
             Some(_) => None,
         };
         // Only a position-addressed draw indexes the WHOLE authored space, so
-        // only it needs a full-corpus SAMPLER MODEL. This gating avoids a
-        // SECOND full-corpus copy, not the first: `metadata` below is built
-        // unconditionally over `sampleable_metadata()` for every mode, and is
-        // the deeper per-conversation clone. `ConversationMetadata` owns its
-        // turn vector, so this copy is deep too and a non-addressed mode would
-        // never read it again. Both corpora enumerate the same
-        // `sampleable_metadata()` order through this one `owns` predicate, so
-        // their index bases cannot drift apart.
+        // only it needs a full-corpus SAMPLER MODEL — and, below, a full-corpus
+        // resolution table. `ConversationMetadata` owns its turn vector, so both
+        // copies are deep and a non-addressed mode would never read either
+        // again: widening them unconditionally would leave `O(W x corpus)`
+        // resident across `W` threads for lookups that provably stay inside the
+        // residue. Both corpora enumerate the same `sampleable_metadata()` order
+        // through this one `owns` predicate, so their index bases cannot drift
+        // apart.
         let addressing = ownership.filter(|_| position_addressed);
         let owns = |index: usize| {
             ownership
                 .map(|partition| partition.owns(index as u64))
                 .unwrap_or(true)
         };
-        let metadata_model: Option<Vec<crate::dataset::model::ConversationMetadata>> =
-            addressing.map(|_| dataset.sampleable_metadata().cloned().collect());
-        let owned_model: Vec<crate::dataset::model::ConversationMetadata> =
-            match metadata_model.as_deref() {
-                Some(full) => full
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| owns(*index))
-                    .map(|(_, conversation)| conversation.clone())
-                    .collect(),
-                None => dataset
-                    .sampleable_metadata()
-                    .enumerate()
-                    .filter(|(index, _)| owns(*index))
-                    .map(|(_, conversation)| conversation.clone())
-                    .collect(),
-            };
+        // The owned residue as a sampler model. Built lazily: under a successful
+        // position probe the sampler comes from the full model instead, and this
+        // deep clone is never paid.
+        let owned_model = || -> Vec<crate::dataset::model::ConversationMetadata> {
+            dataset
+                .sampleable_metadata()
+                .enumerate()
+                .filter(|(index, _)| owns(*index))
+                .map(|(_, conversation)| conversation.clone())
+                .collect()
+        };
         // One sampler over the owned corpus only — the single giver for this shard.
         // Do not wrap with PartitionedSampler: position filtering over a full-corpus
         // sequential draw is what requested foreign sessions after recycle.
-        if ownership.is_some() && owned_model.is_empty() {
+        // Counted rather than materialized: an empty residue is the only fact
+        // this guard needs, and the model above may never be built.
+        if ownership.is_some()
+            && !dataset
+                .sampleable_metadata()
+                .enumerate()
+                .any(|(index, _)| owns(index))
+        {
             bail!(
                 "conversation partition owns no sampleable sessions; reduce workers/cells \
                  so every shard receives at least one conversation"
@@ -1608,8 +1613,10 @@ impl NativeDatasetConversationSource {
         // capability on that sampler: `at_position` is pure, so probing cannot
         // disturb it. A strategy without a closed form (any RNG-stateful one)
         // falls back to today's owned-corpus walk rather than approximating.
-        let (sampler, draw) = match metadata_model.zip(addressing) {
-            Some((full_model, partition)) => {
+        let (sampler, draw) = match addressing {
+            Some(partition) => {
+                let full_model: Vec<crate::dataset::model::ConversationMetadata> =
+                    dataset.sampleable_metadata().cloned().collect();
                 let full = make_sampler(&full_model)?;
                 match full.at_position(0) {
                     Some(_) => (
@@ -1619,18 +1626,25 @@ impl NativeDatasetConversationSource {
                             stride: u64::from(partition.cell_count()),
                         },
                     ),
-                    None => (make_sampler(&owned_model)?, DrawMode::Owned),
+                    None => (make_sampler(&owned_model())?, DrawMode::Owned),
                 }
             }
-            None => (make_sampler(&owned_model)?, DrawMode::Owned),
+            None => (make_sampler(&owned_model())?, DrawMode::Owned),
         };
-        // Resolution is total; enumeration is the residue class. Building
-        // `metadata` over the full corpus is what lets a position-addressed
-        // draw resolve a conversation this shard does not own — the gap that
-        // sank the earlier `PartitionedSampler` attempt.
+        // Resolution is as wide as the draw, and no wider. Under
+        // `DrawMode::Position` the shard reaches outside its residue class by
+        // design, so its table must span the corpus — the gap that sank the
+        // earlier `PartitionedSampler` attempt. Under `DrawMode::Owned` (which
+        // includes the `at_position` fallback above) the shard resolves exactly
+        // what it enumerates, so the residue basis is total over everything it
+        // can reach and costs `O(corpus / W)` per thread instead of
+        // `O(corpus)`.
+        let resolves_whole_corpus = matches!(draw, DrawMode::Position { .. });
         let metadata = dataset
             .sampleable_metadata()
-            .map(|conversation| {
+            .enumerate()
+            .filter(|(index, _)| resolves_whole_corpus || owns(*index))
+            .map(|(_, conversation)| {
                 let authored = dataset
                     .get(&conversation.conversation_id)
                     .expect("metadata is projected from a validated conversation");
@@ -1664,9 +1678,12 @@ impl NativeDatasetConversationSource {
             .map(|(index, metadata)| (metadata.conversation_id.clone(), index))
             .collect();
         let metadata = Arc::new(metadata);
-        // An unpartitioned source enumerates exactly what it resolves, so it
-        // shares the one allocation rather than deep-cloning every turn vector.
-        let owned_metadata = match ownership {
+        // A residue-basis table already IS the enumeration corpus (and an
+        // unpartitioned source enumerates everything), so it shares the one
+        // allocation rather than deep-cloning every turn vector. Only a
+        // position-addressed shard, whose table is wider than what it
+        // enumerates, pays for a separate enumeration vector.
+        let owned_metadata = match ownership.filter(|_| resolves_whole_corpus) {
             None => metadata.clone(),
             Some(partition) => Arc::new(
                 metadata
@@ -3192,6 +3209,11 @@ mod tests {
     /// This is the exact failure the earlier `PartitionedSampler` attempt hit
     /// ("requested foreign sessions after recycle"): the draw was widened while
     /// the resolution map stayed narrow.
+    ///
+    /// Position-addressed specifically, because that is the mode whose draw is
+    /// wider than its enumeration. A `DrawMode::Owned` shard resolves exactly
+    /// what it enumerates and keeps the narrow table on purpose — pinned by
+    /// `an_owned_draw_shard_keeps_the_residue_resolution_table`.
     #[tokio::test]
     async fn a_partitioned_shard_resolves_a_conversation_it_does_not_enumerate() {
         // The middle row carries 3 turns; its neighbours carry 1. That asymmetry
@@ -3202,7 +3224,7 @@ mod tests {
             .iter()
             .map(|conversation| conversation.session_id.as_str().to_string())
             .collect();
-        let source = partitioned_sequential_source(dataset, 0, 2).await;
+        let source = position_addressed_source(dataset, 0, 2).await;
 
         let enumerated = owned_ids(&source);
         assert_eq!(
@@ -3242,6 +3264,45 @@ mod tests {
         session
             .build_first_turn(None)
             .expect("an unowned conversation materializes from the shared dataset");
+    }
+
+    /// The converse of the test above: a `DrawMode::Owned` shard keeps its
+    /// resolution table at the residue basis.
+    ///
+    /// That narrowness is the memory property, not an accident. A full-corpus
+    /// table on every one of `W` threads is `O(W x corpus)` resident — a deep
+    /// per-conversation clone plus a `String`-keyed map each — for lookups an
+    /// owned-draw shard provably never makes, because it resolves only what its
+    /// own sampler hands it and that sampler spans the residue.
+    ///
+    /// Widening it back flips this test; narrowing the position-addressed
+    /// table flips
+    /// `a_partitioned_shard_resolves_a_conversation_it_does_not_enumerate`.
+    #[tokio::test]
+    async fn an_owned_draw_shard_keeps_the_residue_resolution_table() {
+        let dataset = uneven_turn_count_dataset().await;
+        let all_ids: Vec<String> = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.session_id.as_str().to_string())
+            .collect();
+        let source = partitioned_sequential_source(dataset, 0, 2).await;
+
+        let enumerated = owned_ids(&source);
+        assert_eq!(enumerated.len(), 2, "cell 0 of 2 enumerates {enumerated:?}");
+        assert_eq!(
+            source.metadata_by_id.len(),
+            enumerated.len(),
+            "an owned-draw shard's resolution index must not span the corpus"
+        );
+        let unowned = all_ids
+            .iter()
+            .find(|id| !enumerated.contains(id))
+            .expect("a 3-conversation corpus split 2 ways leaves cell 0 one unowned id");
+        assert!(
+            source.session_for(unowned, "corr-1".to_string()).is_err(),
+            "an owned-draw shard never draws {unowned}, so it need not resolve it"
+        );
     }
 
     /// Preferred (shuffle) sampling under a partition still recycles only the
