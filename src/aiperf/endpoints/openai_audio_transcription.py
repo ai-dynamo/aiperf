@@ -86,10 +86,12 @@ class AudioTranscriptionEndpoint(BaseEndpoint):
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
         json_obj = response.get_json()
-        if json_obj:
+        if json_obj is not None:
             # response_format json / verbose_json: transcript is the "text" field.
+            # Use ``is not None`` (not truthiness) so an empty ``{}`` error body
+            # yields no transcript rather than falling through to get_text().
             text = json_obj.get("text")
-            usage = json_obj.get("usage") or None
+            usage = json_obj.get("usage")
         else:
             # response_format text / srt / vtt: the whole body IS the transcript
             # (not JSON), so fall back to the raw text rather than dropping it.

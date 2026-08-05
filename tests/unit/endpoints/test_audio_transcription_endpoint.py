@@ -182,6 +182,23 @@ class TestAudioTranscriptionEndpoint:
         response = create_mock_response(json_data=None, text="")
         assert endpoint.parse_response(response) is None
 
+    def test_parse_response_empty_json_object_returns_none(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
+        """An empty ``{}`` JSON body (e.g. an error path) must yield None, not
+        fall through to get_text() and return the raw ``"{}"`` as a transcript."""
+        response = create_mock_response(json_data={}, text="{}")
+        assert endpoint.parse_response(response) is None
+
+    def test_parse_response_preserves_empty_usage_object(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
+        """An explicit ``"usage": {}`` is preserved as-is (not coerced to None)."""
+        response = create_mock_response(json_data={"text": "hi", "usage": {}})
+        result = endpoint.parse_response(response)
+        assert result is not None
+        assert result.usage == {}
+
     # ===== _build_audio_field =====
 
     @pytest.mark.parametrize(
