@@ -1530,15 +1530,6 @@ fn materialize_credit(
     Ok(command)
 }
 
-/// Drive one routed credit to terminal and return it on the shared stream.
-///
-/// The worker owns the whole request here — no coordinator future is parked on
-/// it — so every report it makes is tagged with the request `uuid`. Live
-/// response streaming is deliberately absent: the credit path is selected only
-/// for runs with no live response observer (see
-/// [`ScheduledRuntime`](crate::scheduled::ScheduledRuntime)'s issuance split),
-/// because forwarding frames would put the coordinator back in the request's
-/// lifetime and undo the entire point of the mode.
 /// Name the worker that executed a record the coordinator did not already
 /// attribute, leaving an existing identity (e.g. a virtual dry-run placement)
 /// untouched. A no-op when this worker has no label.
@@ -1550,6 +1541,15 @@ fn attribute_worker(record: Option<&mut RecordIngest>, label: Option<&str>) {
     }
 }
 
+/// Drive one routed credit to terminal and return it on the shared stream.
+///
+/// The worker owns the whole request here — no coordinator future is parked on
+/// it — so every report it makes is tagged with the request `uuid`. Live
+/// response streaming is deliberately absent: the credit path is selected only
+/// for runs with no live response observer (see
+/// [`ScheduledRuntime`](crate::scheduled::ScheduledRuntime)'s issuance split),
+/// because forwarding frames would put the coordinator back in the request's
+/// lifetime and undo the entire point of the mode.
 async fn execute_worker_credit<S: WorkerSink + 'static>(
     sink: Rc<S>,
     worker_observer: Option<Rc<NativeMetricsObserver>>,

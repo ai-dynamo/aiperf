@@ -110,8 +110,14 @@ pub struct RequestTrace {
 /// One completed request record ready for metric ingestion.
 ///
 /// Cells serialize captured records to the controller for global
-/// dispatch-ordinal ingestion. `metric_overrides` round-trip through the
-/// self-describing MessagePack cellular wire.
+/// dispatch-ordinal ingestion (`cellular::shard::RecordShard::to_bytes`, via
+/// `rmp_serde::to_vec`).
+// That encoding is POSITIONAL — struct fields go on the wire as a bare array,
+// so the `#[serde(default)]` annotations below buy nothing there: inserting a
+// field mid-struct shifts every later field whether or not it has a default.
+// They are retained for the self-describing decoders (the JSON artifacts and
+// test fixtures), where an older document genuinely omits a newer field.
+// Cellular compatibility rests on every cell running the same binary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordIngest {
     /// Absolute zero-based request slot assigned by the workload.

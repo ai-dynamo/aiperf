@@ -224,8 +224,11 @@ impl RequestRateWorkload {
         //   bails with `DatasetError::EmptySampler`, both inside the source
         //   constructor. This bail guards a non-native `ConversationSource`, whose
         //   default `sampled_conversations()` is `conversations()` anyway.
-        // - Widening would scan the whole corpus on each of `W` shards — O(W x
-        //   corpus) startup for a check that provably cannot fire.
+        //
+        // So a widened scan could not reject anything the narrow one accepts.
+        // It is declined because it is redundant, not because of what it would
+        // cost: `can_address_draws_by_slot` below runs exactly that full-corpus
+        // scan per shard, where the answer is not decidable any other way.
         //
         // The invariant the narrow basis rests on is pinned by
         // `multiturn::tests::request_rate_zero_turn_validation_cannot_miss_a_row_outside_the_residue`.

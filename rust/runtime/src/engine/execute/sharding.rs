@@ -342,7 +342,7 @@ pub(crate) async fn execute_scheduled_shard(
     // could re-attribute them). Label its records with the two-level partition
     // index, which is unique across the whole `(cell × thread)` grid and is the
     // same residue class that decides which corpus positions this thread draws.
-    let worker_label: Arc<str> = format!("rust-{}", partition.cell_id()).into();
+    let worker_label = crate::engine::records::worker_label(partition);
     execute_scheduled_pipeline(
         shared,
         thread_id,

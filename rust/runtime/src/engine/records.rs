@@ -171,6 +171,17 @@ struct ClassifiedRecordError {
 /// spelling a one-worker run has always emitted.
 const UNATTRIBUTED_WORKER_ID: &str = "rust-0";
 
+/// Spell the executing-worker identity for `partition`.
+///
+/// The one spelling shared by both `workers > 1` label sites — the shard label
+/// in `execute::sharding` and the placement labels in `global_hop` — and by
+/// [`UNATTRIBUTED_WORKER_ID`], which is this function's `cell_id == 0` output.
+/// Kept here so the fallback constant and the live labels cannot drift apart;
+/// `unattributed_id_is_the_zero_partition_label` pins that they agree.
+pub(crate) fn worker_label(partition: crate::cellular::ModuloCellPartition) -> std::sync::Arc<str> {
+    std::sync::Arc::from(format!("rust-{}", partition.cell_id()))
+}
+
 /// The record's executing-worker identity for the per-record artifacts, falling
 /// back to [`UNATTRIBUTED_WORKER_ID`]. Shared by every per-record row builder so
 /// the JSONL, raw JSONL, CSV, and Parquet artifacts agree per record.
@@ -1180,6 +1191,15 @@ fn trace_value(record: &RecordIngest) -> Value {
 mod tests {
     use super::*;
     use crate::metrics_core::{Phase, TokenCounts};
+
+    /// The fallback constant is the zero-partition label, not an independent
+    /// string that happens to match today.
+    #[test]
+    fn unattributed_id_is_the_zero_partition_label() {
+        let partition = crate::cellular::ModuloCellPartition::new(0, 1)
+            .expect("cell 0 of 1 is a valid partition");
+        assert_eq!(&*worker_label(partition), UNATTRIBUTED_WORKER_ID);
+    }
 
     #[test]
     fn captured_output_prefers_structured_visible_and_reasoning_text() {

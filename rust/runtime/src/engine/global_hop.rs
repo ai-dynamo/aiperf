@@ -138,7 +138,7 @@ pub(crate) async fn run_single_coordinator(
                 thread_id,
                 workers as u32,
             )
-            .map(|partition| Arc::from(format!("rust-{}", partition.cell_id())))
+            .map(crate::engine::records::worker_label)
         })
         .collect::<Result<Vec<Arc<str>>>>()?
         .into();
