@@ -25,6 +25,8 @@ _MARKER_TOKEN_SAMPLES = 8
 _SUFFIX_SEP = "::"
 _UNSET = object()
 
+WARMUP_ISOLATION_MARKER = "[warmup]\n\n"
+
 
 def base_trace_id(conversation_id: str) -> str:
     """Strip any descendant suffix (``::sa:``/``::fa:``/``:sN``) to the root trace id.
@@ -102,6 +104,11 @@ def build_cache_bust_marker(
     """
     if target == CacheBustTarget.NONE:
         return None
+    if target in (
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+        CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+    ):
+        return WARMUP_ISOLATION_MARKER
 
     unique_str = f"{benchmark_id}:{recycle_pass}:{trajectory_index}:{trace_id}"
     digest = hashlib.sha256(unique_str.encode()).hexdigest()[:_DIGEST_LEN]
@@ -124,6 +131,11 @@ def estimate_marker_token_cost(
     the variance, so a handful of samples is enough.
     """
     if target == CacheBustTarget.NONE:
+        return 0
+    if target in (
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+        CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+    ):
         return 0
 
     total = 0
