@@ -94,7 +94,9 @@ class TimerFdPacer:
         Returns immediately if the deadline is already in the past (the kernel
         fires expired absolute timers right away).
         """
-        assert not self._active_waiter, "TimerFdPacer supports only one concurrent waiter"
+        assert not self._active_waiter, (
+            "TimerFdPacer supports only one concurrent waiter"
+        )
         self._active_waiter = True
         try:
             deadline_ns = int(deadline_perf_s * _NANOS_PER_SECOND)
@@ -199,7 +201,9 @@ class ThreadPacer:
 
         Returns immediately if the deadline is already in the past.
         """
-        assert not self._active_waiter, "ThreadPacer supports only one concurrent waiter"
+        assert not self._active_waiter, (
+            "ThreadPacer supports only one concurrent waiter"
+        )
         self._active_waiter = True
         try:
             with self._condition:
