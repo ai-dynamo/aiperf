@@ -146,7 +146,10 @@ def _apply_cache_bust_to_system_message(
     """
     if not marker or target == CacheBustTarget.NONE or system_message is None:
         return system_message
-    if target == CacheBustTarget.SYSTEM_PREFIX:
+    if target in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+    ):
         return marker + system_message
     if target == CacheBustTarget.SYSTEM_SUFFIX:
         return system_message + marker
@@ -432,10 +435,16 @@ def _apply_cache_bust(
     is_prefix = target in (
         CacheBustTarget.SYSTEM_PREFIX,
         CacheBustTarget.FIRST_TURN_PREFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+        CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
     )
     prefix_turns = _effective_prefix_turns(session)
 
-    if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
+    if target in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.SYSTEM_SUFFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+    ):
         return _apply_system_target_cache_bust(
             prefix_turns,
             all_turns=session.turn_list,
