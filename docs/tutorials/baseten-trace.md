@@ -31,7 +31,7 @@ Common optional columns:
 ## Replay Semantics
 
 - Requests are grouped by `provided_session_id` by default. For legacy traces that should use `poor_man_session_id`, set `AIPERF_DATASET_BASETEN_SESSION_COLUMN=poor_man_session_id`. If the selected column is absent, the loader uses the available session column. This explicit schema-based choice avoids scanning trace rows to infer a session column.
-- If neither column repeats (or the chosen column is null for a row), the loader generates a fresh per-row session ID.
+- The loader uses every non-null value from the selected column, including unique values. It generates a fresh per-row session ID only when neither supported column exists or the selected value is null.
 - All timestamps are normalized to `ms since first event in file`.
 - Rows inside each session are sorted by normalized timestamp before replay.
 - `prompt` is replayed as the literal completion prompt.

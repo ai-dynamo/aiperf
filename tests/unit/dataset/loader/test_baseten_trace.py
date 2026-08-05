@@ -501,6 +501,11 @@ class TestBasetenTraceDatasetLoader:
     def test_trace_session_sampling_uses_provided_session_id_fallback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
