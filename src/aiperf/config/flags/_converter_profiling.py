@@ -457,10 +457,10 @@ def _count_dataset_records(file_path: object) -> int:
                 return 0
         if path.suffix.lower() in {".arrow", ".ipc"} and path.is_file():
             from aiperf.dataset.loader.baseten_trace import (
-                count_baseten_parquet_records_and_sessions,
+                count_baseten_records,
             )
 
-            return count_baseten_parquet_records_and_sessions(str(path))[0]
+            return count_baseten_records(str(path))
         if path.is_file():
             with open(path, encoding="utf-8") as f:
                 return sum(1 for line in f if line.strip())

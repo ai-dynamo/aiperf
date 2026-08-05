@@ -14,7 +14,9 @@ import pyarrow.parquet as pq
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
+from aiperf.common.environment import Environment
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.dataset.loader import baseten_trace as baseten_trace_module
 from aiperf.dataset.loader.baseten_trace import (
     BasetenTrace,
     BasetenTraceDatasetLoader,
@@ -92,8 +94,13 @@ class TestBasetenTraceDatasetLoader:
         assert BasetenTraceDatasetLoader.can_load(filename=path) is True
 
     def test_load_dataset_normalizes_timestamps_and_groups_sessions(
-        self, tmp_path: Path
-    ):
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -492,8 +499,8 @@ class TestBasetenTraceDatasetLoader:
         assert first, "mid-ratio sampling should keep at least one session"
 
     def test_trace_session_sampling_uses_provided_session_id_fallback(
-        self, tmp_path: Path
-    ):
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -519,6 +526,19 @@ class TestBasetenTraceDatasetLoader:
             prompt_generator=_mock_prompt_generator(),
         )
 
+        parquet_file_class = pq.ParquetFile
+
+        class NoReadParquetFile:
+            def __init__(self, *args, **kwargs) -> None:
+                self._parquet_file = parquet_file_class(*args, **kwargs)
+
+            def __getattr__(self, name: str):
+                if name == "read":
+                    raise AssertionError("sampled metadata must use bounded batches")
+                return getattr(self._parquet_file, name)
+
+        monkeypatch.setattr(baseten_trace_module.pq, "ParquetFile", NoReadParquetFile)
+
         dataset = loader.load_dataset()
 
         assert list(dataset) == ["unique-1"]
@@ -526,9 +546,14 @@ class TestBasetenTraceDatasetLoader:
             trace.text_input for traces in dataset.values() for trace in traces
         ) == ["row-1"]
 
-    def test_trace_session_sampling_falls_back_to_poor_man_session_id(
-        self, tmp_path: Path
-    ):
+    def test_trace_session_sampling_uses_configured_poor_man_session_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -578,20 +603,21 @@ class TestBasetenTraceDatasetLoader:
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
 
-    def test_sampling_and_grouping_use_same_session_key(self, tmp_path: Path):
-        # Sampling filters rows by the session key scored on the FULL file;
-        # grouping must reuse that key. Re-scoring the filtered subset can flip
-        # to the other column, shredding the sessions sampling kept whole and
-        # grouping row-sampled null-key rows into multi-turn conversations with
-        # silently dropped middle turns.
-        #
+    def test_sampling_and_grouping_use_same_session_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
+
+        # Sampling and grouping must reuse the configured key; switching after
+        # filtering would shred sessions and regroup null-key rows.
         # Fixture shape is pinned to the sampling RNG (root seed 42 from the
         # autouse fixture): 7 poor_man sessions draw the first 7 uniforms (pairB
         # dropped, pairA kept, singletons eat the rest), then the 3 null-poor_man
-        # "s0" rows draw the next 3 (t0 kept, t1 dropped, t2 kept). Full-file
-        # scores: poor_man (4, 2) > provided (2·"s0"... 3 rows -> (3, 1)), so
-        # sampling keys on poor_man; the filtered subset scores (2, 1) vs (2, 1),
-        # which re-scoring would flip to provided_session_id.
+        # "s0" rows draw the next 3 (t0 kept, t1 dropped, t2 kept).
         def row(ts: int, prompt: str, poor: int | None, provided: str | None = None):
             return {
                 "timestamp_start_unix_ms": ts,
@@ -633,7 +659,25 @@ class TestBasetenTraceDatasetLoader:
             if any(prompt.startswith("s0-") for prompt in prompts):
                 assert len(prompts) == 1
 
-    def test_resolver_session_count_uses_same_key_as_loader(self, tmp_path: Path):
+    @pytest.mark.parametrize(
+        ("session_column", "expected_sessions"),
+        [
+            param("provided_session_id", 4, id="provided"),
+            param("poor_man_session_id", 2, id="poor-man"),
+        ],
+    )  # fmt: skip
+    def test_resolver_session_count_uses_same_key_as_loader(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        session_column: str,
+        expected_sessions: int,
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            session_column,
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -672,7 +716,10 @@ class TestBasetenTraceDatasetLoader:
             ],
         )
 
-        assert count_baseten_parquet_records_and_sessions(str(path)) == (4, 2)
+        assert count_baseten_parquet_records_and_sessions(str(path)) == (
+            4,
+            expected_sessions,
+        )
 
     def test_fixed_schedule_offsets_filter_relative_window_on_unix_timestamps(
         self, tmp_path: Path
@@ -879,9 +926,56 @@ class TestBasetenTraceDatasetLoader:
         assert turns["canceled row"].max_tokens == 1
         assert turns["normal row"].max_tokens == 7
 
+    @pytest.mark.parametrize(
+        ("run_kwargs", "expected_columns"),
+        [
+            param(
+                {},
+                {
+                    "block_size",
+                    "input_tokens",
+                    "output_tokens",
+                    "poor_man_session_id",
+                    "prompt",
+                    "timestamp_start_unix_ms",
+                    "total_hashes",
+                },
+                id="default",
+            ),
+            param(
+                {"omit_kv_hints": True},
+                {
+                    "input_tokens",
+                    "output_tokens",
+                    "poor_man_session_id",
+                    "prompt",
+                    "timestamp_start_unix_ms",
+                },
+                id="omit-kv-hints",
+            ),
+            param(
+                {"open_loop_replay": False},
+                {
+                    "block_size",
+                    "duration_e2e_ms",
+                    "input_tokens",
+                    "output_tokens",
+                    "poor_man_session_id",
+                    "prompt",
+                    "timestamp_start_unix_ms",
+                    "total_hashes",
+                },
+                id="closed-loop",
+            ),
+        ],
+    )  # fmt: skip
     def test_load_dataset_validates_sample_and_skips_unused_columns(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_kwargs: dict[str, bool],
+        expected_columns: set[str],
+    ) -> None:
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -894,22 +988,33 @@ class TestBasetenTraceDatasetLoader:
                     "model_name": "unused model",
                     "request_canceled": 1,
                     "__version__": "unused version",
+                    "poor_man_session_id": 1,
+                    "total_hashes": [1, 2],
+                    "block_size": 64,
+                    "duration_e2e_ms": 10,
                 }
                 for index in range(12)
             ],
         )
         original_validate = BasetenTrace.model_validate
+        original_iter_batches = pq.ParquetFile.iter_batches
         validation_calls = 0
+        requested_columns: list[set[str]] = []
 
         def count_validation_calls(row: dict) -> BasetenTrace:
             nonlocal validation_calls
             validation_calls += 1
             return original_validate(row)
 
+        def capture_columns(parquet_file, *args, **kwargs):
+            requested_columns.append(set(kwargs["columns"]))
+            return original_iter_batches(parquet_file, *args, **kwargs)
+
         monkeypatch.setattr(BasetenTrace, "model_validate", count_validation_calls)
+        monkeypatch.setattr(pq.ParquetFile, "iter_batches", capture_columns)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=_make_run(),
+            run=_make_run(path, **run_kwargs),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -918,6 +1023,7 @@ class TestBasetenTraceDatasetLoader:
 
         assert validation_calls == 10
         assert len(traces) == 12
+        assert requested_columns == [expected_columns]
         assert all(not hasattr(trace, "output_text") for trace in traces)
         assert all(not hasattr(trace, "model_name") for trace in traces)
         assert all(not hasattr(trace, "request_canceled") for trace in traces)

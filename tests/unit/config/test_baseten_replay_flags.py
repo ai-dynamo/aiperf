@@ -83,8 +83,9 @@ def trace_parquet(tmp_path: Path) -> Path:
     return path
 
 
-def test_arrow_ipc_profiling_metadata(tmp_path: Path) -> None:
-    path = tmp_path / "trace.arrow"
+@pytest.mark.parametrize("suffix", [".arrow", ".ipc"])
+def test_arrow_ipc_profiling_metadata(tmp_path: Path, suffix: str) -> None:
+    path = tmp_path / f"trace{suffix}"
     table = pa.Table.from_pylist(
         [
             {

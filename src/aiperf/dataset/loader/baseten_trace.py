@@ -30,6 +30,7 @@ from pydantic import Field, field_validator
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode
+from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel, Conversation
 from aiperf.dataset.loader._baseten_replay_timemodel import reflow_idle_gaps
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
@@ -129,10 +130,16 @@ class BasetenTrace(AIPerfBaseModel):
 
 def _baseten_session_key_from_schema(schema_names: set[str]) -> str | None:
     """Choose the canonical session column without scanning trace rows."""
-    if METADATA_COLUMNS_POOR_MAN_SESSION in schema_names:
-        return METADATA_COLUMNS_POOR_MAN_SESSION
-    if METADATA_COLUMNS_SESSION in schema_names:
-        return METADATA_COLUMNS_SESSION
+    configured = Environment.DATASET.BASETEN_SESSION_COLUMN
+    if configured in schema_names:
+        return configured
+    fallback = (
+        METADATA_COLUMNS_POOR_MAN_SESSION
+        if configured == METADATA_COLUMNS_SESSION
+        else METADATA_COLUMNS_SESSION
+    )
+    if fallback in schema_names:
+        return fallback
     return None
 
 
@@ -167,6 +174,22 @@ def _open_arrow_ipc(file_path: str | Path) -> Iterator[Any]:
         source.close()
 
 
+def count_baseten_records(file_path: str) -> int:
+    """Return the row count for a Baseten Parquet or Arrow trace."""
+    if pq is None:  # pragma: no cover - platform-dependent
+        return 0
+    try:
+        if not _is_arrow_ipc(file_path):
+            return pq.ParquetFile(file_path).metadata.num_rows
+        with _open_arrow_ipc(file_path) as reader:
+            return sum(
+                reader.get_batch(index).num_rows
+                for index in range(reader.num_record_batches)
+            )
+    except (OSError, pa.ArrowException):
+        return 0
+
+
 def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int]:
     """Return row and session counts for a Baseten Parquet or Arrow trace."""
     if pq is None:  # pragma: no cover - platform-dependent
@@ -174,9 +197,26 @@ def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int
     try:
         if _is_arrow_ipc(file_path):
             with _open_arrow_ipc(file_path) as reader:
-                table = reader.read_all()
-                row_count = table.num_rows
                 schema_names = set(reader.schema.names)
+                session_key = _baseten_session_key_from_schema(schema_names)
+                row_count = 0
+                session_ids: set[str | int] = set()
+                null_count = 0
+                for index in range(reader.num_record_batches):
+                    batch = reader.get_batch(index)
+                    row_count += batch.num_rows
+                    if session_key is None:
+                        continue
+                    session_column = batch.column(
+                        batch.schema.get_field_index(session_key)
+                    )
+                    null_count += session_column.null_count
+                    session_ids.update(
+                        value
+                        for value in pc.unique(session_column).to_pylist()
+                        if value is not None
+                    )
+                session_count = len(session_ids) + null_count
         else:
             parquet_file = pq.ParquetFile(file_path)
             row_count = parquet_file.metadata.num_rows
@@ -184,17 +224,26 @@ def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int
             session_key = _baseten_session_key_from_schema(schema_names)
             if session_key is None:
                 return row_count, row_count
-            table = parquet_file.read(columns=[session_key])
+            session_ids = set()
+            null_count = 0
+            for batch in parquet_file.iter_batches(
+                columns=[session_key],
+                batch_size=_PARQUET_BATCH_SIZE,
+                use_threads=True,
+            ):
+                session_column = batch.column(0)
+                null_count += session_column.null_count
+                session_ids.update(
+                    value
+                    for value in pc.unique(session_column).to_pylist()
+                    if value is not None
+                )
+            session_count = len(session_ids) + null_count
     except (OSError, pa.ArrowException):
         return 0, 0
 
-    session_key = _baseten_session_key_from_schema(schema_names)
     if session_key is None:
         return row_count, row_count
-    session_column = table[session_key]
-    session_count = (
-        pc.count_distinct(session_column).as_py() + session_column.null_count
-    )
     return row_count, session_count or row_count
 
 
@@ -427,24 +476,21 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             use_threads=True,
         )
 
-    def _read_metadata_table(self, session_key: str | None) -> pa.Table:
-        columns = [METADATA_COLUMNS_TIME]
-        if session_key is not None:
-            columns.append(session_key)
-        if _is_arrow_ipc(self.filename):
-            with _open_arrow_ipc(self.filename) as reader:
-                return reader.read_all().select(columns).combine_chunks()
-        return pq.ParquetFile(self.filename).read(columns=columns)
-
     def _minimum_timestamp(self) -> int | None:
         if not _is_arrow_ipc(self.filename):
             minimum = _parquet_min_timestamp(pq.ParquetFile(self.filename))
             if minimum is not None:
                 return minimum
-        metadata = self._read_metadata_table(None)
-        if metadata.num_rows == 0:
-            return None
-        return pc.min(metadata[METADATA_COLUMNS_TIME]).as_py()
+        minimum = None
+        for batch in self._iter_source_batches([METADATA_COLUMNS_TIME]):
+            batch_minimum = pc.min(batch.column(0)).as_py()
+            if batch_minimum is not None:
+                minimum = (
+                    int(batch_minimum)
+                    if minimum is None
+                    else min(minimum, int(batch_minimum))
+                )
+        return minimum
 
     def _sample_session_ids(
         self,
@@ -454,30 +500,34 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if self._session_sample_ratio is None or self._session_sample_ratio >= 1.0:
             return self._minimum_timestamp(), session_key, None, None
 
-        metadata_table = self._read_metadata_table(session_key)
-        if metadata_table.num_rows == 0:
-            return None, session_key, None, None
-
-        metadata_rows = metadata_table.to_pylist()
         min_timestamp: int | None = None
         session_first_ts: dict[str | int, int] = {}
         null_row_count = 0
 
-        for row in metadata_rows:
-            timestamp = int(row[METADATA_COLUMNS_TIME])
-            min_timestamp = (
-                timestamp if min_timestamp is None else min(min_timestamp, timestamp)
-            )
+        columns = [METADATA_COLUMNS_TIME]
+        if session_key is not None:
+            columns.append(session_key)
+        for batch in self._iter_source_batches(columns):
+            for row in batch.to_pylist():
+                timestamp = int(row[METADATA_COLUMNS_TIME])
+                min_timestamp = (
+                    timestamp
+                    if min_timestamp is None
+                    else min(min_timestamp, timestamp)
+                )
 
-            if session_key is None:
-                continue
-            session_id = row.get(session_key)
-            if session_id is None:
-                null_row_count += 1
-                continue
-            session_first_ts[session_id] = min(
-                timestamp, session_first_ts.get(session_id, timestamp)
-            )
+                if session_key is None:
+                    continue
+                session_id = row.get(session_key)
+                if session_id is None:
+                    null_row_count += 1
+                    continue
+                session_first_ts[session_id] = min(
+                    timestamp, session_first_ts.get(session_id, timestamp)
+                )
+
+        if min_timestamp is None:
+            return None, session_key, None, None
 
         if session_key is None:
             self.warning(

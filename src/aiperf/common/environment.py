@@ -302,6 +302,14 @@ class _DatasetSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
+    BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
+        Field(
+            default="provided_session_id",
+            description="Session column used by the Baseten trace loader when both "
+            "supported columns exist. Set to poor_man_session_id for legacy traces. "
+            "If the selected column is absent, the loader uses the available column.",
+        )
+    )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
         description="Base path for memory-mapped dataset files. If None, uses system temp directory. "
