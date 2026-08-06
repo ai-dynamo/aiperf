@@ -569,7 +569,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     def validate_agentic_cache_warmup(self) -> Self:
         """Restrict accelerated cache warmup to the agentic_replay timing mode.
 
-        ``--agentic-cache-warmup-duration`` is consumed solely by
+        The mutually exclusive duration and deterministic request-budget modes
+        are consumed solely by
         ``aiperf.timing.config._build_agentic_warmup_config``, which only runs
         when the profiling phases resolve to AGENTIC_REPLAY. On any other run
         the value is silently dropped, so an unguarded flag is a no-op the user
@@ -590,11 +591,26 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         from aiperf.timing.config import _is_agentic_replay
 
         profiling_phases = self.get_profiling_phases()
-        if not any(
+        has_duration = any(
             getattr(phase, "agentic_cache_warmup_duration", None) is not None
             for phase in profiling_phases
-        ):
+        )
+        has_request_budget = any(
+            getattr(phase, "warmup_requests_per_lane", None) is not None
+            for phase in profiling_phases
+        )
+        if not has_duration and not has_request_budget:
             return self
+
+        if any(
+            getattr(phase, "warmup_requests_per_lane", None) is not None
+            and getattr(phase, "agentic_cache_warmup_duration", None) is not None
+            for phase in profiling_phases
+        ):
+            raise ValueError(
+                "--warmup-requests-per-lane and "
+                "--agentic-cache-warmup-duration are mutually exclusive."
+            )
 
         if self.scenario is not None:
             from aiperf.common.scenario.registry import get_scenario
@@ -602,7 +618,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             scenario_timing_mode = get_scenario(self.scenario).timing_mode
             if scenario_timing_mode != TimingMode.AGENTIC_REPLAY:
                 raise ValueError(
-                    "--agentic-cache-warmup-duration requires the agentic_replay "
+                    "agentic cache warmup requires the agentic_replay "
                     f"timing mode; scenario {self.scenario!r} locks "
                     f"timing_mode={scenario_timing_mode}."
                 )
@@ -610,7 +626,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
         if not _is_agentic_replay(profiling_phases):
             raise ValueError(
-                "--agentic-cache-warmup-duration requires the agentic_replay "
+                "agentic cache warmup requires the agentic_replay "
                 "timing mode (set today by --scenario inferencex-agentx-mvp); "
                 "the profiling phase(s) are not agentic_replay."
             )

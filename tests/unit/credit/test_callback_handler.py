@@ -792,6 +792,42 @@ async def test_cache_warmup_handoff_allows_paused_dag_work(
     mock_branch_orchestrator.has_pending_branch_work.assert_called_once_with()
 
 
+@pytest.mark.asyncio
+async def test_cache_warmup_handoff_preserves_non_final_child(
+    callback_handler,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+):
+    """A quota-stopped warmup child remains live for profiling handoff."""
+    mock_stop_checker.can_send_child_turn = MagicMock(return_value=False)
+    mock_strategy.wants_returns_after_sending_complete = True
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=False)
+    mock_branch_orchestrator.on_child_stopped = AsyncMock()
+    callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+    callback_handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+
+    credit = make_credit(
+        phase=CreditPhase.WARMUP,
+        turn_index=1,
+        num_turns=7,
+        agent_depth=1,
+    )
+    await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+    mock_strategy.handle_credit_return.assert_awaited_once_with(credit, error=None)
+    mock_branch_orchestrator.on_child_stopped.assert_not_awaited()
+
+
 # =============================================================================
 # Test: Credit Return - Unregistered/Complete Phase
 # =============================================================================

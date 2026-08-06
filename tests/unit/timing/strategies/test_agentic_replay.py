@@ -77,6 +77,7 @@ def _make_strategy(
     run: object | None = None,
     dataset: DatasetMetadata | None = None,
     cache_warmup_duration: float | None = None,
+    cache_warmup_requests_per_lane: int | None = None,
     progress: MagicMock | None = None,
 ) -> tuple[
     AgenticReplayStrategy, AsyncMock, LoopScheduler | MagicMock, TrajectorySource
@@ -88,6 +89,7 @@ def _make_strategy(
     cfg.phase = phase
     cfg.concurrency = len(trajectories)
     cfg.agentic_cache_warmup_duration_sec = cache_warmup_duration
+    cfg.warmup_requests_per_lane = cache_warmup_requests_per_lane
     issuer = issuer if issuer is not None else AsyncMock()
     issuer.replay_gate = MagicMock()
     issuer.replay_gate.completed_prefixes.return_value = ()
@@ -283,6 +285,220 @@ async def test_cache_warmup_starts_after_baseline_and_removes_idle_delay():
     issuer.set_max_tokens_override.assert_called_once_with(1)
     scheduler.schedule_later.assert_called_once()
     assert scheduler.schedule_later.call_args.args[0] == 600.0
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_request_budget_is_enforced_per_lane():
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(2)
+    ]
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_requests_per_lane=2,
+    )
+    issuer.set_turn_admission = MagicMock()
+
+    await strategy.setup_phase()
+
+    admission = issuer.set_turn_admission.call_args.args[0]
+    lane_0 = TurnToSend(
+        conversation_id="trace_0",
+        x_correlation_id=trajectories[0].x_correlation_id,
+        turn_index=0,
+        num_turns=4,
+    )
+    lane_1 = TurnToSend(
+        conversation_id="trace_1",
+        x_correlation_id=trajectories[1].x_correlation_id,
+        turn_index=0,
+        num_turns=4,
+    )
+    strategy._correlation_to_lane[lane_0.x_correlation_id] = 0
+    strategy._correlation_to_lane[lane_1.x_correlation_id] = 1
+    strategy._baseline_warmup_admitted = (
+        strategy.conversation_source.warmup_credit_count
+    )
+
+    assert admission(lane_0) is True
+    assert admission(lane_0) is True
+    assert admission(lane_0) is False
+    assert admission(lane_1) is True
+    assert admission(lane_1) is True
+    assert admission(lane_1) is False
+    issuer.replay_gate.pause_releases.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_quota_is_additional_to_mandatory_lane_primers():
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="lane-0-root",
+                        next_turn_index=1,
+                    ),
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="lane-0-child",
+                        next_turn_index=1,
+                        agent_depth=1,
+                        root_correlation_id="lane-0-root",
+                    ),
+                ),
+            ),
+        ),
+        Trajectory(conversation_id="trace_1", start_turn_index=0),
+    ]
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_requests_per_lane=1,
+    )
+    issuer.set_turn_admission = MagicMock()
+
+    await strategy.setup_phase()
+
+    admission = issuer.set_turn_admission.call_args.args[0]
+    lane_0_first = TurnToSend(
+        conversation_id="trace_0",
+        x_correlation_id="lane-0-root",
+        turn_index=0,
+        num_turns=4,
+    )
+    lane_0_second = TurnToSend(
+        conversation_id="trace_0",
+        x_correlation_id="lane-0-child",
+        root_correlation_id="lane-0-root",
+        turn_index=0,
+        num_turns=4,
+        agent_depth=1,
+    )
+    lane_1 = TurnToSend(
+        conversation_id="trace_1",
+        x_correlation_id=trajectories[1].x_correlation_id,
+        turn_index=0,
+        num_turns=4,
+    )
+    strategy._correlation_to_lane[lane_0_first.x_correlation_id] = 0
+    strategy._correlation_to_lane[lane_0_second.x_correlation_id] = 0
+    strategy._correlation_to_lane[lane_1.x_correlation_id] = 1
+    strategy._root_to_lane[lane_0_first.effective_root_correlation_id] = 0
+    strategy._root_to_lane[lane_1.effective_root_correlation_id] = 1
+    strategy._baseline_correlations.update(
+        {
+            lane_0_first.x_correlation_id,
+            lane_0_second.x_correlation_id,
+            lane_1.x_correlation_id,
+        }
+    )
+    strategy._baseline_warmup_turns.update(
+        {
+            (lane_0_first.x_correlation_id, lane_0_first.turn_index),
+            (lane_0_second.x_correlation_id, lane_0_second.turn_index),
+            (lane_1.x_correlation_id, lane_1.turn_index),
+        }
+    )
+
+    assert admission(lane_0_first) is True
+    assert admission(lane_0_second) is True
+    issuer.replay_gate.pause_releases.assert_not_called()
+    assert admission(lane_1) is True
+    issuer.replay_gate.pause_releases.assert_not_called()
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_0",
+                x_correlation_id=lane_0_first.x_correlation_id,
+                turn_index=1,
+                num_turns=4,
+            )
+        )
+        is True
+    )
+    issuer.replay_gate.pause_releases.assert_not_called()
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_1",
+                x_correlation_id=lane_1.x_correlation_id,
+                turn_index=1,
+                num_turns=4,
+            )
+        )
+        is True
+    )
+    issuer.replay_gate.pause_releases.assert_called_once_with()
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_0",
+                x_correlation_id=lane_0_first.x_correlation_id,
+                turn_index=2,
+                num_turns=4,
+            )
+        )
+        is False
+    )
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_0",
+                x_correlation_id=lane_0_second.x_correlation_id,
+                root_correlation_id="lane-0-root",
+                turn_index=1,
+                num_turns=4,
+                agent_depth=1,
+            )
+        )
+        is False
+    )
+    assert (
+        admission(
+            TurnToSend(
+                conversation_id="trace_1",
+                x_correlation_id=lane_1.x_correlation_id,
+                turn_index=1,
+                num_turns=4,
+            )
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_count_cache_warmup_starts_without_duration_timer():
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, scheduler, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_requests_per_lane=3,
+    )
+    issuer.set_turn_admission = MagicMock()
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+
+    pressure = issuer.issue_credit.await_args_list[1].args[0]
+    assert pressure.turn_index == 2
+    assert pressure.max_tokens_override == 1
+    issuer.set_max_tokens_override.assert_called_once_with(1)
+    scheduler.schedule_later.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -748,8 +964,10 @@ async def test_warmup_lead_clamped_to_idle_gap_cap():
         credit_issuer=issuer,
         lifecycle=lifecycle,
     )
-    # Idle-gap cap of 60s (what the agentx scenario sets).
-    strategy._phase_offset_cap_ms = 60_000.0
+    # The AgentX scenario sets the global system-idle cap, not the per-trace
+    # timestamp-warp cap. Warmup priming must honor that real configuration.
+    strategy._phase_offset_cap_ms = None
+    strategy._system_idle_gap_cap_seconds = 60.0
 
     await strategy.setup_phase()
     await strategy.execute_phase()

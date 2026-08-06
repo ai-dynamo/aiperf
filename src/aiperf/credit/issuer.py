@@ -15,6 +15,7 @@ Key responsibilities:
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -125,7 +126,17 @@ class CreditIssuer:
         )
         self._issuing_stopped = False
         self._max_tokens_override: int | None = None
+        self._turn_admission: Callable[[TurnToSend], bool] | None = None
         self.replay_gate = ReplayIssueGate(replay_barrier)
+
+    def set_turn_admission(self, callback: Callable[[TurnToSend], bool]) -> None:
+        """Install a synchronous final admission check for every turn."""
+        self._turn_admission = callback
+
+    def _is_turn_admitted(self, turn: TurnToSend) -> bool:
+        """Run the optional final admission check."""
+        callback = getattr(self, "_turn_admission", None)
+        return callback is None or callback(turn)
 
     def set_max_tokens_override(self, max_tokens: int | None) -> None:
         """Override generation length for every subsequently issued credit."""
@@ -342,6 +353,12 @@ class CreditIssuer:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return False
 
+        if not self._is_turn_admitted(turn):
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if needs_session_slot:
+                self._concurrency_manager.release_session_slot(self._phase_key)
+            return False
+
         # Both slots held: register the tree before issuing so drain/teardown
         # own the slot release. Must not run before prefill succeeds.
         if needs_session_slot:
@@ -399,6 +416,12 @@ class CreditIssuer:
             if needs_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return None  # No slot - credit not issued
+
+        if not self._is_turn_admitted(turn):
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if needs_session_slot:
+                self._concurrency_manager.release_session_slot(self._phase_key)
+            return False
 
         if needs_session_slot:
             self._open_session_tree(turn)
@@ -520,6 +543,9 @@ class CreditIssuer:
         if not await self._concurrency_manager.acquire_prefill_slot(
             self._phase_key, can_proceed_fn
         ):
+            return False
+        if not self._is_turn_admitted(turn):
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
             return False
         if turn.counts_toward_phase_target:
             turn = _struct_replace(turn, counts_toward_phase_target=False)
