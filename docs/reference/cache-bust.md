@@ -9,6 +9,27 @@ request payloads to defeat the server's KV-cache prefix matching. This is essent
 per-trajectory isolation or want precise control over how much warmup KV-cache work carries over
 into the profiling phase.
 
+## Configuration
+
+**CLI:**
+```bash
+aiperf profile --cache-bust warmup_isolation_first_turn ...
+```
+
+**YAML (`cache_bust.target` inside a dataset's `prompts` block):**
+```yaml
+datasets:
+  - name: main
+    type: synthetic
+    prompts:
+      isl: 512
+      osl: 128
+      cache_bust:
+        target: warmup_isolation_first_turn
+    prefix_prompts:
+      shared_system_length: 512
+```
+
 ## Behavior Table
 
 | Target | Marker | Per-trajectory unique | Injection point | Warmup→Profiling KV cache | Cross-trajectory isolation |
@@ -306,6 +327,12 @@ contamination would skew latency numbers.
 Choose the `system_*` variants when the system prompt itself must be unique per trajectory.
 Choose the `first_turn_*` variants when you want the system prompt pre-cached across all
 trajectories (cheaper amortized cost) but each trajectory's user path isolated from others.
+
+> **Note:** RID targets do not isolate warmup from profiling — the same digest appears in both
+> phases, so warmup primes the profiling cache for each trajectory. There is no single target that
+> provides both per-trajectory isolation and a cold profiling start; if you need a fully cold
+> profiling phase, use `warmup_isolation_system` or `warmup_isolation_first_turn` instead (which
+> offer no per-trajectory isolation).
 
 ### `warmup_isolation_system`
 
