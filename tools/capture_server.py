@@ -119,6 +119,17 @@ class CaptureHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        if not isinstance(payload, dict):
+            self.send_response(400)
+            self.end_headers()
+            return
+
+        messages = payload.get("messages", [])
+        if not isinstance(messages, list):
+            self.send_response(400)
+            self.end_headers()
+            return
+
         stream = payload.get("stream", False)
 
         if _out_file is not None:
@@ -130,7 +141,6 @@ class CaptureHandler(BaseHTTPRequestHandler):
         if _count % 1000 == 0:
             print(f"  captured {_count} requests", file=sys.stderr)
 
-        messages = payload.get("messages", [])
         content = " ".join(
             m.get("content", "") for m in messages if isinstance(m.get("content"), str)
         )
