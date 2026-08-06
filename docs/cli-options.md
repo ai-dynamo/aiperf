@@ -1482,7 +1482,7 @@ Random seed for reproducible search trajectories. When unset, the planner uses n
 
 #### `--search-sla-warmup-seconds` `<float>`
 
-Per-probe warmup duration for SLA search planners. Set to 0 to disable planner-injected warmup. When omitted, the planner uses its automatic default. Ignored by planners that do not support SLA warmup.
+Per-probe warmup base duration for SLA search planners. First probes use max(value, 60s); repeat probes use max(value, 15s). When omitted, the planner defaults to 30s (yielding 60s first-probe / 30s repeat-probe floors). Set to 0 to disable planner-injected warmup. Ignored by planners that do not support SLA warmup.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--search-planner` `<str>`
@@ -3017,7 +3017,7 @@ Random seed for reproducible search trajectories. When unset, the planner uses n
 
 #### `--search-sla-warmup-seconds` `<float>`
 
-Per-probe warmup duration for SLA search planners. Set to 0 to disable planner-injected warmup. When omitted, the planner uses its automatic default. Ignored by planners that do not support SLA warmup.
+Per-probe warmup base duration for SLA search planners. First probes use max(value, 60s); repeat probes use max(value, 15s). When omitted, the planner defaults to 30s (yielding 60s first-probe / 30s repeat-probe floors). Set to 0 to disable planner-injected warmup. Ignored by planners that do not support SLA warmup.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--search-planner` `<str>`
