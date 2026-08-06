@@ -109,6 +109,7 @@ def resolve_config(
     yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
     yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
+    _apply_dataset_synthesis_overrides(merged, cli_config)
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
     promote_benchmark_magic_lists(
@@ -398,6 +399,41 @@ def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> N
         raise ValueError("--dataset-filter requires a public dataset")
     filters = dataset.setdefault("filters", {})
     filters.update(_parse_dataset_filters(cli.dataset_filters))
+
+
+def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    """Overlay explicit synthesis flags onto a YAML-supplied dataset."""
+    if not any(
+        field == "allow_dataset_wrap" or field.startswith("synthesis_")
+        for field in cli.model_fields_set
+    ):
+        return
+
+    from aiperf.config.dataset.trace import SynthesisConfig
+    from aiperf.config.flags._converter_dataset import _apply_synthesis
+
+    benchmark = merged.get("benchmark")
+    datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
+    if not isinstance(datasets, list) or not datasets:
+        raise ValueError("synthesis flags require a file or public dataset")
+    if len(datasets) > 1:
+        logger.warning(
+            "Synthesis flags with multiple YAML datasets apply only to the first dataset"
+        )
+    dataset = datasets[0]
+    if not isinstance(dataset, dict):
+        raise ValueError("synthesis flags require a file or public dataset")
+
+    override = {"type": dataset.get("type")}
+    _apply_synthesis(override, cli)
+    if synthesis := override.get("synthesis"):
+        base = SynthesisConfig.model_validate(
+            dataset.get("synthesis") or {}
+        ).model_dump(by_alias=True, exclude_unset=True)
+        update = SynthesisConfig.model_validate(synthesis).model_dump(
+            by_alias=True, exclude_unset=True
+        )
+        dataset["synthesis"] = deep_merge(base, update)
 
 
 # CLI loadgen flag -> phase field. Each entry is (loadgen_attr, phase_key).

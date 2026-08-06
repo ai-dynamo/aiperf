@@ -13,6 +13,7 @@ from pytest import param
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
+from aiperf.config.flags.resolver import resolve_config
 from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
 
 _WEKA_HF = PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
@@ -195,6 +196,40 @@ class TestSynthesisCapRouting:
         assert ds.synthesis is not None
         assert ds.synthesis.max_isl == 4096
         assert ds.synthesis.max_osl == 512
+
+    def test_cli_overrides_yaml_synthesis(
+        self, tmp_path: Path, trace_jsonl: Path
+    ) -> None:
+        config_file = tmp_path / "base.yaml"
+        config_file.write_text(
+            f"""
+schemaVersion: "2.0"
+benchmark:
+  model: target-model
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: file
+    path: {trace_jsonl}
+    format: mooncake_trace
+    synthesis:
+      speedupRatio: 2.0
+      maxOsl: 16000
+  profiling:
+    type: concurrency
+    requests: 1
+    concurrency: 1
+"""
+        )
+
+        dataset = resolve_config(
+            CLIConfig(config_file=config_file, synthesis_max_osl=12000)
+        ).benchmark.get_default_dataset()
+
+        assert dataset.synthesis is not None
+        assert dataset.synthesis.max_osl == 12000
+        assert dataset.synthesis.speedup_ratio == 2.0
 
 
 class TestOslFallbackRouting:
