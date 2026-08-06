@@ -360,7 +360,22 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             "continues the live trajectories without recorded idle delays and with "
             "one-token outputs for this long, then drains and resumes profiling "
             "from the resulting trajectory state. Read off the profiling phase by "
-            "``timing.config._build_agentic_warmup_config``. None disables it.",
+            "``timing.config._build_agentic_warmup_config``. Mutually exclusive "
+            "with warmup_requests_per_lane. None disables it.",
+        ),
+    ]
+
+    warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            default=None,
+            gt=0,
+            description="AGENTIC_REPLAY only: deterministic cache-pressure "
+            "warmup request budget per concurrency lane, additional to "
+            "mandatory snapshot primers. The total warmup request target is "
+            "the primer count plus this value multiplied by the number of live "
+            "trajectory lanes. Mutually exclusive with "
+            "agentic_cache_warmup_duration.",
         ),
     ]
 

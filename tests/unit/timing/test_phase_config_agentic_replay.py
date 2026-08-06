@@ -148,6 +148,28 @@ def test_cache_warmup_uses_strategy_controlled_stop() -> None:
     assert warmup.grace_period_sec == 300.0
 
 
+def test_cache_warmup_request_budget_scales_with_concurrency() -> None:
+    """The deterministic budget becomes an exact global backstop while the strategy enforces the same quota independently on each lane."""
+    phase = _PHASE_ADAPTER.validate_python(
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "concurrency": 16,
+            "duration": 900,
+            "timing_mode": TimingMode.AGENTIC_REPLAY,
+            "warmup_requests_per_lane": 10,
+        }
+    )
+
+    warmup = _build_agentic_warmup_config(phase)
+
+    assert warmup is not None
+    assert warmup.total_expected_requests == 160
+    assert warmup.agentic_cache_warmup_duration_sec is None
+    assert warmup.warmup_requests_per_lane == 10
+    assert warmup.grace_period_sec == float("inf")
+
+
 def test_cache_warmup_grace_uses_short_duration_without_benchmark_grace() -> None:
     phase = _PHASE_ADAPTER.validate_python(
         {

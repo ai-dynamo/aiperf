@@ -420,6 +420,17 @@ duration expires, it stops issuing new requests, drains requests already on
 the wire, snapshots each live root, subagent, and unresolved join, and starts
 profiling from that exact state.
 
+For repeatable warmup depth, use
+`--warmup-requests-per-lane REQUESTS` instead. After the mandatory snapshot
+primers complete, each concurrency lane sends exactly that many additional
+warmup wire requests. For example, `--concurrency 16` with
+`--warmup-requests-per-lane 10` adds 160 cache-pressure requests after the
+primers, with a strict 10-additional-request quota on every lane.
+
+`--agentic-cache-warmup-duration` and `--warmup-requests-per-lane` are mutually
+exclusive: choose a time-bounded warmup or a deterministic request-bounded
+warmup.
+
 These requests remain part of warmup, so they are excluded from exported
 request metrics.
 

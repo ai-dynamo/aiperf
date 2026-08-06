@@ -414,6 +414,45 @@ def _sibling_children_overlap(plays: list[_Play]) -> bool:
     return False
 
 
+def _assert_complete_play_order_and_joins(plays: list[_Play]) -> None:
+    """Assert source turn order and every known synthetic SPAWN_JOIN frontier."""
+    join_specs = {
+        "trace_alpha": {1: ("fa:001",), 2: ("fa:000",)},
+        "trace_beta": {1: ("fa:000", "fa:001")},
+        "trace_gamma": {1: ("fa:000",)},
+    }
+    checked_trace_ids: set[str] = set()
+    for play in plays:
+        if play.trace_id not in FANOUT_EXPECTED or not _is_complete_play(
+            play, FANOUT_EXPECTED
+        ):
+            continue
+        for records in (play.root, *play.children.values()):
+            assert [m.turn_index for m in records] == list(range(len(records)))
+            for previous, current in zip(records, records[1:], strict=False):
+                assert current.request_start_ns >= previous.request_end_ns, (
+                    f"{play.trace_id}: turn {current.turn_index} started before "
+                    f"turn {previous.turn_index} completed in "
+                    f"{current.conversation_id}"
+                )
+        children_by_suffix = {
+            _child_suffix(cid): records for cid, records in play.children.items()
+        }
+        for root_turn_index, child_suffixes in join_specs[play.trace_id].items():
+            gated = play.root[root_turn_index]
+            for suffix in child_suffixes:
+                child_last = children_by_suffix[suffix][-1]
+                assert gated.request_start_ns >= child_last.request_end_ns, (
+                    f"{play.trace_id}: root turn {root_turn_index} crossed "
+                    f"SPAWN_JOIN before child {suffix} completed"
+                )
+        checked_trace_ids.add(play.trace_id)
+    assert checked_trace_ids == set(FANOUT_EXPECTED), (
+        "expected a fully ordered, join-valid play for every synthetic trace; "
+        f"checked {sorted(checked_trace_ids)}"
+    )
+
+
 async def test_fanout_dir_splits_and_replays_recorded_concurrency(
     tmp_path: Path, mock_server_factory: MockServerFactory
 ) -> None:
@@ -476,6 +515,44 @@ async def test_fanout_dir_splits_and_replays_recorded_concurrency(
     assert branch_stats.children_spawned >= 5, branch_stats
     assert branch_stats.children_completed >= 5, branch_stats
     assert branch_stats.children_errored == 0, branch_stats
+
+
+@pytest.mark.parametrize("warmup_requests_per_lane", [1, 10, 100])
+async def test_cache_warmup_handoff_preserves_order_and_spawn_joins(
+    tmp_path: Path,
+    mock_server_factory: MockServerFactory,
+    warmup_requests_per_lane: int,
+) -> None:
+    """Warmup quotas of different sizes hand profiling a complete DAG, never an independently resumed parent."""
+    corpus = _write_fanout_corpus(tmp_path / "traces")
+    async with mock_server_factory(fast=True, workers=4) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=3.0,
+            concurrency=3,
+            extra_args=[
+                "--scenario",
+                "inferencex-agentx-mvp",
+                "--unsafe-override",
+                "--ignore-trace-delays",
+                "--warmup-requests-per-lane",
+                str(warmup_requests_per_lane),
+            ],
+            timeout=240.0,
+        )
+    _assert_success(
+        result, f"cache warmup handoff ({warmup_requests_per_lane} per lane)"
+    )
+
+    plays = _collect_plays(result)
+    _assert_complete_play_order_and_joins(plays)
+    branch_stats = result.json.branch_stats
+    assert branch_stats is not None
+    assert branch_stats.children_errored == 0, branch_stats
+    assert branch_stats.parents_suspended >= 1, branch_stats
+    assert branch_stats.parents_resumed >= 1, branch_stats
 
 
 async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
