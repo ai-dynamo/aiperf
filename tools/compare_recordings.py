@@ -43,11 +43,14 @@ def load_jsonl(path: Path) -> list[dict]:
 
 
 def load_summary(path: Path) -> dict | None:
-    candidate = path.with_suffix("").with_suffix(".summary.json")
-    if not candidate.exists():
-        candidate = Path(str(path) + ".summary.json")
-    if candidate.exists():
-        return json.loads(candidate.read_text())
+    # Prefer the exact companion the mock server writes (<path>.summary.json),
+    # then fall back to the stem-replacement form for legacy files.
+    for candidate in (
+        Path(str(path) + ".summary.json"),
+        path.with_suffix("").with_suffix(".summary.json"),
+    ):
+        if candidate.exists():
+            return json.loads(candidate.read_text())
     return None
 
 
@@ -458,6 +461,10 @@ def main() -> None:
         if not p.exists():
             sys.exit(f"File not found: {p}")
 
+    out = Path(args.out)
+    if out.resolve() in (path_a.resolve(), path_b.resolve()):
+        sys.exit(f"--out must not point at an input recording file: {out}")
+
     print(f"Loading {path_a} ...", file=sys.stderr)
     rows_a = load_jsonl(path_a)
     print(f"Loading {path_b} ...", file=sys.stderr)
@@ -483,7 +490,6 @@ def main() -> None:
         str(path_b),
     )
 
-    out = Path(args.out)
     out.write_text(html)
     print(f"Written: {out}", file=sys.stderr)
 

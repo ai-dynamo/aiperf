@@ -200,6 +200,9 @@ def main() -> None:
     print(f"Capture server listening on {args.host}:{args.port}", file=sys.stderr)
     print(f"Writing to {args.out}", file=sys.stderr)
     fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(
+        fd, 0o600
+    )  # enforce on existing files too — O_CREAT mode is ignored when file exists
     with open(fd, "w") as f:
         _out_file = f
         with contextlib.suppress(KeyboardInterrupt):
