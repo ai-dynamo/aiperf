@@ -223,13 +223,13 @@ def _build_with_prefix(
     return BenchmarkConfig.model_validate(body)
 
 
-def test_warmup_isolation_system_rejected_without_shared_system_prompt() -> None:
+def test_warmup_isolation_system_without_shared_system_prompt_rejected() -> None:
     """warmup_isolation_system is rejected when no shared_system_length is configured."""
     with pytest.raises(ValueError, match="requires a shared system prompt"):
         _build_with_prefix(target=CacheBustTarget.WARMUP_ISOLATION_SYSTEM)
 
 
-def test_warmup_isolation_system_rejected_with_user_context_only() -> None:
+def test_warmup_isolation_system_with_user_context_only_rejected() -> None:
     """warmup_isolation_system is rejected when only user_context_length is set (no system msg)."""
     with pytest.raises(ValueError, match="requires a shared system prompt"):
         _build_with_prefix(
@@ -238,7 +238,7 @@ def test_warmup_isolation_system_rejected_with_user_context_only() -> None:
         )
 
 
-def test_warmup_isolation_system_rejected_with_prefix_pool_only() -> None:
+def test_warmup_isolation_system_with_prefix_pool_only_rejected() -> None:
     """warmup_isolation_system is rejected when only a prefix pool is configured (no system msg)."""
     with pytest.raises(ValueError, match="requires a shared system prompt"):
         _build_with_prefix(
@@ -248,7 +248,7 @@ def test_warmup_isolation_system_rejected_with_prefix_pool_only() -> None:
         )
 
 
-def test_warmup_isolation_system_accepted_with_shared_system_prompt() -> None:
+def test_warmup_isolation_system_with_shared_system_prompt_accepted() -> None:
     """warmup_isolation_system is accepted when shared_system_length is set."""
     cfg = _build_with_prefix(
         target=CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
@@ -257,7 +257,7 @@ def test_warmup_isolation_system_accepted_with_shared_system_prompt() -> None:
     assert cfg.get_cache_bust_target() == CacheBustTarget.WARMUP_ISOLATION_SYSTEM
 
 
-def test_warmup_isolation_first_turn_accepted_without_shared_system_prompt() -> None:
+def test_warmup_isolation_first_turn_without_shared_system_prompt_accepted() -> None:
     """warmup_isolation_first_turn is accepted with any prefix config (targets user turn)."""
     cfg = _build_with_prefix(
         target=CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
@@ -266,7 +266,7 @@ def test_warmup_isolation_first_turn_accepted_without_shared_system_prompt() -> 
     assert cfg.get_cache_bust_target() == CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN
 
 
-def test_warmup_isolation_first_turn_accepted_with_no_prefix() -> None:
+def test_warmup_isolation_first_turn_with_no_prefix_accepted() -> None:
     """warmup_isolation_first_turn is accepted even without any prefix config."""
     cfg = _build_with_prefix(target=CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN)
     assert cfg.get_cache_bust_target() == CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN
