@@ -1342,6 +1342,12 @@ class ConfigSchemaGenerator(Generator):
             ],
         )
 
+        # Endpoint control hooks accept `false | true | {object}` via
+        # parse_enabled_or_config(); Pydantic only emits the object|null forms.
+        endpoint_props = defs.get("EndpointConfig", {}).get("properties", {})
+        for hook_field in ("resetKvCache", "serverProfiler"):
+            self._extend_any_of(endpoint_props.get(hook_field), [{"type": "boolean"}])
+
         video_audio_props = defs.get("VideoAudioConfig", {}).get("properties", {})
         depth_schema = video_audio_props.get("depth")
         if isinstance(depth_schema, dict) and "oneOf" not in depth_schema:

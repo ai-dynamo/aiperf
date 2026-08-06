@@ -181,9 +181,11 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
             filters.append(
                 SLAFilter(
                     metric_tag="request_error_rate",
-                    stat="p99",
+                    # request_error_rate is a run-level percentage scalar, so
+                    # it only populates avg. The CLI flag remains a fraction.
+                    stat="avg",
                     op="lt",
-                    threshold=float(err),
+                    threshold=float(err) * 100.0,
                 )
             )
         filters.extend(ctx.sla_filters)

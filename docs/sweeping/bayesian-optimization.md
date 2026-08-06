@@ -277,7 +277,7 @@ sweep:
     - {metric: output_token_throughput, stat: avg, direction: maximize}
     - {metric: time_to_first_token, stat: p99, direction: minimize, threshold: 250.0}
   outcome_constraints:
-    - {metric: request_error_rate, op: "<=", bound: 0.01}
+    - {metric: request_error_rate, op: "<=", bound: 1.0}
   max_iterations: 30
 ```
 
@@ -449,16 +449,18 @@ The four issue-named SLA flags are sugar over the generic `--search-sla` syntax.
 | `--ttft-sla-ms` | `time_to_first_token` | `p95` | `lt` | Streaming required |
 | `--tpot-sla-ms` (a.k.a. `--itl-sla-ms`) | `inter_token_latency` | `p95` | `lt` | Streaming required; TPOT == ITL in AIPerf metric tags |
 | `--e2e-sla-ms` | `request_latency` | `p99` | `lt` | |
-| `--error-rate-sla` | `request_error_rate` | `p99` | `lt` | Fraction in `[0, 1]` |
-| `--search-sla "TAG:STAT:OP:THRESHOLD"` | any | any of `{avg, p50, p90, p95, p99}` | any of `{lt, le, gt, ge}` | Repeatable; format is strict colon-delimited 4-tuple |
+| `--error-rate-sla` | `request_error_rate` | `avg` | `lt` | Fraction in `(0, 1)`; converted to percentage points for comparison |
+| `--search-sla "TAG:STAT:OP:THRESHOLD"` | any | any of `{avg, p50, p90, p95, p99}` | any of `{lt, le, gt, ge}` | Repeatable; threshold uses the metric's native unit; format is strict colon-delimited 4-tuple |
+
+Generic `--search-sla` thresholds use each metric's native unit. In particular, `request_error_rate` is exported in percentage points, so `request_error_rate:avg:lt:1` means an average error rate below 1%. This differs from the recipe-specific `--error-rate-sla`, which accepts a fraction (`0.01` means 1%) and converts it to percentage points.
 
 ```bash
-# Compose: TTFT p95 < 200ms AND error rate p99 < 1%, on the explicit
+# Compose: TTFT p95 < 200ms AND average error rate < 1%, on the explicit
 # --search-space path (no recipe).
 aiperf profile --model my-model --streaming \
   --search-space "concurrency:1,1000:int" \
   --search-sla "time_to_first_token:p95:lt:200" \
-  --search-sla "request_error_rate:p99:lt:0.01" \
+  --search-sla "request_error_rate:avg:lt:1" \
   --search-metric output_token_throughput --search-direction maximize \
   --search-max-iterations 30
 ```

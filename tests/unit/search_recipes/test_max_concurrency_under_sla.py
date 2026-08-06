@@ -148,7 +148,11 @@ def test_max_concurrency_under_sla_multi_filter_composition() -> None:
     by_tag = {f.metric_tag: f for f in filters}
     assert by_tag["time_to_first_token"].threshold == 200.0
     assert by_tag["request_latency"].threshold == 1000.0
-    assert by_tag["request_error_rate"].threshold == 0.05
+    error_rate = by_tag["request_error_rate"]
+    assert error_rate.stat == "avg"
+    # --error-rate-sla is a fraction, while request_error_rate is exported as
+    # percentage points.
+    assert error_rate.threshold == 5.0
 
 
 def test_max_concurrency_under_sla_streaming_required_for_ttft_filter() -> None:
@@ -166,7 +170,13 @@ def test_max_concurrency_under_sla_streaming_not_required_for_e2e_only() -> None
         )
     )
     assert out.adaptive_search is not None
-    assert len(out.adaptive_search.sla_filters) == 2
+    filters = {f.metric_tag: f for f in out.adaptive_search.sla_filters}
+    assert len(filters) == 2
+    assert filters["request_latency"].threshold == 1000.0
+    error_rate = filters["request_error_rate"]
+    assert error_rate.stat == "avg"
+    assert error_rate.op == "lt"
+    assert error_rate.threshold == 1.0
 
 
 def test_max_concurrency_under_sla_unknown_style_raises() -> None:
