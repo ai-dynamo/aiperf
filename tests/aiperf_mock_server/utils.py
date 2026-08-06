@@ -36,6 +36,7 @@ from aiperf_mock_server.models import (
     ImageGenerationRequest,
     RankingRequest,
     RequestT,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
@@ -471,6 +472,8 @@ def _create_request_id(request: RequestT) -> str:
             return f"img-{uuid.uuid4()}"
         case SolidoRAGRequest():
             return f"rag-{uuid.uuid4()}"
+        case ResponsesRequest():
+            return f"resp-{uuid.uuid4()}"
         case _:
             raise ValueError(f"Invalid request type: {type(request)}")
 
