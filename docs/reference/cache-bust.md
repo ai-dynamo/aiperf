@@ -134,8 +134,11 @@ phases) so warmup primes profiling.
 Injects `[warmup]\n\n` at the very beginning of the system message during WARMUP. During
 PROFILING the payload is clean — no marker anywhere.
 
-> **Note:** When no system message is present, `warmup_isolation_system` falls back to
-> injecting into the first user turn (identical behavior to `warmup_isolation_first_turn`).
+> **Requires a shared system prompt.** `warmup_isolation_system` is rejected at validation
+> time if no system message is statically present in the dataset config. For synthetic
+> datasets this means `--shared-system-prompt-length` must be set. If you are using
+> `--user-context-prompt-length` or `--num-prefix-prompts` without a shared system prompt,
+> switch to `warmup_isolation_first_turn` instead.
 
 **WARMUP phase:**
 
@@ -192,6 +195,78 @@ message is untouched in both phases.
 Because the system message is identical in both phases, the server can prefix-cache system-prompt
 tokens during warmup. However, the diverging first user turn means user-turn tokens onward are
 cold in profiling.
+
+## Scenario Summary
+
+The table below maps each combination of prefix prompt mode and cache-bust target to the resulting
+warmup→profiling cache behavior. Use it to pick the right pair of flags for your scenario.
+
+| Prefix prompt mode | Flags | `--cache-bust` | Profiling system cache | Profiling user cache | Valid? |
+|---|---|---|---|---|---|
+| None | _(no prefix flags)_ | `none` | Pre-warmed | Pre-warmed | ✅ |
+| None | _(no prefix flags)_ | `warmup_isolation_first_turn` | Pre-warmed | Cold | ✅ |
+| None | _(no prefix flags)_ | `warmup_isolation_system` | — | — | ❌ no system message |
+| Shared system | `--shared-system-prompt-length N` | `none` | Pre-warmed | Pre-warmed | ✅ |
+| Shared system | `--shared-system-prompt-length N` | `warmup_isolation_system` | Cold | Cold | ✅ fully cold start |
+| Shared system | `--shared-system-prompt-length N` | `warmup_isolation_first_turn` | Pre-warmed | Cold | ✅ system pre-warmed |
+| User context | `--user-context-prompt-length N` | `none` | N/A (no system) | Pre-warmed | ✅ |
+| User context | `--user-context-prompt-length N` | `warmup_isolation_first_turn` | N/A (no system) | Context pre-warmed; query cold | ✅ |
+| User context | `--user-context-prompt-length N` | `warmup_isolation_system` | — | — | ❌ no system message |
+| Prefix pool | `--num-prefix-prompts N --prefix-prompt-length M` | `none` | N/A (no system) | Pre-warmed | ✅ |
+| Prefix pool | `--num-prefix-prompts N --prefix-prompt-length M` | `warmup_isolation_first_turn` | N/A (no system) | Cold (prefix + query) | ✅ |
+| Prefix pool | `--num-prefix-prompts N --prefix-prompt-length M` | `warmup_isolation_system` | — | — | ❌ no system message |
+
+**Key:** "Pre-warmed" = profiling requests can reuse KV-cache entries from warmup for those tokens.
+"Cold" = warmup marker differs from profiling payload; server cannot reuse warmup cache entries.
+"N/A (no system)" = configuration produces no system message; system cache column does not apply.
+
+## Prefix Prompt Compatibility
+
+The warmup-isolation targets interact with the three prefix prompt modes differently.
+
+### Shared system prompt (`--shared-system-prompt-length`)
+
+A synthetic system message is created and shared identically across all sessions.
+
+| Target | Warmup system msg | Profiling system msg | Warmup user msg | Profiling user msg |
+|---|---|---|---|---|
+| `warmup_isolation_system` | `[warmup]\n\n<system>` | `<system>` (clean) | `<user>` | `<user>` |
+| `warmup_isolation_first_turn` | `<system>` | `<system>` | `[warmup]\n\n<user>` | `<user>` (clean) |
+
+`warmup_isolation_system` makes profiling fully cold (system poisoned during warmup).
+`warmup_isolation_first_turn` keeps the system prompt pre-warmed; only user-turn tokens are cold.
+
+### User context prefix (`--user-context-prompt-length`)
+
+Each session gets a unique per-session context message prepended as a **user-role** message
+before the main user prompt. No system message is created.
+
+| Target | Warmup msg 1 (context) | Warmup msg 2 (prompt) | Profiling msg 1 | Profiling msg 2 |
+|---|---|---|---|---|
+| `warmup_isolation_system` | — | — | — | — |
+| `warmup_isolation_first_turn` | `<context>` (clean) | `[warmup]\n\n<prompt>` | `<context>` | `<prompt>` (clean) |
+
+`warmup_isolation_system` is **rejected** at config validation time because there is no system
+message slot to target. Use `warmup_isolation_first_turn` instead.
+
+`warmup_isolation_first_turn` injects into the main user prompt (the second user message), not
+the per-session context prefix. This means the context prefix tokens are pre-warmed during
+profiling; only the main query tokens are cold.
+
+### Prefix prompt pool (`--num-prefix-prompts` / `--prefix-prompt-length`)
+
+The prefix pool content is concatenated directly into the user message — there is no system
+message.
+
+| Target | Warmup user msg | Profiling user msg |
+|---|---|---|
+| `warmup_isolation_system` | — | — |
+| `warmup_isolation_first_turn` | `[warmup]\n\n<prefix><prompt>` | `<prefix><prompt>` (clean) |
+
+`warmup_isolation_system` is **rejected** at config validation time (no system message slot).
+
+`warmup_isolation_first_turn` injects at the start of the combined prefix+prompt user message,
+making the entire content cold in profiling — including prefix pool tokens.
 
 ## Choosing a Target
 

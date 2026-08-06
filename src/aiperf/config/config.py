@@ -615,6 +615,44 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_warmup_isolation_system_requires_shared_system_prompt(self) -> Self:
+        """Reject warmup_isolation_system when no system message is statically present.
+
+        ``warmup_isolation_system`` injects ``[warmup]`` into the system message slot
+        during warmup. When no system message exists in the dataset config the marker
+        silently falls through to the user turn, making it indistinguishable from
+        ``warmup_isolation_first_turn``.
+
+        This check is scoped to synthetic datasets where system-message presence is
+        statically known. File and trace datasets may carry system messages inside
+        their content, which cannot be inspected at config time.
+        """
+        from aiperf.common.enums import CacheBustTarget, DatasetType
+
+        if self.get_cache_bust_target() != CacheBustTarget.WARMUP_ISOLATION_SYSTEM:
+            return self
+
+        dataset = self.get_default_dataset()
+        if dataset.type != DatasetType.SYNTHETIC:
+            return self
+
+        prefix_prompts = getattr(dataset, "prefix_prompts", None)
+        has_shared_system = (
+            prefix_prompts is not None
+            and getattr(prefix_prompts, "shared_system_length", None) is not None
+        )
+        if not has_shared_system:
+            raise ValueError(
+                "cache_bust=warmup_isolation_system requires a shared system prompt, "
+                "but no shared_system_length is configured on the synthetic dataset. "
+                "The marker would silently fall through to the user turn, making it "
+                "indistinguishable from warmup_isolation_first_turn. "
+                "Either set prefix_prompts.shared_system_length (--shared-system-prompt-length) "
+                "or switch to cache_bust=warmup_isolation_first_turn."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_agentic_cache_warmup(self) -> Self:
         """Restrict accelerated cache warmup to the agentic_replay timing mode.
 
