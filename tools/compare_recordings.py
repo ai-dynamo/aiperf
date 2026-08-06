@@ -462,8 +462,12 @@ def main() -> None:
             sys.exit(f"File not found: {p}")
 
     out = Path(args.out)
-    if out.resolve() in (path_a.resolve(), path_b.resolve()):
-        sys.exit(f"--out must not point at an input recording file: {out}")
+    protected = {p.resolve() for p in (path_a, path_b)}
+    for p in (path_a, path_b):
+        protected.add(Path(str(p) + ".summary.json").resolve())
+        protected.add(p.with_suffix("").with_suffix(".summary.json").resolve())
+    if out.resolve() in protected:
+        sys.exit(f"--out must not point at an input or companion summary file: {out}")
 
     print(f"Loading {path_a} ...", file=sys.stderr)
     rows_a = load_jsonl(path_a)
