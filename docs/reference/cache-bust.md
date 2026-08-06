@@ -134,11 +134,15 @@ phases) so warmup primes profiling.
 Injects `[warmup]\n\n` at the very beginning of the system message during WARMUP. During
 PROFILING the payload is clean — no marker anywhere.
 
-> **Requires a shared system prompt.** `warmup_isolation_system` is rejected at validation
-> time if no system message is statically present in the dataset config. For synthetic
-> datasets this means `--shared-system-prompt-length` must be set. If you are using
-> `--user-context-prompt-length` or `--num-prefix-prompts` without a shared system prompt,
-> switch to `warmup_isolation_first_turn` instead.
+> **Synthetic datasets only — requires a shared system prompt.**
+> For synthetic datasets, `warmup_isolation_system` is rejected at config validation time
+> if no system message is statically present. This means `--shared-system-prompt-length`
+> must be set. If you are using `--user-context-prompt-length` or `--num-prefix-prompts`
+> without a shared system prompt, switch to `warmup_isolation_first_turn` instead.
+>
+> File and public datasets are not checked statically — system-message presence depends
+> on the dataset content and cannot be determined at config time. If the dataset does not
+> produce a system message, the marker will silently fall through to the first user turn.
 
 **WARMUP phase:**
 
