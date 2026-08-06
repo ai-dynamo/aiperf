@@ -359,6 +359,13 @@ class CreditPhaseConfig(AIPerfBaseModel):
         description="Duration of the accelerated cache-pressure substage for "
         "agentic replay warmup.",
     )
+    warmup_requests_per_lane: int | None = Field(
+        default=None,
+        gt=0,
+        description="Deterministic cache-pressure warmup wire-request budget "
+        "per live agentic replay lane. Mutually exclusive with "
+        "agentic_cache_warmup_duration_sec.",
+    )
 
     artifact_dir: Path | None = Field(
         default=None,
@@ -622,15 +629,25 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
     concurrency = getattr(phase, "concurrency", None)
     grace_period = _agentic_warmup_grace_period(phase)
     cache_warmup_duration = getattr(phase, "agentic_cache_warmup_duration", None)
+    requests_per_lane = getattr(phase, "warmup_requests_per_lane", None)
+    cache_warmup_request_cap = (
+        concurrency * requests_per_lane
+        if concurrency is not None and requests_per_lane is not None
+        else None
+    )
+    if cache_warmup_request_cap is not None:
+        total_expected_requests = cache_warmup_request_cap
+    elif cache_warmup_duration is not None:
+        total_expected_requests = None
+    else:
+        total_expected_requests = concurrency
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
         timing_mode=TimingMode.AGENTIC_REPLAY,
-        # An accelerated cache-pressure warmup is strategy-terminated (the
-        # strategy emits ``mark_sending_complete`` when the duration elapses),
-        # so leave the request cap open instead of sizing it to concurrency.
-        total_expected_requests=(
-            None if cache_warmup_duration is not None else concurrency
-        ),
+        # Duration mode is strategy-terminated by its timer. Count mode uses
+        # the generic request-count stop condition as a global backstop while
+        # the agentic strategy independently enforces each lane's quota.
+        total_expected_requests=total_expected_requests,
         expected_duration_sec=None,
         expected_num_sessions=None,
         concurrency=concurrency,
@@ -641,6 +658,7 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         seamless=False,
         grace_period_sec=grace_period if grace_period is not None else float("inf"),
         agentic_cache_warmup_duration_sec=cache_warmup_duration,
+        warmup_requests_per_lane=requests_per_lane,
     )
 
 

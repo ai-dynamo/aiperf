@@ -258,7 +258,7 @@ SPAWN targets may be referenced from multiple parents — the child conversation
 
 ### Join semantics
 
-DAG-style conversations can declare that a turn dispatches only after children from a prior SPAWN branch complete. Gating is declared via a `TurnPrerequisite(kind=SPAWN_JOIN, branch_id=...)` on the *consuming* turn rather than on the spawning branch. The runtime builds a `(conversation_id, branch_id) -> gated_turn_index` index at phase init; when `BranchOrchestrator.intercept()` sees a spawning turn complete, it resolves the gate from the index and suspends the parent until every outstanding child drains. `CreditIssuer.dispatch_join_turn` then issues the parent's gated turn — reusing the parent's already-held session slot (the gated turn has `turn_index > 0`, so session-slot acquisition is naturally skipped).
+DAG-style conversations can declare that a turn dispatches only after children from a prior SPAWN branch complete. Gating is declared via a `TurnPrerequisite(kind=SPAWN_JOIN, branch_id=...)` on the *consuming* turn rather than on the spawning branch. The runtime builds a `(conversation_id, branch_id) -> gated_turn_index` index at phase init; when `BranchOrchestrator.intercept()` sees a spawning turn complete, it resolves the gate and suspends the parent. The gated turn dispatches at the later of its normal recorded replay deadline and the completion of every outstanding child, so a fast child cannot erase the parent's authored think time and a slow child does not add that delay twice. `CreditIssuer.dispatch_join_turn` reuses the parent's already-held session slot (the gated turn has `turn_index > 0`, so session-slot acquisition is naturally skipped).
 
 For v1, the orchestrator honors these gate shapes:
 

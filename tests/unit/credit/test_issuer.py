@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.session_tree import SessionTreeRegistry
@@ -241,6 +242,74 @@ class TestBasicCreditIssuance:
         result = await credit_issuer.issue_credit(turn)
 
         assert result is False
+
+    async def test_turn_admission_refusal_releases_acquired_slots(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """A quota refusal happens after acquisition and must release both slots."""
+        credit_issuer.set_turn_admission(lambda _turn: False)
+
+        result = await credit_issuer.issue_credit(make_turn())
+
+        assert result is False
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_child_turn_admission_refusal_releases_prefill_slot(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """DAG children share the same quota gate without owning a session slot."""
+        credit_issuer.set_turn_admission(lambda _turn: False)
+        child = TurnToSend(
+            conversation_id="child",
+            x_correlation_id="child-corr",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="parent-corr",
+            root_correlation_id="root-corr",
+        )
+
+        result = await credit_issuer.dispatch_child_turn(child)
+
+        assert result is ChildDispatchResult.REJECTED
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_not_called()
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_child_turn_phase_deferral_preserves_distinct_result(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """A handoff deferral is not collapsed into a terminal child rejection."""
+        credit_issuer.set_turn_admission(lambda _turn: TurnAdmission.DEFER)
+        child = TurnToSend(
+            conversation_id="child",
+            x_correlation_id="child-corr",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="parent-corr",
+            root_correlation_id="root-corr",
+        )
+
+        result = await credit_issuer.dispatch_child_turn(child)
+
+        assert result is ChildDispatchResult.DEFERRED
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_not_called()
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
 
 
 # =============================================================================

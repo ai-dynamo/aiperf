@@ -1157,7 +1157,12 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 
 #### `--agentic-cache-warmup-duration` `<float>`
 
-Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
+<br/>_Constraints: > 0_
+
+#### `--warmup-requests-per-lane` `<int>`
+
+Deterministic agentic cache-pressure warmup request budget per concurrency lane, additional to mandatory snapshot primers. For example, 10 with concurrency 16 sends 160 additional cache-pressure requests after the primers. Mutually exclusive with --agentic-cache-warmup-duration.
 <br/>_Constraints: > 0_
 
 #### `--agentic-warmup-grace-period` `<float>`
@@ -2719,7 +2724,12 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 
 #### `--agentic-cache-warmup-duration` `<float>`
 
-Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
+<br/>_Constraints: > 0_
+
+#### `--warmup-requests-per-lane` `<int>`
+
+Deterministic agentic cache-pressure warmup request budget per concurrency lane, additional to mandatory snapshot primers. For example, 10 with concurrency 16 sends 160 additional cache-pressure requests after the primers. Mutually exclusive with --agentic-cache-warmup-duration.
 <br/>_Constraints: > 0_
 
 #### `--agentic-warmup-grace-period` `<float>`

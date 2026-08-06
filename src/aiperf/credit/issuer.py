@@ -15,6 +15,7 @@ Key responsibilities:
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -22,6 +23,7 @@ from msgspec.structs import replace as _struct_replace
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
 from aiperf.common.phase import phase_runtime_key
+from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.replay_dependencies import ReplayIssueGate
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
@@ -125,7 +127,21 @@ class CreditIssuer:
         )
         self._issuing_stopped = False
         self._max_tokens_override: int | None = None
+        self._turn_admission: Callable[[TurnToSend], TurnAdmission | bool] | None = None
         self.replay_gate = ReplayIssueGate(replay_barrier)
+
+    def set_turn_admission(
+        self, callback: Callable[[TurnToSend], TurnAdmission | bool]
+    ) -> None:
+        """Install a synchronous final admission check for every turn."""
+        self._turn_admission = callback
+
+    def _turn_admission_result(self, turn: TurnToSend) -> TurnAdmission:
+        """Run the optional final admission check."""
+        callback = getattr(self, "_turn_admission", None)
+        if callback is None:
+            return TurnAdmission.ADMIT
+        return TurnAdmission.normalize(callback(turn))
 
     def set_max_tokens_override(self, max_tokens: int | None) -> None:
         """Override generation length for every subsequently issued credit."""
@@ -342,6 +358,12 @@ class CreditIssuer:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return False
 
+        if self._turn_admission_result(turn) is not TurnAdmission.ADMIT:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if needs_session_slot:
+                self._concurrency_manager.release_session_slot(self._phase_key)
+            return False
+
         # Both slots held: register the tree before issuing so drain/teardown
         # own the slot release. Must not run before prefill succeeds.
         if needs_session_slot:
@@ -399,6 +421,12 @@ class CreditIssuer:
             if needs_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return None  # No slot - credit not issued
+
+        if self._turn_admission_result(turn) is not TurnAdmission.ADMIT:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if needs_session_slot:
+                self._concurrency_manager.release_session_slot(self._phase_key)
+            return False
 
         if needs_session_slot:
             self._open_session_tree(turn)
@@ -469,25 +497,22 @@ class CreditIssuer:
 
         return not is_final_credit
 
-    async def dispatch_first_turn(self, sampled_session: SampledSession) -> bool:
+    async def dispatch_first_turn(
+        self, sampled_session: SampledSession
+    ) -> ChildDispatchResult:
         """Dispatch the first turn of a mid-run DAG child session.
 
         Thin wrapper around ``dispatch_child_turn`` that builds the
         first ``TurnToSend`` from the sampled session.
-
-        Returns True if the credit was sent on the wire (orchestrator
-        should expect a return), False otherwise (orchestrator should
-        roll back its tracking via ``BranchOrchestrator.on_child_stopped``
-        / per-child rollback).
         """
         return await self.dispatch_child_turn(sampled_session.build_first_turn())
 
-    async def dispatch_child_turn(self, turn: TurnToSend) -> bool:
+    async def dispatch_child_turn(self, turn: TurnToSend) -> ChildDispatchResult:
         """Dispatch a DAG child turn (first or continuation).
 
-        Returns True if the credit was sent on the wire (caller should
-        expect a return), False otherwise (caller should roll back its
-        tracking via ``BranchOrchestrator.on_child_stopped``).
+        ``DEFERRED`` means the turn is retained by a replay barrier or phase
+        handoff, so callers must preserve its orchestrator bookkeeping.
+        ``REJECTED`` is terminal and permits callers to drain that bookkeeping.
 
         We avoid the overloaded ``issue_credit`` / ``try_issue_credit``
         False (which conflates "gate refused, not issued" with "issued,
@@ -506,25 +531,32 @@ class CreditIssuer:
             turn,
             lambda: self._dispatch_child_turn_ready(turn),
             child_refusal_cleanup=True,
+            retained_result=ChildDispatchResult.DEFERRED,
         )
 
-    async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> bool:
+    async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> ChildDispatchResult:
         """Dispatch a child after its recorded predecessor frontier completes."""
         if self._issuing_stopped:
-            return False
+            return ChildDispatchResult.REJECTED
         can_proceed_fn = self._stop_checker.can_send_child_turn
         if not can_proceed_fn():
-            return False
+            return ChildDispatchResult.REJECTED
         # Children inherit the parent's session slot; wait for prefill
         # capacity so temporary saturation does not delete sibling branches.
         if not await self._concurrency_manager.acquire_prefill_slot(
             self._phase_key, can_proceed_fn
         ):
-            return False
+            return ChildDispatchResult.REJECTED
+        admission = self._turn_admission_result(turn)
+        if admission is not TurnAdmission.ADMIT:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if admission is TurnAdmission.DEFER:
+                return ChildDispatchResult.DEFERRED
+            return ChildDispatchResult.REJECTED
         if turn.counts_toward_phase_target:
             turn = _struct_replace(turn, counts_toward_phase_target=False)
         await self._issue_credit_internal(turn)
-        return True
+        return ChildDispatchResult.ISSUED
 
     async def dispatch_join_turn(self, pending: PendingBranchJoin) -> bool:
         """Dispatch a parent's gated turn after all its children complete.
