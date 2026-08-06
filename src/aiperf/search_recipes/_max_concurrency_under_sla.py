@@ -115,8 +115,8 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
         if not sla_filters:
             raise ValueError(
                 f"recipe {self.name!r} requires at least one of --ttft-sla-ms / "
-                "--tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla; "
-                "pass at least one on the CLI alongside --search-recipe."
+                "--tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla / "
+                "--search-sla; pass at least one on the CLI alongside --search-recipe."
             )
 
         self._check_streaming_if_required(ctx, sla_filters)

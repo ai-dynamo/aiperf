@@ -56,6 +56,7 @@ from aiperf.common.enums import (
     VideoFormat,
     VideoSynthType,
 )
+from aiperf.common.finite import FiniteFloat
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
@@ -3312,7 +3313,7 @@ class CLIConfig(BaseConfig):
     ] = None
 
     search_sla_warmup_seconds: Annotated[
-        float | None,
+        FiniteFloat | None,
         Field(
             default=None,
             ge=0.0,

@@ -506,7 +506,7 @@ class AdaptiveSearchSweep(_SweepBase):
         ),
     ]
     sla_warmup_seconds: Annotated[
-        float | None,
+        FiniteFloat | None,
         Field(
             default=None,
             ge=0.0,
