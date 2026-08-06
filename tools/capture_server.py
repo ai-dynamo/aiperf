@@ -27,15 +27,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _out_file = None
 _count = 0
+_model_id = "capture-model"
 
 _MAX_BODY = 64 * 1024 * 1024  # 64 MiB
-
-MODELS_RESPONSE = json.dumps(
-    {
-        "object": "list",
-        "data": [{"id": "capture-model", "object": "model"}],
-    }
-).encode()
 
 
 def _sse_chunk(completion_id: str, content: str) -> bytes:
@@ -74,10 +68,13 @@ class CaptureHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/v1/models":
+            resp = json.dumps(
+                {"object": "list", "data": [{"id": _model_id, "object": "model"}]}
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(MODELS_RESPONSE)
+            self.wfile.write(resp)
         else:
             self.send_response(404)
             self.end_headers()
@@ -125,7 +122,9 @@ class CaptureHandler(BaseHTTPRequestHandler):
             return
 
         messages = payload.get("messages", [])
-        if not isinstance(messages, list):
+        if not isinstance(messages, list) or not all(
+            isinstance(m, dict) for m in messages
+        ):
             self.send_response(400)
             self.end_headers()
             return
@@ -193,16 +192,24 @@ def main() -> None:
     )
     ap.add_argument("--port", type=int, default=18000, metavar="PORT")
     ap.add_argument("--host", default="127.0.0.1", metavar="HOST")
+    ap.add_argument(
+        "--model",
+        default="capture-model",
+        metavar="MODEL_ID",
+        help="Model ID advertised by /v1/models and used in synthetic responses (default: capture-model)",
+    )
     args = ap.parse_args()
 
-    global _out_file
+    global _out_file, _model_id
+    _model_id = args.model
     server = HTTPServer((args.host, args.port), CaptureHandler)
     print(f"Capture server listening on {args.host}:{args.port}", file=sys.stderr)
     print(f"Writing to {args.out}", file=sys.stderr)
     fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.chmod(
-        fd, 0o600
-    )  # enforce on existing files too — O_CREAT mode is ignored when file exists
+    if sys.platform != "win32":
+        os.chmod(
+            fd, 0o600
+        )  # enforce on existing files; O_CREAT mode is ignored when file exists
     with open(fd, "w") as f:
         _out_file = f
         with contextlib.suppress(KeyboardInterrupt):
