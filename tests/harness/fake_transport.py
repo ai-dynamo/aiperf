@@ -472,7 +472,7 @@ class FakeTransport(BaseTransport):
         AudioTranscriptionEndpoint parses."""
         start_perf_ns = time.perf_counter_ns()
         start_timestamp_ns = time.time_ns()
-        await _wait_for_processing(self.config.image_retrieval_base_latency, 0.0, 1)
+        await _wait_for_processing(self.config.audio_transcription_base_latency, 0.0, 1)
         return self._make_json_record(
             start_perf_ns,
             start_timestamp_ns,
