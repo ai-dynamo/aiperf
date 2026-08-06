@@ -32,8 +32,9 @@ class PostProcessSpec(BaseModel):
     Resolved through the ``search_recipe_post_process`` plugin category and
     invoked by ``aggregate_sweep_and_export`` after per-variation aggregation.
 
-    Example: ``PostProcessSpec(handler="ttft_sla_curve", params={"sla_ms": 200},
-    output_filename="ttft_sla_curve.json")``.
+    Example: ``PostProcessSpec(handler="ttft_curve_fit",
+    params={"metric_tag": "time_to_first_token", "stat": "avg"},
+    output_filename="prefill_curve.json")``.
     """
 
     model_config = ConfigDict(extra="forbid")

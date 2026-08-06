@@ -53,8 +53,9 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
     async def export(self) -> None:
         """Write per-task accuracy summary to CSV at the path from ``get_export_info``.
 
-        Columns: task, correct, total, accuracy (4 decimal places). Rows are
-        emitted for each ``accuracy.task.*`` metric plus a final OVERALL row.
+        Columns: task, correct, total, unparsed, accuracy (4 decimal places).
+        One row per ``accuracy.overall`` / ``accuracy.task.*`` metric, in the
+        order those metrics appear in results (OVERALL first, then tasks).
         Does nothing if no ``accuracy.*`` metrics are present in results.
         """
         results = self.exporter_config.results

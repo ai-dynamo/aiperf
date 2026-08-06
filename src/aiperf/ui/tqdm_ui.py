@@ -20,7 +20,7 @@ _logger = AIPerfLogger(__name__)
 
 
 class ProgressBar:
-    """A progress bar that can be updated with a progress percentage."""
+    """A progress bar updated with an absolute progress count in ``[0, total]``."""
 
     BAR_FORMAT_WITH_TOTAL = (
         "{desc}: {n:,.0f}/{total:,} |{bar}| {percentage:3.0f}% [{elapsed}<{remaining}]"
@@ -60,7 +60,7 @@ class ProgressBar:
         self.last_percent = 0.0
 
     def update(self, progress: int):
-        """Update the progress bar with a new progress percentage."""
+        """Update the progress bar with a new absolute progress value (0..total)."""
         if self.bar.disable:
             return
         if progress is None or not self.total:

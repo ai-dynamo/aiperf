@@ -354,11 +354,12 @@ def _per_variation_aggregate_dir(
     - ``SweepMode.REPEATED``  -> ``<base>/aggregate/<variation_dir_name>/``
     - ``SweepMode.INDEPENDENT`` (default fallback) -> ``<base>/<variation_dir_name>/aggregate/``
 
-    ``variation_dir_name`` is the ``{last_seg}_{value}`` form
-    (e.g. ``concurrency_10``) produced by
-    :attr:`aiperf.config.sweep.SweepVariation.dir_name`. It is NOT the
-    dotted-path variation label; downstream consumers (plotters,
-    dashboards) depend on this form.
+    ``variation_dir_name`` comes from :func:`_variation_dir_name`: the
+    ``{last_seg}_{value}`` form (e.g. ``concurrency_10``) matching
+    :attr:`aiperf.config.sweep.SweepVariation.dir_name` for scalar sweeps,
+    or the sanitized human-authored label when any variation value is a
+    nested override. Either way it is never the raw dotted-path label;
+    downstream consumers (plotters, dashboards) depend on this form.
 
     Example:
         >>> from aiperf.common.enums import SweepMode
@@ -494,8 +495,8 @@ async def aggregate_per_variation_and_export(
     """Write a per-variation confidence aggregate (JSON+CSV) for each cell.
 
     Sweep version of ``aggregate_and_export`` from
-    ``aiperf.cli_runner._aggregate``: groups ``results`` by ``variation_values``
-    and writes one ``profile_export_aiperf_aggregate.{json,csv}`` pair
+    ``aiperf.cli_runner._aggregate``: groups ``results`` by
+    ``(variation_label, variation_values)`` and writes one ``profile_export_aiperf_aggregate.{json,csv}`` pair
     per variation that has >=1 successful run. Single-success cells use
     ``ConfidenceAggregation``'s degraded mode (std=0, CI collapsed to
     mean, ``single_run: True`` in metadata) -- see the comment at
@@ -613,7 +614,7 @@ async def aggregate_sweep_and_export(
 
     Pipeline:
 
-    1. Group ``results`` by ``variation_values``.
+    1. Group ``results`` by ``(variation_label, variation_values)``.
     2. For each group: aggregate trials (multi-trial) or read summary
        directly (single-trial).
     3. Run :meth:`SweepAnalyzer.compute` over the grouped stats (with SLA

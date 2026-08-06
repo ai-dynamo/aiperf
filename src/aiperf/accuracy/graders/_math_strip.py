@@ -11,7 +11,7 @@ parity with that pipeline so the math grader behaves identically to the
 trt-llm reference.
 
 Two minor deviations from the upstream:
-- ``convert_word_number`` is a no-op stub here; the recipe pulls in the
+- ``_convert_word_number`` is a no-op stub here; the recipe pulls in the
   optional ``word2number`` package, but AIME answers are bounded
   integers (0-999) for which word-number conversion never fires. If a
   caller needs it, install ``word2number`` and replace the stub.

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared hash_ids -> decoded prompt synthesis used by Weka and trace loaders.
 
-The 2-phase pipeline:
+The pipeline:
 
 1. Build a token sequence for each requested (hash_ids, input_length) pair.
 2. Batch-parallel-decode all sequences across worker processes.
@@ -83,7 +83,8 @@ class HashIdsPromptSynthesisMixin:
     def sample_partial_tail_tokens(self, n_tokens: int, seed: str) -> list[int]:
         """Deterministic per-seed partial-block tokens sized to ``n_tokens``.
 
-        Returns raw Qwen token IDs (no tokenizer.decode). Mirrors
+        Returns raw token IDs from the configured tokenizer's corpus (no
+        tokenizer.decode). Mirrors
         :meth:`sample_partial_tail` but skips the decode step so callers that
         need byte-exact token-level slicing don't pay the BPE roundtrip cost.
         See spec §4.6 determinism contract.

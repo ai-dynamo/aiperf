@@ -187,7 +187,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             # Pre-encode each turn's raw_payload and write the bytes directly;
             # workers replay these verbatim with no deserialization. Persist
             # turn scalars in the index so metric enrichment can restore
-            # max_tokens / scheduled_send_ms without the full Conversation.
+            # max_tokens / timestamp without the full Conversation.
             turn_offsets: list[PayloadOffset] = []
             for turn in conversation.turns:
                 payload_bytes = orjson.dumps(turn.raw_payload)

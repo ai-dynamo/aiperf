@@ -34,7 +34,9 @@ class ServerMetricsJSONLWriter(
         - timestamp_ns: Collection timestamp in nanoseconds
         - endpoint_latency_ns: Time taken to collect the metrics from the endpoint
         - endpoint_url: Source Prometheus metrics endpoint URL (e.g., 'http://localhost:8081/metrics')
-        - metrics: Dict mapping metric names to sample lists (flat structure)
+        - metrics: Dict mapping metric names to sample lists (flat structure), excluding ``_info`` families
+        - request_sent_ns / first_byte_ns: HTTP trace timestamps (omitted when unset)
+        - benchmark_phase: Credit phase active for the scrape (omitted when unset)
     """
 
     def __init__(

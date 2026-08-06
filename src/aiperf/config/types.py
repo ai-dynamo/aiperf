@@ -129,8 +129,8 @@ class SequenceDistributionEntry(BaseConfig):
         Field(
             ge=0.0,
             le=100.0,
-            description="Relative probability weight for this distribution bucket (0-100). "
-            "Weights are normalized across all entries. "
+            description="Probability percentage for this distribution bucket (0-100). "
+            "Percentages are used as-is (not normalized) and must sum to ~100 across all entries. "
             "Example: probability=40 means 40%% of requests use this ISL/OSL.",
         ),
     ]

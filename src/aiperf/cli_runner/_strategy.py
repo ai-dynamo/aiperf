@@ -60,8 +60,9 @@ def validate_convergence_config(plan: BenchmarkPlan) -> None:
 def build_strategy(plan: BenchmarkPlan, logger: AIPerfLogger) -> ExecutionStrategy:
     """Construct the per-trial execution strategy (adaptive or fixed).
 
-    Called once per config by both ``cli_runner`` (single-trial,
-    non-sweep path) and ``MultiRunOrchestrator`` (per-variation). When
+    Called once by ``cli_runner._multi_run`` (the top-level instance used
+    only to resolve aggregate paths and seed/warmup helpers) and again per
+    variation by ``MultiRunOrchestrator``. When
     ``plan.is_sweep`` is True (multiple variations), the orchestrator
     invokes this N times for N variations so each cell gets a fresh
     strategy with no convergence state leakage. The returned strategy

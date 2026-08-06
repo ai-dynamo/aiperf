@@ -51,12 +51,12 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
 
     The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
     to collect server metrics from multiple Prometheus endpoints and send unified
-    ServerMetricsRecordsMessage to RecordsManager.
+    ServerMetricsRecordMessage to RecordsManager.
 
     This service:
     - Manages lifecycle of ServerMetricsDataCollector instances
     - Collects metrics from multiple Prometheus endpoints
-    - Sends ServerMetricsRecordsMessage to RecordsManager via message system
+    - Sends ServerMetricsRecordMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
     - Follows centralized architecture patterns
 
@@ -380,7 +380,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         """Stop all server metrics collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
-        Waits for flush period to allow metrics to finalize, then stops collectors.
+        Stops all collectors immediately without a final scrape.
 
         Args:
             message: Profile cancel command from SystemController

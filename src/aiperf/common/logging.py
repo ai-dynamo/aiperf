@@ -245,7 +245,7 @@ def create_file_handler(
 
 
 class CustomRichHandler(RichHandler):
-    """Custom RichHandler that formats logs with the logger name right-aligned at the end."""
+    """Custom RichHandler that appends the source file:line at the end of the message and wraps at the character level."""
 
     DEFAULT_WIDTH = 120
     MAX_MESSAGE_LENGTH = 2000

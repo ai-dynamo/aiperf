@@ -225,12 +225,13 @@ class HellaSwagBenchmark(AIPerfLoggerMixin):
         """Load HellaSwag problems and format them DeepEval-style.
 
         Args:
-            tasks: Activity-label strings (case-sensitive against the
+            tasks: Activity-label strings (case-insensitive against the
                 ``HellaSwagTask`` enum's ``value``) or upper-snake-case
                 enum names. ``None`` / ``["all"]`` selects every
                 category. Unknown names raise ``ValueError``.
-            n_shots: Few-shot count, capped at ``MAX_N_SHOTS`` (15).
-                The recipe's ``DeepEval.HellaSwag`` default is 10.
+            n_shots: Few-shot count. Must not exceed ``MAX_N_SHOTS``
+                (15) — a larger value raises ``ValueError``. The
+                recipe's ``DeepEval.HellaSwag`` default is 10.
             enable_cot: Ignored — DeepEval's HellaSwag has no
                 chain-of-thought variant. Accepting the parameter
                 keeps the protocol uniform across benchmarks.

@@ -355,7 +355,7 @@ def on_realtime_telemetry_metrics(func: Callable) -> Callable:
 
     Example:
     ```python
-    class MyPlugin(RealtimeMetricsMixin):
+    class MyPlugin(RealtimeTelemetryMetricsMixin):
         @on_realtime_telemetry_metrics
         def _on_realtime_telemetry_metrics(self, metrics: list[MetricResult]) -> None:
             pass
@@ -369,7 +369,7 @@ def on_pull_message(
 ) -> Callable:
     """Decorator to specify that the function is a hook that should be called a pull client
     receives a message of the given type(s).
-    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+    See :func:`aiperf.common.hooks._hook_decorator_with_params`.
 
     Example:
     ```python
@@ -395,7 +395,7 @@ def on_profiling_progress(func: Callable) -> Callable:
     ```python
     class MyPlugin(ProgressTrackerMixin):
         @on_profiling_progress
-        def _on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
+        def _on_profiling_progress(self, profiling_stats: CombinedPhaseStats) -> None:
             pass
     ```
 
@@ -415,7 +415,7 @@ def on_records_progress(func: Callable) -> Callable:
     ```python
     class MyPlugin(ProgressTrackerMixin):
         @on_records_progress
-        def _on_records_progress(self, progress: PhaseRecordsStats) -> None:
+        def _on_records_progress(self, records_stats: CombinedPhaseStats) -> None:
             pass
     ```
 
@@ -432,11 +432,11 @@ def on_request(
 ) -> Callable:
     """Decorator to specify that the function is a hook that should be called when requests of the
     given type(s) are received from a ReplyClient.
-    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+    See :func:`aiperf.common.hooks._hook_decorator_with_params`.
 
     Example:
     ```python
-    class MyService(RequestClientMixin, BaseComponentService):
+    class MyService(ReplyClientMixin, BaseComponentService):
         @on_request(MessageType.CONVERSATION_REQUEST)
         async def _handle_conversation_request(
             self, message: ConversationRequestMessage
@@ -460,7 +460,7 @@ def on_command(
 ) -> Callable:
     """Decorator to specify that the function is a hook that should be called when a CommandMessage with the given
     command type(s) is received from the message bus.
-    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+    See :func:`aiperf.common.hooks._hook_decorator_with_params`.
 
     Example:
     ```python
@@ -487,7 +487,7 @@ def on_warmup_progress(func: Callable) -> Callable:
     ```python
     class MyPlugin(ProgressTrackerMixin):
         @on_warmup_progress
-        def _on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
+        def _on_warmup_progress(self, warmup_stats: CombinedPhaseStats) -> None:
             pass
     ```
 
@@ -508,7 +508,7 @@ def on_worker_status_summary(func: Callable) -> Callable:
     ```python
     class MyPlugin(WorkerTrackerMixin):
         @on_worker_status_summary
-        def _on_worker_status_summary(self, worker_statuses: dict[str, WorkerStatus]) -> None:
+        def _on_worker_status_summary(self, worker_status_summary: dict[str, WorkerStatus]) -> None:
             pass
     ```
 

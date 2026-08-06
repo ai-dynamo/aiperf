@@ -57,10 +57,9 @@ be part of the key because QMC samplers (Sobol/LHS) over coarse integer
 dimensions routinely produce two distinct sample rows that collapse to
 the same ``values`` dict - those are distinct sweep cells (they were
 sampled independently and may differ in non-integer dims after rounding)
-and must NOT be pooled. Per the user's
-``feedback_never_aggregate_across_runs.md`` rule, only runs that share
-ns + model + settings AND differ in exactly one swept dimension may be
-aggregated; collisions on the values dict are not "the same cell".
+and must NOT be pooled. Only runs that share model + settings AND differ
+in exactly one swept dimension may be aggregated; collisions on the
+values dict are not "the same cell".
 
 The values tuple is retained alongside the label so SweepAnalyzer can
 still surface the parameter combination for reporting.

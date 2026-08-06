@@ -33,7 +33,7 @@ class StopCondition(ABC):
     # DAG children (``agent_depth > 0``) are dispatched reactively by
     # ``BranchOrchestrator`` at credit-return time, NOT by the phase's
     # ``TimingStrategy`` loop, and do not consume entries from the
-    # ``DatasetSampler``. Their stop-condition behavior splits by intent:
+    # dataset sampler. Their stop-condition behavior splits by intent:
     #   - cancellation, duration timeout, ``--request-count``: HONORED.
     #     ``--request-count`` is a literal wire-request cap and
     #     time/cancellation are user-facing guarantees that apply to

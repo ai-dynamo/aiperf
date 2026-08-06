@@ -103,9 +103,9 @@ class AIMEBenchmark(AIPerfLoggerMixin):
         Args:
             tasks: Ignored — AIME has no subtasks. Accepted for protocol
                 parity with other benchmarks.
-            n_shots: Number of few-shot examples to include
-                (capped at :data:`MAX_N_SHOTS`, mirroring the recipe's
-                ``assert n_shots <= 8``). 0 emits no header and no
+            n_shots: Number of few-shot examples to include. Must not
+                exceed :data:`MAX_N_SHOTS`, mirroring the recipe's
+                ``assert n_shots <= 8``. 0 emits no header and no
                 examples.
             enable_cot: When True, append ``Let's think step-by-step.``
                 after the final ``**Answer**:`` marker; when False,
@@ -113,6 +113,9 @@ class AIMEBenchmark(AIPerfLoggerMixin):
 
         Returns:
             One ``BenchmarkProblem`` per dataset row, in dataset order.
+
+        Raises:
+            ValueError: When ``n_shots`` exceeds :data:`MAX_N_SHOTS`.
         """
         if n_shots > MAX_N_SHOTS:
             raise ValueError(
@@ -158,10 +161,10 @@ class AIMEBenchmark(AIPerfLoggerMixin):
     def _format_example(self, row: dict[str, Any]) -> dict[str, str]:
         """Bundle the per-row data the prompt builders need.
 
-        Stores both the bare ``problem`` / ``solution`` / ``answer``
-        fields and the recipe's ``formatted`` form. The actual final
-        rendering is decided by ``_format_example_block`` (which honors
-        ``enable_cot``: solutions only appear when CoT is on).
+        Stores the bare ``problem`` / ``solution`` / ``answer`` fields.
+        The actual final rendering is decided by
+        ``_format_example_block`` (which honors ``enable_cot``:
+        solutions only appear when CoT is on).
         """
         answer = str(row[ANSWER_FIELD])
         problem = row[PROBLEM_FIELD]

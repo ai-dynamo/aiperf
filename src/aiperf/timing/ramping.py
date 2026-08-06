@@ -12,7 +12,7 @@ Supports two modes:
 
 Example:
     ```python
-    from aiperf.timing.ramp import Ramper, RamperConfig
+    from aiperf.timing.ramping import Ramper, RamperConfig
     from aiperf.plugin.enums import RampType
 
     # Discrete mode: +1 steps with timing derived from value count

@@ -20,7 +20,7 @@ PROFILE_EXPORT_AIPERF_AGGREGATE_JSON = "profile_export_aiperf_aggregate.json"
 """Per-cell confidence-aggregate JSON written by the sweep orchestrator at
 ``<base>/aggregate/<cell>/`` (REPEATED) or ``<base>/<cell>/aggregate/``
 (INDEPENDENT). Distinct from the cross-cell ``profile_export_aiperf_sweep.json``,
-which lives under ``sweep_aggregate/`` and is consumed by ``aiperf plot pareto``."""
+which lives under ``sweep_aggregate/`` and is not read by the plot package."""
 
 TRIAL_RUNS_SUBDIR = "profile_runs"
 """Name of the per-trial subdirectory the sweep orchestrator emits at every
@@ -87,7 +87,8 @@ NVIDIA_TEXT_LIGHT = "#E0E0E0"
 NVIDIA_CARD_BG = "#252525"
 OUTLIER_RED = "#E74C3C"
 
-# Direction indicators for derived metrics (not in MetricRegistry)
+# Fallback direction map consulted when a metric tag has no MetricRegistry entry
+# carrying LARGER_IS_BETTER (e.g. metrics derived during data loading).
 # Maps metric name to direction: True = ↑ (higher is better), False = ↓ (lower is better)
 DERIVED_METRIC_DIRECTIONS = {
     "output_token_throughput_per_gpu": True,  # nosec

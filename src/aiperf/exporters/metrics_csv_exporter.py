@@ -20,7 +20,10 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
 
 
 class MetricsCsvExporter(MetricsBaseExporter):
-    """Exports records to a CSV file in a two-section format."""
+    """Exports records to a CSV file in up to three blank-line-separated sections:
+    request metrics (one row per metric, one column per stat in STAT_KEYS),
+    system metrics (Metric/Value pairs), and — when telemetry results are
+    present — a flat GPU telemetry table."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)

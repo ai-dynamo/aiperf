@@ -199,9 +199,10 @@ class ResponsesEndpoint(BaseEndpoint):
             )
         input_items.extend(self.build_messages(turns))
 
-        # Conversation-level fields walk turns from the end so FORK-mode
-        # children whose final turn lacks model/tools still inherit the parent's
-        # intent. Per-request overrides stay scoped to the dispatching turn.
+        # ``raw_tools`` is the only conversation-level field: it walks turns from
+        # the end (below) so FORK-mode children whose final turn lacks tools still
+        # inherit the parent's intent. ``model`` / ``max_tokens`` / ``extra_body``
+        # are per-request overrides scoped to the dispatching turn.
         model_name = turns[-1].model
         max_tokens = turns[-1].max_tokens
         extra_body = turns[-1].extra_body

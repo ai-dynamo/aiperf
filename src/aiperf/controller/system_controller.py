@@ -250,9 +250,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Bootstrap the system services.
 
         This method will:
-        - Initialize all required services
-        - Wait for all required services to be registered
-        - Start all required services
+        - Start the service manager, which launches all required services
+        - Launch the optional services (GPU telemetry, server metrics, network
+          latency, API) so they can participate in configuration
+        - Wait for all launched services to register
+        - Send PROFILE_CONFIGURE, then PROFILE_START, to every registered service
         """
         self.debug("System Controller is bootstrapping services")
 
@@ -515,7 +517,7 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _on_telemetry_status_message(
         self, message: TelemetryStatusMessage
     ) -> None:
-        """Handle telemetry status from TelemetryManager.
+        """Handle telemetry status from GPUTelemetryManager.
 
         TelemetryStatusMessage informs SystemController if telemetry results will be available.
         """
@@ -920,7 +922,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # Only wait for RecordsManager's response since it returns ProcessRecordsResult.
         # Other services receive the broadcast cancel command but we don't wait for them.
-        # This avoids blocking if a service has exited early (e.g., TelemetryManager).
+        # This avoids blocking if a service has exited early (e.g., GPUTelemetryManager).
         records_manager_ids = [
             service_id
             for service_id, info in self.service_manager.service_id_map.items()

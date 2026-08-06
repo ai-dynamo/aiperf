@@ -454,7 +454,7 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
     const prefillDuration = (missTokens / prefillTps) * 1000;
     const decodeDuration = (turn.output_length / decodeTps) * 1000;
 
-    const { startTime: prefillStart, endTime: prefillEnd } = reservePrefill(turnReadyTime, prefillDuration);
+    const { startTime: prefillStart, endTime: prefillEnd } = reservePrefill(time, prefillDuration);
 
     const decodeStart = prefillEnd;
     const decodeEnd = decodeStart + decodeDuration;

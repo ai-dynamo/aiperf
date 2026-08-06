@@ -29,7 +29,8 @@ class ImageGenerator(BaseGenerator):
     Supports three source modes:
     - ASSETS: indexes images from the bundled 'assets/source_images' directory
     - NOISE: generates random noise images on the fly
-    - PATH: indexes images from the given directory (e.g. `./source_images`)
+    - a filesystem ``Path``: indexes images from the given directory
+      (e.g. `./source_images`)
     """
 
     def __init__(self, config: ImageConfig | None, **kwargs):

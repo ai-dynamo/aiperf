@@ -125,12 +125,14 @@ class PlotSpec(AIPerfBaseModel):
     label_by: str | None = Field(
         default=None,
         description="Column to use for labeling points (single column only). "
-        "Must be provided as a single-element list in YAML (e.g., [concurrency]).",
+        "Accepts a plain string or a single-element list in YAML (e.g., [concurrency]); "
+        "multi-element lists are rejected.",
     )
     group_by: str | None = Field(
         default=None,
         description="Column to use for grouping data into separate series (single column only). "
-        "Must be provided as a single-element list in YAML (e.g., [model]). "
+        "Accepts a plain string or a single-element list in YAML (e.g., [model]); "
+        "multi-element lists are rejected. "
         "Note: When experiment_classification is enabled, this is auto-overridden to 'experiment_group'.",
     )
 

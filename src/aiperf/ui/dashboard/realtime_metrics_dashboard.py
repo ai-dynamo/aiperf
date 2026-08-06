@@ -155,7 +155,7 @@ class RealtimeMetricsTable(Widget):
                 )
 
     def _format_metric_row(self, metric: MetricResult) -> list[Text]:
-        """Format worker data into table row cells.
+        """Format a MetricResult into table row cells.
 
         Note: Metrics are pre-converted to display units by summarize(),
         so values can be used directly without conversion.

@@ -46,16 +46,16 @@ def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | 
 
     Examples:
         >>> parse_server_metric_spec("vllm:cache_usage")
-        ("vllm:cache_usage", None, None)
+        ('vllm:cache_usage', None, None)
 
         >>> parse_server_metric_spec("vllm:cache[http://localhost:8081/metrics]")
-        ("vllm:cache", "http://localhost:8081/metrics", None)
+        ('vllm:cache', 'http://localhost:8081/metrics', None)
 
         >>> parse_server_metric_spec("vllm:requests{method='GET',status='200'}")
-        ("vllm:requests", None, {"method": "GET", "status": "200"})
+        ('vllm:requests', None, {'method': 'GET', 'status': '200'})
 
         >>> parse_server_metric_spec("vllm:cache[http://localhost:8081]{instance='worker-1'}")
-        ("vllm:cache", "http://localhost:8081", {"instance": "worker-1"})
+        ('vllm:cache', 'http://localhost:8081', {'instance': 'worker-1'})
     """
     # Combined pattern: metric[endpoint]{labels}
     # Groups: (1) metric name, (2) endpoint (optional), (3) labels (optional)

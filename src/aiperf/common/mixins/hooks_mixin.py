@@ -53,7 +53,7 @@ class HooksMixin(AIPerfLoggerMixin):
                 if not callable(method):
                     continue
 
-                # If the method has the AIPERF_HOOK_TYPE attribute, it is a hook.
+                # If the method has the HookAttrs.HOOK_TYPE attribute, it is a hook.
                 if hasattr(method, HookAttrs.HOOK_TYPE):
                     method_hook_type = getattr(method, HookAttrs.HOOK_TYPE)
                     self._check_hook_type_is_provided(method_hook_type)
@@ -168,7 +168,8 @@ class HooksMixin(AIPerfLoggerMixin):
         """Run the hooks for the given hook type, waiting for each hook to complete before running the next one.
         Hooks are run in the order they are defined by the class, starting with hooks defined in the lowest level
         of base classes, moving up to the top level class. If more than one hook type is provided, the hooks
-        from each level of classes will be run in the order of the hook types provided.
+        are grouped by hook type in the order those hook types were first registered, not in the order the
+        hook types were passed to this method.
 
         If reverse is True, the hooks will be run in reverse order. This is useful for stop/cleanup hooks, where you
         want to start with the children and ending with the parent.
