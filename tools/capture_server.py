@@ -9,10 +9,10 @@ error out.
 
 Usage::
 
-    python tools/capture_server.py --out /tmp/prompts.jsonl --port 18000
+    uv run python tools/capture_server.py --out /tmp/prompts.jsonl --port 18000
 
 Then run your benchmark client against http://localhost:18000.
-Each JSONL line contains the full request payload plus a sequence number.
+Each JSONL line contains the full request payload with a ``_seq`` counter added.
 """
 
 from __future__ import annotations
@@ -95,7 +95,12 @@ class CaptureHandler(BaseHTTPRequestHandler):
             self.send_response(411)
             self.end_headers()
             return
-        length = int(raw_length)
+        try:
+            length = int(raw_length)
+        except ValueError:
+            self.send_response(400)
+            self.end_headers()
+            return
         if length < 0:
             self.send_response(400)
             self.end_headers()
@@ -117,7 +122,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
         stream = payload.get("stream", False)
 
         if _out_file is not None:
-            record = {"i": _count, **payload}
+            record = {**payload, "_seq": _count}
             _out_file.write(json.dumps(record) + "\n")
             _out_file.flush()
 

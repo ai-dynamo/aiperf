@@ -116,7 +116,7 @@ def vocab_top_diffs(
             vc = ep_data.get("vocab_distribution", {})
             if not vc:
                 continue
-            for tok_id_str, cnt in vc.get("counts", {}).items():
+            for tok_id_str, cnt in vc.get("frequencies", vc.get("counts", {})).items():
                 out[int(tok_id_str)] = out.get(int(tok_id_str), 0) + cnt
         return out
 
@@ -304,7 +304,8 @@ def render_tokenization_mode_table(
     def mode_counts(rows: list[dict]) -> dict[str, int]:
         c: dict[str, int] = collections.Counter()
         for r in rows:
-            c[r.get("tokenization_mode", "unknown")] += 1
+            raw = r.get("tokenization_mode")
+            c[raw if isinstance(raw, str) else "unknown"] += 1
         return dict(c)
 
     ca, cb = mode_counts(rows_a), mode_counts(rows_b)
@@ -343,22 +344,26 @@ def build_html(
     st_osl_a = field_stats(rows_a, "requested_osl")
     st_osl_b = field_stats(rows_b, "requested_osl")
 
-    # Histogram bounds
-    def hist_bounds(va: list, vb: list, step: int) -> tuple[int, int]:
-        lo = (min(va + vb) // step) * step
-        hi = (max(va + vb) // step + 2) * step
-        return lo, hi
+    _MAX_BINS = 500
 
-    isl_lo, isl_hi = hist_bounds(isl_a or [0], isl_b or [0], 2)
-    osl_lo, osl_hi = hist_bounds(osl_a or [0], osl_b or [0], 2)
+    def hist_bounds(va: list, vb: list, base_step: int) -> tuple[int, int, int]:
+        lo = (min(va + vb) // base_step) * base_step
+        hi = (max(va + vb) // base_step + 2) * base_step
+        n_bins = (hi - lo) // base_step
+        step = base_step * max(1, math.ceil(n_bins / _MAX_BINS))
+        hi = lo + step * math.ceil((hi - lo) / step)
+        return lo, hi, step
 
-    isl_bins = list(range(isl_lo, isl_hi, 2))
-    osl_bins = list(range(osl_lo, osl_hi, 2))
+    isl_lo, isl_hi, isl_step = hist_bounds(isl_a or [0], isl_b or [0], 2)
+    osl_lo, osl_hi, osl_step = hist_bounds(osl_a or [0], osl_b or [0], 2)
 
-    isl_a_pct = histogram(isl_a, isl_lo, isl_hi, 2)
-    isl_b_pct = histogram(isl_b, isl_lo, isl_hi, 2)
-    osl_a_pct = histogram(osl_a, osl_lo, osl_hi, 2)
-    osl_b_pct = histogram(osl_b, osl_lo, osl_hi, 2)
+    isl_bins = list(range(isl_lo, isl_hi, isl_step))
+    osl_bins = list(range(osl_lo, osl_hi, osl_step))
+
+    isl_a_pct = histogram(isl_a, isl_lo, isl_hi, isl_step)
+    isl_b_pct = histogram(isl_b, isl_lo, isl_hi, isl_step)
+    osl_a_pct = histogram(osl_a, osl_lo, osl_hi, osl_step)
+    osl_b_pct = histogram(osl_b, osl_lo, osl_hi, osl_step)
 
     vocab_diffs = vocab_top_diffs(summary_a, summary_b)
 
