@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import argparse
 import collections
+import html
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -54,20 +56,34 @@ def load_summary(path: Path) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+def _finite_vals(rows: list[dict], key: str) -> list[float]:
+    return [
+        v
+        for r in rows
+        if (v := r.get(key)) is not None
+        and isinstance(v, (int, float))
+        and math.isfinite(v)
+    ]
+
+
 def field_stats(rows: list[dict], key: str) -> dict:
-    vals = [r[key] for r in rows if r.get(key) is not None]
+    vals = _finite_vals(rows, key)
     if not vals:
         return {}
-    s = sorted(vals)
-    n = len(s)
+    n = len(vals)
+    if n >= 2:
+        qs = statistics.quantiles(vals, n=100, method="inclusive")
+        p5, p95 = qs[4], qs[94]
+    else:
+        p5 = p95 = vals[0]
     return {
         "n": n,
-        "min": s[0],
-        "p5": s[int(n * 0.05)],
+        "min": min(vals),
+        "p5": p5,
         "mean": round(statistics.mean(vals), 2),
         "median": statistics.median(vals),
-        "p95": s[int(n * 0.95)],
-        "max": s[-1],
+        "p95": p95,
+        "max": max(vals),
         "std": round(statistics.stdev(vals) if n > 1 else 0, 2),
     }
 
@@ -298,7 +314,7 @@ def render_tokenization_mode_table(
         a_pct = ca.get(m, 0) / len(rows_a) * 100 if rows_a else 0
         b_pct = cb.get(m, 0) / len(rows_b) * 100 if rows_b else 0
         rows_html.append(
-            f"<tr><td>{m}</td><td>{ca.get(m, 0):,} ({a_pct:.1f}%)</td>"
+            f"<tr><td>{html.escape(m)}</td><td>{ca.get(m, 0):,} ({a_pct:.1f}%)</td>"
             f"<td>{cb.get(m, 0):,} ({b_pct:.1f}%)</td></tr>"
         )
     return (
@@ -317,10 +333,10 @@ def build_html(
     path_a: str,
     path_b: str,
 ) -> str:
-    isl_a = [r["isl"] for r in rows_a if r.get("isl") is not None]
-    isl_b = [r["isl"] for r in rows_b if r.get("isl") is not None]
-    osl_a = [r["requested_osl"] for r in rows_a if r.get("requested_osl") is not None]
-    osl_b = [r["requested_osl"] for r in rows_b if r.get("requested_osl") is not None]
+    isl_a = _finite_vals(rows_a, "isl")
+    isl_b = _finite_vals(rows_b, "isl")
+    osl_a = _finite_vals(rows_a, "requested_osl")
+    osl_b = _finite_vals(rows_b, "requested_osl")
 
     st_isl_a = field_stats(rows_a, "isl")
     st_isl_b = field_stats(rows_b, "isl")
@@ -346,47 +362,52 @@ def build_html(
 
     vocab_diffs = vocab_top_diffs(summary_a, summary_b)
 
+    la = html.escape(label_a)
+    lb = html.escape(label_b)
+    pa = html.escape(path_a)
+    pb = html.escape(path_b)
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Recording comparison: {label_a} vs {label_b}</title>
+<title>Recording comparison: {la} vs {lb}</title>
 <style>{_CSS}</style>
 </head>
 <body>
-<h1>Recording comparison: {label_a} vs {label_b}</h1>
+<h1>Recording comparison: {la} vs {lb}</h1>
 <div class="subtitle">
-  A: {path_a}<br>
-  B: {path_b}
+  A: {pa}<br>
+  B: {pb}
 </div>
 
 <h2>Input Sequence Length (ISL)</h2>
-{render_stat_section(st_isl_a, st_isl_b, label_a, label_b, "isl")}
+{render_stat_section(st_isl_a, st_isl_b, la, lb, "isl")}
 <div class="chart-box">
   <div class="chart-title">ISL Distribution (2-token bins)</div>
   <div class="chart-sub">
-    Blue = {label_a} &nbsp;|&nbsp; Red = {label_b} &nbsp;|&nbsp; Overlapping bars share color
+    Blue = {la} &nbsp;|&nbsp; Red = {lb} &nbsp;|&nbsp; Overlapping bars share color
   </div>
   <svg id="hist-isl" width="860" height="280" style="display:block;"></svg>
 </div>
-{_js_hist("hist-isl", isl_bins, isl_a_pct, isl_b_pct, "ISL (tokens)", label_a, label_b)}
+{_js_hist("hist-isl", isl_bins, isl_a_pct, isl_b_pct, "ISL (tokens)", la, lb)}
 
 <h2>Requested Output Sequence Length (OSL)</h2>
-{render_stat_section(st_osl_a, st_osl_b, label_a, label_b, "requested_osl")}
+{render_stat_section(st_osl_a, st_osl_b, la, lb, "requested_osl")}
 <div class="chart-box">
   <div class="chart-title">Requested OSL Distribution (2-token bins)</div>
   <div class="chart-sub">
-    Blue = {label_a} &nbsp;|&nbsp; Red = {label_b} &nbsp;|&nbsp; Overlapping bars share color
+    Blue = {la} &nbsp;|&nbsp; Red = {lb} &nbsp;|&nbsp; Overlapping bars share color
   </div>
   <svg id="hist-osl" width="860" height="280" style="display:block;"></svg>
 </div>
-{_js_hist("hist-osl", osl_bins, osl_a_pct, osl_b_pct, "Requested OSL (tokens)", label_a, label_b)}
+{_js_hist("hist-osl", osl_bins, osl_a_pct, osl_b_pct, "Requested OSL (tokens)", la, lb)}
 
 <h2>Tokenization Mode</h2>
-{render_tokenization_mode_table(rows_a, rows_b, label_a, label_b)}
+{render_tokenization_mode_table(rows_a, rows_b, la, lb)}
 
 <h2>Vocab Distribution — Top {len(vocab_diffs)} token-count differences</h2>
-{render_vocab_table(vocab_diffs, label_a, label_b)}
+{render_vocab_table(vocab_diffs, la, lb)}
 
 </body>
 </html>"""
