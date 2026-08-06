@@ -315,6 +315,18 @@ class JsonExportData(AIPerfBaseModel):
     inter_token_latency: JsonMetricResult | None = None
     output_token_throughput: JsonMetricResult | None = None
     output_token_throughput_per_user: JsonMetricResult | None = None
+    full_decode_duration: JsonMetricResult | None = Field(
+        default=None,
+        description="Client-observed duration from first parsed content through full request completion.",
+    )
+    full_response_inter_token_latency: JsonMetricResult | None = Field(
+        default=None,
+        description="Average token interval from first parsed content through full request completion.",
+    )
+    full_response_output_token_throughput_per_user: JsonMetricResult | None = Field(
+        default=None,
+        description="Per-request output token rate over the full decode duration.",
+    )
     output_sequence_length: JsonMetricResult | None = None
     input_sequence_length: JsonMetricResult | None = None
     goodput: JsonMetricResult | None = None
