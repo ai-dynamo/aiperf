@@ -205,6 +205,14 @@ class PhaseRunner(TaskManagerMixin):
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
 
+    def _resolve_cache_bust_target(self) -> CacheBustTarget:
+        """Return the active cache-bust target, or NONE when no run is attached."""
+        return (
+            self._run.cfg.get_cache_bust_target()
+            if self._run is not None
+            else CacheBustTarget.NONE
+        )
+
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
     ) -> CreditIssuer:
@@ -230,11 +238,7 @@ class PhaseRunner(TaskManagerMixin):
                 or self._cache_warmup_enabled
             ),
             replay_barrier=self._replay_barrier,
-            cache_bust_target=(
-                self._run.cfg.get_cache_bust_target()
-                if self._run is not None
-                else CacheBustTarget.NONE
-            ),
+            cache_bust_target=self._resolve_cache_bust_target(),
         )
 
     def _maybe_construct_branch_orchestrator(
@@ -266,11 +270,7 @@ class PhaseRunner(TaskManagerMixin):
             return
         sticky_router = getattr(self._credit_router, "sticky_router", None)
         benchmark_id = self._run.benchmark_id if self._run is not None else "unknown"
-        cache_bust_target = (
-            self._run.cfg.get_cache_bust_target()
-            if self._run is not None
-            else CacheBustTarget.NONE
-        )
+        cache_bust_target = self._resolve_cache_bust_target()
         self._branch_orchestrator = BranchOrchestrator(
             conversation_source=conversation_source,
             credit_issuer=self._credit_issuer,
