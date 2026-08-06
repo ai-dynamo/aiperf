@@ -24,6 +24,7 @@ import os
 import sys
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
 
 _out_file = None
 _count = 0
@@ -67,7 +68,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path == "/v1/models":
+        if urlparse(self.path).path == "/v1/models":
             resp = json.dumps(
                 {"object": "list", "data": [{"id": _model_id, "object": "model"}]}
             ).encode()
@@ -82,7 +83,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         global _count
 
-        if self.path != "/v1/chat/completions":
+        if urlparse(self.path).path != "/v1/chat/completions":
             self.send_response(404)
             self.end_headers()
             return
