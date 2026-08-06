@@ -148,7 +148,7 @@ check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instruct
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
 
-install: install-app install-mock-server #? install the project and mock server in editable mode.
+install: install-app install-mock-server install-mock-amdsmi #? install the project, mock server, and fake amdsmi bindings in editable mode.
 
 install-app: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]"
@@ -165,7 +165,7 @@ version: #? print the version of the project.
 install-mock-server: #? install the mock server in editable mode.
 	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]"
 
-install-mock-amdsmi: #? install the fake amdsmi bindings for testing the AMD telemetry path (not part of default install).
+install-mock-amdsmi: #? install the fake amdsmi bindings for testing the AMD telemetry path.
 	$(activate_venv) && uv pip install -e "tests/aiperf_mock_amdsmi[dev]"
 
 check-mock-server-install: #? verify the mock server package and CLI entry point are installed.
