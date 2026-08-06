@@ -1425,6 +1425,19 @@ class SystemController(
                 for error in reportable_errors
             )
 
+        for fatal_error in message.results.fatal_errors:
+            self.error(
+                "Received fatal profile-results validation error: "
+                f"{fatal_error.message}"
+            )
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=fatal_error,
+                    operation="profile_results_validation",
+                    service_id=message.service_id,
+                )
+            )
+
         self.debug(
             lambda: (
                 f"Error summary: {message.results.results.error_summary if message.results.results else 'N/A'}"

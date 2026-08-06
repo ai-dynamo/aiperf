@@ -30,6 +30,7 @@ from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from tests.unit.post_processors.conftest import (
     create_accumulator_with_metrics,
+    create_metric_metadata,
     create_metric_records_data,
 )
 
@@ -75,6 +76,114 @@ class TestMetricsAccumulator:
         await processor.process_record(message2)
         values = processor._column_store.numeric("test_record")
         assert list(values[~np.isnan(values)]) == [42.0, 84.0]
+
+    @pytest.mark.asyncio
+    async def test_profile_metric_duration_coverage_is_phase_scoped(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """Warmup observations cannot hide profiling metrics that stopped early."""
+        processor = MetricsAccumulator(mock_run)
+        phase_start_ns = 100 * NANOS_PER_SECOND
+
+        profiling = create_metric_records_data(
+            session_num=0,
+            request_start_ns=147 * NANOS_PER_SECOND,
+            request_end_ns=149 * NANOS_PER_SECOND,
+            results=[
+                {"time_to_first_token": NANOS_PER_SECOND},
+                {"inter_token_latency": 100_000_000},
+            ],
+        )
+        warmup_metadata = create_metric_metadata(
+            session_num=0,
+            benchmark_phase=CreditPhase.WARMUP,
+            request_start_ns=197 * NANOS_PER_SECOND,
+            request_end_ns=199 * NANOS_PER_SECOND,
+        )
+        warmup = create_metric_records_data(
+            metadata=warmup_metadata,
+            results=[
+                {"time_to_first_token": NANOS_PER_SECOND},
+                {"inter_token_latency": 100_000_000},
+            ],
+        )
+        await processor.process_record(profiling)
+        await processor.process_record(warmup)
+
+        coverage = processor.profile_metric_duration_coverage(
+            ExportContext(
+                start_ns=phase_start_ns,
+                phase=CreditPhase.PROFILING,
+            ),
+            phase_name="profiling",
+            expected_duration_seconds=100.0,
+            required_ratio=0.98,
+        )
+
+        assert coverage.ttft_ratio == pytest.approx(0.48)
+        assert coverage.inter_token_latency_ratio == pytest.approx(0.49)
+        assert coverage.passed is False
+
+    @pytest.mark.asyncio
+    async def test_profile_metric_duration_coverage_accepts_threshold_boundary(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """A last TTFT exactly at the threshold and a later ITL record pass."""
+        processor = MetricsAccumulator(mock_run)
+        phase_start_ns = 100 * NANOS_PER_SECOND
+        record = create_metric_records_data(
+            session_num=0,
+            request_start_ns=197 * NANOS_PER_SECOND,
+            request_end_ns=199 * NANOS_PER_SECOND,
+            results=[
+                {"time_to_first_token": NANOS_PER_SECOND},
+                {"inter_token_latency": 100_000_000},
+            ],
+        )
+        await processor.process_record(record)
+
+        coverage = processor.profile_metric_duration_coverage(
+            ExportContext(
+                start_ns=phase_start_ns,
+                phase=CreditPhase.PROFILING,
+            ),
+            phase_name="profiling",
+            expected_duration_seconds=100.0,
+            required_ratio=0.98,
+        )
+
+        assert coverage.ttft_ratio == pytest.approx(0.98)
+        assert coverage.inter_token_latency_ratio == pytest.approx(0.99)
+        assert coverage.passed is True
+
+    @pytest.mark.asyncio
+    async def test_profile_metric_duration_coverage_requires_itl(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """TTFT alone cannot make an interactive streaming run valid."""
+        processor = MetricsAccumulator(mock_run)
+        phase_start_ns = 100 * NANOS_PER_SECOND
+        record = create_metric_records_data(
+            session_num=0,
+            request_start_ns=198 * NANOS_PER_SECOND,
+            request_end_ns=199 * NANOS_PER_SECOND,
+            results=[{"time_to_first_token": 0}],
+        )
+        await processor.process_record(record)
+
+        coverage = processor.profile_metric_duration_coverage(
+            ExportContext(
+                start_ns=phase_start_ns,
+                phase=CreditPhase.PROFILING,
+            ),
+            phase_name="profiling",
+            expected_duration_seconds=100.0,
+            required_ratio=0.98,
+        )
+
+        assert coverage.ttft_ratio == pytest.approx(0.98)
+        assert coverage.inter_token_latency_ratio == 0.0
+        assert coverage.passed is False
 
     @pytest.mark.asyncio
     async def test_process_record_record_metric_list_values(
