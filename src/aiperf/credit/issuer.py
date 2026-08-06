@@ -24,7 +24,10 @@ from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.replay_dependencies import ReplayIssueGate
-from aiperf.timing.strategies.cache_bust import WARMUP_ISOLATION_MARKER
+from aiperf.timing.strategies.cache_bust import (
+    WARMUP_ISOLATION_MARKER,
+    WARMUP_ISOLATION_TARGETS,
+)
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -41,11 +44,6 @@ if TYPE_CHECKING:
 
 
 _logger = AIPerfLogger(__name__)
-
-_WARMUP_ISOLATION_TARGETS = (
-    CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
-    CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
-)
 
 
 class CreditIssuer:
@@ -443,7 +441,7 @@ class CreditIssuer:
 
         cache_bust_marker = turn.cache_bust_marker
         cache_bust_target_for_credit = turn.cache_bust_target
-        if self._cache_bust_target in _WARMUP_ISOLATION_TARGETS:
+        if self._cache_bust_target in WARMUP_ISOLATION_TARGETS:
             cache_bust_target_for_credit = self._cache_bust_target
             cache_bust_marker = (
                 WARMUP_ISOLATION_MARKER if self._phase == CreditPhase.WARMUP else None

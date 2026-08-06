@@ -26,6 +26,10 @@ _SUFFIX_SEP = "::"
 _UNSET = object()
 
 WARMUP_ISOLATION_MARKER = "[warmup]\n\n"
+WARMUP_ISOLATION_TARGETS = (
+    CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+    CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+)
 
 
 def base_trace_id(conversation_id: str) -> str:
@@ -112,10 +116,7 @@ def build_cache_bust_marker(
     """
     if target == CacheBustTarget.NONE:
         return None
-    if target in (
-        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
-        CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
-    ):
+    if target in WARMUP_ISOLATION_TARGETS:
         return WARMUP_ISOLATION_MARKER
 
     unique_str = f"{benchmark_id}:{recycle_pass}:{trajectory_index}:{trace_id}"
@@ -143,10 +144,7 @@ def estimate_marker_token_cost(
     """
     if target == CacheBustTarget.NONE:
         return 0
-    if target in (
-        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
-        CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
-    ):
+    if target in WARMUP_ISOLATION_TARGETS:
         return 0
 
     total = 0
