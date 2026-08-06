@@ -566,6 +566,55 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_warmup_isolation_not_agentic_replay(self) -> Self:
+        """Reject WARMUP_ISOLATION_* targets when timing mode resolves to AGENTIC_REPLAY.
+
+        ``_inject_marker_at_first_user`` mutates Turn objects in-place inside
+        ``session.turn_list``. In agentic replay the same session object spans
+        the WARMUP→PROFILING boundary (the session is never evicted at phase
+        transition), so a Turn mutated with ``[warmup]`` during WARMUP carries
+        that mutation into PROFILING — even though the PROFILING credit has
+        ``cache_bust_marker=None`` and ``_apply_cache_bust`` returns early.
+
+        Resolution logic mirrors ``validate_agentic_cache_warmup``: resolve the
+        scenario's declared timing_mode when a scenario is present (scenario
+        stamps phases post-construction); otherwise inspect the phases directly.
+        """
+        from aiperf.common.enums import CacheBustTarget
+        from aiperf.plugin.enums import TimingMode
+        from aiperf.timing.config import _is_agentic_replay
+
+        target = self.get_cache_bust_target()
+        _WARMUP_ISOLATION = (
+            CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+            CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+        )
+        if target not in _WARMUP_ISOLATION:
+            return self
+
+        profiling_phases = self.get_profiling_phases()
+        is_agentic = False
+        if self.scenario is not None:
+            from aiperf.common.scenario.registry import get_scenario
+
+            is_agentic = (
+                get_scenario(self.scenario).timing_mode == TimingMode.AGENTIC_REPLAY
+            )
+        else:
+            is_agentic = _is_agentic_replay(profiling_phases)
+
+        if is_agentic:
+            raise ValueError(
+                "cache_bust targets warmup_isolation_system and "
+                "warmup_isolation_first_turn are not compatible with agentic_replay "
+                "timing mode: Turn objects mutated during warmup persist into profiling "
+                "sessions. Use cache_bust=none for agentic_replay workloads or one of "
+                "the RID-based targets (system_prefix, first_turn_prefix, etc.) for "
+                "per-trajectory isolation."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_agentic_cache_warmup(self) -> Self:
         """Restrict accelerated cache warmup to the agentic_replay timing mode.
 

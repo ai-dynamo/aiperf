@@ -92,11 +92,19 @@ def build_cache_bust_marker(
 ) -> str | None:
     """Render the marker text for the given inputs and target position.
 
-    The digest tuple is intentionally phase-agnostic. Spec requires
-    "warmup-coherent" markers: a trajectory's warmup turn ``k_i`` and its
-    first profiling turn ``k_i+1`` must share the same marker so warmup
-    KV-cache work transfers to profiling. Adding phase to the digest
-    would defeat that — keep it out.
+    Two paths depending on ``target``:
+
+    (a) RID-digest targets (``SYSTEM_PREFIX``, ``SYSTEM_SUFFIX``,
+        ``FIRST_TURN_PREFIX``, ``FIRST_TURN_SUFFIX``): the digest tuple is
+        intentionally phase-agnostic. Spec requires "warmup-coherent" markers:
+        a trajectory's warmup turn ``k_i`` and its first profiling turn
+        ``k_i+1`` must share the same marker so warmup KV-cache work transfers
+        to profiling. Adding phase to the digest would defeat that — keep it out.
+
+    (b) ``WARMUP_ISOLATION_*`` targets: return the constant
+        ``WARMUP_ISOLATION_MARKER`` string. No digest is computed. The
+        phase-aware gate (emit during WARMUP, suppress during PROFILING) lives
+        in ``CreditIssuer._issue_credit_internal``, not here.
 
     Returns ``None`` when target is NONE so callers can unconditionally pass
     the result through into ``Credit.cache_bust_marker: str | None``. Returning
@@ -127,8 +135,11 @@ def estimate_marker_token_cost(
     """Average token count of the cache-bust marker for a given target.
 
     Tokenizes ``samples`` distinct markers and rounds the mean to an int.
-    Returns 0 for ``CacheBustTarget.NONE``. The 12-hex digest dominates
-    the variance, so a handful of samples is enough.
+    Returns 0 for ``CacheBustTarget.NONE`` and for ``WARMUP_ISOLATION_*``
+    targets (their marker is only injected during WARMUP; PROFILING credits
+    carry ``None``, so there is no profiling-phase token cost to estimate).
+    The 12-hex digest dominates the variance for RID targets, so a handful
+    of samples is enough.
     """
     if target == CacheBustTarget.NONE:
         return 0

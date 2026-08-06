@@ -123,10 +123,19 @@ These targets are **phase-aware**: the marker is present only during warmup and 
 profiling. This is the opposite of the RID targets, which are phase-agnostic (same marker in both
 phases) so warmup primes profiling.
 
+> **Incompatibility with `agentic_replay`:** These targets cannot be used with the
+> `agentic_replay` timing mode. In agentic replay, the same session object spans the
+> WARMUP→PROFILING boundary and Turn objects mutated during warmup would carry the
+> `[warmup]` marker into profiling credits. Use `cache_bust=none` for `agentic_replay`
+> workloads, or one of the RID-based targets for per-trajectory isolation.
+
 ### `warmup_isolation_system`
 
 Injects `[warmup]\n\n` at the very beginning of the system message during WARMUP. During
 PROFILING the payload is clean — no marker anywhere.
+
+> **Note:** When no system message is present, `warmup_isolation_system` falls back to
+> injecting into the first user turn (identical behavior to `warmup_isolation_first_turn`).
 
 **WARMUP phase:**
 

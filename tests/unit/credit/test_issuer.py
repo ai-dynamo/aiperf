@@ -105,14 +105,22 @@ def make_turn(
     conversation_id: str = "conv1",
     turn_index: int = 0,
     num_turns: int = 1,
+    cache_bust_marker: str | None = None,
+    cache_bust_target=None,
 ) -> TurnToSend:
     """Create a TurnToSend for testing."""
-    return TurnToSend(
+
+    kwargs: dict = dict(
         conversation_id=conversation_id,
         x_correlation_id=f"corr-{conversation_id}",
         turn_index=turn_index,
         num_turns=num_turns,
     )
+    if cache_bust_marker is not None:
+        kwargs["cache_bust_marker"] = cache_bust_marker
+    if cache_bust_target is not None:
+        kwargs["cache_bust_target"] = cache_bust_target
+    return TurnToSend(**kwargs)
 
 
 # =============================================================================
@@ -1045,7 +1053,13 @@ class TestWarmupIsolationMarkerEmission:
         mock_cancellation,
         mock_lifecycle,
     ):
-        """Non-WARMUP_ISOLATION targets are unaffected by the new param."""
+        """Non-WARMUP_ISOLATION targets pass through the turn's marker unchanged.
+
+        The issuer is configured with NONE (no WARMUP_ISOLATION override), so the
+        marker already on the TurnToSend must survive into the Credit unmodified.
+        Using a real non-None marker makes the assertion meaningful — if the issuer
+        were to clobber it with None the test would catch the regression.
+        """
         from aiperf.common.enums import CacheBustTarget, CreditPhase
 
         issuer = _make_warmup_isolation_issuer(
@@ -1058,7 +1072,12 @@ class TestWarmupIsolationMarkerEmission:
             mock_cancellation=mock_cancellation,
             mock_lifecycle=mock_lifecycle,
         )
-        await issuer.issue_credit(make_turn())
+        turn = make_turn(
+            cache_bust_marker="[rid:abc123def456]",
+            cache_bust_target=CacheBustTarget.SYSTEM_PREFIX,
+        )
+        await issuer.issue_credit(turn)
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
-        assert sent_credit.cache_bust_marker is None
+        assert sent_credit.cache_bust_marker == "[rid:abc123def456]"
+        assert sent_credit.cache_bust_target == CacheBustTarget.SYSTEM_PREFIX

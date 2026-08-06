@@ -1731,7 +1731,7 @@ def test_seeded_resume_with_buried_reset_suffix():
 # WARMUP_ISOLATION_* target routing.
 # During WARMUP the CreditIssuer sets cache_bust_marker=WARMUP_ISOLATION_MARKER.
 # During PROFILING it sets cache_bust_marker=None, so _apply_cache_bust returns
-# early (the `not marker` gate) before any routing — no tests needed for that path.
+# early (the `not marker` gate) before any routing.
 
 
 def test_apply_cache_bust_warmup_isolation_system_injects_into_system_message():

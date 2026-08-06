@@ -470,7 +470,7 @@ def _apply_system_target_cache_bust(
     target: CacheBustTarget,
     is_prefix: bool,
 ) -> str | None:
-    """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` marker for one credit.
+    """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` / ``WARMUP_ISOLATION_SYSTEM`` marker for one credit.
 
     ``prefix_turns`` is the effective wire prefix slice (see
     :func:`_effective_prefix_turns`). Four sub-paths, ordered to match how the
