@@ -11,16 +11,20 @@ title: NVIDIA AIPerf Documentation
 products:
   - display-name: AIPerf
     slug: /
-    path: ./versions/v0.11.0.yml
+    path: ./versions/v0.12.0.yml
     versions:
-      - display-name: Latest (v0.11.0)
-        path: ./versions/v0.11.0.yml
+      - display-name: Latest (v0.12.0)
+        path: ./versions/v0.12.0.yml
         slug: latest
         availability: stable
       - display-name: dev
         path: ./versions/dev.yml
         slug: dev
         availability: beta
+      - display-name: v0.12.0
+        path: ./versions/v0.12.0.yml
+        slug: v0.12.0
+        availability: stable
       - display-name: v0.11.0
         path: ./versions/v0.11.0.yml
         slug: v0.11.0
