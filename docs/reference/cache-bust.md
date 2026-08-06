@@ -1,6 +1,4 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 sidebar-title: Cache-Bust Targets
 ---
 
@@ -188,16 +186,19 @@ cold in profiling.
 
 ## Choosing a Target
 
-```
-Is warmup-to-profiling cache transfer desired?
-├── Yes — use none or an RID target.
-│   ├── Single trajectory or no cross-trajectory isolation needed → none
-│   └── Multiple trajectories, isolation required → system_prefix / system_suffix / first_turn_prefix / first_turn_suffix
-│       ├── Isolate from token 0 (system prompt varies per trajectory) → system_prefix or system_suffix
-│       └── Share system-prompt cache, isolate from first user turn → first_turn_prefix or first_turn_suffix
-└── No — use a warmup_isolation target.
-    ├── Fully cold start (no warmup benefit at all) → warmup_isolation_system
-    └── System prompt pre-warmed, user turns cold → warmup_isolation_first_turn
+```mermaid
+flowchart TD
+    A{Warmup-to-profiling\ncache transfer desired?} -->|Yes| B{Cross-trajectory\nisolation needed?}
+    A -->|No| C{System prompt\npre-warmed?}
+
+    B -->|No| D["`**none**`"]
+    B -->|Yes| E{Isolate from\ntoken 0?}
+
+    E -->|Yes — system prompt\nvaries per trajectory| F["`**system_prefix**\n**system_suffix**`"]
+    E -->|No — share system-prompt\ncache across trajectories| G["`**first_turn_prefix**\n**first_turn_suffix**`"]
+
+    C -->|No — fully cold start| H["`**warmup_isolation_system**`"]
+    C -->|Yes — system prompt\nalready resident| I["`**warmup_isolation_first_turn**`"]
 ```
 
 ### `none`
