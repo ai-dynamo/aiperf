@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.credit.dispatch import ChildDispatchResult
 
 if TYPE_CHECKING:
+    from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.common.models import DatasetMetadata
     from aiperf.credit.structs import Credit, TurnToSend
 
@@ -137,8 +139,8 @@ class _PendingDispatch:
 
     turn: TurnToSend
     """The turn queued for dispatch once its barrier clears."""
-    issue: Callable[[], Awaitable[bool]]
-    """Coroutine factory that issues the credit; returns True on acceptance."""
+    issue: Callable[[], Awaitable[bool | ChildDispatchResult]]
+    """Coroutine factory that resolves the credit's dispatch disposition."""
     on_refused: Callable[[], Awaitable[None]] | None
     """Optional callback run when the dispatch is refused or cancelled."""
 
@@ -151,12 +153,24 @@ class _RootBarrierState:
     """Keys of requests on this tree that have recorded completion."""
     pending: dict[ReplayTurnKey, _PendingDispatch]
     """Dispatches keyed by request, waiting on their predecessors to complete."""
+    in_flight: int = 0
+    """Requests from this runtime tree currently on the wire."""
+    idle_watchdog: asyncio.TimerHandle | None = None
+    """Per-tree idle-cap callback, armed only while no request is in flight."""
+    idle_cap_expired: bool = False
+    """Whether this idle interval has already consumed its full cap budget."""
 
 
 class ReplayBarrierCoordinator:
     """Release requests only after their recorded frontier has completed."""
 
-    def __init__(self, dataset_metadata: DatasetMetadata) -> None:
+    def __init__(
+        self,
+        dataset_metadata: DatasetMetadata,
+        *,
+        scheduler: LoopScheduler | None = None,
+        root_idle_gap_cap_seconds: float | None = None,
+    ) -> None:
         self._predecessors: dict[ReplayTurnKey, tuple[ReplayTurnKey, ...]] = {}
         for conversation in dataset_metadata.conversations:
             for turn_index, turn in enumerate(conversation.turns):
@@ -169,6 +183,40 @@ class ReplayBarrierCoordinator:
         self._dispatch_tasks: set[asyncio.Task] = set()
         self._active = False
         self._releases_paused = False
+        self._scheduler = scheduler
+        self._root_idle_gap_cap_seconds = root_idle_gap_cap_seconds
+        self._root_idle_jumps = 0
+        self._root_idle_seconds_skipped = 0.0
+
+    def _root_state(self, root_id: str) -> _RootBarrierState:
+        return self._roots.setdefault(
+            root_id, _RootBarrierState(completed=set(), pending={})
+        )
+
+    def observe_issued(self, credit: Credit) -> None:
+        """Track one request reaching the wire and cancel its idle watchdog."""
+        if not self._active:
+            return
+        state = self._root_state(credit.effective_root_correlation_id)
+        state.in_flight += 1
+        state.idle_cap_expired = False
+        if state.idle_watchdog is not None:
+            state.idle_watchdog.cancel()
+            state.idle_watchdog = None
+
+    def observe_idle_root(self, root_id: str) -> None:
+        """Start monitoring a known-idle tree with pending runtime work.
+
+        Profiling snapshots may begin with every stream scheduled in the
+        future, before any request from that runtime root has reached the wire.
+        Registering the root after those timers are installed lets the same
+        completion-driven watchdog cover that initial idle interval.
+        """
+        if not self._active:
+            return
+        state = self._root_state(root_id)
+        if state.in_flight == 0:
+            self._arm_root_idle_watchdog(root_id, state)
 
     def activate(self) -> None:
         """Enable barriers after baseline cache priming completes."""
@@ -195,17 +243,16 @@ class ReplayBarrierCoordinator:
     async def submit(
         self,
         turn: TurnToSend,
-        issue: Callable[[], Awaitable[bool]],
+        issue: Callable[[], Awaitable[bool | ChildDispatchResult]],
         *,
         on_refused: Callable[[], Awaitable[None]] | None = None,
-    ) -> bool:
+        retained_result: bool | ChildDispatchResult = True,
+    ) -> bool | ChildDispatchResult:
         """Issue now when ready, otherwise retain one deferred dispatch."""
         if not self._active:
             return await issue()
         root_id = turn.effective_root_correlation_id
-        state = self._roots.setdefault(
-            root_id, _RootBarrierState(completed=set(), pending={})
-        )
+        state = self._root_state(root_id)
         key = ReplayTurnKey(turn.conversation_id, turn.turn_index)
         if self._ready(state, key) and not self._releases_paused:
             return await issue()
@@ -216,16 +263,22 @@ class ReplayBarrierCoordinator:
         state.pending[key] = _PendingDispatch(
             turn=turn, issue=issue, on_refused=on_refused
         )
-        return True
+        # A cap-expired timer can land here because its recorded predecessor
+        # has not completed yet.  The tree is still fully idle, so immediately
+        # advance the next timer in this tree instead of waiting another full
+        # cap interval (or never re-arming at all).  ``observe_issued`` cancels
+        # this retry as soon as any candidate actually reaches the wire.
+        if state.in_flight == 0 and state.idle_cap_expired:
+            self._arm_root_idle_watchdog(root_id, state)
+        return retained_result
 
     def complete(self, credit: Credit) -> None:
         """Record any terminal request outcome and release newly ready work."""
         if not self._active:
             return
         root_id = credit.effective_root_correlation_id
-        state = self._roots.setdefault(
-            root_id, _RootBarrierState(completed=set(), pending={})
-        )
+        state = self._root_state(root_id)
+        state.in_flight = max(0, state.in_flight - 1)
         state.completed.add(ReplayTurnKey(credit.conversation_id, credit.turn_index))
         if self._releases_paused:
             return
@@ -235,10 +288,50 @@ class ReplayBarrierCoordinator:
             task = asyncio.create_task(self._dispatch_pending(pending))
             self._dispatch_tasks.add(task)
             task.add_done_callback(self._dispatch_tasks.discard)
+        if state.in_flight == 0:
+            state.idle_cap_expired = False
+            self._arm_root_idle_watchdog(root_id, state)
+
+    def _arm_root_idle_watchdog(self, root_id: str, state: _RootBarrierState) -> None:
+        """Advance only this tree's timers after a fully idle capped gap."""
+        cap = self._root_idle_gap_cap_seconds
+        if (
+            cap is None
+            or cap < 0
+            or self._scheduler is None
+            or state.idle_watchdog is not None
+        ):
+            return
+        loop = asyncio.get_running_loop()
+        delay = 0.0 if state.idle_cap_expired else cap
+        state.idle_watchdog = loop.call_later(
+            delay, self._enforce_root_idle_cap, root_id
+        )
+
+    def _enforce_root_idle_cap(self, root_id: str) -> None:
+        state = self._roots.get(root_id)
+        if state is None:
+            return
+        state.idle_watchdog = None
+        if state.in_flight != 0 or self._scheduler is None:
+            return
+        state.idle_cap_expired = True
+        shifted = self._scheduler.cap_pending_delay_for_group(root_id, 0.0)
+        if shifted <= 0:
+            return
+        self._root_idle_jumps += 1
+        self._root_idle_seconds_skipped += shifted
+        _logger.info(
+            "Per-trace idle cap advanced replay root %s by %.3fs",
+            root_id,
+            shifted,
+        )
 
     def close_root(self, root_id: str) -> None:
         """Discard completed runtime state when a recycled tree drains."""
-        self._roots.pop(root_id, None)
+        state = self._roots.pop(root_id, None)
+        if state is not None and state.idle_watchdog is not None:
+            state.idle_watchdog.cancel()
 
     def seed_completed_prefixes(
         self,
@@ -246,9 +339,7 @@ class ReplayBarrierCoordinator:
         boundaries: tuple[ReplayResumeBoundary, ...],
     ) -> None:
         """Seed exact pre-resume history before any turn can be submitted."""
-        state = self._roots.setdefault(
-            root_id, _RootBarrierState(completed=set(), pending={})
-        )
+        state = self._root_state(root_id)
         if state.pending:
             raise RuntimeError(
                 f"Cannot seed replay history after dispatch for root={root_id!r}"
@@ -311,6 +402,9 @@ class ReplayBarrierCoordinator:
         """Cancel retained dispatches during phase teardown."""
         callbacks = []
         for state in self._roots.values():
+            if state.idle_watchdog is not None:
+                state.idle_watchdog.cancel()
+                state.idle_watchdog = None
             if notify_refused:
                 callbacks.extend(
                     pending.on_refused
@@ -344,7 +438,8 @@ class ReplayBarrierCoordinator:
                 "Barrier-released replay dispatch failed for %r", pending.turn
             )
             issued = False
-        if not issued and pending.on_refused is not None:
+        rejected = issued is False or issued is ChildDispatchResult.REJECTED
+        if rejected and pending.on_refused is not None:
             await pending.on_refused()
 
 
@@ -374,10 +469,11 @@ class ReplayIssueGate:
     async def submit(
         self,
         turn: TurnToSend,
-        issue: Callable[[], Awaitable[bool]],
+        issue: Callable[[], Awaitable[bool | ChildDispatchResult]],
         *,
         child_refusal_cleanup: bool = False,
-    ) -> bool:
+        retained_result: bool | ChildDispatchResult = True,
+    ) -> bool | ChildDispatchResult:
         if self._coordinator is None:
             return await issue()
         on_refused = None
@@ -386,7 +482,12 @@ class ReplayIssueGate:
             async def on_refused() -> None:
                 await self._child_refused(turn.x_correlation_id)
 
-        return await self._coordinator.submit(turn, issue, on_refused=on_refused)
+        return await self._coordinator.submit(
+            turn,
+            issue,
+            on_refused=on_refused,
+            retained_result=retained_result,
+        )
 
     def activate(self) -> None:
         if self._coordinator is not None:
@@ -395,6 +496,10 @@ class ReplayIssueGate:
     def complete(self, credit: Credit) -> None:
         if self._coordinator is not None:
             self._coordinator.complete(credit)
+
+    def observe_idle_root(self, root_correlation_id: str) -> None:
+        if self._coordinator is not None:
+            self._coordinator.observe_idle_root(root_correlation_id)
 
     def close_root(self, root_correlation_id: str) -> None:
         if self._coordinator is not None:
@@ -430,5 +535,7 @@ class ReplayIssueGate:
             await self._coordinator.cancel_pending(notify_refused=notify_refused)
 
     async def observe_issued(self, credit: Credit) -> None:
+        if self._coordinator is not None:
+            self._coordinator.observe_issued(credit)
         if self._credit_issued is not None:
             await self._credit_issued(credit)

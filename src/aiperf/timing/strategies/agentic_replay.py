@@ -38,12 +38,14 @@ aborts PROFILING so steady-state metrics aren't silently biased by a
 degraded trajectory pool.
 
 PROFILING: each stream resumes at its first turn at/after t*
-(``next_turn_index``). Default dispatch preserves the stream's recorded offset
-from the replay boundary; ``--burst-phase-starts`` collapses each lane's first
-eligible request to profiling-time 0. Accelerated cache warmup synthesizes a
-new replay boundary at the warmup handoff and carries each live stream's
-residual next-turn delay into profiling, so the handoff ramps instead of
-firing every live stream at once. Subsequent turns honor trace inter-turn
+(``next_turn_index``). Default dispatch subtracts one phase-wide minimum from
+every stream's recorded offset: the earliest eligible request fires at
+profiling-time 0 while all cross-trajectory spacing and ordering are preserved.
+``--burst-phase-starts`` instead collapses each lane's first eligible request
+to profiling-time 0. Accelerated cache warmup synthesizes a new replay boundary
+at the warmup handoff and carries each live stream's full next-turn delay into
+profiling; time spent waiting for the global warmup barrier does not consume
+that delay. Subsequent turns honor trace inter-turn
 ``delay_ms`` from the original trace timeline. Gated parents fire their
 join turn when blocking children complete. When a root session reaches its
 final turn AND its whole tree (root + every descendant subagent) has drained,
@@ -59,7 +61,6 @@ import asyncio
 import time
 import uuid
 from collections import Counter, deque
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -70,6 +71,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
+from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.replay_dependencies import ReplayResumeBoundary
@@ -82,6 +84,7 @@ from aiperf.timing.trajectory_source import (
 )
 
 _WARMUP_MAX_TOKENS = 1
+_IDLE_WATCHDOG_EPSILON_SECONDS = 1e-6
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
@@ -179,12 +182,28 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             if isinstance(cache_warmup_duration, int | float)
             else None
         )
+        cache_warmup_requests_per_lane = getattr(
+            config, "warmup_requests_per_lane", None
+        )
+        self._cache_warmup_requests_per_lane: int | None = (
+            int(cache_warmup_requests_per_lane)
+            if isinstance(cache_warmup_requests_per_lane, int)
+            else None
+        )
+        self._cache_warmup_requests_by_lane: Counter[int] = Counter()
+        self._cache_warmup_request_budget_reached = False
+        self._baseline_warmup_admitted = 0
+        self._quota_handoff_turns: dict[tuple[str, str, int], TurnToSend] = {}
         self._baseline_warmup_returns: dict[str, Credit] = {}
         self._baseline_correlations: set[str] = set()
+        self._baseline_warmup_turns: set[tuple[str, int]] = set()
         self._accelerated_warmup_started = False
         self._handoff_credits: dict[str, Credit] = {}
-        self._handoff_returned_at_ns: dict[str, int] = {}
         self._root_to_lane: dict[str, int] = {}
+        # Accelerated warmup removes idle delays. Keep each tree's sampled t*
+        # so handoff can restore every stream to one flattened dataset clock;
+        # otherwise pending child turn-0 requests all look due at offset zero.
+        self._replay_origin_ms_by_root: dict[str, float] = {}
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
@@ -214,13 +233,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         )
         self._benchmark_id: str = run.benchmark_id if run is not None else "unknown"
         # ``--burst-phase-starts`` (BasePhaseConfig.burst_phase_starts on the
-        # profiling phase). Default False: the WARMUP and PROFILING phase starts
-        # are SPREAD by each request's recorded offset from t* (warmup globally
-        # t*-aligned, profiling preserving each lane's leading gap). When True,
-        # both phase starts collapse into synchronized bursts. Governs ONLY the
-        # two phase-start dispatch patterns; the rest of replay timing is
-        # faithful regardless. ``is True`` guards MagicMock/None test configs ->
-        # default (spread).
+        # profiling phase). Default False: WARMUP is globally t*-aligned and
+        # PROFILING subtracts one global minimum so its earliest request starts
+        # immediately while every other request keeps its relative offset.
+        # When True, each lane subtracts its own minimum and the phase starts as
+        # a synchronized burst. Governs ONLY the two phase-start dispatch
+        # patterns; the rest of replay timing is faithful regardless. ``is
+        # True`` guards MagicMock/None test configs -> default (spread).
         profiling_phase = None
         if run is not None:
             phases = run.cfg.get_profiling_phases()
@@ -239,25 +258,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._system_idle_jump_count = 0
         self._system_idle_seconds_skipped = 0.0
         self._system_idle_started_at: float | None = None
-        if self._system_idle_gap_cap_seconds is not None:
-            self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
-        # Idle-gap cap (ms) for the t* boundary the load-time warp can't see (t*
-        # is the sampling instant, not a request). Consumed two ways:
-        #   - WARMUP: clamps each warmup lead so priming doesn't start hours
-        #     early (``_capped_warmup_lead_ms``); priming spacing is meaningless.
-        #   - PROFILING: a single uniform shift caps the leading idle (t* ->
-        #     earliest stream) while preserving recorded inter-stream spacing
-        #     (``_leading_idle_shift_ms``); a per-stream clamp would collapse
-        #     every idle subagent onto t=cap.
-        # None when no cap is set (raw faithful timing -- the user's choice).
-        # v2: trace_idle_gap_cap_seconds lives on the (file) dataset config.
-        default_dataset = run.cfg.get_default_dataset() if run is not None else None
-        idle_cap_s = getattr(default_dataset, "trace_idle_gap_cap_seconds", None)
-        self._phase_offset_cap_ms: float | None = (
-            idle_cap_s * MILLIS_PER_SECOND
-            if isinstance(idle_cap_s, int | float)
-            else None
-        )
+        self._system_idle_watchdog: asyncio.TimerHandle | None = None
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
         # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
@@ -276,6 +277,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
     @property
+    def _cache_warmup_enabled(self) -> bool:
+        """Whether either accelerated cache-pressure warmup mode is active."""
+        return (
+            self._cache_warmup_duration is not None
+            or self._cache_warmup_requests_per_lane is not None
+        )
+
+    @property
     def _has_tree_registry(self) -> bool:
         """True when per-tree session-slot accounting is engaged.
 
@@ -283,17 +292,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         engages it because it opens trees and spawns descendants during WARMUP.
         """
         return self._session_tree_registry is not None and (
-            self.config.phase == CreditPhase.PROFILING
-            or self._cache_warmup_duration is not None
+            self.config.phase == CreditPhase.PROFILING or self._cache_warmup_enabled
         )
 
     @property
     def wants_returns_after_sending_complete(self) -> bool:
         """Pressure warmup returns must be observed to build the handoff state."""
-        return (
-            self.config.phase == CreditPhase.WARMUP
-            and self._cache_warmup_duration is not None
-        )
+        return self.config.phase == CreditPhase.WARMUP and self._cache_warmup_enabled
 
     @property
     def allows_pending_branch_handoff_after_sending_complete(self) -> bool:
@@ -373,6 +378,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         lane = self._correlation_to_lane.pop(root_corr, None)
         self._session_marker.pop(root_corr, None)
         self._root_to_lane.pop(root_corr, None)
+        self._replay_origin_ms_by_root.pop(root_corr, None)
         if lane is None:
             self.warning(
                 lambda: (
@@ -396,8 +402,20 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         dataset's ``sampling_strategy`` and reuses every root about equally --
         no strategy-side recycle queue to keep in sync.
         """
+        # Strategies for later phases may be constructed before the current
+        # phase finalizes.  Register the observer when this phase becomes
+        # active, not in ``__init__``; otherwise warmup teardown can clear the
+        # already-constructed profiling observer and a barrier-retained timer
+        # can leave the whole system idle past the global cap.
+        if self._system_idle_gap_cap_seconds is not None:
+            self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
         if self._has_tree_registry:
             self._session_tree_registry.set_drain_callback(self._on_tree_drained)
+        if (
+            self.config.phase == CreditPhase.WARMUP
+            and self._cache_warmup_requests_per_lane is not None
+        ):
+            self.credit_issuer.set_turn_admission(self._admit_cache_warmup_turn)
         if self.config.phase == CreditPhase.PROFILING:
             for trajectory in self.conversation_source.trajectories:
                 self._seed_trajectory_replay_prefix(trajectory)
@@ -422,6 +440,66 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     f"fresh root once their background subagents drain"
                 )
 
+    def _cache_warmup_lane(self, turn_or_credit: TurnToSend | Credit) -> int:
+        """Resolve a warmup turn or credit to its stable trajectory lane."""
+        lane = self._root_to_lane.get(turn_or_credit.effective_root_correlation_id)
+        if lane is None:
+            lane = self._correlation_to_lane.get(turn_or_credit.x_correlation_id)
+        if lane is None:
+            raise RuntimeError(
+                "Agentic cache warmup could not resolve a request to a "
+                f"trajectory lane: correlation_id={turn_or_credit.x_correlation_id!r}, "
+                "root_correlation_id="
+                f"{turn_or_credit.effective_root_correlation_id!r}"
+            )
+        return lane
+
+    def _admit_cache_warmup_turn(self, turn: TurnToSend) -> TurnAdmission:
+        """Admit mandatory primers, then enforce the additional per-lane quota.
+
+        Snapshot reconstruction can require multiple primers on one lane when
+        a root and one or more subagents are all live at ``t*``. Those primers
+        are the first warmup stage and do not consume the configured
+        cache-pressure quota. The quota applies only to traffic replayed after
+        all mandatory primers return.
+        """
+        assert self._cache_warmup_requests_per_lane is not None
+        lane = self._cache_warmup_lane(turn)
+        is_baseline = (
+            turn.x_correlation_id,
+            turn.turn_index,
+        ) in self._baseline_warmup_turns
+        if is_baseline:
+            self._baseline_warmup_admitted += 1
+            return TurnAdmission.ADMIT
+        if (
+            self._cache_warmup_requests_by_lane[lane]
+            >= self._cache_warmup_requests_per_lane
+        ):
+            state_key = (
+                turn.conversation_id,
+                turn.x_correlation_id,
+                turn.turn_index,
+            )
+            self._quota_handoff_turns[state_key] = turn
+            return TurnAdmission.DEFER
+        self._cache_warmup_requests_by_lane[lane] += 1
+        if not self._cache_warmup_request_budget_reached and all(
+            self._cache_warmup_requests_by_lane[lane_index]
+            >= self._cache_warmup_requests_per_lane
+            for lane_index in range(len(self.conversation_source.trajectories))
+        ):
+            self._cache_warmup_request_budget_reached = True
+            self.credit_issuer.replay_gate.pause_releases()
+            self.info(
+                "WARMUP cache pressure request budget reached: "
+                f"{self._cache_warmup_requests_per_lane} additional requests "
+                "on each of "
+                f"{len(self.conversation_source.trajectories)} lanes; "
+                "draining requests"
+            )
+        return TurnAdmission.ADMIT
+
     async def execute_phase(self) -> None:
         """Dispatch initial credits for the phase."""
         if self.config.phase == CreditPhase.WARMUP:
@@ -441,24 +519,35 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
         # Credit returns start a new idle interval. Scheduler-drain callbacks
         # recheck the same interval after a scheduled turn is barrier-retained.
-        follows_request_return = in_flight_requests is not None
+        in_flight_requests, follows_request_return = (
+            self._resolve_in_flight_request_count(in_flight_requests)
+        )
         if in_flight_requests is None:
-            if self._progress is None:
-                return
-            in_flight_requests = self._progress.in_flight
+            return
         if in_flight_requests > 0:
             self._system_idle_started_at = None
+            self._cancel_system_idle_watchdog()
             return
         now = time.monotonic()
         if follows_request_return or self._system_idle_started_at is None:
             self._system_idle_started_at = now
-        if self.scheduler.running_count > 0:
-            return
 
         idle_elapsed = max(0.0, now - self._system_idle_started_at)
         remaining_idle_budget = max(
             0.0, self._system_idle_gap_cap_seconds - idle_elapsed
         )
+        if remaining_idle_budget <= _IDLE_WATCHDOG_EPSILON_SECONDS:
+            remaining_idle_budget = 0.0
+        if remaining_idle_budget > 0:
+            self._arm_system_idle_watchdog(remaining_idle_budget)
+
+        # A just-fired replay callback may still be transitioning into a real
+        # request. Give it the remainder of the idle budget to do so, but do
+        # not let a control-plane coroutine extend true request-idle time past
+        # the configured cap. The watchdog re-enters here at the deadline and
+        # progress.in_flight remains the authoritative wire-activity signal.
+        if self.scheduler.running_count > 0 and remaining_idle_budget > 0:
+            return
 
         shifted = self.scheduler.cap_pending_delay(remaining_idle_budget)
         if shifted <= 0:
@@ -472,46 +561,66 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
         )
 
+    def _resolve_in_flight_request_count(
+        self, supplied_count: int | None
+    ) -> tuple[int | None, bool]:
+        """Resolve wire activity and whether the observation is a return."""
+        if supplied_count is not None:
+            return supplied_count, True
+        if self._progress is None:
+            return None, False
+        return self._progress.in_flight, False
+
+    def _arm_system_idle_watchdog(self, delay_seconds: float) -> None:
+        """Guarantee an idle-cap recheck even when no scheduler task drains.
+
+        Request-return and scheduler-drain callbacks remain the fast path. The
+        independent control timer closes the gap where one of those callbacks
+        observes a transient running scheduler coroutine and no later state
+        transition re-enters the cap logic. It deliberately lives outside the
+        replay scheduler so ``cap_pending_delay`` cannot advance its own guard.
+        """
+        if self._system_idle_watchdog is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Some direct unit/API callers exercise the synchronous fast path
+            # without an event loop. They still get the immediate schedule
+            # shift below; only the independent future recheck is unavailable.
+            return
+        self._system_idle_watchdog = loop.call_later(
+            max(0.0, delay_seconds),
+            self._run_system_idle_watchdog,
+        )
+
+    def _run_system_idle_watchdog(self) -> None:
+        """Clear the one-shot handle and re-evaluate actual request idleness."""
+        self._system_idle_watchdog = None
+        self.enforce_system_idle_cap()
+
+    def _cancel_system_idle_watchdog(self) -> None:
+        """Cancel the independent idle guard when wire activity resumes."""
+        if self._system_idle_watchdog is None:
+            return
+        self._system_idle_watchdog.cancel()
+        self._system_idle_watchdog = None
+
     def _capped_warmup_lead_ms(self, lead_ms: float) -> float:
-        """Clamp a WARMUP lead (t* - the warmed turn) to the idle-gap cap.
+        """Clamp a WARMUP lead to the global system-idle guard.
 
         Warmup is a cache-priming pass, not faithful replay: warming a stream
         that last fired hours before t* that far ahead would make the warmup
-        phase itself take hours. Clamping each lead bounds the priming window
-        to the cap; the relative timing among warmup requests carries no replay
-        meaning (each primes its own session, all converge at t*), so an
-        independent per-lead clamp is fine here. No-op when no cap is set.
-
-        PROFILING dispatch offsets are NOT clamped this way -- see
-        :meth:`_leading_idle_shift_ms`.
+        phase itself take hours. The per-trajectory trace cap is deliberately
+        absent here: it is a profiling runtime watchdog, not a phase-start
+        schedule transform.
         """
-        if self._phase_offset_cap_ms is not None:
-            return min(lead_ms, self._phase_offset_cap_ms)
-        return lead_ms
-
-    def _leading_idle_shift_ms(self, offsets: Iterable[float]) -> float:
-        """Excess to subtract UNIFORMLY from every PROFILING dispatch offset so
-        a trajectory's leading idle (t* -> its earliest post-t* request) is
-        capped to the idle-gap cap.
-
-        The idle-gap warp (applied at load time across ALL of a trace's request
-        timestamps) already bounds every inter-request gap to the cap, so the
-        dispatch offsets carry faithful relative spacing. The ONE gap the warp
-        cannot see is t* -> first request: t* is the trajectory sampling
-        instant, not a request. A single uniform shift caps that leading gap
-        while keeping every stream's recorded offset relative to the others
-        intact -- unlike a per-stream ``min(offset, cap)`` clamp, which collapses
-        every offset above the cap onto it, firing every idle subagent at the
-        same instant.
-
-        Returns 0 when no cap is set or the leading idle is already within it.
-        """
-        if self._phase_offset_cap_ms is None:
-            return 0.0
-        present = [o for o in offsets if o is not None]
-        if not present:
-            return 0.0
-        return max(0.0, min(present) - self._phase_offset_cap_ms)
+        if self._system_idle_gap_cap_seconds is None:
+            return lead_ms
+        return min(
+            lead_ms,
+            self._system_idle_gap_cap_seconds * MILLIS_PER_SECOND,
+        )
 
     async def _execute_warmup(self) -> None:
         """Warm turn n-1 of every session active (mid-flight) at t*.
@@ -565,10 +674,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 )
                 prepared.append((turn, None))
                 self._baseline_correlations.add(turn.x_correlation_id)
+                self._baseline_warmup_turns.add(
+                    (turn.x_correlation_id, turn.turn_index)
+                )
                 self._root_to_lane[turn.effective_root_correlation_id] = lane
                 continue
 
             t_star_ms = trajectory.snapshot.t_star_ms
+            root_correlation_id = self._lane_root_corr(trajectory.snapshot)
+            if root_correlation_id is not None:
+                self._replay_origin_ms_by_root[root_correlation_id] = t_star_ms
             for state in trajectory.snapshot.states:
                 warm_index = state.warmup_turn_index
                 if warm_index is None:
@@ -589,7 +704,17 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                         lead_ms = self._capped_warmup_lead_ms(t_star_ms - warm_ts)
                 prepared.append((turn, lead_ms))
                 self._baseline_correlations.add(turn.x_correlation_id)
+                self._baseline_warmup_turns.add(
+                    (turn.x_correlation_id, turn.turn_index)
+                )
                 self._root_to_lane[turn.effective_root_correlation_id] = lane
+
+        if self._cache_warmup_requests_per_lane is not None:
+            self.info(
+                "WARMUP count budget: "
+                f"{self._cache_warmup_requests_per_lane} additional requests "
+                f"per lane after {len(prepared)} mandatory snapshot primers"
+            )
 
         # Nothing to warm: every lane's first request is at/after t* (no turn
         # precedes t*), so no warmup credit will dispatch. The count path that
@@ -597,7 +722,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # with zero credits it would never fire and the warmup phase would hang
         # waiting on a barrier sized to concurrency. Finalize immediately.
         if not prepared:
-            if self._cache_warmup_duration is not None:
+            if self._cache_warmup_enabled:
                 # No baseline priming to wait for; jump straight to the
                 # accelerated cache-pressure substage.
                 await self._start_accelerated_warmup()
@@ -644,37 +769,48 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _finish_initial_warmup_dispatch(self) -> None:
         """Mark sending complete for burst warmup with no cache-pressure stage.
 
-        When a cache-pressure duration is set the accelerated substage is driven
-        by baseline credit returns (``_handle_warmup_return``), so there is
-        nothing to finalize here in that case.
+        When either cache-pressure mode is set, the accelerated substage is
+        driven by baseline credit returns (``_handle_warmup_return``), so there
+        is nothing to finalize here.
         """
-        if (
-            self._cache_warmup_duration is None
-            and not self.lifecycle.is_sending_complete
-        ):
+        if not self._cache_warmup_enabled and not self.lifecycle.is_sending_complete:
             self.lifecycle.mark_sending_complete()
 
     async def _start_accelerated_warmup(self) -> None:
         """Continue the sampled trajectories under compressed warmup traffic."""
         if self._accelerated_warmup_started:
             return
-        assert self._cache_warmup_duration is not None
+        assert self._cache_warmup_enabled
+        # Baseline primers return before accelerated replay is active. A parent
+        # already blocked on a child join may never return again in WARMUP, so
+        # seed its last nonterminal credit into the profiling handoff now.
+        for credit in self._baseline_warmup_returns.values():
+            if credit.is_final_turn:
+                continue
+            self._handoff_credits[credit.x_correlation_id] = credit
         self._accelerated_warmup_started = True
         self.credit_issuer.set_max_tokens_override(_WARMUP_MAX_TOKENS)
         for trajectory in self.conversation_source.trajectories:
             self._seed_trajectory_replay_prefix(trajectory)
         self.credit_issuer.replay_gate.activate()
+        if self._cache_warmup_duration is not None:
+            limit = f"for {self._cache_warmup_duration:.1f}s"
+        else:
+            limit = (
+                f"until each lane reaches "
+                f"{self._cache_warmup_requests_per_lane} additional requests"
+            )
         self.info(
-            "WARMUP cache pressure: replaying live trajectories for "
-            f"{self._cache_warmup_duration:.1f}s with zero idle delay and "
-            f"max_tokens={_WARMUP_MAX_TOKENS}"
+            "WARMUP cache pressure: replaying live trajectories "
+            f"{limit} with zero idle delay and max_tokens={_WARMUP_MAX_TOKENS}"
         )
         if self.branch_orchestrator is not None:
             self.branch_orchestrator.start_accelerated_warmup()
-        self.scheduler.schedule_later(
-            self._cache_warmup_duration,
-            self._finish_accelerated_warmup(),
-        )
+        if self._cache_warmup_duration is not None:
+            self.scheduler.schedule_later(
+                self._cache_warmup_duration,
+                self._finish_accelerated_warmup(),
+            )
         results = await asyncio.gather(
             *(
                 self._dispatch_accelerated_trajectory(trajectory, lane)
@@ -707,6 +843,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
 
         snapshot = trajectory.snapshot
+        root_correlation_id = self._lane_root_corr(snapshot)
+        if root_correlation_id is not None:
+            self._replay_origin_ms_by_root[root_correlation_id] = snapshot.t_star_ms
         for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
             self._root_to_lane[state.root_correlation_id or state.x_correlation_id] = (
@@ -768,12 +907,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self._correlation_to_lane[credit.x_correlation_id] = lane
         if credit.is_final_turn:
             self._handoff_credits.pop(credit.x_correlation_id, None)
-            self._handoff_returned_at_ns.pop(credit.x_correlation_id, None)
         else:
             self._handoff_credits[credit.x_correlation_id] = credit
-            self._handoff_returned_at_ns[credit.x_correlation_id] = (
-                time.perf_counter_ns()
-            )
 
     async def _handle_accelerated_warmup_return(self, credit: Credit) -> None:
         """Issue the next compressed turn or recycle a completed tree."""
@@ -794,20 +929,29 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             await self.credit_issuer.issue_credit(turn)
 
     async def _issue_child_continuation_or_drain(self, turn: TurnToSend) -> None:
-        """Dispatch a DAG child continuation, draining the join on refusal.
+        """Dispatch a DAG child continuation, draining terminal refusals.
 
-        ``dispatch_child_turn`` returns True iff the turn reached the wire; on
-        any refusal (e.g. the ``--request-count`` cap) notify the orchestrator
-        so the parent's join drains deterministically instead of deadlocking on
-        a child whose remaining turns will never be issued.
+        On a terminal refusal, notify the orchestrator so the parent's join
+        drains deterministically instead of deadlocking on a child whose
+        remaining turns will never be issued. A deferred accelerated-warmup
+        turn is different: the remaining child and its active join are
+        persisted for profiling, so marking the child stopped here would
+        release the parent prematurely.
         """
-        on_wire = await self.credit_issuer.dispatch_child_turn(turn)
-        if not on_wire and self.branch_orchestrator is not None:
+        result = ChildDispatchResult.normalize(
+            await self.credit_issuer.dispatch_child_turn(turn)
+        )
+        if (
+            result is ChildDispatchResult.REJECTED
+            and self.branch_orchestrator is not None
+            and not self.allows_pending_branch_handoff_after_sending_complete
+        ):
             await self.branch_orchestrator.on_child_stopped(turn.x_correlation_id)
 
     async def finalize_phase(self) -> None:
         """Persist the drained accelerated-warmup DAG for profiling."""
         if self._system_idle_gap_cap_seconds is not None:
+            self._cancel_system_idle_watchdog()
             self.scheduler.set_drain_observer(None)
             self.info(
                 "Global system-idle cap summary: "
@@ -817,8 +961,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
         if not self._accelerated_warmup_started:
             return
-        finalized_at_ns = time.perf_counter_ns()
-        states_by_lane = self._build_handoff_states(finalized_at_ns=finalized_at_ns)
+        states_by_lane = self._build_handoff_states()
         boundaries_by_lane = {
             lane: self._build_handoff_replay_boundaries(states)
             for lane, states in states_by_lane.items()
@@ -831,12 +974,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             f"{sum(len(states) for states in states_by_lane.values())} live streams"
         )
 
-    def _build_handoff_states(
-        self, *, finalized_at_ns: int | None = None
-    ) -> dict[int, list[ConversationState]]:
+    def _build_handoff_states(self) -> dict[int, list[ConversationState]]:
         """Convert drained credits and join annotations into lane states."""
-        if finalized_at_ns is None:
-            finalized_at_ns = time.perf_counter_ns()
         blocked, child_annotations = self._handoff_annotations()
         states_by_lane: dict[int, list[ConversationState]] = {
             lane: [] for lane in range(len(self.conversation_source.trajectories))
@@ -845,7 +984,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             states_by_lane,
             blocked=blocked,
             child_annotations=child_annotations,
-            finalized_at_ns=finalized_at_ns,
         )
         self._add_pending_handoff_states(
             states_by_lane, seen_states, child_annotations=child_annotations
@@ -881,7 +1019,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         *,
         blocked: dict[str, int],
         child_annotations: dict[str, list[tuple[str | None, int | None]]],
-        finalized_at_ns: int,
     ) -> set[tuple[str, str, int]]:
         seen_states: set[tuple[str, str, int]] = set()
         for credit in self._handoff_credits.values():
@@ -889,7 +1026,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 credit,
                 blocked=blocked,
                 child_annotations=child_annotations,
-                finalized_at_ns=finalized_at_ns,
             )
             if handoff is None:
                 continue
@@ -906,7 +1042,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         *,
         blocked: dict[str, int],
         child_annotations: dict[str, list[tuple[str | None, int | None]]],
-        finalized_at_ns: int,
     ) -> tuple[int, ConversationState] | None:
         lane = self._root_to_lane.get(credit.effective_root_correlation_id)
         if lane is None or credit.turn_index + 1 >= credit.num_turns:
@@ -918,8 +1053,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             conversation_id=credit.conversation_id,
             x_correlation_id=credit.x_correlation_id,
             next_turn_index=credit.turn_index + 1,
-            next_dispatch_offset_ms=self._handoff_residual_delay_ms(
-                credit, finalized_at_ns=finalized_at_ns
+            next_dispatch_offset_ms=self._handoff_replay_offset_ms(
+                credit.effective_root_correlation_id,
+                credit.conversation_id,
+                credit.turn_index + 1,
             ),
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
@@ -960,6 +1097,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             pending_by_root = dict(pending_by_root_getter())
         else:
             pending_by_root = {}
+        for turn in self._quota_handoff_turns.values():
+            root_correlation_id = turn.effective_root_correlation_id
+            pending_by_root.setdefault(root_correlation_id, ())
+            pending_by_root[root_correlation_id] += (turn,)
         pending_turns_getter = getattr(
             self.credit_issuer.replay_gate, "pending_turns", None
         )
@@ -995,7 +1136,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             conversation_id=turn.conversation_id,
             x_correlation_id=turn.x_correlation_id,
             next_turn_index=turn.turn_index,
-            next_dispatch_offset_ms=0.0,
+            next_dispatch_offset_ms=self._handoff_replay_offset_ms(
+                turn.effective_root_correlation_id,
+                turn.conversation_id,
+                turn.turn_index,
+            ),
             agent_depth=turn.agent_depth,
             parent_correlation_id=turn.parent_correlation_id,
             root_correlation_id=turn.root_correlation_id,
@@ -1022,55 +1167,64 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 return lane
         return self._correlation_to_lane.get(turn.x_correlation_id)
 
-    def _handoff_residual_delay_ms(
-        self, credit: Credit, *, finalized_at_ns: int
-    ) -> float:
-        """Delay before a warmup-handoff stream should issue in PROFILING.
-
-        Accelerated warmup intentionally removes idle gaps while it is building
-        KV pressure. At the profiling boundary, however, firing every drained
-        stream at once creates an artificial burst. Preserve the local replay
-        cadence by carrying the next turn's recorded delay forward, minus any
-        wall-clock time already spent waiting for the warmup drain/finalize.
-        """
-        delay_ms = self._handoff_base_delay_ms(credit)
-        returned_at_ns = self._handoff_returned_at_ns.get(credit.x_correlation_id)
-        if returned_at_ns is not None:
-            elapsed_ms = max(0.0, (finalized_at_ns - returned_at_ns) / 1_000_000.0)
-            delay_ms = max(0.0, delay_ms - elapsed_ms)
-        if self._phase_offset_cap_ms is not None:
-            delay_ms = min(delay_ms, self._phase_offset_cap_ms)
-        return delay_ms
-
-    def _handoff_base_delay_ms(self, credit: Credit) -> float:
-        """Recorded delay from a returned warmup credit to its next turn."""
+    def _handoff_delay_ms(self, conversation_id: str, next_turn_index: int) -> float:
+        """Recorded end-to-start delay carried across the warmup barrier."""
         try:
-            next_meta = self.conversation_source.get_next_turn_metadata(credit)
-        except (KeyError, ValueError):
+            metadata = self.conversation_source.get_metadata(conversation_id)
+        except KeyError:
+            return 0.0
+        if next_turn_index < 0 or next_turn_index >= len(metadata.turns):
             return 0.0
 
+        next_meta = metadata.turns[next_turn_index]
         delay_ms = _as_timestamp_ms(getattr(next_meta, "delay_ms", None))
         if delay_ms is not None:
             return max(0.0, delay_ms)
-
-        try:
-            metadata = self.conversation_source.get_metadata(credit.conversation_id)
-        except KeyError:
-            return 0.0
-        if credit.turn_index < 0 or credit.turn_index + 1 >= len(metadata.turns):
+        if next_turn_index == 0:
             return 0.0
 
-        previous_meta = metadata.turns[credit.turn_index]
+        previous_meta = metadata.turns[next_turn_index - 1]
         previous_ts_ms = _as_timestamp_ms(getattr(previous_meta, "timestamp_ms", None))
-        next_ts_ms = _as_timestamp_ms(
-            getattr(metadata.turns[credit.turn_index + 1], "timestamp_ms", None)
-        )
+        next_ts_ms = _as_timestamp_ms(getattr(next_meta, "timestamp_ms", None))
         if previous_ts_ms is None or next_ts_ms is None:
             return 0.0
 
         previous_api_ms = _as_timestamp_ms(getattr(previous_meta, "api_time_ms", None))
         previous_duration_ms = max(0.0, previous_api_ms or 0.0)
         return max(0.0, next_ts_ms - previous_ts_ms - previous_duration_ms)
+
+    def _handoff_replay_offset_ms(
+        self,
+        root_correlation_id: str,
+        conversation_id: str,
+        next_turn_index: int,
+    ) -> float:
+        """Place a surviving stream back on its tree's shared replay clock.
+
+        Accelerated warmup compresses runtime waits, so elapsed wall time is
+        not a usable profiling deadline.  Timestamped AgentX datasets already
+        provide a common clock for every stream in a tree.  Subtracting the
+        tree's sampled replay origin preserves the original flattened order
+        and spacing across roots, children, sidecars, and gated joins.  The
+        profiling phase later subtracts one phase-wide minimum so the earliest
+        request starts immediately without turning the rest into a burst.
+
+        Timestamp-less datasets have no shared clock, so retain the legacy
+        per-stream end-to-start delay as the best available fallback.
+        """
+        replay_origin_ms = self._replay_origin_ms_by_root.get(root_correlation_id)
+        if replay_origin_ms is not None:
+            try:
+                metadata = self.conversation_source.get_metadata(conversation_id)
+            except KeyError:
+                metadata = None
+            if metadata is not None and 0 <= next_turn_index < len(metadata.turns):
+                next_timestamp_ms = _as_timestamp_ms(
+                    getattr(metadata.turns[next_turn_index], "timestamp_ms", None)
+                )
+                if next_timestamp_ms is not None:
+                    return max(0.0, next_timestamp_ms - replay_origin_ms)
+        return self._handoff_delay_ms(conversation_id, next_turn_index)
 
     def _build_handoff_replay_boundaries(
         self, states: list[ConversationState]
@@ -1168,6 +1322,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         serializing over N credit round-trips. Subsequent turns and
         recycle-pool sessions are dispatched from handle_credit_return.
         """
+        phase_t0_offset_ms = self._profiling_phase_t0_offset_ms()
         spread_s = self._profiling_spread_seconds()
         mode = "burst" if self._burst_phase_starts else "spread"
         self.info(
@@ -1180,7 +1335,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # unreachable by the phase runner's cancellation.
         results = await asyncio.gather(
             *(
-                self._dispatch_one_profiling_trajectory(trajectory, lane)
+                self._dispatch_one_profiling_trajectory(
+                    trajectory, lane, phase_t0_offset_ms
+                )
                 for lane, trajectory in enumerate(self.conversation_source.trajectories)
             ),
             return_exceptions=True,
@@ -1203,8 +1360,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """Window over which each trajectory's FIRST request fires, in seconds.
 
         Per trajectory the first request is its earliest dispatchable stream
-        (``min`` of the lane offsets after the leading-idle shift; t0=0 spread,
-        or t0=lane-min burst). This returns max-minus-min of those per-trajectory
+        (t0=0 spread, or t0=lane-min burst). This returns max-minus-min of those per-trajectory
         first-request offsets -- the ramp-in window. Later streams in a
         trajectory (subagents that spawn further out at their own faithful
         offsets) are excluded: including them would report the full per-
@@ -1220,24 +1376,36 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             ]
             if not dispatchable:
                 continue
-            leading_shift_ms = self._leading_idle_shift_ms(
-                s.next_dispatch_offset_ms for s in dispatchable
-            )
-            lane_offsets = [
-                s.next_dispatch_offset_ms - leading_shift_ms for s in dispatchable
-            ]
+            lane_offsets = [s.next_dispatch_offset_ms for s in dispatchable]
             lane_t0 = min(lane_offsets) if self._burst_phase_starts else 0.0
             first_offsets.append(min(lane_offsets) - lane_t0)
         if not first_offsets:
             return 0.0
         return (max(first_offsets) - min(first_offsets)) / MILLIS_PER_SECOND
 
+    def _profiling_phase_t0_offset_ms(self) -> float:
+        """Global spread anchor that starts the earliest request at phase zero."""
+        if self._burst_phase_starts:
+            return 0.0
+        offsets: list[float] = []
+        for trajectory in self.conversation_source.trajectories:
+            if trajectory.snapshot is None:
+                return 0.0
+            offsets.extend(
+                state.next_dispatch_offset_ms
+                for state in trajectory.snapshot.states
+                if not state.waiting_on_children
+            )
+        return min(offsets, default=0.0)
+
     async def _dispatch_one_profiling_trajectory(
-        self, trajectory: Trajectory, lane: int
+        self, trajectory: Trajectory, lane: int, phase_t0_offset_ms: float
     ) -> None:
         """Dispatch one lane's initial PROFILING credit (run under gather)."""
         if trajectory.snapshot is not None:
-            await self._dispatch_snapshot_for_profiling(trajectory, lane)
+            await self._dispatch_snapshot_for_profiling(
+                trajectory, lane, phase_t0_offset_ms
+            )
             return
 
         session = self.conversation_source.session_for(trajectory)
@@ -1356,7 +1524,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     async def _handle_warmup_return(self, credit: Credit) -> None:
         """Advance baseline warmup into the optional cache-pressure stage."""
-        if self._cache_warmup_duration is None:
+        if not self._cache_warmup_enabled:
             return
         if self._accelerated_warmup_started:
             await self._handle_accelerated_warmup_return(credit)
@@ -1373,11 +1541,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         DAG child continuations (``agent_depth > 0``) go through the single
         child-issuance chokepoint (``_issue_child_continuation_or_drain``) so a
-        ``--request-count`` cap refusal is routed to ``on_child_stopped`` (drain
-        the parent join) instead of being silently swallowed by the discarded
-        ``issue_credit`` return -- including on the delayed (``delay_ms``) path,
-        where the refusal would otherwise fire long after the callback handler
-        decided the child could proceed. Root continuations keep ``issue_credit``.
+        terminal refusal is routed to ``on_child_stopped`` (drain the parent
+        join) instead of being silently swallowed by the discarded
+        ``issue_credit`` return. A warmup cutoff is preserved for profiling
+        handoff instead. This applies equally to delayed continuations, whose
+        refusal may happen after the callback handler decided the child could
+        proceed. Root continuations keep ``issue_credit``.
         """
         next_meta = self.conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit, next_meta)
@@ -1388,7 +1557,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             else self.credit_issuer.issue_credit(turn)
         )
         if next_meta.delay_ms is not None and next_meta.delay_ms > 0:
-            self.scheduler.schedule_later(next_meta.delay_ms / MILLIS_PER_SECOND, coro)
+            self.scheduler.schedule_later(
+                next_meta.delay_ms / MILLIS_PER_SECOND,
+                coro,
+                group_id=credit.effective_root_correlation_id,
+            )
         else:
             await coro
 
@@ -1426,6 +1599,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # Prune so every early-return path leaves dicts clean.
         self._session_marker.pop(finished_correlation_id, None)
         self._root_to_lane.pop(finished_correlation_id, None)
+        self._replay_origin_ms_by_root.pop(finished_correlation_id, None)
         lane = self._release_lane_for(finished_correlation_id, finished_trace_id)
         await self._dispatch_recycled_on_lane(lane)
 
@@ -1453,6 +1627,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         self._correlation_to_lane[session.x_correlation_id] = lane
         self._root_to_lane[session.effective_root_correlation_id] = lane
+        if self.config.phase == CreditPhase.WARMUP:
+            first_timestamp_ms = _as_timestamp_ms(
+                getattr(session.metadata.turns[0], "timestamp_ms", None)
+            )
+            if first_timestamp_ms is not None:
+                self._replay_origin_ms_by_root[
+                    session.effective_root_correlation_id
+                ] = first_timestamp_ms
         self._mint_marker_for_session(
             session.effective_root_correlation_id, next_trace_id, lane
         )
@@ -1481,27 +1663,26 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         await self._dispatch_recycled_on_lane(lane)
 
     async def _dispatch_snapshot_for_profiling(
-        self, trajectory: Trajectory, lane: int
+        self, trajectory: Trajectory, lane: int, phase_t0_offset_ms: float
     ) -> None:
         """Resume one trajectory's streams for PROFILING.
 
         Each stream profiles from turn ``next_turn_index`` (the first turn at
         or after t*; its predecessor, if any, was primed during WARMUP).
 
-        Dispatch anchoring depends on ``--burst-phase-starts``: by default
-        (spread) ``t0_offset = 0`` so each stream waits out its recorded offset
-        from t* -- the leading t*->first-request gap is preserved and lanes
-        ramp in. With ``--burst-phase-starts`` the trajectory's earliest
-        post-t* request is anchored at profiling-time 0 (subtracting T0, the
-        min offset) so the lane bursts at once. Relative timing among the
-        trajectory's streams and turns is identical either way -- only the
-        per-lane start offset differs.
+        Dispatch anchoring depends on ``--burst-phase-starts``. By default one
+        phase-wide minimum is subtracted from every stream: the earliest
+        request starts at profiling-time 0 and all cross-trajectory spacing is
+        preserved. With ``--burst-phase-starts`` each trajectory subtracts its
+        own minimum, so every lane starts at profiling-time 0. Relative timing
+        within each trajectory is identical either way.
 
         Gated parents (``waiting_on_children``) are not dispatched here; their
-        join is seeded with the orchestrator and their gated turn fires when
-        the blocking children complete during PROFILING. No stream completes
-        during WARMUP (warmup only ever sends a non-terminal turn), so there
-        is no warmup-continuation or terminal-root recycle step.
+        join is seeded with the orchestrator and their gated turn fires at the
+        later of its recorded replay deadline and the blocking-child completion
+        frontier. No stream completes during WARMUP (warmup only ever sends a
+        non-terminal turn), so there is no warmup-continuation or terminal-root
+        recycle step.
         """
         snapshot = self._get_snapshot(trajectory)
         for state in snapshot.states:
@@ -1512,13 +1693,35 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 lane,
             )
 
+        dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
+        # Compute one replay timeline for dispatchable streams and gated
+        # parents alike. A parent's join deadline uses the same optional burst
+        # anchor as every other request in its trajectory; only its child gate
+        # is additional.
+        offset_by_corr = {
+            s.x_correlation_id: s.next_dispatch_offset_ms for s in snapshot.states
+        }
+        if self._burst_phase_starts and dispatchable:
+            t0_offset_ms = min(
+                offset_by_corr[state.x_correlation_id] for state in dispatchable
+            )
+        else:
+            t0_offset_ms = phase_t0_offset_ms
+
         if self.branch_orchestrator is not None:
             self.branch_orchestrator.seed_snapshot(
                 snapshot.states,
                 cache_bust_markers=self._session_marker,
+                join_release_delays_ms={
+                    state.x_correlation_id: max(
+                        0.0,
+                        offset_by_corr[state.x_correlation_id] - t0_offset_ms,
+                    )
+                    for state in snapshot.states
+                    if state.waiting_on_children
+                },
             )
 
-        dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
         # A lane needs its own session credit when it dispatches no
         # slot-acquiring depth-0 root credit at PROFILING start. Two cases:
         #   - rootless: the root's turns are all before t*, so the snapshot has
@@ -1580,27 +1783,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
             if not self._has_tree_registry and not has_root_state:
                 self._rootless_lane_outstanding[lane] = len(dispatchable)
-        # Cap the leading idle (t* -> the trajectory's earliest post-t* request)
-        # by shifting EVERY stream left by the same excess, so an idle-at-t*
-        # trajectory ramps in within the cap instead of going dead for the whole
-        # run -- while preserving the recorded spacing among streams. A per-stream
-        # min(offset, cap) clamp would instead collapse every idle subagent onto
-        # t=cap. The idle-gap warp already bounded inter-request gaps at load
-        # time; this fixes the one gap it cannot see (t* is not a request).
-        # Spread (default): t0 = 0, each lane fires at its (shifted) offset from
-        # t*. Burst (--burst-phase-starts): t0 = the lane's min offset, anchoring
-        # the earliest post-t* request at profiling-0.
-        leading_shift_ms = self._leading_idle_shift_ms(
-            s.next_dispatch_offset_ms for s in dispatchable
-        )
-        offset_by_corr = {
-            s.x_correlation_id: s.next_dispatch_offset_ms - leading_shift_ms
-            for s in dispatchable
-        }
-        if self._burst_phase_starts and offset_by_corr:
-            t0_offset_ms = min(offset_by_corr.values())
-        else:
-            t0_offset_ms = 0.0
+        # Spread (default): every lane shares one phase-wide T0, preserving
+        # cross-trajectory offsets. Burst: each lane uses its own minimum.
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)
@@ -1613,9 +1797,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 self.scheduler.schedule_later(
                     delay_s,
                     self.credit_issuer.issue_credit(turn),
+                    group_id=turn.effective_root_correlation_id,
                 )
             else:
                 await self.credit_issuer.issue_credit(turn)
+
+        root_correlation_id = self._lane_root_corr(snapshot)
+        if root_correlation_id is not None:
+            self.credit_issuer.replay_gate.observe_idle_root(root_correlation_id)
 
     def _get_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
         """Return the persistent sampled snapshot for a trajectory lane.

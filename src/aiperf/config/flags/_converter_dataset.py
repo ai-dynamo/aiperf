@@ -808,11 +808,11 @@ def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
 def _apply_trace_delay_flags(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route trace-replay delay knobs onto ``FileDataset``/``PublicDataset``.
 
-    ``--ignore-trace-delays``, ``--use-think-time-only``, and
-    ``--trace-idle-gap-cap-seconds`` live on
-    both FILE and PUBLIC dataset models and bake into ``Turn.delay`` /
-    ``Turn.timestamp`` at load time. Without this route the CLI flags are
-    silently dropped (YAML / scenario paths set the fields directly).
+    These flags live on both FILE and PUBLIC dataset models. Ignore/think-only
+    affect ``Turn.delay`` / ``Turn.timestamp`` at load time; the trace idle cap
+    is consumed by the AgentX runtime watchdog without rewriting either field.
+    Without this route the CLI flags are silently dropped (YAML / scenario
+    paths set the fields directly).
     Mutual exclusivity of ignore vs think-only is enforced by the dataset
     model validators after conversion.
     """

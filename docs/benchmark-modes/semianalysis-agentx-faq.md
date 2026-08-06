@@ -66,7 +66,9 @@ transparency.
   is rejected), and a fresh `--random-seed` is filled in — pin one yourself for reproducible run-to-run
   comparisons ([§7](#7-reading-the-results-metrics-validity-and-submission-requirements)). Timing mode is
   locked to agentic-replay.
-- **Forbidden — do not pass:** `--ignore-trace-delays`, `--trace-idle-gap-cap-seconds`,
+- **Optional timing control:** `--trace-idle-gap-cap-seconds` limits observed
+  whole-tree idle time independently for each root and all of its descendants.
+- **Forbidden — do not pass:** `--ignore-trace-delays`,
   `--inter-turn-delay-cap-seconds`, `--synthesis-max-isl` (input truncation), and the
   rate/schedule flags `--request-rate` / `--arrival-pattern` / `--user-centric-rate` / `--fixed-schedule`
   / `--adaptive-scale`.
@@ -282,10 +284,11 @@ the benchmark waits the recorded "think time"/gap before sending the next turn. 
 request-start to request-start. This is always the case for weka trace replay; there is no flag to
 change it. Replay dispatches each turn only after the previous one completes,
 so start-to-start deltas would double-count the server's own response time and make every session
-drift later turn by turn. Individual trace gaps are not capped. If the entire replay has no active
-or ready request, AIPerf uniformly shifts every pending request timer so the next request arrives
-within 10 seconds. This avoids benchmarking dead air without changing the recorded spacing inside
-one trace while other sessions keep the system busy.
+drift later turn by turn. Individual trace gaps are not capped by default; pass
+`--trace-idle-gap-cap-seconds S` to advance a trajectory's pending timers when its root and
+all descendants have had no request in flight for `S` seconds. This runtime guard does not
+rewrite dataset timestamps or bypass spawn/join dependencies. If the entire replay has no active or ready request, AIPerf uniformly
+shifts every pending request timer so the next request arrives within 10 seconds.
 
 ### Q: What does a single session look like on the wire?
 A sequence of chat-completions requests that grow turn over turn (the prompt prefix accumulates),
@@ -791,7 +794,7 @@ the context-overflow bound is evaluated during the run.
 | SemiAnalysis corpus | A pinned `*_weka_*` `--public-dataset` alias, or `weka_hf` pinned to `semianalysisai/cc-traces-weka-062126` | A non-pinned dataset, local `weka_trace`, or another `--hf-weka-dataset` under the scenario; omitting a dataset entirely (CLI synthetic default) | Explicit wrong / unpinned loader: refuses to start (or `submission_valid: false` via `--unsafe-override`). Missing/synthetic: always refuses — `--unsafe-override` cannot bypass |
 | `ignore_eos` | Injected `ignore_eos=true` | Explicit `ignore_eos=false` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Streaming | `--streaming` auto-enabled | Explicit `--no-streaming` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
-| Honored trace delays | Recorded think-time gaps are preserved; only globally idle replay time is capped at 10s | `--ignore-trace-delays`, `--trace-idle-gap-cap-seconds`, or `--inter-turn-delay-cap-seconds` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
+| Honored trace delays | Recorded think-time gaps are preserved; `--trace-idle-gap-cap-seconds` may bound observed whole-tree runtime idle without rewriting them | `--ignore-trace-delays` or `--inter-turn-delay-cap-seconds` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | No input truncation | Prompts built to the full recorded token counts | Truncating/capping input below the recorded length | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Minimum duration | `--benchmark-duration` ≥ 900s (default 1800s) | A duration below 900s | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | First-turn-prefix cache-busting | Uniqueness marker placed as a first-turn prefix | Disabling cache-busting or relocating the marker | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
@@ -1148,7 +1151,8 @@ The ones a serving engineer is most likely to use:
 | `--max-context-length` | Drops whole traces whose peak prompt+output exceeds your server's window, so you don't get guaranteed mid-run overflows. Blunter than a `_256k` corpus (removes entire traces, not just over-limit turns). If it would drop everything, the run errors instead of silently emptying the dataset. |
 | `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` | The window within each session where t\* is sampled — i.e. how deep into sessions the measured traffic sits. Defaults to the **full session (0.0–1.0)** under the `inferencex-agentx-mvp` scenario; 0.25–0.75 is the generic CLI default when not scenario-locked. |
 | `--system-idle-gap-cap-seconds` | Caps only globally idle replay time (scenario default 10s); all pending timers shift uniformly, preserving order and relative spacing. |
-| `--trace-idle-gap-cap-seconds` / `--inter-turn-delay-cap-seconds` | Per-trace/per-turn timing compression; forbidden by the scenario so recorded think times and cache-TTL intervals remain faithful. |
+| `--trace-idle-gap-cap-seconds` | Optional observed whole-tree runtime idle cap; unset by default and allowed by the scenario. |
+| `--inter-turn-delay-cap-seconds` | Per-turn timing compression; forbidden by the scenario. |
 | `--cache-bust` | Where the per-session uniqueness marker goes; the scenario locks `first_turn_prefix`. |
 
 ### Validity thresholds (environment variables)

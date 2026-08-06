@@ -510,15 +510,14 @@ class FileDataset(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
-            "For Weka trace replay, AIPerf looks at all parent and subagent request "
-            "submission timestamps within one root trace, compresses long gaps between "
-            "consecutive request submissions, and derives turn delays from the "
-            "compressed per-trace timeline. Original request api_time values are not "
-            "used to decide these idle gaps. When set for Weka, this takes precedence over "
-            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
-            "delays are not separately capped. Defaults to None (no per-trace "
-            "idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree. The idle clock covers initial future work and "
+            "restarts when the final in-flight request across the root and all descendant "
+            "streams completes. If no request from that tree reaches the wire before the "
+            "cap, AIPerf uniformly advances "
+            "only that tree's pending replay timers. Dataset timestamps are unchanged, "
+            "and request order, spawn/join dependencies, and replay barriers remain "
+            "authoritative. Defaults to None (no per-trace runtime idle cap).",
         ),
     ]
 
@@ -794,11 +793,10 @@ class PublicDataset(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each "
-            "individual trace for HF-backed Weka replay (mirror of "
-            "``FileDataset.trace_idle_gap_cap_seconds``). When set, takes "
-            "precedence over ``inter_turn_delay_cap_seconds``. Defaults to "
-            "None (no per-trace idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree for HF-backed Weka replay (mirror of "
+            "``FileDataset.trace_idle_gap_cap_seconds``). Dataset timestamps remain "
+            "unchanged. Defaults to None (no per-trace runtime idle cap).",
         ),
     ]
 
