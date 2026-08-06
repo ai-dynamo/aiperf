@@ -2230,15 +2230,14 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
-            "For Weka trace replay, AIPerf looks at all parent and subagent request "
-            "submission timestamps within one root trace, compresses long gaps between "
-            "consecutive request submissions, and derives turn delays from the "
-            "compressed per-trace timeline. Original request api_time values are not "
-            "used to decide these idle gaps. When set for Weka, this takes precedence over "
-            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
-            "delays are not separately capped. Defaults to None (no per-trace "
-            "idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree. The idle clock covers initial future work and "
+            "restarts when the final in-flight request across the root and all descendant "
+            "streams completes. If no request from that tree reaches the wire before the "
+            "cap, AIPerf uniformly advances "
+            "only that tree's pending replay timers. Dataset timestamps are unchanged, "
+            "and request order, spawn/join dependencies, and replay barriers remain "
+            "authoritative. Defaults to None (no per-trace runtime idle cap).",
         ),
         CLIParameter(
             name=("--trace-idle-gap-cap-seconds",),
@@ -2331,10 +2330,27 @@ class CLIConfig(BaseConfig):
             "After the normal snapshot warmup drains, AIPerf continues the live "
             "trajectories without recorded idle delays and with one-token outputs, "
             "then drains and resumes profiling from the resulting trajectory state "
-            "using each live stream's residual next-turn delay.",
+            "using each live stream's residual next-turn delay. Mutually exclusive "
+            "with --warmup-requests-per-lane.",
         ),
         CLIParameter(
             name=("--agentic-cache-warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            gt=0,
+            description="Deterministic agentic cache-pressure warmup request "
+            "budget per concurrency lane, additional to mandatory snapshot "
+            "primers. For example, 10 with concurrency 16 sends 160 additional "
+            "cache-pressure requests after the primers. Mutually exclusive with "
+            "--agentic-cache-warmup-duration.",
+        ),
+        CLIParameter(
+            name=("--warmup-requests-per-lane",),
             group=Groups.WARMUP,
         ),
     ] = None

@@ -497,23 +497,27 @@ class CreditCallbackHandler:
         # behind ``can_send_child_turn`` instead — the phase-level
         # sending-complete flag is driven by root sampling exhaustion, not
         # by DAG work, but the global ``--request-count`` cap still
-        # applies. When the cap blocks a non-final child continuation, we
-        # notify the orchestrator (``on_child_stopped``) so the parent's
-        # join still drains instead of deadlocking on a child whose
-        # remaining turns will never be issued. Final-turn child returns
-        # are always passed through (the strategy is a no-op for them, but
-        # observer hooks still need to fire).
+        # applies. In terminal phases, a blocked non-final child notifies the
+        # orchestrator (``on_child_stopped``) so the parent's join can drain.
+        # Strategies requesting stopped returns (such as quota warmup) instead
+        # preserve resumable children across a phase handoff. Final-turn child
+        # returns are always passed through (the strategy is a no-op for them,
+        # but observer hooks still need to fire).
+        wants_stopped_returns = (
+            getattr(handler.strategy, "wants_returns_after_sending_complete", False)
+            is True
+        )
         is_child = credit.agent_depth > 0
         if not is_child:
-            wants_stopped_returns = (
-                getattr(handler.strategy, "wants_returns_after_sending_complete", False)
-                is True
-            )
             if handler.stop_checker.can_send_any_turn() or wants_stopped_returns:
                 await handler.strategy.handle_credit_return(
                     credit, error=credit_return.error
                 )
-        elif credit.is_final_turn or handler.stop_checker.can_send_child_turn():
+        elif (
+            credit.is_final_turn
+            or handler.stop_checker.can_send_child_turn()
+            or wants_stopped_returns
+        ):
             await handler.strategy.handle_credit_return(
                 credit, error=credit_return.error
             )

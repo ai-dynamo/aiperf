@@ -131,9 +131,12 @@ class PhaseRunner(TaskManagerMixin):
         self._branch_orchestrator = branch_orchestrator
         self._run = run
         self._session_tree_registry = session_tree_registry
-        self._cache_warmup_enabled = isinstance(
-            getattr(config, "agentic_cache_warmup_duration_sec", None),
-            int | float,
+        self._cache_warmup_enabled = (
+            isinstance(
+                getattr(config, "agentic_cache_warmup_duration_sec", None),
+                int | float,
+            )
+            or getattr(config, "warmup_requests_per_lane", None) is not None
         )
 
         # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
@@ -150,22 +153,31 @@ class PhaseRunner(TaskManagerMixin):
         elif (
             config.timing_mode == TimingMode.AGENTIC_REPLAY
             and config.phase == CreditPhase.WARMUP
-            and not self._cache_warmup_enabled
         ):
-            # AGENTIC_REPLAY warmup dispatches one priming credit per warmable
-            # stream (root + each mid-flight subagent at t*), which exceeds the
-            # `concurrency` placeholder when lanes hold multiple streams. Without
-            # this re-anchor the concurrency-sized barrier fires early and cancels
-            # the closest-to-t* priming credits -- under-priming the server cache
-            # and masking warmup failures for the cancelled streams. Re-anchor the
-            # barrier to the actual dispatch count (``warmup_credit_count``
-            # promises exactly this). Single-stream lanes already equal
-            # concurrency, so this is a no-op for them.
-            warmup_count = getattr(conversation_source, "warmup_credit_count", None)
-            if warmup_count:
-                self._config = config.model_copy(
-                    update={"total_expected_requests": warmup_count}
+            requests_per_lane = getattr(config, "warmup_requests_per_lane", None)
+            if self._cache_warmup_enabled and requests_per_lane is not None:
+                lane_count = len(getattr(conversation_source, "trajectories", ()))
+                baseline_counts = getattr(
+                    conversation_source, "warmup_credit_counts_by_lane", ()
                 )
+                request_cap = (
+                    sum(baseline_counts) + requests_per_lane * lane_count
+                    if len(baseline_counts) == lane_count
+                    else requests_per_lane * lane_count
+                )
+                self._config = config.model_copy(
+                    update={"total_expected_requests": request_cap}
+                )
+            elif not self._cache_warmup_enabled:
+                # AGENTIC_REPLAY warmup dispatches one priming credit per
+                # warmable stream (root + each mid-flight subagent at t*), which
+                # exceeds the `concurrency` placeholder when lanes hold multiple
+                # streams. Re-anchor the barrier to the actual dispatch count.
+                warmup_count = getattr(conversation_source, "warmup_credit_count", None)
+                if warmup_count:
+                    self._config = config.model_copy(
+                        update={"total_expected_requests": warmup_count}
+                    )
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
@@ -186,7 +198,11 @@ class PhaseRunner(TaskManagerMixin):
             counter=self._progress.counter,
         )
         self._replay_barrier = (
-            ReplayBarrierCoordinator(self._conversation_source.dataset_metadata)
+            ReplayBarrierCoordinator(
+                self._conversation_source.dataset_metadata,
+                scheduler=self._scheduler,
+                root_idle_gap_cap_seconds=self._root_idle_gap_cap_seconds(),
+            )
             if (
                 self._config.timing_mode == TimingMode.AGENTIC_REPLAY
                 and self._conversation_source.dataset_metadata is not None
@@ -204,6 +220,23 @@ class PhaseRunner(TaskManagerMixin):
         self._rampers: list[RateControllerProtocol] = []
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
+
+    def _root_idle_gap_cap_seconds(self) -> float | None:
+        """Per-trace runtime idle cap for AgentX profiling.
+
+        The cap measures actual whole-tree idle time after the final in-flight
+        request completes. Dataset timestamps remain untouched; only pending
+        runtime timers for that root and its descendants may be advanced.
+        """
+        if (
+            self._config.phase != CreditPhase.PROFILING
+            or self._config.timing_mode != TimingMode.AGENTIC_REPLAY
+            or self._run is None
+        ):
+            return None
+        dataset = self._run.cfg.get_default_dataset()
+        cap = getattr(dataset, "trace_idle_gap_cap_seconds", None)
+        return float(cap) if isinstance(cap, int | float) else None
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -275,6 +308,7 @@ class PhaseRunner(TaskManagerMixin):
             session_tree_registry=self._session_tree_registry,
             cache_bust_ledger=getattr(conversation_source, "cache_bust_ledger", None),
             allow_accelerated_warmup=self._cache_warmup_enabled,
+            scheduler=self._scheduler,
         )
 
     def _wire_replay_gate(self) -> None:
@@ -1049,13 +1083,21 @@ class PhaseRunner(TaskManagerMixin):
                 f"Error waiting for phase {self._config.phase} to send all credits: {e!r}"
             )
         finally:
+            preserve_branch_handoff = self._preserve_replay_gate_until_finalize(
+                strategy
+            )
             if not self._lifecycle.is_sending_complete:
                 self._lifecycle.mark_sending_complete(timeout_triggered=timed_out)
                 self._progress.freeze_sent_counts()
                 self._scheduler.cancel_all_pending()
+                if (
+                    self._branch_orchestrator is not None
+                    and not preserve_branch_handoff
+                ):
+                    await self._branch_orchestrator.expire_replay_deadlines()
                 self._progress.all_credits_sent_event.set()
 
-            if not self._preserve_replay_gate_until_finalize(strategy):
+            if not preserve_branch_handoff:
                 await self._credit_issuer.replay_gate.cancel(
                     notify_refused=self._config.phase == CreditPhase.PROFILING
                 )

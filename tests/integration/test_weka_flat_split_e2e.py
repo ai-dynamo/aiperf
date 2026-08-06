@@ -70,11 +70,12 @@ def _req(
     api_time: float,
     out: int = 8,
     model: str = TRACE_MODEL,
+    request_type: str = "n",
 ) -> dict:
     """One hash-aligned top-level normal request (in == len(hash_ids) * 64)."""
     return {
         "t": t,
-        "type": "n",
+        "type": request_type,
         "model": model,
         "in": len(hash_ids) * BLOCK_SIZE,
         "out": out,
@@ -151,6 +152,63 @@ def _write_join_trace(target_dir: Path) -> Path:
         chain = [*chain, 10 + k]
     requests.append(_req(1.0, [1, 2, 3, 4], api_time=0.05))
     _write_trace(target_dir, "trace_join", requests)
+    return target_dir
+
+
+def _write_issue_1231_trace(target_dir: Path) -> Path:
+    """Scaled form of issue #1231's root-child-root join timing.
+
+    Source seconds are divided by 1000 so the integration test stays fast:
+    the previous root ends at 31.042ms, the child ends at 47.658ms, and the
+    gated root is due at 229.088ms. That preserves both the parent's 198.046ms
+    end-to-start delay and the source-aligned 181.430ms post-child residual.
+    """
+    _write_trace(
+        target_dir,
+        "trace_issue_1231",
+        [
+            _req(
+                0.0,
+                [1, 2, 3],
+                api_time=0.031042,
+                out=1,
+                request_type="s",
+            ),
+            _req(0.021181, [1, 2, 50, 51], api_time=0.026477, out=1),
+            _req(
+                0.229088,
+                [1, 2, 3, 4],
+                api_time=0.005489,
+                out=1,
+                request_type="s",
+            ),
+        ],
+    )
+    return target_dir
+
+
+def _write_independent_stream_drift_trace(target_dir: Path) -> Path:
+    """A scaled multi-stream trace whose runtime clock drift can exceed its cap.
+
+    Every authored request start is at most 300ms after the preceding request
+    in the whole tree. One worker's first response is deliberately much slower
+    than its recorded ``api_time``, however, so its independent continuation
+    timer would otherwise leave the entire tree idle for over 300ms.
+    """
+    _write_trace(
+        target_dir,
+        "trace_stream_drift",
+        [
+            _req(0.00, [1, 2, 3], api_time=0.005, out=1),
+            _req(0.05, [1, 2, 10], api_time=0.005, out=1),
+            _req(0.10, [1, 2, 20], api_time=0.005, out=100),
+            _req(0.35, [1, 2, 10, 11], api_time=0.005, out=1),
+            _req(0.65, [1, 2, 10, 11, 12], api_time=0.005, out=1),
+            _req(0.95, [1, 2, 10, 11, 12, 13], api_time=0.005, out=1),
+            _req(1.20, [1, 2, 20, 21], api_time=0.005, out=1),
+            _req(1.50, [1, 2, 3, 4], api_time=0.005, out=1),
+        ],
+    )
     return target_dir
 
 
@@ -414,6 +472,65 @@ def _sibling_children_overlap(plays: list[_Play]) -> bool:
     return False
 
 
+def _assert_complete_play_order_and_joins(
+    plays: list[_Play], *, assert_timing: bool = False
+) -> None:
+    """Assert source order, SPAWN_JOIN frontiers, and optional replay delays."""
+    join_specs = {
+        "trace_alpha": {1: ("fa:001",), 2: ("fa:000",)},
+        "trace_beta": {1: ("fa:000", "fa:001")},
+        "trace_gamma": {1: ("fa:000",)},
+    }
+    residual_delay_ms = {
+        "trace_alpha": {1: 980.0, 2: 530.0},
+        "trace_beta": {1: 900.0},
+        "trace_gamma": {1: 900.0},
+    }
+    checked_trace_ids: set[str] = set()
+    for play in plays:
+        if play.trace_id not in FANOUT_EXPECTED or not _is_complete_play(
+            play, FANOUT_EXPECTED
+        ):
+            continue
+        for records in (play.root, *play.children.values()):
+            assert [m.turn_index for m in records] == list(range(len(records)))
+            for previous, current in zip(records, records[1:], strict=False):
+                assert current.request_start_ns >= previous.request_end_ns, (
+                    f"{play.trace_id}: turn {current.turn_index} started before "
+                    f"turn {previous.turn_index} completed in "
+                    f"{current.conversation_id}"
+                )
+        children_by_suffix = {
+            _child_suffix(cid): records for cid, records in play.children.items()
+        }
+        for root_turn_index, child_suffixes in join_specs[play.trace_id].items():
+            gated = play.root[root_turn_index]
+            for suffix in child_suffixes:
+                child_last = children_by_suffix[suffix][-1]
+                assert gated.request_start_ns >= child_last.request_end_ns, (
+                    f"{play.trace_id}: root turn {root_turn_index} crossed "
+                    f"SPAWN_JOIN before child {suffix} completed"
+                )
+            if assert_timing:
+                previous = play.root[root_turn_index - 1]
+                replay_gap_ms = (
+                    gated.request_start_ns - previous.request_end_ns
+                ) / 1_000_000.0
+                assert replay_gap_ms >= (
+                    residual_delay_ms[play.trace_id][root_turn_index] - 25.0
+                ), (
+                    f"{play.trace_id}: root turn {root_turn_index} replayed "
+                    f"after {replay_gap_ms:.1f}ms, shorter than its recorded "
+                    f"{residual_delay_ms[play.trace_id][root_turn_index]:.1f}ms "
+                    "end-to-start delay"
+                )
+        checked_trace_ids.add(play.trace_id)
+    assert checked_trace_ids == set(FANOUT_EXPECTED), (
+        "expected a fully ordered, join-valid play for every synthetic trace; "
+        f"checked {sorted(checked_trace_ids)}"
+    )
+
+
 async def test_fanout_dir_splits_and_replays_recorded_concurrency(
     tmp_path: Path, mock_server_factory: MockServerFactory
 ) -> None:
@@ -461,6 +578,7 @@ async def test_fanout_dir_splits_and_replays_recorded_concurrency(
         f"{sorted(_play_signature(p) for p in complete)}; all plays: "
         f"{sorted(_play_signature(p) for p in plays)}"
     )
+    _assert_complete_play_order_and_joins(plays, assert_timing=True)
 
     # Recorded concurrency reproduced: two sibling worker sessions of one
     # play overlap in wall-clock (each request takes >= ttft=150ms and the
@@ -476,6 +594,44 @@ async def test_fanout_dir_splits_and_replays_recorded_concurrency(
     assert branch_stats.children_spawned >= 5, branch_stats
     assert branch_stats.children_completed >= 5, branch_stats
     assert branch_stats.children_errored == 0, branch_stats
+
+
+@pytest.mark.parametrize("warmup_requests_per_lane", [1, 10, 100])
+async def test_cache_warmup_handoff_preserves_order_and_spawn_joins(
+    tmp_path: Path,
+    mock_server_factory: MockServerFactory,
+    warmup_requests_per_lane: int,
+) -> None:
+    """Warmup quotas of different sizes hand profiling a complete DAG, never an independently resumed parent."""
+    corpus = _write_fanout_corpus(tmp_path / "traces")
+    async with mock_server_factory(fast=True, workers=4) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=3.0,
+            concurrency=3,
+            extra_args=[
+                "--scenario",
+                "inferencex-agentx-mvp",
+                "--unsafe-override",
+                "--ignore-trace-delays",
+                "--warmup-requests-per-lane",
+                str(warmup_requests_per_lane),
+            ],
+            timeout=240.0,
+        )
+    _assert_success(
+        result, f"cache warmup handoff ({warmup_requests_per_lane} per lane)"
+    )
+
+    plays = _collect_plays(result)
+    _assert_complete_play_order_and_joins(plays)
+    branch_stats = result.json.branch_stats
+    assert branch_stats is not None
+    assert branch_stats.children_errored == 0, branch_stats
+    assert branch_stats.parents_suspended >= 1, branch_stats
+    assert branch_stats.parents_resumed >= 1, branch_stats
 
 
 async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
@@ -528,6 +684,71 @@ async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
         "no complete gated play executed within the benchmark duration; "
         "cannot verify SPAWN_JOIN ordering"
     )
+    branch_stats = result.json.branch_stats
+    assert branch_stats is not None
+    assert branch_stats.parents_suspended >= 1, (
+        f"the parent never suspended on the gate (join was a no-op): {branch_stats}"
+    )
+    assert branch_stats.parents_resumed >= 1, branch_stats
+    assert branch_stats.children_errored == 0, branch_stats
+
+
+async def test_runtime_idle_cap_handles_independent_stream_clock_drift(
+    tmp_path: Path, mock_server_factory: MockServerFactory
+) -> None:
+    """A slow child cannot recreate a tree-idle gap beyond the dataset cap."""
+    corpus = _write_independent_stream_drift_trace(tmp_path / "traces")
+    cap_seconds = 0.3
+    async with mock_server_factory(ttft=10.0, itl=5.0, workers=4) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=4.0,
+            concurrency=1,
+            extra_args=[
+                "--scenario",
+                "inferencex-agentx-mvp",
+                "--unsafe-override",
+                "--trace-idle-gap-cap-seconds",
+                str(cap_seconds),
+                "--warmup-requests-per-lane",
+                "1",
+            ],
+            timeout=240.0,
+        )
+    _assert_success(result, "independent-stream runtime idle cap")
+
+    complete_plays = [
+        play
+        for play in _collect_plays(result)
+        if play.trace_id == "trace_stream_drift"
+        and [md.turn_index for md in play.root] == [0, 1]
+        and sorted(len(records) for records in play.children.values()) == [2, 4]
+    ]
+    assert complete_plays, "the profiling phase never completed the synthetic tree"
+
+    for play in complete_plays:
+        records = sorted(
+            [*play.root, *(md for child in play.children.values() for md in child)],
+            key=lambda md: md.request_start_ns,
+        )
+        latest_end_ns = records[0].request_end_ns
+        for current in records[1:]:
+            if current.request_start_ns > latest_end_ns:
+                gap_seconds = (current.request_start_ns - latest_end_ns) / 1e9
+                assert gap_seconds <= cap_seconds + 0.15, (
+                    f"runtime tree was completely idle for {gap_seconds:.3f}s "
+                    f"despite a {cap_seconds:.3f}s trace cap"
+                )
+            latest_end_ns = max(latest_end_ns, current.request_end_ns)
+
+        for session in (play.root, *play.children.values()):
+            assert [md.turn_index for md in session] == list(range(len(session)))
+        child_last_end = max(
+            child[-1].request_end_ns for child in play.children.values()
+        )
+        assert play.root[-1].request_start_ns >= child_last_end
 
     branch_stats = result.json.branch_stats
     assert branch_stats is not None
@@ -536,6 +757,97 @@ async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
     )
     assert branch_stats.parents_resumed >= 1, branch_stats
     assert branch_stats.children_errored == 0, branch_stats
+
+
+async def test_issue_1231_shape_preserves_parent_replay_deadline(
+    tmp_path: Path, mock_server_factory: MockServerFactory
+) -> None:
+    """The exact #1231 timing shape waits on replay time and child completion."""
+    corpus = _write_issue_1231_trace(tmp_path / "traces")
+    async with mock_server_factory(ttft=30.0, itl=0.0, workers=2) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=1.0,
+            concurrency=1,
+        )
+    _assert_success(result, "issue #1231 timing shape")
+
+    complete = [
+        play
+        for play in _collect_plays(result)
+        if play.trace_id == "trace_issue_1231"
+        and len(play.root) == 2
+        and sorted(len(records) for records in play.children.values()) == [1]
+    ]
+    assert complete, "no complete replay of the #1231 root-child-root shape"
+    play = complete[0]
+    previous, gated = play.root
+    child_last = next(iter(play.children.values()))[-1]
+
+    assert [record.source_outer_idx for record in play.root] == [0, 2]
+    assert child_last.source_outer_idx == 1
+    assert gated.request_start_ns >= child_last.request_end_ns
+    parent_gap_ms = (gated.request_start_ns - previous.request_end_ns) / 1_000_000
+    assert parent_gap_ms >= 173.0, (
+        f"gated parent replayed after {parent_gap_ms:.1f}ms; expected the "
+        "198.046ms recorded parent delay within scheduler tolerance"
+    )
+    post_child_gap_ms = (gated.request_start_ns - child_last.request_end_ns) / 1_000_000
+    assert post_child_gap_ms >= 140.0, (
+        f"gated parent resumed only {post_child_gap_ms:.1f}ms after the child; "
+        "the issue #1231 residual delay was dropped"
+    )
+
+
+async def test_system_idle_cap_advances_issue_1231_join_without_bypassing_child(
+    tmp_path: Path, mock_server_factory: MockServerFactory
+) -> None:
+    """The global idle guard advances a gated replay deadline, never its join."""
+    corpus = _write_issue_1231_trace(tmp_path / "traces")
+    async with mock_server_factory(ttft=30.0, itl=0.0, workers=2) as server:
+        result = await _run_weka_profile(
+            input_dir=corpus,
+            artifact_dir=tmp_path / "artifacts",
+            url=server.url,
+            duration=1.0,
+            concurrency=1,
+            extra_args=[
+                "--scenario",
+                "inferencex-agentx-mvp",
+                "--unsafe-override",
+                "--system-idle-gap-cap-seconds",
+                "0.05",
+            ],
+        )
+    _assert_success(result, "issue #1231 timing shape with global idle cap")
+
+    complete = [
+        play
+        for play in _collect_plays(result)
+        if play.trace_id == "trace_issue_1231"
+        and len(play.root) == 2
+        and sorted(len(records) for records in play.children.values()) == [1]
+    ]
+    assert complete, "no complete replay of the capped #1231 join shape"
+    play = complete[0]
+    previous, gated = play.root
+    child_last = next(iter(play.children.values()))[-1]
+
+    assert gated.request_start_ns >= child_last.request_end_ns, (
+        "the system-idle cap bypassed the required child-completion gate"
+    )
+    parent_gap_ms = (gated.request_start_ns - previous.request_end_ns) / 1_000_000
+    post_child_gap_ms = (gated.request_start_ns - child_last.request_end_ns) / 1_000_000
+    assert 35.0 <= post_child_gap_ms <= 100.0, (
+        f"capped join resumed {post_child_gap_ms:.1f}ms after the child; "
+        "expected the 50ms whole-system idle guard within process jitter"
+    )
+    assert parent_gap_ms < 173.0, (
+        f"capped join still waited {parent_gap_ms:.1f}ms from its parent; "
+        "the replay deadline was not advanced"
+    )
 
 
 async def test_background_worker_chain_runs_after_root_and_drains_cleanly(

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -301,11 +302,14 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         credit NOT on wire" with "credit issued, was the final one". Calling
         ``on_child_stopped`` in the latter case prematurely drains a child
         whose return is still in flight, leading to a deadlock when that
-        return arrives at an empty join. ``dispatch_child_turn`` returns
-        True iff the credit was actually sent on the wire.
+        return arrives at an empty join. ``dispatch_child_turn`` gives the
+        caller an explicit issued/deferred/rejected disposition.
         """
+        result = ChildDispatchResult.normalize(
+            await self._credit_issuer.dispatch_child_turn(turn)
+        )
         if (
-            not await self._credit_issuer.dispatch_child_turn(turn)
+            result is ChildDispatchResult.REJECTED
             and self._branch_orchestrator is not None
         ):
             try:

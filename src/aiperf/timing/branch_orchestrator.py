@@ -18,12 +18,12 @@ Dispatch offsets (SPAWN mode)
 -----------------------------
 A SPAWN child whose recorded first request starts after the branch spawn
 (child turn-0 ``timestamp_ms`` past the branch ``start_timestamp_ms``)
-dispatches via a delayed background task at that offset instead of firing
-immediately, reproducing the recorded in-subagent timing (e.g. a weka
-overflow stream whose first request landed minutes after the subagent
-spawned). Join gates and descendant counts are registered before the sleep,
-so gated parents wait for sleeping children; ``cleanup()`` cancels pending
-sleepers. Datasets without timing (``--ignore-trace-delays``) carry None
+dispatches through the shared replay scheduler at that offset instead of
+firing immediately, reproducing the recorded in-subagent timing (e.g. a
+weka overflow stream whose first request landed minutes after the subagent
+spawned). Join gates and descendant counts are registered before scheduling,
+so gated parents wait for delayed children; ``cleanup()`` cancels pending
+dispatches. Datasets without timing (``--ignore-trace-delays``) carry None
 timestamps and keep the immediate-dispatch behavior.
 
 Sticky-routing locality (FORK mode)
@@ -95,7 +95,7 @@ import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common import random_generator as _rng
 from aiperf.common.enums import (
@@ -106,6 +106,10 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.models.branch_stats import BranchStats
+from aiperf.credit.dispatch import ChildDispatchResult
+
+if TYPE_CHECKING:
+    from aiperf.common.loop_scheduler import LoopScheduler
 
 __all__ = [
     "BranchOrchestrator",
@@ -184,6 +188,7 @@ class PendingBranchJoin:
     parent_num_turns: int
     parent_agent_depth: int = 0
     parent_parent_correlation_id: str | None = None
+    parent_root_correlation_id: str | None = None
     gated_turn_index: int | None = None
     outstanding: dict[str, PrereqState] = field(default_factory=dict)
     parent_branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
@@ -204,11 +209,24 @@ class PendingBranchJoin:
     # the coordinator's wait after a round's branches drain, before the next
     # round fires. Median for the sampled-distribution draw in _resolve_think_ms.
     parent_delay_ms_on_gated_turn: float = 0.0
+    replay_deadline_elapsed: bool = True
+    """Whether the gated turn's recorded replay deadline has elapsed.
+
+    A blocked join releases at the later of this deadline and its last child
+    completion. Untimed joins keep the default ``True``.
+    """
+    replay_deadline_armed: bool = False
+    """Whether a replay-deadline timer has already been registered."""
 
     @property
     def is_satisfied(self) -> bool:
         """True when every prereq's expected completions have all arrived."""
         return all(s.is_done for s in self.outstanding.values())
+
+    @property
+    def can_release(self) -> bool:
+        """True when both child prerequisites and replay timing are ready."""
+        return self.is_satisfied and self.replay_deadline_elapsed
 
     @property
     def total_outstanding(self) -> int:
@@ -250,6 +268,7 @@ class BranchOrchestrator:
         session_tree_registry=None,
         cache_bust_ledger=None,
         allow_accelerated_warmup: bool = False,
+        scheduler: LoopScheduler | None = None,
     ) -> None:
         self._cs = conversation_source
         self._issuer = credit_issuer
@@ -269,6 +288,7 @@ class BranchOrchestrator:
         # the per-tree outstanding count.
         self._session_tree_registry = session_tree_registry
         self._allow_accelerated_warmup = allow_accelerated_warmup
+        self._scheduler = scheduler
         self._accelerated_warmup_started = False
         self._handoff_snapshot_taken = False
         # child x_correlation_id -> its tree's root_correlation_id, so the
@@ -298,8 +318,10 @@ class BranchOrchestrator:
         # of making shutdown wait out a full (possibly large, sampled) interval.
         self._cleanup_event: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
-        # spawn dispatch via delayed background tasks (see
-        # _start_delayed_first_turn). cleanup() cancels pending sleepers.
+        # spawn dispatch through the shared replay scheduler (see
+        # _start_delayed_first_turn), so the system-idle cap can advance those
+        # timers uniformly with every other replay timer. The task set is a
+        # compatibility fallback for isolated callers that provide no scheduler.
         self._delayed_dispatch_tasks: set[asyncio.Task] = set()
         # Drain observer: sync callback fired after state mutations that may
         # drain has_pending_branch_work() to False. Wired by
@@ -563,15 +585,14 @@ class BranchOrchestrator:
                         )
                         self.stats.children_errored += 1
                         continue
-                    issued = await self._issuer.dispatch_first_turn(child_session)
-                    if issued:
+                    result = ChildDispatchResult.normalize(
+                        await self._issuer.dispatch_first_turn(child_session)
+                    )
+                    if result.preserves_tracking:
                         self.stats.children_spawned += 1
                     else:
-                        # ``dispatch_first_turn`` -> ``dispatch_child_turn``
-                        # only returns False when a stop condition refuses
-                        # the child before or during prefill-slot acquisition.
-                        # Exceptions are caught above. Tally as truncated,
-                        # not errored.
+                        # Terminal refusal before the child reaches the wire.
+                        # Exceptions are caught above; tally this as truncated.
                         self.stats.children_truncated += 1
                 self._pre_dispatched_branches.add(
                     (conv.conversation_id, branch.branch_id)
@@ -665,6 +686,7 @@ class BranchOrchestrator:
         states,
         *,
         cache_bust_markers: dict[str, str | None] | None = None,
+        join_release_delays_ms: dict[str, float] | None = None,
     ) -> None:
         """Seed join bookkeeping from an agentic replay wall-clock snapshot.
 
@@ -677,50 +699,72 @@ class BranchOrchestrator:
             return
 
         states_by_corr = {state.x_correlation_id: state for state in states}
+        join_release_delays_ms = join_release_delays_ms or {}
         children_by_parent: dict[str, list] = defaultdict(list)
         for state in states:
             if state.agent_depth > 0 and state.parent_correlation_id is not None:
                 children_by_parent[state.parent_correlation_id].append(state)
 
         for parent_corr, child_states in children_by_parent.items():
-            parent_state = states_by_corr.get(parent_corr)
-            parent_meta = None
-            if parent_state is not None:
-                parent_meta = self._cs.get_metadata(parent_state.conversation_id)
+            self._seed_snapshot_parent(
+                parent_corr=parent_corr,
+                child_states=child_states,
+                parent_state=states_by_corr.get(parent_corr),
+                cache_bust_markers=cache_bust_markers,
+                join_release_delay_ms=join_release_delays_ms.get(parent_corr, 0.0),
+            )
 
-            tracked_children = 0
-            for child_state in child_states:
-                self._child_modes[child_state.x_correlation_id] = (
-                    child_state.branch_mode
-                )
-                self._register_fork_routing(parent_corr, child_state.branch_mode)
-                entries = self._seeded_join_entries(
+    def _seed_snapshot_parent(
+        self,
+        *,
+        parent_corr: str,
+        child_states: list,
+        parent_state,
+        cache_bust_markers: dict[str, str | None] | None,
+        join_release_delay_ms: float,
+    ) -> None:
+        """Restore one snapshot parent's children, joins, and tree accounting."""
+        parent_meta = (
+            self._cs.get_metadata(parent_state.conversation_id)
+            if parent_state is not None
+            else None
+        )
+        for child_state in child_states:
+            self._child_modes[child_state.x_correlation_id] = child_state.branch_mode
+            self._register_fork_routing(parent_corr, child_state.branch_mode)
+            self._child_to_join[child_state.x_correlation_id] = (
+                self._seeded_join_entries(
                     parent_corr=parent_corr,
                     parent_state=parent_state,
                     parent_meta=parent_meta,
                     child_state=child_state,
                     cache_bust_markers=cache_bust_markers,
                 )
+            )
+            self._child_root[child_state.x_correlation_id] = (
+                child_state.root_correlation_id or parent_corr
+            )
 
-                self._child_to_join[child_state.x_correlation_id] = entries
-                self._child_root[child_state.x_correlation_id] = (
-                    child_state.root_correlation_id or parent_corr
-                )
-                tracked_children += 1
+        if parent_state is not None and parent_state.waiting_on_children:
+            pending = self._active_joins.get(parent_corr)
+            if pending is not None:
+                self._arm_join_replay_deadline(pending, join_release_delay_ms)
 
-            if tracked_children:
-                # Per-parent drain accounting stays keyed on the direct parent
-                # (``has_pending_branch_work`` / intercept drain). Session-tree
-                # accounting keys on the depth-0 root — same as live spawn.
-                self._descendant_counts[parent_corr] = (
-                    self._descendant_counts.get(parent_corr, 0) + tracked_children
-                )
-                roots: dict[str, int] = defaultdict(int)
-                for child_state in child_states:
-                    roots[self._child_root[child_state.x_correlation_id]] += 1
-                for tree_root, n in roots.items():
-                    self._register_tree_descendants(tree_root, n)
-                self.stats.children_spawned += tracked_children
+        tracked_children = len(child_states)
+        if not tracked_children:
+            return
+        # Per-parent drain accounting stays keyed on the direct parent
+        # (``has_pending_branch_work`` / intercept drain). Session-tree
+        # accounting keys on the depth-0 root — same as live spawn.
+        self._descendant_counts[parent_corr] = (
+            self._descendant_counts.get(parent_corr, 0) + tracked_children
+        )
+        roots: dict[str, int] = defaultdict(int)
+        for child_state in child_states:
+            roots[self._child_root[child_state.x_correlation_id]] += 1
+        for tree_root, count in roots.items():
+            self._register_tree_descendants(tree_root, count)
+        self.stats.children_spawned += tracked_children
 
     def _ensure_seeded_join(
         self,
@@ -758,6 +802,9 @@ class BranchOrchestrator:
             parent_num_turns=len(parent_meta.turns),
             parent_agent_depth=parent_state.agent_depth,
             parent_parent_correlation_id=parent_state.parent_correlation_id,
+            parent_root_correlation_id=(
+                parent_state.root_correlation_id or parent_state.x_correlation_id
+            ),
             gated_turn_index=gated_idx,
             parent_branch_mode=parent_state.branch_mode,
             parent_has_forks_on_gated_turn=has_forks,
@@ -1039,10 +1086,10 @@ class BranchOrchestrator:
             state.registered = True
 
         # Dispatch children. A SPAWN child whose recorded first request
-        # starts after the branch spawn dispatches via a delayed background
-        # task at that offset; everything else dispatches immediately.
-        # try_issue_credit returning False/None rolls back per-child
-        # bookkeeping (shared between both paths).
+        # starts after the branch spawn dispatches through the shared replay
+        # scheduler at that offset; everything else dispatches immediately.
+        # Terminal refusals roll back per-child bookkeeping. Deferred children
+        # retain it so their joins survive phase handoff.
         immediate_children: list = []
         for child in all_children:
             offset_ms = dispatch_offset_by_corr.get(child.x_correlation_id, 0.0)
@@ -1058,7 +1105,9 @@ class BranchOrchestrator:
             return_exceptions=True,
         )
         for child, result in zip(immediate_children, results, strict=True):
-            if result is not True:
+            if isinstance(result, BaseException) or (
+                ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED
+            ):
                 self._rollback_failed_first_turn(child, result, parent_corr)
         # The parent's NEXT turn (about to be re-evaluated by
         # _maybe_suspend_parent on return) is the only gate that may need
@@ -1071,9 +1120,7 @@ class BranchOrchestrator:
     def _rollback_failed_first_turn(self, child, result, parent_corr: str) -> None:
         """Undo per-child bookkeeping for a turn-0 dispatch that didn't land.
 
-        Shared by the immediate gather path and the delayed-dispatch tasks so
-        both classify results identically (BaseException -> errored, False ->
-        truncated, None -> silent no-op).
+        Shared by the immediate gather path and the delayed-dispatch tasks.
         """
         child_corr = child.x_correlation_id
         child_mode = self._child_modes.pop(child_corr, None)
@@ -1107,13 +1154,12 @@ class BranchOrchestrator:
         # over len(all_children)); a turn-0 dispatch that never landed must
         # decrement it too, or the tree's slot would never drain.
         self._tree_descendant_done(child_corr)
-        # Three-way classification of non-True dispatch results:
+        # Classification of terminal dispatch results:
         #   * BaseException -> genuine error (mirror commit 05d02720b
         #     which fixed the analogous bug in
         #     ``dispatch_pre_session_branches``).
-        #   * False -> ``dispatch_child_turn`` stop-condition refusal;
-        #     not an error.
-        #   * None -> issuer suppressed silently; observable no-op.
+        #   * REJECTED (including legacy False/None) -> stop-condition
+        #     refusal; not an error.
         if isinstance(result, BaseException):
             logger.error(
                 "dispatch_first_turn failed for child %s",
@@ -1121,10 +1167,8 @@ class BranchOrchestrator:
                 exc_info=result,
             )
             self.stats.children_errored += 1
-        elif result is False:
+        elif ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED:
             self.stats.children_truncated += 1
-        elif result is None:
-            pass
         else:
             logger.warning(
                 "dispatch_first_turn returned unexpected value %r for child %s",
@@ -1182,7 +1226,7 @@ class BranchOrchestrator:
         if (
             active is not None
             and active.gated_turn_index == next_turn_index
-            and not active.is_satisfied
+            and not active.can_release
         ):
             parent_will_suspend = True
 
@@ -1204,7 +1248,7 @@ class BranchOrchestrator:
         # gate with no child-leaf decrement to fire it -> the suspended parent
         # deadlocks until drain-timeout. Pop and dispatch it here on the same
         # machinery so the parent resumes.
-        if active is not None and active.is_satisfied:
+        if active is not None and active.can_release:
             self._active_joins.pop(parent_corr, None)
             drained_gates.append(active)
         # If no successful children AND no gated turns, release the
@@ -1220,14 +1264,8 @@ class BranchOrchestrator:
         # (does not race / double-decrement registered children).
         if self._sticky_router is not None:
             self._sticky_router.evict_unclaimed_sticky(parent_corr)
-        if (
-            not any_child_tracked_for_parent(self._child_to_join, parent_corr)
-            and not self._future_joins.get(parent_corr)
-            and parent_corr in self._descendant_counts
-            and self._descendant_counts[parent_corr] <= 0
-        ):
-            self._release_slot(parent_corr)
-            del self._descendant_counts[parent_corr]
+        if not any_child_tracked_for_parent(self._child_to_join, parent_corr):
+            self._release_parent_slot_if_drained(parent_corr)
         # Dispatch each drained gate's gated turn immediately. The gate was
         # satisfied with zero outstanding children (every child rolled back),
         # so no child-leaf decrement will ever fire it; without this the
@@ -1284,12 +1322,20 @@ class BranchOrchestrator:
         """Schedule a SPAWN child's turn-0 dispatch at its recorded offset.
 
         Join gates, descendant counts, and ``_child_to_join`` were registered
-        at spawn time, so a gated parent keeps waiting while the child sleeps
-        and ``has_pending_branch_work()`` stays True (the phase drain's
-        existing timeout backstop bounds the wait if the run ends mid-sleep).
-        ``cleanup()`` cancels pending sleepers and clears all bookkeeping
-        itself, so a cancelled task performs no rollback of its own.
+        at spawn time, so a gated parent keeps waiting while the timer is
+        pending and ``has_pending_branch_work()`` stays True. Production uses
+        the shared replay scheduler, making this authored offset subject to the
+        same uniform system-idle advancement as turn and join timers. Isolated
+        callers without a scheduler retain the legacy task/sleep fallback.
         """
+        if self._scheduler is not None:
+            self._scheduler.schedule_later(
+                offset_ms / 1000.0,
+                self._dispatch_first_turn_after_offset(child, 0.0, parent_corr),
+                group_id=child.effective_root_correlation_id,
+            )
+            self.stats.children_delayed += 1
+            return
         task = asyncio.create_task(
             self._dispatch_first_turn_after_offset(child, offset_ms, parent_corr)
         )
@@ -1306,9 +1352,9 @@ class BranchOrchestrator:
     ) -> None:
         """Delayed-dispatch task body: sleep, then dispatch + settle.
 
-        A post-sleep stop-condition refusal (issuer returns False) rolls back
-        exactly like an immediate refusal. Dispatch and settlement run under
-        the parent lock, matching the intercept path's locking.
+        A post-sleep terminal refusal rolls back exactly like an immediate
+        refusal. Dispatch and settlement run under the parent lock, matching
+        the intercept path's locking.
         """
         await self._sleep_offset_ms(offset_ms)
         if self._cleaning_up:
@@ -1318,7 +1364,9 @@ class BranchOrchestrator:
                 result = await self._dispatch_first_turn(child)
             except Exception as exc:
                 result = exc
-            if result is not True:
+            if isinstance(result, BaseException) or (
+                ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED
+            ):
                 self._rollback_failed_first_turn(child, result, parent_corr)
                 await self._finalize_failed_dispatches(parent_corr)
 
@@ -1347,6 +1395,7 @@ class BranchOrchestrator:
                 parent_num_turns=len(parent_meta.turns),
                 parent_agent_depth=credit.agent_depth,
                 parent_parent_correlation_id=credit.parent_correlation_id,
+                parent_root_correlation_id=credit.effective_root_correlation_id,
                 gated_turn_index=gated_idx,
                 parent_branch_mode=getattr(
                     credit, "branch_mode", ConversationBranchMode.FORK
@@ -1443,7 +1492,7 @@ class BranchOrchestrator:
         if (
             active is not None
             and active.gated_turn_index == next_idx
-            and not active.is_satisfied
+            and not active.can_release
         ):
             return True
 
@@ -1461,7 +1510,102 @@ class BranchOrchestrator:
         # would otherwise double-count in cleanup diagnostics.
         self._pop_future_join(parent_corr, next_idx)
         self.stats.parents_suspended += 1
+        if not future.parent_no_request_on_gated_turn:
+            self._arm_join_replay_deadline(
+                future,
+                self._gated_turn_delay_ms(credit.conversation_id, next_idx),
+            )
         return True
+
+    def _gated_turn_delay_ms(self, conversation_id: str, gated_idx: int) -> float:
+        """Return the gated turn's end-to-start delay from dataset metadata."""
+        try:
+            metadata = self._cs.get_metadata(conversation_id)
+        except (AttributeError, KeyError):
+            return 0.0
+        if gated_idx <= 0 or gated_idx >= len(metadata.turns):
+            return 0.0
+
+        gated = metadata.turns[gated_idx]
+        delay_ms = _as_timestamp_ms(getattr(gated, "delay_ms", None))
+        if delay_ms is not None:
+            return max(0.0, delay_ms)
+
+        previous = metadata.turns[gated_idx - 1]
+        previous_ts_ms = _as_timestamp_ms(getattr(previous, "timestamp_ms", None))
+        gated_ts_ms = _as_timestamp_ms(getattr(gated, "timestamp_ms", None))
+        if previous_ts_ms is None or gated_ts_ms is None:
+            return 0.0
+        previous_api_ms = _as_timestamp_ms(getattr(previous, "api_time_ms", None))
+        return max(0.0, gated_ts_ms - previous_ts_ms - (previous_api_ms or 0.0))
+
+    def _arm_join_replay_deadline(
+        self, pending: PendingBranchJoin, delay_ms: float
+    ) -> None:
+        """Arm the independent replay-time side of a blocked parent join."""
+        if pending.replay_deadline_armed:
+            return
+        # Accelerated warmup deliberately removes recorded replay delays for
+        # every request while retaining dependency ordering. A join has the
+        # same two independent readiness conditions as profiling -- replay
+        # time and child completion -- but its replay-time condition is
+        # immediately ready in zero-idle warmup. Child completion is still
+        # mandatory, so this cannot release a parent ahead of its subagents.
+        if self._accelerated_warmup_started:
+            delay_ms = 0.0
+        if delay_ms <= 0.0 or self._scheduler is None:
+            pending.replay_deadline_elapsed = True
+            return
+        pending.replay_deadline_armed = True
+        pending.replay_deadline_elapsed = False
+        self._scheduler.schedule_later(
+            delay_ms / 1000.0,
+            self._on_join_replay_deadline(
+                pending.parent_x_correlation_id,
+                pending.gated_turn_index,
+            ),
+            group_id=(
+                pending.parent_root_correlation_id or pending.parent_x_correlation_id
+            ),
+        )
+
+    async def _on_join_replay_deadline(
+        self, parent_corr: str, gated_idx: int | None
+    ) -> None:
+        """Release a blocked parent if its children finished before its timer."""
+        if self._cleaning_up or gated_idx is None:
+            return
+        pending = self._active_joins.get(parent_corr)
+        if pending is None or pending.gated_turn_index != gated_idx:
+            return
+        pending.replay_deadline_elapsed = True
+        if not pending.is_satisfied:
+            return
+        self._active_joins.pop(parent_corr, None)
+        self._release_parent_slot_if_drained(parent_corr)
+        await self._release_blocked_join(pending)
+        self._notify_drain()
+
+    async def expire_replay_deadlines(self) -> None:
+        """Drain active joins after phase scheduling has stopped.
+
+        ``PhaseRunner`` cancels the shared scheduler when the phase stops
+        sending. Any join timer still pending at that boundary can no longer
+        become a legal replay dispatch, so mark its timing condition complete
+        and let the issuer's normal stop condition suppress it once its child
+        condition is also complete. This preserves the two-condition join
+        state machine without leaving cancelled timers as phantom DAG work.
+        """
+        releasable: list[PendingBranchJoin] = []
+        for parent_corr, pending in list(self._active_joins.items()):
+            pending.replay_deadline_elapsed = True
+            if pending.can_release:
+                self._active_joins.pop(parent_corr, None)
+                self._release_parent_slot_if_drained(parent_corr)
+                releasable.append(pending)
+        for pending in releasable:
+            await self._release_blocked_join(pending)
+        self._notify_drain()
 
     async def _satisfy_prerequisite(
         self,
@@ -1502,8 +1646,10 @@ class BranchOrchestrator:
         outstanding.completed.add(child_corr)
         if not pending.is_satisfied:
             return None
-        if pending.is_blocked:
+        if pending.is_blocked and pending.can_release:
             return self._active_joins.pop(parent_corr, None)
+        if pending.is_blocked:
+            return None
         # Satisfied before the parent arrived. A request-free SPINE gate carries
         # between-round think-time, so leave it in place (marked satisfied) for
         # ``_take_satisfied_future`` to pick up and apply the wait before
@@ -1624,15 +1770,14 @@ class BranchOrchestrator:
         else:
             self.stats.joins_suppressed += 1
 
-    async def _dispatch_first_turn(self, child_sampled_session) -> bool:
+    async def _dispatch_first_turn(self, child_sampled_session) -> ChildDispatchResult:
         """Dispatch a child's turn-0 via the credit issuer.
 
-        Returns True on successful dispatch, False when the issuer declined
-        because a stop condition fired. Callers use this to roll back
-        orchestrator bookkeeping when dispatch doesn't actually land a credit.
+        Legacy Boolean issuer results are normalized at this boundary so the
+        orchestrator handles every child through one explicit lifecycle type.
         """
         result = await self._issuer.dispatch_first_turn(child_sampled_session)
-        return bool(result)
+        return ChildDispatchResult.normalize(result)
 
     async def on_child_leaf_reached(self, child_x_correlation_id: str) -> None:
         """Called when a child session reaches its final turn (or terminates early)."""
@@ -1699,22 +1844,23 @@ class BranchOrchestrator:
         # number of gates satisfied.
         if parent in self._descendant_counts:
             self._descendant_counts[parent] -= 1
-            # If no active/future joins remain and count reached zero,
-            # release the slot (mirrors prior behavior for the
-            # no-join/no-child terminal path).
-            if (
-                self._descendant_counts[parent] <= 0
-                and parent not in self._active_joins
-                and parent not in self._future_joins
-            ):
-                self._release_slot(parent)
-                del self._descendant_counts[parent]
+            self._release_parent_slot_if_drained(parent)
         # Decrement the child's TREE outstanding count; the registry releases the
         # tree's session slot (and recycles its lane) once root + all descendants
         # have drained. Keyed on the tree root, not the direct parent, so a
         # subchild correctly holds the top root's slot.
         self._tree_descendant_done(child_corr)
         self._notify_drain()  # cap-suppressed joins finalize w/o credit return
+
+    def _release_parent_slot_if_drained(self, parent_corr: str) -> None:
+        """Release branch state once no descendants or gated turns remain."""
+        if (
+            self._descendant_counts.get(parent_corr, 1) <= 0
+            and parent_corr not in self._active_joins
+            and parent_corr not in self._future_joins
+        ):
+            self._release_slot(parent_corr)
+            del self._descendant_counts[parent_corr]
 
     async def on_child_errored(self, child_x_correlation_id: str) -> None:
         """Called when a child session errors mid-branch.
