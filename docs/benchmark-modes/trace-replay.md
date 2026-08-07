@@ -114,7 +114,8 @@ AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-pro
 The `baseten_trace` loader reads trace rows and sampled-session metadata in
 bounded batches and projects only the columns required by the selected replay
 options. It also skips `inputs.json` generation, which would otherwise
-duplicate large recorded prompts.
+duplicate large recorded prompts. This is independent of the mmap dataset
+cache; Baseten traces remain uncached.
 
 The same schema can be stored as one uncompressed Arrow IPC file with an
 `.arrow` or `.ipc` suffix. AIPerf memory-maps that file and materializes only

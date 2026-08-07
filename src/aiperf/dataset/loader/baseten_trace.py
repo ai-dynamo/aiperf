@@ -144,7 +144,11 @@ def _baseten_session_key_from_schema(schema_names: set[str]) -> str | None:
 
 
 def _parquet_min_timestamp(parquet_file: pq.ParquetFile) -> int | None:
-    """Return the minimum timestamp from row-group statistics when available."""
+    """Return the minimum timestamp only when every row group has statistics.
+
+    Returning ``None`` for any missing statistic makes the caller scan the
+    timestamp column, preserving correctness when statistics are incomplete.
+    """
     timestamp_index = parquet_file.schema.names.index(METADATA_COLUMNS_TIME)
     minimum: int | None = None
     for row_group_index in range(parquet_file.metadata.num_row_groups):
@@ -311,6 +315,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         # it because re-scoring the filtered subset can flip to the other
         # column and silently shred the sessions sampling kept whole.
         self._sampled_session_key: str | None = None
+        self._schema_names: set[str] | None = None
+        self._parquet_file: Any | None = None
 
     def _reject_extra_input_collisions(self) -> None:
         """Reject endpoint extra-inputs keys this loader injects per-turn.
@@ -374,13 +380,14 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         )
 
     def _preprocess_trace(self, trace: BasetenTrace) -> None:
+        trace.total_hashes = list(trace.total_hashes or [])
         trace.timestamp = int(trace.timestamp_start_unix_ms)
         trace.input_length = int(trace.input_tokens)
         # Real traces contain canceled requests with output_tokens=0, but
         # Turn.max_tokens requires >= 1.
         trace.output_length = max(1, int(trace.output_tokens))
         trace.text_input = trace.prompt
-        trace.hash_ids = list(trace.total_hashes or [])
+        trace.hash_ids = list(trace.total_hashes)
 
     def _set_request_body(self, trace: BasetenTrace) -> None:
         if trace.hash_ids is None:
@@ -455,22 +462,25 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         return {session_id: traces for _, session_id, traces in session_entries}
 
     def _source_schema_names(self) -> set[str]:
-        if _is_arrow_ipc(self.filename):
-            with _open_arrow_ipc(self.filename) as reader:
-                return set(reader.schema.names)
-        return set(pq.read_schema(self.filename).names)
+        if self._schema_names is None:
+            if _is_arrow_ipc(self.filename):
+                with _open_arrow_ipc(self.filename) as reader:
+                    self._schema_names = set(reader.schema.names)
+            else:
+                assert self._parquet_file is not None
+                self._schema_names = set(self._parquet_file.schema_arrow.names)
+        return self._schema_names
 
     def _iter_source_batches(self, columns: list[str]) -> Iterator[pa.RecordBatch]:
         """Yield projected batches from Parquet or memory-mapped Arrow IPC."""
         if _is_arrow_ipc(self.filename):
             with _open_arrow_ipc(self.filename) as reader:
-                batch_count = reader.num_record_batches
-            for index in range(batch_count):
-                with _open_arrow_ipc(self.filename) as reader:
+                for index in range(reader.num_record_batches):
                     yield reader.get_batch(index).select(columns)
             return
 
-        yield from pq.ParquetFile(self.filename).iter_batches(
+        assert self._parquet_file is not None
+        yield from self._parquet_file.iter_batches(
             columns=columns,
             batch_size=_PARQUET_BATCH_SIZE,
             use_threads=True,
@@ -478,7 +488,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
     def _minimum_timestamp(self) -> int | None:
         if not _is_arrow_ipc(self.filename):
-            minimum = _parquet_min_timestamp(pq.ParquetFile(self.filename))
+            assert self._parquet_file is not None
+            minimum = _parquet_min_timestamp(self._parquet_file)
             if minimum is not None:
                 return minimum
         minimum = None
@@ -578,7 +589,15 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._capped_max_osl = 0
         self._floored_zero_osl = 0
 
-        items = self._read_traces(*self._sample_session_ids())
+        if not _is_arrow_ipc(self.filename):
+            self._parquet_file = pq.ParquetFile(self.filename)
+            self._schema_names = set(self._parquet_file.schema_arrow.names)
+        try:
+            items = self._read_traces(*self._sample_session_ids())
+        finally:
+            if self._parquet_file is not None:
+                self._parquet_file.close()
+                self._parquet_file = None
 
         # Closed-loop replay defers the gap cap to convert_to_conversations so
         # think-time delays derive from the recorded timestamps, not reflowed ones.
@@ -634,7 +653,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 if not kept:
                     continue
 
-            if validated_rows < _VALIDATION_SAMPLE_ROWS:
+            if validated_rows < _VALIDATION_SAMPLE_ROWS or self._row_needs_validation(
+                row
+            ):
                 trace = BasetenTrace.model_validate(row)
                 validated_rows += 1
             else:
@@ -659,6 +680,20 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 self._floored_zero_osl += 1
             items.append(trace)
         return items
+
+    @staticmethod
+    def _row_needs_validation(row: dict[str, Any]) -> bool:
+        """Route malformed required fields through Pydantic's clear errors."""
+        if not isinstance(row.get("prompt"), str):
+            return True
+        return any(
+            not isinstance(value := row.get(field), int) or value < 0
+            for field in (
+                METADATA_COLUMNS_TIME,
+                "input_tokens",
+                "output_tokens",
+            )
+        )
 
     def _projected_trace_columns(self, session_key: str | None) -> list[str]:
         """Return source columns needed by the configured replay behavior."""

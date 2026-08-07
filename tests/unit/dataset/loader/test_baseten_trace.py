@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -11,6 +12,7 @@ pytest.importorskip("pyarrow")
 import pyarrow as pa
 import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
@@ -210,6 +212,77 @@ class TestBasetenTraceDatasetLoader:
         )
 
         assert count_baseten_parquet_records_and_sessions(str(path)) == (4, 3)
+
+    def test_arrow_ipc_opens_once_per_scan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = _write_arrow(
+            tmp_path / "trace.arrow",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": str(index),
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                }
+                for index in range(12)
+            ],
+            batch_size=2,
+        )
+        run = _make_run(path)
+        original_open = baseten_trace_module._open_arrow_ipc
+        open_calls = 0
+
+        def counting_open(file_path: str | Path) -> Any:
+            nonlocal open_calls
+            open_calls += 1
+            return original_open(file_path)
+
+        monkeypatch.setattr(baseten_trace_module, "_open_arrow_ipc", counting_open)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        loader.load_dataset()
+
+        assert open_calls == 3
+
+    def test_parquet_opens_once_per_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": str(index),
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                }
+                for index in range(12)
+            ],
+        )
+        run = _make_run(path)
+        parquet_file_class = pq.ParquetFile
+        open_calls = 0
+
+        def counting_open(*args: Any, **kwargs: Any) -> Any:
+            nonlocal open_calls
+            open_calls += 1
+            return parquet_file_class(*args, **kwargs)
+
+        monkeypatch.setattr(baseten_trace_module.pq, "ParquetFile", counting_open)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        loader.load_dataset()
+
+        assert open_calls == 1
 
     def test_convert_to_conversations_uses_literal_prompts(self, tmp_path: Path):
         path = _write_parquet(
@@ -1033,6 +1106,69 @@ class TestBasetenTraceDatasetLoader:
         assert all(not hasattr(trace, "model_name") for trace in traces)
         assert all(not hasattr(trace, "request_canceled") for trace in traces)
         assert all(not hasattr(trace, "dataset_version") for trace in traces)
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            param("timestamp_start_unix_ms", -1, id="negative-timestamp"),
+            param("input_tokens", None, id="null-input-tokens"),
+            param("output_tokens", -1, id="negative-output-tokens"),
+            param("prompt", None, id="null-prompt"),
+        ],
+    )  # fmt: skip
+    def test_load_dataset_validates_malformed_required_field_after_sample(
+        self,
+        tmp_path: Path,
+        field: str,
+        invalid_value: object,
+    ) -> None:
+        rows = [
+            {
+                "timestamp_start_unix_ms": index,
+                "prompt": f"prompt-{index}",
+                "input_tokens": 5,
+                "output_tokens": 1,
+            }
+            for index in range(11)
+        ]
+        rows[-1][field] = invalid_value
+        path = _write_parquet(tmp_path / "trace.parquet", rows)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        with pytest.raises(ValidationError, match=field):
+            loader.load_dataset()
+
+    def test_load_dataset_normalizes_null_hashes_after_validation_sample(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": f"prompt-{index}",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "total_hashes": [1] if index < 10 else None,
+                }
+                for index in range(11)
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        traces = [
+            trace for session in loader.load_dataset().values() for trace in session
+        ]
+
+        assert traces[-1].total_hashes == []
 
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
