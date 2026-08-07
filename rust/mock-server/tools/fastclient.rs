@@ -27,6 +27,17 @@
 //
 // Assumes a UNIFORM fixed-length response (true for fastmock / fastmock-uring):
 // response framing is by the probed byte length L, not a per-response parser.
+// Framing-by-length means any single off-size response (error, early close)
+// permanently misaligns the byte counter on that connection, silently. On
+// sampled iterations (1-in-32) fastclient checks that the first read of each
+// response starts with "HTTP/1.1 2"; this catches desync within one sampling
+// window at negligible cost and requires no per-response hash.
+//
+// Co-located runs (UDS or loopback TCP) report a pair ceiling: client and
+// server share the host CPU budget, so the reported RPS is roughly half of
+// what the server alone could sustain with an off-box client. The RPS summary
+// line is annotated to prevent the number from being quoted as server-only
+// throughput.
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
@@ -245,6 +256,9 @@ fn main() {
         std::process::exit(1);
     }
 
+    let is_colocated = uds.is_some()
+        || matches!(host.as_str(), "127.0.0.1" | "::1" | "localhost");
+
     let batch: Arc<Vec<u8>> = Arc::new(req.iter().cloned().cycle().take(req.len() * pipeline).collect());
     let read_target = resp_len * pipeline;
 
@@ -324,7 +338,21 @@ fn main() {
                             broken = true;
                             break;
                         }
-                        Ok(n) => got += n,
+                        Ok(n) => {
+                            // Desync guard on sampled iterations: if this is
+                            // the first read of a response and carries ≥10
+                            // bytes, verify the 2xx status line. An off-size
+                            // response (error, early close) permanently
+                            // misaligns the byte counter; catching it here
+                            // bounds contamination to one sampling window.
+                            if sample && got == 0 && n >= 10
+                                && &buf[..10] != b"HTTP/1.1 2"
+                            {
+                                broken = true;
+                                break;
+                            }
+                            got += n;
+                        }
                         Err(_) => {
                             broken = true;
                             break;
@@ -369,9 +397,14 @@ fn main() {
     // Mean per-request latency = mean batch latency / pipeline depth.
     let per_req_us = (lat_sum as f64 / batches as f64) / 1000.0 / pipeline as f64;
 
+    let coloc_tag = if is_colocated {
+        "  [co-located: pair ceiling, ~half server capacity]"
+    } else {
+        ""
+    };
     println!("elapsed: {elapsed:.2}s");
     println!(
-        "requests: {reqs}  errors: {errs}  RPS: {:.0}",
+        "requests: {reqs}  errors: {errs}  RPS: {:.0}{coloc_tag}",
         reqs as f64 / elapsed
     );
     println!("mean latency/req: {per_req_us:.1}us  (pipeline depth {pipeline})");
