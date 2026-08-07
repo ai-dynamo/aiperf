@@ -85,13 +85,21 @@ enum Target {
 }
 
 fn connect(target: &Target) -> std::io::Result<Conn> {
+    // 30-second read timeout prevents join() from blocking forever if the
+    // server stalls mid-response (e.g. hung connection after a crash).
+    let timeout = Some(std::time::Duration::from_secs(30));
     match target {
         Target::Tcp(addr) => {
             let s = TcpStream::connect(addr)?;
             s.set_nodelay(true).ok();
+            s.set_read_timeout(timeout).ok();
             Ok(Conn::Tcp(s))
         }
-        Target::Uds(path) => Ok(Conn::Unix(UnixStream::connect(path)?)),
+        Target::Uds(path) => {
+            let s = UnixStream::connect(path)?;
+            s.set_read_timeout(timeout).ok();
+            Ok(Conn::Unix(s))
+        }
     }
 }
 
@@ -148,8 +156,16 @@ fn probe_response_len(target: &Target, req: &[u8]) -> std::io::Result<(usize, u1
             break;
         }
         acc.extend_from_slice(&buf[..n]);
+        // Guard against a misbehaving server that streams indefinitely.
+        if acc.len() > 1_048_576 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "probe: response exceeded 1 MiB without a complete header+body",
+            ));
+        }
         if let Some(hpos) = find(&acc, b"\r\n\r\n") {
-            let total = hpos + 4 + content_length(&acc[..hpos]);
+            // saturating_add prevents overflow on a malformed Content-Length.
+            let total = hpos.saturating_add(4).saturating_add(content_length(&acc[..hpos]));
             if acc.len() >= total {
                 let status = status_code(&acc[..hpos]).unwrap_or(0);
                 return Ok((total, status));
