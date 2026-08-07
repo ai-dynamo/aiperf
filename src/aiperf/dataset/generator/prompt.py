@@ -187,10 +187,18 @@ class PromptGenerator(BaseGenerator):
         _corpus_rng when preseed is not in use.
         """
         if self._corpus == PromptCorpus.RANDOM:
-            n = len(self._allowed_tokens)
-            rng = getattr(self, "_preseed_rng", None) or self._corpus_rng
-            ids = rng.integers(0, n, size=num_tokens)
-            return [self._allowed_tokens[i] for i in ids]
+            # vLLM bench passes rng=self._rng (the shared seeded generator) to
+            # gen_prompt_decode_to_target_len, drawing top-up tokens from the
+            # same stream as ISL/OSL/offsets with range [0, vocab_size).
+            vocab_size = (
+                self.tokenizer.vocab_size
+                if self.tokenizer is not None
+                else len(self._allowed_tokens)
+            )
+            preseed_rng = getattr(self, "_preseed_rng", None)
+            if preseed_rng is not None:
+                return preseed_rng.integers(0, vocab_size, size=num_tokens).tolist()  # type: ignore[union-attr]
+            return self._corpus_rng.integers(0, vocab_size, size=num_tokens).tolist()
         return self._sample_tokens(num_tokens)
 
     def preseed(self, n: int, generator: object) -> None:
@@ -205,9 +213,20 @@ class PromptGenerator(BaseGenerator):
         in :meth:`_sample_topup_tokens` continue from the same stream, matching
         vLLM's ``gen_prompt_decode_to_target_len`` which uses its single shared
         rng for both the initial sequence and any top-up tokens.
+
         """
-        pool = len(self._allowed_tokens)
-        self._offset_cache: list[int] = generator.integers(0, pool, size=n).tolist()  # type: ignore[union-attr]
+        # vLLM bench draws offsets from [0, tokenizer.vocab_size), not from
+        # [0, len(allowed_tokens)). Using vocab_size as the draw bound matches
+        # vLLM bench's get_sampling_params and produces the same offset values
+        # for the same seed, giving identical prompts.
+        vocab_size = (
+            self.tokenizer.vocab_size
+            if self.tokenizer is not None
+            else len(self._allowed_tokens)
+        )
+        self._offset_cache: list[int] = generator.integers(
+            0, vocab_size, size=n
+        ).tolist()  # type: ignore[union-attr]
         self._offset_idx: int = 0
         self._preseed_rng = generator
 
@@ -413,13 +432,17 @@ class PromptGenerator(BaseGenerator):
         tokens = self._sample_tokens(num_tokens)
         for _ in range(_max_retries):
             text = self.tokenizer.decode(tokens)
-            actual = len(self.tokenizer.encode(text))
-            if actual == num_tokens:
+            # Re-assign tokens from the re-encoded result, matching vLLM bench's
+            # gen_prompt_decode_to_target_len which reassigns token_sequence after
+            # encode before trimming or extending. Trimming the re-encoded sequence
+            # (not the original) is what produces identical prompts for the same seed.
+            tokens = self.tokenizer.encode(text, add_special_tokens=False)
+            if len(tokens) == num_tokens:
                 return text
-            if actual > num_tokens:
-                tokens = tokens[: -(actual - num_tokens)]
+            if len(tokens) > num_tokens:
+                tokens = tokens[:num_tokens]
             else:
-                tokens = tokens + self._sample_topup_tokens(num_tokens - actual)
+                tokens = tokens + self._sample_topup_tokens(num_tokens - len(tokens))
         return self.tokenizer.decode(tokens)
 
     def _generate_cached_prompt(
