@@ -307,18 +307,35 @@ class RecordsTracker:
             was_cancelled=any(s.was_cancelled for s in stats),
         )
 
-    def total_records_for_phase(self, phase: CreditPhase) -> int:
-        """Return the running total record count for the phase without building a stats model.
+    def total_records_for_phase(
+        self, phase: CreditPhase, phase_index: int | None = None
+    ) -> int:
+        """Return the running total for one concrete phase without building a model.
 
         Lightweight int accessor for hot per-record paths (e.g. the
         failed-request abort check) that only need the counter, avoiding a full
         validated ``PhaseRecordsStats`` construction per record.
-        """
-        return self._get_phase_tracker(phase).total_records
 
-    def error_records_for_phase(self, phase: CreditPhase) -> int:
-        """Return the running error record count for the phase without building a stats model."""
-        return self._get_phase_tracker(phase)._error_records
+        When ``phase_index`` is omitted, use the latest concrete tracker rather
+        than creating an orphan ``(phase, None)`` tracker.
+        """
+        tracker = (
+            self._get_phase_tracker(phase, phase_index)
+            if phase_index is not None
+            else self._latest_tracker_for_phase(phase)
+        )
+        return tracker.total_records if tracker is not None else 0
+
+    def error_records_for_phase(
+        self, phase: CreditPhase, phase_index: int | None = None
+    ) -> int:
+        """Return the running error count for one concrete phase."""
+        tracker = (
+            self._get_phase_tracker(phase, phase_index)
+            if phase_index is not None
+            else self._latest_tracker_for_phase(phase)
+        )
+        return tracker._error_records if tracker is not None else 0
 
     def update_phase_info(self, credit_phase_stats: CreditPhaseStats) -> None:
         """Update the phase tracker."""

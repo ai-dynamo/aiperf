@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import BaselineKind
+from aiperf.common.enums import BaselineKind, ProfileCancelReason
 from aiperf.common.messages import PhaseBaselineRequestMessage, ProfileCancelCommand
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -130,5 +130,12 @@ class PhasePublisher:
         down -- instead of warmup running to teardown and hanging the run.
         Reuses the existing PROFILE_CANCEL handlers across services.
         """
-        msg = ProfileCancelCommand(service_id=self._service_id)
+        msg = ProfileCancelCommand(
+            service_id=self._service_id,
+            reason=ProfileCancelReason.WARMUP_FAILURE,
+            reason_detail=(
+                "A root AgentX warmup request failed, so profiling was not started. "
+                "Check the preceding request error and inference server logs."
+            ),
+        )
         await self._pub_client.publish(msg)
