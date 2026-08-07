@@ -423,6 +423,13 @@ def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -
     dataset = datasets[0]
     if not isinstance(dataset, dict):
         raise ValueError("synthesis flags require a file or public dataset")
+    if dataset.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
+        logger.warning(
+            "Synthesis flags require a file or public dataset; ignoring them "
+            "for dataset type %r",
+            dataset.get("type"),
+        )
+        return
 
     override = {"type": dataset.get("type")}
     _apply_synthesis(override, cli)
