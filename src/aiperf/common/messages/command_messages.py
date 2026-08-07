@@ -10,6 +10,7 @@ from aiperf.common.enums import (
     CommandType,
     LifecycleState,
     MessageType,
+    ProfileCancelReason,
 )
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
@@ -272,6 +273,15 @@ class ProfileCancelCommand(CommandMessage):
     """Command message sent to request services to cancel profiling."""
 
     command: CommandTypeT = CommandType.PROFILE_CANCEL
+    reason: ProfileCancelReason = Field(
+        default=ProfileCancelReason.USER,
+        description="Why profiling was cancelled; benchmark abort reasons cause a "
+        "non-zero process exit.",
+    )
+    reason_detail: str | None = Field(
+        default=None,
+        description="Operator-facing detail describing why the cancellation occurred.",
+    )
 
 
 class ShutdownCommand(CommandMessage):

@@ -8,12 +8,20 @@ import pytest
 from aiperf.common.enums import (
     CommandType,
     LifecycleState,
+    ProfileCancelReason,
     ServiceRegistrationStatus,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.messages import ProcessRecordsResultMessage, ProfileCancelCommand
 from aiperf.common.messages.command_messages import CommandErrorResponse
-from aiperf.common.models import ErrorDetails, ExitErrorInfo
+from aiperf.common.models import (
+    ErrorDetails,
+    ExitErrorInfo,
+    MetricResult,
+    ProcessRecordsResult,
+    ProfileResults,
+)
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import AccuracyBenchmarkType
 from tests.unit.controller.conftest import MockTestException
@@ -78,6 +86,75 @@ class TestSystemController:
 
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""
+
+    @pytest.mark.asyncio
+    async def test_fatal_profile_result_validation_records_exit_error(
+        self, system_controller: SystemController
+    ) -> None:
+        """A post-run coverage failure makes the final process exit non-zero."""
+        fatal_error = ErrorDetails(
+            type="ProfileMetricCoverageError",
+            message="Profiling metric coverage below the required 98.0%.",
+        )
+        message = ProcessRecordsResultMessage(
+            service_id="records_manager",
+            results=ProcessRecordsResult(
+                results=ProfileResults(
+                    records=[],
+                    completed=0,
+                    start_ns=1,
+                    end_ns=2,
+                ),
+                fatal_errors=[fatal_error],
+            ),
+        )
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+
+        await system_controller._on_process_records_result_message(message)
+
+        assert any(
+            item.error_details == fatal_error
+            and item.operation == "profile_results_validation"
+            for item in system_controller._exit_errors
+        )
+
+    @pytest.mark.asyncio
+    async def test_fatal_validation_exports_partial_results_before_error_report(
+        self, system_controller: SystemController
+    ) -> None:
+        """A fatal post-run verdict retains aggregate artifacts for diagnosis."""
+        system_controller._profile_results = ProcessRecordsResult(
+            results=ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="request_count",
+                        header="Request Count",
+                        unit="requests",
+                        avg=1.0,
+                    )
+                ],
+                completed=1,
+                start_ns=1,
+                end_ns=2,
+            )
+        )
+        system_controller._exit_errors = [
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    type="ProfileMetricCoverageError",
+                    message="coverage failed",
+                ),
+                operation="profile_results_validation",
+                service_id="records_manager",
+            )
+        ]
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock()
+        system_controller._print_exit_errors_and_log_file = MagicMock()
+
+        await system_controller._report_post_shutdown_results_and_errors()
+
+        system_controller._print_post_benchmark_info_and_metrics.assert_awaited_once()
+        system_controller._print_exit_errors_and_log_file.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_configure_error_response(
@@ -296,6 +373,57 @@ class TestSignalHandling:
         system_controller.send_command_and_wait_for_all_responses.assert_called_once()
         call_args = system_controller.send_command_and_wait_for_all_responses.call_args
         assert call_args[0][0].command == CommandType.PROFILE_CANCEL
+
+    @pytest.mark.parametrize(
+        ("reason", "expected_abort"),
+        [
+            (ProfileCancelReason.USER, False),
+            (ProfileCancelReason.WARMUP_FAILURE, True),
+            (ProfileCancelReason.FAILED_REQUEST_THRESHOLD, True),
+        ],
+    )
+    def test_profile_cancel_reason_is_abort(
+        self, reason: ProfileCancelReason, expected_abort: bool
+    ) -> None:
+        assert reason.is_abort is expected_abort
+
+    @pytest.mark.asyncio
+    async def test_abort_reason_cancel_records_exit_error(
+        self, system_controller: SystemController
+    ) -> None:
+        await system_controller._record_abort_on_profile_cancel(
+            ProfileCancelCommand(
+                service_id="records",
+                reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                reason_detail=(
+                    "12/100 profiling requests failed (12.0%), exceeding the "
+                    "--failed-request-threshold limit of 10.0%. "
+                    "Check inference server logs."
+                ),
+            )
+        )
+
+        assert system_controller._abort_recorded
+        assert len(system_controller._exit_errors) == 1
+        assert system_controller._exit_errors[0].error_details.type == "ProfileAborted"
+        assert system_controller._exit_errors[0].error_details.message == (
+            "12/100 profiling requests failed (12.0%), exceeding the "
+            "--failed-request-threshold limit of 10.0%. Check inference server logs."
+        )
+
+    @pytest.mark.asyncio
+    async def test_user_cancel_does_not_record_exit_error(
+        self, system_controller: SystemController
+    ) -> None:
+        await system_controller._record_abort_on_profile_cancel(
+            ProfileCancelCommand(
+                service_id="controller",
+                reason=ProfileCancelReason.USER,
+            )
+        )
+
+        assert not system_controller._abort_recorded
+        assert not system_controller._exit_errors
 
     def test_print_cancel_warning_uses_console(
         self, system_controller: SystemController

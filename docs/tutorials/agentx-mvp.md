@@ -623,6 +623,13 @@ the aggregate file — divide it by
 (the same denominator the aggregate exporter uses for the 1% threshold)
 to see how close you were to the limit.
 
+**Run exits non-zero with `ProfileMetricCoverageError`**
+The server stopped producing TTFT or inter-token-latency observations before 98% of the configured
+profiling duration elapsed. AIPerf retains the result artifact, marks it invalid with
+`insufficient_profile_metric_coverage`, and reports the observed coverage for both signals. Check
+the inference-server logs for a crash or stalled request processing. Warmup metrics and profiling
+phases shorter than the scenario's minimum valid duration are excluded.
+
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …" / cannot verify corpus identity for a local weka_trace directory**
 The AgentX MVP scenario stamps `submission_valid: true` only for a pinned
 public SemiAnalysis Weka corpus (`semianalysisai/cc-traces-weka-062126`),

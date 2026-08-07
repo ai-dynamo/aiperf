@@ -23,6 +23,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ProfileCancelReason,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -59,10 +60,12 @@ from aiperf.common.models import (
     ProcessRecordsResult,
     ProcessServerMetricsResult,
     ProcessTelemetryResult,
+    ProfileMetricDurationCoverage,
     ProfileResults,
     TimesliceResult,
     WorkerProcessingStats,
 )
+from aiperf.common.scenario.registry import get_scenario
 from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
@@ -688,17 +691,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
-    async def _maybe_trigger_failed_request_abort(self, phase: CreditPhase) -> None:
+    async def _maybe_trigger_failed_request_abort(
+        self, phase: CreditPhase, *, phase_index: int | None = None
+    ) -> None:
         """Abort the run when the PROFILING failure rate exceeds the threshold.
 
         No-op when ``--failed-request-threshold`` is unset, when this method
         already fired once for this run, or when the total record count has
         not yet crossed the grace floor (``max(concurrency, 10)``). Otherwise
-        broadcasts ProfileCancelCommand on the message bus -- the existing
-        cancel-path handlers in timing_manager, server_metrics manager, and
-        gpu_telemetry manager stop their work; this manager's own
-        _on_profile_cancel_command marks the phase cancelled and finalizes
-        results with cancelled=True.
+        checks the concrete profiling phase identified by ``phase_index`` and
+        broadcasts ProfileCancelCommand on the message bus so the other
+        services stop their work, then locally finalizes the records manager.
+        A PUB socket does not receive its own message, so relying on the
+        broadcast for local finalization would leave the run hanging.
         """
         if self._failed_request_threshold is None:
             return
@@ -707,11 +712,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if phase != CreditPhase.PROFILING:
             return
 
-        total = self._records_tracker.total_records_for_phase(phase)
+        total = self._records_tracker.total_records_for_phase(phase, phase_index)
         if total < self._failed_request_grace_floor:
             return
 
-        error_records = self._records_tracker.error_records_for_phase(phase)
+        error_records = self._records_tracker.error_records_for_phase(
+            phase, phase_index
+        )
         rate = error_records / total if total > 0 else 0.0
         if rate <= self._failed_request_threshold:
             return
@@ -725,12 +732,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             "Broadcasting ProfileCancelCommand to terminate the run."
         )
         try:
-            await self.publish(ProfileCancelCommand(service_id=self.service_id))
+            command = ProfileCancelCommand(
+                service_id=self.service_id,
+                reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                reason_detail=(
+                    f"{error_records}/{total} profiling requests failed "
+                    f"({rate:.1%}), exceeding the "
+                    f"--failed-request-threshold limit of "
+                    f"{self._failed_request_threshold:.1%}. "
+                    "Check inference server logs."
+                ),
+            )
+            await self.publish(command)
         except Exception as exc:
             self.warning(
                 f"Failed to publish ProfileCancelCommand for threshold abort: {exc!r}"
             )
             self._failed_request_abort_triggered = False
+            return
+        await self._on_profile_cancel_command(command)
 
     def _maybe_hint_missing_cache_reporting(
         self, record_data: MetricRecordsData
@@ -793,7 +813,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_index=message.metadata.phase_index,
             )
 
-        await self._maybe_trigger_failed_request_abort(phase)
+        await self._maybe_trigger_failed_request_abort(
+            phase, phase_index=message.metadata.phase_index
+        )
 
         if (
             phase in self._complete_credit_phases
@@ -1700,6 +1722,126 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         return records_results, error_results
 
+    def _validate_profile_metric_duration_coverage(
+        self,
+        phase: CreditPhase,
+        cancelled: bool,
+    ) -> tuple[list[ProfileMetricDurationCoverage], list[ErrorDetails]]:
+        """Apply a scenario's post-run latency-signal coverage requirement."""
+        if phase != CreditPhase.PROFILING or cancelled:
+            return [], []
+
+        scenario_name = self.run.cfg.scenario
+        if scenario_name is None:
+            return [], []
+        # Scenario resolution validates the name before services start.
+        scenario_spec = get_scenario(scenario_name)
+        required_ratio = scenario_spec.minimum_profile_metric_coverage_ratio
+        if required_ratio is None:
+            return [], []
+
+        accumulator = self._accumulators.get(AccumulatorType.METRIC_RESULTS)
+        calculate = getattr(accumulator, "profile_metric_duration_coverage", None)
+        if not callable(calculate):
+            error = ErrorDetails(
+                type="ProfileMetricCoverageError",
+                message=(
+                    "Profiling metric coverage could not be validated because the "
+                    "metrics accumulator does not expose coverage timestamps."
+                ),
+            )
+            return [], [error]
+
+        phase_configs = self.run.cfg.get_profiling_phases()
+        concrete_stats = self._iter_concrete_phase_stats(CreditPhase.PROFILING)
+        aggregate_stats = RecordsManager._create_result_stats_for_phase(
+            self, CreditPhase.PROFILING
+        )
+        coverage_results: list[ProfileMetricDurationCoverage] = []
+        fatal_errors: list[ErrorDetails] = []
+
+        for profiling_index, phase_config in enumerate(phase_configs):
+            if phase_config.duration is None:
+                continue
+            if phase_config.duration < scenario_spec.min_benchmark_duration_seconds:
+                self.info(
+                    "Skipping profiling metric coverage validation for "
+                    f"{phase_config.name!r}: configured duration "
+                    f"{float(phase_config.duration):.1f}s is below scenario minimum "
+                    f"{scenario_spec.min_benchmark_duration_seconds}s."
+                )
+                continue
+            stats = next(
+                (
+                    item
+                    for item in concrete_stats
+                    if item.phase_name == phase_config.name
+                    or item.profiling_index == profiling_index
+                ),
+                aggregate_stats if len(phase_configs) == 1 else None,
+            )
+            if stats is None or stats.start_ns is None:
+                fatal_errors.append(
+                    ErrorDetails(
+                        type="ProfileMetricCoverageError",
+                        message=(
+                            "Profiling metric coverage could not be validated for "
+                            f"phase {phase_config.name!r} because its start time is "
+                            "unavailable."
+                        ),
+                    )
+                )
+                continue
+
+            ctx = ExportContext(
+                start_ns=stats.start_ns,
+                end_ns=stats.requests_end_ns,
+                phase=CreditPhase.PROFILING,
+                phase_index=stats.phase_index,
+                phase_name=phase_config.name,
+                phase_kind="profiling",
+                is_phase_scoped=True,
+                cancelled=False,
+            )
+            coverage = calculate(
+                ctx,
+                phase_name=phase_config.name,
+                expected_duration_seconds=float(phase_config.duration),
+                required_ratio=required_ratio,
+            )
+            coverage_results.append(coverage)
+            if coverage.passed:
+                self.info(
+                    "Profiling metric coverage passed for "
+                    f"{phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
+                    "inter-token latency="
+                    f"{coverage.inter_token_latency_ratio:.1%} "
+                    f"(required={required_ratio:.1%})."
+                )
+                continue
+
+            allowed_tail_seconds = float(phase_config.duration) * (1.0 - required_ratio)
+            message = (
+                f"Profiling metric coverage below the required {required_ratio:.1%} "
+                f"for phase {phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
+                "inter-token latency="
+                f"{coverage.inter_token_latency_ratio:.1%} over the configured "
+                f"{float(phase_config.duration):.1f}s duration. At least one required "
+                f"metric stopped more than {allowed_tail_seconds:.1f}s before the "
+                "nominal profiling end; check inference server logs for a stalled "
+                "or unavailable server."
+            )
+            self.error(message)
+            fatal_errors.append(
+                ErrorDetails(
+                    type="ProfileMetricCoverageError",
+                    message=message,
+                    details=coverage.model_dump(mode="json"),
+                )
+            )
+
+        return coverage_results, fatal_errors
+
     async def _phase_telemetry_results(
         self,
         stats: PhaseRecordsStats,
@@ -1959,6 +2101,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_records = await RecordsManager._build_phase_profile_results(
             self, phase, cancelled
         )
+        metric_duration_coverage, fatal_errors = (
+            self._validate_profile_metric_duration_coverage(phase, cancelled)
+        )
         # Snapshot count BEFORE extending with derived aggregates (efficiency,
         # analyzers) — `completed` reports request-derived records only.
         records_completed = len(records_results)
@@ -1985,12 +2130,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 context_overflow_count=self._skipped_context_overflow_counts_by_phase.get(
                     phase, 0
                 ),
+                metric_duration_coverage=metric_duration_coverage,
+                runtime_submission_invalid_reasons=(
+                    ["insufficient_profile_metric_coverage"] if fatal_errors else []
+                ),
                 phase_records=phase_records,
                 pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(
                     summary_ctx
                 ),
             ),
             errors=error_results,
+            fatal_errors=fatal_errors,
         )
         self.debug(lambda: f"Process records result: {result}")
         self.debug("Publishing ProcessRecordsResultMessage...")

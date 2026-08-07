@@ -21,6 +21,7 @@ from aiperf.common.enums import (
     CommandType,
     LifecycleState,
     MessageType,
+    ProfileCancelReason,
     ServiceRegistrationStatus,
     parse_result_producer_capability,
 )
@@ -107,6 +108,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             warn_accuracy_temperature()
 
         self._was_cancelled = False
+        self._abort_recorded = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
         self.required_services: dict[ServiceTypeT, int] = {
@@ -445,6 +447,37 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_id = message.service_id
         self.info(f"Received credits complete from '{service_id}'")
 
+    @on_command(CommandType.PROFILE_CANCEL)
+    async def _record_abort_on_profile_cancel(
+        self, message: ProfileCancelCommand
+    ) -> None:
+        """Record benchmark-triggered cancellation as a process failure."""
+        if not message.reason.is_abort or self._abort_recorded:
+            return
+        self._abort_recorded = True
+        if message.reason_detail is not None:
+            error_message = message.reason_detail
+        elif message.reason == ProfileCancelReason.FAILED_REQUEST_THRESHOLD:
+            error_message = (
+                "Inference server request failures exceeded "
+                "--failed-request-threshold; benchmark aborted."
+            )
+        else:
+            error_message = f"Benchmark aborted: {message.reason}."
+        self.warning(
+            f"Run aborted ({message.reason}): {error_message} Will exit non-zero."
+        )
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    type="ProfileAborted",
+                    message=error_message,
+                ),
+                operation="Profiling",
+                service_id=message.service_id,
+            )
+        )
+
     @on_message(MessageType.SERVICE_ERROR)
     async def _process_service_error_message(
         self, message: BaseServiceErrorMessage
@@ -643,6 +676,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         if message.results.errors:
             self.error(
                 f"Received process records result message with errors: {message.results.errors}"
+            )
+        for fatal_error in message.results.fatal_errors:
+            self.error(
+                "Received fatal profile-results validation error: "
+                f"{fatal_error.message}"
+            )
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=fatal_error,
+                    operation="profile_results_validation",
+                    service_id=message.service_id,
+                )
             )
 
         self.debug(
@@ -934,6 +979,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             responses = await self.send_command_and_wait_for_all_responses(
                 ProfileCancelCommand(
                     service_id=self.service_id,
+                    reason=ProfileCancelReason.USER,
                 ),
                 records_manager_ids,
                 timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,
@@ -1054,10 +1100,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         # on Windows PIPE'd stdout — but any rendering bug has the same blast
         # radius, so we catch broadly.
         try:
-            if not self._exit_errors:
-                await self._print_post_benchmark_info_and_metrics()
-            else:
-                self._print_exit_errors_and_log_file()
+            await self._report_post_shutdown_results_and_errors()
 
             if Environment.DEV.MODE:
                 # Print a warning message to the console if developer mode is enabled, on exit after results
@@ -1082,6 +1125,20 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(1 if self._exit_errors else 0)
+
+    async def _report_post_shutdown_results_and_errors(self) -> None:
+        """Export any usable results before reporting a fatal run error."""
+        has_exportable_results = bool(
+            self._profile_results and self._profile_results.results.records
+        )
+        if has_exportable_results:
+            await self._print_post_benchmark_info_and_metrics()
+            if self._exit_errors:
+                self._print_exit_errors_and_log_file()
+        elif self._exit_errors:
+            self._print_exit_errors_and_log_file()
+        else:
+            await self._print_post_benchmark_info_and_metrics()
 
     def _print_exit_errors_and_log_file(self) -> None:
         """Print post exit errors and log file info to the console."""
