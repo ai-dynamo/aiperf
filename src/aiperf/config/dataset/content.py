@@ -59,15 +59,24 @@ def _parse_image_source(value: object) -> object:
 
 
 class CacheBustConfig(BaseConfig):
-    """Per-conversation cache-bust marker injected into the prompt.
+    """Per-run cache-bust marker configuration.
 
-    Prefix variants diverge at token 0 (defeats KV-cache prefix matching for
-    the entire prompt -- recommended when shared_system_length is large).
-    Suffix variants append after existing content (lighter bust; preserves
-    leading-prefix caching). Marker is deterministic from
-    (benchmark_id, recycle_pass, trajectory_index) -- reproducible across
-    reruns. Same marker for all turns within a conversation; fresh marker
-    on each recycle of a trace_id.
+    Two families of targets:
+
+    RID targets (``system_prefix``, ``system_suffix``, ``first_turn_prefix``,
+    ``first_turn_suffix``): inject a per-trajectory unique marker derived from a
+    SHA-256 digest of (benchmark_id, recycle_pass, trajectory_index, trace_id).
+    The digest is phase-agnostic — warmup and profiling turns for the same
+    trajectory share the same marker — so warmup KV-cache work transfers to
+    profiling. Different trajectories (different lanes or recycle passes) receive
+    distinct markers. Prefix variants diverge at token 0; suffix variants append
+    after existing content.
+
+    Warmup-isolation targets (``warmup_isolation_system``,
+    ``warmup_isolation_first_turn``): inject a constant ``[warmup]`` marker only
+    during the WARMUP phase; during PROFILING the marker is ``None`` so the
+    profiling request arrives clean. These targets are phase-aware and do NOT use
+    a per-trajectory digest. Incompatible with ``agentic_replay`` timing mode.
     """
 
     model_config = ConfigDict(extra="forbid")
