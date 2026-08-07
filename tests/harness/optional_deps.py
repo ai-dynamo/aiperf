@@ -28,9 +28,10 @@ gated on ``IS_WINDOWS_ARM`` rather than on a missing import.
 
 import ast
 import importlib.util
-import json
 import os
 from pathlib import Path
+
+import orjson
 
 # Windows-on-ARM: native render/codec backends (kaleido's browser engine, etc.)
 # have no working ARM build and hard-crash (access violation) rather than
@@ -124,22 +125,25 @@ def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
 
     Results are cached in ``.pytest_cache/optional_deps_scan.json`` so that
     multiple xdist worker processes pay the rglob+AST cost at most once per CI
-    job.  The cache is keyed by resolved ``test_dir`` path so unit and
-    component_integration conftest calls store independent entries.
+    job.  The cache key includes both the resolved ``test_dir`` path and the
+    sorted set of currently-unavailable deps so that installing a previously
+    absent dep invalidates the entry.
     """
     unavailable = unavailable_gated_deps()
     if not unavailable:
         return []
 
     cache_file = _CACHE_DIR / _CACHE_FILE_NAME
-    key = str(test_dir.resolve())
+    # Include the sorted unavailable set so a dep becoming available (e.g. a
+    # local install) invalidates the cached skip list.
+    key = f"{test_dir.resolve()}|{','.join(sorted(unavailable))}"
 
     # Try to read an existing cache entry for this test_dir.
     try:
-        data: dict[str, list[str]] = json.loads(cache_file.read_text(encoding="utf-8"))
+        data: dict[str, list[str]] = orjson.loads(cache_file.read_bytes())
         if key in data:
             return [Path(p) for p in data[key]]
-    except (OSError, json.JSONDecodeError, KeyError):
+    except (OSError, orjson.JSONDecodeError, KeyError):
         data = {}
 
     # Cache miss: do the scan.
@@ -149,13 +153,22 @@ def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
         if _top_level_imports(path) & unavailable
     ]
 
-    # Write result back (best-effort). Atomic rename so concurrent workers
-    # don't read a partial file.
+    # Write result back (best-effort). Re-read first to merge any entries
+    # another worker wrote while we were scanning, reducing lost-update
+    # exposure. Use a per-process tmp path so concurrent workers don't stomp
+    # each other's writes on Windows (where os.replace on a shared .tmp path
+    # can raise PermissionError).
     data[key] = [str(p) for p in found]
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = cache_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            merged: dict[str, list[str]] = orjson.loads(cache_file.read_bytes())
+            merged.update(data)
+            data = merged
+        except (OSError, orjson.JSONDecodeError):
+            pass
+        tmp = _CACHE_DIR / f"optional_deps_scan.{os.getpid()}.tmp"
+        tmp.write_bytes(orjson.dumps(data))
         os.replace(tmp, cache_file)
     except OSError:
         pass
