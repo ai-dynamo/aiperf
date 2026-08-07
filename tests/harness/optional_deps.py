@@ -125,9 +125,10 @@ def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
 
     Results are cached in ``.pytest_cache/optional_deps_scan.json`` so that
     multiple xdist worker processes pay the rglob+AST cost at most once per CI
-    job.  The cache key includes both the resolved ``test_dir`` path and the
-    sorted set of currently-unavailable deps so that installing a previously
-    absent dep invalidates the entry.
+    job.  The cache key includes the resolved ``test_dir`` path and the sorted
+    set of currently-unavailable deps; the entry also stores the total count of
+    ``test_*.py`` files so that adding a new file (which would not appear in
+    the cached skip list) invalidates the entry on the next call.
     """
     unavailable = unavailable_gated_deps()
     if not unavailable:
@@ -135,34 +136,40 @@ def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
 
     cache_file = _CACHE_DIR / _CACHE_FILE_NAME
     # Include the sorted unavailable set so a dep becoming available (e.g. a
-    # local install) invalidates the cached skip list.
+    # local install) also invalidates the cached skip list.
     key = f"{test_dir.resolve()}|{','.join(sorted(unavailable))}"
 
-    # Try to read an existing cache entry for this test_dir.
+    # List all test files once: used for count-based cache validation on a hit
+    # and for the AST scan on a miss.  Directory listing (no reads) is cheap
+    # relative to 912 read+parse operations.
+    all_test_files = sorted(test_dir.rglob("test_*.py"))
+    total = len(all_test_files)
+
+    # Try to read an existing cache entry.  A hit is only valid when the total
+    # file count matches — any addition or removal of test_*.py files forces a
+    # re-scan so newly gated imports are never silently missed.
     try:
-        data: dict[str, list[str]] = orjson.loads(cache_file.read_bytes())
-        if key in data:
-            return [Path(p) for p in data[key]]
-    except (OSError, orjson.JSONDecodeError, KeyError):
+        raw: dict[str, dict[str, object]] = orjson.loads(cache_file.read_bytes())
+        entry = raw.get(key)
+        if isinstance(entry, dict) and entry.get("total") == total:
+            return [Path(p) for p in entry["files"]]  # type: ignore[arg-type]
+        data = dict(raw)
+    except (OSError, orjson.JSONDecodeError):
         data = {}
 
-    # Cache miss: do the scan.
-    found = [
-        path
-        for path in sorted(test_dir.rglob("test_*.py"))
-        if _top_level_imports(path) & unavailable
-    ]
+    # Cache miss: full scan (read + AST parse per file).
+    found = [p for p in all_test_files if _top_level_imports(p) & unavailable]
 
     # Write result back (best-effort). Re-read first to merge any entries
     # another worker wrote while we were scanning, reducing lost-update
     # exposure. Use a per-process tmp path so concurrent workers don't stomp
     # each other's writes on Windows (where os.replace on a shared .tmp path
     # can raise PermissionError).
-    data[key] = [str(p) for p in found]
+    data[key] = {"files": [str(p) for p in found], "total": total}
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         try:
-            merged: dict[str, list[str]] = orjson.loads(cache_file.read_bytes())
+            merged: dict[str, dict[str, object]] = orjson.loads(cache_file.read_bytes())
             merged.update(data)
             data = merged
         except (OSError, orjson.JSONDecodeError):
