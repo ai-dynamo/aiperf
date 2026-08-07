@@ -4,6 +4,7 @@
 
 import pytest
 
+from aiperf.common.constants import IS_WINDOWS_ARM
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
@@ -11,6 +12,11 @@ from tests.harness.utils import AIPerfCLI
 
 
 @pytest.mark.component_integration
+@pytest.mark.skipif(
+    IS_WINDOWS_ARM,
+    reason="synthetic audio generation requires libsndfile, which has no "
+    "prebuilt Windows-on-ARM wheel (see audio.py::import_soundfile)",
+)
 class TestAudioTranscriptionEndpoint:
     """Smoke tests for the audio_transcription endpoint against the mock server."""
 
