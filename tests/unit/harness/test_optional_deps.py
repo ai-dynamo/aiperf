@@ -88,7 +88,13 @@ def test__test_files_needing_unavailable_deps_new_file_invalidates_cache(
         # Second call: total is now 2, so cache is stale → re-scan finds both.
         result = _test_files_needing_unavailable_deps(tmp_path)
 
+    # Both files must be present — the rescan must not lose the original file.
+    assert test_file in result
     assert new_file in result
+    # Cache entry should be refreshed with total=2.
+    key = f"{tmp_path}|{fake_dep}"
+    data = orjson.loads((cache_dir / "optional_deps_scan.json").read_bytes())
+    assert data[key]["total"] == 2
 
 
 def test__test_files_needing_unavailable_deps_all_deps_present_skips_cache(

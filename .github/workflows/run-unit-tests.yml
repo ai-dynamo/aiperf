@@ -123,9 +123,11 @@ jobs:
       # tests/unit/**; tests/zmq/** uses real asyncio.sleep as before.
       # --no-looptime is omitted: looptime is opt-in per test via marker/
       # fixture and zmq tests use neither, so they run with a real-time loop.
+      # --continue-on-collection-errors preserves the previous two-step
+      # behaviour where a unit collection error did not block the zmq suite.
       if: runner.os == 'Windows'
       run: |
-        uv run pytest tests/unit tests/zmq -n auto --dist=worksteal --tb=short -m 'not performance and not stress and not slow'
+        uv run pytest tests/unit tests/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
       # ``!cancelled()`` overrides the implicit ``success()`` so component
       # integration still runs even if the unit-test step failed — matching
