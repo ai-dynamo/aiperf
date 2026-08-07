@@ -241,6 +241,8 @@ navigation:
         path: ../pages-dev/reference/json-export-schema.md
       - page: HTTP API Endpoints
         path: ../pages-dev/reference/api-endpoints.md
+      - page: Cache-Bust Targets
+        path: ../pages-dev/reference/cache-bust.md
       - page: YAML Config Roadmap
         path: ../pages-dev/reference/yaml-config-roadmap.md
       - page: Mocking a ROCm Environment
