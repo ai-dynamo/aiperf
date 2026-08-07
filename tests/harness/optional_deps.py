@@ -28,12 +28,23 @@ gated on ``IS_WINDOWS_ARM`` rather than on a missing import.
 
 import ast
 import importlib.util
+import json
+import os
 from pathlib import Path
 
 # Windows-on-ARM: native render/codec backends (kaleido's browser engine, etc.)
 # have no working ARM build and hard-crash (access violation) rather than
 # raising, so affected tests must be skipped by platform rather than probed.
 from aiperf.common.constants import IS_WINDOWS_ARM  # noqa: F401
+
+# .pytest_cache lives next to the repo root conftest.  All xdist workers share
+# the same filesystem, so one worker populates the cache and the rest read it —
+# no subprocess coordination needed.  The cache is only written on platforms
+# where unavailable_gated_deps() is non-empty (currently Windows-ARM); on all
+# other platforms _test_files_needing_unavailable_deps() short-circuits before
+# touching this path.
+_CACHE_DIR = Path(__file__).parents[2] / ".pytest_cache"
+_CACHE_FILE_NAME = "optional_deps_scan.json"
 
 
 def is_installed(module: str) -> bool:
@@ -110,15 +121,46 @@ def _top_level_imports(path: Path) -> set[str]:
 def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
     """Sorted test files under ``test_dir`` whose top-level imports need a dep
     that is unavailable on this platform. Empty when all gated deps are present.
+
+    Results are cached in ``.pytest_cache/optional_deps_scan.json`` so that
+    multiple xdist worker processes pay the rglob+AST cost at most once per CI
+    job.  The cache is keyed by resolved ``test_dir`` path so unit and
+    component_integration conftest calls store independent entries.
     """
     unavailable = unavailable_gated_deps()
     if not unavailable:
         return []
-    return [
+
+    cache_file = _CACHE_DIR / _CACHE_FILE_NAME
+    key = str(test_dir.resolve())
+
+    # Try to read an existing cache entry for this test_dir.
+    try:
+        data: dict[str, list[str]] = json.loads(cache_file.read_text(encoding="utf-8"))
+        if key in data:
+            return [Path(p) for p in data[key]]
+    except (OSError, json.JSONDecodeError, KeyError):
+        data = {}
+
+    # Cache miss: do the scan.
+    found = [
         path
         for path in sorted(test_dir.rglob("test_*.py"))
         if _top_level_imports(path) & unavailable
     ]
+
+    # Write result back (best-effort). Atomic rename so concurrent workers
+    # don't read a partial file.
+    data[key] = [str(p) for p in found]
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = cache_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, cache_file)
+    except OSError:
+        pass
+
+    return found
 
 
 def collect_ignore_for_unavailable_deps(test_dir: str | Path) -> list[str]:
