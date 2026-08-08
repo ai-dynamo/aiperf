@@ -248,7 +248,7 @@ benchmark:
             param([], id="empty"),
             param([None], id="first-not-dict"),
         ],
-    )
+    )  # fmt: skip
     def test_invalid_yaml_datasets_raise(self, datasets: list[object]) -> None:
         merged = {"benchmark": {"datasets": datasets}}
 
