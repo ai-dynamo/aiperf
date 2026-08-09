@@ -410,12 +410,16 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         """Open memory-mapped files (read-only)."""
         self._loop = asyncio.get_running_loop()
         self.debug(
-            lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
+            lambda: (
+                f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
+            )
         )
         self._client = MemoryMapDatasetClient(self._data_path, self._index_path)
         self.debug(
-            lambda: f"Memory-mapped client store initialized with "
-            f"{len(self._client.index.conversation_ids)} conversations"
+            lambda: (
+                f"Memory-mapped client store initialized with "
+                f"{len(self._client.index.conversation_ids)} conversations"
+            )
         )
 
     async def get_conversation(self, conversation_id: str) -> Conversation:
@@ -696,7 +700,9 @@ class MemoryMapDatasetClient:
         )
 
         _logger.debug(
-            lambda: f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes"
+            lambda: (
+                f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes"
+            )
         )
 
     def __enter__(self) -> MemoryMapDatasetClient:
@@ -780,11 +786,16 @@ class MemoryMapDatasetClient:
         offset_info = self.index.offsets[conversation_id]
 
         try:
-            self.data_mmap.seek(offset_info.offset)
-            conv_bytes = self.data_mmap.read(offset_info.size)
+            conv_bytes = bytes(
+                self.data_mmap[
+                    offset_info.offset : offset_info.offset + offset_info.size
+                ]
+            )
 
             _logger.debug(
-                lambda: f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"
+                lambda: (
+                    f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"
+                )
             )
 
             return self._deserialize_conversation(conv_bytes)
