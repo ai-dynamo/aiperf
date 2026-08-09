@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import orjson
 import pytest
 
@@ -90,6 +93,63 @@ async def test_conversation_format_returns_none_for_payload_bytes(
     conversation = client.get_conversation("conv-1")
     assert conversation.session_id == "conv-1"
 
+    client.close()
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_conversation_reads_do_not_share_mmap_position(
+    tmp_path, monkeypatch
+):
+    """Executor reads must use offsets directly instead of shared seek state."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(benchmark_id="test_concurrent_reads")
+    await store.initialize()
+    for conversation_id, content in (("conv-a", "a" * 4096), ("conv-b", "b" * 4096)):
+        await store.add_conversation(
+            conversation_id,
+            Conversation(
+                session_id=conversation_id,
+                turns=[Turn(role="user", content=content)],
+            ),
+        )
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(metadata.data_file_path, metadata.index_file_path)
+    base_mmap = client.data_mmap
+
+    class InterleavingMmap:
+        def __init__(self):
+            self.position = 0
+            self.barrier = threading.Barrier(2)
+
+        def __getitem__(self, key):
+            return base_mmap[key]
+
+        def seek(self, offset):
+            self.position = offset
+            self.barrier.wait(timeout=5)
+
+        def read(self, size):
+            start = self.position
+            self.position += size
+            return base_mmap[start : start + size]
+
+        def close(self):
+            base_mmap.close()
+
+    client.data_mmap = InterleavingMmap()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        conversations = list(
+            executor.map(client.get_conversation, ("conv-a", "conv-b"))
+        )
+
+    assert [conversation.session_id for conversation in conversations] == [
+        "conv-a",
+        "conv-b",
+    ]
     client.close()
     await store.stop()
 
