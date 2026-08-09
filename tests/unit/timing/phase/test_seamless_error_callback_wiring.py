@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Every seamless non-final runner must get the fatal-error callback.
+"""Every runner with a seamless transition to the next phase gets an error callback.
 
 The post-loop barrier in ``_execute_phases`` only inspects runners still in
 ``_active_runners``, and a seamless phase's complete-callback removes the runner
@@ -26,8 +26,8 @@ from ..conftest import make_phase_config
 def _orchestrator(*, with_profiler_hooks: bool) -> PhaseOrchestrator:
     orch = PhaseOrchestrator.__new__(PhaseOrchestrator)
     orch._ordered_phase_configs = [
-        make_phase_config(phase=CreditPhase.PROFILING, seamless=True),
         make_phase_config(phase=CreditPhase.PROFILING),
+        make_phase_config(phase=CreditPhase.PROFILING, seamless=True),
     ]
     orch._active_runners = []
     orch._server_profiler_owners = set()
