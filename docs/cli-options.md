@@ -348,7 +348,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`audio_transcription`, `chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -705,8 +705,8 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 
 #### `--cache-bust` `<str>`
 
-Where (and how) to inject a per-conversation cache-bust marker. Prefix variants prepend at token 0 (most aggressive); suffix variants append after existing content. 'none' disables the feature (default).
-<br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`]_
+Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay timing mode. 'none' disables the feature (default).
+<br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
 
 ### Prefix Prompt
@@ -1910,7 +1910,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`audio_transcription`, `chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -2267,8 +2267,8 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 
 #### `--cache-bust` `<str>`
 
-Where (and how) to inject a per-conversation cache-bust marker. Prefix variants prepend at token 0 (most aggressive); suffix variants append after existing content. 'none' disables the feature (default).
-<br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`]_
+Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay timing mode. 'none' disables the feature (default).
+<br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
 
 ### Prefix Prompt
