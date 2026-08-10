@@ -444,10 +444,10 @@ class ProfileMetricDurationCoverage(AIPerfBaseModel):
 
     @property
     def passed(self) -> bool:
-        """Return whether every required latency signal met the threshold."""
+        """Return whether any latency signal proves late profiling activity."""
         return (
             self.ttft_ratio >= self.required_ratio
-            and self.inter_token_latency_ratio >= self.required_ratio
+            or self.inter_token_latency_ratio >= self.required_ratio
         )
 
 
@@ -529,7 +529,7 @@ class ProfileResults(AIPerfBaseModel):
     )
     metric_duration_coverage: list[ProfileMetricDurationCoverage] = Field(
         default_factory=list,
-        description="Post-run TTFT and ITL duration-coverage checks, when enabled.",
+        description="Post-run latency-signal duration-coverage checks, when enabled.",
     )
     runtime_submission_invalid_reasons: list[str] = Field(
         default_factory=list,

@@ -658,8 +658,10 @@ the aggregate file — divide it by
 to see how close you were to the limit.
 
 **Run exits non-zero with `ProfileMetricCoverageError`**
-The server stopped producing TTFT or inter-token-latency observations before 98% of the configured
-profiling duration elapsed. AIPerf retains the result artifact, marks it invalid with
+The server stopped producing both TTFT and inter-token-latency observations before 98% of the
+configured profiling duration elapsed. Either signal proves global server activity, so a long
+streaming response remains valid even when no new request starts near the boundary. AIPerf retains
+the result artifact, marks it invalid with
 `insufficient_profile_metric_coverage`, and reports the observed coverage for both signals. Check
 the inference-server logs for a crash or stalled request processing. Warmup metrics and profiling
 phases shorter than the scenario's minimum valid duration are excluded.

@@ -144,7 +144,7 @@ class ScenarioSpec(AIPerfBaseModel):
         le=1.0,
         description=(
             "Minimum fraction of each duration-based profiling phase that must "
-            "contain both TTFT and inter-token-latency observations. A run that "
+            "contain TTFT or inter-token-latency observations. A run that "
             "falls below the threshold exits non-zero and is not a valid scenario "
             "submission. None disables the post-run check."
         ),

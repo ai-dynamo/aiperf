@@ -2242,9 +2242,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"for phase {phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
                 "inter-token latency="
                 f"{coverage.inter_token_latency_ratio:.1%} over the configured "
-                f"{float(phase_config.duration):.1f}s duration. At least one required "
-                f"metric stopped more than {allowed_tail_seconds:.1f}s before the "
-                "nominal profiling end; check inference server logs for a stalled "
+                f"{float(phase_config.duration):.1f}s duration. Neither latency "
+                f"signal extended into the final {allowed_tail_seconds:.1f}s before "
+                "the nominal profiling end; check inference server logs for a stalled "
                 "or unavailable server."
             )
             self.error(message)

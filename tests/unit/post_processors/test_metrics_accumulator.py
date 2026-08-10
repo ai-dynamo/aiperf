@@ -157,10 +157,10 @@ class TestMetricsAccumulator:
         assert coverage.passed is True
 
     @pytest.mark.asyncio
-    async def test_profile_metric_duration_coverage_requires_itl(
+    async def test_profile_metric_duration_coverage_accepts_ttft_without_itl(
         self, mock_metric_registry: Mock, mock_run
     ) -> None:
-        """TTFT alone cannot make an interactive streaming run valid."""
+        """Late TTFT proves activity when a response has no inter-token interval."""
         processor = MetricsAccumulator(mock_run)
         phase_start_ns = 100 * NANOS_PER_SECOND
         record = create_metric_records_data(
@@ -183,7 +183,39 @@ class TestMetricsAccumulator:
 
         assert coverage.ttft_ratio == pytest.approx(0.98)
         assert coverage.inter_token_latency_ratio == 0.0
-        assert coverage.passed is False
+        assert coverage.passed is True
+
+    @pytest.mark.asyncio
+    async def test_profile_metric_duration_coverage_accepts_late_streaming_activity(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """A long response streaming near the end remains globally live."""
+        processor = MetricsAccumulator(mock_run)
+        phase_start_ns = 100 * NANOS_PER_SECOND
+        record = create_metric_records_data(
+            session_num=0,
+            request_start_ns=147 * NANOS_PER_SECOND,
+            request_end_ns=199 * NANOS_PER_SECOND,
+            results=[
+                {"time_to_first_token": NANOS_PER_SECOND},
+                {"inter_token_latency": 100_000_000},
+            ],
+        )
+        await processor.process_record(record)
+
+        coverage = processor.profile_metric_duration_coverage(
+            ExportContext(
+                start_ns=phase_start_ns,
+                phase=CreditPhase.PROFILING,
+            ),
+            phase_name="profiling",
+            expected_duration_seconds=100.0,
+            required_ratio=0.98,
+        )
+
+        assert coverage.ttft_ratio == pytest.approx(0.48)
+        assert coverage.inter_token_latency_ratio == pytest.approx(0.99)
+        assert coverage.passed is True
 
     @pytest.mark.asyncio
     async def test_process_record_record_metric_list_values(

@@ -389,6 +389,32 @@ class TestProcessResultsAccumulatorPath:
         assert result.results.runtime_submission_invalid_reasons == []
 
     @pytest.mark.asyncio
+    async def test_agentx_metric_coverage_accepts_late_streaming_activity(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        acc.profile_metric_duration_coverage.return_value = (
+            ProfileMetricDurationCoverage(
+                phase_name="profiling",
+                expected_duration_seconds=3600.0,
+                required_ratio=0.98,
+                ttft_ratio=0.979504,
+                inter_token_latency_ratio=1.0,
+            )
+        )
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 3600.0
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert result.fatal_errors == []
+        assert result.results.runtime_submission_invalid_reasons == []
+
+    @pytest.mark.asyncio
     async def test_agentx_short_unsafe_smoke_skips_metric_coverage(self) -> None:
         acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
         mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
