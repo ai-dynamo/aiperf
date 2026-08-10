@@ -284,6 +284,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             self._concurrency_manager,
             session_tree_registry=self._session_tree_registry,
             on_warmup_abort=self._phase_publisher.publish_profile_cancel,
+            allow_agentic_warmup_failures=config.allow_agentic_warmup_failures,
         )
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(

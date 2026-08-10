@@ -284,6 +284,16 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
+    allow_agentic_warmup_failures: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Allow AGENTIC_REPLAY profiling to start after terminal "
+            "warmup request failures. Disabled by default to preserve cache-sensitive "
+            "measurement integrity.",
+        ),
+    ]
+
     trajectory_start_min_ratio: Annotated[
         float,
         Field(

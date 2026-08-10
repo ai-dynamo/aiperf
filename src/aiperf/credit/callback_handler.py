@@ -88,6 +88,7 @@ class CreditCallbackHandler:
         branch_orchestrator: BranchOrchestrator | None = None,
         session_tree_registry: SessionTreeRegistry | None = None,
         on_warmup_abort: Callable[[], Awaitable[None]] | None = None,
+        allow_agentic_warmup_failures: bool = False,
     ) -> None:
         """Initialize callback handler.
 
@@ -118,11 +119,15 @@ class CreditCallbackHandler:
                 must not start, so there is no value in waiting for the rest of
                 the warmup credits to return. ``None`` -> legacy teardown-time
                 abort via the strategy's ``report_warmup_failures`` only.
+            allow_agentic_warmup_failures: Record terminal warmup failures but
+                continue into profiling instead of invoking the abort callback.
+                Intended for measurements where warmed cache state is irrelevant.
         """
         self._concurrency_manager = concurrency_manager
         self._branch_orchestrator = branch_orchestrator
         self._session_tree_registry = session_tree_registry
         self._on_warmup_abort = on_warmup_abort
+        self._allow_agentic_warmup_failures = allow_agentic_warmup_failures
         self._warmup_abort_triggered = False
         self._phase_handlers: dict[PhaseRuntimeKey, PhaseCallbackContext] = {}
 
@@ -131,9 +136,10 @@ class CreditCallbackHandler:
         """The wired live warmup-abort callback, or None if not enabled.
 
         When non-None, the live path (first terminal warmup failure ->
-        ProfileCancelCommand) is authoritative and PhaseRunner skips its
-        teardown ``report_warmup_failures`` raise (which is only a backstop for
-        the un-wired case).
+        ProfileCancelCommand) is authoritative unless warmup failures are
+        explicitly allowed. PhaseRunner skips its teardown
+        ``report_warmup_failures`` raise because that is only a backstop for the
+        un-wired case.
         """
         return self._on_warmup_abort
 
@@ -304,6 +310,12 @@ class CreditCallbackHandler:
         if record_warmup_failure is None:
             return
         record_warmup_failure(credit.conversation_id)
+        if self._allow_agentic_warmup_failures:
+            _logger.warning(
+                lambda: f"Terminal warmup failure for trace {credit.conversation_id}; "
+                "continuing because allow_agentic_warmup_failures is enabled."
+            )
+            return
         if self._on_warmup_abort is None or self._warmup_abort_triggered:
             return
         self._warmup_abort_triggered = True

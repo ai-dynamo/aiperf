@@ -48,6 +48,7 @@ _RAMP_FIELDS: tuple[tuple[str, str], ...] = (
 # AGENTIC_REPLAY phase fields that pass through verbatim onto BasePhaseConfig.
 # (output_key == attr_name on CLIConfig.)
 _AGENTIC_REPLAY_ROUTES: tuple[str, ...] = (
+    "allow_agentic_warmup_failures",
     "failed_request_threshold",
     "trajectory_start_min_ratio",
     "trajectory_start_max_ratio",

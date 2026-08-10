@@ -1400,6 +1400,38 @@ class TestWarmupEarlyAbort:
         warmup_strategy.record_warmup_failure.assert_called_once()
         assert handler._warmup_abort_triggered is False
 
+    async def test_allowed_warmup_failure_records_without_abort(
+        self,
+        warmup_strategy,
+        abort_cb,
+        mock_concurrency,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+    ):
+        """The opt-in policy preserves the failure without cancelling the run."""
+        handler = CreditCallbackHandler(
+            mock_concurrency,
+            on_warmup_abort=abort_cb,
+            allow_agentic_warmup_failures=True,
+        )
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="500"
+        )
+
+        await handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once()
+        abort_cb.assert_not_awaited()
+
 
 async def test_no_request_return_skips_prefill_counter(
     registered_handler, mock_progress

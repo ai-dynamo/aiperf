@@ -2177,6 +2177,20 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    allow_agentic_warmup_failures: Annotated[
+        bool,
+        Field(
+            description="Allow AGENTIC_REPLAY profiling to start after terminal "
+            "warmup request failures. Defaults to false because failed warmup can "
+            "invalidate cache-sensitive measurements. Use only when warmup state is "
+            "not part of the measurement contract; failures remain in the artifacts.",
+        ),
+        CLIParameter(
+            name=("--allow-agentic-warmup-failures",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = False
+
     trajectory_start_min_ratio: Annotated[
         float,
         Field(

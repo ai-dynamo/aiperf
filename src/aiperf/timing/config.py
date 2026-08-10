@@ -133,6 +133,10 @@ class TimingConfig(AIPerfBaseModel):
         "per-trajectory start position, as a fraction of the trace's total "
         "turn count. Effective per-trace ceiling is min(int(max_ratio * n), n - 2).",
     )
+    allow_agentic_warmup_failures: bool = Field(
+        default=False,
+        description="Allow AGENTIC_REPLAY profiling after terminal warmup failures.",
+    )
     allow_dataset_wrap: bool = Field(
         default=False,
         description="Allow AGENTIC_REPLAY to reuse distinct eligible traces "
@@ -200,6 +204,9 @@ class TimingConfig(AIPerfBaseModel):
         concurrency = getattr(first_profiling, "concurrency", None)
         trajectory_min = getattr(first_profiling, "trajectory_start_min_ratio", 0.25)
         trajectory_max = getattr(first_profiling, "trajectory_start_max_ratio", 0.75)
+        allow_agentic_warmup_failures = bool(
+            getattr(first_profiling, "allow_agentic_warmup_failures", False)
+        )
         synthesis = getattr(cfg.get_default_dataset(), "synthesis", None)
         allow_dataset_wrap = bool(
             getattr(synthesis, "allow_dataset_wrap", False) if synthesis else False
@@ -215,6 +222,7 @@ class TimingConfig(AIPerfBaseModel):
             random_seed=run.random_seed,
             trajectory_start_min_ratio=trajectory_min,
             trajectory_start_max_ratio=trajectory_max,
+            allow_agentic_warmup_failures=allow_agentic_warmup_failures,
             allow_dataset_wrap=allow_dataset_wrap,
             cache_bust_enabled=cache_bust_enabled,
         )
