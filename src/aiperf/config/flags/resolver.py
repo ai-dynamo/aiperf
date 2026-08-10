@@ -410,7 +410,10 @@ def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -
         return
 
     from aiperf.config.dataset.trace import SynthesisConfig
-    from aiperf.config.flags._converter_dataset import _apply_synthesis
+    from aiperf.config.flags._converter_dataset import (
+        _apply_synthesis,
+        _reject_baseten_trace_unsupported_synthesis,
+    )
 
     benchmark = merged.get("benchmark")
     datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
@@ -430,6 +433,13 @@ def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -
             dataset.get("type"),
         )
         return
+
+    if dataset.get("type") == DatasetType.FILE:
+        _reject_baseten_trace_unsupported_synthesis(
+            cli,
+            dataset.get("format"),
+            dataset_format_source="YAML format: baseten_trace",
+        )
 
     override = {"type": dataset.get("type")}
     _apply_synthesis(override, cli)

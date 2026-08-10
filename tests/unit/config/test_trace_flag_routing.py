@@ -288,6 +288,44 @@ benchmark:
         assert "require a file or public dataset" in caplog.text
         assert dataset == {"type": "synthetic"}
 
+    @pytest.mark.parametrize(
+        ("cli_kwargs", "match"),
+        [
+            param(
+                {"synthesis_speedup_ratio": 2.0},
+                "--synthesis-speedup-ratio is not supported",
+                id="speedup",
+            ),
+            param(
+                {"synthesis_prompt_len_multiplier": 2.0},
+                "hash_ids",
+                id="prompt-reshaping",
+            ),
+        ],
+    )  # fmt: skip
+    def test_baseten_yaml_rejects_unsupported_synthesis(
+        self, cli_kwargs: dict[str, object], match: str
+    ) -> None:
+        merged = {
+            "benchmark": {"datasets": [{"type": "file", "format": "baseten_trace"}]}
+        }
+
+        with pytest.raises(ValueError, match=match) as exc_info:
+            _apply_dataset_synthesis_overrides(merged, CLIConfig(**cli_kwargs))
+
+        assert "YAML format: baseten_trace" in str(exc_info.value)
+        assert "--custom-dataset-type" not in str(exc_info.value)
+
+    def test_baseten_yaml_accepts_output_len_synthesis(self) -> None:
+        dataset = {"type": "file", "format": "baseten_trace"}
+        merged = {"benchmark": {"datasets": [dataset]}}
+
+        _apply_dataset_synthesis_overrides(
+            merged, CLIConfig(synthesis_output_len_multiplier=2.0)
+        )
+
+        assert dataset["synthesis"] == {"outputLenMultiplier": 2.0}
+
 
 class TestOslFallbackRouting:
     """The --osl per-record fallback routes onto the flat osl field on either file or public datasets."""
