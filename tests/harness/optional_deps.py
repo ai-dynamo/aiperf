@@ -149,12 +149,14 @@ def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
     # file count matches — any addition or removal of test_*.py files forces a
     # re-scan so newly gated imports are never silently missed.
     try:
-        raw: dict[str, dict[str, object]] = orjson.loads(cache_file.read_bytes())
+        raw = orjson.loads(cache_file.read_bytes())
+        if not isinstance(raw, dict):
+            raise ValueError
         entry = raw.get(key)
         if isinstance(entry, dict) and entry.get("total") == total:
             return [Path(p) for p in entry["files"]]  # type: ignore[arg-type]
         data = dict(raw)
-    except (OSError, orjson.JSONDecodeError):
+    except (OSError, orjson.JSONDecodeError, ValueError):
         data = {}
 
     # Cache miss: full scan (read + AST parse per file).
@@ -169,9 +171,10 @@ def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         try:
-            merged: dict[str, dict[str, object]] = orjson.loads(cache_file.read_bytes())
-            merged.update(data)
-            data = merged
+            merged = orjson.loads(cache_file.read_bytes())
+            if isinstance(merged, dict):
+                merged.update(data)
+                data = merged
         except (OSError, orjson.JSONDecodeError):
             pass
         tmp = _CACHE_DIR / f"optional_deps_scan.{os.getpid()}.tmp"
