@@ -154,7 +154,9 @@ def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
             raise ValueError
         entry = raw.get(key)
         if isinstance(entry, dict) and entry.get("total") == total:
-            return [Path(p) for p in entry["files"]]  # type: ignore[arg-type]
+            files = entry.get("files")
+            if isinstance(files, list):
+                return [Path(p) for p in files]
         data = dict(raw)
     except (OSError, orjson.JSONDecodeError, ValueError):
         data = {}
