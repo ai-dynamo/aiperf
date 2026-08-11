@@ -36,6 +36,9 @@ from aiperf.metrics.derived_latency import (
     inject_derived_latency_metrics,
 )
 from aiperf.metrics.display_units import to_display_unit
+from aiperf.metrics.e2e_normalized_interactivity_analyzer import (
+    inject_e2e_normalized_interactivity_metrics,
+)
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.network_adjusted_analyzer import (
@@ -684,6 +687,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 overall_results,
                 mask=mask,
                 warn_degraded=self._warn_replay_degraded,
+            )
+            # E2E Normalized Interactivity (AgentX/InferenceX Pareto x-axis):
+            # 1 / p(request_latency_s / OSL), request-weighted over the masked
+            # columns. Run-scoped, injected here like the sibling families.
+            inject_e2e_normalized_interactivity_metrics(
+                self._column_store,
+                overall_results,
+                mask=mask,
             )
 
         overall_results = self._filter_hidden_metrics(overall_results)

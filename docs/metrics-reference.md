@@ -23,6 +23,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
+    - [E2E Normalized Interactivity](#e2e-normalized-interactivity)
     - [Prefill Throughput Per User](#prefill-throughput-per-user)
   - [Token Based Metrics](#token-based-metrics)
     - [Output Token Count](#output-token-count)
@@ -368,6 +369,31 @@ output_token_throughput_per_user = 1.0 / inter_token_latency_seconds
 - Computes the inverse of ITL to show tokens per second from an individual user's perspective.
 - Differs from Output Token Throughput (aggregate across all concurrent requests) by focusing on single-request experience.
 - Useful for understanding the user experience independent of concurrency effects.
+
+---
+
+### E2E Normalized Interactivity
+
+**Type:** [Derived Metric](#derived-metrics) (injected post-aggregation)
+
+> [!NOTE]
+> Emitted as two named percentile scalars, `e2e_normalized_interactivity_p90` and `e2e_normalized_interactivity_p75`, in tokens/sec/user. Reproduces the x-axis InferenceX renders for AgentX Pareto curves, so `aiperf profile` yields the point directly with no post-processing.
+
+The rate at which a user receives output tokens **including** the prefill wait (TTFT). Unlike [Output Token Throughput Per User](#output-token-throughput-per-user) (`1 / ITL`, decode-only), it charges the whole end-to-end latency, so a large TTFT relative to the tokens produced pulls it down — prefill-delaying cannot inflate it.
+
+**Formula:**
+```python
+# per-request ratio, in seconds per output token
+ratio = request_latency_seconds / output_sequence_length
+# invert AFTER taking the percentile (slow-tail convention)
+e2e_normalized_interactivity_p90 = 1.0 / percentile(ratio, 90)
+e2e_normalized_interactivity_p75 = 1.0 / percentile(ratio, 75)
+```
+
+**Notes:**
+- The percentile is taken over the seconds-per-token ratio and then inverted (`1 / p(x)`, **not** `p(1 / x)`). A higher percentile names a slower, more pessimistic tail, so `p90` is the effective token rate of the 90th-percentile worst request. This differs from `p90` of the per-request rate, which would report the fast tail.
+- Request-weighted: every request with positive, finite `request_latency`, `output_sequence_length`, and (when present) `time_to_first_token` and `input_sequence_length` contributes one sample, matching InferenceX's filter.
+- Percentile uses numpy-linear interpolation, matching InferenceX's `quantile`, so values line up exactly for identical inputs.
 
 ---
 
