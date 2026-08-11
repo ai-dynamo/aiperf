@@ -696,20 +696,28 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         )
 
     def _projected_trace_columns(self, session_key: str | None) -> list[str]:
-        """Return source columns needed by the configured replay behavior."""
+        """Return source columns needed by the configured replay behavior.
+
+        Recorded-outcome columns (durations, cached-token reference) are always
+        projected: they are ground truth that must survive load for later
+        fidelity comparison, independent of replay mode. They are small integer
+        columns, so keeping them costs negligibly against the projection's I/O
+        savings on the large prompt/hash columns.
+        """
         schema_names = self._source_schema_names()
         columns = {
             METADATA_COLUMNS_TIME,
             "prompt",
             "input_tokens",
             "output_tokens",
+            "duration_e2e_ms",
+            "duration_ttft_ms",
+            "cached_tokens_reference",
         }
         if session_key is not None:
             columns.add(session_key)
         if not self._omit_kv_hints:
             columns.update(("total_hashes", "block_size"))
-        if not self._open_loop:
-            columns.add("duration_e2e_ms")
         return sorted(columns & schema_names)
 
     def _iter_trace_rows(

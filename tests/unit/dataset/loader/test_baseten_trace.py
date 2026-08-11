@@ -1011,6 +1011,7 @@ class TestBasetenTraceDatasetLoader:
                 {},
                 {
                     "block_size",
+                    "duration_e2e_ms",
                     "input_tokens",
                     "output_tokens",
                     "poor_man_session_id",
@@ -1023,6 +1024,7 @@ class TestBasetenTraceDatasetLoader:
             param(
                 {"omit_kv_hints": True},
                 {
+                    "duration_e2e_ms",
                     "input_tokens",
                     "output_tokens",
                     "poor_man_session_id",
