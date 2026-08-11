@@ -9,6 +9,10 @@ import pytest
 
 from aiperf.common.constants import NANOS_PER_MILLIS, NANOS_PER_SECOND
 from aiperf.metrics.accumulator import MetricsAccumulator
+from aiperf.metrics.types.e2e_normalized_interactivity_metrics import (
+    E2ENormalizedInteractivityP75Metric,
+    E2ENormalizedInteractivityP90Metric,
+)
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.replay_sched_lag_metrics import (
@@ -282,6 +286,8 @@ class TestMetricsAccumulatorRunScopedDerivedMetrics:
             ReplaySchedLagP90Metric.tag,
             ReplaySchedLagP99Metric.tag,
             ReplaySchedDegradedMetric.tag,
+            E2ENormalizedInteractivityP90Metric.tag,
+            E2ENormalizedInteractivityP75Metric.tag,
         }
         # The run-scoped family derives at run level but is skipped per slice.
         assert run_scoped_tags <= set(accumulator._derive_funcs)
