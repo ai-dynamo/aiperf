@@ -47,7 +47,7 @@ class TestMooncakeBuildTurnForwardsHeaders:
             headers={"x-session-token": "tok-A"},
         )
         turn = loader._build_turn(trace, "hi")
-        assert turn.headers == {"x-session-token": "tok-A"}
+        assert turn.extra_headers == {"x-session-token": "tok-A"}
 
     def test_build_turn_messages_path_carries_headers(self):
         loader = self._loader()
@@ -57,7 +57,7 @@ class TestMooncakeBuildTurnForwardsHeaders:
             headers={"baggage": "userId=alice"},
         )
         turn = loader._build_turn(trace, "")
-        assert turn.headers == {"baggage": "userId=alice"}
+        assert turn.extra_headers == {"baggage": "userId=alice"}
 
     def test_build_turn_payload_path_carries_headers(self):
         loader = self._loader()
@@ -67,13 +67,13 @@ class TestMooncakeBuildTurnForwardsHeaders:
             headers={"x-session-token": "tok-C"},
         )
         turn = loader._build_turn(trace, "")
-        assert turn.headers == {"x-session-token": "tok-C"}
+        assert turn.extra_headers == {"x-session-token": "tok-C"}
 
     def test_build_turn_no_headers_yields_none(self):
         loader = self._loader()
         trace = MooncakeTrace(text_input="hi", output_length=4)
         turn = loader._build_turn(trace, "hi")
-        assert turn.headers is None
+        assert turn.extra_headers is None
 
 
 class TestMooncakeSynthesisPreservesHeaders:

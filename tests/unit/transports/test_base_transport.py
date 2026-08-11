@@ -337,6 +337,114 @@ class TestBaseTransport:
         assert headers["X-Priority"] == "transport"  # Transport wins
         assert headers["Content-Type"] == "application/json"  # Transport
 
+    def test_build_headers_extra_headers_merged(self, transport, request_info):
+        """Per-turn extra_headers are merged on top of endpoint headers."""
+        request_info.endpoint_headers = {"X-Static": "static-value"}
+        request_info.turns = [Turn(extra_headers={"x-session-token": "tok-A"})]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Static"] == "static-value"
+        assert headers["x-session-token"] == "tok-A"
+
+    def test_build_headers_extra_headers_override_endpoint(
+        self, transport, request_info
+    ):
+        """On key conflict, per-turn extra_headers win over endpoint headers."""
+        request_info.endpoint_headers = {"baggage": "from-config"}
+        request_info.turns = [Turn(extra_headers={"baggage": "from-trace"})]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["baggage"] == "from-trace"
+
+    def test_build_headers_extra_headers_case_insensitive_override(
+        self, transport, request_info
+    ):
+        """A per-turn header with different casing replaces the endpoint-config
+        header rather than producing two duplicate wire headers (RFC 7230).
+        """
+        request_info.endpoint_headers = {
+            "Authorization": "Bearer secret",
+            "Baggage": "from-config",
+        }
+        request_info.turns = [
+            Turn(extra_headers={"baggage": "from-trace", "authorization": "Bearer t"})
+        ]
+
+        headers = transport.build_headers(request_info)
+
+        keys_lower = [k.lower() for k in headers]
+        assert keys_lower.count("baggage") == 1
+        assert keys_lower.count("authorization") == 1
+        assert headers["baggage"] == "from-trace"
+        assert headers["authorization"] == "Bearer t"
+        assert "Baggage" not in headers
+        assert "Authorization" not in headers
+
+    def test_build_headers_extra_headers_collapses_case_variants_within_turn(
+        self, transport, request_info
+    ):
+        """Case variants of the same header inside a single trace row collapse
+        to one wire header; the later row entry wins and keeps its casing.
+        """
+        request_info.endpoint_headers = {"Authorization": "Bearer secret"}
+        request_info.turns = [
+            Turn(
+                extra_headers={
+                    "Authorization": "Bearer first",
+                    "authorization": "Bearer second",
+                }
+            )
+        ]
+
+        headers = transport.build_headers(request_info)
+
+        keys_lower = [k.lower() for k in headers]
+        assert keys_lower.count("authorization") == 1
+        assert headers["authorization"] == "Bearer second"
+        assert "Authorization" not in headers
+
+    def test_build_headers_extra_headers_uses_last_turn(self, transport, request_info):
+        """Multi-turn sessions read extra_headers from the current (last) turn."""
+        request_info.endpoint_headers = {}
+        request_info.turns = [
+            Turn(extra_headers={"x-session-token": "tok-A"}),
+            Turn(extra_headers=None),
+            Turn(extra_headers={"x-session-token": "tok-B"}),
+        ]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["x-session-token"] == "tok-B"
+
+    def test_build_headers_extra_headers_none_is_noop(self, transport, request_info):
+        """A Turn with extra_headers=None is a no-op for the merge."""
+        request_info.endpoint_headers = {"X-Static": "v"}
+        request_info.turns = [Turn(extra_headers=None)]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Static"] == "v"
+
+    def test_build_headers_extra_headers_can_displace_user_agent(
+        self, transport, request_info
+    ):
+        """The case-insensitive collapse spans base/universal headers too.
+
+        Deliberate: the merge runs against the fully accumulated dict, so a
+        trace row can replace AIPerf's own User-Agent rather than adding a
+        second differing-case entry. Pins the scope of the collapse.
+        """
+        request_info.endpoint_headers = {}
+        request_info.turns = [Turn(extra_headers={"user-agent": "custom/1.0"})]
+
+        headers = transport.build_headers(request_info)
+
+        assert [k.lower() for k in headers].count("user-agent") == 1
+        assert headers["user-agent"] == "custom/1.0"
+        assert "User-Agent" not in headers
+
     def test_build_url_simple(self, transport, request_info):
         """Test build_url with no query parameters."""
         request_info.endpoint_params = {}
@@ -535,6 +643,36 @@ class TestSessionHeader:
 
         assert headers["X-Correlation-ID"] == "conv-uuid-123"
         assert headers["x-dynamo-session-id"] == "source-session-1"
+
+    def test_turn_headers_override_correlation_header_case_insensitively(self):
+        """A trace row naming the correlation header displaces AIPerf's value.
+
+        Deliberate: the per-turn merge collapses case variants across the whole
+        accumulated header dict, so a row carrying `x-correlation-id` replaces
+        the `X-Correlation-ID` AIPerf derives from the conversation ID instead
+        of emitting two differing-case headers (RFC 7230 treats them as one).
+        """
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+        request_info.turns = [Turn(extra_headers={"x-correlation-id": "from-trace"})]
+
+        headers = transport.build_headers(request_info)
+
+        assert [k.lower() for k in headers].count("x-correlation-id") == 1
+        assert headers["x-correlation-id"] == "from-trace"
+        assert "X-Correlation-ID" not in headers
+
+    def test_turn_headers_override_custom_session_header_case_insensitively(self):
+        """The same displacement applies to a --session-header rename."""
+        transport = self._make_transport(session_header="X-Session-ID")
+        request_info = self._make_request_info(transport)
+        request_info.turns = [Turn(extra_headers={"x-session-id": "from-trace"})]
+
+        headers = transport.build_headers(request_info)
+
+        assert [k.lower() for k in headers].count("x-session-id") == 1
+        assert headers["x-session-id"] == "from-trace"
+        assert "X-Session-ID" not in headers
 
     def test_session_header_replaces_x_correlation_id(self):
         """With --session-header, the configured name is used instead of X-Correlation-ID."""

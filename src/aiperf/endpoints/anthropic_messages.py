@@ -450,7 +450,7 @@ class MessagesEndpoint(BaseEndpoint):
         if cfg.api_key:
             headers["x-api-key"] = cfg.api_key
         headers.setdefault("anthropic-version", _ANTHROPIC_VERSION)
-        return self._apply_turn_headers(headers, request_info)
+        return headers
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format Anthropic Messages API request payload.

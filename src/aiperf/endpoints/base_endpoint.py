@@ -40,45 +40,17 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         self.model_endpoint = model_endpoint
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
-        """Get endpoint headers (auth + user custom + per-turn). Override to customize.
+        """Get endpoint headers (auth + user custom). Override to customize.
 
-        Merge order (later wins on conflict): endpoint config -> auth -> per-turn
-        headers from the current turn. Per-turn headers come from trace dataset
-        loaders (e.g., MooncakeTrace) and let traces drive request-affinity
-        headers like `x-session-token` or W3C `baggage`.
-
-        Header names are matched case-insensitively per RFC 7230: a per-turn
-        `authorization` replaces an endpoint-config `Authorization` rather than
-        producing two duplicate wire headers.
+        Per-turn headers (``Turn.extra_headers``) are merged downstream in
+        ``BaseTransportProtocol.build_headers`` — case-insensitively per
+        RFC 7230 — so a trace-row ``authorization`` replaces the
+        ``Authorization`` set here rather than producing two wire headers.
         """
         cfg = self.model_endpoint.endpoint
         headers = dict(cfg.headers) if cfg.headers else {}
         if cfg.api_key:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
-        return self._apply_turn_headers(headers, request_info)
-
-    def _apply_turn_headers(
-        self, headers: dict[str, str], request_info: RequestInfo
-    ) -> dict[str, str]:
-        """Merge the current turn's headers into ``headers``; turn wins on
-        case-insensitive (RFC 7230) key conflicts.
-
-        Endpoints that override ``get_endpoint_headers`` must funnel their
-        result through this so trace-driven per-turn headers survive the
-        override.
-        """
-        # turns[-1] is the current turn; in DELTAS_WITHOUT_RESPONSES mode the
-        # worker accumulates prior user/assistant turns in the list, so turns[0]
-        # would always pick the first turn's headers.
-        turn_headers = request_info.turns[-1].headers if request_info.turns else None
-        if turn_headers:
-            # A trace row may itself carry case variants of the same header
-            # (e.g. `Authorization` and `authorization`); collapse them so the
-            # wire never sees duplicate differing-case headers. Later row entry
-            # wins and keeps its casing.
-            by_lower = {k.lower(): (k, v) for k, v in turn_headers.items()}
-            headers = {k: v for k, v in headers.items() if k.lower() not in by_lower}
-            headers.update(dict(by_lower.values()))
         return headers
 
     def get_endpoint_params(self, request_info: RequestInfo) -> dict[str, str]:

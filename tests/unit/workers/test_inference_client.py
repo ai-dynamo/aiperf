@@ -515,21 +515,20 @@ class TestInferenceClient:
             f"Unexpected Pydantic serialization warnings for {base_url!r}: {pydantic_warnings}"
         )
 
-    def test_finalize_request_record_redacts_sensitive_per_turn_headers(
+    def test_finalize_request_record_does_not_mutate_session_owned_turns(
         self, inference_client
     ):
-        """Sensitive per-turn headers (e.g. Authorization) carried by trace
-        rows must be redacted on `record.turns[*].headers` so they don't
-        leak into serialised ZMQ records.
+        """Per-turn extra_headers on the session-owned Turn must not be
+        mutated by the record enrichment pass.  The slim RecordContext
+        (downcast from RequestInfo) intentionally drops ``turns``, so
+        per-turn headers never cross ZMQ.
         """
         original_turn = Turn(
             texts=[Text(contents=["hello"])],
             role="user",
-            headers={"Authorization": "Bearer secret", "x-app-id": "app-1"},
+            extra_headers={"Authorization": "Bearer secret", "x-app-id": "app-1"},
         )
-        # Hold a reference so we can assert the original (session-owned) Turn
-        # is not mutated by the enrichment pass.
-        original_turn_headers_before = dict(original_turn.headers)
+        original_headers_before = dict(original_turn.extra_headers)
         request_info = RequestInfo(
             model_endpoint=inference_client.model_endpoint,
             turns=[original_turn],
@@ -552,12 +551,10 @@ class TestInferenceClient:
         )
 
         # Original session-owned Turn is untouched.
-        assert original_turn.headers == original_turn_headers_before
-        # record.turns carries scrubbed copies (Authorization redacted,
-        # non-sensitive header preserved).
-        assert result.turns[0].headers["Authorization"] != "Bearer secret"
-        assert result.turns[0].headers["x-app-id"] == "app-1"
-        # The downcast `record.request_info.turns` also crosses ZMQ, so it must
-        # be scrubbed too (it is re-materialised from an unredacted model_dump).
-        assert result.request_info.turns[0].headers["Authorization"] != "Bearer secret"
-        assert result.request_info.turns[0].headers["x-app-id"] == "app-1"
+        assert original_turn.extra_headers == original_headers_before
+        assert request_info.turns[0] is original_turn
+        # RecordContext (the downcast) does not carry turns, so per-turn
+        # headers never leak into the serialised ZMQ record.
+        assert not hasattr(
+            result.request_info, "turns"
+        ) or not result.request_info.model_fields.get("turns")

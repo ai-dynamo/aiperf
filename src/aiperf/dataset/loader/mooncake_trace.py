@@ -136,7 +136,7 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 turn.extra_body = trace.extra
         # Copy to avoid aliasing the trace's dict on the Turn; matches the
         # defensive copy pattern in Turn.copy_with_stripped_media.
-        turn.headers = dict(trace.headers) if trace.headers is not None else None
+        turn.extra_headers = dict(trace.headers) if trace.headers is not None else None
         return turn
 
     # ------------------------------------------------------------------

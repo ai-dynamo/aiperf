@@ -133,7 +133,14 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
 
         headers.update(request_info.endpoint_headers)
         if request_info.turns and request_info.turns[-1].extra_headers:
-            headers.update(request_info.turns[-1].extra_headers)
+            turn_headers = request_info.turns[-1].extra_headers
+            # Case-insensitive merge per RFC 7230: a per-turn
+            # `authorization` replaces an endpoint-config `Authorization`
+            # rather than producing two duplicate wire headers. Collapse
+            # case variants within the turn's headers; later entry wins.
+            by_lower = {k.lower(): (k, v) for k, v in turn_headers.items()}
+            headers = {k: v for k, v in headers.items() if k.lower() not in by_lower}
+            headers.update(dict(by_lower.values()))
         headers.update(self.get_transport_headers(request_info))
 
         # Apply derived Dynamo session headers last so they are authoritative

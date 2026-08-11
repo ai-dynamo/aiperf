@@ -242,7 +242,13 @@ class Turn(AIPerfBaseModel):
     )
     extra_headers: dict[str, str] | None = Field(
         default=None,
-        description="Per-turn HTTP headers merged into the request at dispatch time.",
+        repr=False,
+        description="Per-turn HTTP headers merged into the request at dispatch time. "
+        "Merged after endpoint-config headers so per-turn values win on "
+        "case-insensitive (RFC 7230) key conflict. Set by trace dataset loaders "
+        "(e.g., MooncakeTrace) and session-routing loaders (e.g., Exgentic). "
+        "repr=False so secret headers (Authorization, API keys) never leak "
+        "into str()/repr TRACE logs before record redaction.",
     )
     prerequisites: list[TurnPrerequisite] = Field(
         default_factory=list,
@@ -261,15 +267,6 @@ class Turn(AIPerfBaseModel):
         ge=0,
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
-    )
-    headers: dict[str, str] | None = Field(
-        default=None,
-        repr=False,
-        description="Per-turn custom HTTP headers to inject into the outgoing request. "
-        "Merged after endpoint-config headers so per-turn values win on key conflict. "
-        "Set by trace dataset loaders (e.g., MooncakeTrace) when the source data "
-        "carries per-row headers. repr=False so secret headers (Authorization, "
-        "API keys) never leak into str()/repr TRACE logs before record redaction.",
     )
 
     def metadata(self) -> TurnMetadata:
@@ -336,7 +333,9 @@ class Turn(AIPerfBaseModel):
             prerequisites=list(self.prerequisites),
             branch_ids=list(self.branch_ids),
             audio_duration_seconds=self.audio_duration_seconds,
-            headers=dict(self.headers) if self.headers is not None else None,
+            extra_headers=dict(self.extra_headers)
+            if self.extra_headers is not None
+            else None,
         )
 
 
