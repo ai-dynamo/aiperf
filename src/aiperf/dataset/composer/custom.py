@@ -10,7 +10,7 @@ import orjson
 from aiperf.common.enums import ConversationContextMode, DatasetFormat
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.common.utils import load_json_str
+from aiperf.common.utils import load_json_str, open_text_maybe_gzip
 from aiperf.config.dataset import FileDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
@@ -138,7 +138,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 return self._infer_type(data=None, filename=file_path)
 
             # For files, read first non-empty line and use both content and path detection
-            with open(file_path, encoding="utf-8") as f:
+            with open_text_maybe_gzip(file_path) as f:
                 try:
                     for line in f:
                         if not (line := line.strip()):

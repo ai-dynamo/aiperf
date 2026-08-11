@@ -106,6 +106,31 @@ def test_arrow_ipc_profiling_metadata(tmp_path: Path, suffix: str) -> None:
     assert _count_dataset_records(path) == 1
 
 
+def _truncated_gz(tmp_path: Path) -> Path:
+    import gzip
+    import json
+
+    gz = tmp_path / "trunc.jsonl.gz"
+    with gzip.open(gz, "wt", encoding="utf-8") as f:
+        for _ in range(50):
+            f.write(json.dumps({"timestamp": 0, "input_length": 4}) + "\n")
+    # Keep only the gzip magic bytes — the first record is guaranteed cut off.
+    gz.write_bytes(gz.read_bytes()[:20])
+    return gz
+
+
+def test_first_record_has_timestamp_returns_false_on_truncated_gz(
+    tmp_path: Path,
+) -> None:
+    """A truncated gzip must degrade to False, not raise EOFError."""
+    assert _first_record_has_timestamp(_truncated_gz(tmp_path)) is False
+
+
+def test_count_dataset_records_returns_zero_on_truncated_gz(tmp_path: Path) -> None:
+    """A truncated gzip must degrade to 0, not raise EOFError."""
+    assert _count_dataset_records(_truncated_gz(tmp_path)) == 0
+
+
 def _baseten_argv(trace_parquet: Path, *extra: str) -> list[str]:
     return [
         "--url",

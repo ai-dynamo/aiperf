@@ -456,6 +456,32 @@ class TestDatasetResolverEdgeCases:
 
         assert DatasetResolver._read_first_jsonl_record(str(empty_file)) is None
 
+    def test_read_first_jsonl_record_returns_none_on_truncated_gz(
+        self, tmp_path
+    ) -> None:
+        """A truncated gzip must degrade to None, not raise EOFError."""
+        import gzip
+        import json
+
+        gz = tmp_path / "trunc.jsonl.gz"
+        with gzip.open(gz, "wt", encoding="utf-8") as f:
+            for _ in range(50):
+                f.write(json.dumps({"session_id": "s1"}) + "\n")
+        gz.write_bytes(gz.read_bytes()[:20])
+        assert DatasetResolver._read_first_jsonl_record(str(gz)) is None
+
+    def test_check_timing_data_returns_false_on_truncated_gz(self, tmp_path) -> None:
+        """A truncated gzip must degrade to False, not raise EOFError."""
+        import gzip
+        import json
+
+        gz = tmp_path / "trunc.jsonl.gz"
+        with gzip.open(gz, "wt", encoding="utf-8") as f:
+            for _ in range(50):
+                f.write(json.dumps({"timestamp": 0, "input_length": 4}) + "\n")
+        gz.write_bytes(gz.read_bytes()[:20])
+        assert DatasetResolver._check_timing_data(str(gz), None) is False
+
     def test_detect_type_returns_none_none_when_file_unreadable(self, tmp_path) -> None:
         """OSError on file open bails the whole detection with (None, None).
 
