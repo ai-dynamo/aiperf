@@ -213,6 +213,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             else None
         )
         has_synthetic_system_prompt = configured_shared_sys_len is not None
+        # A verbatim --system-prompt fills the same system-message slot, so
+        # SYSTEM_* markers land on it instead of falling through to the first
+        # user turn. Unlike the synthetic prompt it cannot be shrunk to absorb
+        # the marker cost (component (c) below): the text is the user's, so the
+        # marker is simply additive -- matching the additive ISL model for the
+        # system prompt itself.
+        has_custom_system_prompt = self.run.cfg.get_system_prompt() is not None
+        has_system_prompt = has_synthetic_system_prompt or has_custom_system_prompt
         is_system_target = cache_bust_target in (
             CacheBustTarget.SYSTEM_PREFIX,
             CacheBustTarget.SYSTEM_SUFFIX,
@@ -228,12 +236,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         # Component (a) routing: mirrors ``worker._apply_cache_bust``'s fallback:
         # SYSTEM_* + system prompt -> marker on system msg; otherwise (incl.
         # SYSTEM_* with no system message, and FIRST_TURN_*) -> first user turn.
-        marker_on_shared_system_prompt = (
-            is_system_target and has_synthetic_system_prompt
-        )
+        marker_on_system_prompt = is_system_target and has_system_prompt
         marker_on_first_user_turn = (
-            cache_bust_target != CacheBustTarget.NONE
-            and not marker_on_shared_system_prompt
+            cache_bust_target != CacheBustTarget.NONE and not marker_on_system_prompt
         )
         self._first_turn_cache_bust_marker_tokens = (
             self._cache_bust_marker_tokens if marker_on_first_user_turn else 0
@@ -257,7 +262,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         # cost so its wire length still matches ``--shared-system-prompt-length``.
         # Compensate via a model_copy passed to PromptGenerator — never mutate
         # the user-facing config in place.
-        if marker_on_shared_system_prompt and configured_shared_sys_len is not None:
+        #
+        # The ``configured_shared_sys_len`` guard keeps this synthetic-only: a
+        # verbatim --system-prompt has no target length to compensate against,
+        # so its marker stays additive.
+        if marker_on_system_prompt and configured_shared_sys_len is not None:
             compensated_shared_sys_len = max(
                 1, configured_shared_sys_len - self._cache_bust_marker_tokens
             )
@@ -501,6 +510,41 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         self._inject_context_prompts(conversations)
 
+    def _inject_custom_system_prompt(self, conversations: list[Conversation]) -> None:
+        """Prepend the user's verbatim ``--system-prompt`` to every conversation.
+
+        Prepends rather than assigns so a dataset that authored its own system
+        message keeps it: loaders such as ``multi_turn`` hoist a leading system
+        turn into ``conversation.system_message`` before this runs, and
+        discarding that would drop content the trace depends on. The two are
+        joined into a single system message rather than emitted as two, since
+        repeated system roles are mishandled by many OpenAI-compatible servers.
+
+        Datasets that leave an unhoisted ``role: system`` inside
+        ``turn.raw_messages`` are merged at the endpoint layer instead; the
+        composer does not reach into pre-rendered message arrays.
+
+        Mutually exclusive with ``prefix_prompts.shared_system_length`` (enforced
+        in config validation), so this never races the synthetic system prompt
+        injected below.
+        """
+        system_prompt = self.run.cfg.get_system_prompt()
+        if system_prompt is None:
+            return
+
+        self.debug(
+            lambda: (
+                f"Injecting custom system prompt into {len(conversations)} conversations"
+            )
+        )
+        for conversation in conversations:
+            if conversation.system_message:
+                conversation.system_message = (
+                    f"{system_prompt}\n\n{conversation.system_message}"
+                )
+            else:
+                conversation.system_message = system_prompt
+
     def _inject_context_prompts(self, conversations: list[Conversation]) -> None:
         """Inject shared system and user context prompts into conversations.
 
@@ -510,6 +554,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         Args:
             conversations: List of conversations to inject prompts into
         """
+        # Runs ahead of both guards below: a verbatim system prompt needs
+        # neither a tokenizer nor ``prefix_prompts``, and file/public datasets
+        # carry neither. Gating it behind them is exactly why those datasets
+        # get no system prompt today.
+        self._inject_custom_system_prompt(conversations)
+
         if self.prompt_generator is None:
             return
 
@@ -541,7 +591,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             if shared_system_prompt:
                 conversation.system_message = shared_system_prompt
                 self.trace(
-                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
+                    lambda conv=conversation: (
+                        f"Set system_message on conversation {conv.session_id}"
+                    )
                 )
 
             # Set user context prompt (unique per session)
@@ -551,9 +603,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 )
                 conversation.user_context_message = user_context
                 self.trace(
-                    lambda idx=session_index,
-                    conv=conversation: f"Set user_context_message for session {idx} "
-                    f"(conversation {conv.session_id})"
+                    lambda idx=session_index, conv=conversation: (
+                        f"Set user_context_message for session {idx} "
+                        f"(conversation {conv.session_id})"
+                    )
                 )
 
     @staticmethod

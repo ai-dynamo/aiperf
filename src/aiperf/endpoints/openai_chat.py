@@ -20,6 +20,21 @@ from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
+def _prepend_system_text(prefix: str, content: Any) -> Any:
+    """Return ``content`` with ``prefix`` prepended, preserving its shape.
+
+    System-message content is normally a plain string, but the OpenAI schema
+    also permits a list of content parts; a raw-payload dataset may author
+    either. Returns a new object in both cases -- callers pass content that
+    aliases reusable turn state.
+    """
+    if isinstance(content, list):
+        return [{"type": "text", "text": prefix}, *content]
+    if isinstance(content, str) and content:
+        return f"{prefix}\n\n{content}"
+    return prefix
+
+
 class ChatEndpoint(BaseEndpoint):
     """OpenAI Chat Completions endpoint.
 
@@ -83,15 +98,35 @@ class ChatEndpoint(BaseEndpoint):
     def _format_messages(
         request_info: RequestInfo, rendered: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Build chat messages with RequestInfo-level prompts applied."""
+        """Build chat messages with RequestInfo-level prompts applied.
+
+        When the dataset already rendered a leading system message, the
+        conversation-level ``system_message`` is merged into it rather than
+        dropped, so a verbatim ``--system-prompt`` still reaches the wire on
+        raw-payload/DAG datasets. The two are joined into one message because
+        repeated system roles are mishandled by many OpenAI-compatible servers.
+        """
         messages: list[dict[str, Any]] = []
         first_is_system = (
             bool(rendered)
             and isinstance(rendered[0], dict)
             and rendered[0].get("role") == "system"
         )
-        if request_info.system_message and not first_is_system:
-            messages.append({"role": "system", "content": request_info.system_message})
+        if request_info.system_message:
+            if first_is_system:
+                # Copy rather than mutate: ``rendered`` aliases the turn's
+                # raw_messages, which are reused across credits in a session, so
+                # an in-place edit would restack the prefix on every replay.
+                merged = dict(rendered[0])
+                merged["content"] = _prepend_system_text(
+                    request_info.system_message, merged.get("content")
+                )
+                messages.append(merged)
+                rendered = rendered[1:]
+            else:
+                messages.append(
+                    {"role": "system", "content": request_info.system_message}
+                )
         if request_info.user_context_message:
             messages.append(
                 {"role": "user", "content": request_info.user_context_message}

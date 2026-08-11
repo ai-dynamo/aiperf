@@ -1197,6 +1197,44 @@ class CLIConfig(BaseConfig):
     ##############################################################################
     # Prefix Prompt
     ##############################################################################
+    system_prompt: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Verbatim system prompt text, identical across every conversation.\n"
+                "Sent as a system-role message ahead of all turns. Works with both\n"
+                "synthetic and file/public datasets; when the dataset already carries\n"
+                "its own system message, this text is prepended to it.\n"
+                "Tokens are additive: `--isl` continues to size the generated user prompt only.\n"
+                "Mutually exclusive with `--system-prompt-file`, "
+                "`--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
+    system_prompt_file: Annotated[
+        Path | None,
+        Field(
+            default=None,
+            description=(
+                "Path to a UTF-8 text file holding the verbatim system prompt.\n"
+                "Preferred over `--system-prompt` for real production prompts, which are\n"
+                "long enough that shell quoting mangles them. Read once at startup, so a\n"
+                "missing or unreadable file fails immediately rather than mid-run.\n"
+                "Mutually exclusive with `--system-prompt`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt-file",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
     prompt_prefix_pool_size: Annotated[
         int,
         Field(
