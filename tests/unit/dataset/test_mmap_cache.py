@@ -248,12 +248,17 @@ class TestComputeCacheKey:
         assert k1 is not None and k2 is not None
         assert k1 != k2, "random_seed must distinguish the cache key"
 
-    def test_settings_payload_key_set_is_frozen(self, tmp_path: Path) -> None:
+    def test_settings_payload_key_set_is_frozen(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Any new cache-affecting field must be added here intentionally.
 
         This test is the gate for the class of cache-key holes where a setting
         that rewrites cached bytes is accidentally omitted from the payload.
+        Covers both the top-level key set and the nested preformat_endpoint
+        sub-dict (the latter only populated when PREFORMAT_PAYLOADS is on).
         """
+        from aiperf.common.environment import Environment
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(tmp_path, b'{"session_id": "s1"}\n')
@@ -304,6 +309,21 @@ class TestComputeCacheKey:
             "synthesis",
             "max_context_length",
             "entries_explicit",
+        }
+
+        # Also gate the nested preformat_endpoint sub-dict — force_content_parts
+        # lives there, not at the top level, so the key-set check above doesn't
+        # catch a future omission inside this dict.
+        monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
+        payload_with_preformat = mmap_cache._settings_payload_from_run(run)
+        preformat = payload_with_preformat["preformat_endpoint"]
+        assert preformat is not None
+        assert set(preformat.keys()) == {
+            "streaming",
+            "use_legacy_max_tokens",
+            "use_server_token_count",
+            "extra",
+            "force_content_parts",
         }
 
     def test_settings_payload_includes_seed_corpus_osl(self, tmp_path: Path) -> None:

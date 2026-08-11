@@ -397,12 +397,12 @@ class DatasetResolver:
                         if line := line.strip():
                             record = load_json_str(line)
                             break
-            except (OSError, UnicodeDecodeError):
-                return False
             except (EOFError, gzip.BadGzipFile) as e:
                 _logger.warning(
                     f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
                 )
+                return False
+            except (OSError, UnicodeDecodeError):
                 return False
 
         if record is None:
@@ -445,12 +445,12 @@ class DatasetResolver:
                     record_count += 1
                     if is_multi_turn:
                         _add_session_id(line, session_ids)
-        except (OSError, UnicodeDecodeError):
-            return 0, 0
         except (EOFError, gzip.BadGzipFile) as e:
             _logger.warning(
                 f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
             )
+            return 0, 0
+        except (OSError, UnicodeDecodeError):
             return 0, 0
 
         if is_multi_turn and session_ids:

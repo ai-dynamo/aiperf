@@ -131,6 +131,39 @@ def test_count_dataset_records_returns_zero_on_truncated_gz(tmp_path: Path) -> N
     assert _count_dataset_records(_truncated_gz(tmp_path)) == 0
 
 
+def _corrupt_gz_header(tmp_path: Path) -> Path:
+    # gzip magic + method byte 0x09 (not 8=deflate) → gzip.BadGzipFile.
+    # BadGzipFile is an OSError subclass; if the except clauses are in the
+    # wrong order the OSError arm wins silently with no log line.
+    gz = tmp_path / "corrupt.jsonl.gz"
+    gz.write_bytes(b"\x1f\x8b\x09\x00\x00\x00\x00\x00\x00\x00")
+    return gz
+
+
+def test_first_record_has_timestamp_logs_on_corrupt_gz_header(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """BadGzipFile (corrupt header) must be caught by the logged branch."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        result = _first_record_has_timestamp(_corrupt_gz_header(tmp_path))
+    assert result is False
+    assert any("corrupt" in r.message.lower() for r in caplog.records)
+
+
+def test_count_dataset_records_logs_on_corrupt_gz_header(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """BadGzipFile (corrupt header) must be caught by the logged branch."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        result = _count_dataset_records(_corrupt_gz_header(tmp_path))
+    assert result == 0
+    assert any("corrupt" in r.message.lower() for r in caplog.records)
+
+
 def _baseten_argv(trace_parquet: Path, *extra: str) -> list[str]:
     return [
         "--url",
