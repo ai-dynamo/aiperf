@@ -12,6 +12,7 @@ Structure:
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
+    Environment.ENDPOINT.*       - Endpoint wire-format settings
     Environment.GPU.*            - GPU telemetry collection
     Environment.HTTP.*           - HTTP client socket and connection settings
     Environment.LOGGING.*        - Logging configuration
@@ -302,6 +303,14 @@ class _DatasetSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
+    BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
+        Field(
+            default="provided_session_id",
+            description="Session column used by the Baseten trace loader when both "
+            "supported columns exist. Set to poor_man_session_id for legacy traces. "
+            "If the selected column is absent, the loader uses the available column.",
+        )
+    )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
         description="Base path for memory-mapped dataset files. If None, uses system temp directory. "
@@ -535,6 +544,30 @@ class _DatasetSettings(BaseSettings):
         "shot sidecar never becomes a worker-group member. Set to 0 to disable "
         "worker-group tagging (parallel workers keep the generic ::fa: tag). Only "
         "applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+
+
+class _EndpointSettings(BaseSettings):
+    """Endpoint wire-format configuration.
+
+    Controls how AIPerf serializes message content when building request
+    payloads. The main knob is FORCE_CONTENT_PARTS, which overrides the
+    single-text fast path that emits a plain string for simple turns.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_ENDPOINT_",
+    )
+
+    FORCE_CONTENT_PARTS: bool = Field(
+        default=False,
+        description="When True, always emit the multi-part content array "
+        '(e.g. [{"type": "text", "text": "..."}]) for synthetic turns, '
+        "even when there is only a single text with no media. By default "
+        "(False) single-text turns emit a plain string to stay compatible "
+        "with servers that reject list-of-parts content for non-multimodal "
+        "inputs (e.g. OpenAI Dynamo). Enable when the target server requires "
+        "the structured content-parts shape unconditionally.",
     )
 
 
@@ -1754,6 +1787,10 @@ class _Environment(BaseSettings):
     DAG: _DagSettings = Field(
         default_factory=_DagSettings,
         description="DAG benchmark mode settings (dag_jsonl input type)",
+    )
+    ENDPOINT: _EndpointSettings = Field(
+        default_factory=_EndpointSettings,
+        description="Endpoint wire-format settings (content serialization, etc.)",
     )
     DEV: _DeveloperSettings = Field(
         default_factory=_DeveloperSettings,
