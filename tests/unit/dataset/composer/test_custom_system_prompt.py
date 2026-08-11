@@ -8,14 +8,22 @@ public) and the prepend-vs-assign branch that keeps a dataset's own authored
 system message intact.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import orjson
 import pytest
 
+from aiperf.common.models import Conversation, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.custom import CustomDatasetComposer
+from aiperf.dataset.composer.public import PublicDatasetComposer
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 from aiperf.endpoints.openai_chat import ChatEndpoint
-from aiperf.plugin.enums import EndpointType
+from aiperf.plugin.enums import (
+    DatasetSamplingStrategy,
+    EndpointType,
+    PublicDatasetType,
+)
 from tests.unit.dataset.composer.conftest import make_run
 from tests.unit.endpoints.conftest import create_model_endpoint, create_request_info
 
@@ -244,3 +252,91 @@ class TestSpeedBenchSystemPrompt:
         systems = [m for m in messages if m["role"] == "system"]
         assert len(systems) == 1
         assert systems[0]["content"] == self.DATASET_SYSTEM
+
+
+@pytest.mark.asyncio
+class TestPublicComposerSystemPrompt:
+    """Public (HF-backed) datasets reach the same injection point.
+
+    ``PublicDatasetComposer.create_dataset_async`` calls
+    ``_finalize_conversations`` like the other composers, but it is the only one
+    on the async path. The loader is mocked so this stays offline.
+    """
+
+    @staticmethod
+    def _public_cli(**kwargs) -> CLIConfig:
+        return CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=2,
+            public_dataset=PublicDatasetType.AIMO,
+            **kwargs,
+        )
+
+    @staticmethod
+    async def _compose(cli: CLIConfig, conversations: list[Conversation]):
+        mock_loader = AsyncMock()
+        mock_loader.load_dataset = AsyncMock(return_value={"dataset": []})
+        mock_loader.convert_to_conversations = AsyncMock(return_value=conversations)
+
+        mock_loader_class = MagicMock()
+        mock_loader_class.get_preferred_sampling_strategy.return_value = (
+            DatasetSamplingStrategy.SEQUENTIAL
+        )
+        mock_loader_class.return_value = mock_loader
+
+        composer = PublicDatasetComposer(run=make_run(cli), tokenizer=None)
+        with (
+            patch(
+                "aiperf.dataset.composer.public.plugins.get_class",
+                return_value=mock_loader_class,
+            ),
+            patch(
+                "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+                return_value=MagicMock(
+                    hf_dataset_name="test/dataset",
+                    hf_split="train",
+                    hf_subset=None,
+                    prompt_column="problem",
+                    multi_turn=False,
+                    streaming=False,
+                    is_trace=False,
+                ),
+            ),
+        ):
+            return await composer.create_dataset_async()
+
+    @staticmethod
+    def _conversations(system_message: str | None = None) -> list[Conversation]:
+        return [
+            Conversation(
+                session_id=f"conv-{i}",
+                system_message=system_message,
+                turns=[Turn(texts=[Text(contents=[f"What is {i} + {i}?"])])],
+            )
+            for i in range(2)
+        ]
+
+    async def test_sets_system_message_on_every_conversation(self, prompt_file):
+        result = await self._compose(
+            self._public_cli(system_prompt_file=str(prompt_file)),
+            self._conversations(),
+        )
+
+        assert len(result) == 2
+        assert all(c.system_message == SYSTEM_TEXT for c in result)
+
+    async def test_absent_without_the_flag(self):
+        result = await self._compose(self._public_cli(), self._conversations())
+
+        assert all(c.system_message is None for c in result)
+
+    async def test_prepends_to_loader_supplied_system_message(self, prompt_file):
+        """A public loader that already set system_message keeps its text."""
+        result = await self._compose(
+            self._public_cli(system_prompt_file=str(prompt_file)),
+            self._conversations(system_message="Dataset system."),
+        )
+
+        assert all(
+            c.system_message == f"{SYSTEM_TEXT}\n\nDataset system." for c in result
+        )
