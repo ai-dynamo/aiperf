@@ -34,17 +34,26 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Protocol,
+    Self,
+    runtime_checkable,
+)
 
 import numpy as np
 import orjson
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import RandomCorpusStyle
 from aiperf.common.utils import load_json_str
+from aiperf.config.base import BaseConfig
 
 if TYPE_CHECKING:
     from aiperf.common.random_generator import RandomGenerator
@@ -529,115 +538,306 @@ def create_balanced_distribution(
     return SequenceLengthDistribution(seq_pairs)
 
 
-@dataclass(frozen=True)
-class _ModeConfig:
-    ratio_min: float
-    ratio_max: float
-    ratio_max_exclusive: bool
-    input_floor: int
-    adjust_mean: Callable[[int, int], int]
-    compute_low: Callable[[int, float], int]
-    compute_high: Callable[[int, float], int]
+def _parse_vllm_ratio_string(value: str) -> tuple[float, float]:
+    """Parse a vLLM-style CLI ratio string.
 
-    def validate_ratio(self, name: str, value: float) -> None:
-        upper_ok = (
-            value < self.ratio_max
-            if self.ratio_max_exclusive
-            else value <= self.ratio_max
+    Accepts a plain float string (``"0.3"``) applied to both dimensions, or a
+    JSON object (``'{"input": 0.3, "output": 0.5}'``) for independent values.
+    """
+    value = value.strip()
+    if not value:
+        raise ValueError("--random-range-ratio value cannot be empty")
+    try:
+        ratio = float(value)
+        return ratio, ratio
+    except ValueError:
+        pass
+    try:
+        data = orjson.loads(value)
+    except orjson.JSONDecodeError as e:
+        raise ValueError(
+            f"--random-range-ratio must be a float or a JSON object with "
+            f"'input' and 'output' keys, got: {value!r} ({e})"
+        ) from e
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"--random-range-ratio must be a float or a JSON object with "
+            f"'input' and 'output' keys, got: {value!r}"
         )
-        if not (self.ratio_min <= value and upper_ok):
-            hi_bracket = ")" if self.ratio_max_exclusive else "]"
+    missing = {"input", "output"} - data.keys()
+    if missing:
+        raise ValueError(
+            f"--random-range-ratio JSON object missing keys: {sorted(missing)}"
+        )
+    extra = data.keys() - {"input", "output"}
+    if extra:
+        raise ValueError(
+            f"--random-range-ratio JSON object has unexpected keys: {sorted(extra)}"
+        )
+    return float(data["input"]), float(data["output"])
+
+
+def _parse_sglang_ratio_string(value: str) -> tuple[float, float]:
+    """Parse an SGLang-style CLI ratio string.
+
+    Accepts only a plain float string (``"0.3"``); independent input/output
+    values via a JSON dict are rejected because SGLang applies a single ratio
+    to both dimensions.
+    """
+    value = value.strip()
+    if not value:
+        raise ValueError("--random-range-ratio value cannot be empty")
+    try:
+        ratio = float(value)
+        return ratio, ratio
+    except ValueError:
+        pass
+    try:
+        data = orjson.loads(value)
+        if isinstance(data, dict):
             raise ValueError(
-                f"{name} must be in [{self.ratio_min}, {self.ratio_max}{hi_bracket}, got {value}"
+                "SGLang corpus style applies a single ratio to both ISL and OSL. "
+                "Independent input/output values are not supported; "
+                "provide a plain float instead (e.g. 0.3)."
             )
+    except orjson.JSONDecodeError:
+        pass
+    raise ValueError(
+        f"--random-range-ratio must be a plain float for SGLang corpus style, got: {value!r}"
+    )
 
 
-_MODE_CONFIG: dict[RandomCorpusStyle, _ModeConfig] = {
-    RandomCorpusStyle.VLLM: _ModeConfig(
-        ratio_min=0.0,
-        ratio_max=1.0,
-        ratio_max_exclusive=True,
-        input_floor=0,
-        adjust_mean=lambda mean, n: max(0, mean - n),
-        compute_low=lambda mean, r: math.floor(mean * (1 - r)),
-        compute_high=lambda mean, r: math.ceil(mean * (1 + r)),
-    ),
-    RandomCorpusStyle.SGLANG: _ModeConfig(
-        ratio_min=0.0,
-        ratio_max=1.0,
-        ratio_max_exclusive=False,
-        input_floor=1,
-        adjust_mean=lambda mean, n: mean,
-        compute_low=lambda mean, r: int(mean * r),
-        compute_high=lambda mean, r: mean,
-    ),
-}
+def _coerce_ratio_input(v: Any, parser: Any) -> tuple[float, float] | Any:
+    """Coerce ``range_ratio`` field input to a ``(isl_ratio, osl_ratio)`` tuple.
+
+    Handles float/int (symmetric), string (via ``parser``), and 2-element
+    list/tuple.  Returns ``v`` unchanged for other types so Pydantic's own type
+    error fires.
+    """
+    if isinstance(v, (int, float)):
+        return float(v), float(v)
+    if isinstance(v, str):
+        return parser(v)
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        return float(v[0]), float(v[1])
+    return v
+
+
+class VLLMRatioConfig(BaseConfig):
+    """Config for vLLM-style range-ratio sampling.
+
+    ``range_ratio`` accepts:
+
+    - a plain float (``0.3``) — applied to both ISL and OSL
+    - a CLI string (``"0.3"`` or ``'{"input": 0.3, "output": 0.5}'``)
+    - a 2-tuple ``(isl_ratio, osl_ratio)``
+
+    Ratios must be in ``[0.0, 1.0)``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    isl_mean: Annotated[int, Field(ge=1, description="Mean input sequence length.")]
+    osl_mean: Annotated[int, Field(ge=1, description="Mean output sequence length.")]
+    isl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed ISL mean.",
+        ),
+    ] = 0.0
+    osl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed OSL mean.",
+        ),
+    ] = 0.0
+    num_special_tokens: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Special tokens subtracted from isl_mean before bounds.",
+        ),
+    ] = 0
+    chat_template_len: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Present for API symmetry with SGLangRatioConfig; unused in VLLM-style bounds.",
+        ),
+    ] = 0
+    range_ratio: Annotated[
+        tuple[float, float],
+        Field(
+            description="(isl_ratio, osl_ratio); symmetric window [floor(mean*(1-r)), ceil(mean*(1+r))]."
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _no_stddev(self) -> Self:
+        if self.isl_stddev != 0.0:
+            raise ValueError(
+                "--isl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls ISL variance."
+            )
+        if self.osl_stddev != 0.0:
+            raise ValueError(
+                "--osl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls OSL variance."
+            )
+        return self
+
+    @field_validator("range_ratio", mode="before")
+    @classmethod
+    def _coerce_and_validate(cls, v: Any) -> tuple[float, float]:
+        ir, or_ = _coerce_ratio_input(v, _parse_vllm_ratio_string)
+        if not math.isfinite(ir) or not (0.0 <= ir < 1.0):
+            raise ValueError(f"ISL range_ratio must be in [0.0, 1.0), got {ir}")
+        if not math.isfinite(or_) or not (0.0 <= or_ < 1.0):
+            raise ValueError(f"OSL range_ratio must be in [0.0, 1.0), got {or_}")
+        return ir, or_
+
+    def compute_input_bounds(self) -> tuple[int, int]:
+        adjusted = max(0, self.isl_mean - self.num_special_tokens)
+        r = self.range_ratio[0]
+        return max(0, math.floor(adjusted * (1 - r))), math.ceil(adjusted * (1 + r))
+
+    def compute_output_bounds(self) -> tuple[int, int]:
+        r = self.range_ratio[1]
+        return (
+            max(1, math.floor(self.osl_mean * (1 - r))),
+            max(1, math.ceil(self.osl_mean * (1 + r))),
+        )
+
+
+class SGLangRatioConfig(BaseConfig):
+    """Config for SGLang-style range-ratio sampling.
+
+    ``range_ratio`` accepts:
+
+    - a plain float (``0.3``) — applied to both ISL and OSL
+    - a plain-float CLI string (``"0.3"``); JSON dict form is rejected
+    - a 2-tuple ``(r, r)`` where both elements must be equal
+
+    Ratios must be in ``[0.0, 1.0]``. ``chat_template_len`` is subtracted from
+    ``isl_mean`` before bounds are computed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    isl_mean: Annotated[int, Field(ge=1, description="Mean input sequence length.")]
+    osl_mean: Annotated[int, Field(ge=1, description="Mean output sequence length.")]
+    isl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed ISL mean.",
+        ),
+    ] = 0.0
+    osl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed OSL mean.",
+        ),
+    ] = 0.0
+    num_special_tokens: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Ignored; present for API symmetry with VLLMRatioConfig.",
+        ),
+    ] = 0
+    chat_template_len: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Chat template token overhead subtracted from isl_mean.",
+        ),
+    ] = 0
+    range_ratio: Annotated[
+        tuple[float, float],
+        Field(
+            description="(isl_ratio, osl_ratio); lower-bounded window [max(1, int(mean*r)), mean]."
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _no_stddev(self) -> Self:
+        if self.isl_stddev != 0.0:
+            raise ValueError(
+                "--isl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls ISL variance."
+            )
+        if self.osl_stddev != 0.0:
+            raise ValueError(
+                "--osl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls OSL variance."
+            )
+        return self
+
+    @field_validator("range_ratio", mode="before")
+    @classmethod
+    def _coerce_and_validate(cls, v: Any) -> tuple[float, float]:
+        ir, or_ = _coerce_ratio_input(v, _parse_sglang_ratio_string)
+        if not math.isfinite(ir) or not (0.0 <= ir <= 1.0):
+            raise ValueError(f"range_ratio must be in [0.0, 1.0], got {ir}")
+        if ir != or_:
+            raise ValueError(
+                f"SGLang corpus style requires equal ISL and OSL ratios, got ({ir}, {or_})"
+            )
+        return ir, or_
+
+    def compute_input_bounds(self) -> tuple[int, int]:
+        adjusted = max(1, self.isl_mean - self.chat_template_len)
+        r = self.range_ratio[0]
+        return max(1, int(adjusted * r)), adjusted
+
+    def compute_output_bounds(self) -> tuple[int, int]:
+        r = self.range_ratio[1]
+        return max(1, int(self.osl_mean * r)), self.osl_mean
 
 
 class RangeRatioDistribution:
     """Uniform ISL/OSL sampling in a ratio-defined integer window around configured means.
 
-    Supports two modes (see :class:`RandomCorpusStyle`):
+    Instantiate via the registry for mode-driven dispatch::
 
-    - ``VLLM`` (default): symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``.
-      ``r`` must satisfy ``0.0 <= r < 1.0``. Matches ``vllm bench serve``.
-    - ``SGLANG``: lower-bounded window ``[max(1, int(mean*r)), mean]``. ``r`` must
-      satisfy ``0.0 <= r <= 1.0``. Matches ``sglang.bench_serving``.
+        DistClass = _CLASS_FOR_MODE[mode]
+        config = DistClass.get_config_class()(isl_mean=512, osl_mean=128, range_ratio="0.3")
+        dist = DistClass(config)
 
-    Special-token accounting (BOS etc.) is style-specific: each
-    :class:`RandomCorpusStyle` encodes its own ``adjust_mean`` rule, so callers
-    need only supply the raw count via ``num_special_tokens`` and the style
-    determines whether and how to subtract it.
+    Two concrete styles:
+
+    - :class:`RangeRatioDistribution` (VLLM): symmetric window
+      ``[floor(mean*(1-r)), ceil(mean*(1+r))]``, ``r ∈ [0.0, 1.0)``.
+    - :class:`SGLangRangeRatioDistribution` (SGLANG): lower-bounded window
+      ``[max(1, int(mean*r)), mean]``, ``r ∈ [0.0, 1.0]``.
     """
 
-    def __init__(
-        self,
-        isl_mean: int,
-        osl_mean: int,
-        input_ratio: float,
-        output_ratio: float,
-        *,
-        mode: RandomCorpusStyle = RandomCorpusStyle.VLLM,
-        num_special_tokens: int = 0,
-    ) -> None:
-        if isl_mean < 1:
-            raise ValueError(f"Input sequence length mean must be >= 1, got {isl_mean}")
-        if osl_mean < 1:
-            raise ValueError(
-                f"Output sequence length mean must be >= 1, got {osl_mean}"
-            )
-        if num_special_tokens < 0:
-            raise ValueError(
-                f"num_special_tokens must be >= 0, got {num_special_tokens}"
-            )
+    _style: ClassVar[RandomCorpusStyle] = RandomCorpusStyle.VLLM
 
-        cfg = _MODE_CONFIG[mode]
-        cfg.validate_ratio("input_range_ratio", input_ratio)
-        cfg.validate_ratio("output_range_ratio", output_ratio)
+    @classmethod
+    def get_config_class(cls) -> type[VLLMRatioConfig]:
+        return VLLMRatioConfig
 
+    def __init__(self, config: VLLMRatioConfig) -> None:
         self._rng = rng.derive("models.range_ratio.distribution")
-        self._isl_mean = int(isl_mean)
-        self._osl_mean = int(osl_mean)
-        self._input_ratio = float(input_ratio)
-        self._output_ratio = float(output_ratio)
-        self._mode = mode
-        self._num_special_tokens = num_special_tokens
+        self._isl_mean = config.isl_mean
+        self._osl_mean = config.osl_mean
+        self._config = config
 
-        adjusted_isl_mean = cfg.adjust_mean(self._isl_mean, num_special_tokens)
-        self._input_low, self._input_high = self._compute_bounds(
-            adjusted_isl_mean, self._input_ratio, cfg, floor=cfg.input_floor
-        )
-        self._output_low, self._output_high = self._compute_bounds(
-            self._osl_mean, self._output_ratio, cfg, floor=1
-        )
-
-    @staticmethod
-    def _compute_bounds(
-        mean: int, ratio: float, cfg: _ModeConfig, *, floor: int
-    ) -> tuple[int, int]:
-        return max(floor, cfg.compute_low(mean, ratio)), max(
-            floor, cfg.compute_high(mean, ratio)
-        )
+        self._input_low, self._input_high = config.compute_input_bounds()
+        self._output_low, self._output_high = config.compute_output_bounds()
 
     def preseed(self, n: int, seed: int | None, prefix_len: int = 0) -> None:
         """Pre-generate all ISL then all OSL values using vLLM's PCG64 draw order.
@@ -691,66 +891,13 @@ class RangeRatioDistribution:
 
     @property
     def mode(self) -> RandomCorpusStyle:
-        return self._mode
+        return type(self)._style
 
     def __repr__(self) -> str:
         return (
-            f"RangeRatioDistribution(mode={self._mode}, isl_mean={self._isl_mean}, "
-            f"osl_mean={self._osl_mean}, input_ratio={self._input_ratio}, "
-            f"output_ratio={self._output_ratio})"
+            f"RangeRatioDistribution(mode={type(self)._style}, isl_mean={self._isl_mean}, "
+            f"osl_mean={self._osl_mean}, range_ratio={self._config.range_ratio})"
         )
-
-    @classmethod
-    def parse_cli_value(
-        cls,
-        value: str,
-        mode: RandomCorpusStyle = RandomCorpusStyle.VLLM,
-    ) -> tuple[float, float]:
-        """Parse a ``--random-range-ratio`` CLI value into (input_ratio, output_ratio).
-
-        Accepts either a plain float string (``"0.3"``) applied to both dimensions,
-        or a JSON object (``'{"input": 0.3, "output": 0.5}'``) for independent values.
-        """
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("--random-range-ratio value cannot be empty")
-
-        value = value.strip()
-
-        try:
-            ratio = float(value)
-        except ValueError:
-            try:
-                data = orjson.loads(value)
-            except orjson.JSONDecodeError as e:
-                raise ValueError(
-                    f"--random-range-ratio must be a float or a JSON object with "
-                    f"'input' and 'output' keys, got: {value!r} ({e})"
-                ) from e
-            if not isinstance(data, dict):
-                raise ValueError(
-                    f"--random-range-ratio must be a float or a JSON object with "
-                    f"'input' and 'output' keys, got: {value!r}"
-                ) from None
-            missing = {"input", "output"} - data.keys()
-            if missing:
-                raise ValueError(
-                    f"--random-range-ratio JSON object missing keys: {sorted(missing)}"
-                ) from None
-            extra = data.keys() - {"input", "output"}
-            if extra:
-                raise ValueError(
-                    f"--random-range-ratio JSON object has unexpected keys: {sorted(extra)}"
-                ) from None
-            input_ratio = float(data["input"])
-            output_ratio = float(data["output"])
-        else:
-            input_ratio = output_ratio = ratio
-
-        cfg = _MODE_CONFIG[mode]
-        cfg.validate_ratio("--random-range-ratio input", input_ratio)
-        cfg.validate_ratio("--random-range-ratio output", output_ratio)
-
-        return input_ratio, output_ratio
 
 
 class _LegacyRNG:
@@ -798,10 +945,14 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
     never seeds the global RNG before sampling.
     """
 
-    def __init__(self, *, chat_template_len: int = 0, **kwargs: object) -> None:
-        isl_mean = kwargs.pop("isl_mean")  # type: ignore[assignment]
-        super().__init__(isl_mean=max(1, int(isl_mean) - chat_template_len), **kwargs)
-        self._chat_template_len = chat_template_len
+    _style: ClassVar[RandomCorpusStyle] = RandomCorpusStyle.SGLANG
+
+    @classmethod
+    def get_config_class(cls) -> type[SGLangRatioConfig]:
+        return SGLangRatioConfig
+
+    def __init__(self, config: SGLangRatioConfig) -> None:
+        super().__init__(config)
 
     def preseed(self, n: int, seed: int | None, prefix_len: int = 0) -> None:
         if seed is not None:
@@ -814,3 +965,9 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
         ).tolist()
         self._cache_idx = 0
         self._preseed_rng: object = g
+
+
+_CLASS_FOR_MODE: dict[RandomCorpusStyle, type[RangeRatioDistribution]] = {
+    RandomCorpusStyle.VLLM: RangeRatioDistribution,
+    RandomCorpusStyle.SGLANG: SGLangRangeRatioDistribution,
+}

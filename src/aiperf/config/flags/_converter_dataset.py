@@ -425,11 +425,21 @@ def _apply_sequence_distribution(d: dict[str, Any], cli: CLIConfig) -> None:
 def _apply_random_range_ratio(d: dict[str, Any], cli: CLIConfig) -> None:
     if not cli.prompt_random_range_ratio:
         return
-    from aiperf.common.models.sequence_distribution import RangeRatioDistribution
-
-    RangeRatioDistribution.parse_cli_value(
-        cli.prompt_random_range_ratio, cli.prompt_random_corpus_style
+    from aiperf.common.enums import RandomCorpusStyle
+    from aiperf.common.models.sequence_distribution import (
+        _parse_sglang_ratio_string,
+        _parse_vllm_ratio_string,
     )
+
+    parser = (
+        _parse_sglang_ratio_string
+        if cli.prompt_random_corpus_style == RandomCorpusStyle.SGLANG
+        else _parse_vllm_ratio_string
+    )
+    try:
+        parser(cli.prompt_random_range_ratio)
+    except ValueError as e:
+        raise ValueError(f"Invalid --random-range-ratio value: {e}") from e
     d.setdefault("prompts", {})["random_range_ratio"] = cli.prompt_random_range_ratio
     if "prompt_random_corpus_style" in cli.model_fields_set:
         d["prompts"]["random_corpus_style"] = cli.prompt_random_corpus_style

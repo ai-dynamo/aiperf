@@ -20,11 +20,15 @@ import pytest
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import RandomCorpusStyle
 from aiperf.common.models.sequence_distribution import (
+    _CLASS_FOR_MODE,
     DistributionParser,
     RangeRatioDistribution,
     SequenceLengthDistribution,
     SequenceLengthPair,
     SequenceLengthSampler,
+    SGLangRangeRatioDistribution,
+    SGLangRatioConfig,
+    VLLMRatioConfig,
     create_balanced_distribution,
     create_uniform_distribution,
 )
@@ -753,39 +757,40 @@ class TestSequenceCaching:
         assert turn2_id in composer._turn_sequence_cache
 
 
+def _vllm(
+    isl_mean: int, osl_mean: int, ratio: float | tuple[float, float], **kw: int
+) -> RangeRatioDistribution:
+    return RangeRatioDistribution(
+        VLLMRatioConfig(isl_mean=isl_mean, osl_mean=osl_mean, range_ratio=ratio, **kw)
+    )
+
+
+def _sglang(
+    isl_mean: int, osl_mean: int, ratio: float, **kw: int
+) -> SGLangRangeRatioDistribution:
+    return SGLangRangeRatioDistribution(
+        SGLangRatioConfig(isl_mean=isl_mean, osl_mean=osl_mean, range_ratio=ratio, **kw)
+    )
+
+
 class TestRangeRatioDistribution:
     """Tests for vllm-style uniform ISL/OSL sampling around configured means."""
 
     def test_implements_sequence_length_sampler_protocol(self):
-        dist = RangeRatioDistribution(
-            isl_mean=100, osl_mean=50, input_ratio=0.2, output_ratio=0.2
-        )
-        assert isinstance(dist, SequenceLengthSampler)
+        assert isinstance(_vllm(100, 50, 0.2), SequenceLengthSampler)
 
     def test_ratio_zero_is_fixed(self):
-        dist = RangeRatioDistribution(
-            isl_mean=1024, osl_mean=128, input_ratio=0.0, output_ratio=0.0
-        )
+        dist = _vllm(1024, 128, 0.0)
         for _ in range(50):
             assert dist.sample() == (1024, 128)
 
     def test_bounds_are_computed_per_vllm_formula(self):
-        dist = RangeRatioDistribution(
-            isl_mean=1024, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
-        assert dist.input_bounds == (
-            math.floor(1024 * 0.7),
-            math.ceil(1024 * 1.3),
-        )
-        assert dist.output_bounds == (
-            math.floor(128 * 0.7),
-            math.ceil(128 * 1.3),
-        )
+        dist = _vllm(1024, 128, 0.3)
+        assert dist.input_bounds == (math.floor(1024 * 0.7), math.ceil(1024 * 1.3))
+        assert dist.output_bounds == (math.floor(128 * 0.7), math.ceil(128 * 1.3))
 
     def test_samples_are_inclusive_on_both_ends(self):
-        dist = RangeRatioDistribution(
-            isl_mean=100, osl_mean=40, input_ratio=0.5, output_ratio=0.25
-        )
+        dist = _vllm(100, 40, (0.5, 0.25))
         in_low, in_high = dist.input_bounds
         out_low, out_high = dist.output_bounds
 
@@ -797,105 +802,69 @@ class TestRangeRatioDistribution:
         assert max(isls) <= in_high
         assert min(osls) >= out_low
         assert max(osls) <= out_high
-
-        # With 2000 samples across modest ranges we expect to hit both ends at least once.
         assert in_low in isls and in_high in isls
         assert out_low in osls and out_high in osls
 
     def test_sample_values_are_python_ints(self):
-        dist = RangeRatioDistribution(
-            isl_mean=100, osl_mean=40, input_ratio=0.1, output_ratio=0.1
-        )
-        isl, osl = dist.sample()
+        isl, osl = _vllm(100, 40, 0.1).sample()
         assert type(isl) is int
         assert type(osl) is int
 
     def test_independent_input_and_output_ratios(self):
-        dist = RangeRatioDistribution(
-            isl_mean=1024, osl_mean=128, input_ratio=0.1, output_ratio=0.5
-        )
+        dist = _vllm(1024, 128, (0.1, 0.5))
         assert dist.input_bounds == (math.floor(1024 * 0.9), math.ceil(1024 * 1.1))
         assert dist.output_bounds == (math.floor(128 * 0.5), math.ceil(128 * 1.5))
 
     def test_vllm_input_allows_zero_matching_upstream(self):
         # vllm bench allows 0-length input ranges; floor(1 * (1 - 0.9)) = 0 is valid.
-        dist = RangeRatioDistribution(
-            isl_mean=1, osl_mean=1, input_ratio=0.9, output_ratio=0.9
-        )
-        assert dist.input_bounds[0] == 0
+        assert _vllm(1, 1, 0.9).input_bounds[0] == 0
 
     def test_output_always_floors_at_one(self):
-        # Output is always clamped to >= 1 regardless of mode.
-        dist = RangeRatioDistribution(
-            isl_mean=1, osl_mean=1, input_ratio=0.9, output_ratio=0.9
-        )
+        dist = _vllm(1, 1, 0.9)
         assert dist.output_bounds[0] >= 1
         for _ in range(20):
             _, osl = dist.sample()
             assert osl >= 1
 
     def test_sglang_input_floors_at_one(self):
-        # sglang mirrors per-sample max(1, len - num_special) — input never reaches 0.
-        dist = RangeRatioDistribution(
-            isl_mean=1,
-            osl_mean=1,
-            input_ratio=0.9,
-            output_ratio=0.9,
-            mode=RandomCorpusStyle.SGLANG,
-        )
+        dist = _sglang(1, 1, 0.9)
         assert dist.input_bounds[0] >= 1
         for _ in range(20):
             isl, _ = dist.sample()
             assert isl >= 1
 
     @pytest.mark.parametrize("bad_ratio", [-0.1, 1.0, 1.5, float("inf"), float("nan")])
-    def test_rejects_input_ratio_out_of_range(self, bad_ratio):
-        with pytest.raises(ValueError, match="input_range_ratio"):
-            RangeRatioDistribution(
-                isl_mean=100, osl_mean=50, input_ratio=bad_ratio, output_ratio=0.1
-            )
+    def test_rejects_isl_ratio_out_of_range(self, bad_ratio):
+        with pytest.raises(ValueError, match="ISL range_ratio"):
+            _vllm(100, 50, (bad_ratio, 0.1))
 
     @pytest.mark.parametrize("bad_ratio", [-0.1, 1.0, 1.5, float("inf"), float("nan")])
-    def test_rejects_output_ratio_out_of_range(self, bad_ratio):
-        with pytest.raises(ValueError, match="output_range_ratio"):
-            RangeRatioDistribution(
-                isl_mean=100, osl_mean=50, input_ratio=0.1, output_ratio=bad_ratio
-            )
+    def test_rejects_osl_ratio_out_of_range(self, bad_ratio):
+        with pytest.raises(ValueError, match="OSL range_ratio"):
+            _vllm(100, 50, (0.1, bad_ratio))
 
     def test_rejects_non_positive_isl_mean(self):
-        with pytest.raises(ValueError, match="Input sequence length mean"):
-            RangeRatioDistribution(
-                isl_mean=0, osl_mean=50, input_ratio=0.1, output_ratio=0.1
-            )
+        with pytest.raises(ValueError, match="isl_mean"):
+            _vllm(0, 50, 0.1)
 
     def test_rejects_non_positive_osl_mean(self):
-        with pytest.raises(ValueError, match="Output sequence length mean"):
-            RangeRatioDistribution(
-                isl_mean=100, osl_mean=0, input_ratio=0.1, output_ratio=0.1
-            )
+        with pytest.raises(ValueError, match="osl_mean"):
+            _vllm(100, 0, 0.1)
 
     def test_sampling_is_deterministic_with_fixed_seed(self):
-        # Global RNG is re-seeded to 42 between tests via auto-fixture.
-        dist1 = RangeRatioDistribution(
-            isl_mean=1024, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
+        dist1 = _vllm(1024, 128, 0.3)
         first_run = [dist1.sample() for _ in range(10)]
 
-        # Reset global RNG and rebuild to confirm reproducibility.
         rng.reset()
         rng.init(42)
-        dist2 = RangeRatioDistribution(
-            isl_mean=1024, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
+        dist2 = _vllm(1024, 128, 0.3)
         second_run = [dist2.sample() for _ in range(10)]
 
         assert first_run == second_run
 
     def test_preseed_draws_all_isls_then_osls(self):
         """preseed(seed) uses PCG64; sample reads from the cache."""
-        dist = RangeRatioDistribution(
-            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
+        dist = _vllm(128, 128, 0.3)
         n = 5
         g = np.random.default_rng(0)
         expected_isls = g.integers(
@@ -914,14 +883,9 @@ class TestRangeRatioDistribution:
 
     def test_preseed_prefix_len_shifts_isl_cache(self):
         """prefix_len adds to each sampled ISL so first_turn_adj gives back body range."""
-        dist = RangeRatioDistribution(
-            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
-        n = 5
-        prefix = 20
-        dist_no_prefix = RangeRatioDistribution(
-            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
+        n, prefix = 5, 20
+        dist = _vllm(128, 128, 0.3)
+        dist_no_prefix = _vllm(128, 128, 0.3)
         dist_no_prefix.preseed(n, 0)
         dist.preseed(n, 0, prefix_len=prefix)
 
@@ -932,11 +896,8 @@ class TestRangeRatioDistribution:
 
     def test_preseed_exposes_rng_for_offset_draws(self):
         """_preseed_rng after preseed is advanced past ISL+OSL draws."""
-        dist = RangeRatioDistribution(
-            isl_mean=128, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
+        dist = _vllm(128, 128, 0.3)
         dist.preseed(3, 42)
-        # _preseed_rng is past 6 draws (3 ISL + 3 OSL)
         g_ref = np.random.default_rng(42)
         g_ref.integers(dist.input_bounds[0], dist.input_bounds[1] + 1, size=3)
         g_ref.integers(dist.output_bounds[0], dist.output_bounds[1] + 1, size=3)
@@ -944,16 +905,8 @@ class TestRangeRatioDistribution:
 
     def test_num_special_tokens_adjusts_isl_mean_only(self):
         """Style's adjust_mean subtracts special tokens from isl_mean; osl is unchanged."""
-        dist_plain = RangeRatioDistribution(
-            isl_mean=512, osl_mean=128, input_ratio=0.3, output_ratio=0.3
-        )
-        dist_adjusted = RangeRatioDistribution(
-            isl_mean=512,
-            osl_mean=128,
-            input_ratio=0.3,
-            output_ratio=0.3,
-            num_special_tokens=1,
-        )
+        dist_plain = _vllm(512, 128, 0.3)
+        dist_adjusted = _vllm(512, 128, 0.3, num_special_tokens=1)
         assert dist_adjusted.input_bounds == (
             math.floor(511 * 0.7),
             math.ceil(511 * 1.3),
@@ -962,88 +915,43 @@ class TestRangeRatioDistribution:
 
     def test_num_special_tokens_vllm_allows_zero_adjusted_mean(self):
         """vllm adjust_mean: max(0, isl_mean - n) — allows zero."""
-        dist = RangeRatioDistribution(
-            isl_mean=1,
-            osl_mean=128,
-            input_ratio=0.0,
-            output_ratio=0.0,
-            num_special_tokens=5,
-        )
-        assert dist.input_bounds == (0, 0)
+        assert _vllm(1, 128, 0.0, num_special_tokens=5).input_bounds == (0, 0)
 
     def test_num_special_tokens_zero_is_identity(self):
         """num_special_tokens=0 (default) leaves bounds unchanged."""
-        dist_default = RangeRatioDistribution(
-            isl_mean=512, osl_mean=128, input_ratio=0.3, output_ratio=0.3
+        assert (
+            _vllm(512, 128, 0.3).input_bounds
+            == _vllm(512, 128, 0.3, num_special_tokens=0).input_bounds
         )
-        dist_explicit_zero = RangeRatioDistribution(
-            isl_mean=512,
-            osl_mean=128,
-            input_ratio=0.3,
-            output_ratio=0.3,
-            num_special_tokens=0,
-        )
-        assert dist_default.input_bounds == dist_explicit_zero.input_bounds
-        assert dist_default.output_bounds == dist_explicit_zero.output_bounds
 
     def test_num_special_tokens_negative_raises(self):
         """Negative num_special_tokens is invalid."""
         with pytest.raises(ValueError, match="num_special_tokens"):
-            RangeRatioDistribution(
-                isl_mean=512,
-                osl_mean=128,
-                input_ratio=0.3,
-                output_ratio=0.3,
-                num_special_tokens=-1,
-            )
+            _vllm(512, 128, 0.3, num_special_tokens=-1)
 
 
 class TestRangeRatioDistributionSglangMode:
     """sglang-mode semantics: lower-bounded window [max(1, int(mean*r)), mean]."""
 
     def test_ratio_zero_gives_full_variability(self):
-        dist = RangeRatioDistribution(
-            isl_mean=1024,
-            osl_mean=128,
-            input_ratio=0.0,
-            output_ratio=0.0,
-            mode=RandomCorpusStyle.SGLANG,
-        )
+        dist = _sglang(1024, 128, 0.0)
         assert dist.input_bounds == (1, 1024)
         assert dist.output_bounds == (1, 128)
 
     def test_ratio_one_is_fixed_at_mean(self):
-        dist = RangeRatioDistribution(
-            isl_mean=1024,
-            osl_mean=128,
-            input_ratio=1.0,
-            output_ratio=1.0,
-            mode=RandomCorpusStyle.SGLANG,
-        )
+        dist = _sglang(1024, 128, 1.0)
         assert dist.input_bounds == (1024, 1024)
         assert dist.output_bounds == (128, 128)
         for _ in range(20):
             assert dist.sample() == (1024, 128)
 
     def test_ratio_half_gives_lower_bounded_window(self):
-        dist = RangeRatioDistribution(
-            isl_mean=1024,
-            osl_mean=128,
-            input_ratio=0.5,
-            output_ratio=0.5,
-            mode=RandomCorpusStyle.SGLANG,
-        )
+        dist = _sglang(1024, 128, 0.5)
         assert dist.input_bounds == (512, 1024)
         assert dist.output_bounds == (64, 128)
 
     def test_samples_never_exceed_mean(self):
-        dist = RangeRatioDistribution(
-            isl_mean=200,
-            osl_mean=50,
-            input_ratio=0.3,
-            output_ratio=0.2,
-            mode=RandomCorpusStyle.SGLANG,
-        )
+        dist = _sglang(200, 50, 0.3)
         for _ in range(2000):
             isl, osl = dist.sample()
             assert 1 <= isl <= 200
@@ -1051,103 +959,84 @@ class TestRangeRatioDistributionSglangMode:
 
     def test_rejects_ratio_below_zero(self):
         with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\]"):
-            RangeRatioDistribution(
-                isl_mean=100,
-                osl_mean=50,
-                input_ratio=-0.1,
-                output_ratio=0.1,
-                mode=RandomCorpusStyle.SGLANG,
-            )
+            _sglang(100, 50, -0.1)
 
     def test_rejects_ratio_above_one(self):
         with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\]"):
-            RangeRatioDistribution(
-                isl_mean=100,
-                osl_mean=50,
-                input_ratio=0.1,
-                output_ratio=1.5,
-                mode=RandomCorpusStyle.SGLANG,
+            _sglang(100, 50, 1.5)
+
+    def test_rejects_json_dict_form(self):
+        """SGLang only allows a single ratio; independent input/output values are rejected."""
+        with pytest.raises(ValueError, match="single ratio"):
+            SGLangRatioConfig(
+                isl_mean=100, osl_mean=50, range_ratio='{"input": 0.3, "output": 0.5}'
             )
 
     def test_num_special_tokens_sglang_does_not_adjust_mean(self):
         """sglang adjust_mean is a no-op — SGLang uses raw input_len without BOS subtraction."""
-        dist_zero = RangeRatioDistribution(
-            isl_mean=128,
-            osl_mean=128,
-            input_ratio=0.3,
-            output_ratio=0.3,
-            num_special_tokens=0,
-            mode=RandomCorpusStyle.SGLANG,
+        assert (
+            _sglang(128, 128, 0.3).input_bounds
+            == _sglang(128, 128, 0.3, num_special_tokens=5).input_bounds
         )
-        dist_with = RangeRatioDistribution(
-            isl_mean=128,
-            osl_mean=128,
-            input_ratio=0.3,
-            output_ratio=0.3,
-            num_special_tokens=5,
-            mode=RandomCorpusStyle.SGLANG,
-        )
-        # SGLANG does not subtract num_special_tokens from the mean
-        assert dist_with.input_bounds == dist_zero.input_bounds
 
 
 class TestParseRandomRangeRatio:
-    """Tests for the --random-range-ratio CLI value parser."""
+    """Tests for --random-range-ratio CLI string parsing via VLLMRatioConfig."""
+
+    def _parse(self, s: str) -> tuple[float, float]:
+        return VLLMRatioConfig(isl_mean=1, osl_mean=1, range_ratio=s).range_ratio
 
     def test_float_applies_to_both_dimensions(self):
-        assert RangeRatioDistribution.parse_cli_value("0.3") == (0.3, 0.3)
+        assert self._parse("0.3") == (0.3, 0.3)
 
     def test_zero_is_valid(self):
-        assert RangeRatioDistribution.parse_cli_value("0") == (0.0, 0.0)
-        assert RangeRatioDistribution.parse_cli_value("0.0") == (0.0, 0.0)
+        assert self._parse("0") == (0.0, 0.0)
+        assert self._parse("0.0") == (0.0, 0.0)
 
     def test_whitespace_is_tolerated(self):
-        assert RangeRatioDistribution.parse_cli_value("  0.25  ") == (0.25, 0.25)
+        assert self._parse("  0.25  ") == (0.25, 0.25)
 
     def test_json_dict_sets_input_and_output_independently(self):
-        assert RangeRatioDistribution.parse_cli_value(
-            '{"input": 0.3, "output": 0.5}'
-        ) == (0.3, 0.5)
+        assert self._parse('{"input": 0.3, "output": 0.5}') == (0.3, 0.5)
 
     def test_json_dict_accepts_integer_values(self):
-        assert RangeRatioDistribution.parse_cli_value('{"input": 0, "output": 0}') == (
-            0.0,
-            0.0,
-        )
+        assert self._parse('{"input": 0, "output": 0}') == (0.0, 0.0)
 
     @pytest.mark.parametrize("bad", [-0.1, 1.0, 1.5])
     def test_float_out_of_range_rejected(self, bad):
         with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\)"):
-            RangeRatioDistribution.parse_cli_value(str(bad))
+            self._parse(str(bad))
 
     def test_json_out_of_range_rejected(self):
         with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\)"):
-            RangeRatioDistribution.parse_cli_value('{"input": 0.2, "output": 1.2}')
+            self._parse('{"input": 0.2, "output": 1.2}')
 
     def test_json_missing_keys_rejected(self):
         with pytest.raises(ValueError, match="missing keys"):
-            RangeRatioDistribution.parse_cli_value('{"input": 0.3}')
+            self._parse('{"input": 0.3}')
 
     def test_json_extra_keys_rejected(self):
         with pytest.raises(ValueError, match="unexpected keys"):
-            RangeRatioDistribution.parse_cli_value(
-                '{"input": 0.3, "output": 0.5, "extra": 1}'
-            )
+            self._parse('{"input": 0.3, "output": 0.5, "extra": 1}')
 
     def test_empty_value_rejected(self):
         with pytest.raises(ValueError, match="cannot be empty"):
-            RangeRatioDistribution.parse_cli_value("")
+            self._parse("")
 
     def test_whitespace_only_rejected(self):
         with pytest.raises(ValueError, match="cannot be empty"):
-            RangeRatioDistribution.parse_cli_value("   ")
+            self._parse("   ")
 
     def test_invalid_json_rejected(self):
         with pytest.raises(ValueError, match="must be a float or a JSON object"):
-            RangeRatioDistribution.parse_cli_value("{not valid json")
+            self._parse("{not valid json")
 
     def test_non_object_json_rejected(self):
         # A bare JSON number string parses as a float via the first-try path,
         # but a JSON array or string must error in the dict-parse branch.
         with pytest.raises(ValueError, match="must be a float or a JSON object"):
-            RangeRatioDistribution.parse_cli_value("[0.3, 0.5]")
+            self._parse("[0.3, 0.5]")
+
+    def test_registry_returns_correct_class_for_mode(self):
+        assert _CLASS_FOR_MODE[RandomCorpusStyle.VLLM] is RangeRatioDistribution
+        assert _CLASS_FOR_MODE[RandomCorpusStyle.SGLANG] is SGLangRangeRatioDistribution

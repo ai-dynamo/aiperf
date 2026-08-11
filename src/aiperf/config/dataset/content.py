@@ -116,10 +116,10 @@ class CacheBustConfig(BaseConfig):
 
 
 def _coerce_range_ratio(v: object) -> object:
-    """Normalize native float/dict inputs to the string form parse_cli_value expects.
+    """Normalize native float/dict inputs to the string form the ratio configs expect.
 
     YAML parses ``random_range_ratio: 0.3`` as float and ``{input: 0.3, output: 0.5}``
-    as dict. Both are valid user intent but parse_cli_value requires a string.
+    as dict. Both are valid user intent but the ratio field validators require a string.
     """
     if isinstance(v, bool):
         return v  # let Pydantic reject booleans via type validation
@@ -258,14 +258,7 @@ class PromptConfig(BaseConfig):
     def _validate_random_range_ratio(self) -> Self:
         if self.random_range_ratio is None:
             return self
-        from aiperf.common.models.sequence_distribution import RangeRatioDistribution
-
-        try:
-            RangeRatioDistribution.parse_cli_value(
-                self.random_range_ratio, self.random_corpus_style
-            )
-        except Exception as e:
-            raise ValueError(f"Invalid random_range_ratio value: {e}") from e
+        from aiperf.common.models.sequence_distribution import _CLASS_FOR_MODE
 
         if self.sequence_distribution is not None:
             raise ValueError(
@@ -273,18 +266,27 @@ class PromptConfig(BaseConfig):
                 "use one or the other."
             )
 
-        isl_stddev = getattr(self.isl, "stddev", 0) or 0
-        osl_stddev = getattr(self.osl, "stddev", 0) or 0
-        if isl_stddev > 0:
+        if self.isl is None:
             raise ValueError(
-                "--isl-stddev cannot be combined with --random-range-ratio; "
-                "the ratio window already controls ISL variance."
+                "--random-range-ratio requires --isl to be set explicitly. "
+                "There is no safe default when a ratio window is requested."
             )
-        if osl_stddev > 0:
+        if self.osl is None:
             raise ValueError(
-                "--osl-stddev cannot be combined with --random-range-ratio; "
-                "the ratio window already controls OSL variance."
+                "--random-range-ratio requires --osl to be set explicitly. "
+                "There is no safe default when a ratio window is requested."
             )
+
+        try:
+            _CLASS_FOR_MODE[self.random_corpus_style].get_config_class()(
+                isl_mean=int(self.isl.expected_value),
+                osl_mean=int(self.osl.expected_value),
+                isl_stddev=float(getattr(self.isl, "stddev", 0.0) or 0.0),
+                osl_stddev=float(getattr(self.osl, "stddev", 0.0) or 0.0),
+                range_ratio=self.random_range_ratio,
+            )
+        except Exception as e:
+            raise ValueError(f"Invalid random_range_ratio value: {e}") from e
 
         return self
 
@@ -315,46 +317,19 @@ class PromptConfig(BaseConfig):
             return SequenceLengthDistribution(pairs)
 
         if self.random_range_ratio is not None:
-            from aiperf.common.enums import RandomCorpusStyle
-            from aiperf.common.models.sequence_distribution import (
-                RangeRatioDistribution,
-                SGLangRangeRatioDistribution,
-            )
+            from aiperf.common.models.sequence_distribution import _CLASS_FOR_MODE
 
-            input_ratio, output_ratio = RangeRatioDistribution.parse_cli_value(
-                self.random_range_ratio, self.random_corpus_style
-            )
-            if self.isl is None:
-                raise ValueError(
-                    "--random-range-ratio requires --isl to be set explicitly. "
-                    "There is no safe default when a ratio window is requested."
-                )
-            if self.osl is None:
-                raise ValueError(
-                    "--random-range-ratio requires --osl to be set explicitly. "
-                    "There is no safe default when a ratio window is requested."
-                )
-            isl_mean = int(self.isl.expected_value)
-            osl_mean = int(self.osl.expected_value)
-            DistClass = (
-                SGLangRangeRatioDistribution
-                if self.random_corpus_style == RandomCorpusStyle.SGLANG
-                else RangeRatioDistribution
-            )
-            extra = (
-                {"chat_template_len": chat_template_len}
-                if DistClass is SGLangRangeRatioDistribution
-                else {}
-            )
-            return DistClass(
-                isl_mean=isl_mean,
-                osl_mean=osl_mean,
-                input_ratio=input_ratio,
-                output_ratio=output_ratio,
-                mode=self.random_corpus_style,
+            DistClass = _CLASS_FOR_MODE[self.random_corpus_style]
+            config = DistClass.get_config_class()(
+                isl_mean=int(self.isl.expected_value),
+                osl_mean=int(self.osl.expected_value),
+                isl_stddev=0.0,
+                osl_stddev=0.0,
+                range_ratio=self.random_range_ratio,
                 num_special_tokens=num_special_tokens,
-                **extra,
+                chat_template_len=chat_template_len,
             )
+            return DistClass(config)
 
         return None
 

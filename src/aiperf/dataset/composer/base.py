@@ -270,15 +270,31 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         # Component (d): prefix prompt tokens consumed from the first-turn ISL
         # budget. The prefix is prepended to the body at request time, so the body
         # must be shorter by the prefix length to keep total wire ISL on target.
-        # Only active when pool_size > 0 — without a pool there are no prefixes
-        # to prepend.
+        # Only active when pool_size > 0 — without a pool there are no prefixes.
+        #
+        # Exception: RANDOM corpus with VLLM or SGLANG style treats the prefix
+        # as additive (total ISL = body + prefix), matching vLLM's
+        # --random-prefix-len and SGLang's prefix_len behaviour. Setting the
+        # budget to 0 keeps the body ISL distribution unchanged.
+        from aiperf.common.enums import PromptCorpus, RandomCorpusStyle
+
+        _random_additive = (
+            self.run.cfg.get_prompt_corpus() == PromptCorpus.RANDOM
+            and self._synthetic_prompts is not None
+            and self._synthetic_prompts.random_corpus_style
+            in (RandomCorpusStyle.VLLM, RandomCorpusStyle.SGLANG)
+        )
         self._prefix_prompt_tokens = (
-            prefix_prompts.length
-            if prefix_prompts is not None
-            and prefix_prompts.length is not None
-            and prefix_prompts.pool_size is not None
-            and prefix_prompts.pool_size > 0
-            else 0
+            0
+            if _random_additive
+            else (
+                prefix_prompts.length
+                if prefix_prompts is not None
+                and prefix_prompts.length is not None
+                and prefix_prompts.pool_size is not None
+                and prefix_prompts.pool_size > 0
+                else 0
+            )
         )
 
         return prefix_prompts
@@ -565,7 +581,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             if shared_system_prompt:
                 conversation.system_message = shared_system_prompt
                 self.trace(
-                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
+                    lambda conv=conversation: (
+                        f"Set system_message on conversation {conv.session_id}"
+                    )
                 )
 
             # Set user context prompt (unique per session)
@@ -575,9 +593,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 )
                 conversation.user_context_message = user_context
                 self.trace(
-                    lambda idx=session_index,
-                    conv=conversation: f"Set user_context_message for session {idx} "
-                    f"(conversation {conv.session_id})"
+                    lambda idx=session_index, conv=conversation: (
+                        f"Set user_context_message for session {idx} "
+                        f"(conversation {conv.session_id})"
+                    )
                 )
 
     @staticmethod

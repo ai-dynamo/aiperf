@@ -55,23 +55,21 @@ def test_prompt_config_random_range_ratio_json_dict_builds_distribution():
 
 
 def test_prompt_config_random_range_ratio_requires_osl():
-    """--random-range-ratio without --osl raises instead of silently defaulting."""
-    config = PromptConfig(
-        random_range_ratio="0.0",
-        isl=FixedDistribution(value=1024),
-    )
+    """--random-range-ratio without --osl raises at parse time."""
     with pytest.raises(ValueError, match="--osl"):
-        config.get_sequence_distribution()
+        PromptConfig(
+            random_range_ratio="0.0",
+            isl=FixedDistribution(value=1024),
+        )
 
 
 def test_prompt_config_random_range_ratio_requires_isl():
-    """--random-range-ratio without --isl raises instead of silently defaulting."""
-    config = PromptConfig(
-        random_range_ratio="0.0",
-        osl=FixedDistribution(value=128),
-    )
+    """--random-range-ratio without --isl raises at parse time."""
     with pytest.raises(ValueError, match="--isl"):
-        config.get_sequence_distribution()
+        PromptConfig(
+            random_range_ratio="0.0",
+            osl=FixedDistribution(value=128),
+        )
 
 
 def test_prompt_config_random_range_ratio_rejects_isl_stddev():
@@ -101,7 +99,11 @@ def test_prompt_config_random_range_ratio_rejects_osl_stddev():
 def test_prompt_config_random_range_ratio_invalid_value_rejected():
     """Bad ratio value is rejected at validation time, not on first use."""
     with pytest.raises(ValueError, match="Invalid random_range_ratio value"):
-        PromptConfig(random_range_ratio="1.5")
+        PromptConfig(
+            random_range_ratio="1.5",
+            isl=FixedDistribution(value=128),
+            osl=FixedDistribution(value=128),
+        )
 
 
 def test_prompt_config_random_range_ratio_conflicts_with_sequence_distribution():
