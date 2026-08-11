@@ -31,6 +31,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.finite import is_finite_value
 from aiperf.common.models import MetricResult
 from aiperf.metrics.types.e2e_normalized_interactivity_metrics import (
     E2ENormalizedInteractivityP75Metric,
@@ -95,18 +96,28 @@ def inject_e2e_normalized_interactivity_metrics(
     if not keep.any():
         return
 
-    # Seconds per output token, per surviving request.
+    # Seconds per output token, per surviving request. Drop any non-finite
+    # ratio (an extreme latency/OSL can overflow the division) so the
+    # percentile and its reciprocal stay finite -- injected metric values must
+    # be finite per the NaN/Inf discipline.
     ratio = (latency_ns[keep] / NANOS_PER_SECOND) / osl[keep]
+    ratio = ratio[np.isfinite(ratio)]
+    if ratio.size == 0:
+        return
 
     for cls in _PERCENTILE_METRICS:
         ratio_p = float(np.percentile(ratio, cls.percentile))
         if ratio_p <= 0:
             continue
+        value = 1.0 / ratio_p
+        # Guard the reciprocal too: a subnormal ratio_p can overflow to inf.
+        if not is_finite_value(value):
+            continue
         results[cls.tag] = MetricResult(
             tag=cls.tag,
             header=cls.header,
             unit=str(cls.unit),
-            avg=1.0 / ratio_p,
+            avg=value,
             count=int(ratio.size),
             console_group=cls.console_group,
         )

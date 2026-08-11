@@ -15,6 +15,8 @@ identical inputs.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 from pytest import param
@@ -179,6 +181,16 @@ def test_deferred_derive_raises() -> None:
     metric = E2ENormalizedInteractivityP90Metric()
     with pytest.raises(NoMetricValue):
         metric._derive_value(MetricResultsDict())
+
+
+def test_extreme_values_never_inject_nonfinite() -> None:
+    """Extreme latency/OSL must not inject nan/inf (NaN/Inf discipline): a tiny
+    latency over a large OSL underflows the ratio so the reciprocal would
+    overflow to inf; the guard must drop it rather than emit a non-finite value."""
+    store = _store(latency_s=[1e-300, 1e-300, 1e-300], osl=[1e9, 1e9, 1e9])
+    results = _inject(store)
+    for tag in (P90, P75):
+        assert tag not in results or math.isfinite(results[tag].avg)
 
 
 def test_metric_metadata() -> None:
