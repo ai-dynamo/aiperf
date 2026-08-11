@@ -8,12 +8,16 @@ public) and the prepend-vs-assign branch that keeps a dataset's own authored
 system message intact.
 """
 
+import orjson
 import pytest
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
+from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import EndpointType
 from tests.unit.dataset.composer.conftest import make_run
+from tests.unit.endpoints.conftest import create_model_endpoint, create_request_info
 
 SYSTEM_TEXT = "You are a production assistant."
 
@@ -142,3 +146,101 @@ class TestCustomComposerSystemPrompt:
         conversations = CustomDatasetComposer(run=run, tokenizer=None).create_dataset()
 
         assert conversations[0].system_message == SYSTEM_TEXT
+
+
+class TestSpeedBenchSystemPrompt:
+    """SPEED-Bench keeps its leading system message as a dispatched turn.
+
+    ``SpeedBenchLoader._hoist_leading_system_message`` is False, so unlike
+    ``multi_turn`` the dataset's system message never reaches
+    ``conversation.system_message``. The composer therefore has nothing to
+    prepend to, and the merge has to happen at the endpoint layer instead --
+    the one production loader that exercises that path.
+    """
+
+    DATASET_SYSTEM = "SPEED-Bench system message."
+
+    @pytest.fixture
+    def speed_bench_file(self, tmp_path):
+        row = {
+            "question_id": "speed-coding-1".ljust(32, "0"),
+            "category": "coding",
+            "messages": [
+                {"role": "system", "content": self.DATASET_SYSTEM},
+                {"role": "user", "content": "Write a function to reverse a string."},
+            ],
+        }
+        path = tmp_path / "speedbench.jsonl"
+        path.write_bytes(orjson.dumps(row) + b"\n")
+        return path
+
+    def _compose(self, speed_bench_file, prompt_file, tokenizer):
+        kwargs = {}
+        if prompt_file is not None:
+            kwargs["system_prompt_file"] = str(prompt_file)
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                input_file=str(speed_bench_file),
+                custom_dataset_type="speed_bench_coding",
+                **kwargs,
+            )
+        )
+        return CustomDatasetComposer(run=run, tokenizer=tokenizer).create_dataset()
+
+    @staticmethod
+    def _format(conversation, turns):
+        endpoint = ChatEndpoint(model_endpoint=create_model_endpoint(EndpointType.CHAT))
+        request_info = create_request_info(
+            model_endpoint=endpoint.model_endpoint,
+            turns=turns,
+            system_message=conversation.system_message,
+        )
+        return endpoint.format_payload(request_info)["messages"]
+
+    def test_composer_does_not_merge_unhoisted_system_turn(
+        self, speed_bench_file, prompt_file, mock_tokenizer
+    ):
+        """The dataset's system message stays a turn; only the custom text is lifted."""
+        conversation = self._compose(speed_bench_file, prompt_file, mock_tokenizer)[0]
+
+        assert conversation.system_message == SYSTEM_TEXT
+        assert self.DATASET_SYSTEM not in conversation.system_message
+
+    def test_endpoint_merges_into_one_system_message(
+        self, speed_bench_file, prompt_file, mock_tokenizer
+    ):
+        conversation = self._compose(speed_bench_file, prompt_file, mock_tokenizer)[0]
+        messages = self._format(conversation, conversation.turns)
+
+        systems = [m for m in messages if m["role"] == "system"]
+        assert len(systems) == 1
+        assert systems[0]["content"] == f"{SYSTEM_TEXT}\n\n{self.DATASET_SYSTEM}"
+
+    def test_prefix_not_duplicated_across_repeated_formats(
+        self, speed_bench_file, prompt_file, mock_tokenizer
+    ):
+        """Turn state is shared across credits, so the merge must not restack.
+
+        Regression guard for the copy-in-_format_messages: mutating the rendered
+        system message in place would compound the prefix on every later request
+        in the same session.
+        """
+        conversation = self._compose(speed_bench_file, prompt_file, mock_tokenizer)[0]
+
+        for _ in range(3):
+            messages = self._format(conversation, conversation.turns)
+            systems = [m for m in messages if m["role"] == "system"]
+            assert len(systems) == 1
+            assert systems[0]["content"].count(SYSTEM_TEXT) == 1
+
+    def test_dataset_system_turn_untouched_without_the_flag(
+        self, speed_bench_file, mock_tokenizer
+    ):
+        conversation = self._compose(speed_bench_file, None, mock_tokenizer)[0]
+        messages = self._format(conversation, conversation.turns)
+
+        assert conversation.system_message is None
+        systems = [m for m in messages if m["role"] == "system"]
+        assert len(systems) == 1
+        assert systems[0]["content"] == self.DATASET_SYSTEM
