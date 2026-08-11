@@ -276,22 +276,26 @@ class TestMetricsAccumulatorRunScopedDerivedMetrics:
     accumulator excludes it from per-slice derivation while keeping it in the
     overall summary."""
 
+    # Every run-scoped derived tag (``timeslice_derivable = False``): derived at
+    # run level, excluded from per-slice derivation. Shared by both tests so a
+    # new run-scoped metric is covered by both without updating them separately.
+    _RUN_SCOPED_TAGS = {
+        ReplaySchedLagP50Metric.tag,
+        ReplaySchedLagP90Metric.tag,
+        ReplaySchedLagP99Metric.tag,
+        ReplaySchedDegradedMetric.tag,
+        E2ENormalizedInteractivityP90Metric.tag,
+        E2ENormalizedInteractivityP75Metric.tag,
+    }
+
     def test_run_scoped_tags_excluded_from_timeslice_derivation(
         self, fixed_schedule_slice_run
     ) -> None:
         accumulator = MetricsAccumulator(fixed_schedule_slice_run)
 
-        run_scoped_tags = {
-            ReplaySchedLagP50Metric.tag,
-            ReplaySchedLagP90Metric.tag,
-            ReplaySchedLagP99Metric.tag,
-            ReplaySchedDegradedMetric.tag,
-            E2ENormalizedInteractivityP90Metric.tag,
-            E2ENormalizedInteractivityP75Metric.tag,
-        }
         # The run-scoped family derives at run level but is skipped per slice.
-        assert run_scoped_tags <= set(accumulator._derive_funcs)
-        assert accumulator._non_timeslice_derived_tags == run_scoped_tags
+        assert set(accumulator._derive_funcs) >= self._RUN_SCOPED_TAGS
+        assert accumulator._non_timeslice_derived_tags == self._RUN_SCOPED_TAGS
 
     @pytest.mark.asyncio
     async def test_run_scoped_tags_never_derived_in_timeslice_results(
@@ -317,7 +321,5 @@ class TestMetricsAccumulatorRunScopedDerivedMetrics:
         assert summary.timeslices is not None
         assert len(summary.timeslices) >= 1
         for ts in summary.timeslices:
-            assert ReplaySchedLagP50Metric.tag not in ts.metric_results
-            assert ReplaySchedLagP90Metric.tag not in ts.metric_results
-            assert ReplaySchedLagP99Metric.tag not in ts.metric_results
-            assert ReplaySchedDegradedMetric.tag not in ts.metric_results
+            for tag in self._RUN_SCOPED_TAGS:
+                assert tag not in ts.metric_results
