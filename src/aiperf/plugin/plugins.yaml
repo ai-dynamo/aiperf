@@ -181,6 +181,23 @@ service_manager:
 # One-to-one mapping: exactly one endpoint is selected based on endpoint_type config.
 # =============================================================================
 endpoint:
+  audio_transcription:
+    class: aiperf.endpoints.openai_audio_transcription:AudioTranscriptionEndpoint
+    description: |
+      OpenAI Audio Transcription endpoint (Whisper-style). Uploads audio as a
+      multipart file and returns a plain-text transcript. Compatible with
+      OpenAI /v1/audio/transcriptions, NIM, and SGLang. Pair with an ASR
+      dataset loader (e.g. --dataset librispeech). Use
+      --endpoint-type audio_transcription.
+    metadata:
+      endpoint_path: /v1/audio/transcriptions
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      supports_audio: true
+      requires_form_data: true
+      metrics_title: Audio Transcription Metrics
+
   chat:
     class: aiperf.endpoints.openai_chat:ChatEndpoint
     description: |
