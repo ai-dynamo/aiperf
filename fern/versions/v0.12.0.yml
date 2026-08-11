@@ -193,8 +193,6 @@ navigation:
         path: ../pages-v0.12.0/tutorials/baseten-trace.md
       - page: Conversation DAG Benchmarks
         path: ../pages-v0.12.0/benchmark-modes/dag.md
-      - page: "SemiAnalysis AgentX: How the Benchmark Works (FAQ)"
-        path: ../pages-v0.12.0/benchmark-modes/semianalysis-agentx-faq.md
   - section: Accuracy
     collapsed: true
     contents:

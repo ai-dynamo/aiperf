@@ -12,11 +12,6 @@ aimed at someone who hasn't worked with the scenario before — after a short
 orientation, you'll get a copy-pasteable command, then explanations of what it
 does and why.
 
-> **Want the under-the-hood mechanics instead of a how-to?** See
-> [SemiAnalysis AgentX: How the Benchmark Works (FAQ)](../benchmark-modes/semianalysis-agentx-faq.md)
-> — a serving-engineer's guide to what load it puts on your server, how it reproduces
-> KV-cache structure, what `t*`/warmup/cache-busting do, and what makes a run valid.
-
 ---
 
 ## What Is AgentX MVP?
@@ -78,8 +73,7 @@ corpus drops, and two runs on different drops are not comparable. Each corpus
 also has a `_256k` variant (e.g.
 `semianalysis_cc_traces_weka_with_subagents_256k`) that pre-drops individual
 requests whose input + output exceeds 256k tokens — pick it when your
-server's context window is ~256k (see the
-[AgentX FAQ §3](../benchmark-modes/semianalysis-agentx-faq.md#3-how-realistic-are-the-prompts-and-token-counts)).
+server's context window is ~256k.
 
 Then:
 
@@ -165,8 +159,8 @@ explicit value is honored *silently*, with no error and no change to the
   passing your own (any integer) makes the run reproducible up front.
   Pinning a seed also keys the reconstructed-dataset disk cache: unseeded
   scenario runs draw a fresh seed each time and repay the full multi-minute
-  corpus reconstruction on every run (see the
-  [AgentX FAQ §8](../benchmark-modes/semianalysis-agentx-faq.md#8-running-the-benchmark-and-why-the-first-run-is-slow)).
+  corpus reconstruction on every run (see
+  [Troubleshooting](#troubleshooting)).
 
 **Optional extras** (not in the command above):
 
@@ -220,8 +214,11 @@ and exposes it as an additive session-affinity header via an environment
 variable: `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=1` (SGLang
 `manual`), `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID=1` (Dynamo
 session affinity), or `AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID=1` (any
-other router). Details and full launch commands: the
-[AgentX FAQ §9](../benchmark-modes/semianalysis-agentx-faq.md#9-multi-replica-serving-conversation-aware-routing-sglang-dynamo).
+other router). For the server-side prefix-affinity setup, see
+[SGLang Model Gateway](https://docs.sglang.io/docs/advanced_features/sgl_model_gateway)
+and [Dynamo KV-aware routing](https://docs.nvidia.com/dynamo/dev/cli/kv-aware-routing/overview);
+the sticky-session headers above are AIPerf-side and are described in
+[Environment Variables](../environment-variables.md).
 
 ### What you should see
 
@@ -467,9 +464,7 @@ A few wrinkles worth knowing:
   trace recycles into a new play — that's what keeps the server's prefix
   cache from warming progressively on identical content as the run goes on.
   Markers also differ across runs, since each run's auto-generated benchmark
-  ID feeds the marker digest. See
-  [AgentX FAQ §4](../benchmark-modes/semianalysis-agentx-faq.md#4-the-kv-cache-story-warmup-t-and-cache-busting)
-  for marker placement and the warmup-to-profiling handoff.
+  ID feeds the marker digest.
 - **Warmup and profiling share the marker for a given play.** A trajectory's
   warmup turn `k_i` and its first profiling turn `k_i+1` carry the *same*
   `[rid:…]` — that's how the KV-cache prefix work done during warmup
@@ -611,9 +606,12 @@ The most common cause is starting the server with a reduced `--max-model-len`
 server without overriding the max length and try again. If the model's
 *native* window is itself around 256k (MiniMax-class models), the fix is a
 matching `_256k` corpus instead — e.g.
-`--public-dataset semianalysis_cc_traces_weka_with_subagents_256k`; see the
-[AgentX FAQ §3](../benchmark-modes/semianalysis-agentx-faq.md#3-how-realistic-are-the-prompts-and-token-counts)
-for why that beats capping client-side. The number of requests that
+`--public-dataset semianalysis_cc_traces_weka_with_subagents_256k`. That beats
+capping client-side with `--max-context-length`: the `_256k` build is pre-baked
+at the source and drops only the individual over-limit *requests*, so each trace
+stays multi-turn with its think-time pacing intact, whereas
+`--max-context-length` drops a *whole trace* as soon as one turn exceeds the
+limit. The number of requests that
 overflowed appears as the `context_overflow_count` metric (a raw count, not
 a rate), top-level in `profile_export_aiperf.json` and under `metrics` in
 the aggregate file — divide it by
@@ -676,8 +674,7 @@ timeout. Raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` and
 to ~1800 seconds for a cold run. The cost is one-time: the reconstructed
 dataset lands in an on-disk cache (default `~/.cache/aiperf/dataset_mmap`)
 whose key includes the random seed, so pin `--random-seed` and later runs
-restore it in seconds. See
-[AgentX FAQ §8](../benchmark-modes/semianalysis-agentx-faq.md#8-running-the-benchmark-and-why-the-first-run-is-slow).
+restore it in seconds.
 
 **Run is slower than I expected**
 On a cold first run, the corpus reconstruction described in the previous
