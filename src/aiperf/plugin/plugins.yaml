@@ -543,10 +543,10 @@ custom_dataset_loader:
   baseten_trace:
     class: aiperf.dataset.loader.baseten_trace:BasetenTraceDatasetLoader
     description: |
-      Baseten completion trace dataset loader for Parquet exports that include
-      prompts, timestamps, session identifiers, output tokens, and optional
-      hash-based KV-cache metadata. Supports fixed_schedule timing replay for
-      /v1/completions workloads.
+      Baseten completion trace dataset loader for Parquet or Arrow IPC exports
+      that include prompts, timestamps, session identifiers, output tokens, and
+      optional hash-based KV-cache metadata. Arrow IPC files are memory-mapped.
+      Supports fixed_schedule timing replay for /v1/completions workloads.
     metadata:
       is_trace: true
       default_block_size: 64
