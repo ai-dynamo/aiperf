@@ -846,6 +846,23 @@ custom_dataset_loader:
     metadata:
       category: high_entropy
 
+  tracelab:
+    class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
+    description: |
+      TraceLab agentic coding trace loader for the uw-syfi corpus published at
+      https://github.com/uw-syfi/TraceLab. Input is a single JSONL file, gzipped
+      or plain, holding one row per LLM round. Rounds are grouped into sessions,
+      per-request hash_ids are synthesized from the engine-reported prefix /
+      append token split, and subagent parent-child links are recovered by
+      timing containment before reconstruction is delegated to the Weka trace
+      loader. Subagent entries spawn concurrent child sessions via SPAWN +
+      SPAWN_JOIN prerequisites.
+      Usage: --custom-dataset-type tracelab --input-file syfi_coding_trace.jsonl.gz
+    metadata:
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
   weka_trace:
     class: aiperf.dataset.loader.weka_trace:WekaTraceLoader
     description: |
