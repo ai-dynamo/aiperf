@@ -248,6 +248,64 @@ class TestComputeCacheKey:
         assert k1 is not None and k2 is not None
         assert k1 != k2, "random_seed must distinguish the cache key"
 
+    def test_settings_payload_key_set_is_frozen(self, tmp_path: Path) -> None:
+        """Any new cache-affecting field must be added here intentionally.
+
+        This test is the gate for the class of cache-key holes where a setting
+        that rewrites cached bytes is accidentally omitted from the payload.
+        """
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(tmp_path, b'{"session_id": "s1"}\n')
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                input_file=str(trace),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            )
+        )
+        payload = mmap_cache._settings_payload_from_run(run)
+        assert set(payload.keys()) == {
+            "num_dataset_entries",
+            "dataset_sampling_strategy",
+            "custom_dataset_type",
+            "public_dataset_source",
+            "random_seed",
+            "dataset_random_seed",
+            "corpus",
+            "osl_fallback",
+            "preformat_payloads",
+            "preformat_endpoint",
+            "inline_records_sha256",
+            "prompt",
+            "endpoint_type",
+            "model_names",
+            "fixed_schedule_start_offset",
+            "fixed_schedule_end_offset",
+            "ignore_trace_delays",
+            "use_think_time_only",
+            "inter_turn_delay_cap_seconds",
+            "trace_idle_gap_cap_seconds",
+            "weka_split_flattened_agents",
+            "weka_aux_max_requests",
+            "weka_aux_isl_ratio",
+            "weka_aux_isl_floor",
+            "weka_aux_cross_model",
+            "weka_aux_reduction_osl_max",
+            "weka_aux_reduction_ratio",
+            "weka_worker_group_min",
+            "weka_tool_shaped_messages",
+            "weka_seam_max_gap_seconds",
+            "weka_seam_min_overlap_ratio",
+            "block_size",
+            "tracelab_subagent_join",
+            "tracelab_codex_subagent_join",
+            "tracelab_min_spawn_ms",
+            "synthesis",
+            "max_context_length",
+            "entries_explicit",
+        }
+
     def test_settings_payload_includes_seed_corpus_osl(self, tmp_path: Path) -> None:
         # Regression guard for the wrong-cache-hit findings: random_seed,
         # prompts.corpus, and the per-record OSL fallback must enter the key.

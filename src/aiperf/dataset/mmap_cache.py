@@ -200,6 +200,7 @@ TRACE_VERBATIM_DATASET_TYPES = frozenset(
         "raw_payload",
         "inputs_json",
         "weka_trace",
+        "tracelab",
     }
 )
 
@@ -792,6 +793,7 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
                 "use_legacy_max_tokens": cfg.endpoint.use_legacy_max_tokens,
                 "use_server_token_count": cfg.endpoint.use_server_token_count,
                 "extra": cfg.endpoint.extra,
+                "force_content_parts": Environment.ENDPOINT.FORCE_CONTENT_PARTS,
             }
             if Environment.DATASET.PREFORMAT_PAYLOADS
             else None
@@ -799,7 +801,7 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "inline_records_sha256": records_hash,
         "prompt": prompt_dump,
         "endpoint_type": str(cfg.endpoint.type),
-        "model_name": model_names[0] if model_names else "",
+        "model_names": model_names,
         "fixed_schedule_start_offset": start_offset,
         "fixed_schedule_end_offset": end_offset,
         # Load-time timing knobs bake into the cached Turn timestamps/delays
@@ -832,10 +834,24 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "weka_seam_min_overlap_ratio": (
             Environment.DATASET.WEKA_SEAM_MIN_OVERLAP_RATIO
         ),
+        # --isl-block-size lands here for the hash-id trace formats. It sets
+        # the token width every hash_id decodes to, so it rewrites the cached
+        # prompt bytes outright; without it in the key, changing the flag
+        # serves the previous run's mmap unchanged.
+        "block_size": getattr(dataset, "block_size", None),
+        # TraceLab synthesizes its block ids and recovers its subagent nesting
+        # at load time, so these select between reconstructions that are baked
+        # into the cached conversations.
+        "tracelab_subagent_join": Environment.DATASET.TRACELAB_SUBAGENT_JOIN,
+        "tracelab_codex_subagent_join": (
+            Environment.DATASET.TRACELAB_CODEX_SUBAGENT_JOIN
+        ),
+        "tracelab_min_spawn_ms": Environment.DATASET.TRACELAB_MIN_SPAWN_MS,
         # Full synthesis dump: max_isl/max_osl caps AND the speedup_ratio /
         # *_multiplier transforms, all of which rewrite the decoded trace bytes.
         "synthesis": synthesis_dump,
         "max_context_length": getattr(dataset, "max_context_length", None),
+        "entries_explicit": getattr(dataset, "entries_explicit", False),
     }
 
 
