@@ -107,12 +107,12 @@ RUN mkdir -p /opt/licenses/dpkg \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and build ffmpeg with libvpx (VP9), libvorbis and libopus.
-# The component allowlist is deliberate: a default build ships hundreds of
-# codecs. AIPerf only ever encodes VP8/VP9 video with Vorbis or Opus audio, so
-# --disable-everything plus an explicit allowlist keeps the shipped codec set
-# minimal. --disable-autodetect stops configure from linking whatever dev
-# packages the base image happens to carry.
+# Build ffmpeg with libvpx (VP9), libvorbis and libopus. A default build ships
+# hundreds of codecs; AIPerf only encodes VP8/VP9 with Vorbis or Opus, so
+# --disable-everything plus this allowlist keeps the set minimal, and
+# --disable-autodetect stops configure linking stray dev packages. The artifact
+# still exceeds the lists: muxers add aac_adtstoasc (not an AAC codec), and
+# --enable-ffmpeg adds 18 filters. Verify with `ffmpeg -encoders`, not `-codecs`.
 ARG FFMPEG_VERSION=8.1.2
 RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
