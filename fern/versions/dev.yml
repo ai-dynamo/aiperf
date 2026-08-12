@@ -104,6 +104,8 @@ navigation:
             path: ../pages-dev/tutorials/agentic-code-generator.md
           - page: Replay Weka Agentic Coding Traces
             path: ../pages-dev/tutorials/weka-trace.md
+          - page: Replay TraceLab Agentic Coding Traces
+            path: ../pages-dev/tutorials/tracelab-trace.md
           - page: InferenceX AgentX MVP Benchmark
             path: ../pages-dev/tutorials/agentx-mvp.md
       - section: Load Patterns & Scheduling
