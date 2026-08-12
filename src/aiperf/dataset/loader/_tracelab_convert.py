@@ -209,7 +209,20 @@ def order_rounds(
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Spawn:
-    """One recovered parent -> child link."""
+    """One recovered parent -> child link.
+
+    Attributes:
+        parent_sid: Session id of the spawning (parent) session.
+        child_sid: Session id of the spawned (child) session.
+        start: POSIX seconds (from :func:`parse_ts`) at which the spawning
+            tool call was emitted — the left edge of the containment window.
+        end: POSIX seconds at which the spawning tool call returned — the
+            right edge of the containment window.
+        duration_ms: Wall-clock duration of the spawn window in milliseconds
+            (``int((end - start) * 1000)``).
+        kind: ``"claude"`` for a blocking Agent/Task call, ``"codex"`` for the
+            async spawn_agent/wait_agent lifecycle.
+    """
 
     parent_sid: str
     child_sid: str
