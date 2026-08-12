@@ -372,6 +372,33 @@ class _DatasetSettings(BaseSettings):
         "dataset to a JSONL file. No hard cap.",
     )
 
+    TRACELAB_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), TraceLabTraceDatasetLoader recovers "
+        "subagent parent/child links by timing containment and nests each "
+        "recovered child as a subagent entry inside its parent trace. Set to "
+        "False to emit every recorded session as an independent flat trace, "
+        "which is the shape the corpus literally records.",
+    )
+    TRACELAB_CODEX_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), the TraceLab subagent join also "
+        "runs over codex sessions. Codex uses an async spawn/wait/close agent "
+        "lifecycle whose handles are stripped from the released corpus, so "
+        "only a coarse session-level window is available there and a session "
+        "fanning out several agents collapses them into one window. Set to "
+        "False to keep only the precise blocking-tool-call join.",
+    )
+    TRACELAB_MIN_SPAWN_MS: int = Field(
+        ge=0,
+        default=10000,
+        description="Minimum wall latency, in milliseconds, for a spawning "
+        "tool call to be treated as a subagent round-trip by the TraceLab "
+        "join. Short calls are overwhelmingly no-op or error returns, and "
+        "admitting them widens the containment window enough to start "
+        "capturing unrelated concurrent sessions.",
+    )
+
     WEKA_PARALLEL_WORKERS: int = Field(
         ge=0,
         le=256,
