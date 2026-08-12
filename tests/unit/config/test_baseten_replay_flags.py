@@ -131,6 +131,15 @@ def test_count_dataset_records_returns_zero_on_truncated_gz(tmp_path: Path) -> N
     assert _count_dataset_records(_truncated_gz(tmp_path)) == 0
 
 
+def _crc_corrupt_gz(tmp_path: Path) -> Path:
+    # Valid 10-byte gzip header + garbage deflate payload → zlib.error on any read.
+    gz = tmp_path / "crc_corrupt.jsonl.gz"
+    gz.write_bytes(
+        b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03" + b"\xff" * 20 + b"\x00" * 8
+    )
+    return gz
+
+
 def _corrupt_gz_header(tmp_path: Path) -> Path:
     # gzip magic + method byte 0x09 (not 8=deflate) → gzip.BadGzipFile.
     # BadGzipFile is an OSError subclass; if the except clauses are in the
@@ -162,6 +171,20 @@ def test_count_dataset_records_logs_on_corrupt_gz_header(
         result = _count_dataset_records(_corrupt_gz_header(tmp_path))
     assert result == 0
     assert any("corrupt" in r.message.lower() for r in caplog.records)
+
+
+def test_first_record_has_timestamp_returns_false_on_crc_corrupt_gz(
+    tmp_path: Path,
+) -> None:
+    """zlib.error from CRC corruption must degrade to False, not propagate."""
+    assert _first_record_has_timestamp(_crc_corrupt_gz(tmp_path)) is False
+
+
+def test_count_dataset_records_returns_zero_on_crc_corrupt_gz(
+    tmp_path: Path,
+) -> None:
+    """zlib.error from CRC corruption must degrade to 0, not propagate."""
+    assert _count_dataset_records(_crc_corrupt_gz(tmp_path)) == 0
 
 
 def _baseten_argv(trace_parquet: Path, *extra: str) -> list[str]:

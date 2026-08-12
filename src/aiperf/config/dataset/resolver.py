@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import gzip
+import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -320,7 +321,7 @@ class DatasetResolver:
                         except orjson.JSONDecodeError:
                             return None
                         return parsed if isinstance(parsed, dict) else None
-        except (UnicodeDecodeError, EOFError, gzip.BadGzipFile):
+        except (UnicodeDecodeError, EOFError, gzip.BadGzipFile, zlib.error):
             return None
         return None
 
@@ -397,12 +398,12 @@ class DatasetResolver:
                         if line := line.strip():
                             record = load_json_str(line)
                             break
-            except (EOFError, gzip.BadGzipFile) as e:
+            except (EOFError, gzip.BadGzipFile, zlib.error) as e:
                 _logger.warning(
                     f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
                 )
                 return False
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError, ValueError):
                 return False
 
         if record is None:
@@ -445,7 +446,7 @@ class DatasetResolver:
                     record_count += 1
                     if is_multi_turn:
                         _add_session_id(line, session_ids)
-        except (EOFError, gzip.BadGzipFile) as e:
+        except (EOFError, gzip.BadGzipFile, zlib.error) as e:
             _logger.warning(
                 f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
             )

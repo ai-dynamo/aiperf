@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import gzip
+import zlib
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -444,7 +445,7 @@ def _first_record_has_timestamp(file_path: object) -> bool:
                 return data.get(
                     "timestamp"
                 ) is not None or _has_timing_events_timestamp(data)
-    except (EOFError, gzip.BadGzipFile) as e:
+    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
         _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
         return False
     except (OSError, UnicodeDecodeError):
@@ -486,7 +487,7 @@ def _count_dataset_records(file_path: object) -> int:
         if path.is_file():
             with open_text_maybe_gzip(path) as f:
                 return sum(1 for line in f if line.strip())
-    except (EOFError, gzip.BadGzipFile) as e:
+    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
         _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
         return 0
     except (OSError, UnicodeDecodeError):
