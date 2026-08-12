@@ -1186,7 +1186,8 @@ class CLIConfig(BaseConfig):
                 "warmup_isolation_first_turn) — inject a constant '[warmup]' marker only "
                 "during the WARMUP phase; profiling sees no marker (fully cold start or "
                 "system-pre-warmed). Incompatible with agentic_replay timing mode. "
-                "'none' disables the feature (default)."
+                "'none' disables the feature (default). "
+                "See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples."
             ),
         ),
         CLIParameter(
