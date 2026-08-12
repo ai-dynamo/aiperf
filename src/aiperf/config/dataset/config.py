@@ -493,6 +493,46 @@ class FileDataset(SystemPromptMixin):
         ),
     ]
 
+    prompt_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Number of text items per request. "
+            "Only honored by format: random_pool.",
+        ),
+    ]
+
+    image_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Number of images per request. "
+            "Only honored by format: random_pool.",
+        ),
+    ]
+
+    audio_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Number of audio items per request. "
+            "Only honored by format: random_pool.",
+        ),
+    ]
+
+    video_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Number of video items per request. "
+            "Only honored by format: random_pool.",
+        ),
+    ]
+
     block_size: Annotated[
         int | None,
         Field(

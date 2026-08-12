@@ -607,6 +607,13 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Batch-size flags are synthetic-only for trace/single-turn datasets, but
+# random_pool supports them to control how many items are packed per request.
+_RANDOM_POOL_BATCH_SIZE_FLAGS: frozenset[str] = frozenset(
+    {"prompt_batch_size", "image_batch_size", "audio_batch_size", "video_batch_size"}
+)
+
+
 def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     """Reject synthetic-only flags on FILE or PUBLIC (trace) datasets.
 
@@ -626,8 +633,16 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     if not cli.input_file and not _implies_public_dataset(cli):
         return
     s = cli.model_fields_set
+    from aiperf.plugin.enums import CustomDatasetType
+
+    is_random_pool = (
+        cli.input_file is not None
+        and cli.custom_dataset_type == CustomDatasetType.RANDOM_POOL
+    )
     violations = [
-        flag for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS if attr in s
+        flag
+        for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
+        if attr in s and not (is_random_pool and attr in _RANDOM_POOL_BATCH_SIZE_FLAGS)
     ]
     if violations:
         raise ValueError(
@@ -636,6 +651,27 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
             "apply synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
             "generation, multi-turn conversation, etc)."
         )
+
+
+def _apply_random_pool_batch_sizes(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route batch-size CLI flags onto FileDataset fields when format is random_pool.
+
+    FileDataset has no prompts/images/audio/video sub-configs, so batch sizes
+    live as flat fields and are threaded directly to RandomPoolDatasetLoader.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if not cli.input_file or cli.custom_dataset_type != CustomDatasetType.RANDOM_POOL:
+        return
+    s = cli.model_fields_set
+    if "prompt_batch_size" in s:
+        d["prompt_batch_size"] = cli.prompt_batch_size
+    if "image_batch_size" in s:
+        d["image_batch_size"] = cli.image_batch_size
+    if "audio_batch_size" in s:
+        d["audio_batch_size"] = cli.audio_batch_size
+    if "video_batch_size" in s:
+        d["video_batch_size"] = cli.video_batch_size
 
 
 _BASETEN_ONLY_TRACE_FLAGS: tuple[tuple[str, str], ...] = (
@@ -1119,6 +1155,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
+    _apply_random_pool_batch_sizes(d, cli)
     # block_size for FILE hash-id traces is owned by _apply_block_size (which
     # also rejects weka / non-hash-id formats). Do not also call
     # _apply_file_block_size — that helper is broader and redundant here.

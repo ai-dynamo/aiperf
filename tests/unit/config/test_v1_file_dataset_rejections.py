@@ -20,6 +20,7 @@ trace replay, so it is meaningful, and it routes onto ``FileDataset.block_size``
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -173,3 +174,56 @@ def test_synthetic_only_flag_rejected_on_public_dataset(
     )
     with pytest.raises(ValueError, match=expected_flag_fragment):
         build_dataset(user)
+
+
+class TestRandomPoolBatchSizeCarveOut:
+    """random_pool must be exempt from the batch-size flag rejection."""
+
+    @pytest.fixture
+    def pool_jsonl(self, tmp_path: Path) -> Path:
+        p = tmp_path / "pool.jsonl"
+        p.touch()
+        return p
+
+    @pytest.mark.parametrize(
+        "batch_kwarg, expected_field",
+        [
+            param({"prompt_batch_size": 5}, "prompt_batch_size", id="text"),
+            param({"image_batch_size": 3}, "image_batch_size", id="image"),
+            param({"audio_batch_size": 2}, "audio_batch_size", id="audio"),
+            param({"video_batch_size": 4}, "video_batch_size", id="video"),
+        ],
+    )  # fmt: skip
+    def test_batch_size_allowed_with_random_pool(
+        self, pool_jsonl: Path, batch_kwarg: dict, expected_field: str
+    ):
+        """Batch-size flags must not raise when custom_dataset_type is random_pool."""
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(pool_jsonl),
+            custom_dataset_type="random_pool",
+            **batch_kwarg,
+        )
+        cfg = convert_cli_to_aiperf(cli)
+        dataset = cfg.benchmark.datasets[0]
+        assert getattr(dataset, expected_field) == list(batch_kwarg.values())[0]
+
+    @pytest.mark.parametrize(
+        "batch_kwarg, flag",
+        [
+            param({"prompt_batch_size": 5}, "--prompt-batch-size", id="text"),
+            param({"image_batch_size": 3}, "--image-batch-size", id="image"),
+        ],
+    )  # fmt: skip
+    def test_batch_size_still_rejected_for_trace_formats(
+        self, mc_jsonl: Path, batch_kwarg: dict, flag: str
+    ):
+        """Batch-size flags must still be rejected for non-random-pool file datasets."""
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(mc_jsonl),
+            custom_dataset_type="mooncake_trace",
+            **batch_kwarg,
+        )
+        with pytest.raises(ValueError, match=re.escape(flag)):
+            convert_cli_to_aiperf(cli)
