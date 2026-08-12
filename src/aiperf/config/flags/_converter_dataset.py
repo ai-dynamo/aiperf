@@ -626,6 +626,11 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     AIPerfConfig validation with ``extra_forbidden``). Surface a clear message
     instead.
 
+    Exception: batch-size flags (--prompt-batch-size, --image-batch-size,
+    --audio-batch-size, --video-batch-size) are allowed when
+    ``--custom-dataset-type random_pool`` is set; they control per-modality
+    packing in ``RandomPoolDatasetLoader``.
+
     --osl / --osl-stddev are NOT rejected — they're routed onto
     ``FileDataset.osl`` / ``PublicDataset.osl`` by ``_apply_file_osl`` as a
     per-record fallback.
@@ -1133,7 +1138,8 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     flat input fields and sub-config holders on ``cli``, then assembles the
     sub-fields into the correct dataset shape. Rejects synthetic-only
     flags (prefix, ISL shaping, batch_size, seq-dist, multimodal batch_size)
-    when --input-file is set.
+    when --input-file is set, except batch-size flags when
+    ``--custom-dataset-type random_pool`` is the custom dataset type.
 
     Returns:
         A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``.

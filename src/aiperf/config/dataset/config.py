@@ -646,6 +646,27 @@ class FileDataset(SystemPromptMixin):
         return self
 
     @model_validator(mode="after")
+    def _validate_batch_sizes_random_pool_only(self) -> FileDataset:
+        """Reject per-modality batch sizes on non-random_pool formats.
+
+        These fields are only consumed by RandomPoolDatasetLoader; on other
+        formats they would be silently ignored.
+        """
+        batch_fields = {
+            "prompt_batch_size": self.prompt_batch_size,
+            "image_batch_size": self.image_batch_size,
+            "audio_batch_size": self.audio_batch_size,
+            "video_batch_size": self.video_batch_size,
+        }
+        set_fields = {k: v for k, v in batch_fields.items() if v is not None}
+        if set_fields and self.format != DatasetFormat.RANDOM_POOL:
+            names = ", ".join(set_fields)
+            raise ValueError(
+                f"{names} only apply to format: random_pool; got format: {self.format}."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_max_context_length_weka_only(self) -> FileDataset:
         """Reject max_context_length on provably non-Weka file formats.
 

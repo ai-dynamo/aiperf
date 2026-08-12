@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
+from aiperf.config.dataset.config import FileDataset
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
@@ -108,8 +109,6 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         # prompts/images/audio/video sub-configs.  FileDataset (the --input-file
         # path) stores them as flat fields populated by the CLI converter.
         dataset = self.run.cfg.get_default_dataset()
-        from aiperf.config.dataset.config import FileDataset
-
         if isinstance(dataset, FileDataset):
             self.batch_size_text = dataset.prompt_batch_size or 1
             self.batch_size_image = dataset.image_batch_size or 1

@@ -26,9 +26,11 @@ from pathlib import Path
 import pytest
 from pytest import param
 
+from aiperf.config.dataset.config import FileDataset
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
+from aiperf.plugin.enums import DatasetFormat
 
 
 @pytest.fixture
@@ -209,15 +211,15 @@ class TestRandomPoolBatchSizeCarveOut:
         assert getattr(dataset, expected_field) == list(batch_kwarg.values())[0]
 
     @pytest.mark.parametrize(
-        "batch_kwarg, flag",
+        "batch_kwarg, expected_flag_fragment",
         [
             param({"prompt_batch_size": 5}, "--prompt-batch-size", id="text"),
             param({"image_batch_size": 3}, "--image-batch-size", id="image"),
         ],
     )  # fmt: skip
     def test_batch_size_still_rejected_for_trace_formats(
-        self, mc_jsonl: Path, batch_kwarg: dict, flag: str
-    ):
+        self, mc_jsonl: Path, batch_kwarg: dict, expected_flag_fragment: str
+    ) -> None:
         """Batch-size flags must still be rejected for non-random-pool file datasets."""
         cli = CLIConfig(
             model_names=["test-model"],
@@ -225,5 +227,19 @@ class TestRandomPoolBatchSizeCarveOut:
             custom_dataset_type="mooncake_trace",
             **batch_kwarg,
         )
-        with pytest.raises(ValueError, match=re.escape(flag)):
+        with pytest.raises(ValueError, match=re.escape(expected_flag_fragment)):
             convert_cli_to_aiperf(cli)
+
+
+def test_batch_size_fields_rejected_on_non_random_pool_format(tmp_path: Path) -> None:
+    """FileDataset model validator rejects batch-size fields when format != random_pool."""
+    p = tmp_path / "f.jsonl"
+    p.touch()
+    with pytest.raises(ValueError, match="only apply to format: random_pool"):
+        FileDataset(
+            name="d",
+            type="file",
+            path=p,
+            format=DatasetFormat.MOONCAKE_TRACE,
+            prompt_batch_size=8,
+        )
