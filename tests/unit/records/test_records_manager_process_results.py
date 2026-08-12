@@ -329,7 +329,7 @@ class TestProcessResultsAccumulatorPath:
 
     @pytest.mark.asyncio
     async def test_agentx_metric_coverage_failure_is_fatal(self) -> None:
-        """A duration-based AgentX phase below 98% remains exportable but fatal."""
+        """A duration-based AgentX phase below 95% remains exportable but fatal."""
         acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
         acc.profile_metric_duration_coverage.return_value = (
             ProfileMetricDurationCoverage(
@@ -353,7 +353,7 @@ class TestProcessResultsAccumulatorPath:
 
         assert len(result.fatal_errors) == 1
         assert result.fatal_errors[0].type == "ProfileMetricCoverageError"
-        assert "required 98.0%" in result.fatal_errors[0].message
+        assert "required 95.0%" in result.fatal_errors[0].message
         assert "check inference server logs" in result.fatal_errors[0].message
         assert result.results.runtime_submission_invalid_reasons == [
             "insufficient_profile_metric_coverage"
