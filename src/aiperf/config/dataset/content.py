@@ -24,9 +24,11 @@ from pydantic import (
 
 from aiperf.common.enums import (
     AudioFormat,
+    CacheBustTarget,
     ImageFormat,
     ImageSource,
     ImageSourceSamplingStrategy,
+    PromptCorpus,
 )
 from aiperf.config.base import BaseConfig
 from aiperf.config.types import (
@@ -54,6 +56,57 @@ def _parse_image_source(value: object) -> object:
         except ValueError:
             return Path(value).expanduser()
     return value
+
+
+class CacheBustConfig(BaseConfig):
+    """Per-run cache-bust marker configuration.
+
+    Two families of targets:
+
+    RID targets (``system_prefix``, ``system_suffix``, ``first_turn_prefix``,
+    ``first_turn_suffix``): inject a per-trajectory unique marker derived from a
+    SHA-256 digest of (benchmark_id, recycle_pass, trajectory_index, trace_id).
+    The digest is phase-agnostic — warmup and profiling turns for the same
+    trajectory share the same marker — so warmup KV-cache work transfers to
+    profiling. Different trajectories (different lanes or recycle passes) receive
+    distinct markers. Prefix variants diverge at token 0; suffix variants append
+    after existing content.
+
+    Warmup-isolation targets (``warmup_isolation_system``,
+    ``warmup_isolation_first_turn``): inject a constant ``[warmup]`` marker only
+    during the WARMUP phase; during PROFILING the marker is ``None`` so the
+    profiling request arrives clean. These targets are phase-aware and do NOT use
+    a per-trajectory digest. Incompatible with ``agentic_replay`` timing mode.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    _target_explicitly_set: bool = False
+
+    target: Annotated[
+        CacheBustTarget,
+        Field(
+            default=CacheBustTarget.NONE,
+            description=(
+                "Where (and how) to inject a per-conversation cache-bust marker. "
+                "Prefix variants prepend at token 0 (most aggressive); "
+                "suffix variants append after existing content. "
+                "'none' disables the feature (default)."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _record_explicit_set_flags(self) -> Self:
+        """Snapshot whether the user explicitly set the cache-bust target.
+
+        Scenario validation distinguishes "user explicitly set target to a
+        non-required value" (raise) from "target is at default; auto-fill from
+        scenario spec" (info log). Surface a stable underscore flag for the
+        validator's defensive `getattr`.
+        """
+        self._target_explicitly_set = "target" in self.model_fields_set
+        return self
 
 
 class PromptConfig(BaseConfig):
@@ -114,6 +167,28 @@ class PromptConfig(BaseConfig):
         ),
     ]
 
+    cache_bust: Annotated[
+        CacheBustConfig,
+        Field(
+            default_factory=CacheBustConfig,
+            description="Per-conversation cache-bust marker configuration. "
+            "Injects a deterministic marker into prompts to defeat KV-cache "
+            "prefix matching. Disabled by default (target='none').",
+        ),
+    ]
+
+    corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            default=None,
+            description="Source corpus for synthetic prompt text generation. "
+            "'sonnet' uses Shakespeare sonnets. "
+            "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
+            "When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; "
+            "agentic-coding loaders such as weka_trace default to 'coding').",
+        ),
+    ]
+
     sequence_distribution: Annotated[
         list[SequenceDistributionEntry] | None,
         Field(
@@ -133,6 +208,25 @@ class PromptConfig(BaseConfig):
         if v is not None:
             validate_probability_distribution(v)
         return v
+
+
+class PromptSelectionConfig(BaseConfig):
+    """Slim prompts block for file/public datasets (corpus selection only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            default=None,
+            description="Source corpus for synthesized prompt text. "
+            "'sonnet' uses Shakespeare sonnets. "
+            "'coding' uses realistic coding content. "
+            "When unset, the active dataset loader's default applies. "
+            "Honored only where content is synthesized (synthetic + hash/trace "
+            "replay); verbatim loaders ignore it.",
+        ),
+    ]
 
 
 class PrefixPromptConfig(BaseConfig):

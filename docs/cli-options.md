@@ -12,6 +12,14 @@ sidebar-title: Command Line Options
 
 Install shell completion for this application.
 
+### [`analyze swim-lane`](#aiperf-analyze-swim-lane)
+
+Render a per-session swim-lane PNG with concurrency curve underneath.
+
+### [`analyze turn-messages`](#aiperf-analyze-turn-messages)
+
+Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
+
 ### [`analyze-trace`](#aiperf-analyze-trace)
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
@@ -36,7 +44,7 @@ Validate an AIPerf config file.
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Cache Bust](#cache-bust) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Scenario](#scenario) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
 
 ### [`plot`](#aiperf-plot)
 
@@ -50,7 +58,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 
 Run an AIPerf service in a single process.
 
-[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Cache Bust](#cache-bust) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Scenario](#scenario) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
 
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
@@ -59,10 +67,6 @@ Assemble per-category SPEED-Bench aiperf results into a matrix report.
 ### [`synthesize`](#aiperf-synthesize)
 
 Synthesize a dataset workload.
-
-### [`turn-messages`](#aiperf-turn-messages)
-
-Render a collapsible HTML viewer of the per-turn input messages a run sent.
 
 ### [`validate`](#aiperf-validate)
 
@@ -76,13 +80,68 @@ Install shell completion for this application.
 
 This command generates and installs the completion script to the appropriate location for your shell. After installation, you may need to restart your shell or source your shell configuration file.
 
-#### `--shell` `<str>`
+### `--shell` `<str>`
 
 Shell type for completion. If not specified, attempts to auto-detect current shell.
 
-#### `-o`, `--output` `<str>`
+### `-o`, `--output` `<str>`
 
 Output path for the completion script. If not specified, uses shell-specific default.
+
+<hr/>
+
+## `aiperf analyze swim-lane`
+
+Render a per-session swim-lane PNG with concurrency curve underneath.
+
+### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+
+One or more AIPerf run directories.
+
+### `-o`, `--out` `<str>`
+
+Output PNG path. Only valid when a single run directory is given.
+
+### `-c`, `--concurrency` `<int>`
+
+Target concurrency to draw as a reference line in the concurrency panel.
+
+### `--ramp` `<float>`
+
+Ramp duration in seconds for the ramp-done marker; overrides the value read from ``profile_export_aiperf.json`` (useful when only the jsonl was exported).
+
+### `--html`, `--no-html`
+
+Also write an interactive HTML trace viewer (``swim_lane.html``, or the ``--out`` path with an ``.html`` suffix).
+
+<hr/>
+
+## `aiperf analyze turn-messages`
+
+Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
+
+### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+
+One or more AIPerf run directories.
+
+### `-o`, `--out` `<str>`
+
+Output HTML path. Only valid when a single run directory is given.
+
+### `-n`, `--limit-conversations` `<int>`
+
+Max conversations to render (roots first, then by earliest request time).
+<br/>_Default: `40`_
+
+### `--max-turns` `<int>`
+
+Max turns rendered per conversation; the rest are summarized as a hidden count.
+<br/>_Default: `60`_
+
+### `--content-cap` `<int>`
+
+Max characters kept per unique message body; longer bodies are truncated with a remaining-chars note. Raise for full fidelity.
+<br/>_Default: `8000`_
 
 <hr/>
 
@@ -90,16 +149,16 @@ Output path for the completion script. If not specified, uses shell-specific def
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
-#### `--input-file` `<str>` _(Required)_
+### `--input-file` `<str>` _(Required)_
 
 Path to input mooncake trace JSONL file.
 
-#### `--block-size` `<int>`
+### `--block-size` `<int>`
 
 KV cache block size for analysis (default: 512).
 <br/>_Default: `512`_
 
-#### `--output-file` `<str>`
+### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
 
@@ -124,33 +183,33 @@ aiperf chat --model Qwen/Qwen3-0.6B --no-history
 aiperf chat --model Qwen/Qwen3-0.6B --quick "hello, who are you?"
 ```
 
-#### `-m`, `--model` `<str>` _(Required)_
+### `-m`, `--model` `<str>` _(Required)_
 
 Model name served by the endpoint.
 
-#### `-u`, `--url` `<str>`
+### `-u`, `--url` `<str>`
 
 Base URL of the OpenAI-compatible server (e.g. http://localhost:8000), matching `aiperf profile`.
 <br/>_Default: `http://localhost:8000`_
 
-#### `--system-prompt` `<str>`
+### `--system-prompt` `<str>`
 
 Optional system prompt prepended to the conversation.
 
-#### `-q`, `--quick` `<str>`
+### `-q`, `--quick` `<str>`
 
 Send a single MESSAGE and print the response + stats, then exit.
 
-#### `--history`, `--no-history`
+### `--history`, `--no-history`
 
 Retain and resend conversation history each turn (default). Pass --no-history for stateless, completion-style turns. Ignored with --quick.
 <br/>_Default: `True`_
 
-#### `--api-key` `<str>`
+### `--api-key` `<str>`
 
 API key sent as a Bearer token. Defaults to the OPENAI_API_KEY environment variable.
 
-#### `--tokenizer` `<str>`
+### `--tokenizer` `<str>`
 
 Tokenizer for client-side token counts. Defaults to the model name. Pass `builtin` for a zero-network tokenizer.
 
@@ -162,35 +221,35 @@ Generate, list, or search bundled AIPerf config templates.
 
 Without ``--output``, selected template YAML is printed to stdout. With ``--output``, the customized template is written to that path after applying ``--model`` and ``--url`` overrides.
 
-#### `-t`, `--template` `<str>`
+### `-t`, `--template` `<str>`
 
 Template name to generate (e.g. 'minimal', 'goodput_slo').
 
-#### `-l`, `--list`, `--no-list`
+### `-l`, `--list`, `--no-list`
 
 List bundled templates and exit.
 
-#### `-s`, `--search` `<str>`
+### `-s`, `--search` `<str>`
 
 Filter templates by keyword.
 
-#### `-c`, `--category` `<str>`
+### `-c`, `--category` `<str>`
 
 Filter --list by category.
 
-#### `-v`, `--verbose`, `--no-verbose`
+### `-v`, `--verbose`, `--no-verbose`
 
 Show tags and difficulty columns.
 
-#### `-m`, `--model` `<str>`
+### `-m`, `--model` `<str>`
 
 Override the template's model name.
 
-#### `-u`, `--url` `<str>`
+### `-u`, `--url` `<str>`
 
 Override the template's endpoint URL.
 
-#### `-o`, `--output` `<str>`
+### `-o`, `--output` `<str>`
 
 Write to file instead of stdout.
 
@@ -202,19 +261,19 @@ Expand a sweep config and print the resulting variations.
 
 Drives the same `load_config` -> `build_benchmark_plan` pipeline that `aiperf profile` uses, then prints what the orchestrator would have iterated over - without launching any benchmarks. Useful for verifying sweep paths, dir_name conventions, and per-variation merges before spending compute.
 
-#### `--config-file` `<str>` _(Required)_
+### `--config-file` `<str>` _(Required)_
 
 Path to an AIPerf YAML config containing a `sweep:` block.
 
-#### `-F`, `--full`, `--no-full`
+### `-F`, `--full`, `--no-full`
 
 Also emit each variation's fully-merged BenchmarkConfig body.
 
-#### `-i`, `--index` `<int>`
+### `-i`, `--index` `<int>`
 
 Show only the variation at this zero-based index (implies --full).
 
-#### `-f`, `--format` `<str>`
+### `-f`, `--format` `<str>`
 
 Output format: text (default human-readable), yaml, or json.
 <br/>_Default: `text`_
@@ -227,7 +286,7 @@ Validate an AIPerf config file.
 
 Loads the config through the same pipeline as `aiperf profile`, surfacing fatal errors (exit 1) and non-fatal warnings (printed to stderr; exit 0). Useful as a pre-flight check or in CI before kicking off a benchmark.
 
-#### `--config-file` `<str>` _(Required)_
+### `--config-file` `<str>` _(Required)_
 
 Path to an AIPerf YAML config to validate.
 
@@ -289,7 +348,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`audio_transcription`, `chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -331,6 +390,38 @@ How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends
 Seconds between endpoint readiness probe attempts.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
+
+#### `--reset-kv-cache`
+
+Enable once-per-cell KV-cache reset via POST to the endpoint.
+<br/>_Flag (no value required)_
+
+#### `--reset-kv-cache-timeout-seconds` `<float>`
+
+Timeout seconds for reset_kv_cache control requests.
+<br/>_Constraints: > 0_
+
+#### `--reset-kv-cache-path` `<str>`
+
+Relative path for reset_kv_cache (default /reset_prefix_cache).
+
+#### `--server-profiler`
+
+Enable server profiler start/stop around profiling phases.
+<br/>_Flag (no value required)_
+
+#### `--server-profiler-timeout-seconds` `<float>`
+
+Timeout seconds for server_profiler control requests.
+<br/>_Constraints: > 0_
+
+#### `--server-profiler-start-path` `<str>`
+
+Relative path for profiler start (default /start_profile).
+
+#### `--server-profiler-stop-path` `<str>`
+
+Relative path for profiler stop (default /stop_profile).
 
 #### `--api-key` `<str>`
 
@@ -426,11 +517,15 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--hf-weka-dataset` `<str>`
+
+HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
 #### `--dataset-filter` `<list>`
 
@@ -439,12 +534,31 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `weka_trace`]_
+
+#### `--ignore-trace-delays`
+
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).
+<br/>_Flag (no value required)_
+
+#### `--use-think-time-only`
+
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+<br/>_Flag (no value required)_
+
+#### `--max-context-length` `<int>`
+
+Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.
+<br/>_Constraints: ≥ 1_
 
 #### `--dataset-sampling-strategy` `<str>`
 
 Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
+
+#### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
+
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
@@ -575,6 +689,25 @@ Pin ``min_tokens`` to the recorded output length so replayed generations match r
 Number of text inputs to include in each request for batch processing endpoints. Supported by `embeddings` and `rankings` endpoint types where models can process multiple inputs simultaneously for efficiency. Set to 1 for single-input requests. Not applicable to `chat` or `completions` endpoints.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `1`_
+
+#### `--prompt-corpus` `<str>`
+
+Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). Honored only for synthesized content (synthetic datasets and count/hash-id trace loaders); verbatim formats ignore it. When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding').
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `sonnet` |  | Shakespeare sonnets (default). Classic prose for filler text. |
+| `coding` |  | Realistic coding content: code, bash output, JSON, error tracebacks, git diffs. |
+
+### Cache Bust
+
+#### `--cache-bust` `<str>`
+
+Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay timing mode. 'none' disables the feature (default).
+<br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
+<br/>_Default: `none`_
 
 ### Prefix Prompt
 
@@ -906,7 +1039,7 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 
 #### `--synthesis-max-osl` `<int>`
 
-Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
+Maximum output sequence length cap for top-level (parent) turns. Turns with output_length > max_osl are capped to max_osl. Subagent child turns are intentionally uncapped so their decode load stays faithful; flat-chain sidecars still honor the cap.
 <br/>_Constraints: ≥ 1_
 
 ### Load Generator
@@ -967,6 +1100,49 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 JSON file containing request-rate points for piecewise-linear request-rate control.
 
+#### `--failed-request-threshold` `<float>`
+
+Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+#### `--trajectory-start-min-ratio` `<float>`
+
+AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+<br/>_Default: `0.25`_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+<br/>_Default: `0.75`_
+
+#### `--burst-phase-starts`
+
+AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp, synchronized start), e.g. for a throughput-oriented run rather than a faithful arrival replay.
+<br/>_Flag (no value required)_
+
+#### `--trace-idle-gap-cap-seconds` `<float>`
+
+Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
+<br/>_Constraints: ≥ 0.0_
+
+#### `--system-idle-gap-cap-seconds` `<float>`
+
+AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
+<br/>_Constraints: ≥ 0.0_
+
+### Scenario
+
+#### `--scenario` `<str>`
+
+Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+
+#### `--unsafe-override`
+
+Convert scenario lock errors to warnings; stamps submission_valid=false in the aggregate output. No-op without --scenario.
+<br/>_Flag (no value required)_
+
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -978,6 +1154,16 @@ The maximum number of warmup requests to send before benchmarking. If not set an
 
 The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
 <br/>_Constraints: > 0_
+
+#### `--agentic-cache-warmup-duration` `<float>`
+
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
+<br/>_Constraints: > 0_
+
+#### `--agentic-warmup-grace-period` `<float>`
+
+AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier waits for in-flight priming requests after the warmup burst sends. The agentic warmup is synthesized from the profiling phase rather than a user-declared warmup phase, so it does NOT honor `--warmup-grace-period` (which requires `--warmup-duration`). If not set, the warmup barrier waits indefinitely until every primed trajectory returns.
+<br/>_Constraints: ≥ 0_
 
 #### `--num-warmup-sessions` `<int>`
 
@@ -1066,8 +1252,8 @@ Controls which output files are generated. `summary`: Only aggregate metrics fil
 
 | | | |
 |-------|:-------:|-------------|
-| `summary` |  | Export only aggregated/summarized metrics (default, most compact) |
-| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
+| `summary` |  | Export only aggregated/summarized metrics (most compact) |
+| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion (CLI default) |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
 #### `--slice-duration` `<float>`
@@ -1082,6 +1268,11 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 #### `--plot-required`
 
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
+<br/>_Flag (no value required)_
+
+#### `--export-outputs-json`
+
+Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
 <br/>_Flag (no value required)_
 
 #### `--otel-url` `<str>`
@@ -1352,7 +1543,7 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 #### `--search-sla` `<list>`
 
-SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float in the metric's native unit. For request_error_rate, 1 means 1% (percentage points), unlike --error-rate-sla, which accepts a fraction. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:avg:lt:1'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
 
 #### `--search-sla-tier` `<list>`
 
@@ -1388,7 +1579,7 @@ End-to-end request-latency SLA threshold in milliseconds (p99). Maps to the `req
 
 #### `--error-rate-sla` `<float>`
 
-Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (p99). Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
+Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (avg), converting the fraction to the metric's percentage-point scale. Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
 <br/>_Constraints: > 0, &lt; 1_
 
 #### `--slo-attainment-fraction` `<float>`
@@ -1595,50 +1786,50 @@ aiperf plot --paths artifacts/my-run --mlflow-upload
 aiperf plot --paths artifacts/my-run --mlflow-upload --mlflow-tracking-uri http://127.0.0.1:5000 --mlflow-run-id <run_id>
 ```
 
-#### `--paths`, `--empty-paths` `<list>`
+### `--paths`, `--empty-paths` `<list>`
 
 Paths to profiling run directories. Defaults to ./artifacts if not specified.
 
-#### `--output` `<str>`
+### `--output` `<str>`
 
 Directory to save generated plots. Defaults to &lt;first_path>/plots if not specified.
 
-#### `--theme` `<str>`
+### `--theme` `<str>`
 
 Plot theme to use: 'light' (white background) or 'dark' (dark background). Defaults to 'light'.
 <br/>_Default: `light`_
 
-#### `--config` `<str>`
+### `--config` `<str>`
 
 Path to custom plot configuration YAML file. If not specified, auto-creates and uses ~/.aiperf/plot_config.yaml.
 
-#### `--verbose`, `--no-verbose`
+### `--verbose`, `--no-verbose`
 
 Show detailed error tracebacks in console (errors are always logged to ~/.aiperf/plot.log).
 
-#### `--dashboard`, `--no-dashboard`
+### `--dashboard`, `--no-dashboard`
 
 Launch interactive dashboard server instead of generating static PNGs.
 
-#### `--host` `<str>`
+### `--host` `<str>`
 
 Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
 <br/>_Default: `127.0.0.1`_
 
-#### `--port` `<int>`
+### `--port` `<int>`
 
 Port for dashboard server (only used with --dashboard). Defaults to 8050.
 <br/>_Default: `8050`_
 
-#### `--mlflow-upload`, `--no-mlflow-upload`
+### `--mlflow-upload`, `--no-mlflow-upload`
 
 Upload generated PNG plot artifacts to an existing MLflow run. Mutually exclusive with --dashboard.
 
-#### `--mlflow-tracking-uri` `<str>`
+### `--mlflow-tracking-uri` `<str>`
 
 Optional MLflow tracking URI override for plot upload.
 
-#### `--mlflow-run-id` `<str>`
+### `--mlflow-run-id` `<str>`
 
 Optional MLflow run id override for plot upload.
 
@@ -1648,20 +1839,20 @@ Optional MLflow run id override for plot upload.
 
 Explore AIPerf plugins: aiperf plugins [category] [type]
 
-#### `--category` `<str>`
+### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `spec_decode_adapter`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
-#### `--name` `<str>`
+### `--name` `<str>`
 
 Type name for details.
 
-#### `-a`, `--all`, `--no-all`
+### `-a`, `--all`, `--no-all`
 
 Show all categories and plugins.
 
-#### `-v`, `--validate`, `--no-validate`
+### `-v`, `--validate`, `--no-validate`
 
 Validate plugins.yaml.
 
@@ -1719,7 +1910,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`audio_transcription`, `chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -1761,6 +1952,38 @@ How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends
 Seconds between endpoint readiness probe attempts.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
+
+#### `--reset-kv-cache`
+
+Enable once-per-cell KV-cache reset via POST to the endpoint.
+<br/>_Flag (no value required)_
+
+#### `--reset-kv-cache-timeout-seconds` `<float>`
+
+Timeout seconds for reset_kv_cache control requests.
+<br/>_Constraints: > 0_
+
+#### `--reset-kv-cache-path` `<str>`
+
+Relative path for reset_kv_cache (default /reset_prefix_cache).
+
+#### `--server-profiler`
+
+Enable server profiler start/stop around profiling phases.
+<br/>_Flag (no value required)_
+
+#### `--server-profiler-timeout-seconds` `<float>`
+
+Timeout seconds for server_profiler control requests.
+<br/>_Constraints: > 0_
+
+#### `--server-profiler-start-path` `<str>`
+
+Relative path for profiler start (default /start_profile).
+
+#### `--server-profiler-stop-path` `<str>`
+
+Relative path for profiler stop (default /stop_profile).
 
 #### `--api-key` `<str>`
 
@@ -1856,11 +2079,15 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--hf-weka-dataset` `<str>`
+
+HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
 #### `--dataset-filter` `<list>`
 
@@ -1869,12 +2096,31 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `weka_trace`]_
+
+#### `--ignore-trace-delays`
+
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).
+<br/>_Flag (no value required)_
+
+#### `--use-think-time-only`
+
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+<br/>_Flag (no value required)_
+
+#### `--max-context-length` `<int>`
+
+Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.
+<br/>_Constraints: ≥ 1_
 
 #### `--dataset-sampling-strategy` `<str>`
 
 Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
+
+#### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
+
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
 
 #### `--random-seed` `<int>`
 
@@ -2005,6 +2251,25 @@ Pin ``min_tokens`` to the recorded output length so replayed generations match r
 Number of text inputs to include in each request for batch processing endpoints. Supported by `embeddings` and `rankings` endpoint types where models can process multiple inputs simultaneously for efficiency. Set to 1 for single-input requests. Not applicable to `chat` or `completions` endpoints.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `1`_
+
+#### `--prompt-corpus` `<str>`
+
+Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). Honored only for synthesized content (synthetic datasets and count/hash-id trace loaders); verbatim formats ignore it. When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding').
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `sonnet` |  | Shakespeare sonnets (default). Classic prose for filler text. |
+| `coding` |  | Realistic coding content: code, bash output, JSON, error tracebacks, git diffs. |
+
+### Cache Bust
+
+#### `--cache-bust` `<str>`
+
+Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay timing mode. 'none' disables the feature (default).
+<br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
+<br/>_Default: `none`_
 
 ### Prefix Prompt
 
@@ -2336,7 +2601,7 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 
 #### `--synthesis-max-osl` `<int>`
 
-Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
+Maximum output sequence length cap for top-level (parent) turns. Turns with output_length > max_osl are capped to max_osl. Subagent child turns are intentionally uncapped so their decode load stays faithful; flat-chain sidecars still honor the cap.
 <br/>_Constraints: ≥ 1_
 
 ### Load Generator
@@ -2397,6 +2662,49 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 JSON file containing request-rate points for piecewise-linear request-rate control.
 
+#### `--failed-request-threshold` `<float>`
+
+Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+#### `--trajectory-start-min-ratio` `<float>`
+
+AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+<br/>_Default: `0.25`_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+<br/>_Default: `0.75`_
+
+#### `--burst-phase-starts`
+
+AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp, synchronized start), e.g. for a throughput-oriented run rather than a faithful arrival replay.
+<br/>_Flag (no value required)_
+
+#### `--trace-idle-gap-cap-seconds` `<float>`
+
+Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
+<br/>_Constraints: ≥ 0.0_
+
+#### `--system-idle-gap-cap-seconds` `<float>`
+
+AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
+<br/>_Constraints: ≥ 0.0_
+
+### Scenario
+
+#### `--scenario` `<str>`
+
+Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+
+#### `--unsafe-override`
+
+Convert scenario lock errors to warnings; stamps submission_valid=false in the aggregate output. No-op without --scenario.
+<br/>_Flag (no value required)_
+
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -2408,6 +2716,16 @@ The maximum number of warmup requests to send before benchmarking. If not set an
 
 The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
 <br/>_Constraints: > 0_
+
+#### `--agentic-cache-warmup-duration` `<float>`
+
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay.
+<br/>_Constraints: > 0_
+
+#### `--agentic-warmup-grace-period` `<float>`
+
+AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier waits for in-flight priming requests after the warmup burst sends. The agentic warmup is synthesized from the profiling phase rather than a user-declared warmup phase, so it does NOT honor `--warmup-grace-period` (which requires `--warmup-duration`). If not set, the warmup barrier waits indefinitely until every primed trajectory returns.
+<br/>_Constraints: ≥ 0_
 
 #### `--num-warmup-sessions` `<int>`
 
@@ -2496,8 +2814,8 @@ Controls which output files are generated. `summary`: Only aggregate metrics fil
 
 | | | |
 |-------|:-------:|-------------|
-| `summary` |  | Export only aggregated/summarized metrics (default, most compact) |
-| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
+| `summary` |  | Export only aggregated/summarized metrics (most compact) |
+| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion (CLI default) |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
 #### `--slice-duration` `<float>`
@@ -2512,6 +2830,11 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 #### `--plot-required`
 
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
+<br/>_Flag (no value required)_
+
+#### `--export-outputs-json`
+
+Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
 <br/>_Flag (no value required)_
 
 #### `--otel-url` `<str>`
@@ -2782,7 +3105,7 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 #### `--search-sla` `<list>`
 
-SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float in the metric's native unit. For request_error_rate, 1 means 1% (percentage points), unlike --error-rate-sla, which accepts a fraction. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:avg:lt:1'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
 
 #### `--search-sla-tier` `<list>`
 
@@ -2818,7 +3141,7 @@ End-to-end request-latency SLA threshold in milliseconds (p99). Maps to the `req
 
 #### `--error-rate-sla` `<float>`
 
-Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (p99). Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
+Maximum acceptable request error rate as a fraction in (0, 1) (e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag (avg), converting the fraction to the metric's percentage-point scale. Consumed by the max-concurrency-under-sla recipe; ignored otherwise. Available without streaming.
 <br/>_Constraints: > 0, &lt; 1_
 
 #### `--slo-attainment-fraction` `<float>`
@@ -3018,21 +3341,21 @@ aiperf speed-bench-report ./artifacts/ --metric accept_rate
 aiperf speed-bench-report ./artifacts/ --metric throughput
 ```
 
-#### `--paths`, `--empty-paths` `<list>` _(Required)_
+### `--paths`, `--empty-paths` `<list>` _(Required)_
 
 Run directories or parent directories containing run subdirectories.
 
-#### `--output` `<str>`
+### `--output` `<str>`
 
 Output CSV file path. Defaults to ./speed_bench_report.csv.
 <br/>_Default: `speed_bench_report.csv`_
 
-#### `--format` `<str>`
+### `--format` `<str>`
 
 Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
 <br/>_Default: `both`_
 
-#### `--metric` `<str>`
+### `--metric` `<str>`
 
 Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
 <br/>_Default: `accept_length`_
@@ -3043,65 +3366,36 @@ Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaul
 
 Synthesize a dataset workload.
 
-#### `--target` `<str>` _(Required)_
+### `--target` `<str>` _(Required)_
 
 Dataset workload to synthesize.
 
-#### `--num-sessions` `<int>`
+### `--num-sessions` `<int>`
 
 Number of sessions to generate.
 <br/>_Default: `1000`_
 
-#### `--output` `<str>`
+### `--output` `<str>`
 
 Parent directory for the run directory.
 <br/>_Default: `.`_
 
-#### `--config` `<str>`
+### `--config` `<str>`
 
 Path to config/manifest JSON.
 
-#### `--seed` `<int>`
+### `--seed` `<int>`
 
 Random seed for reproducibility.
 <br/>_Default: `42`_
 
-#### `--max-isl` `<int>`
+### `--max-isl` `<int>`
 
 Maximum input sequence length.
 
-#### `--max-osl` `<int>`
+### `--max-osl` `<int>`
 
 Maximum output sequence length.
-
-<hr/>
-
-## `aiperf turn-messages`
-
-Render a collapsible HTML viewer of the per-turn input messages a run sent.
-
-#### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
-
-One or more AIPerf run directories.
-
-#### `-o`, `--out` `<str>`
-
-Output HTML path. Only valid when a single run directory is given.
-
-#### `-n`, `--limit-conversations` `<int>`
-
-Max conversations to render (roots first, then by earliest request time).
-<br/>_Default: `40`_
-
-#### `--max-turns` `<int>`
-
-Max turns rendered per conversation; the rest are summarized as a hidden count.
-<br/>_Default: `60`_
-
-#### `--content-cap` `<int>`
-
-Max characters kept per unique message body; longer bodies are truncated with a remaining-chars note. Raise for full fidelity.
-<br/>_Default: `8000`_
 
 <hr/>
 
@@ -3109,10 +3403,10 @@ Max characters kept per unique message body; longer bodies are truncated with a 
 
 Validate a benchmark artifact.
 
-#### `--target` `<str>` _(Required)_
+### `--target` `<str>` _(Required)_
 
 Artifact format to validate.
 
-#### `--input` `<str>` _(Required)_
+### `--input` `<str>` _(Required)_
 
 Path to the artifact file.

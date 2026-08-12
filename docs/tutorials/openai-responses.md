@@ -292,6 +292,45 @@ aiperf profile \
 
 ---
 
+## Verifying ISL/OSL Distribution with the Mock Server
+
+Use the mock server's `--record-requests` flag to capture the exact token lengths
+AIPerf sends on the wire before running against a real server:
+
+```bash
+aiperf-mock-server --record-requests /tmp/responses-req.jsonl --fast &
+mock_server_pid=$!
+
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type responses \
+    --endpoint /v1/responses \
+    --synthetic-input-tokens-mean 512 \
+    --output-tokens-mean 256 \
+    --url http://localhost:8000 \
+    --request-count 100
+
+kill $mock_server_pid   # graceful shutdown flushes the JSONL and prints a summary
+```
+
+The recorder writes one JSON line per request. For `/v1/responses` requests the
+`request_id` carries a `resp-` prefix and `max_output_tokens` is canonicalized
+into the `max_completion_tokens` column so the schema stays uniform with chat
+and completions rows:
+
+```json
+{"ts": 1714000000.123, "request_id": "resp-3b8568cb-...", "endpoint": "/v1/responses",
+ "model": "Qwen/Qwen3-0.6B", "isl": 512,
+ "requested_osl": 256, "max_tokens": null, "max_completion_tokens": 256,
+ "min_tokens": null, "ignore_eos": false, "reasoning_effort": null,
+ "stream": false, "tokenization_mode": "tokenizer_call"}
+```
+
+See the [mock server README](https://github.com/ai-dynamo/aiperf/blob/main/tests/aiperf_mock_server/README.md#request-recording)
+for the full output format and summary schema.
+
+---
+
 ## Key Differences from Chat Completions
 
 When migrating AIPerf benchmarks from `--endpoint-type chat` to `--endpoint-type responses`:

@@ -33,8 +33,9 @@ Output:
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
+
+import orjson
 
 from tools._core import (
     GeneratedFile,
@@ -134,6 +135,18 @@ JINJA2_TEMPLATE_PATTERN = r".*\{\{.*\}\}.*"
 # Examples: "${CONCURRENCY}", "${RATE:100}", "${ISL:512}"
 ENV_VAR_PATTERN = r".*\$\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}.*"
 
+COMPACT_ADAPTIVE_SLA_SCHEMA = {
+    "type": "object",
+    "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"type": ["number", "string"]},
+        },
+    },
+    "description": "Compact SLA mapping: metric -> stat -> operator -> threshold.",
+}
+
 # Fields to EXCLUDE from Jinja2 template support
 # These are fields where Jinja2 doesn't make sense (e.g., discriminator fields, enums)
 JINJA2_EXCLUDED_FIELDS: set[str] = {
@@ -224,6 +237,12 @@ class ConfigSchemaGenerator(Generator):
                 f"Added compact adaptive SLA form to {adaptive_sla_count} fields"
             )
 
+        adaptive_scale_count = self._add_adaptive_scale_nested_form(enhanced_schema)
+        if self.verbose and adaptive_scale_count > 0:
+            print_step(
+                f"Added nested adaptiveScale form to {adaptive_scale_count} phase schemas"
+            )
+
         # Add models field simplified forms (string/list[str] → ModelsAdvanced)
         self._add_models_simplified_forms(enhanced_schema)
         if self.verbose:
@@ -260,7 +279,7 @@ class ConfigSchemaGenerator(Generator):
             )
 
         # Serialize with proper formatting
-        content = json.dumps(enhanced_schema, indent=2, ensure_ascii=False) + "\n"
+        content = orjson.dumps(enhanced_schema).decode("utf-8") + "\n"
 
         if self.verbose:
             print_step(f"Schema size: {len(content):,} bytes")
@@ -743,17 +762,6 @@ class ConfigSchemaGenerator(Generator):
                 p95:
                   le: 30000
         """
-        compact_sla_schema = {
-            "type": "object",
-            "additionalProperties": {
-                "type": "object",
-                "additionalProperties": {
-                    "type": "object",
-                    "additionalProperties": {"type": ["number", "string"]},
-                },
-            },
-            "description": "Compact SLA mapping: metric -> stat -> operator -> threshold.",
-        }
         enhanced_count = 0
 
         def is_sla_filter_array(field_schema: dict) -> bool:
@@ -778,7 +786,10 @@ class ConfigSchemaGenerator(Generator):
                                 + " Accepts the canonical list form or compact metric/stat/op mapping."
                             ).strip(),
                             "title": original.get("title", "Sla"),
-                            "anyOf": [original, copy.deepcopy(compact_sla_schema)],
+                            "anyOf": [
+                                original,
+                                copy.deepcopy(COMPACT_ADAPTIVE_SLA_SCHEMA),
+                            ],
                         }
                         enhanced_count += 1
                 for value in obj.values():
@@ -788,6 +799,173 @@ class ConfigSchemaGenerator(Generator):
                     walk(value)
 
         walk(schema)
+        return enhanced_count
+
+    def _add_adaptive_scale_nested_form(self, schema: dict) -> int:
+        """Allow documented nested adaptiveScale/adaptive_scale phase blocks."""
+        defs = schema.setdefault("$defs", {})
+
+        template_variants = [
+            {
+                "type": "string",
+                "pattern": JINJA2_TEMPLATE_PATTERN,
+                "description": "Jinja2 template (e.g., '{{ variable }}').",
+            },
+            {
+                "type": "string",
+                "pattern": ENV_VAR_PATTERN,
+                "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}').",
+            },
+        ]
+
+        def numeric_schema(
+            *, minimum: float | None = None, exclusive_minimum: float | None = None
+        ) -> dict:
+            variants = [{"type": "integer"}, {"type": "number"}]
+            for variant in variants:
+                if minimum is not None:
+                    variant["minimum"] = minimum
+                if exclusive_minimum is not None:
+                    variant["exclusiveMinimum"] = exclusive_minimum
+            return {"anyOf": [*variants, *copy.deepcopy(template_variants)]}
+
+        def integer_schema(*, minimum: int | None = None) -> dict:
+            schema = {"type": "integer"}
+            if minimum is not None:
+                schema["minimum"] = minimum
+            return {"oneOf": [schema, *copy.deepcopy(template_variants)]}
+
+        positive_numeric = numeric_schema(exclusive_minimum=0)
+        ge_one_numeric = numeric_schema(minimum=1)
+        ge_one_integer = integer_schema(minimum=1)
+
+        boolean_string_schema = {
+            "type": "string",
+            "enum": ["true", "false", "yes", "no", "on", "off", "1", "0"],
+        }
+        false_string_schema = {
+            "type": "string",
+            "enum": ["false", "no", "off", "0"],
+        }
+        control_variable_schema = {
+            "type": "string",
+            "enum": [
+                "concurrency",
+                "prefill_concurrency",
+                "request_rate",
+                "users",
+            ],
+        }
+        adaptive_scale_object_schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "enabled": {"anyOf": [{"type": "boolean"}, boolean_string_schema]},
+                "control": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "variable": copy.deepcopy(control_variable_schema),
+                        "min": copy.deepcopy(positive_numeric),
+                        "max": copy.deepcopy(positive_numeric),
+                    },
+                },
+                "strategy": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "type": {"type": "string", "enum": ["ramp_until_fail"]},
+                        "stepPolicy": {
+                            "type": "string",
+                            "enum": ["sla_margin", "fixed_percent_step"],
+                        },
+                        "step_policy": {
+                            "type": "string",
+                            "enum": ["sla_margin", "fixed_percent_step"],
+                        },
+                        "baseStep": copy.deepcopy(ge_one_integer),
+                        "base_step": copy.deepcopy(ge_one_integer),
+                        "maxStepMultiplier": copy.deepcopy(ge_one_integer),
+                        "max_step_multiplier": copy.deepcopy(ge_one_integer),
+                        "stepPercent": copy.deepcopy(positive_numeric),
+                        "step_percent": copy.deepcopy(positive_numeric),
+                    },
+                },
+                "sla": {
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/SLAFilter"},
+                        },
+                        copy.deepcopy(COMPACT_ADAPTIVE_SLA_SCHEMA),
+                    ],
+                },
+                "controlVariable": copy.deepcopy(control_variable_schema),
+                "control_variable": copy.deepcopy(control_variable_schema),
+                "controlMin": copy.deepcopy(positive_numeric),
+                "control_min": copy.deepcopy(positive_numeric),
+                "controlMax": copy.deepcopy(positive_numeric),
+                "control_max": copy.deepcopy(positive_numeric),
+                "minConcurrency": copy.deepcopy(ge_one_integer),
+                "min_concurrency": copy.deepcopy(ge_one_integer),
+                "maxConcurrency": copy.deepcopy(ge_one_integer),
+                "max_concurrency": copy.deepcopy(ge_one_integer),
+                "window": copy.deepcopy(ge_one_numeric),
+                "assessmentPeriod": copy.deepcopy(ge_one_numeric),
+                "assessment_period": copy.deepcopy(ge_one_numeric),
+                "minCompletedRequests": copy.deepcopy(ge_one_integer),
+                "min_completed_requests": copy.deepcopy(ge_one_integer),
+                "sustainDuration": copy.deepcopy(positive_numeric),
+                "sustain_duration": copy.deepcopy(positive_numeric),
+            },
+        }
+        disabled_adaptive_scale_object_schema = copy.deepcopy(
+            adaptive_scale_object_schema
+        )
+        disabled_adaptive_scale_object_schema["properties"]["enabled"] = {
+            "anyOf": [{"const": False}, false_string_schema]
+        }
+        disabled_adaptive_scale_object_schema["required"] = ["enabled"]
+
+        defs["AdaptiveScaleNestedBlock"] = adaptive_scale_object_schema
+        defs["DisabledAdaptiveScaleNestedBlock"] = disabled_adaptive_scale_object_schema
+
+        def field_schema_for(def_name: str, original: dict) -> dict:
+            if def_name == "FixedSchedulePhase":
+                return {
+                    "description": (
+                        original.get("description", "")
+                        + " Fixed-schedule phases only accept disabled adaptive-scale no-op blocks."
+                    ).strip(),
+                    "title": original.get("title", "Adaptive Scale"),
+                    "anyOf": [
+                        {"const": False},
+                        {"$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"},
+                    ],
+                }
+            return {
+                "description": (
+                    original.get("description", "")
+                    + " Accepts either a boolean or a nested adaptive-scale configuration block."
+                ).strip(),
+                "title": original.get("title", "Adaptive Scale"),
+                "anyOf": [original, {"$ref": "#/$defs/AdaptiveScaleNestedBlock"}],
+            }
+
+        enhanced_count = 0
+        for def_name, def_schema in defs.items():
+            if not isinstance(def_schema, dict):
+                continue
+            properties = def_schema.get("properties")
+            if not isinstance(properties, dict):
+                continue
+            field_schema = properties.get("adaptiveScale")
+            if not isinstance(field_schema, dict):
+                continue
+            enhanced = field_schema_for(def_name, copy.deepcopy(field_schema))
+            properties["adaptiveScale"] = enhanced
+            properties["adaptive_scale"] = copy.deepcopy(enhanced)
+            enhanced_count += 1
         return enhanced_count
 
     def _add_models_simplified_forms(self, schema: dict) -> None:
@@ -1163,6 +1341,12 @@ class ConfigSchemaGenerator(Generator):
                 },
             ],
         )
+
+        # Endpoint control hooks accept `false | true | {object}` via
+        # parse_enabled_or_config(); Pydantic only emits the object|null forms.
+        endpoint_props = defs.get("EndpointConfig", {}).get("properties", {})
+        for hook_field in ("resetKvCache", "serverProfiler"):
+            self._extend_any_of(endpoint_props.get(hook_field), [{"type": "boolean"}])
 
         video_audio_props = defs.get("VideoAudioConfig", {}).get("properties", {})
         depth_schema = video_audio_props.get("depth")

@@ -25,13 +25,14 @@ DAG mode exposes one primitive with two flavors, selected by a shorthand key on 
 | Mode | Shorthand on parent turn | What the child sees | Routing | Parent fate |
 |---|---|---|---|---|
 | **FORK** | `"forks": [...]` | Inherits the parent's full conversation history, including the captured model response. | Pinned to the same worker as the parent (locality). | Bare-string entries terminate; `{"child": ..., "background": true}` keeps the parent running. |
-| **SPAWN** | `"spawns": [...]` | Starts from an empty history. Only the child's own messages go on the wire. | Free to land on any worker. | Continues; suspends only at an explicit `join_at` (or the next-turn auto-join). |
+| **SPAWN** | `"spawns": [...]` | Starts from an empty history. Only the child's own messages go on the wire. | Co-locates on the parent's client worker while that sticky entry is live (no sticky refcount bump); least-loaded once the parent entry is gone. | Continues; suspends only at an explicit `join_at` (or the next-turn auto-join). |
 
 Both keys can appear on the same turn — the scheduler treats them independently, so one turn can both fork continuations and spawn fresh sub-agents.
 
 ## A minimal example, walked through
 
-Below is the shipped example at `examples/dag_jsonl/example.dag.jsonl`. Each line is one conversation; the three conversations together describe one tree.
+Below is a minimal FORK example (same shape as `tests/fixtures/dag/small.dag.jsonl`).
+Each line is one conversation; the three conversations together describe one tree.
 
 ```jsonl
 {"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"You are a careful assistant."},{"role":"user","content":"Please summarize the attached document."}],"max_tokens":128,"forks":["branch-a","branch-b"]}]}
@@ -63,7 +64,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --input-file examples/dag_jsonl/example.dag.jsonl \
+    --input-file tests/fixtures/dag/small.dag.jsonl \
     --custom-dataset-type dag_jsonl \
     --concurrency 1
 ```
@@ -89,6 +90,71 @@ Use `--custom-dataset-type dag_jsonl`. Each line of the input file is one conver
 ```
 
 **`pre_session_spawns`** is a list of child session ids dispatched as background SPAWN branches **before** this conversation's turn 0 is issued. It exists for trace-timing fidelity: if a captured trace shows a sub-agent's first request overlapping with the parent's turn 0 in-flight window, the literal "spawn after parent turn completes" rule would shift the child later than the trace records. Listing the child here issues it ahead of turn 0 instead. These children are fire-and-forget; each gets a fresh correlation id with `parent_correlation_id=None`, so no SPAWN_JOIN gate can reference them. Pre-session children must be SPAWN-mode (no parent context to inherit) — referencing a session as a `pre_session_spawns` target while it is also a FORK target is rejected at load time.
+
+### Orchestrator conversation
+
+An **orchestrator conversation** is a request-less driver whose only job is to fan out to a fixed set of children on every sampled iteration. Declare it with `orchestrator: true` plus conversation-level `spawns` (and **no** authored `turns`):
+
+```jsonc
+// orchestrator.dag.jsonl (see tests/fixtures/dag/orchestrator.dag.jsonl)
+{"session_id": "start", "orchestrator": true, "spawns": ["fan-out-a", "fan-out-b"]}
+{"session_id": "fan-out-a", "turns": [{"messages": [{"role": "user", "content": "..."}], "max_tokens": 16, "extra": {"min_tokens": 16}}]}
+{"session_id": "fan-out-b", "turns": [{"messages": [{"role": "user", "content": "..."}], "max_tokens": 16, "extra": {"min_tokens": 16}}]}
+```
+
+Semantics:
+
+- **Sends no request.** The loader synthesizes a single no-op turn (`no_request=True`); `StickyCreditRouter.send_credit()` short-circuits the credit in-process (no worker is selected) and synthesizes its return immediately. `BranchOrchestrator.intercept()` then fires the conversation-level `spawns` as real child wire requests.
+- **Re-fires every sampled iteration.** The orchestrator stays a sampleable root, so under `--concurrency`, `--request-count`, or duration limits it is re-sampled repeatedly and re-fans-out its children each time (fire-and-forget; children are SPAWN-mode with `parent_correlation_id=None`, so no SPAWN_JOIN gate can reference them).
+- **Counts as a conversation, not a request.** Each virtual firing takes a session slot and counts toward `--num-conversations`, but the request-less credit does **not** advance the `--request-count` cap — only the child wire requests do. So `--request-count N` caps the children; the orchestrator's own virtual credits are excluded.
+- **Empty `turns` required.** An `orchestrator: true` conversation must omit `turns`, must provide a non-empty `spawns`, and must not also set `pre_session_spawns`; violations are rejected at load time.
+
+#### Gated rounds (spine)
+
+Add `rounds` to an orchestrator to build a **gated spine**: instead of one fire-and-forget firing, the coordinator runs N sequential rounds — each round fans out its branches, waits (`join=all`) for **all** of them to complete, waits a per-round **think-time**, then fires the next round. The spine issues no HTTP itself; only the branch turns are real requests. Two forms:
+
+**Integer — repeated template.** `rounds: N` re-fires the shared conversation-level `spawns` N times (every round is identical):
+
+```jsonc
+{"session_id": "start", "orchestrator": true, "rounds": 3,
+ "think_time_ms": 100, "think_time_sigma": 0.6, "think_time_min_ms": 10,
+ "spawns": ["branch-a", "branch-b"]}
+```
+
+**List — per-round authored branches.** `rounds: [ ... ]` lets each round declare its **own** branch session ids (and optional per-round think-time), so the rounds are distinct authored stages — different prompts, growing pre-baked history, different multimodal payloads per round — rather than one repeated template. Omit conversation-level `spawns` in this form:
+
+```jsonc
+// see tests/fixtures/dag/orchestrator_spine_per_round.dag.jsonl
+{"session_id": "start", "orchestrator": true, "rounds": [
+  {"spawns": ["t0-a", "t0-b"], "think_time_ms": 12000},
+  {"spawns": ["t1-a", "t1-b"], "think_time_ms": 31000},
+  {"spawns": ["t2-a", "t2-b"], "think_time_ms": 18000}
+]}
+// ... plus one conversation line per branch session (t0-a, t0-b, t1-a, ...)
+```
+
+- **Think-time.** `think_time_ms` is the per-round wait before releasing the next round (turn 0 via the normal delay, later rounds via the gated join). Set `think_time_sigma` to draw it from a lognormal (median = `think_time_ms`) sampled independently per (instance, round), reproducible under `--random-seed`; `think_time_min_ms`/`think_time_max_ms` clamp the draw. In list form, a round's `think_time_ms` overrides the conversation-level value.
+- **Counts.** A spine of N rounds with an A branch (`a` turns) and a B branch (`b` turns) produces `N x (a + b)` real requests; the N+1 request-free spine turns produce none.
+
+#### Payload isolation (`context_mode`)
+
+By default DAG conversations accumulate multi-turn history and thread live inference responses into later turns (`deltas_without_responses`). For a workload where **every turn authors its own complete payload** — its own system prompt, pre-baked history, and multimodal blocks, with no accumulation — set `context_mode: message_array_with_responses` on the branch conversation. Each turn is then sent as exactly its authored `messages` array; prior turns and live responses are **not** spliced in:
+
+```jsonc
+{"session_id": "t0-a", "context_mode": "message_array_with_responses", "turns": [ /* each turn = its own full array */ ]}
+```
+
+Under this mode each turn may also carry its **own** system prompt (the non-root system-placement rule is waived, since each turn is its own array), and typed multimodal blocks (`image_url`, `projection_embedding`) pass through verbatim. Note that a non-standard block like `projection_embedding` requires a server that understands it; a vanilla OpenAI-compatible server will reject it.
+
+#### Measurement & attribution
+
+The request-free spine (roots, joins) issues no HTTP and contributes **0** to `request_count`, token throughput, TTFT/ITL, and QPS — only the branch turns are real requests. To attribute a raw record (`--export-level raw`) to its place in the graph, key on:
+
+- **`root_correlation_id`** — the graph *instance* (distinct per `--num-conversations` firing),
+- **`conversation_id`** — the round's branch session (e.g. `t0-a`, `t1-a`), and
+- **`turn_index`** — the node within that branch (`a1`…`a4`).
+
+That triple is unique per request even when the same branch session ids repeat across instances, so per-round latency is fully reconstructable. **Think-time** is applied as a delay *before* a round's requests dispatch, so it is **excluded** from per-request latency/TTFT/ITL and **included** only in end-to-end graph-completion time.
 
 ### Per-turn shape
 
@@ -153,7 +219,7 @@ By default a bare-string `forks: ["c"]` entry is **terminal**: the parent has no
 
 The seed history a FORK child inherits is the parent's `messages` plus the captured assistant reply, with two intentional simplifications:
 
-- **`reasoning` is dropped from the captured assistant turn.** The endpoint's `build_assistant_turn` keeps `content` (and tool/function calls when present) but discards `reasoning_content`/`reasoning` because most chat templates do not round-trip reasoning back to the model on a follow-up. Only the `content` field of a `ReasoningResponseData` survives into the child's seed; if the parent emitted reasoning *only* (empty `content`), the reasoning text is used as a fallback so the child still sees something. For workloads where chain-of-thought continuity across turns matters, prefer SPAWN mode — its children start fresh with the same `system` prompt rather than inheriting an inevitably-stripped CoT.
+- **`reasoning` may be dropped from the captured assistant turn on chat/completions.** The base chat endpoint's `build_assistant_turn` keeps `content` (and tool/function calls when present) but discards `reasoning_content`/`reasoning` because most chat templates do not round-trip reasoning back to the model on a follow-up. Only the `content` field of a `ReasoningResponseData` survives into the child's seed; if the parent emitted reasoning *only* (empty `content`), the reasoning text is used as a fallback so the child still sees something. **Anthropic Messages** is different: it reassembles `thinking` (+ signature) → `text` → `tool_use` for FORK replay — see [Anthropic Messages endpoint](../tutorials/anthropic-messages-endpoint.md). For workloads where chain-of-thought continuity across turns matters on chat endpoints, prefer SPAWN mode — its children start fresh with the same `system` prompt rather than inheriting a stripped CoT.
 - **Responses-API output items that are server-built tool outputs are filtered.** When the parent runs against `endpoint=responses` and the model emitted `web_search_call`, `file_search_call`, `image_generation_call`, `code_interpreter_call`, `computer_call`, or `reasoning` items, those are stripped from the seed before splicing into the child's `input` array — the Responses API rejects them as input unless paired with the corresponding tool config, which the child does not redeclare. `message` and `function_call` items round-trip cleanly and remain.
 
 ### FORK mode with `background: true` (fork-and-continue)
@@ -186,7 +252,7 @@ For agentic patterns where the parent eventually needs the child's result before
 `spawns: [session_id, ...]` desugars into SPAWN-mode branches. When the parent turn completes, each listed child session:
 
 - Starts with an **empty** accumulator — only its own `messages` go on the wire.
-- Routes freely (no sticky pin to the parent's worker).
+- Still carries `parent_correlation_id`, so the sticky router co-locates it on the parent's client worker while that sticky entry is live. Unlike FORK, the orchestrator does **not** bump sticky refcounts for SPAWN. Once the parent sticky entry is gone, SPAWN children route least-loaded.
 
 SPAWN targets may be referenced from multiple parents — the child conversation is effectively a fresh-context template. Use SPAWN when you're benchmarking agent-tree shapes where each sub-agent is semantically independent, not a continuation of the parent.
 
@@ -249,17 +315,18 @@ If you need each phase to wrap the previous response with a new "system-like" fr
 
 ## Reference: routing and `agent_depth`
 
-Every AIPerf session has its own `x_correlation_id` that pins it to a specific worker via sticky routing. In a DAG, FORK children inherit their parent's routing key: the router keys on the root session's correlation id, not each child's. That means:
+Every AIPerf session has its own `x_correlation_id` that pins it to a specific worker via sticky routing. In a DAG, FORK children inherit their parent's routing key: the router keys on the parent's correlation id, not each child's. Ordinary SPAWN children also carry `parent_correlation_id`, so they co-locate on the same client worker while the parent sticky entry is still live (without bumping sticky refcounts). That means:
 
 - All siblings in a fork hit the **same worker** as the parent.
-- Siblings send the same root prefix, so the worker (and its server) see a clean prefix-cache hit pattern across sibling pairs.
+- SPAWN children also land on the parent's worker while that sticky entry exists; after it is gone they fall back to least-loaded.
+- FORK siblings send the same root prefix, so the worker (and its server) see a clean prefix-cache hit pattern across sibling pairs.
 
 This is what makes FORK mode useful for exercising prefix-cache and KV-aware routing — without sticky routing across the fork, siblings would scatter across workers and the prefix-share benefit would be invisible on the server.
 
 Every credit and request record is tagged with two DAG-aware fields:
 
 - **`agent_depth`** (`int`) — `0` for root sessions, `1` for direct children, `2` for grandchildren, etc. Roots flowing through a non-DAG dataset all carry `agent_depth=0`, so post-hoc analysis can filter on this field to compare root-only vs full-tree throughput without re-running the benchmark.
-- **`parent_correlation_id`** (`str | None`) — the correlation id of the immediate parent session, or `None` for roots and pre-session SPAWN children (which start fresh with no parent gating). FORK and ordinary SPAWN children both carry the spawning parent's correlation id, distinguishing "this request belongs to a fork tree" from "this is an independent sub-agent dispatch".
+- **`parent_correlation_id`** (`str | None`) — the correlation id of the immediate parent session, or `None` for roots and pre-session SPAWN children. FORK and ordinary (post-turn) SPAWN children both carry the spawning parent's correlation id so the sticky router can co-locate them while that entry is live. Discriminate FORK vs SPAWN with `branch_mode`, not this field alone.
 
 ## Reference: concurrency (fanout exceeds session slots)
 
@@ -278,13 +345,7 @@ Children are dispatched reactively by `BranchOrchestrator` at credit-return time
 
 ### `--num-conversations` autodefault for `dag_jsonl`
 
-When neither `--request-count` nor `--num-conversations` is supplied for a `dag_jsonl` run, AIPerf auto-defaults `--num-conversations` to the **root count** of the file (sessions not referenced by any other conversation's `forks` list) rather than auto-defaulting `--request-count`. Auto-defaulting `--request-count` for a forking dataset would silently truncate the DAG mid-tree because the cap counts fork-spawned children. The CLI logs:
-
-```
-No request count or conversation count provided for forking dataset;
-defaulting --num-conversations to N (run each root in the file once).
-Use --request-count for a literal wire-request cap instead.
-```
+When neither `--request-count` nor `--num-conversations` is supplied for a `dag_jsonl` run, AIPerf auto-defaults `--num-conversations` to the **root count** of the file (sessions not referenced by any other conversation's `forks`, `spawns`, or `pre_session_spawns` lists) rather than auto-defaulting `--request-count`. Auto-defaulting `--request-count` for a forking dataset would silently truncate the DAG mid-tree because the cap counts fork-spawned children. The converter sets `sessions` to that root count silently (no special CLI log line).
 
 If you do want a wire-request cap, pass `--request-count` explicitly — but be aware of the cap-applies-to-children behavior described above.
 
@@ -335,6 +396,7 @@ Every DAG-shaped run publishes a `BranchStats` snapshot per credit phase, export
     "children_completed":                 11,  // children that reached their leaf turn
     "children_errored":                    0,  // children that terminated with an error
     "children_truncated":                  1,  // children stopped mid-tree by --request-count
+    "children_delayed":                    0,  // SPAWN children whose turn-0 dispatch was delayed
     "parents_suspended":                   3,  // parents that paused awaiting a join
     "parents_resumed":                     3,  // parents that resumed after all children drained
     "parents_failed_due_to_child_error":   0,  // parents aborted under AIPERF_DAG_FAIL_FAST=1
@@ -344,7 +406,7 @@ Every DAG-shaped run publishes a `BranchStats` snapshot per credit phase, export
 }
 ```
 
-Counters are mode-agnostic (the same shape applies to FORK-only, SPAWN-only, and mixed runs). Use `children_truncated` and `joins_suppressed` to detect when a `--request-count` cap interrupted the DAG mid-tree; they tally separately from `children_completed` so observability stays accurate. Linear (non-DAG) runs leave `branch_stats` unset on `ProfileResults`.
+Counters are mode-agnostic (the same shape applies to FORK-only, SPAWN-only, and mixed runs). Use `children_truncated` and `joins_suppressed` to detect when a `--request-count` cap interrupted the DAG mid-tree; they tally separately from `children_completed` so observability stays accurate. `children_delayed` counts SPAWN children whose turn-0 dispatch waited on a delay gate. Linear (non-DAG) runs leave `branch_stats` unset on `ProfileResults`.
 
 ## Reference: environment variables
 

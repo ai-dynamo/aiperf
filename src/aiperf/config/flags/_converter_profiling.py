@@ -45,6 +45,41 @@ _RAMP_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+# AGENTIC_REPLAY phase fields that pass through verbatim onto BasePhaseConfig.
+# (output_key == attr_name on CLIConfig.)
+_AGENTIC_REPLAY_ROUTES: tuple[str, ...] = (
+    "failed_request_threshold",
+    "trajectory_start_min_ratio",
+    "trajectory_start_max_ratio",
+    "burst_phase_starts",
+    "system_idle_gap_cap_seconds",
+    "agentic_cache_warmup_duration",
+    "agentic_warmup_grace_period",
+)
+
+
+def _apply_agentic_replay_fields(phase: dict[str, Any], cli: CLIConfig) -> None:
+    """Copy explicitly-set AGENTIC_REPLAY phase fields onto a phase dict.
+
+    These four fields live on ``BasePhaseConfig`` (shared by profiling and
+    warmup), so the same helper feeds both converters.
+    """
+    fields_set = cli.model_fields_set
+    for attr in _AGENTIC_REPLAY_ROUTES:
+        if attr in fields_set:
+            phase[attr] = getattr(cli, attr)
+    # v1 parity: under a --scenario, --warmup-grace-period fed the agentic
+    # warmup barrier grace (there was no dedicated flag). Route it onto
+    # agentic_warmup_grace_period when the dedicated flag is unset; an
+    # explicit --agentic-warmup-grace-period wins.
+    if (
+        cli.scenario is not None
+        and "agentic_warmup_grace_period" not in fields_set
+        and cli.warmup_grace_period is not None
+    ):
+        phase["agentic_warmup_grace_period"] = cli.warmup_grace_period
+
+
 def _profiling_phase_type(cli: CLIConfig) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
@@ -54,6 +89,17 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
     if cli.user_centric_rate is not None:
         return PhaseType.USER_CENTRIC
     if cli.request_rate is not None or cli.request_rate_series is not None:
+        # v1 parity (user_config.py auto-promote): --arrival-smoothness /
+        # --vllm-burstiness without an explicit --arrival-pattern resolves to
+        # gamma, since smoothness is a gamma-distribution knob. Without this the
+        # flag fell through to POISSON and then _apply_phase_specific_routes
+        # hard-rejected it ("only supported with gamma") -- a cutover regression
+        # that made --vllm-burstiness unusable on its own.
+        if (
+            "arrival_pattern" not in cli.model_fields_set
+            and cli.arrival_smoothness is not None
+        ):
+            return PhaseType.GAMMA
         match cli.arrival_pattern:
             case ArrivalPattern.GAMMA:
                 return PhaseType.GAMMA
@@ -260,6 +306,12 @@ def _maybe_auto_promote_trace(
         dataset_type is None
         or file_path is None
         or cli.disable_auto_fixed_schedule
+        # A --scenario locks its own timing_mode (e.g. agentic_replay), which
+        # would immediately conflict with an auto-promoted FIXED_SCHEDULE
+        # phase in the scenario validator. v1 parity: only an EXPLICIT
+        # --fixed-schedule conflicts with a scenario; the auto-derived
+        # promotion is simply skipped so the phase keeps its default shape.
+        or cli.scenario is not None
         or prof["type"] == PhaseType.FIXED_SCHEDULE
         or not plugins.is_trace_dataset(str(dataset_type))
         or not _first_record_has_timestamp(file_path)
@@ -408,8 +460,14 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
     for output_key, attr_name in _PROF_FIELD_ROUTES:
         if attr_name in fields_set:
             prof[output_key] = getattr(cli, attr_name)
+    if (
+        cli.benchmark_duration is not None
+        and "benchmark_grace_period" not in fields_set
+    ):
+        prof["grace_period"] = cli.benchmark_grace_period
 
     _apply_profiling_ramps(prof, cli)
+    _apply_agentic_replay_fields(prof, cli)
     _apply_profiling_rate_series(prof, cli)
 
     prof["type"] = _profiling_phase_type(cli)

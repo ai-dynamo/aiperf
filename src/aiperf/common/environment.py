@@ -12,6 +12,7 @@ Structure:
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
+    Environment.ENDPOINT.*       - Endpoint wire-format settings
     Environment.GPU.*            - GPU telemetry collection
     Environment.HTTP.*           - HTTP client socket and connection settings
     Environment.LOGGING.*        - Logging configuration
@@ -83,6 +84,18 @@ class _AccuracySettings(BaseSettings):
         "export. Set to 0 to skip the wait entirely.",
     )
 
+    LCB_GRADE_TIMEOUT_MAX_S: float = Field(
+        default=300.0,
+        gt=0.0,
+        description="Hard ceiling (seconds) on the client-side wall-clock timeout "
+        "for a single LiveCodeBench code-execution grade. The per-grade timeout "
+        "scales with the problem's test-case count (lighteval's internal budget "
+        "plus a margin) but is capped here so one wedged grading worker cannot "
+        "stall the whole run. Raise it if legitimately slow large problems are "
+        "being prematurely failed; lower it to fail wedged workers faster. "
+        "Consumed by ``aiperf.accuracy.graders.code_execution._derive_grade_timeout``.",
+    )
+
     LCB_RELEASE_TAG: str = Field(
         default="v4_v5",
         description="LiveCodeBench dataset subset (HF config name) "
@@ -92,10 +105,67 @@ class _AccuracySettings(BaseSettings):
         "are reproducible across runs and branches. Default "
         "``v4_v5`` matches lighteval's base subset; bump (e.g. to "
         "``v6``) when the team rebaselines against a newer snapshot. "
-        "The loader always passes ``trust_remote_code=True`` so LCB's "
-        "dataset-loading script can execute on ``datasets`` v4+ "
-        "(mirrors lighteval's reference opt-in). Consumed by "
+        "``trust_remote_code=True`` is required because LCB ships a "
+        "repository loading script; this is only compatible with "
+        "``datasets<4`` (``datasets>=4`` dropped loading-script support "
+        "entirely — the loader surfaces a clear error with a "
+        "``datasets<4`` pin). Consumed by "
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
+
+
+class _AgentXSettings(BaseSettings):
+    """Settings for the InferenceX AgentX scenario family.
+
+    Controls runtime knobs for the agentx scenario: the substring allowlist
+    and rate limit used to classify and gate context-overflow errors
+    (RFC 2026-04-26 §7), and the AgenticReplayStrategy double-recycle guard
+    window (RECYCLE_GUARD_MAX_WINDOW).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_AGENTX_",
+    )
+
+    CONTEXT_OVERFLOW_SUBSTRINGS: list[str] = Field(
+        default=[
+            "context length",
+            "maximum context",
+            "context_length_exceeded",
+            "prompt is too long",
+        ],
+        description="Case-insensitive substring allowlist used to classify a "
+        "server error response as a context-overflow event. Matched against "
+        "the raw response body and the OpenAI-style nested 'error.message' "
+        "field. Extend via AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS to "
+        "support additional inference-server vocabularies (vLLM, TGI, "
+        "TensorRT-LLM, ...). Empty list disables runtime detection.",
+    )
+    CONTEXT_OVERFLOW_RATE_LIMIT: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.01,
+        description="Strict upper bound on the per-run context-overflow rate "
+        "(context_overflow_count / total_responses) before a scenario "
+        "submission is flipped to submission_valid=false with reason "
+        "'context_overflow_rate_exceeded'. Default 0.01 (1%) matches the "
+        "scenario spec RFC 2026-04-26 §7. Comparison is strictly greater-than: "
+        "rate exactly equal to the limit is accepted. Has no effect on "
+        "non-scenario runs (no --scenario flag) or runs with zero responses.",
+    )
+    RECYCLE_GUARD_MAX_WINDOW: int = Field(
+        ge=1,
+        default=1_000_000,
+        description="Maximum number of recently-recycled root correlation_ids "
+        "retained by AgenticReplayStrategy's double-recycle guard (which raises "
+        "if a final-turn credit return is delivered twice and would re-spawn a "
+        "session). Without a bound the guard retains one entry per recycled "
+        "session for the entire PROFILING phase -- hundreds of MB of "
+        "unreclaimable memory on long, high-throughput durability ramps. Oldest "
+        "entries are evicted FIFO once the window is full; a duplicate delivered "
+        "after this many intervening recycles is no longer caught. Duplicate "
+        "deliveries are near-immediate in practice, so the default window is far "
+        "larger than any real gap; raise it for very high concurrency.",
     )
 
 
@@ -240,6 +310,33 @@ class _DatasetSettings(BaseSettings):
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
     )
+    MMAP_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
+        "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
+        "Set to False to force every run to re-tokenize and re-write its mmap files. "
+        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+    )
+    MMAP_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory holding the content-addressed mmap cache. If None, defaults to "
+        "~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains "
+        "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
+        "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
+    )
+    PREFORMAT_PAYLOADS: bool = Field(
+        default=False,
+        description="If True, pre-encode single-turn / self-contained synthetic "
+        "conversations to the PAYLOAD_BYTES mmap fast path at dataset-build time "
+        "so workers stream the bytes verbatim and skip per-request encoding. This "
+        "is a throughput optimization that DROPS input-tokenization metrics "
+        "(input_sequence_length, image counts) because the structured prompt is "
+        "discarded. Default False keeps the structured-turns (CONVERSATION) path "
+        "so those metrics are computed. Datasets that natively ship raw payloads "
+        "(raw_payload / inputs_json / mooncake-with-payload) always use "
+        "PAYLOAD_BYTES regardless of this flag; cache-bust runs always use "
+        "CONVERSATION regardless.",
+    )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -267,6 +364,204 @@ class _DatasetSettings(BaseSettings):
         "dataset to a JSONL file. No hard cap.",
     )
 
+    WEKA_PARALLEL_WORKERS: int = Field(
+        ge=0,
+        le=256,
+        default=0,
+        description="Number of worker processes for WekaTraceLoader parallel "
+        "reconstruction. 0 = auto (min(cpu_count - 1, 16, num_traces)). Set to 1 "
+        "to force serial reconstruction.",
+    )
+    WEKA_PARALLEL_THRESHOLD: int = Field(
+        ge=1,
+        le=100000,
+        default=8,
+        description="Minimum number of parent traces required before "
+        "WekaTraceLoader switches to the multi-process parallel reconstruction "
+        "path. Below this, the in-process serial path is used (Pool startup "
+        "overhead exceeds the speedup for tiny corpora).",
+    )
+    WEKA_SPLIT_FLATTENED_AGENTS: bool = Field(
+        default=True,
+        description="When True (default), WekaTraceLoader runs hash_id LCP "
+        "chain detection at both layers: untagged agent fan-outs recorded as "
+        "flat top-level requests split into per-agent child conversations "
+        "(::fa:NNN), and each subagent entry's inner requests split into "
+        "per-context-chain children (`::sa:agent_id` plus :fa:NNN siblings), "
+        "all with SPAWN/SPAWN_JOIN linkage so replay reproduces the recorded "
+        "concurrency. Set to False to disable detection at both layers: all "
+        "top-level requests serialize into one root conversation and each "
+        "subagent emits exactly one child with its inner requests in time "
+        "order. Detected chains at both layers are further split into genuine "
+        "agents and auxiliary one-shot sidecars (top-level ::fa: vs ::aux:; "
+        "subagent overflow :fa: vs :aux:) per WEKA_AUX_MAX_REQUESTS / "
+        "WEKA_AUX_ISL_RATIO / WEKA_AUX_ISL_FLOOR.",
+    )
+    WEKA_TOOL_SHAPED_MESSAGES: bool = Field(
+        default=False,
+        description="When True, WekaTraceLoader emits the OpenAI tool-call "
+        "wire shape for turns classified as tool-result continuations: the "
+        "same-delta assistant message gains a synthetic tool_calls entry and "
+        "the turn's new input is sent as a role='tool' message instead of "
+        "plain user text (content unchanged). Exercises the server's "
+        "tool-message chat-template path at the cost of exact ISL fidelity "
+        "(tool messages tokenize differently than plain user text). Only "
+        "turns with a recorded tool signal (input_types / prior stop) shape; "
+        "legacy traces are unaffected. Default False keeps the byte-exact "
+        "plain-user replay shape.",
+    )
+    WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
+        ge=0.0,
+        default=3600.0,
+        description="LCP chain-detection seam guard: the maximum wall-clock gap "
+        "(seconds) between a chain's last request and a candidate continuation "
+        "before that continuation is only accepted when it also keeps enough of "
+        "the prior context (see WEKA_SEAM_MIN_OVERLAP_RATIO). A genuine context "
+        "compaction continues promptly (seconds to minutes), so a low-overlap "
+        "join hours later is treated as a distinct session that merely shares a "
+        "base prefix and is spawned as its own conversation instead of being "
+        "stitched onto the chain (which would fabricate a multi-hour intra-"
+        "conversation idle gap). The guard fires only when BOTH this gap is "
+        "exceeded AND overlap is below the ratio, so prompt compactions at any "
+        "overlap and verbatim long-gap resumes at high overlap are preserved. "
+        "Raise toward infinity to disable the temporal half of the guard.",
+    )
+    WEKA_SEAM_MIN_OVERLAP_RATIO: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.5,
+        description="LCP chain-detection seam guard: the minimum shared-prefix "
+        "ratio (continuation's fork depth / the chain tail's block count) for a "
+        "far-future continuation to still be accepted as the same agent. Below "
+        "this, a continuation past WEKA_SEAM_MAX_GAP_SECONDS is spawned as a new "
+        "conversation rather than spliced on. Corpus data is bimodal -- real "
+        "compactions and verbatim resumes keep at least 94% of the prefix, while "
+        "coincidental base-prefix mis-merges keep under 50% -- so 0.5 sits in a wide "
+        "safe valley. Set to 0.0 to disable the overlap half of the guard.",
+    )
+    WEKA_AUX_MAX_REQUESTS: int = Field(
+        ge=0,
+        default=1,
+        description="Auxiliary (sidecar) classification: a detected worker "
+        "chain with at most this many requests is eligible to be reclassified "
+        "as an auxiliary one-shot call -- a tool-issued sidecar (web "
+        "fetch/search summary, title generation, a classifier) rather than a "
+        "sustained agent -- when it also passes the WEKA_AUX_ISL_* size test. "
+        "Applies to both top-level flat chains (::fa: -> ::aux:) and a "
+        "subagent's nested-LCP overflow (:fa: -> :aux:). Corpus sidecars are "
+        "overwhelmingly single-request, so the default is 1. Set to 0 to "
+        "disable aux classification (every worker chain keeps its agent tag). "
+        "Only applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_AUX_ISL_RATIO: float = Field(
+        ge=0.0,
+        default=0.10,
+        description="Auxiliary (sidecar) classification: an aux-eligible chain "
+        "(see WEKA_AUX_MAX_REQUESTS) is reclassified to a sidecar only when its "
+        "first request's input length is below max(WEKA_AUX_ISL_FLOOR, this "
+        "ratio * the enclosing main chain's peak input length -- the trace's for "
+        "flat chains, the subagent's for overflow). The ratio catches calls "
+        "small relative to a large conversation's accumulated context; the floor "
+        "catches them in absolute terms. Sidecars start from a fresh "
+        "few-thousand-token context vs the agent's tens-to-hundreds of "
+        "thousands.",
+    )
+    WEKA_AUX_ISL_FLOOR: int = Field(
+        ge=0,
+        default=16384,
+        description="Auxiliary (sidecar) classification: absolute input-length "
+        "floor (tokens) for the aux size test (see WEKA_AUX_ISL_RATIO). A chain "
+        "whose first-request input length is below max(this, ratio * main peak "
+        "ISL) is treated as an auxiliary one-shot sidecar. Keeps small "
+        "fresh-context calls classified as sidecars even when the enclosing "
+        "conversation is itself small.",
+    )
+    WEKA_AUX_CROSS_MODEL: bool = Field(
+        default=True,
+        description="Auxiliary (sidecar) classification: when True (default), an "
+        "aux-eligible chain (at most WEKA_AUX_MAX_REQUESTS requests) whose first "
+        "request runs on a different model than its enclosing main chain is "
+        "treated as a sidecar regardless of input length. An agent does not "
+        "switch models for its own reasoning, so a one-shot on a different model "
+        "is a tool-internal call -- e.g. a Haiku WebFetch summary fired by an "
+        "Opus agent, which can carry a large fetched-page payload and so escape "
+        "the WEKA_AUX_ISL_* size test. Set to False to classify purely by size.",
+    )
+    WEKA_AUX_REDUCTION_OSL_MAX: int = Field(
+        ge=0,
+        default=4000,
+        description="Auxiliary (sidecar) classification, reduction arm: a "
+        "single-request worker chain on the SAME model as its enclosing main "
+        "chain is reclassified to an auxiliary one-shot when its output length "
+        "is in (0, this) tokens AND its input length is at least "
+        "WEKA_AUX_ISL_FLOOR AND its input/output ratio exceeds "
+        "WEKA_AUX_REDUCTION_RATIO. This catches large-input/short-output "
+        "reductions (context compaction, subagent-result summaries, tool-output "
+        "digests) that the size and cross-model arms miss because they are "
+        "same-model and large. The bound separates a bounded summary from "
+        "generative agent output (a real agent emits long completions); corpus "
+        "reductions cap well below 4k output across every capture. Reductions "
+        "are emitted as ordinary ::aux: sidecars. Set to 0 to disable the "
+        "reduction arm. Only applies when "
+        "WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_AUX_REDUCTION_RATIO: float = Field(
+        ge=0.0,
+        default=20.0,
+        description="Auxiliary (sidecar) classification, reduction arm: the "
+        "minimum input-to-output token ratio for a same-model single-request "
+        "large-input chain to be treated as a reduction sidecar (see "
+        "WEKA_AUX_REDUCTION_OSL_MAX). A reduction consumes a large body and "
+        "emits a short summary, so input/output is high (corpus median ~120); "
+        "20 is a conservative floor that still excludes balanced request/"
+        "response calls. Only applies when WEKA_AUX_REDUCTION_OSL_MAX > 0.",
+    )
+    WEKA_WORKER_GROUP_MIN: int = Field(
+        ge=0,
+        default=3,
+        description="Parallel worker-group tagging: a coordinated parallel fan-"
+        "out must BOTH share a deep spawned context AND run concurrently. Workers "
+        "that forked from shared context (fork depth > 0) are first scoped by "
+        "their fork point (the parent request they branched off), then within "
+        "each scope split into connected components of overlapping active "
+        "[t0, t1) intervals; a component with at least this many members is "
+        "emitted as ::wg:{group}_{member} (group = the concurrent fan-out, member "
+        "= index by start time) instead of the generic ::fa: agent marker. The "
+        "fork-point scope keeps unrelated fan-outs apart (pure interval overlap "
+        "bridges a busy trace into one blob); the overlap split drops members "
+        "that share the fork point but never run concurrently. This isolates "
+        "genuine parallel sub-agent fan-out (the dominant agent population) from "
+        "solo agents, unlike keying on the first context block (shared by ~every "
+        "worker all session). Auxiliary chains are classified first, so a one-"
+        "shot sidecar never becomes a worker-group member. Set to 0 to disable "
+        "worker-group tagging (parallel workers keep the generic ::fa: tag). Only "
+        "applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+
+
+class _EndpointSettings(BaseSettings):
+    """Endpoint wire-format configuration.
+
+    Controls how AIPerf serializes message content when building request
+    payloads. The main knob is FORCE_CONTENT_PARTS, which overrides the
+    single-text fast path that emits a plain string for simple turns.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_ENDPOINT_",
+    )
+
+    FORCE_CONTENT_PARTS: bool = Field(
+        default=False,
+        description="When True, always emit the multi-part content array "
+        '(e.g. [{"type": "text", "text": "..."}]) for synthetic turns, '
+        "even when there is only a single text with no media. By default "
+        "(False) single-text turns emit a plain string to stay compatible "
+        "with servers that reject list-of-parts content for non-multimodal "
+        "inputs (e.g. OpenAI Dynamo). Enable when the target server requires "
+        "the structured content-parts shape unconditionally.",
+    )
+
 
 class _DagSettings(BaseSettings):
     """Settings for DAG benchmark mode (`dag_jsonl` input type)."""
@@ -277,12 +572,13 @@ class _DagSettings(BaseSettings):
 
     FAIL_FAST: bool = Field(
         default=False,
-        description="When True, abort the whole run on the first DAG child "
-        "error (cancel pending siblings, raise to PhaseRunner, terminate "
-        "phase). Default False - the orchestrator counts the error in "
+        description="When True, a single DAG child error aborts the parent and "
+        "every orphan sibling under the same branch (releases sticky refcounts "
+        "and calls issuer.abort_session); unrelated root sessions continue. "
+        "Default False - the orchestrator counts the error in "
         "BranchStats.children_errored, releases the join slot, drains pending "
-        "siblings, and continues the run. Set via "
-        "AIPERF_DAG_FAIL_FAST=1 for strict CI assertions.",
+        "siblings, and continues. Set via AIPERF_DAG_FAIL_FAST=1 for strict CI "
+        "assertions.",
     )
 
 
@@ -495,12 +791,26 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Session-ID with the stable X-Correlation-ID value. "
+        "This transport setting is the supported way to enable generic HTTP session "
+        "affinity. It is ADDITIVE (both headers are sent); --session-header only "
+        "RENAMES the single correlation header.",
+    )
+    X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
+        "This transport setting is the supported affinity path for the SGLang Model "
+        "Gateway manual routing policy.",
+    )
     X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
-        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
-        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
-        "session to the replica holding its KV prefix.",
+        "plus X-Dynamo-Parent-Session-ID on subagent children. This transport setting "
+        "is the supported affinity path for a Dynamo frontend running "
+        "--router-session-affinity-ttl-secs, pinning every turn of a session to the "
+        "replica holding its KV prefix.",
     )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
@@ -713,7 +1023,7 @@ class _SearchPlannerSettings(BaseSettings):
         default=0.05,
         description="Default SLA boundary search precision target. "
         "The bisection / smooth-isotonic bracket halts when "
-        "(infeasible_min - feasible_max) / infeasible_min < this value, "
+        "(infeasible_min - feasible_max) / infeasible_min stays below this value, "
         "and the cliff detector requires bracket_gap > this * x_hi to "
         "report a cliff. 5% mirrors perf_analyzer's --binary-search default.",
     )
@@ -921,6 +1231,13 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=2.0,
         description="Interval in seconds between credit progress report messages",
+    )
+    WARMUP_PROGRESS_LOG_INTERVAL: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=30.0,
+        description="Interval in seconds between warmup progress heartbeat log messages. "
+        "Set to 0 to disable.",
     )
     DISABLE_UVLOOP: bool = Field(
         default=False,
@@ -1216,17 +1533,6 @@ class _UISettings(BaseSettings):
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
     )
-    CONSOLE_EXPORT_WIDTH: int = Field(
-        ge=40,
-        le=10000,
-        default=140,
-        description=(
-            "Fixed column width used to render the post-run console exporter "
-            "tables. Applied both to the recording console that produces "
-            "profile_export_console.txt and to the live console when stdout "
-            "is not a tty (so non-tty CI logs match the saved artifact)."
-        ),
-    )
 
 
 class _WorkerSettings(BaseSettings):
@@ -1446,6 +1752,10 @@ class _Environment(BaseSettings):
         default_factory=_AccuracySettings,
         description="Accuracy benchmark settings (dataset version pins, etc.)",
     )
+    AGENTX: _AgentXSettings = Field(
+        default_factory=_AgentXSettings,
+        description="InferenceX AgentX scenario settings (context-overflow detection, etc.)",
+    )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
@@ -1469,6 +1779,10 @@ class _Environment(BaseSettings):
     DAG: _DagSettings = Field(
         default_factory=_DagSettings,
         description="DAG benchmark mode settings (dag_jsonl input type)",
+    )
+    ENDPOINT: _EndpointSettings = Field(
+        default_factory=_EndpointSettings,
+        description="Endpoint wire-format settings (content serialization, etc.)",
     )
     DEV: _DeveloperSettings = Field(
         default_factory=_DeveloperSettings,

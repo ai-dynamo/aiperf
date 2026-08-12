@@ -191,6 +191,21 @@ analyzer:
     One-to-many mapping: multiple analyzers loaded simultaneously.
 
 # =============================================================================
+# Speculative Decoding Categories
+# =============================================================================
+
+spec_decode_adapter:
+  protocol: aiperf.spec_decode.protocols:SpecDecodeAdapterProtocol
+  enum: SpecDecodeAdapterType
+  description: |
+    Spec-decode adapters read an engine's raw per-request speculative-decoding
+    payload off the parsed responses and fill the engine-neutral
+    SpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the
+    metrics layer. Auto-detected: adapters are tried in priority order and the
+    first whose can_adapt() recognizes the payload wins.
+
+
+# =============================================================================
 # Accuracy Categories
 # =============================================================================
 

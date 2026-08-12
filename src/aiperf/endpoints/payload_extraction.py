@@ -62,7 +62,7 @@ def _walk_items_arrays(
     fallbacks should not also fire).
     """
     found = False
-    chat_messages: list[dict[str, str]] = []
+    chat_messages: list[dict[str, Any]] = []
     for items_field in ("messages", "input"):
         items = payload.get(items_field)
         if not isinstance(items, list) or not items:
@@ -90,7 +90,7 @@ def _walk_item(
     item: dict[str, Any],
     result: ExtractedPayload,
     type_to_media: dict[str, MediaType],
-    chat_messages: list[dict[str, str]],
+    chat_messages: list[dict[str, Any]],
 ) -> None:
     """Walk one chat/Responses item: content, tool_calls, function_call(_output).
 
@@ -98,14 +98,21 @@ def _walk_item(
     to ``chat_messages`` when the item carries a string ``role``.
     """
     msg_text_parts = _walk_item_content(item, result, type_to_media)
-    _walk_item_tool_calls(item, result)
-    _walk_item_function_call(item, result)
     role = item.get("role")
-    if isinstance(role, str):
+    in_messages = isinstance(role, str)
+    _walk_item_tool_calls(item, result, in_messages=in_messages)
+    _walk_item_function_call(item, result)
+    if in_messages:
         # Chat templates expect string content. Concatenate the text parts
         # of mixed-content messages; media parts are dropped here (they don't
         # templatize meaningfully and the media counts already captured them).
-        chat_messages.append({"role": role, "content": "".join(msg_text_parts)})
+        msg: dict[str, Any] = {"role": role, "content": "".join(msg_text_parts)}
+        # Pass replayed tool_calls through: chat templates render them, so
+        # dropping them would undercount the templated ISL for agent replays.
+        tool_calls = item.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            msg["tool_calls"] = tool_calls
+        chat_messages.append(msg)
 
 
 def _walk_item_content(
@@ -151,13 +158,19 @@ def _walk_content_part(
         result.video_count += 1
 
 
-def _walk_item_tool_calls(item: dict[str, Any], result: ExtractedPayload) -> None:
+def _walk_item_tool_calls(
+    item: dict[str, Any], result: ExtractedPayload, in_messages: bool
+) -> None:
     """Chat-shape assistant message replaying earlier ``tool_calls``.
 
     Each call's ``function.name`` and ``function.arguments`` are tokens the
     model previously generated, and the server tokenises them on input
     replay. Without this the ISL of agent-history replays is undercounted
     by everything in those calls.
+
+    ``in_messages`` routes the strings to ``texts`` only (the chat-template
+    path renders them via ``messages``, so ``tool_texts`` would double-count);
+    otherwise they go to both ledgers.
     """
     tool_calls = item.get("tool_calls")
     if not isinstance(tool_calls, list):
@@ -169,7 +182,10 @@ def _walk_item_tool_calls(item: dict[str, Any], result: ExtractedPayload) -> Non
         if isinstance(fn, dict):
             collected: list[str] = []
             _collect_str_fields(fn, ("name", "arguments"), collected)
-            _append_tool_texts(result, collected)
+            if in_messages:
+                result.texts.extend(collected)
+            else:
+                _append_tool_texts(result, collected)
 
 
 def _walk_item_function_call(item: dict[str, Any], result: ExtractedPayload) -> None:

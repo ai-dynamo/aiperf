@@ -39,6 +39,7 @@ from aiperf_mock_server.models import (
     ImageGenerationRequest,
     RankingRequest,
     RequestT,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
@@ -303,6 +304,8 @@ def _encode_request_prompt_ids(
         return _encode_texts_without_special_tokens(tokenizer, [request.prompt])
     if isinstance(request, SolidoRAGRequest):
         return _encode_texts_without_special_tokens(tokenizer, request.query)
+    if isinstance(request, ResponsesRequest):
+        return _encode_texts_with_tokenizer_call(tokenizer, [request.prompt_text])
     return [], "unsupported_request"
 
 

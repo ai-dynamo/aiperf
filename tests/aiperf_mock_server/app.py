@@ -19,6 +19,7 @@ from aiperf_mock_server.config import (
     public_config_dump,
     server_config,
 )
+from aiperf_mock_server.control_state import control_state
 from aiperf_mock_server.dcgm_faker import DCGMFaker
 from aiperf_mock_server.metrics import (
     AIPERF_MOCK_REGISTRY,
@@ -54,6 +55,7 @@ from aiperf_mock_server.models import (
     ImageGenerationRequest,
     ImageRetrievalRequest,
     RankingRequest,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
@@ -212,6 +214,7 @@ _AUTH_PROTECTED_PATHS: frozenset[str] = frozenset(
         "/generate_stream",
         "/rag/api/prompt",
         "/rerank",
+        "/v1/audio/transcriptions",
         "/v1/chat/completions",
         "/v1/chat/embeddings",
         "/v1/completions",
@@ -419,6 +422,7 @@ async def chat_completions(
     request: Request,
 ) -> ORJSONResponse | StreamingResponse:
     """Chat completion endpoint."""
+    control_state.record("inference")
     endpoint = "/v1/chat/completions"
     init_model_config(req.model)
     ctx = make_ctx(req, endpoint, request.state.start_time)
@@ -688,29 +692,6 @@ async def _text_stream_wrapper(ctx: RequestCtx, req: CompletionRequest, endpoint
 # ============================================================================
 
 
-def _extract_responses_prompt(payload: dict[str, Any]) -> str:
-    input_value = payload.get("input", "")
-    if isinstance(input_value, str):
-        return input_value
-    if isinstance(input_value, list):
-        parts: list[str] = []
-        for item in input_value:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                content = item.get("content", "")
-                if isinstance(content, str):
-                    parts.append(content)
-                elif isinstance(content, list):
-                    parts.extend(
-                        str(part.get("text", ""))
-                        for part in content
-                        if isinstance(part, dict)
-                    )
-        return "\n".join(part for part in parts if part)
-    return str(input_value)
-
-
 def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
     return {
         "id": ctx.request_id,
@@ -731,17 +712,12 @@ def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
 
 @app.post("/v1/responses", response_model=None)
 @with_error_injection
-async def responses(req: dict[str, Any], request: Request) -> ORJSONResponse:
+async def responses(req: ResponsesRequest, request: Request) -> ORJSONResponse:
     """Mock OpenAI Responses endpoint."""
     endpoint = "/v1/responses"
-    model = str(req.get("model") or "test-model")
-    mock_req = ChatCompletionRequest(
-        model=model,
-        messages=[{"role": "user", "content": _extract_responses_prompt(req)}],
-    )
-    ctx = make_ctx(mock_req, endpoint, request.state.start_time)
+    ctx = make_ctx(req, endpoint, request.state.start_time)
 
-    with track_llm_request(ctx, model, endpoint):
+    with track_llm_request(ctx, ctx.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         response_data = _build_responses_response_data(ctx)
         record_request_bytes(
@@ -1392,6 +1368,51 @@ async def image_edits(
 
 
 # ============================================================================
+# AUDIO TRANSCRIPTION
+# ============================================================================
+
+
+@app.post("/v1/audio/transcriptions", response_model=None)
+@with_error_injection
+async def audio_transcriptions(
+    request: Request,
+    file: UploadFile = File(...),  # noqa: B008
+    model: str = Form("mock-model"),  # noqa: B008
+    language: str | None = Form(None),  # noqa: B008
+    temperature: float | None = Form(None),  # noqa: B008
+    response_format: str = Form("json"),  # noqa: B008
+) -> ORJSONResponse:
+    """Mock OpenAI Audio Transcription endpoint.
+
+    Drains the uploaded audio file so multipart parsing is exercised, then
+    returns a deterministic transcript as ``{"text": ...}`` with usage.
+    """
+    endpoint = "/v1/audio/transcriptions"
+    upload_bytes = await file.read()
+
+    start_time = request.state.start_time
+    mock_req = ChatCompletionRequest(
+        model=model, messages=[{"role": "user", "content": "transcribe"}]
+    )
+    ctx = make_ctx(mock_req, endpoint, start_time)
+
+    with track_llm_request(ctx, model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        body: dict[str, Any] = {
+            "text": ctx.content,
+            "input_audio_bytes": len(upload_bytes),
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": len(ctx.tokens),
+                "total_tokens": len(ctx.tokens),
+            },
+        }
+        if language is not None:
+            body["language"] = language
+        return ORJSONResponse(body)
+
+
+# ============================================================================
 # SOLIDO RAG
 # ============================================================================
 
@@ -1444,6 +1465,38 @@ async def solido_rag(req: SolidoRAGRequest, request: Request) -> ORJSONResponse:
     with track_llm_request(ctx, req.inference_model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         return ORJSONResponse(_build_solido_rag_response_data(ctx, req))
+
+
+# ============================================================================
+# Control-plane admin routes (benchmark hooks; not inference)
+# ============================================================================
+
+
+@app.post("/reset_prefix_cache")
+async def reset_prefix_cache() -> Response:
+    control_state.reset_count += 1
+    control_state.record("reset")
+    return Response(status_code=200)
+
+
+@app.post("/flush_cache")
+async def flush_cache() -> Response:
+    """SGLang-compatible radix/prefix-cache flush (alias of reset_prefix_cache)."""
+    control_state.reset_count += 1
+    control_state.record("reset")
+    return Response(status_code=200)
+
+
+@app.post("/start_profile")
+async def start_profile() -> Response:
+    control_state.profiler_starts += 1
+    return Response(status_code=200)
+
+
+@app.post("/stop_profile")
+async def stop_profile() -> Response:
+    control_state.profiler_stops += 1
+    return Response(status_code=200)
 
 
 # ============================================================================

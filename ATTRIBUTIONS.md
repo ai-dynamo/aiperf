@@ -201,7 +201,7 @@ This document provides attribution information for public domain assets used in 
 - **Source**: [101arrowz/fzstd](https://github.com/101arrowz/fzstd) (npm: `fzstd`)
 - **Author**: Arjun Barrett
 - **License**: MIT License
-- **Usage**: Inlined into the `aiperf turn-messages` HTML viewer to decompress the embedded zstd payload client-side (no network, no WASM).
+- **Usage**: Inlined into the `aiperf analyze turn-messages` HTML viewer to decompress the embedded zstd payload client-side (no network, no WASM).
 
 **License Text:**
 

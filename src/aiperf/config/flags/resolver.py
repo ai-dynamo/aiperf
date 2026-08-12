@@ -109,6 +109,7 @@ def resolve_config(
     yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
     yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
+    _apply_dataset_synthesis_overrides(merged, cli_config)
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
     promote_benchmark_magic_lists(
@@ -400,6 +401,58 @@ def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> N
     filters.update(_parse_dataset_filters(cli.dataset_filters))
 
 
+def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    """Overlay explicit synthesis flags onto a YAML-supplied dataset."""
+    if not any(
+        field == "allow_dataset_wrap" or field.startswith("synthesis_")
+        for field in cli.model_fields_set
+    ):
+        return
+
+    from aiperf.config.dataset.trace import SynthesisConfig
+    from aiperf.config.flags._converter_dataset import (
+        _apply_synthesis,
+        _reject_baseten_trace_unsupported_synthesis,
+    )
+
+    benchmark = merged.get("benchmark")
+    datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
+    if not isinstance(datasets, list) or not datasets:
+        raise ValueError("synthesis flags require a file or public dataset")
+    if len(datasets) > 1:
+        logger.warning(
+            "Synthesis flags with multiple YAML datasets apply only to the first dataset"
+        )
+    dataset = datasets[0]
+    if not isinstance(dataset, dict):
+        raise ValueError("synthesis flags require a file or public dataset")
+    if dataset.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
+        logger.warning(
+            "Synthesis flags require a file or public dataset; ignoring them "
+            "for dataset type %r",
+            dataset.get("type"),
+        )
+        return
+
+    if dataset.get("type") == DatasetType.FILE:
+        _reject_baseten_trace_unsupported_synthesis(
+            cli,
+            dataset.get("format"),
+            dataset_format_source="YAML format: baseten_trace",
+        )
+
+    override = {"type": dataset.get("type")}
+    _apply_synthesis(override, cli)
+    if synthesis := override.get("synthesis"):
+        base = SynthesisConfig.model_validate(
+            dataset.get("synthesis") or {}
+        ).model_dump(by_alias=True, exclude_unset=True)
+        update = SynthesisConfig.model_validate(synthesis).model_dump(
+            by_alias=True, exclude_unset=True
+        )
+        dataset["synthesis"] = deep_merge(base, update)
+
+
 # CLI loadgen flag -> phase field. Each entry is (loadgen_attr, phase_key).
 # The CLI help promises "CLI flags override values from the config file";
 # this table makes that real for YAML-supplied phase shapes by overlaying
@@ -428,9 +481,22 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     left untouched so a
     user passing ``--request-count 10`` with ``warmup_profiling.yaml``
     doesn't clobber the warmup ramp.
+
+    The AGENTIC_REPLAY phase fields (``--agentic-cache-warmup-duration``,
+    ``--burst-phase-starts``, ``--failed-request-threshold``,
+    ``--trajectory-start-min/max-ratio``) live on ``BasePhaseConfig`` and
+    are overlaid via the same converter helper the CLI-only path uses, so a
+    ``-f scenario.yaml --agentic-cache-warmup-duration 30`` honors the
+    documented "CLI flags override values from the config file" contract.
     """
-    fields_set = cli.model_fields_set & LOADGEN_FIELDS
-    if not fields_set:
+    from aiperf.config.flags._converter_profiling import (
+        _AGENTIC_REPLAY_ROUTES,
+        _apply_agentic_replay_fields,
+    )
+
+    loadgen_set = cli.model_fields_set & LOADGEN_FIELDS
+    agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
+    if not loadgen_set and not agentic_set:
         return
 
     benchmark = merged.get("benchmark")
@@ -444,15 +510,15 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     if target is None:
         return
 
-    _reject_loadgen_target_collisions(fields_set)
+    _reject_loadgen_target_collisions(loadgen_set)
 
-    if "request_rate_series" in fields_set and cli.request_rate_series is not None:
+    if "request_rate_series" in loadgen_set and cli.request_rate_series is not None:
         from aiperf.config.rate_series import RateSeriesConfig
 
         series = RateSeriesConfig(path=str(cli.request_rate_series))
         target["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
         target.pop("rate", None)
-        if "arrival_pattern" in fields_set:
+        if "arrival_pattern" in loadgen_set:
             target["type"] = {
                 ArrivalPattern.POISSON: PhaseType.POISSON,
                 ArrivalPattern.GAMMA: PhaseType.GAMMA,
@@ -460,12 +526,22 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
             }.get(cli.arrival_pattern, PhaseType.POISSON)
 
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
-        if attr not in fields_set:
+        if attr not in loadgen_set:
             continue
         value = getattr(cli, attr)
         if value is None:
             continue
         target[key] = value
+
+    if (
+        "benchmark_duration" in loadgen_set
+        and "benchmark_grace_period" not in loadgen_set
+        and cli.benchmark_duration is not None
+        and "grace_period" not in target
+    ):
+        target["grace_period"] = cli.benchmark_grace_period
+
+    _apply_agentic_replay_fields(target, cli)
 
 
 def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:

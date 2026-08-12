@@ -360,6 +360,29 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # RateSeriesConfig.points: list[RateSeriesPoint], not a numeric field. The
     # substring-based heuristic sees "int" inside "Point".
     "RateSeriesConfig.points",
+    # OutputFragment.metrics: dict[str, MetricValueTypeT], not a numeric leaf.
+    # Per-metric values are constrained by the metrics system; no field-level
+    # bound is meaningful on the container.
+    "OutputFragment.metrics",
+    # SpecDecodeAcceptanceRecord: histograms/per-step arrays of non-negative
+    # counts. A field-level ge/le bound cannot apply to a dict/list container, so
+    # non-negativity is enforced on the element type (dict[NonNegativeInt,
+    # NonNegativeInt] / list[NonNegativeInt]); the scalar count fields carry ge=0.
+    "SpecDecodeAcceptanceRecord.acceptance_histogram",
+    "SpecDecodeAcceptanceRecord.per_step_accepted",
+    "SpecDecodeAcceptanceRecord.per_step_drafted",
+    # DagConversation.rounds: int | list[DagRound] | None union. A field-level
+    # ge cannot apply cleanly across the list/None members, so the int minimum
+    # (>= 1) is enforced by DagConversation._validate_orchestrator_rounds.
+    "DagConversation.rounds",
+    # Pooled acceptance histograms ({accepted_draft_count: steps}). Same reason as
+    # above -- a field-level ge bound cannot apply to a dict container; the counts
+    # are non-negative by construction (summed from the neutral record's histogram).
+    "ProfileResults.pooled_spec_decode_acceptance_histogram",
+    "JsonExportData.pooled_spec_decode_acceptance_histogram",
+    # _Environment.ENDPOINT: nested _EndpointSettings object, not a numeric
+    # leaf. The heuristic fires because "int" appears in "_EndpointSettings".
+    "_Environment.ENDPOINT",
 }
 
 

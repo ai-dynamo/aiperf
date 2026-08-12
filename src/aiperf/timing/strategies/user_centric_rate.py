@@ -389,8 +389,12 @@ class UserCentricStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(
         self,
         credit: Credit,
+        *,
+        error: str | None = None,
     ) -> None:
         """Handle credit return: dispatch next turn.
+
+        ``error`` is accepted for protocol parity and ignored here.
 
         Schedules next turn at `max(now, user.next_send_time + turn_gap)`.
         This maintains ideal pacing when responses arrive on time, but if the
@@ -399,6 +403,11 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         if credit.is_final_turn:
             # User finished all their turns. New users continue spawning in execute_phase.
             self._session_to_user.pop(credit.x_correlation_id, None)
+            # user_ids are never reused, so the retained cache-bust marker for
+            # this correlation id can never be looked up again.
+            self._conversation_source.release_marker_for_correlation_id(
+                credit.x_correlation_id
+            )
             return
 
         current_sec = time.perf_counter()

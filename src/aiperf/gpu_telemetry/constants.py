@@ -13,10 +13,10 @@ from aiperf.common.enums import (
     TemperatureMetricUnit,
 )
 
-# Source identifier for pynvml collector (used in TelemetryRecord.dcgm_url field)
+# Source identifier for pynvml collector (used in TelemetryRecord.telemetry_source_url field)
 PYNVML_SOURCE_IDENTIFIER = "pynvml://localhost"
 
-# Source identifier for amdsmi collector (used in TelemetryRecord.dcgm_url field)
+# Source identifier for amdsmi collector (used in TelemetryRecord.telemetry_source_url field)
 AMDSMI_SOURCE_IDENTIFIER = "amdsmi://localhost"
 
 NVIDIA_GPU_TELEMETRY_PLATFORM = "nvidia"

@@ -358,7 +358,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                     records.append(
                         TelemetryRecord(
                             timestamp_ns=now_ns,
-                            dcgm_url=AMDSMI_SOURCE_IDENTIFIER,
+                            telemetry_source_url=AMDSMI_SOURCE_IDENTIFIER,
                             **gpu.metadata.model_dump(),
                             telemetry_data=metrics,
                         )

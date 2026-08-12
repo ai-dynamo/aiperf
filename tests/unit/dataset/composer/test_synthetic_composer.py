@@ -508,10 +508,13 @@ class TestSyntheticDatasetComposer:
         composer = SyntheticDatasetComposer(
             run=make_run(audio_config), tokenizer=mock_tokenizer
         )
+        # The generator records the sampled duration; the composer hoists the
+        # first content's duration onto the turn for RTFx.
+        composer.audio_generator.last_audio_duration_seconds = 3.5
 
         # Test audio payload generation
         turn = Turn()
-        audio = composer._generate_audio_payloads()
+        audio, audio_duration_seconds = composer._generate_audio_payloads()
         turn.audios.append(audio)
 
         # Test correct number of audio payloads based on batch_size
@@ -520,6 +523,7 @@ class TestSyntheticDatasetComposer:
         audio_payload = turn.audios[0]
         assert audio_payload.name == "input_audio"
         assert audio_payload.contents == ["fake_audio_data"]
+        assert audio_duration_seconds == 3.5
 
     # ============================================================================
     # Configuration Variations Tests

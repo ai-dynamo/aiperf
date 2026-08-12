@@ -2,11 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 name: "Run Unit Tests"
 
+# The Linux matrix leg runs on Velonix. Only run repository code from trusted
+# branch pushes; fork PRs enter CI after being copied to pull-request/<number>.
 on:
-  pull_request:
   push:
     branches:
       - main
+      - 'pull-request/[0-9]+'
+      - 'release/*'
 
 jobs:
   build:
@@ -105,24 +108,26 @@ jobs:
         # builder pod. -n auto without this OOM-kills the runner agent.
         PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       run: |
-        make test-ci PYTHON_VERSION=${{ matrix.python-version }}
+        # Only collect coverage on the linux/3.12 leg where Codecov upload runs.
+        COV=${{ (matrix.os == 'linux' && matrix.python-version == '3.12') && '1' || '0' }}
+        make test-ci PYTHON_VERSION=${{ matrix.python-version }} COV=$COV
     # Mirrors POSIX ``make test-ci`` semantics: run BOTH tiers and
     # aggregate exit codes so unit-test failures don't mask component-
     # integration failures (or vice versa). Without the explicit
     # ``always() && runner.os == 'Windows'`` guard on the second step,
     # GitHub Actions' implicit ``success()`` short-circuits the
     # component-integration step on any unit-test failure.
-    - name: Run unit tests (Windows)
+    - name: Run unit and zmq tests (Windows)
+      # Merged into one invocation to pay collection overhead once instead of
+      # twice. tests/unit/conftest.py's no_sleep patch applies only to
+      # tests/unit/**; tests/zmq/** uses real asyncio.sleep as before.
+      # --no-looptime is omitted: looptime is opt-in per test via marker/
+      # fixture and zmq tests use neither, so they run with a real-time loop.
+      # --continue-on-collection-errors preserves the previous two-step
+      # behaviour where a unit collection error did not block the zmq suite.
       if: runner.os == 'Windows'
       run: |
-        uv run pytest tests/unit -n auto --tb=short -m 'not performance and not stress and not slow'
-    - name: Run zmq real-transport tests (Windows)
-      # Real-socket libzmq tests (no looptime). ``!cancelled()`` lets them run
-      # even if the unit step failed, matching the POSIX ``make test-ci``
-      # exit-code aggregation across tiers.
-      if: ${{ !cancelled() && runner.os == 'Windows' }}
-      run: |
-        uv run pytest tests/zmq --tb=short --no-looptime -m 'not performance and not stress and not slow'
+        uv run pytest tests/unit tests/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
       # ``!cancelled()`` overrides the implicit ``success()`` so component
       # integration still runs even if the unit-test step failed — matching
@@ -131,7 +136,7 @@ jobs:
       # finishing after a manual stop.
       if: ${{ !cancelled() && runner.os == 'Windows' }}
       run: |
-        uv run pytest tests/component_integration -n auto --tb=short -v -m 'not performance and not stress and not slow'
+        uv run pytest tests/component_integration -n auto --dist=worksteal --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
       if: matrix.os == 'linux' && matrix.python-version == '3.12'
       uses: codecov/codecov-action@v5

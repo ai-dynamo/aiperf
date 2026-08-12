@@ -6,6 +6,7 @@
 import pytest
 from pydantic import ValidationError
 
+from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 
@@ -37,7 +38,11 @@ class TestMooncakeBuildTurnForwardsHeaders:
 
     def _loader(self) -> MooncakeTraceDatasetLoader:
         # Bypass __init__ so we can call _build_turn without a real config.
-        return MooncakeTraceDatasetLoader.__new__(MooncakeTraceDatasetLoader)
+        # The base _build_turn clamps delay through _delay_cap_tracker, so
+        # supply an uncapped one; these tests don't exercise delay.
+        loader = MooncakeTraceDatasetLoader.__new__(MooncakeTraceDatasetLoader)
+        loader._delay_cap_tracker = DelayCapTracker(cap_seconds=None)
+        return loader
 
     def test_build_turn_text_input_path_carries_headers(self):
         loader = self._loader()

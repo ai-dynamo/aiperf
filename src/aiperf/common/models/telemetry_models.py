@@ -180,8 +180,8 @@ class TelemetryRecord(GpuMetadata):
     """Single telemetry data point from GPU monitoring.
 
     This record contains all telemetry data for one GPU at one point in time,
-    along with metadata to identify the source DCGM endpoint and specific GPU.
-    Used for hierarchical storage: dcgm_url -> gpu_uuid -> time series data.
+    along with metadata to identify the source endpoint and specific GPU.
+    Used for hierarchical storage: telemetry_source_url -> gpu_uuid -> time series data.
 
     Inherits from GpuMetadata to avoid duplicating metadata fields.
     """
@@ -191,8 +191,13 @@ class TelemetryRecord(GpuMetadata):
     timestamp_ns: int = Field(
         description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
     )
-    dcgm_url: str = Field(
-        description="Source identifier (DCGM URL e.g., 'http://node1:9401/metrics' or 'pynvml://localhost')"
+    telemetry_source_url: str = Field(
+        description=(
+            "Source identifier for the collector "
+            "(e.g. 'http://node1:9401/metrics', 'pynvml://localhost', 'amdsmi://localhost'). "
+            "Serialized as 'telemetry_source_url' in gpu_telemetry_export.jsonl — "
+            "renamed from 'dcgm_url' in v0.12."
+        )
     )
     telemetry_data: TelemetryMetrics = Field(
         description="GPU metrics snapshot collected at this timestamp"
@@ -637,7 +642,7 @@ class GpuTelemetryData(AIPerfBaseModel):
 
 
 class TelemetryHierarchy(AIPerfBaseModel):
-    """Hierarchical storage: dcgm_url -> gpu_uuid -> complete GPU telemetry data.
+    """Hierarchical storage: telemetry_source_url -> gpu_uuid -> complete GPU telemetry data.
 
     This provides the requested hierarchical structure while maintaining efficient
     access patterns for both real-time display and final aggregation.
@@ -654,9 +659,9 @@ class TelemetryHierarchy(AIPerfBaseModel):
     }
     """
 
-    dcgm_endpoints: dict[str, dict[str, GpuTelemetryData]] = Field(
+    telemetry_source_endpoints: dict[str, dict[str, GpuTelemetryData]] = Field(
         default_factory=dict,
-        description="Nested dict: dcgm_url -> gpu_uuid -> telemetry data",
+        description="Nested dict: telemetry_source_url -> gpu_uuid -> telemetry data",
     )
 
     def add_record(self, record: TelemetryRecord) -> None:
@@ -666,17 +671,17 @@ class TelemetryHierarchy(AIPerfBaseModel):
             record: New telemetry data from GPU monitoring
 
         Note: Automatically creates hierarchy levels as needed:
-        - New DCGM endpoints get empty GPU dict
+        - New source endpoints get empty GPU dict
         - New GPUs get initialized with metadata and empty metrics
         """
 
-        if record.dcgm_url not in self.dcgm_endpoints:
-            self.dcgm_endpoints[record.dcgm_url] = {}
+        if record.telemetry_source_url not in self.telemetry_source_endpoints:
+            self.telemetry_source_endpoints[record.telemetry_source_url] = {}
 
-        dcgm_data = self.dcgm_endpoints[record.dcgm_url]
+        source_data = self.telemetry_source_endpoints[record.telemetry_source_url]
 
-        if record.gpu_uuid not in dcgm_data:
-            dcgm_data[record.gpu_uuid] = GpuTelemetryData(
+        if record.gpu_uuid not in source_data:
+            source_data[record.gpu_uuid] = GpuTelemetryData(
                 metadata=GpuMetadata(
                     gpu_index=record.gpu_index,
                     gpu_uuid=record.gpu_uuid,
@@ -688,7 +693,7 @@ class TelemetryHierarchy(AIPerfBaseModel):
                 ),
             )
 
-        dcgm_data[record.gpu_uuid].add_record(record)
+        source_data[record.gpu_uuid].add_record(record)
 
 
 class ProcessTelemetryResult(AIPerfBaseModel):

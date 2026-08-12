@@ -51,7 +51,8 @@ class TestMooncakeTraceIntegration:
         )
 
         assert result.request_count == request_count
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_mooncake_trace_with_text_input(
         self,
@@ -87,7 +88,8 @@ class TestMooncakeTraceIntegration:
         )
 
         assert result.request_count == request_count
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_mooncake_trace_with_messages_field(
         self,
@@ -120,7 +122,8 @@ class TestMooncakeTraceIntegration:
         )
 
         assert result.request_count == request_count
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_mooncake_trace_with_messages_and_tools(
         self,
@@ -152,7 +155,8 @@ class TestMooncakeTraceIntegration:
         )
 
         assert result.request_count == request_count
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_mooncake_trace_multi_turn_with_session_id(
         self,
@@ -192,7 +196,8 @@ class TestMooncakeTraceIntegration:
         )
 
         assert result.request_count == request_count
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_mooncake_trace_with_per_row_headers(
         self,
@@ -239,7 +244,7 @@ class TestMooncakeTraceIntegration:
             )
 
             assert result.request_count == request_count
-            assert result.has_all_outputs
+            assert result.has_all_outputs_except_inputs
 
             # On-wire assertion: every trace row's `headers` dict appears
             # verbatim on the inbound request the mock server received.
@@ -308,4 +313,5 @@ class TestMooncakeTraceIntegration:
 
         # Should complete without validation errors
         assert result.request_count == request_count
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"

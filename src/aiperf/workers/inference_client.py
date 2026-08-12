@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import orjson
 
+from aiperf.common.enums import RequestContentType
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -113,16 +114,35 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        raw_payload = request_info.turns[-1].raw_payload
-        payload = (
-            raw_payload
-            if raw_payload is not None
-            else self.endpoint.format_payload(request_info)
-        )
-        request_info.payload_bytes = orjson.dumps(payload)
+        if request_info.payload_bytes is not None:
+            formatted_payload: dict[str, Any] | bytes = request_info.payload_bytes
+        else:
+            current_turn = request_info.turns[-1] if request_info.turns else None
+            if current_turn and current_turn.raw_payload is not None:
+                formatted_payload = current_turn.raw_payload
+            else:
+                formatted_payload = self.endpoint.format_payload(request_info)
+        # Canonicalise to bytes and stash on request_info. Two wins: (1) the
+        # transport skips its own orjson.dumps on the dict path, (2) the
+        # record processor can read the exact wire payload for raw-export.
+        # Multipart endpoints (image_edit / image_generation / video) are the
+        # exception: the transport must receive the structured dict so it can
+        # build the FormData. Pre-dumped bytes would be sent verbatim as JSON
+        # and the server's form parser would reject them (422, prompt=null).
+        wire_payload: dict[str, Any] | bytes = formatted_payload
+        if isinstance(formatted_payload, dict):
+            encoded = orjson.dumps(formatted_payload)
+            request_info.payload_bytes = encoded
+            is_multipart = (
+                self.model_endpoint.endpoint.request_content_type
+                == RequestContentType.MULTIPART_FORM_DATA
+            )
+            wire_payload = formatted_payload if is_multipart else encoded
+        else:
+            request_info.payload_bytes = formatted_payload
         return await self.transport.send_request(
             request_info,
-            payload=payload,
+            payload=wire_payload,
             first_token_callback=first_token_callback,
         )
 
@@ -182,12 +202,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
-        if not request_info.turns:
+        if not request_info.turns and not request_info.payload_bytes:
             raise ValueError(
                 f"RequestInfo has no turns (credit_num={request_info.credit_num}, "
                 f"conversation_id={request_info.conversation_id})"
             )
-        if self.is_trace_enabled:
+        if self.is_trace_enabled and request_info.turns:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
         # Redact sensitive headers on the request_info now that the transport has
@@ -224,32 +244,42 @@ class InferenceClient(AIPerfLifecycleMixin):
         record: RequestRecord,
         request_info: RequestInfo,
     ) -> RequestRecord:
-        """Enrich a RequestRecord with the original request info."""
-        record.model_name = (
-            request_info.turns[-1].model or self.model_endpoint.primary_model_name
-        )
-        # Hoist per-turn scalars onto the RecordContext so the record
-        # processor's metrics (requested_osl, audio_duration,
-        # replay_send_schedule_offset) can read them without walking turns:
-        # max_tokens / scheduled_send_ms from the dispatch turn,
-        # audio_duration_seconds from the first turn (ASR requests are
-        # single-turn; mirrors the pre-hoist turns[0] read).
-        last_turn = request_info.turns[-1]
-        request_info.max_tokens = last_turn.max_tokens
-        request_info.audio_duration_seconds = request_info.turns[
-            0
-        ].audio_duration_seconds
-        request_info.scheduled_send_ms = (
-            float(last_turn.timestamp) if last_turn.timestamp is not None else None
-        )
+        """Enrich a RequestRecord with the original request info.
+
+        The hoisted metric inputs ``max_tokens``, ``audio_duration_seconds``,
+        and ``scheduled_send_ms`` live only on the originating turn — they are
+        NOT ``RecordContext`` fields on ``request_info`` and so are not copied
+        by the downcast in ``_enrich_request_record``. Populate them explicitly
+        so the record processor (``osl_mismatch`` / ``audio_duration`` /
+        ``replay_send_schedule_offset`` metrics) reads them directly off the
+        slim record without the full ``turns`` list on the wire:
+        ``max_tokens`` and ``scheduled_send_ms`` from the dispatch (last) turn,
+        ``audio_duration_seconds`` from the first turn (ASR requests are
+        single-turn; mirrors the pre-hoist ``turns[0]`` read).
+        """
+        last_turn = request_info.turns[-1] if request_info.turns else None
+        first_turn = request_info.turns[0] if request_info.turns else None
+        turn_model = last_turn.model if last_turn else None
+        record.model_name = turn_model or self.model_endpoint.primary_model_name
         self._enrich_request_record(record, request_info)
 
-        # When stripping is enabled (large-prompt memory optimization,
-        # resolved by the worker's payload-retention auto-detection), drop
-        # the canonical request payload bytes from the slim record context
-        # after dispatch.
-        if self.strip_record_payload_bytes and record.request_info is not None:
-            record.request_info.payload_bytes = None
+        if record.request_info is not None:
+            record.request_info.max_tokens = last_turn.max_tokens if last_turn else None
+            record.request_info.audio_duration_seconds = (
+                first_turn.audio_duration_seconds if first_turn else None
+            )
+            record.request_info.scheduled_send_ms = (
+                float(last_turn.timestamp)
+                if last_turn is not None and last_turn.timestamp is not None
+                else None
+            )
+
+            # When stripping is enabled (large-prompt memory optimization,
+            # resolved by the worker's payload-retention auto-detection), drop
+            # the canonical request payload bytes from the slim record context
+            # after dispatch.
+            if self.strip_record_payload_bytes:
+                record.request_info.payload_bytes = None
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

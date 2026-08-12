@@ -243,6 +243,23 @@ class AIPerfResults:
             )
         )
 
+    @property
+    def has_all_outputs_except_inputs(self) -> bool:
+        """Check all standard outputs exist except inputs.json.
+
+        Trace / verbatim datasets (mooncake, sagemaker, burst_gpt, bailian,
+        raw_payload, inputs_json) intentionally skip inputs.json generation
+        because the per-turn payloads are verbatim or synthesized and would be
+        huge, so their runs produce json/csv/jsonl but no inputs.json.
+        """
+        return all(
+            (
+                self.json is not None,
+                bool(self.csv),
+                self.jsonl is not None,
+            )
+        )
+
     def validate_pydantic_models(self) -> None:
         """Validate that all Pydantic models are properly loaded."""
         if self.json:

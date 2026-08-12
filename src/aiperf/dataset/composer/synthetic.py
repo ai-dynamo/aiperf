@@ -145,7 +145,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_image:
             turn.images.append(self._generate_image_payloads())
         if self.include_audio:
-            turn.audios.append(self._generate_audio_payloads())
+            audio, audio_duration_seconds = self._generate_audio_payloads()
+            turn.audios.append(audio)
+            # Hoist the sampled duration so ASR metrics (RTFx) work for
+            # synthetic audio, mirroring ASR dataset loaders (see hf_asr).
+            turn.audio_duration_seconds = audio_duration_seconds
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
@@ -192,6 +196,18 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn_id = id(turn)
         isl, _ = self._get_turn_sequence_lengths(turn_id)
 
+        # ISL budget compensation. See ``base.first_turn_isl_adjustment`` and
+        # ``base.subsequent_turn_isl_adjustment`` for the model. Floored at 1 so
+        # prompt generation stays valid for very small ISLs (a one-token prompt
+        # rather than a crash or empty content).
+        adjustment = (
+            self.first_turn_isl_adjustment
+            if is_first
+            else self.subsequent_turn_isl_adjustment
+        )
+        if adjustment > 0:
+            isl = max(1, isl - adjustment)
+
         # Preserve original variance unless sequence distribution is active
         stddev = 0 if self._seq_distribution is not None else self._isl_stddev
 
@@ -221,18 +237,24 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             image.contents.append(data)
         return image
 
-    def _generate_audio_payloads(self) -> Audio:
+    def _generate_audio_payloads(self) -> tuple[Audio, float]:
         """
         Generate synthetic audios if the audio length is specified.
 
         Returns:
-            Audio: An audio payload object.
+            A tuple of the audio payload and the duration (seconds) of the FIRST
+            content -- the one ASR endpoints actually dispatch (``turn.audios[0]
+            .contents[0]``) -- so ``Turn.audio_duration_seconds`` matches the
+            audio sent and RTFx is accurate.
         """
         audio = Audio(name="input_audio")
-        for _ in range(self._audio_batch_size):
+        first_duration = 0.0
+        for i in range(self._audio_batch_size):
             data = self.audio_generator.generate()
             audio.contents.append(data)
-        return audio
+            if i == 0:
+                first_duration = self.audio_generator.last_audio_duration_seconds
+        return audio, first_duration
 
     def _generate_video_payloads(self) -> Video:
         """
