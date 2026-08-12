@@ -165,7 +165,7 @@ You can use the `act` tool to run GitHub Actions locally. See [act usage](https:
 act -j run-integration-tests
 ```
 
-You can also use the VSCode extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
+You can also use the Visual Studio Code extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
 
 ## Developer Certificate of Origin
 
