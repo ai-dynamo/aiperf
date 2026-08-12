@@ -1011,6 +1011,9 @@ class TestBasetenTraceDatasetLoader:
                 {},
                 {
                     "block_size",
+                    "cached_tokens_reference",
+                    "duration_e2e_ms",
+                    "duration_ttft_ms",
                     "input_tokens",
                     "output_tokens",
                     "poor_man_session_id",
@@ -1023,6 +1026,9 @@ class TestBasetenTraceDatasetLoader:
             param(
                 {"omit_kv_hints": True},
                 {
+                    "cached_tokens_reference",
+                    "duration_e2e_ms",
+                    "duration_ttft_ms",
                     "input_tokens",
                     "output_tokens",
                     "poor_man_session_id",
@@ -1035,7 +1041,9 @@ class TestBasetenTraceDatasetLoader:
                 {"open_loop_replay": False},
                 {
                     "block_size",
+                    "cached_tokens_reference",
                     "duration_e2e_ms",
+                    "duration_ttft_ms",
                     "input_tokens",
                     "output_tokens",
                     "poor_man_session_id",
@@ -1070,6 +1078,8 @@ class TestBasetenTraceDatasetLoader:
                     "total_hashes": [1, 2],
                     "block_size": 64,
                     "duration_e2e_ms": 10,
+                    "duration_ttft_ms": 4,
+                    "cached_tokens_reference": 2,
                 }
                 for index in range(12)
             ],
@@ -1106,6 +1116,11 @@ class TestBasetenTraceDatasetLoader:
         assert all(not hasattr(trace, "model_name") for trace in traces)
         assert all(not hasattr(trace, "request_canceled") for trace in traces)
         assert all(not hasattr(trace, "dataset_version") for trace in traces)
+        # Recorded outcomes must survive load for later fidelity comparison,
+        # regardless of replay mode.
+        assert all(trace.duration_e2e_ms == 10 for trace in traces)
+        assert all(trace.duration_ttft_ms == 4 for trace in traces)
+        assert all(trace.cached_tokens_reference == 2 for trace in traces)
 
     @pytest.mark.parametrize(
         ("field", "invalid_value"),
