@@ -103,18 +103,27 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         self.num_conversations = (
             num_conversations if num_conversations is not None else 100
         )
-        # Per-modality batch_size only exists on SyntheticDataset (and even then
-        # only when the modality config block is present). FileDataset has none
-        # of these, so default to 1 for missing fields rather than crashing.
+        # Per-modality batch sizes come from different places depending on the
+        # dataset type.  SyntheticDataset carries them nested under
+        # prompts/images/audio/video sub-configs.  FileDataset (the --input-file
+        # path) stores them as flat fields populated by the CLI converter.
         dataset = self.run.cfg.get_default_dataset()
-        prompts = getattr(dataset, "prompts", None)
-        images = getattr(dataset, "images", None)
-        audio = getattr(dataset, "audio", None)
-        video = getattr(dataset, "video", None)
-        self.batch_size_image = getattr(images, "batch_size", 1) if images else 1
-        self.batch_size_text = getattr(prompts, "batch_size", 1) if prompts else 1
-        self.batch_size_audio = getattr(audio, "batch_size", 1) if audio else 1
-        self.batch_size_video = getattr(video, "batch_size", 1) if video else 1
+        from aiperf.config.dataset.config import FileDataset
+
+        if isinstance(dataset, FileDataset):
+            self.batch_size_text = dataset.prompt_batch_size or 1
+            self.batch_size_image = dataset.image_batch_size or 1
+            self.batch_size_audio = dataset.audio_batch_size or 1
+            self.batch_size_video = dataset.video_batch_size or 1
+        else:
+            prompts = getattr(dataset, "prompts", None)
+            images = getattr(dataset, "images", None)
+            audio = getattr(dataset, "audio", None)
+            video = getattr(dataset, "video", None)
+            self.batch_size_image = getattr(images, "batch_size", 1) if images else 1
+            self.batch_size_text = getattr(prompts, "batch_size", 1) if prompts else 1
+            self.batch_size_audio = getattr(audio, "batch_size", 1) if audio else 1
+            self.batch_size_video = getattr(video, "batch_size", 1) if video else 1
 
     @staticmethod
     def _validate_path(path: Path) -> int:

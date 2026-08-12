@@ -1039,3 +1039,90 @@ class TestRandomPoolBatchSize:
         )
         assert loader.batch_size_audio == 2
         assert loader.batch_size_video == 3
+
+
+class TestRandomPoolBatchSizeWithFileDataset:
+    """Batch sizes must work when the dataset is a FileDataset (--input-file path)."""
+
+    def _make_file_run(
+        self,
+        tmp_path: Path,
+        *,
+        prompt_batch_size: int | None = None,
+        image_batch_size: int | None = None,
+        audio_batch_size: int | None = None,
+        video_batch_size: int | None = None,
+    ):
+        from aiperf.config.flags.cli_config import CLIConfig
+
+        pool = tmp_path / "pool.jsonl"
+        pool.touch()
+        kwargs = {}
+        if prompt_batch_size is not None:
+            kwargs["prompt_batch_size"] = prompt_batch_size
+        if image_batch_size is not None:
+            kwargs["image_batch_size"] = image_batch_size
+        if audio_batch_size is not None:
+            kwargs["audio_batch_size"] = audio_batch_size
+        if video_batch_size is not None:
+            kwargs["video_batch_size"] = video_batch_size
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(pool),
+            custom_dataset_type="random_pool",
+            **kwargs,
+        )
+        return make_run_from_cli(cli), str(pool)
+
+    def test_text_batch_size_via_file_dataset(self, tmp_path: Path):
+        """prompt_batch_size from FileDataset produces multi-text conversations."""
+        run, pool_path = self._make_file_run(tmp_path, prompt_batch_size=4)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 4
+
+        data = {
+            "pool.jsonl": [
+                RandomPool(text="q1"),
+                RandomPool(text="q2"),
+                RandomPool(text="q3"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns) == 1
+            assert len(conv.turns[0].texts) == 1
+            assert len(conv.turns[0].texts[0].contents) == 4
+
+    def test_image_batch_size_via_file_dataset(self, tmp_path: Path):
+        """image_batch_size from FileDataset produces multi-image conversations."""
+        run, pool_path = self._make_file_run(tmp_path, image_batch_size=3)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_image == 3
+
+        data = {
+            "pool.jsonl": [
+                RandomPool(image="https://example.com/img1.png"),
+                RandomPool(image="https://example.com/img2.png"),
+                RandomPool(image="https://example.com/img3.png"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns[0].images[0].contents) == 3
+
+    def test_default_batch_size_1_when_not_set(self, tmp_path: Path):
+        """When no batch-size is set, FileDataset path defaults to 1 (existing behavior)."""
+        run, pool_path = self._make_file_run(tmp_path)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 1
+        assert loader.batch_size_image == 1
+        assert loader.batch_size_audio == 1
+        assert loader.batch_size_video == 1
