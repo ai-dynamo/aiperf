@@ -640,6 +640,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
+            "`tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), "
             "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
@@ -1185,7 +1186,8 @@ class CLIConfig(BaseConfig):
                 "warmup_isolation_first_turn) — inject a constant '[warmup]' marker only "
                 "during the WARMUP phase; profiling sees no marker (fully cold start or "
                 "system-pre-warmed). Incompatible with agentic_replay timing mode. "
-                "'none' disables the feature (default)."
+                "'none' disables the feature (default). "
+                "See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples."
             ),
         ),
         CLIParameter(
