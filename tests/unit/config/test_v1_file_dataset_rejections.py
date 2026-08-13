@@ -198,7 +198,7 @@ class TestRandomPoolBatchSizeCarveOut:
     )  # fmt: skip
     def test_batch_size_allowed_with_random_pool(
         self, pool_jsonl: Path, batch_kwarg: dict, expected_field: str
-    ):
+    ) -> None:
         """Batch-size flags must not raise when custom_dataset_type is random_pool."""
         cli = CLIConfig(
             model_names=["test-model"],
@@ -208,7 +208,7 @@ class TestRandomPoolBatchSizeCarveOut:
         )
         cfg = convert_cli_to_aiperf(cli)
         dataset = cfg.benchmark.datasets[0]
-        assert getattr(dataset, expected_field) == list(batch_kwarg.values())[0]
+        assert getattr(dataset, expected_field) == next(iter(batch_kwarg.values()))
 
     @pytest.mark.parametrize(
         "batch_kwarg, expected_flag_fragment",

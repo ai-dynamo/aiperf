@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.models import Audio, Image, Text, Video
+from aiperf.config import BenchmarkRun
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
@@ -1052,9 +1054,7 @@ class TestRandomPoolBatchSizeWithFileDataset:
         image_batch_size: int | None = None,
         audio_batch_size: int | None = None,
         video_batch_size: int | None = None,
-    ):
-        from aiperf.config.flags.cli_config import CLIConfig
-
+    ) -> tuple[BenchmarkRun, str]:
         pool = tmp_path / "pool.jsonl"
         pool.touch()
         kwargs = {}
@@ -1074,7 +1074,7 @@ class TestRandomPoolBatchSizeWithFileDataset:
         )
         return make_run_from_cli(cli), str(pool)
 
-    def test_text_batch_size_via_file_dataset(self, tmp_path: Path):
+    def test_text_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
         """prompt_batch_size from FileDataset produces multi-text conversations."""
         run, pool_path = self._make_file_run(tmp_path, prompt_batch_size=4)
         loader = RandomPoolDatasetLoader(
@@ -1096,7 +1096,7 @@ class TestRandomPoolBatchSizeWithFileDataset:
             assert len(conv.turns[0].texts) == 1
             assert len(conv.turns[0].texts[0].contents) == 4
 
-    def test_image_batch_size_via_file_dataset(self, tmp_path: Path):
+    def test_image_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
         """image_batch_size from FileDataset produces multi-image conversations."""
         run, pool_path = self._make_file_run(tmp_path, image_batch_size=3)
         loader = RandomPoolDatasetLoader(
@@ -1116,7 +1116,7 @@ class TestRandomPoolBatchSizeWithFileDataset:
         for conv in conversations:
             assert len(conv.turns[0].images[0].contents) == 3
 
-    def test_default_batch_size_1_when_not_set(self, tmp_path: Path):
+    def test_default_batch_size_1_when_not_set(self, tmp_path: Path) -> None:
         """When no batch-size is set, FileDataset path defaults to 1 (existing behavior)."""
         run, pool_path = self._make_file_run(tmp_path)
         loader = RandomPoolDatasetLoader(
