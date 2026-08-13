@@ -110,10 +110,20 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         # path) stores them as flat fields populated by the CLI converter.
         dataset = self.run.cfg.get_default_dataset()
         if isinstance(dataset, FileDataset):
-            self.batch_size_text = dataset.prompt_batch_size or 1
-            self.batch_size_image = dataset.image_batch_size or 1
-            self.batch_size_audio = dataset.audio_batch_size or 1
-            self.batch_size_video = dataset.video_batch_size or 1
+            self.batch_size_text = (
+                dataset.prompt_batch_size
+                if dataset.prompt_batch_size is not None
+                else 1
+            )
+            self.batch_size_image = (
+                dataset.image_batch_size if dataset.image_batch_size is not None else 1
+            )
+            self.batch_size_audio = (
+                dataset.audio_batch_size if dataset.audio_batch_size is not None else 1
+            )
+            self.batch_size_video = (
+                dataset.video_batch_size if dataset.video_batch_size is not None else 1
+            )
         else:
             prompts = getattr(dataset, "prompts", None)
             images = getattr(dataset, "images", None)

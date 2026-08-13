@@ -235,7 +235,9 @@ def test_batch_size_fields_rejected_on_non_random_pool_format(tmp_path: Path) ->
     """FileDataset model validator rejects batch-size fields when format != random_pool."""
     p = tmp_path / "f.jsonl"
     p.touch()
-    with pytest.raises(ValueError, match="only apply to format: random_pool"):
+    with pytest.raises(
+        ValueError, match="are rejected on formats other than random_pool"
+    ):
         FileDataset(
             name="d",
             type="file",

@@ -499,7 +499,8 @@ class FileDataset(SystemPromptMixin):
             default=None,
             ge=1,
             description="Number of text items per request. "
-            "Only honored by format: random_pool.",
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Must be at least 1 (a text batch size of 0 has no useful meaning).",
         ),
     ]
 
@@ -507,9 +508,10 @@ class FileDataset(SystemPromptMixin):
         int | None,
         Field(
             default=None,
-            ge=1,
+            ge=0,
             description="Number of images per request. "
-            "Only honored by format: random_pool.",
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable image inputs entirely.",
         ),
     ]
 
@@ -517,9 +519,10 @@ class FileDataset(SystemPromptMixin):
         int | None,
         Field(
             default=None,
-            ge=1,
+            ge=0,
             description="Number of audio items per request. "
-            "Only honored by format: random_pool.",
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable audio inputs entirely.",
         ),
     ]
 
@@ -527,9 +530,10 @@ class FileDataset(SystemPromptMixin):
         int | None,
         Field(
             default=None,
-            ge=1,
+            ge=0,
             description="Number of video items per request. "
-            "Only honored by format: random_pool.",
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable video inputs entirely.",
         ),
     ]
 
@@ -649,8 +653,8 @@ class FileDataset(SystemPromptMixin):
     def _validate_batch_sizes_random_pool_only(self) -> FileDataset:
         """Reject per-modality batch sizes on non-random_pool formats.
 
-        These fields are only consumed by RandomPoolDatasetLoader; on other
-        formats they would be silently ignored.
+        These fields are only consumed by RandomPoolDatasetLoader. Setting them
+        on other formats is an error, not a silent no-op.
         """
         batch_fields = {
             "prompt_batch_size": self.prompt_batch_size,
@@ -662,7 +666,8 @@ class FileDataset(SystemPromptMixin):
         if set_fields and self.format != DatasetFormat.RANDOM_POOL:
             names = ", ".join(set_fields)
             raise ValueError(
-                f"{names} only apply to format: random_pool; got format: {self.format}."
+                f"{names} are rejected on formats other than random_pool; "
+                f"got format: {self.format}."
             )
         return self
 

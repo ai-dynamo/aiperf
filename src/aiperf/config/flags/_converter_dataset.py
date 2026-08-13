@@ -644,17 +644,29 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
         cli.input_file is not None
         and cli.custom_dataset_type == CustomDatasetType.RANDOM_POOL
     )
-    violations = [
+    batch_size_attrs = _RANDOM_POOL_BATCH_SIZE_FLAGS
+    non_batch_violations = [
         flag
         for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
-        if attr in s and not (is_random_pool and attr in _RANDOM_POOL_BATCH_SIZE_FLAGS)
+        if attr in s and attr not in batch_size_attrs
     ]
-    if violations:
+    batch_violations = [
+        flag
+        for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
+        if attr in s and attr in batch_size_attrs and not is_random_pool
+    ]
+    if non_batch_violations:
         raise ValueError(
-            f"{', '.join(violations)} is only supported with synthetic datasets; "
+            f"{', '.join(non_batch_violations)} is only supported with synthetic datasets; "
             "remove --input-file / --public-dataset (use a synthetic dataset) to "
             "apply synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
             "generation, multi-turn conversation, etc)."
+        )
+    if batch_violations:
+        raise ValueError(
+            f"{', '.join(batch_violations)} requires --custom-dataset-type random_pool "
+            "when used with --input-file. Either add --custom-dataset-type random_pool "
+            "to keep --input-file, or remove --input-file to use a synthetic dataset."
         )
 
 

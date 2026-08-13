@@ -851,7 +851,9 @@ class TestRandomPoolBatchSize:
     # test_image_one_text_zero_disables_texts_via_legacy_path. v2 PromptConfig
     # rejects batch_size=0 (ge=1); the "disable text via batch_size_text=0"
     # path is unreachable from a valid v2 config so the assertion has no path
-    # to exercise. Image/audio/video batch_size=0 paths remain covered.
+    # to exercise. Image/audio/video batch_size=0 paths are covered here for
+    # the SyntheticDataset branch; zero-value coverage for the FileDataset
+    # (--input-file) branch lives in TestRandomPoolBatchSizeWithFileDataset.
 
     def test_num_conversations_none_defaults_to_100(self, default_cfg):
         """When num_conversations=None is passed, the loader should default to 100."""
@@ -1126,3 +1128,60 @@ class TestRandomPoolBatchSizeWithFileDataset:
         assert loader.batch_size_image == 1
         assert loader.batch_size_audio == 1
         assert loader.batch_size_video == 1
+
+    def test_audio_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
+        """audio_batch_size from FileDataset is stored correctly."""
+        run, pool_path = self._make_file_run(tmp_path, audio_batch_size=5)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_audio == 5
+
+    def test_video_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
+        """video_batch_size from FileDataset is stored correctly."""
+        run, pool_path = self._make_file_run(tmp_path, video_batch_size=7)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_video == 7
+
+    def test_all_four_modality_batch_sizes_distinct(self, tmp_path: Path) -> None:
+        """All four batch-size fields are read independently; a field-order swap fails."""
+        run, pool_path = self._make_file_run(
+            tmp_path,
+            prompt_batch_size=2,
+            image_batch_size=3,
+            audio_batch_size=5,
+            video_batch_size=7,
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 2
+        assert loader.batch_size_image == 3
+        assert loader.batch_size_audio == 5
+        assert loader.batch_size_video == 7
+
+    def test_image_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """image_batch_size=0 through --input-file must not collapse to 1."""
+        run, pool_path = self._make_file_run(tmp_path, image_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_image == 0
+
+    def test_audio_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """audio_batch_size=0 through --input-file must not collapse to 1."""
+        run, pool_path = self._make_file_run(tmp_path, audio_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_audio == 0
+
+    def test_video_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """video_batch_size=0 through --input-file must not collapse to 1."""
+        run, pool_path = self._make_file_run(tmp_path, video_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_video == 0

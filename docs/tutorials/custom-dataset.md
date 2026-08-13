@@ -439,6 +439,32 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 - Sampling with replacement (entries can repeat)
 - Use `--random-seed` for reproducibility
 
+### Multimodal batch sizes
+
+For multimodal workloads, `random_pool` supports per-modality batch-size flags that control how many items are packed into each request:
+
+| Flag | Field | Default | Notes |
+|---|---|---|---|
+| `--prompt-batch-size N` | `prompt_batch_size` | 1 | Text items per request. Must be ≥ 1. |
+| `--image-batch-size N` | `image_batch_size` | 1 | Images per request. Set to `0` to disable image inputs. |
+| `--audio-batch-size N` | `audio_batch_size` | 1 | Audio items per request. Set to `0` to disable audio inputs. |
+| `--video-batch-size N` | `video_batch_size` | 1 | Video items per request. Set to `0` to disable video inputs. |
+
+These flags are only valid with `--custom-dataset-type random_pool`. Using them with other file dataset types (e.g. `mooncake_trace`) is an error.
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-VL-7B \
+    --endpoint-type chat \
+    --input-file pool.jsonl \
+    --custom-dataset-type random_pool \
+    --image-batch-size 2 \
+    --num-conversations 50 \
+    --streaming \
+    --concurrency 4 \
+    --url localhost:8000
+```
+
 ### Inline alternative (multi-pool)
 
 ```yaml
