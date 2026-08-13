@@ -36,7 +36,7 @@ from aiperf.config.flags._section_fields import (
     OUTPUT_FIELDS,
     SWEEPING_FIELDS,
 )
-from aiperf.plugin.enums import ArrivalPattern, PhaseType
+from aiperf.plugin.enums import ArrivalPattern, DatasetFormat, PhaseType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -111,6 +111,7 @@ def resolve_config(
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_synthesis_overrides(merged, cli_config)
     _apply_dataset_filter_overrides(merged, cli_config)
+    _apply_random_pool_batch_size_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
@@ -399,6 +400,76 @@ def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> N
         raise ValueError("--dataset-filter requires a public dataset")
     filters = dataset.setdefault("filters", {})
     filters.update(_parse_dataset_filters(cli.dataset_filters))
+
+
+# Maps CLIConfig attribute name -> (FileDataset field name, CLI flag display name).
+# Used by _apply_random_pool_batch_size_overrides for gating and error messages.
+_RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP: tuple[tuple[str, str, str], ...] = (
+    ("prompt_batch_size", "prompt_batch_size", "--prompt-batch-size"),
+    ("image_batch_size", "image_batch_size", "--image-batch-size"),
+    ("audio_batch_size", "audio_batch_size", "--audio-batch-size"),
+    ("video_batch_size", "video_batch_size", "--video-batch-size"),
+)
+
+
+def _apply_random_pool_batch_size_overrides(
+    merged: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Overlay explicit batch-size CLI flags onto a YAML-supplied random_pool dataset.
+
+    In the YAML+CLI path ``_apply_input_overrides`` only routes ``headers`` and
+    ``extra_inputs``; every other ``INPUT_FIELDS`` member (including the four
+    batch-size fields added by this PR) was silently discarded.  This function
+    closes that gap for the four fields that ``RandomPoolDatasetLoader`` consumes.
+
+    Gating is on ``cli.model_fields_set`` — not truthiness, not ``is not None``
+    against the field value — so an unset flag never clobbers a YAML-supplied value.
+    Zero is a valid value (``image/audio/video_batch_size=0`` disables that modality).
+
+    For non-random_pool datasets a ``ValueError`` is raised with a message that
+    names the flag and the format, matching the friendly error the CLI-only path
+    produces instead of letting the ``FileDataset`` model validator fire a raw
+    Pydantic trace.
+
+    With multiple YAML datasets the override applies to the first dataset only,
+    consistent with the convention in ``_apply_dataset_synthesis_overrides`` and
+    ``_apply_dataset_filter_overrides``.
+    """
+    set_fields = cli.model_fields_set & {
+        cli_attr for cli_attr, _, _ in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
+    }
+    if not set_fields:
+        return
+
+    benchmark = merged.get("benchmark")
+    datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
+    if not isinstance(datasets, list) or not datasets:
+        return
+
+    if len(datasets) > 1:
+        logger.warning(
+            "Batch-size flags with multiple YAML datasets apply only to the first dataset"
+        )
+    dataset = datasets[0]
+    if not isinstance(dataset, dict):
+        return
+
+    fmt = dataset.get("format")
+    if fmt != DatasetFormat.RANDOM_POOL:
+        flag_names = ", ".join(
+            flag
+            for cli_attr, _, flag in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
+            if cli_attr in set_fields
+        )
+        raise ValueError(
+            f"{flag_names} requires format: random_pool on the YAML dataset "
+            f"(got format: {fmt!r}). Either set format: random_pool in the dataset "
+            "config, or remove these flags."
+        )
+
+    for cli_attr, dataset_field, _ in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP:
+        if cli_attr in set_fields:
+            dataset[dataset_field] = getattr(cli, cli_attr)
 
 
 def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:

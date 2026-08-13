@@ -1,0 +1,165 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Regression: batch-size CLI flags must override YAML-supplied random_pool datasets.
+
+In the YAML+CLI path, ``_apply_input_overrides`` only routed ``headers`` and
+``extra_inputs``; all other INPUT_FIELDS members were silently discarded.  For
+the four batch-size fields this was newly reachable after this PR added them to
+``FileDataset``.  ``_apply_random_pool_batch_size_overrides`` closes the gap.
+
+All tests drive ``resolve_config`` with a real YAML file, not ``convert_cli_to_aiperf``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from aiperf.config.flags import CLIConfig
+from aiperf.config.flags.resolver import resolve_config
+
+
+def _write_random_pool_yaml(
+    tmp_path: Path, pool_path: Path, **extra_dataset_fields: object
+) -> Path:
+    """Write a minimal YAML config with a random_pool file dataset.
+
+    Extra keyword arguments are serialised as YAML dataset fields (one per line,
+    two-space indent) so individual tests can pre-set batch sizes in the YAML.
+    """
+    extra_lines = "".join(
+        f"    {key}: {value}\n" for key, value in extra_dataset_fields.items()
+    )
+    yaml_content = f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: random_pool
+    path: {pool_path}
+{extra_lines}\
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    cfg_path = tmp_path / "random_pool.yaml"
+    cfg_path.write_text(yaml_content)
+    return cfg_path
+
+
+def _cli(**kwargs: object) -> CLIConfig:
+    """Build a CLIConfig with only the supplied fields in model_fields_set."""
+    return CLIConfig(**CLIConfig(**kwargs).model_dump(exclude_unset=True))  # type: ignore[arg-type]
+
+
+def _dataset(cfg):  # noqa: ANN001
+    return cfg.benchmark.datasets[0]
+
+
+# ---------------------------------------------------------------------------
+# Core override semantics
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_batch_size_cli_overrides_yaml_silence(tmp_path: Path) -> None:
+    """CLI --prompt-batch-size wins when YAML has no batch-size set."""
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_random_pool_yaml(tmp_path, pool)
+    cli = _cli(prompt_batch_size=7)
+    cfg = resolve_config(cli, yaml_path)
+    assert _dataset(cfg).prompt_batch_size == 7
+
+
+def test_prompt_batch_size_cli_wins_over_yaml(tmp_path: Path) -> None:
+    """CLI --prompt-batch-size overrides a value already set in the YAML."""
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_random_pool_yaml(tmp_path, pool, prompt_batch_size=10)
+    cli = _cli(prompt_batch_size=3)
+    cfg = resolve_config(cli, yaml_path)
+    assert _dataset(cfg).prompt_batch_size == 3
+
+
+def test_yaml_batch_size_survives_when_cli_not_set(tmp_path: Path) -> None:
+    """YAML batch-size must survive when the CLI flag is absent.
+
+    This is the regression guard for the 'gate on model_fields_set' requirement:
+    if the check were truthiness-based the YAML value would be clobbered on
+    every run that omits the flag.
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_random_pool_yaml(tmp_path, pool, prompt_batch_size=10)
+    cli = CLIConfig()  # no batch-size flags set at all
+    cfg = resolve_config(cli, yaml_path)
+    assert _dataset(cfg).prompt_batch_size == 10
+
+
+def test_image_batch_size_zero_resolves_to_zero(tmp_path: Path) -> None:
+    """image_batch_size=0 (disable images) must not be treated as unset or clamped to 1."""
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_random_pool_yaml(tmp_path, pool)
+    cli = _cli(image_batch_size=0)
+    cfg = resolve_config(cli, yaml_path)
+    assert _dataset(cfg).image_batch_size == 0
+
+
+def test_all_four_modalities_distinct_values(tmp_path: Path) -> None:
+    """All four batch-size fields are written independently; a field-order swap fails."""
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_random_pool_yaml(tmp_path, pool)
+    cli = _cli(
+        prompt_batch_size=2, image_batch_size=3, audio_batch_size=5, video_batch_size=7
+    )
+    cfg = resolve_config(cli, yaml_path)
+    ds = _dataset(cfg)
+    assert ds.prompt_batch_size == 2
+    assert ds.image_batch_size == 3
+    assert ds.audio_batch_size == 5
+    assert ds.video_batch_size == 7
+
+
+# ---------------------------------------------------------------------------
+# Non-random_pool dataset: friendly error, not raw Pydantic trace
+# ---------------------------------------------------------------------------
+
+
+def test_batch_size_on_non_random_pool_yaml_raises_friendly_error(
+    tmp_path: Path,
+) -> None:
+    """Batch-size CLI flag on a mooncake_trace YAML dataset must raise a clear ValueError.
+
+    The FileDataset model validator would fire anyway, but its message does not
+    name the CLI flag.  The override helper must intercept first and raise a
+    message that tells the user what to do.
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_content = f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: mooncake_trace
+    path: {pool}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    yaml_path = tmp_path / "trace.yaml"
+    yaml_path.write_text(yaml_content)
+    cli = _cli(prompt_batch_size=4)
+    with pytest.raises(ValueError, match="random_pool"):
+        resolve_config(cli, yaml_path)
