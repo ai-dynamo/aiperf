@@ -934,8 +934,8 @@ _BLOCK_SIZE_TRACE_FORMATS = frozenset(
     {
         "mooncake_trace",
         "bailian_trace",
-        "burst_gpt_trace",
-        "sagemaker_data_capture",
+        "baseten_trace",
+        "tracelab",
     }
 )
 
@@ -944,8 +944,8 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--isl-block-size`` onto ``FileDataset.block_size`` for hash-id
     trace datasets.
 
-    block_size is fundamentally a TRACE field: the mooncake/bailian/burst_gpt/
-    sagemaker loaders decode each ``hash_id`` into a cached block of this many
+    block_size is fundamentally a TRACE field: the mooncake/bailian/baseten/
+    tracelab loaders decode each ``hash_id`` into a cached block of this many
     tokens (default 512 / 16 from plugin metadata). Synthetic datasets carry it
     on ``prompts.block_size`` (written by ``_build_prompts``, then stripped for
     FILE/PUBLIC by ``_apply_dataset_type``), so for FILE traces it must be
@@ -991,9 +991,9 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
         return
     raise ValueError(
         "--isl-block-size only applies to synthetic generation or hash-id trace "
-        "replay (mooncake_trace, bailian_trace, burst_gpt_trace, "
-        "sagemaker_data_capture). The selected dataset does not decode hash-id "
-        "token blocks; drop --isl-block-size."
+        "replay (mooncake_trace, bailian_trace, baseten_trace, tracelab). "
+        "The selected dataset does not decode hash-id token blocks; "
+        "drop --isl-block-size."
     )
 
 

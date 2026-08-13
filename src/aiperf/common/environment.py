@@ -372,6 +372,33 @@ class _DatasetSettings(BaseSettings):
         "dataset to a JSONL file. No hard cap.",
     )
 
+    TRACELAB_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), TraceLabTraceDatasetLoader recovers "
+        "subagent parent/child links by timing containment and nests each "
+        "recovered child as a subagent entry inside its parent trace. Set to "
+        "False to emit every recorded session as an independent flat trace, "
+        "which is the shape the corpus literally records.",
+    )
+    TRACELAB_CODEX_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), the TraceLab subagent join also "
+        "runs over codex sessions. Codex uses an async spawn/wait/close agent "
+        "lifecycle whose handles are stripped from the released corpus, so "
+        "only a coarse session-level window is available there and a session "
+        "fanning out several agents collapses them into one window. Set to "
+        "False to keep only the precise blocking-tool-call join.",
+    )
+    TRACELAB_MIN_SPAWN_MS: int = Field(
+        ge=0,
+        default=10000,
+        description="Minimum wall latency, in milliseconds, for a spawning "
+        "tool call to be treated as a subagent round-trip by the TraceLab "
+        "join. Short calls are overwhelmingly no-op or error returns, and "
+        "admitting them widens the containment window enough to start "
+        "capturing unrelated concurrent sessions.",
+    )
+
     WEKA_PARALLEL_WORKERS: int = Field(
         ge=0,
         le=256,
@@ -1196,6 +1223,24 @@ class _TimingSettings(BaseSettings):
         le=10.0,
         default=0.1,
         description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
+    )
+    HIGH_RES_TIMER: bool = Field(
+        default=True,
+        description="Use high-resolution rate-loop pacing instead of event-loop timers, which "
+        "quantize sub-millisecond sleeps to ~1ms granularity. Restores exact rate delivery and "
+        "arrival-distribution fidelity at high request rates. Uses a Linux timerfd (kernel "
+        "hrtimer, ~50us wakeup precision) when available, and a dedicated sleep thread on other "
+        "platforms (~100us POSIX, ~0.5ms Windows). Set to false to force event-loop timer pacing.",
+    )
+    MAX_CATCHUP_SECONDS: float = Field(
+        ge=0.0,
+        le=10.0,
+        default=0.01,
+        description="Maximum schedule backlog in seconds the rate loop is allowed to catch up on "
+        "before re-anchoring to the current time. Event-loop timers oversleep sub-millisecond "
+        "waits (~1ms granularity under uvloop/libuv); without a catch-up window every oversleep "
+        "permanently forfeits schedule and high request rates silently under-deliver. Bounded so "
+        "a genuine multi-second stall still re-anchors instead of firing a burst storm.",
     )
 
 

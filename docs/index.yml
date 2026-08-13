@@ -106,6 +106,8 @@ navigation:
       path: tutorials/agentic-code-generator.md
     - page: Replay Weka Agentic Coding Traces
       path: tutorials/weka-trace.md
+    - page: Replay TraceLab Agentic Coding Traces
+      path: tutorials/tracelab-trace.md
     - page: InferenceX AgentX MVP Benchmark
       path: tutorials/agentx-mvp.md
   - section: Load Patterns & Scheduling
@@ -231,8 +233,6 @@ navigation:
     path: reference/prompt-corpus.md
   - page: Validating ISL/OSL Distributions with the Mock Server
     path: reference/validating-isl-distribution.md
-  - page: ISL Distribution Examples
-    path: reference/isl-distribution-examples.html
   - page: ISL Budget Compensation Derivation
     path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode
