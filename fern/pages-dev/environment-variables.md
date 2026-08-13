@@ -301,6 +301,8 @@ Timing manager configuration. Controls timing-related settings for credit phase 
 |----------------------|---------|-------------|-------------|
 | `AIPERF_TIMING_CANCEL_DRAIN_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for waiting for cancelled credits to drain after phase timeout |
 | `AIPERF_TIMING_RATE_RAMP_UPDATE_INTERVAL` | `0.1` | ≥ 0.01, ≤ 10.0 | Update interval in seconds for continuous rate ramping (default 0.1s = 100ms) |
+| `AIPERF_TIMING_HIGH_RES_TIMER` | `True` | — | Use high-resolution rate-loop pacing instead of event-loop timers, which quantize sub-millisecond sleeps to ~1ms granularity. Restores exact rate delivery and arrival-distribution fidelity at high request rates. Uses a Linux timerfd (kernel hrtimer, ~50us wakeup precision) when available, and a dedicated sleep thread on other platforms (~100us POSIX, ~0.5ms Windows). Set to false to force event-loop timer pacing. |
+| `AIPERF_TIMING_MAX_CATCHUP_SECONDS` | `0.01` | ≥ 0.0, ≤ 10.0 | Maximum schedule backlog in seconds the rate loop is allowed to catch up on before re-anchoring to the current time. Event-loop timers oversleep sub-millisecond waits (~1ms granularity under uvloop/libuv); without a catch-up window every oversleep permanently forfeits schedule and high request rates silently under-deliver. Bounded so a genuine multi-second stall still re-anchors instead of firing a burst storm. |
 
 ## TOKENIZER
 
