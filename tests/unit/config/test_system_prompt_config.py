@@ -8,11 +8,15 @@ The feature is the content-valued replacement for
 so it inherits that field's exclusivity rules rather than defining its own.
 """
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.enums import DatasetType
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.dataset import FileDataset, PublicDataset, SyntheticDataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
@@ -22,7 +26,7 @@ SYSTEM_TEXT = "You are a production assistant."
 
 
 @pytest.fixture
-def prompt_file(tmp_path):
+def prompt_file(tmp_path: Path) -> Path:
     """A readable system-prompt file.
 
     ``tmp_path`` resolves through /private on macOS, so it has no symlinked
@@ -33,7 +37,7 @@ def prompt_file(tmp_path):
     return path
 
 
-def _cli(**kwargs) -> CLIConfig:
+def _cli(**kwargs: Any) -> CLIConfig:
     return CLIConfig(
         model_names=["mock-model"],
         url="http://localhost:8000",
@@ -42,7 +46,7 @@ def _cli(**kwargs) -> CLIConfig:
     )
 
 
-def _benchmark(**kwargs):
+def _benchmark(**kwargs: Any) -> BenchmarkConfig:
     return convert_cli_to_aiperf(_cli(**kwargs)).benchmark
 
 
@@ -52,13 +56,13 @@ def _benchmark(**kwargs):
 
 
 class TestSystemPromptResolution:
-    def test_inline_text_resolves(self):
+    def test_inline_text_resolves(self) -> None:
         dataset = SyntheticDataset(
             name="main", type=DatasetType.SYNTHETIC, system_prompt=SYSTEM_TEXT
         )
         assert dataset.resolved_system_prompt == SYSTEM_TEXT
 
-    def test_file_resolves(self, prompt_file):
+    def test_file_resolves(self, prompt_file: Path) -> None:
         dataset = SyntheticDataset(
             name="main",
             type=DatasetType.SYNTHETIC,
@@ -66,11 +70,11 @@ class TestSystemPromptResolution:
         )
         assert dataset.resolved_system_prompt == SYSTEM_TEXT
 
-    def test_unset_resolves_to_none(self):
+    def test_unset_resolves_to_none(self) -> None:
         dataset = SyntheticDataset(name="main", type=DatasetType.SYNTHETIC)
         assert dataset.resolved_system_prompt is None
 
-    def test_file_read_once_at_validation_time(self, prompt_file):
+    def test_file_read_once_at_validation_time(self, prompt_file: Path) -> None:
         """Later edits to the file do not change an already-validated config."""
         dataset = SyntheticDataset(
             name="main",
@@ -99,13 +103,15 @@ class TestSystemPromptResolution:
             ),
         ],
     )  # fmt: skip
-    def test_every_dataset_variant_carries_the_field(self, dataset_cls, extra):
+    def test_every_dataset_variant_carries_the_field(
+        self, dataset_cls: type, extra: dict[str, Any]
+    ) -> None:
         dataset = dataset_cls(name="main", system_prompt=SYSTEM_TEXT, **extra)
         assert dataset.resolved_system_prompt == SYSTEM_TEXT
 
 
 class TestSystemPromptRejections:
-    def test_text_and_file_are_mutually_exclusive(self, prompt_file):
+    def test_text_and_file_are_mutually_exclusive(self, prompt_file: Path) -> None:
         with pytest.raises(ValidationError, match="mutually exclusive"):
             SyntheticDataset(
                 name="main",
@@ -122,13 +128,13 @@ class TestSystemPromptRejections:
             param("\n\t ", id="whitespace"),
         ],
     )  # fmt: skip
-    def test_blank_text_rejected(self, text):
+    def test_blank_text_rejected(self, text: str) -> None:
         with pytest.raises(ValidationError, match="empty or whitespace-only"):
             SyntheticDataset(
                 name="main", type=DatasetType.SYNTHETIC, system_prompt=text
             )
 
-    def test_blank_file_rejected(self, tmp_path):
+    def test_blank_file_rejected(self, tmp_path: Path) -> None:
         blank = tmp_path / "blank.txt"
         blank.write_text("   \n")
         with pytest.raises(ValidationError, match="empty or whitespace-only"):
@@ -138,7 +144,7 @@ class TestSystemPromptRejections:
                 system_prompt_file=str(blank),
             )
 
-    def test_missing_file_rejected_at_startup(self, tmp_path):
+    def test_missing_file_rejected_at_startup(self, tmp_path: Path) -> None:
         with pytest.raises(ValidationError, match="could not be read"):
             SyntheticDataset(
                 name="main",
@@ -153,13 +159,15 @@ class TestSystemPromptRejections:
 
 
 class TestSystemPromptCompatibility:
-    def test_resolves_through_cli_for_synthetic(self, prompt_file):
+    def test_resolves_through_cli_for_synthetic(self, prompt_file: Path) -> None:
         benchmark = _benchmark(
             prompt_input_tokens_mean=100, system_prompt_file=str(prompt_file)
         )
         assert benchmark.get_system_prompt() == SYSTEM_TEXT
 
-    def test_resolves_through_cli_for_file_dataset(self, prompt_file, tmp_path):
+    def test_resolves_through_cli_for_file_dataset(
+        self, prompt_file: Path, tmp_path: Path
+    ) -> None:
         data = tmp_path / "data.jsonl"
         data.write_text('{"text": "hello"}\n')
         benchmark = _benchmark(
@@ -167,13 +175,13 @@ class TestSystemPromptCompatibility:
         )
         assert benchmark.get_system_prompt() == SYSTEM_TEXT
 
-    def test_resolves_through_cli_for_public_dataset(self, prompt_file):
+    def test_resolves_through_cli_for_public_dataset(self, prompt_file: Path) -> None:
         benchmark = _benchmark(
             public_dataset="sharegpt", system_prompt_file=str(prompt_file)
         )
         assert benchmark.get_system_prompt() == SYSTEM_TEXT
 
-    def test_conflicts_with_shared_system_prompt_length(self):
+    def test_conflicts_with_shared_system_prompt_length(self) -> None:
         with pytest.raises(ValidationError, match="shared-system-prompt-length"):
             _benchmark(
                 prompt_input_tokens_mean=100,
@@ -181,7 +189,7 @@ class TestSystemPromptCompatibility:
                 prompt_prefix_shared_system_length=200,
             )
 
-    def test_conflicts_with_prefix_pool(self):
+    def test_conflicts_with_prefix_pool(self) -> None:
         """Inherited from shared_system_length, which fills the same slot."""
         with pytest.raises(ValidationError, match="num-prefix-prompts"):
             _benchmark(
@@ -191,7 +199,7 @@ class TestSystemPromptCompatibility:
                 prompt_prefix_length=100,
             )
 
-    def test_allowed_with_user_context_length(self):
+    def test_allowed_with_user_context_length(self) -> None:
         """The two-tier shape, with verbatim text for the shared tier."""
         benchmark = _benchmark(
             prompt_input_tokens_mean=100,
@@ -208,7 +216,9 @@ class TestSystemPromptCompatibility:
             param("nim_rankings", id="rankings"),
         ],
     )  # fmt: skip
-    def test_rejected_on_endpoints_without_a_system_role(self, endpoint_type):
+    def test_rejected_on_endpoints_without_a_system_role(
+        self, endpoint_type: str
+    ) -> None:
         with pytest.raises(ValidationError, match="not supported by endpoint"):
             _benchmark(
                 prompt_input_tokens_mean=100,
@@ -225,7 +235,9 @@ class TestSystemPromptCompatibility:
             param("chat_embeddings", id="chat_embeddings"),
         ],
     )  # fmt: skip
-    def test_allowed_on_endpoints_that_consume_system_message(self, endpoint_type):
+    def test_allowed_on_endpoints_that_consume_system_message(
+        self, endpoint_type: str
+    ) -> None:
         benchmark = _benchmark(
             prompt_input_tokens_mean=100,
             system_prompt=SYSTEM_TEXT,
@@ -233,7 +245,7 @@ class TestSystemPromptCompatibility:
         )
         assert benchmark.get_system_prompt() == SYSTEM_TEXT
 
-    def test_satisfies_warmup_isolation_system_requirement(self):
+    def test_satisfies_warmup_isolation_system_requirement(self) -> None:
         """A verbatim prompt is a real system message, so the marker has a slot."""
         benchmark = _benchmark(
             prompt_input_tokens_mean=100,
@@ -242,7 +254,9 @@ class TestSystemPromptCompatibility:
         )
         assert benchmark.get_system_prompt() == SYSTEM_TEXT
 
-    def test_warmup_isolation_system_still_rejected_without_any_system_prompt(self):
+    def test_warmup_isolation_system_still_rejected_without_any_system_prompt(
+        self,
+    ) -> None:
         with pytest.raises(ValidationError, match="requires a shared system prompt"):
             _benchmark(
                 prompt_input_tokens_mean=100,

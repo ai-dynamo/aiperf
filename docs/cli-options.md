@@ -717,7 +717,7 @@ Verbatim system prompt text, identical across every conversation. Sent as a syst
 
 #### `--system-prompt-file` `<str>`
 
-Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`.
+Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
 
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 
@@ -2287,7 +2287,7 @@ Verbatim system prompt text, identical across every conversation. Sent as a syst
 
 #### `--system-prompt-file` `<str>`
 
-Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`.
+Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
 
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 

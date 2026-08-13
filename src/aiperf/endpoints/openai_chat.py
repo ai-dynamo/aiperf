@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.models import (
     BaseResponseData,
     Image,
@@ -31,7 +32,7 @@ def _prepend_system_text(prefix: str, content: Any) -> Any:
     if isinstance(content, list):
         return [{"type": "text", "text": prefix}, *content]
     if isinstance(content, str) and content:
-        return f"{prefix}\n\n{content}"
+        return f"{prefix}{SYSTEM_PROMPT_JOIN_SEP}{content}"
     return prefix
 
 

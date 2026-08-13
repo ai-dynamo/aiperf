@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
+from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
@@ -540,7 +541,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         for conversation in conversations:
             if conversation.system_message:
                 conversation.system_message = (
-                    f"{system_prompt}\n\n{conversation.system_message}"
+                    f"{system_prompt}"
+                    f"{SYSTEM_PROMPT_JOIN_SEP}"
+                    f"{conversation.system_message}"
                 )
             else:
                 conversation.system_message = system_prompt

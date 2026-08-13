@@ -8,12 +8,15 @@ public) and the prepend-vs-assign branch that keeps a dataset's own authored
 system message intact.
 """
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
 
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 from aiperf.dataset.composer.public import PublicDatasetComposer
@@ -31,14 +34,14 @@ SYSTEM_TEXT = "You are a production assistant."
 
 
 @pytest.fixture
-def prompt_file(tmp_path):
+def prompt_file(tmp_path: Path) -> Path:
     path = tmp_path / "system.txt"
     path.write_text(SYSTEM_TEXT)
     return path
 
 
 @pytest.fixture
-def multi_turn_file(tmp_path):
+def multi_turn_file(tmp_path: Path) -> Path:
     """A dataset whose first turn is a system message the loader hoists."""
     path = tmp_path / "data.jsonl"
     path.write_text(
@@ -49,7 +52,7 @@ def multi_turn_file(tmp_path):
     return path
 
 
-def _synthetic_cli(**kwargs) -> CLIConfig:
+def _synthetic_cli(**kwargs: Any) -> CLIConfig:
     return CLIConfig(
         model_names=["test-model"],
         conversation_num_dataset_entries=3,
@@ -61,8 +64,8 @@ def _synthetic_cli(**kwargs) -> CLIConfig:
 
 class TestSyntheticComposerSystemPrompt:
     def test_sets_system_message_on_every_conversation(
-        self, prompt_file, mock_tokenizer
-    ):
+        self, prompt_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         run = make_run(_synthetic_cli(system_prompt_file=str(prompt_file)))
         conversations = SyntheticDatasetComposer(
             run=run, tokenizer=mock_tokenizer
@@ -71,7 +74,7 @@ class TestSyntheticComposerSystemPrompt:
         assert len(conversations) == 3
         assert all(c.system_message == SYSTEM_TEXT for c in conversations)
 
-    def test_absent_without_the_flag(self, mock_tokenizer):
+    def test_absent_without_the_flag(self, mock_tokenizer: Tokenizer) -> None:
         run = make_run(_synthetic_cli())
         conversations = SyntheticDatasetComposer(
             run=run, tokenizer=mock_tokenizer
@@ -79,7 +82,9 @@ class TestSyntheticComposerSystemPrompt:
 
         assert all(c.system_message is None for c in conversations)
 
-    def test_inline_text_matches_file_text(self, prompt_file, mock_tokenizer):
+    def test_inline_text_matches_file_text(
+        self, prompt_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         from_file = SyntheticDatasetComposer(
             run=make_run(_synthetic_cli(system_prompt_file=str(prompt_file))),
             tokenizer=mock_tokenizer,
@@ -94,8 +99,8 @@ class TestSyntheticComposerSystemPrompt:
 
 class TestCustomComposerSystemPrompt:
     def test_prepends_to_authored_system_message(
-        self, prompt_file, multi_turn_file, mock_tokenizer
-    ):
+        self, prompt_file: Path, multi_turn_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         """The dataset's own system message is kept, not replaced."""
         run = make_run(
             CLIConfig(
@@ -111,8 +116,8 @@ class TestCustomComposerSystemPrompt:
         assert conversations[0].system_message == f"{SYSTEM_TEXT}\n\nDataset system."
 
     def test_authored_system_message_untouched_without_the_flag(
-        self, multi_turn_file, mock_tokenizer
-    ):
+        self, multi_turn_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         run = make_run(
             CLIConfig(model_names=["test-model"], input_file=str(multi_turn_file))
         )
@@ -123,8 +128,8 @@ class TestCustomComposerSystemPrompt:
         assert conversations[0].system_message == "Dataset system."
 
     def test_assigns_when_dataset_has_no_system_message(
-        self, prompt_file, tmp_path, mock_tokenizer
-    ):
+        self, prompt_file: Path, tmp_path: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         data = tmp_path / "plain.jsonl"
         data.write_text('{"text": "hello"}\n')
         run = make_run(
@@ -140,7 +145,9 @@ class TestCustomComposerSystemPrompt:
 
         assert conversations[0].system_message == SYSTEM_TEXT
 
-    def test_injected_without_a_tokenizer(self, prompt_file, tmp_path):
+    def test_injected_without_a_tokenizer(
+        self, prompt_file: Path, tmp_path: Path
+    ) -> None:
         """Verbatim text needs no tokenizer, unlike the synthetic prefix path."""
         data = tmp_path / "plain.jsonl"
         data.write_text('{"text": "hello"}\n')
@@ -169,7 +176,7 @@ class TestSpeedBenchSystemPrompt:
     DATASET_SYSTEM = "SPEED-Bench system message."
 
     @pytest.fixture
-    def speed_bench_file(self, tmp_path):
+    def speed_bench_file(self, tmp_path: Path) -> Path:
         row = {
             "question_id": "speed-coding-1".ljust(32, "0"),
             "category": "coding",
@@ -182,7 +189,12 @@ class TestSpeedBenchSystemPrompt:
         path.write_bytes(orjson.dumps(row) + b"\n")
         return path
 
-    def _compose(self, speed_bench_file, prompt_file, tokenizer):
+    def _compose(
+        self,
+        speed_bench_file: Path,
+        prompt_file: Path | None,
+        tokenizer: Tokenizer | None,
+    ) -> list[Conversation]:
         kwargs = {}
         if prompt_file is not None:
             kwargs["system_prompt_file"] = str(prompt_file)
@@ -197,7 +209,7 @@ class TestSpeedBenchSystemPrompt:
         return CustomDatasetComposer(run=run, tokenizer=tokenizer).create_dataset()
 
     @staticmethod
-    def _format(conversation, turns):
+    def _format(conversation: Conversation, turns: list[Turn]) -> list[dict[str, Any]]:
         endpoint = ChatEndpoint(model_endpoint=create_model_endpoint(EndpointType.CHAT))
         request_info = create_request_info(
             model_endpoint=endpoint.model_endpoint,
@@ -207,8 +219,8 @@ class TestSpeedBenchSystemPrompt:
         return endpoint.format_payload(request_info)["messages"]
 
     def test_composer_does_not_merge_unhoisted_system_turn(
-        self, speed_bench_file, prompt_file, mock_tokenizer
-    ):
+        self, speed_bench_file: Path, prompt_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         """The dataset's system message stays a turn; only the custom text is lifted."""
         conversation = self._compose(speed_bench_file, prompt_file, mock_tokenizer)[0]
 
@@ -216,8 +228,8 @@ class TestSpeedBenchSystemPrompt:
         assert self.DATASET_SYSTEM not in conversation.system_message
 
     def test_endpoint_merges_into_one_system_message(
-        self, speed_bench_file, prompt_file, mock_tokenizer
-    ):
+        self, speed_bench_file: Path, prompt_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         conversation = self._compose(speed_bench_file, prompt_file, mock_tokenizer)[0]
         messages = self._format(conversation, conversation.turns)
 
@@ -226,8 +238,8 @@ class TestSpeedBenchSystemPrompt:
         assert systems[0]["content"] == f"{SYSTEM_TEXT}\n\n{self.DATASET_SYSTEM}"
 
     def test_prefix_not_duplicated_across_repeated_formats(
-        self, speed_bench_file, prompt_file, mock_tokenizer
-    ):
+        self, speed_bench_file: Path, prompt_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         """Turn state is shared across credits, so the merge must not restack.
 
         Regression guard for the copy-in-_format_messages: mutating the rendered
@@ -243,8 +255,8 @@ class TestSpeedBenchSystemPrompt:
             assert systems[0]["content"].count(SYSTEM_TEXT) == 1
 
     def test_dataset_system_turn_untouched_without_the_flag(
-        self, speed_bench_file, mock_tokenizer
-    ):
+        self, speed_bench_file: Path, mock_tokenizer: Tokenizer
+    ) -> None:
         conversation = self._compose(speed_bench_file, None, mock_tokenizer)[0]
         messages = self._format(conversation, conversation.turns)
 
@@ -264,7 +276,7 @@ class TestPublicComposerSystemPrompt:
     """
 
     @staticmethod
-    def _public_cli(**kwargs) -> CLIConfig:
+    def _public_cli(**kwargs: Any) -> CLIConfig:
         return CLIConfig(
             model_names=["test-model"],
             conversation_num_dataset_entries=2,
@@ -273,7 +285,9 @@ class TestPublicComposerSystemPrompt:
         )
 
     @staticmethod
-    async def _compose(cli: CLIConfig, conversations: list[Conversation]):
+    async def _compose(
+        cli: CLIConfig, conversations: list[Conversation]
+    ) -> list[Conversation]:
         mock_loader = AsyncMock()
         mock_loader.load_dataset = AsyncMock(return_value={"dataset": []})
         mock_loader.convert_to_conversations = AsyncMock(return_value=conversations)
@@ -316,7 +330,9 @@ class TestPublicComposerSystemPrompt:
             for i in range(2)
         ]
 
-    async def test_sets_system_message_on_every_conversation(self, prompt_file):
+    async def test_sets_system_message_on_every_conversation(
+        self, prompt_file: Path
+    ) -> None:
         result = await self._compose(
             self._public_cli(system_prompt_file=str(prompt_file)),
             self._conversations(),
@@ -325,12 +341,14 @@ class TestPublicComposerSystemPrompt:
         assert len(result) == 2
         assert all(c.system_message == SYSTEM_TEXT for c in result)
 
-    async def test_absent_without_the_flag(self):
+    async def test_absent_without_the_flag(self) -> None:
         result = await self._compose(self._public_cli(), self._conversations())
 
         assert all(c.system_message is None for c in result)
 
-    async def test_prepends_to_loader_supplied_system_message(self, prompt_file):
+    async def test_prepends_to_loader_supplied_system_message(
+        self, prompt_file: Path
+    ) -> None:
         """A public loader that already set system_message keeps its text."""
         result = await self._compose(
             self._public_cli(system_prompt_file=str(prompt_file)),

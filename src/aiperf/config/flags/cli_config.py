@@ -1226,7 +1226,9 @@ class CLIConfig(BaseConfig):
                 "Preferred over `--system-prompt` for real production prompts, which are\n"
                 "long enough that shell quoting mangles them. Read once at startup, so a\n"
                 "missing or unreadable file fails immediately rather than mid-run.\n"
-                "Mutually exclusive with `--system-prompt`."
+                "Mutually exclusive with `--system-prompt`, "
+                "`--shared-system-prompt-length`, and "
+                "`--num-prefix-prompts`/`--prefix-prompt-length`."
             ),
         ),
         CLIParameter(
