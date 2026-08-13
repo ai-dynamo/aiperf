@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,10 @@ from pytest import param
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
+from aiperf.config.flags.resolver import (
+    _apply_dataset_synthesis_overrides,
+    resolve_config,
+)
 from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
 
 _WEKA_HF = PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
@@ -195,6 +200,131 @@ class TestSynthesisCapRouting:
         assert ds.synthesis is not None
         assert ds.synthesis.max_isl == 4096
         assert ds.synthesis.max_osl == 512
+
+
+class TestSynthesisYamlOverride:
+    """Explicit synthesis flags overlay valid YAML datasets and report invalid shapes."""
+
+    async def test_cli_overrides_yaml_synthesis(
+        self, tmp_path: Path, trace_jsonl: Path
+    ) -> None:
+        config_file = tmp_path / "base.yaml"
+        await asyncio.to_thread(
+            config_file.write_text,
+            f"""
+schemaVersion: "2.0"
+benchmark:
+  model: target-model
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: file
+    path: {trace_jsonl}
+    format: mooncake_trace
+    synthesis:
+      speedupRatio: 2.0
+      maxOsl: 16000
+  profiling:
+    type: concurrency
+    requests: 1
+    concurrency: 1
+""",
+        )
+
+        config = await asyncio.to_thread(
+            resolve_config,
+            CLIConfig(config_file=config_file, synthesis_max_osl=12000),
+        )
+        dataset = config.benchmark.get_default_dataset()
+
+        assert dataset.synthesis is not None
+        assert dataset.synthesis.max_osl == 12000
+        assert dataset.synthesis.speedup_ratio == 2.0
+
+    @pytest.mark.parametrize(
+        "datasets",
+        [
+            param([], id="empty"),
+            param([None], id="first-not-dict"),
+        ],
+    )  # fmt: skip
+    def test_invalid_yaml_datasets_raise(self, datasets: list[object]) -> None:
+        merged = {"benchmark": {"datasets": datasets}}
+
+        with pytest.raises(
+            ValueError, match="synthesis flags require a file or public dataset"
+        ):
+            _apply_dataset_synthesis_overrides(merged, CLIConfig(synthesis_max_osl=512))
+
+    def test_multiple_yaml_datasets_warns_and_updates_only_first(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        first = {
+            "type": "file",
+            "synthesis": {"speedupRatio": 2.0, "maxOsl": 16000},
+        }
+        second = {"type": "file", "synthesis": {"maxOsl": 8000}}
+        merged = {"benchmark": {"datasets": [first, second]}}
+
+        with caplog.at_level("WARNING", logger="aiperf.config.flags.resolver"):
+            _apply_dataset_synthesis_overrides(
+                merged, CLIConfig(synthesis_max_osl=12000)
+            )
+
+        assert "apply only to the first dataset" in caplog.text
+        assert first["synthesis"] == {"speedupRatio": 2.0, "maxOsl": 12000}
+        assert second["synthesis"] == {"maxOsl": 8000}
+
+    def test_non_trace_yaml_dataset_warns_and_is_unchanged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        dataset = {"type": "synthetic"}
+        merged = {"benchmark": {"datasets": [dataset]}}
+
+        with caplog.at_level("WARNING", logger="aiperf.config.flags.resolver"):
+            _apply_dataset_synthesis_overrides(merged, CLIConfig(synthesis_max_osl=512))
+
+        assert "require a file or public dataset" in caplog.text
+        assert dataset == {"type": "synthetic"}
+
+    @pytest.mark.parametrize(
+        ("cli_kwargs", "match"),
+        [
+            param(
+                {"synthesis_speedup_ratio": 2.0},
+                "--synthesis-speedup-ratio is not supported",
+                id="speedup",
+            ),
+            param(
+                {"synthesis_prompt_len_multiplier": 2.0},
+                "hash_ids",
+                id="prompt-reshaping",
+            ),
+        ],
+    )  # fmt: skip
+    def test_baseten_yaml_rejects_unsupported_synthesis(
+        self, cli_kwargs: dict[str, object], match: str
+    ) -> None:
+        merged = {
+            "benchmark": {"datasets": [{"type": "file", "format": "baseten_trace"}]}
+        }
+
+        with pytest.raises(ValueError, match=match) as exc_info:
+            _apply_dataset_synthesis_overrides(merged, CLIConfig(**cli_kwargs))
+
+        assert "YAML format: baseten_trace" in str(exc_info.value)
+        assert "--custom-dataset-type" not in str(exc_info.value)
+
+    def test_baseten_yaml_accepts_output_len_synthesis(self) -> None:
+        dataset = {"type": "file", "format": "baseten_trace"}
+        merged = {"benchmark": {"datasets": [dataset]}}
+
+        _apply_dataset_synthesis_overrides(
+            merged, CLIConfig(synthesis_output_len_multiplier=2.0)
+        )
+
+        assert dataset["synthesis"] == {"outputLenMultiplier": 2.0}
 
 
 class TestOslFallbackRouting:

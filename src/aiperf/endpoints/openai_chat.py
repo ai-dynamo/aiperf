@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
     Image,
@@ -91,40 +90,14 @@ class ChatEndpoint(BaseEndpoint):
             and isinstance(rendered[0], dict)
             and rendered[0].get("role") == "system"
         )
-        if request_info.system_message:
-            if first_is_system and request_info.credit_phase == CreditPhase.WARMUP:
-                rendered = ChatEndpoint._prepend_system_message(
-                    rendered, request_info.system_message
-                )
-            elif not first_is_system:
-                messages.append(
-                    {"role": "system", "content": request_info.system_message}
-                )
+        if request_info.system_message and not first_is_system:
+            messages.append({"role": "system", "content": request_info.system_message})
         if request_info.user_context_message:
             messages.append(
                 {"role": "user", "content": request_info.user_context_message}
             )
         messages.extend(rendered)
         return messages
-
-    @staticmethod
-    def _prepend_system_message(
-        rendered: list[dict[str, Any]], system_message: str
-    ) -> list[dict[str, Any]]:
-        """Prepend ``system_message`` to the leading rendered system message."""
-        first = dict(rendered[0])
-        content = first.get("content")
-        if isinstance(content, str):
-            first["content"] = (
-                f"{system_message}\n{content}" if content else system_message
-            )
-        elif isinstance(content, list):
-            first["content"] = [{"type": "text", "text": system_message}, *content]
-        elif content is None:
-            first["content"] = system_message
-        else:
-            first["content"] = f"{system_message}\n{content}"
-        return [first, *rendered[1:]]
 
     def _extend_image_parts(
         self, parts: list[dict[str, Any]], images: list[Image]

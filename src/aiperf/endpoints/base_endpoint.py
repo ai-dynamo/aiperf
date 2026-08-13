@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 from aiperf.common.enums import MediaType
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     BaseResponseData,
@@ -316,7 +317,8 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         part type names (e.g. ``text`` -> ``input_text`` for Responses API).
         """
         if (
-            len(turn.texts) == 1
+            not Environment.ENDPOINT.FORCE_CONTENT_PARTS
+            and len(turn.texts) == 1
             and len(turn.texts[0].contents) == 1
             and not turn.images
             and not turn.audios

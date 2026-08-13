@@ -181,6 +181,23 @@ service_manager:
 # One-to-one mapping: exactly one endpoint is selected based on endpoint_type config.
 # =============================================================================
 endpoint:
+  audio_transcription:
+    class: aiperf.endpoints.openai_audio_transcription:AudioTranscriptionEndpoint
+    description: |
+      OpenAI Audio Transcription endpoint (Whisper-style). Uploads audio as a
+      multipart file and returns a plain-text transcript. Compatible with
+      OpenAI /v1/audio/transcriptions, NIM, and SGLang. Pair with an ASR
+      dataset loader (e.g. --dataset librispeech). Use
+      --endpoint-type audio_transcription.
+    metadata:
+      endpoint_path: /v1/audio/transcriptions
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      supports_audio: true
+      requires_form_data: true
+      metrics_title: Audio Transcription Metrics
+
   chat:
     class: aiperf.endpoints.openai_chat:ChatEndpoint
     description: |
@@ -526,10 +543,10 @@ custom_dataset_loader:
   baseten_trace:
     class: aiperf.dataset.loader.baseten_trace:BasetenTraceDatasetLoader
     description: |
-      Baseten completion trace dataset loader for Parquet exports that include
-      prompts, timestamps, session identifiers, output tokens, and optional
-      hash-based KV-cache metadata. Supports fixed_schedule timing replay for
-      /v1/completions workloads.
+      Baseten completion trace dataset loader for Parquet or Arrow IPC exports
+      that include prompts, timestamps, session identifiers, output tokens, and
+      optional hash-based KV-cache metadata. Arrow IPC files are memory-mapped.
+      Supports fixed_schedule timing replay for /v1/completions workloads.
     metadata:
       is_trace: true
       default_block_size: 64
@@ -828,6 +845,23 @@ custom_dataset_loader:
       SPEED-Bench throughput ~32K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
     metadata:
       category: high_entropy
+
+  tracelab:
+    class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
+    description: |
+      TraceLab agentic coding trace loader for the uw-syfi corpus published at
+      https://github.com/uw-syfi/TraceLab. Input is a single JSONL file, gzipped
+      or plain, holding one row per LLM round. Rounds are grouped into sessions,
+      per-request hash_ids are synthesized from the engine-reported prefix /
+      append token split, and subagent parent-child links are recovered by
+      timing containment before reconstruction is delegated to the Weka trace
+      loader. Subagent entries spawn concurrent child sessions via SPAWN +
+      SPAWN_JOIN prerequisites.
+      Usage: --custom-dataset-type tracelab --input-file syfi_coding_trace.jsonl.gz
+    metadata:
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
 
   weka_trace:
     class: aiperf.dataset.loader.weka_trace:WekaTraceLoader

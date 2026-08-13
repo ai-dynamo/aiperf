@@ -305,8 +305,9 @@ class FileDataset(BaseConfig):
             description="Path to file or directory containing benchmark dataset. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
-            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/"
-            "bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+            "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
+            "tracelab, JSONL trace files for mooncake_trace/bailian_trace, "
+            "Parquet for baseten_trace, directories for random_pool.",
         ),
     ]
 
@@ -330,6 +331,7 @@ class FileDataset(BaseConfig):
             description="Dataset file format determining parsing logic and expected file structure. "
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
+            "tracelab: TraceLab agentic-coding corpus, JSONL or gzipped JSONL. "
             "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
             "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
@@ -496,9 +498,9 @@ class FileDataset(BaseConfig):
             default=None,
             ge=1,
             description="Hash-id block granularity for trace replay (--isl-block-size). "
-            "hash-id trace loaders (mooncake_trace, bailian_trace, burst_gpt_trace, "
-            "sagemaker_data_capture) decode each hash_id into a cached block of this "
-            "many tokens; total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
+            "hash-id trace loaders (mooncake_trace, bailian_trace, baseten_trace, "
+            "tracelab) decode each hash_id into a cached block of this many tokens; "
+            "total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
             "When unset, the loader's plugin-metadata default applies (e.g. 512 for "
             "mooncake_trace, 16 for bailian_trace). Not used by weka, which carries its "
             "own inline per-block sizes.",
