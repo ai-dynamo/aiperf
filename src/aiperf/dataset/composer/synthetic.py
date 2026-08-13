@@ -117,6 +117,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 self._num_entries, self._seq_distribution._preseed_rng
             )
 
+        # Must follow preseed: the RANDOM corpus draws its prefixes from the shared
+        # stream at vLLM's position (after the offset draws). No-op without a pool.
+        if self.prompt_generator is not None:
+            self.prompt_generator.initialize_prefix_pool()
+
     def create_dataset(self) -> list[Conversation]:
         """Create a synthetic conversation dataset from the given configuration.
 
@@ -230,16 +235,17 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         # Preserve original variance unless sequence distribution is active
         stddev = 0 if self._seq_distribution is not None else self._isl_stddev
 
+        # The prefix is prepended inside the generator at the token level so that
+        # prefix + body tokenizes to exactly prefix_len + isl (AIP-1118).
+        with_prefix = is_first and self.prefix_prompt_enabled
+
         for _ in range(self._prompt_batch_size):
             # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
-
-            # Add prefix prompt if this is the first turn and prefix is enabled
-            if is_first and self.prefix_prompt_enabled:
-                prefix = self.prompt_generator.get_random_prefix_prompt()
-                content = f"{prefix} {content}"
-
-            text.contents.append(content)
+            text.contents.append(
+                self.prompt_generator.generate(
+                    mean=isl, stddev=stddev, with_prefix=with_prefix
+                )
+            )
 
         return text
 

@@ -405,8 +405,8 @@ class PrefixPromptConfig(BaseConfig):
             default=None,
             description="Token length for each prefix prompt in the pool. "
             "Only used when pool_size is set. "
-            "Note: due to prefix and user prompts being concatenated, "
-            "the final prompt token count may be off by one. "
+            "The prefix is concatenated to the body at the token level, so the "
+            "final prompt contains exactly prefix length + input length tokens. "
             "Mutually exclusive with shared_system_length/user_context_length.",
         ),
     ]

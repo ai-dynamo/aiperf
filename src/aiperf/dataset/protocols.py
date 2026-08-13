@@ -31,12 +31,24 @@ class CorpusGeneratorProtocol(Protocol):
     the cache; others silently do nothing.
     """
 
-    def generate(self, mean: int, stddev: int = 0) -> str:
-        """Generate a single prompt of approximately ``mean`` tokens."""
+    def generate(self, mean: int, stddev: int = 0, *, with_prefix: bool = False) -> str:
+        """Generate a single prompt of approximately ``mean`` tokens.
+
+        When ``with_prefix`` is set the prefix is prepended at the token level so
+        the result tokenizes to exactly ``prefix_len + mean``.
+        """
         ...
 
     def get_random_prefix_prompt(self) -> str:
         """Return a randomly sampled prefix from the prefix pool."""
+        ...
+
+    def get_random_prefix_prompt_tokens(self) -> list[int]:
+        """Return the token IDs of a randomly sampled prefix from the pool."""
+        ...
+
+    def initialize_prefix_pool(self) -> None:
+        """Build the prefix pool, after ``preseed``. No-op without a pool."""
         ...
 
     def get_shared_system_prompt(self) -> str | None:

@@ -146,6 +146,25 @@ than requiring a separate generator type.
 a prefix pool is configured, prefix prompts are generated using the same
 arithmetic token-ID sequence as body prompts.
 
+### Token-level prefix concatenation
+
+The prefix is joined to the body at the **token-ID level**, and the combined
+sequence goes through a single decode/re-encode correction targeting exactly
+`prefix_len + body_len` — the same contract as vLLM's `generate_token_sequence`.
+A prompt therefore contains exactly the configured number of tokens.
+
+Joining the two decoded segments as strings instead (`f"{prefix} {body}"`) would
+let BPE charge for the separator: measured on GPT-2 that cost one extra token on
+~81% of requests, +0.84 on average, and it perturbed the per-request token index.
+See AIP-1118.
+
+For the RANDOM corpus the pool is drawn from the shared preseed stream *after*
+the ISL/OSL/offset draws, bounded by `len(allowed_tokens)`, mirroring vLLM's
+`RandomDataset.get_prefix`. Byte-exact prompt parity with vLLM requires
+`--prompt-prefix-pool-size 1`, since vLLM has exactly one prefix; larger pools
+consume additional draws from the shared stream and so diverge in the
+(rarely-exercised) top-up token values.
+
 ### Prefix semantics vs vLLM / SGLang
 
 The prefix is **additive** in every corpus, matching the reference benchmarkers:
