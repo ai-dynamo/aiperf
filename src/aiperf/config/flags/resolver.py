@@ -442,17 +442,21 @@ def _apply_random_pool_batch_size_overrides(
         return
 
     benchmark = merged.get("benchmark")
-    datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
-    if not isinstance(datasets, list) or not datasets:
+    if not isinstance(benchmark, dict):
         return
 
-    if len(datasets) > 1:
-        logger.warning(
-            "Batch-size flags with multiple YAML datasets apply only to the first dataset"
-        )
-    dataset = datasets[0]
+    dataset = benchmark.get("dataset")
     if not isinstance(dataset, dict):
-        return
+        datasets = benchmark.get("datasets")
+        if not isinstance(datasets, list) or not datasets:
+            return
+        if len(datasets) > 1:
+            logger.warning(
+                "Batch-size flags with multiple YAML datasets apply only to the first dataset"
+            )
+        dataset = datasets[0]
+        if not isinstance(dataset, dict):
+            return
 
     fmt = dataset.get("format")
     if fmt != DatasetFormat.RANDOM_POOL:

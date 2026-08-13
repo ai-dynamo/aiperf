@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.config import AIPerfConfig
+from aiperf.config.dataset.config import FileDataset
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 
@@ -57,7 +59,7 @@ def _cli(**kwargs: object) -> CLIConfig:
     return CLIConfig(**CLIConfig(**kwargs).model_dump(exclude_unset=True))  # type: ignore[arg-type]
 
 
-def _dataset(cfg):  # noqa: ANN001
+def _dataset(cfg: AIPerfConfig) -> FileDataset:
     return cfg.benchmark.datasets[0]
 
 
