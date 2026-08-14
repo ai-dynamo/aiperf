@@ -22,7 +22,7 @@ authors = [
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "aiofiles~=24.1.0",
-  "aiohttp~=3.13.3",
+  "aiohttp>=3.14.3,<4",
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
