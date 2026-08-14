@@ -14,6 +14,7 @@ from aiperf.common.enums import ConversationContextMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation
 from aiperf.common.session_id_generator import SessionIDGenerator
+from aiperf.common.utils import open_text_maybe_gzip
 from aiperf.dataset.loader.models import CustomDatasetT
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
@@ -163,7 +164,9 @@ class BaseFileLoader(BaseLoader):
             raises ``ValueError`` if absent). Unknown pool names raise ``KeyError``.
 
         For file mode:
-          - Yields ``orjson.loads`` of each non-empty stripped line.
+          - Yields ``orjson.loads`` of each non-empty stripped line. A ``.gz``
+            suffix is transparently decompressed, so a gzipped JSONL corpus
+            can be replayed without inflating it first.
           - ``source`` (if provided) is treated as an alternate file path
             (used by directory-walking loaders such as ``random_pool``).
         """
@@ -180,7 +183,7 @@ class BaseFileLoader(BaseLoader):
             return
 
         target = source if source is not None else self.filename
-        with open(target, encoding="utf-8") as f:
+        with open_text_maybe_gzip(target) as f:
             for lineno, line in enumerate(f, start=1):
                 if line := line.strip():
                     try:
