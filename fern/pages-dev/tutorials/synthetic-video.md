@@ -197,7 +197,18 @@ Features:
 
 ### Video Codec Selection
 
-Choose encoding codec based on your hardware and requirements:
+Choose encoding codec based on your hardware and requirements.
+
+<Info>
+AIPerf invokes whichever `ffmpeg` binary is on `PATH`. The container bundles a
+minimal build at `/opt/ffmpeg` supporting only VP8/VP9 video with Vorbis or
+Opus audio; a PyPI install uses the FFmpeg you have installed.
+
+Codecs outside that set — `libx264`, `libx265`, `h264_nvenc`, `hevc_nvenc` and
+`aac` — remain valid options, but encoding with them fails inside the
+container. To use them, run AIPerf with your own FFmpeg on `PATH`, or rebuild
+the container's FFmpeg with them enabled.
+</Info>
 
 #### CPU Encoding (Default)
 
@@ -214,13 +225,14 @@ aiperf profile \
 ```
 
 **Available CPU Codecs:**
-- `libvpx-vp9`: VP9 encoding, BSD-licensed (default, WebM format)
-- `libx264`: H.264 encoding, GPL-licensed, widely compatible (MP4 format)
-- `libx265`: H.265 encoding, GPL-licensed, smaller file sizes, slower encoding (MP4 format)
+- `libvpx-vp9`: VP9 encoding, BSD-licensed (default, WebM and MP4 formats)
+- `libvpx`: VP8 encoding, BSD-licensed
+- `libx264`: H.264 encoding, GPL-licensed, widely compatible (MP4 format; not in the AIPerf container)
+- `libx265`: H.265 encoding, GPL-licensed, smaller file sizes, slower encoding (MP4 format; not in the AIPerf container)
 
 #### GPU Encoding (NVIDIA)
 
-For faster encoding with NVIDIA GPUs:
+For faster encoding with NVIDIA GPUs, using an FFmpeg built with NVENC:
 
 ```bash
 aiperf profile \
@@ -233,7 +245,7 @@ aiperf profile \
     --request-count 50
 ```
 
-**Available NVIDIA GPU Codecs:**
+**Available NVIDIA GPU Codecs** (require an FFmpeg built with NVENC; not in the AIPerf container):
 - `h264_nvenc`: H.264 GPU encoding
 - `hevc_nvenc`: H.265 GPU encoding, smaller files
 
@@ -273,7 +285,7 @@ aiperf profile \
     --request-count 20
 ```
 
-This generates videos with a mono, 44.1 kHz audio track using an auto-selected codec (libvorbis for WebM, aac for MP4).
+This generates videos with a mono audio track using an auto-selected codec (libvorbis for WebM, libopus for MP4).
 
 #### Audio Parameters
 
@@ -281,7 +293,7 @@ This generates videos with a mono, 44.1 kHz audio track using an auto-selected c
 |---|---|---|---|
 | `--video-audio-num-channels` | `int` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `float` | `44.1` | Sample rate in kHz (8-96) |
-| `--video-audio-codec` | `string` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
+| `--video-audio-codec` | `string` | auto | Audio codec (`libvorbis`, `libopus`, `aac`; `aac` is not in the AIPerf container) |
 | `--video-audio-depth` | `int` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 #### Audio Codec Selection
@@ -291,7 +303,15 @@ When `--video-audio-codec` is not specified, the codec is automatically selected
 | Video Format | Auto-Selected Audio Codec |
 |---|---|
 | WebM | `libvorbis` (Vorbis) |
-| MP4 | `aac` (AAC) |
+| MP4 | `libopus` (Opus) |
+
+<Note>
+`libopus` always encodes at 48 kHz. Whatever `--video-audio-sample-rate` you
+request is resampled to 48 kHz during muxing, so the audio stream in the
+generated file reports 48 kHz — this applies to every rate, including ones
+Opus itself supports such as 16 kHz. Use `libvorbis` if the track must keep
+its requested rate.
+</Note>
 
 You can override the auto-selection with an explicit codec:
 
@@ -327,7 +347,7 @@ aiperf profile \
 1. A Gaussian noise audio signal is generated matching the video duration
 2. The audio is encoded as 16-bit PCM WAV
 3. FFmpeg muxes the video and audio streams together using `-shortest` to ensure duration alignment
-4. The audio codec converts the WAV data to the target format (AAC, Vorbis, or Opus)
+4. The audio codec converts the WAV data to the target format (Vorbis or Opus)
 5. The resulting video+audio file is base64-encoded for API requests
 
 The audio generation uses a deterministic RNG seed (`dataset.video.audio`), so videos with audio are reproducible across runs when using `--random-seed`.
@@ -337,7 +357,7 @@ The audio generation uses a deterministic RNG seed (`dataset.video.audio`), so v
 Factors affecting audio contribution to file size:
 - **Sample rate**: 48 kHz produces ~9% more data than 44.1 kHz
 - **Channels**: Stereo (2) doubles audio data compared to mono (1)
-- **Codec**: Vorbis and Opus provide better compression than AAC at lower bitrates
+- **Codec**: Opus generally compresses better than Vorbis at lower bitrates
 - **Duration**: Audio size scales linearly with video duration
 
 For most benchmarking scenarios, the audio track adds minimal overhead compared to the video stream.
@@ -377,7 +397,7 @@ aiperf profile \
     --video-height 1080 \
     --video-fps 8 \
     --video-duration 10.0 \
-    --video-codec h264_nvenc \
+    --video-codec libvpx-vp9 \
     --concurrency 2 \
     --request-count 20
 ```
@@ -441,9 +461,9 @@ aiperf profile \
     --video-fps 8 \
     --video-duration 10.0 \
     --video-format mp4 \
-    --video-codec libx264 \
+    --video-codec libvpx-vp9 \
     --video-audio-num-channels 2 \
-    --video-audio-sample-rate 44.1 \
+    --video-audio-sample-rate 48 \
     --concurrency 2 \
     --request-count 20
 ```
@@ -498,7 +518,7 @@ aiperf profile \
     --video-width 640 \
     --video-height 480 \
     --video-format mp4 \
-    --video-codec libx264 \
+    --video-codec libvpx-vp9 \
     --request-count 20
 ```
 
@@ -515,8 +535,8 @@ This allows seamless integration with vision-language model APIs that accept bas
 
 ### Encoding Performance
 
-- **CPU codecs** (`libvpx-vp9`, `libx264`, `libx265`): Slower but universally available
-- **GPU codecs** (`h264_nvenc`, `hevc_nvenc`): Much faster, requires NVIDIA GPU
+- **CPU codecs** (`libvpx-vp9`, `libvpx`): Slower but always available, including in the AIPerf container
+- **GPU codecs** (`h264_nvenc`, `hevc_nvenc`): Much faster, requires an NVIDIA GPU and an FFmpeg built with NVENC
 - Higher resolution and frame rates increase encoding time
 
 ### Video Size Impact
@@ -563,7 +583,7 @@ Error: Encoder 'h264_nvenc' not found
 Solutions:
 1. Verify NVIDIA GPU is available: `nvidia-smi`
 2. Check FFmpeg was compiled with NVENC support: `ffmpeg -encoders | grep nvenc`
-3. Fall back to CPU codec: `--video-codec libvpx-vp9 --video-format webm` or `--video-codec libx264 --video-format mp4`
+3. Fall back to CPU codec: `--video-codec libvpx-vp9 --video-format webm` or `--video-codec libvpx-vp9 --video-format mp4`
 
 ### Out of Memory
 
@@ -595,7 +615,7 @@ All video-related parameters at a glance:
 |---|---|---|
 | `--video-audio-num-channels` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `44.1` | Sample rate in kHz (8-96) |
-| `--video-audio-codec` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
+| `--video-audio-codec` | auto | Audio codec (`libvorbis`, `libopus`, `aac`; `aac` is not in the AIPerf container) |
 | `--video-audio-depth` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 ## Summary
