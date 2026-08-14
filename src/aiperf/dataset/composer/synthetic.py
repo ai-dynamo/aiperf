@@ -112,11 +112,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             and getattr(self.prompt_generator, "_corpus", None) == PromptCorpus.RANDOM
             and isinstance(self._seq_distribution, RangeRatioDistribution)
         ):
-            self._seq_distribution.preseed(
-                self._num_entries,
-                run.random_seed,
-                prefix_len=self._prefix_prompt_tokens,
-            )
+            self._seq_distribution.preseed(self._num_entries, run.random_seed)
             self.prompt_generator.preseed(
                 self._num_entries, self._seq_distribution._preseed_rng
             )

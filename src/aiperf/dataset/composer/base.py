@@ -262,41 +262,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             compensated_shared_sys_len = max(
                 1, configured_shared_sys_len - self._cache_bust_marker_tokens
             )
-            self._prefix_prompt_tokens = 0
             return prefix_prompts.model_copy(
                 update={"shared_system_length": compensated_shared_sys_len}
             )
 
-        # Component (d): prefix prompt tokens consumed from the first-turn ISL
-        # budget. The prefix is prepended to the body at request time, so the body
-        # must be shorter by the prefix length to keep total wire ISL on target.
-        # Only active when pool_size > 0 — without a pool there are no prefixes.
-        #
-        # Exception: RANDOM corpus with VLLM or SGLANG style treats the prefix
-        # as additive (total ISL = body + prefix), matching vLLM's
-        # --random-prefix-len and SGLang's prefix_len behaviour. Setting the
-        # budget to 0 keeps the body ISL distribution unchanged.
-        from aiperf.common.enums import PromptCorpus, RandomCorpusStyle
-
-        _random_additive = (
-            self.run.cfg.get_prompt_corpus() == PromptCorpus.RANDOM
-            and self._synthetic_prompts is not None
-            and self._synthetic_prompts.random_corpus_style
-            in (RandomCorpusStyle.VLLM, RandomCorpusStyle.SGLANG)
-        )
-        self._prefix_prompt_tokens = (
-            0
-            if _random_additive
-            else (
-                prefix_prompts.length
-                if prefix_prompts is not None
-                and prefix_prompts.length is not None
-                and prefix_prompts.pool_size is not None
-                and prefix_prompts.pool_size > 0
-                else 0
-            )
-        )
-
+        # Prefix prompts are additive: total wire ISL is body + prefix, matching
+        # vLLM's --random-prefix-len and SGLang's prefix_len. The prefix is NOT
+        # subtracted from the ISL budget, so --prompt-input-tokens-mean describes
+        # the body and the prefix rides on top.
         return prefix_prompts
 
     @property
@@ -304,15 +277,16 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """Total tokens to subtract from the FIRST user turn's synthetic ISL.
 
         Composed of the per-request chat-template fixed cost (gen-prompt
-        suffix), the per-message chat-template wrap (role header + EOT), the
-        cache-bust marker when it lands on the first user turn, and the prefix
-        prompt length so that prefix + body stays within the configured ISL.
+        suffix), the per-message chat-template wrap (role header + EOT), and the
+        cache-bust marker when it lands on the first user turn.
+
+        Prefix prompts are deliberately absent: they are additive, so the body
+        keeps the full configured ISL and the prefix is prepended on top.
         """
         return (
             self._chat_template_per_request_fixed_tokens
             + self._chat_template_per_msg_wrap_tokens
             + self._first_turn_cache_bust_marker_tokens
-            + self._prefix_prompt_tokens
         )
 
     @property

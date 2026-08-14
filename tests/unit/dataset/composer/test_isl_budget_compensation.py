@@ -317,15 +317,16 @@ class TestChatTemplateOverheadProbe:
 class TestAdjustmentProperties:
     """The two public properties must compose the components correctly."""
 
-    def test_first_turn_adjustment_composes_all_four(self):
+    def test_first_turn_adjustment_composes_all_three(self):
         config = _make_config(
             cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
             prefix_pool_size=3,
             prefix_length=20,
         )
         composer = _build_composer(config, marker_cost=10, chat_fixed=4, chat_wrap=5)
-        # 4 (fixed) + 5 (wrap) + 10 (marker) + 20 (prefix) = 39
-        assert composer.first_turn_isl_adjustment == 39
+        # 4 (fixed) + 5 (wrap) + 10 (marker) = 19. The 20-token prefix is NOT
+        # subtracted: prefixes are additive.
+        assert composer.first_turn_isl_adjustment == 19
 
     def test_subsequent_turn_adjustment_only_per_msg_wrap(self):
         config = _make_config(cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
@@ -339,15 +340,19 @@ class TestAdjustmentProperties:
         assert composer.first_turn_isl_adjustment == 0
         assert composer.subsequent_turn_isl_adjustment == 0
 
-    def test_prefix_length_included_in_first_turn_adjustment(self):
-        """Prefix tokens are subtracted from the first-turn ISL so body + prefix = target."""
+    def test_prefix_length_excluded_from_first_turn_adjustment(self):
+        """Prefixes are additive: the body keeps the full ISL and the prefix rides on top.
+
+        Matches vLLM's --random-prefix-len and SGLang's prefix_len, so
+        --prompt-input-tokens-mean describes the body rather than the wire total.
+        """
         config = _make_config(prefix_pool_size=3, prefix_length=30)
         composer = _build_composer(config)
-        assert composer.first_turn_isl_adjustment == 30
+        assert composer.first_turn_isl_adjustment == 0
         assert composer.subsequent_turn_isl_adjustment == 0
 
-    def test_no_prefix_length_when_pool_size_absent(self):
-        """prefix_length without pool_size has no effect on adjustment."""
+    def test_prefix_length_without_pool_size_also_excluded(self):
+        """prefix_length without pool_size likewise has no effect on adjustment."""
         config = _make_config(prefix_length=30)
         composer = _build_composer(config)
         assert composer.first_turn_isl_adjustment == 0

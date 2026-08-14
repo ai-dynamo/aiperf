@@ -881,18 +881,21 @@ class TestRangeRatioDistribution:
             assert isl == expected_isls[i]
             assert osl == expected_osls[i]
 
-    def test_preseed_prefix_len_shifts_isl_cache(self):
-        """prefix_len adds to each sampled ISL so first_turn_adj gives back body range."""
-        n, prefix = 5, 20
+    def test_preseed_isl_cache_is_body_only(self):
+        """Cached ISLs describe the body alone; prefixes are additive and added later.
+
+        preseed() takes no prefix_len — the prefix is prepended to the generated
+        body at request time, so the sampled distribution must be unaffected by
+        prefix configuration.
+        """
+        n = 5
         dist = _vllm(128, 128, 0.3)
-        dist_no_prefix = _vllm(128, 128, 0.3)
-        dist_no_prefix.preseed(n, 0)
-        dist.preseed(n, 0, prefix_len=prefix)
+        dist.preseed(n, 0)
+        low, high = dist._config.compute_input_bounds()
 
         for _ in range(n):
-            isl_with, _ = dist.sample()
-            isl_without, _ = dist_no_prefix.sample()
-            assert isl_with == isl_without + prefix
+            isl, _ = dist.sample()
+            assert low <= isl <= high
 
     def test_preseed_exposes_rng_for_offset_draws(self):
         """_preseed_rng after preseed is advanced past ISL+OSL draws."""
