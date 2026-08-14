@@ -14,15 +14,34 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import numpy as np
+from annotated_types import Ge, Gt
 from numpy.random import Generator
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from scipy.optimize import brentq
 
-from aiperf.common.finite import FiniteFloat
+from aiperf.common.finite import FiniteFloat, is_finite_value
 from aiperf.common.models import AIPerfBaseModel
+
+
+def _reject_non_finite(value: float) -> float:
+    """Reject NaN/inf, matching :data:`FiniteFloat`'s message."""
+    if not is_finite_value(value):
+        raise ValueError(f"value must be finite, got {value!r}")
+    return value
+
+
+# Bounded finite floats. The bound lives INSIDE the Annotated rather than in
+# Field(gt=...) because the two do not compose on an optional field: pydantic
+# emits `{"gt": 0.0}` for `FiniteFloat | None = Field(gt=0.0)` instead of
+# `{"exclusiveMinimum": 0.0}`, and `gt` is not a JSON Schema keyword -- an
+# editor validating against the published spec would silently stop enforcing
+# the bound. That is the same schema-weaker-than-the-loader failure the
+# untagged-Weibull guard below exists to prevent, so it is not cosmetic.
+_PositiveFinite = Annotated[float, Gt(0.0), AfterValidator(_reject_non_finite)]
+_NonNegativeFinite = Annotated[float, Ge(0.0), AfterValidator(_reject_non_finite)]
 
 # Native parameters that identify one family to the exclusion of the other.
 # AIPerfBaseModel allows extra keys and the union defaults to lognormal when
@@ -68,20 +87,21 @@ class LognormalParams(AIPerfBaseModel):
         }
     )
 
-    # Log-space mean is legitimately negative for sub-1 medians, so it takes no
-    # ge/gt bound -- but it must still be finite, which FiniteFloat enforces at
-    # validation time rather than leaving to the model validator below.
+    # Every field is finite-checked: a gt/ge bound does not exclude inf, so a
+    # plain float accepted mean=inf and derived sigma=inf from it. Log-space mean
+    # is legitimately negative for sub-1 medians, so mu takes no bound at all and
+    # can use FiniteFloat directly.
     mu: FiniteFloat | None = Field(default=None, description="Log-space mean")
-    sigma: float | None = Field(
-        default=None, ge=0.0, description="Log-space standard deviation"
+    sigma: _NonNegativeFinite | None = Field(
+        default=None, description="Log-space standard deviation"
     )
-    mean: float = Field(gt=0.0, description="Real-space mean (derived)")
-    median: float = Field(gt=0.0, description="Real-space median (derived)")
-    min: float | None = Field(
-        default=None, gt=0.0, description="Hard lower bound (rejection sampled)"
+    mean: _PositiveFinite = Field(description="Real-space mean (derived)")
+    median: _PositiveFinite = Field(description="Real-space median (derived)")
+    min: _PositiveFinite | None = Field(
+        default=None, description="Hard lower bound (rejection sampled)"
     )
-    max: float | None = Field(
-        default=None, gt=0.0, description="Hard upper bound (rejection sampled)"
+    max: _PositiveFinite | None = Field(
+        default=None, description="Hard upper bound (rejection sampled)"
     )
 
     @model_validator(mode="after")
@@ -97,10 +117,6 @@ class LognormalParams(AIPerfBaseModel):
             raise ValueError(f"min ({self.min}) must be <= max ({self.max})")
         if (self.mu is None) != (self.sigma is None):
             raise ValueError("mu and sigma must be supplied as a pair")
-        if self.mu is not None and not math.isfinite(self.mu):
-            raise ValueError("mu must be finite")
-        if self.sigma is not None and not math.isfinite(self.sigma):
-            raise ValueError("sigma must be finite")
         if self.mu is None:
             self.mu = math.log(self.median)
             ratio = self.mean / self.median
@@ -183,19 +199,22 @@ class WeibullParams(AIPerfBaseModel):
     distribution: Literal["weibull"] = Field(
         description="Distribution family tag; required so untagged configs keep parsing as lognormal"
     )
-    shape: float | None = Field(
-        default=None, gt=0.0, description="Weibull shape parameter k"
+    # FiniteFloat throughout, for the same reason as LognormalParams: gt=0.0
+    # admits inf, and an infinite mean or bound propagates into the solve and
+    # into rejection sampling rather than being caught at the edge.
+    shape: _PositiveFinite | None = Field(
+        default=None, description="Weibull shape parameter k"
     )
-    scale: float | None = Field(
-        default=None, gt=0.0, description="Weibull scale parameter lambda"
+    scale: _PositiveFinite | None = Field(
+        default=None, description="Weibull scale parameter lambda"
     )
-    mean: float = Field(gt=0.0, description="Real-space mean (derived)")
-    median: float = Field(gt=0.0, description="Real-space median (derived)")
-    min: float | None = Field(
-        default=None, gt=0.0, description="Hard lower bound (rejection sampled)"
+    mean: _PositiveFinite = Field(description="Real-space mean (derived)")
+    median: _PositiveFinite = Field(description="Real-space median (derived)")
+    min: _PositiveFinite | None = Field(
+        default=None, description="Hard lower bound (rejection sampled)"
     )
-    max: float | None = Field(
-        default=None, gt=0.0, description="Hard upper bound (rejection sampled)"
+    max: _PositiveFinite | None = Field(
+        default=None, description="Hard upper bound (rejection sampled)"
     )
 
     @model_validator(mode="after")
@@ -207,10 +226,6 @@ class WeibullParams(AIPerfBaseModel):
             raise ValueError(f"min ({self.min}) must be <= max ({self.max})")
         if (self.shape is None) != (self.scale is None):
             raise ValueError("shape and scale must be supplied as a pair")
-        if self.shape is not None and not math.isfinite(self.shape):
-            raise ValueError("shape must be finite")
-        if self.scale is not None and not math.isfinite(self.scale):
-            raise ValueError("scale must be finite")
         if self.shape is None:
             self.shape, self.scale = _weibull_shape_scale_from_mean_median(
                 self.mean, self.median

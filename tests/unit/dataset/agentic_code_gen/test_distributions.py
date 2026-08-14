@@ -110,13 +110,22 @@ class TestLognormalParamsAutoCompute:
         with pytest.raises(ValueError, match="supplied as a pair"):
             LognormalParams(mean=100, median=100, **kwargs)
 
-    def test_non_finite_explicit_mu_sigma_raises(self) -> None:
-        # mu is annotated FiniteFloat, so the field validator rejects it before
-        # the model validator's own "mu must be finite" branch is reached.
+    @pytest.mark.parametrize(
+        "field",
+        ["mu", "sigma", "mean", "median", "min", "max"],
+    )
+    def test_non_finite_field_raises(self, field: str) -> None:
+        # Every field is FiniteFloat, so rejection happens at the field
+        # validator rather than in the model validator. gt=0.0 does not
+        # exclude inf, which is the reason the annotation is needed: without
+        # it LognormalParams(mean=inf, median=1.0) was accepted and derived
+        # sigma=inf.
+        kwargs: dict[str, float] = {"mean": 100.0, "median": 100.0}
+        if field in ("mu", "sigma"):
+            kwargs |= {"mu": 1.0, "sigma": 0.1}
+        kwargs[field] = math.inf
         with pytest.raises(ValueError, match="value must be finite"):
-            LognormalParams(mu=math.inf, sigma=0.1, mean=100, median=100)
-        with pytest.raises(ValueError, match="sigma must be finite"):
-            LognormalParams(mu=1.0, sigma=math.inf, mean=100, median=100)
+            LognormalParams(**kwargs)
 
     def test_min_greater_than_max_raises(self) -> None:
         with pytest.raises(ValueError, match="must be <= max"):
@@ -241,23 +250,20 @@ class TestWeibullParams:
         with pytest.raises(ValueError, match="supplied as a pair"):
             WeibullParams(distribution="weibull", mean=2_500, median=1_800, **kwargs)
 
-    def test_weibull_params_non_finite_shape_scale_raises(self) -> None:
-        with pytest.raises(ValueError, match="shape must be finite"):
-            WeibullParams(
-                distribution="weibull",
-                shape=math.inf,
-                scale=1.0,
-                mean=2_500,
-                median=1_800,
-            )
-        with pytest.raises(ValueError, match="scale must be finite"):
-            WeibullParams(
-                distribution="weibull",
-                shape=1.5,
-                scale=math.inf,
-                mean=2_500,
-                median=1_800,
-            )
+    @pytest.mark.parametrize(
+        "field",
+        ["shape", "scale", "mean", "median", "min", "max"],
+    )
+    def test_weibull_params_non_finite_field_raises(self, field: str) -> None:
+        # As for LognormalParams: FiniteFloat rejects at the field validator.
+        # Without it an infinite mean reached the brentq solve and failed with
+        # "f(a) and f(b) must have different signs", which names nothing.
+        kwargs: dict[str, float] = {"mean": 2_500.0, "median": 1_800.0}
+        if field in ("shape", "scale"):
+            kwargs |= {"shape": 1.5, "scale": 1.0}
+        kwargs[field] = math.inf
+        with pytest.raises(ValueError, match="value must be finite"):
+            WeibullParams(distribution="weibull", **kwargs)
 
     def test_weibull_params_min_greater_than_max_raises(self) -> None:
         with pytest.raises(ValueError, match="must be <= max"):
