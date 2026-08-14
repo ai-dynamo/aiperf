@@ -14,4 +14,4 @@
 # Docs: https://docs.github.com/articles/about-code-owners
 
 # Default owners for everything in the repository — the core NVIDIA AIPerf team.
-*   @ajcasagrande @debermudez @matthewkotila @ilana-n @lkomali @ganeshku1 @FrankD412
+*   @ai-dynamo/aiperf-codeowners

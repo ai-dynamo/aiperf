@@ -21,6 +21,7 @@ from aiperf.config.flags._section_fields import (
 
 if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
+    from aiperf.plugin.enums import CustomDatasetType
 
 
 def _normalize_sample_rate_khz(value: float | int) -> float:
@@ -647,7 +648,12 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
         )
 
 
-def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
+def _reject_baseten_trace_unsupported_synthesis(
+    cli: CLIConfig,
+    dataset_format: CustomDatasetType | str | None,
+    *,
+    dataset_format_source: str = "--custom-dataset-type baseten_trace",
+) -> None:
     """Reject synthesis knobs that cannot apply to baseten_trace replay.
 
     baseten_trace replay is paced by --replay-speedup; synthesis speedup
@@ -659,16 +665,19 @@ def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
     from the prompt. Output-length synthesis and the max-ISL/OSL filter/cap
     remain valid. The auto-detected dataset-type path is guarded at load
     time by the loader.
+
+    ``dataset_format`` is the resolved loader identity: the CLI
+    ``--custom-dataset-type`` or the YAML ``format`` field being overlaid.
+    ``dataset_format_source`` is its user-facing spelling in error messages.
     """
     from aiperf.plugin.enums import CustomDatasetType
 
-    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+    if dataset_format != CustomDatasetType.BASETEN_TRACE:
         return
     if cli.synthesis_speedup_ratio != 1.0:
         raise ValueError(
             "--synthesis-speedup-ratio is not supported with "
-            "--custom-dataset-type baseten_trace; use --replay-speedup to "
-            "scale replay pacing."
+            f"{dataset_format_source}; use --replay-speedup to scale replay pacing."
         )
     reshaping_flags = [
         flag
@@ -695,7 +704,7 @@ def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
         verb = "is" if len(reshaping_flags) == 1 else "are"
         raise ValueError(
             f"{', '.join(reshaping_flags)} {verb} not supported with "
-            "--custom-dataset-type baseten_trace: it replays recorded "
+            f"{dataset_format_source}: it replays recorded "
             "prompts verbatim, so hash-reshaping synthesis cannot change "
             "the sent prompt and would desync the forwarded hash_ids KV "
             "hints."
@@ -901,8 +910,8 @@ _BLOCK_SIZE_TRACE_FORMATS = frozenset(
     {
         "mooncake_trace",
         "bailian_trace",
-        "burst_gpt_trace",
-        "sagemaker_data_capture",
+        "baseten_trace",
+        "tracelab",
     }
 )
 
@@ -911,8 +920,8 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--isl-block-size`` onto ``FileDataset.block_size`` for hash-id
     trace datasets.
 
-    block_size is fundamentally a TRACE field: the mooncake/bailian/burst_gpt/
-    sagemaker loaders decode each ``hash_id`` into a cached block of this many
+    block_size is fundamentally a TRACE field: the mooncake/bailian/baseten/
+    tracelab loaders decode each ``hash_id`` into a cached block of this many
     tokens (default 512 / 16 from plugin metadata). Synthetic datasets carry it
     on ``prompts.block_size`` (written by ``_build_prompts``, then stripped for
     FILE/PUBLIC by ``_apply_dataset_type``), so for FILE traces it must be
@@ -958,9 +967,9 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
         return
     raise ValueError(
         "--isl-block-size only applies to synthetic generation or hash-id trace "
-        "replay (mooncake_trace, bailian_trace, burst_gpt_trace, "
-        "sagemaker_data_capture). The selected dataset does not decode hash-id "
-        "token blocks; drop --isl-block-size."
+        "replay (mooncake_trace, bailian_trace, baseten_trace, tracelab). "
+        "The selected dataset does not decode hash-id token blocks; "
+        "drop --isl-block-size."
     )
 
 
@@ -1051,7 +1060,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
-    _reject_baseten_trace_unsupported_synthesis(cli)
+    _reject_baseten_trace_unsupported_synthesis(cli, cli.custom_dataset_type)
     _reject_baseten_trace_extra_input_collisions(cli)
     if cli.dataset_filters and not _implies_public_dataset(cli):
         raise ValueError("--dataset-filter requires --public-dataset")

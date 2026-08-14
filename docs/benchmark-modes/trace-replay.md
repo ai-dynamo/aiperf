@@ -93,6 +93,8 @@ The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamp
 
 When you supply a trace dataset (`--custom-dataset-type mooncake_trace`, `bailian_trace`, `burst_gpt_trace`, ...) and the file's first record carries a `timestamp` field, AIPerf automatically switches the profiling phase to fixed-schedule mode and fills `--request-count` from the number of trace entries. You can pass `--fixed-schedule` explicitly for clarity, but it's no longer required.
 
+A few formats carry timing somewhere other than a top-level `timestamp` and are recognized by type instead: `sagemaker_data_capture` nests it under `eventMetadata`, `burst_gpt_trace` enforces a `Timestamp` column, and `tracelab` derives a submission time per round from its `timing_events[]` array.
+
 To override the auto-promotion — for example, to replay the same trace under a fresh `--concurrency` or `--request-rate` setting and ignore the captured timestamps — pass `--no-fixed-schedule`:
 
 ```bash
@@ -108,6 +110,19 @@ aiperf profile \
 ```
 
 AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-promoted trace; either pin a single value or pass `--no-fixed-schedule` to keep your sweep semantics.
+
+### Large Baseten Parquet Traces
+
+The `baseten_trace` loader reads trace rows and sampled-session metadata in
+bounded batches and projects only the columns required by the selected replay
+options. It also skips `inputs.json` generation, which would otherwise
+duplicate large recorded prompts. This is independent of the mmap dataset
+cache; Baseten traces remain uncached.
+
+The same schema can be stored as one uncompressed Arrow IPC file with an
+`.arrow` or `.ipc` suffix. AIPerf memory-maps that file and materializes only
+rows selected for replay. Use `--custom-dataset-type baseten_trace`; no schema
+or row-order conversion beyond the storage format is required.
 
 ## Using Pre-formatted Messages
 

@@ -267,6 +267,14 @@ class TestTokenizerResolverEdgeCases:
         assert run.resolved.tokenizer_names == expected
 
 
+def _make_crc_corrupt_gz(path: Path, row: dict) -> Path:
+    # Valid 10-byte gzip header + garbage deflate payload → zlib.error on any read.
+    path.write_bytes(
+        b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03" + b"\xff" * 20 + b"\x00" * 8
+    )
+    return path
+
+
 # ============================================================
 # DatasetResolver Edge Cases
 # ============================================================
@@ -455,6 +463,61 @@ class TestDatasetResolverEdgeCases:
         empty_file.write_text("\n   \n\n")
 
         assert DatasetResolver._read_first_jsonl_record(str(empty_file)) is None
+
+    def test_read_first_jsonl_record_returns_none_on_truncated_gz(
+        self, tmp_path
+    ) -> None:
+        """A truncated gzip must degrade to None, not raise EOFError."""
+        import gzip
+        import json
+
+        gz = tmp_path / "trunc.jsonl.gz"
+        with gzip.open(gz, "wt", encoding="utf-8") as f:
+            for _ in range(50):
+                f.write(json.dumps({"session_id": "s1"}) + "\n")
+        gz.write_bytes(gz.read_bytes()[:20])
+        assert DatasetResolver._read_first_jsonl_record(str(gz)) is None
+
+    def test_check_timing_data_returns_false_on_truncated_gz(self, tmp_path) -> None:
+        """A truncated gzip must degrade to False, not raise EOFError."""
+        import gzip
+        import json
+
+        gz = tmp_path / "trunc.jsonl.gz"
+        with gzip.open(gz, "wt", encoding="utf-8") as f:
+            for _ in range(50):
+                f.write(json.dumps({"timestamp": 0, "input_length": 4}) + "\n")
+        gz.write_bytes(gz.read_bytes()[:20])
+        assert DatasetResolver._check_timing_data(str(gz), None) is False
+
+    def test_read_first_jsonl_record_returns_none_on_crc_corrupt_gz(
+        self, tmp_path
+    ) -> None:
+        """zlib.error from CRC payload corruption must degrade to None."""
+        gz = _make_crc_corrupt_gz(tmp_path / "crc.jsonl.gz", {"session_id": "s1"})
+        assert DatasetResolver._read_first_jsonl_record(str(gz)) is None
+
+    def test_check_timing_data_returns_false_on_crc_corrupt_gz(self, tmp_path) -> None:
+        """zlib.error from CRC payload corruption must degrade to False."""
+        gz = _make_crc_corrupt_gz(tmp_path / "crc.jsonl.gz", {"timestamp": 0})
+        assert DatasetResolver._check_timing_data(str(gz), None) is False
+
+    def test_check_timing_data_returns_false_on_invalid_json_first_line(
+        self, tmp_path
+    ) -> None:
+        """orjson.JSONDecodeError (ValueError subclass) from a malformed first line
+        must degrade to False — the original handler caught ValueError and the
+        narrowed refactor must not silently drop that protection."""
+        bad = tmp_path / "bad.jsonl"
+        bad.write_text("{not json}\n", encoding="utf-8")
+        assert DatasetResolver._check_timing_data(str(bad), None) is False
+
+    def test_count_records_returns_zero_on_crc_corrupt_gz(self, tmp_path) -> None:
+        """zlib.error from CRC payload corruption must degrade to (0, 0)."""
+        gz = _make_crc_corrupt_gz(tmp_path / "crc.jsonl.gz", {"session_id": "s1"})
+        count, sessions = DatasetResolver._count_records_and_sessions(str(gz), None)
+        assert count == 0
+        assert sessions == 0
 
     def test_detect_type_returns_none_none_when_file_unreadable(self, tmp_path) -> None:
         """OSError on file open bails the whole detection with (None, None).
