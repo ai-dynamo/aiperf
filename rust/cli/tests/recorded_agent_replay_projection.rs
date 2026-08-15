@@ -37,29 +37,33 @@ fn cli_and_yaml_project_identical_agent_recording_graph_config() {
     let cli_run = aiperf_cli::load::resolve(&flags).expect("CLI resolves");
 
     let yaml = r#"
-model: model
-url: http://127.0.0.1:8000
-endpoint:
-  type: chat
-  streaming: false
-dataset:
-  type: file
-  path: /tmp/recording.json
-  format: agent_recording
-  graph:
-    replay_root: /tmp/replay
-    execute_tools: true
-    tool_image: tools:latest
-    pinch_image: pinch:latest
-    command_timeout_seconds: 9.5
-    container_stop_timeout_seconds: 4
-    session_close_grace_seconds: 1.5
-    use_family_sampling: false
-    emit_warmup: true
-    stop_on_failure: true
-metadata:
-  hardware: unknown
-  endpoint_placement: remote
+benchmark:
+  model: model
+  endpoint:
+    url: http://127.0.0.1:8000
+    type: chat
+    streaming: false
+  dataset:
+    type: file
+    path: /tmp/recording.json
+    format: agent_recording
+    graph:
+      replay_root: /tmp/replay
+      execute_tools: true
+      tool_image: tools:latest
+      pinch_image: pinch:latest
+      command_timeout_seconds: 9.5
+      container_stop_timeout_seconds: 4
+      session_close_grace_seconds: 1.5
+      use_family_sampling: false
+      emit_warmup: true
+      stop_on_failure: true
+  metadata:
+    hardware: unknown
+    endpoint_placement: remote
+  profiling:
+    concurrency: 1
+    requests: 1
 "#;
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("recorded-agent.yaml");

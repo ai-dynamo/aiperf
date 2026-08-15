@@ -5,7 +5,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::rng::{RngRoot, RuntimeRandomGenerator};
+use crate::rng::RngRoot;
 use serde_json::Value;
 
 const NAMESPACE_SUFFIX: &str = " Performance replay cache namespace. Ignore the digits above.\n\n";
