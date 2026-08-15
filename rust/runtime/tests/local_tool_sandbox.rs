@@ -319,7 +319,16 @@ async fn nested_detaching_constructs_are_rejected_before_execution() {
         1024,
     );
 
-    for command in ["bash -c 'setsid true &'", "echo $(setsid true)"] {
+    for command in [
+        "bash -c 'setsid true &'",
+        "bash --norc -c 'setsid true'",
+        "bash -c -- 'setsid true'",
+        "bash -c -x 'setsid true'",
+        "echo $(setsid true)",
+        "true & setsid true",
+        "printf ok | (setsid true)",
+        "printf ok | { setsid true; }",
+    ] {
         let error = sandbox
             .run(command, Some(1_000_000_000))
             .await

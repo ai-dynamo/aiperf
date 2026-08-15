@@ -123,6 +123,10 @@ fn segment_starts_detaching_command(segment: &str) -> bool {
             .iter()
             .flat_map(|command| top_level_segments(command))
             .any(segment_starts_detaching_command)
+        || grouped_commands(segment)
+            .iter()
+            .flat_map(|command| top_level_segments(command))
+            .any(segment_starts_detaching_command)
         || shell_command_payloads(&tokens)
             .iter()
             .flat_map(|command| top_level_segments(command))
@@ -149,14 +153,19 @@ fn shell_command_payloads(tokens: &[String]) -> Vec<&str> {
     if !matches!(executable, "bash" | "sh" | "zsh") {
         return Vec::new();
     }
-    let mut arguments = tokens[1..].iter();
-    while let Some(argument) = arguments.next() {
-        if argument == "--" {
-            break;
+    let mut has_command_option = false;
+    for argument in &tokens[1..] {
+        if !has_command_option {
+            has_command_option = argument == "--command"
+                || argument.starts_with('-')
+                    && !argument.starts_with("--")
+                    && argument[1..].contains('c');
+            continue;
         }
-        if argument.starts_with('-') && argument.contains('c') {
-            return arguments.next().map(String::as_str).into_iter().collect();
+        if argument == "--" || argument.starts_with('-') {
+            continue;
         }
+        return vec![argument];
     }
     Vec::new()
 }
@@ -203,6 +212,9 @@ fn top_level_segments(command: &str) -> Vec<&str> {
         {
             segments.push(&command[start..index]);
             index += 1;
+            start = index + 1;
+        } else if quote.is_none() && matches!(byte, b'&' | b'|') {
+            segments.push(&command[start..index]);
             start = index + 1;
         }
         index += 1;
@@ -394,6 +406,45 @@ fn nested_commands(segment: &str) -> Vec<String> {
             if index < characters.len() {
                 commands.push(characters[start..index].iter().collect());
             }
+        }
+        index += 1;
+    }
+    commands
+}
+
+fn grouped_commands(segment: &str) -> Vec<String> {
+    let characters = segment.chars().collect::<Vec<_>>();
+    let mut commands = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        if escaped {
+            escaped = false;
+        } else if character == '\\' && quote != Some('\'') {
+            escaped = true;
+        } else if matches!(character, '\'' | '"') {
+            quote = if quote == Some(character) {
+                None
+            } else if quote.is_none() {
+                Some(character)
+            } else {
+                quote
+            };
+        } else if quote.is_none()
+            && matches!(character, '(' | '{')
+            && (character == '('
+                || index == 0
+                || characters[index - 1].is_ascii_whitespace()
+                || matches!(characters[index - 1], ';' | '|' | '&'))
+        {
+            let closing = if character == '(' { ')' } else { '}' };
+            let end = skip_balanced_expansion(&characters, index + 1, character, closing);
+            if end > index + 1 {
+                commands.push(characters[index + 1..end - 1].iter().collect());
+            }
+            index = end.saturating_sub(1);
         }
         index += 1;
     }

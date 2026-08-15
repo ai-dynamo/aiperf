@@ -93,7 +93,16 @@ fn guarded_policy_blocks_an_installer_nested_in_shell_control() {
 fn guarded_policy_blocks_detachment_nested_in_shell_control() {
     // This catches checking only the top-level executable while a nested shell
     // payload or command substitution starts a process outside containment.
-    for command in ["bash -c 'setsid true &'", "echo $(setsid true)"] {
+    for command in [
+        "bash -c 'setsid true &'",
+        "bash --norc -c 'setsid true'",
+        "bash -c -- 'setsid true'",
+        "bash -c -x 'setsid true'",
+        "echo $(setsid true)",
+        "true & setsid true",
+        "printf ok | (setsid true)",
+        "printf ok | { setsid true; }",
+    ] {
         let disposition = GuardedToolCommandPolicy
             .evaluate(command)
             .expect("policy inspects nested detaching commands");
