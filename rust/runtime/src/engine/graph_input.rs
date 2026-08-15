@@ -26,6 +26,7 @@ use crate::graph::recorded::{
 };
 use crate::graph::segment::SegmentPool;
 use crate::graph::supplement::PlannedReplayTraceInstance;
+use crate::graph::tools::{PinchWorkspaceStager, WorkspaceEntrySource};
 use crate::graph::tstar::{
     PermutationDraw, RecycleDrawMode, sampler_random_seed, sampler_shuffle_seed,
 };
@@ -480,6 +481,56 @@ struct RecordedAgentDatasetInput {
     standard_scenario: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinchTaskPackManifest {
+    tasks: Vec<PinchTaskPackEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinchTaskPackEntry {
+    task_id: String,
+    path: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinchTaskFile {
+    #[serde(default, rename = "id")]
+    _id: Option<String>,
+    #[serde(default, rename = "name")]
+    _name: Option<String>,
+    #[serde(default, rename = "category")]
+    _category: Option<String>,
+    #[serde(default, rename = "grading_type")]
+    _grading_type: Option<String>,
+    #[serde(default, rename = "timeout_seconds")]
+    _timeout_seconds: Option<u64>,
+    workspace_files: Vec<PinchWorkspaceFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PinchWorkspaceFile {
+    Literal(PinchWorkspaceLiteral),
+    Asset(PinchWorkspaceAsset),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinchWorkspaceLiteral {
+    path: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinchWorkspaceAsset {
+    source: String,
+    dest: String,
+}
+
 fn default_agent_recording_sampling() -> String {
     "sequential".to_string()
 }
@@ -550,7 +601,7 @@ impl RecordedAgentDatasetInput {
                     .as_ref()
                     .map(|replay| &replay.identity)
                     .ok_or_else(|| anyhow!("recorded replay program has no task identity"))?;
-                let environment = resolve_recorded_environment(
+                let mut environment = resolve_recorded_environment(
                     identity,
                     &trace.recording.metadata,
                     pinch_image,
@@ -564,11 +615,26 @@ impl RecordedAgentDatasetInput {
                         identity.task_id
                     )
                 })?;
+                if identity.adapter == "pinchbench" {
+                    let replay_root = replay_root.ok_or_else(|| {
+                        anyhow!(
+                            "PinchBench task {:?} requires dataset.graph.replay_root",
+                            identity.task_id
+                        )
+                    })?;
+                    environment.workspace = stage_pinch_task_workspace(
+                        replay_root,
+                        &trace.recording.metadata,
+                        &identity.task_id,
+                        &mut pool,
+                    )?;
+                }
                 program.environment = Some(
                     crate::graph::driver::TraceEnvironmentSpec::from_resolved(&environment)
                         .map_err(|error| anyhow!(error.to_string()))?,
                 );
             }
+            bundle.segments = Arc::new(pool.clone().freeze());
         }
         ensure!(
             !bundle.programs.is_empty(),
@@ -595,6 +661,98 @@ impl RecordedAgentDatasetInput {
             cache_bust_target: CacheBustTarget::None,
         })
     }
+}
+
+fn stage_pinch_task_workspace(
+    replay_root: &std::path::Path,
+    metadata: &crate::graph::recorded::agent_recording::RecordedAgentMetadata,
+    task_id: &str,
+    pool: &mut SegmentPool,
+) -> Result<crate::graph::tools::WorkspaceSpec> {
+    let replay_root = replay_root
+        .canonicalize()
+        .context("canonicalizing recorded-agent replay root for Pinch task pack")?;
+    let manifest = metadata.manifest.as_deref().ok_or_else(|| {
+        anyhow!("PinchBench task {task_id:?} recording metadata has no task-pack manifest")
+    })?;
+    let manifest = manifest
+        .strip_prefix("<open-lab-root>/")
+        .unwrap_or(manifest);
+    let manifest_path =
+        rooted_existing_path(&replay_root, std::path::Path::new(manifest), "manifest")?;
+    let manifest_wire = fs::read(&manifest_path)
+        .with_context(|| format!("reading Pinch task-pack manifest {manifest_path:?}"))?;
+    let manifest: PinchTaskPackManifest = serde_yaml::from_slice(&manifest_wire)
+        .with_context(|| format!("decoding Pinch task-pack manifest {manifest_path:?}"))?;
+    let mut matches = manifest.tasks.iter().filter(|task| task.task_id == task_id);
+    let task = matches
+        .next()
+        .ok_or_else(|| anyhow!("Pinch task-pack manifest has no task {task_id:?}"))?;
+    ensure!(
+        matches.next().is_none(),
+        "Pinch task-pack manifest contains duplicate task {task_id:?}"
+    );
+    let task_pack_root = manifest_path
+        .parent()
+        .ok_or_else(|| anyhow!("Pinch task-pack manifest has no parent directory"))?;
+    let task_path = rooted_existing_path(task_pack_root, &task.path, "task file")?;
+    let task_wire =
+        fs::read(&task_path).with_context(|| format!("reading Pinch task file {task_path:?}"))?;
+    let task = decode_pinch_task_file(&task_wire)
+        .with_context(|| format!("decoding Pinch task file {task_path:?}"))?;
+    let entries = task.workspace_files.into_iter().map(|entry| match entry {
+        PinchWorkspaceFile::Literal(entry) => {
+            WorkspaceEntrySource::literal(entry.path, entry.content)
+        }
+        PinchWorkspaceFile::Asset(entry) => {
+            let source = if entry.source == "assets" || entry.source.starts_with("assets/") {
+                entry.source
+            } else {
+                format!("assets/{}", entry.source)
+            };
+            WorkspaceEntrySource::asset(source, entry.dest)
+        }
+    });
+    PinchWorkspaceStager::new(task_pack_root, pool)
+        .stage(entries)
+        .map_err(|error| anyhow!(error.to_string()))
+}
+
+fn decode_pinch_task_file(wire: &[u8]) -> Result<PinchTaskFile> {
+    let text = std::str::from_utf8(wire).context("Pinch task file is not UTF-8")?;
+    let yaml = if let Some(frontmatter) = text.strip_prefix("---\n") {
+        frontmatter
+            .split_once("\n---")
+            .map(|(yaml, _)| yaml)
+            .ok_or_else(|| anyhow!("Pinch task Markdown has no closing YAML frontmatter fence"))?
+    } else {
+        text
+    };
+    serde_yaml::from_str(yaml).context("decoding Pinch task workspace frontmatter")
+}
+
+fn rooted_existing_path(
+    root: &std::path::Path,
+    relative: &std::path::Path,
+    label: &str,
+) -> Result<PathBuf> {
+    ensure!(
+        !relative.is_absolute()
+            && relative.components().all(|component| matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )),
+        "Pinch task-pack {label} path {relative:?} is not root-contained"
+    );
+    let resolved = root
+        .join(relative)
+        .canonicalize()
+        .with_context(|| format!("canonicalizing Pinch task-pack {label} {relative:?}"))?;
+    ensure!(
+        resolved.starts_with(root),
+        "Pinch task-pack {label} path {relative:?} escapes its root"
+    );
+    Ok(resolved)
 }
 
 /// Enumerate the finite recorded-agent profiling assignments a controller gives one cell.
@@ -1418,7 +1576,7 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::dataset::TiktokenTokenizer;
+    use crate::dataset::{Payload, TiktokenTokenizer};
     use serde_json::json;
 
     use super::*;
@@ -1495,15 +1653,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recorded_agent_tool_execution_preserves_each_resolved_environment_recipe() {
-        let fixture_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/recorded_agent_replay");
+    async fn recorded_agent_tool_execution_stages_pinch_task_pack_workspace_files() {
+        let fixture_root = tempfile::tempdir().expect("temporary replay root");
+        fs::create_dir_all(fixture_root.path().join("benchmark/pinchbench/tasks"))
+            .expect("task-pack directories exist");
+        fs::create_dir_all(fixture_root.path().join("benchmark/pinchbench/assets"))
+            .expect("task-pack assets directory exists");
+        fs::write(
+            fixture_root
+                .path()
+                .join("benchmark/pinchbench/manifest.json"),
+            serde_json::to_vec(&json!({
+                "tasks": [{
+                    "task_id": "task_k8s_debugging",
+                    "path": "tasks/task_k8s_debugging.md"
+                }]
+            }))
+            .expect("manifest serializes"),
+        )
+        .expect("task-pack manifest is written");
+        fs::write(
+            fixture_root
+                .path()
+                .join("benchmark/pinchbench/tasks/task_k8s_debugging.md"),
+            b"---\nworkspace_files:\n  - source: input.txt\n    dest: config/input.txt\n---\n# Task\n",
+        )
+        .expect("task file is written");
+        fs::write(
+            fixture_root
+                .path()
+                .join("benchmark/pinchbench/assets/input.txt"),
+            b"staged product fixture\n",
+        )
+        .expect("task asset is written");
+        let source_fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "tests/fixtures/recorded_agent_replay/recordings/\
+             pinchbench-openclaw-task_k8s_debugging-recording.json",
+        );
+        let recording: Value = serde_json::from_slice(
+            &fs::read(source_fixture).expect("source recording fixture is readable"),
+        )
+        .expect("source recording is JSON");
+        fs::write(
+            fixture_root.path().join("recording.json"),
+            serde_json::to_vec(&recording).expect("recording serializes"),
+        )
+        .expect("recording is written below replay root");
         let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
         let input = raw(json!({
             "type": "file",
             "format": "agent_recording",
-            "replay_root": fixture_root,
-            "path": "canonical_manifest.json",
+            "replay_root": fixture_root.path(),
+            "path": "recording.json",
             "graph": {
                 "execute_tools": true,
                 "pinch_image": "aiperf-recorded-agent-pinchbench:v1"
@@ -1521,21 +1722,26 @@ mod tests {
             .await
             .expect("tool-enabled recorded-agent input resolves every recipe");
 
-        for program in &prepared.bundle.programs {
-            let adapter = &program
-                .replay
-                .as_ref()
-                .expect("recorded replay metadata")
-                .identity
-                .adapter;
-            let environment = program
-                .environment
-                .as_ref()
-                .expect("tool-enabled replay retains its environment");
-            assert_eq!(environment.kind, *adapter);
-            assert!(environment.data.contains_key("image"));
-            assert!(environment.data.contains_key("workspace"));
-        }
+        let environment = prepared.bundle.programs[0]
+            .environment
+            .as_ref()
+            .expect("tool-enabled replay retains its environment")
+            .resolve()
+            .expect("transport recipe resolves");
+        assert_eq!(environment.workspace.files.len(), 1);
+        assert_eq!(
+            environment.workspace.files[0].destination,
+            "config/input.txt"
+        );
+        let Payload::Raw { wire } = prepared
+            .bundle
+            .segments
+            .get(environment.workspace.files[0].content)
+            .expect("staged task file travels in the graph segment store")
+        else {
+            panic!("Pinch workspace content must be stored as raw bytes")
+        };
+        assert_eq!(wire.as_ref(), b"staged product fixture\n");
     }
 
     #[tokio::test]

@@ -12,7 +12,10 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use bytes::Bytes;
 
+use crate::clock::Clock;
+use crate::dataset::SegmentStore;
 use crate::graph::driver::TraceIdentity;
+use crate::graph::replay::ReplayRunIdentity;
 
 use super::{
     CommandDisposition, ResolvedTraceEnvironment, ToolCommandPolicy, ToolCommandResult,
@@ -177,8 +180,12 @@ pub struct TraceOpenContext<'a> {
     pub environment: Option<&'a ResolvedTraceEnvironment>,
     /// Staged workspace policy for the selected recipe.
     pub workspace: Option<&'a WorkspaceSpec>,
-    /// Opaque run label allocated by composition.
-    pub run_label: &'a str,
+    /// The worker's execution clock.
+    pub clock: &'a Rc<dyn Clock>,
+    /// Frozen graph segments, including staged workspace content.
+    pub segments: &'a dyn SegmentStore,
+    /// Controller-persisted replay identity used for cleanup scope.
+    pub run_identity: &'a ReplayRunIdentity,
 }
 
 /// Per-dispatch policy inputs supplied by the trace owner.

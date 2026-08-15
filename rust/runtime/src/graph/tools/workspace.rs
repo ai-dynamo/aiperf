@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::dataset::{Handle, SegmentPool};
+use crate::dataset::{Handle, Payload, SegmentPool, SegmentStore};
 
 use super::environment::TraceEnvironmentError;
 
@@ -60,10 +60,11 @@ pub struct WorkspaceFile {
 }
 
 /// Worker-local result of materializing a workspace specification.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ProvisionedWorkspace {
     /// Worker-owned workspace root, never serialized in a graph program.
     pub root: PathBuf,
+    _owner: tempfile::TempDir,
 }
 
 /// Materializes an already-resolved workspace on the worker which owns it.
@@ -74,6 +75,89 @@ pub trait WorkspaceProvisioner {
         &self,
         spec: &WorkspaceSpec,
     ) -> Result<ProvisionedWorkspace, TraceEnvironmentError>;
+}
+
+/// Worker-local materializer backed by the graph program's frozen segment store.
+pub struct SegmentWorkspaceProvisioner<'a> {
+    segments: &'a dyn SegmentStore,
+}
+
+impl<'a> SegmentWorkspaceProvisioner<'a> {
+    /// Borrow the worker-visible content-addressed segment store.
+    pub fn new(segments: &'a dyn SegmentStore) -> Self {
+        Self { segments }
+    }
+}
+
+#[async_trait(?Send)]
+impl WorkspaceProvisioner for SegmentWorkspaceProvisioner<'_> {
+    async fn provision(
+        &self,
+        spec: &WorkspaceSpec,
+    ) -> Result<ProvisionedWorkspace, TraceEnvironmentError> {
+        if !spec.mount_workspace {
+            return Err(TraceEnvironmentError::new(
+                "cannot provision a workspace whose mount policy is disabled",
+            ));
+        }
+        let owner = tempfile::tempdir().map_err(|error| {
+            TraceEnvironmentError::new(format!("cannot create worker workspace: {error}"))
+        })?;
+        for file in &spec.files {
+            validate_relative(&file.destination, "workspace destination")?;
+            let Payload::Raw { wire } = self.segments.get(file.content).map_err(|error| {
+                TraceEnvironmentError::new(format!(
+                    "cannot resolve workspace file {:?}: {error}",
+                    file.destination
+                ))
+            })?
+            else {
+                return Err(TraceEnvironmentError::new(format!(
+                    "workspace file {:?} does not reference a raw-byte segment",
+                    file.destination
+                )));
+            };
+            let destination = owner.path().join(&file.destination);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    TraceEnvironmentError::new(format!(
+                        "cannot create workspace directory {:?}: {error}",
+                        parent
+                    ))
+                })?;
+            }
+            fs::write(&destination, wire).map_err(|error| {
+                TraceEnvironmentError::new(format!(
+                    "cannot materialize workspace file {:?}: {error}",
+                    file.destination
+                ))
+            })?;
+            set_executable(&destination, file.is_executable)?;
+        }
+        Ok(ProvisionedWorkspace {
+            root: owner.path().to_path_buf(),
+            _owner: owner,
+        })
+    }
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path, is_executable: bool) -> Result<(), TraceEnvironmentError> {
+    use std::os::unix::fs::PermissionsExt as _;
+    if !is_executable {
+        return Ok(());
+    }
+    let mut permissions = fs::metadata(path)
+        .map_err(|error| TraceEnvironmentError::new(error.to_string()))?
+        .permissions();
+    permissions.set_mode(permissions.mode() | 0o111);
+    fs::set_permissions(path, permissions)
+        .map_err(|error| TraceEnvironmentError::new(error.to_string()))
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path, _is_executable: bool) -> Result<(), TraceEnvironmentError> {
+    Ok(())
 }
 
 /// One supported task-pack source entry for a Pinch workspace.

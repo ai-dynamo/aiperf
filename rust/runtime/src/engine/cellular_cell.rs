@@ -660,6 +660,9 @@ async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
             false,
         )
         .map_err(|error| format!("resolving replay recipe for {}: {error}", trace.trace_id))?;
+        if environment.backend == crate::graph::tools::ToolExecutionBackend::Local {
+            continue;
+        }
         crate::graph::tools::preflight_docker_sandbox(&runtime, &environment)
             .await
             .map_err(|error| format!("cell replay preflight for {}: {error}", trace.trace_id))?;

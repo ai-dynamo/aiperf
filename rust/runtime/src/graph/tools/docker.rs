@@ -22,11 +22,12 @@ use crate::graph::driver::TraceIdentity;
 use crate::graph::replay::ReplayRunIdentity;
 
 use super::{
-    EnvironmentToolDispatcher, GuardedToolCommandPolicy, ResolvedTraceEnvironment,
-    ToolBackendIdentity, ToolCommandResult, ToolDispatchContext, ToolDispatchError,
-    ToolDispatchRequest, ToolDispatchResult, ToolDispatcher, ToolDispatcherFactory, ToolSandbox,
+    EnvironmentToolDispatcher, GuardedToolCommandPolicy, LocalSessionSandbox, ProvisionedWorkspace,
+    ResolvedTraceEnvironment, SegmentWorkspaceProvisioner, ToolBackendIdentity, ToolCommandResult,
+    ToolDispatchContext, ToolDispatchError, ToolDispatchRequest, ToolDispatchResult,
+    ToolDispatcher, ToolDispatcherFactory, ToolExecutionBackend, ToolSandbox,
     ToolSandboxCapabilities, ToolSandboxError, TraceEnvironmentError, TraceOpenContext,
-    policy::contains_detaching_command,
+    WorkspaceProvisioner, policy::contains_detaching_command,
 };
 
 /// Docker label key whose value is the exact controller-minted replay run label.
@@ -38,14 +39,14 @@ static CONTAINER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DEFAULT_TOOL_OUTPUT_LIMIT: usize = 1 << 20;
 type DockerRuntimeFactory = dyn Fn(Rc<dyn Clock>) -> Rc<dyn ContainerRuntime> + Send + Sync;
 
-/// Stock dispatcher factory which defers Docker sandbox creation until trace-open context exists.
+/// Stock dispatcher factory selecting the resolved local or Docker backend at trace open.
 #[derive(Clone)]
-pub struct DockerToolDispatcherFactory {
+pub struct NativeToolDispatcherFactory {
     output_limit: usize,
     runtime: Arc<DockerRuntimeFactory>,
 }
 
-impl Default for DockerToolDispatcherFactory {
+impl Default for NativeToolDispatcherFactory {
     fn default() -> Self {
         Self {
             output_limit: DEFAULT_TOOL_OUTPUT_LIMIT,
@@ -54,16 +55,16 @@ impl Default for DockerToolDispatcherFactory {
     }
 }
 
-impl std::fmt::Debug for DockerToolDispatcherFactory {
+impl std::fmt::Debug for NativeToolDispatcherFactory {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("DockerToolDispatcherFactory")
+            .debug_struct("NativeToolDispatcherFactory")
             .field("output_limit", &self.output_limit)
             .finish_non_exhaustive()
     }
 }
 
-impl DockerToolDispatcherFactory {
+impl NativeToolDispatcherFactory {
     /// Build the stock factory with an explicit per-command captured-output bound.
     #[must_use]
     pub fn with_output_limit(output_limit: usize) -> Self {
@@ -85,25 +86,30 @@ impl DockerToolDispatcherFactory {
     }
 }
 
-impl ToolDispatcherFactory for DockerToolDispatcherFactory {
+impl ToolDispatcherFactory for NativeToolDispatcherFactory {
     fn create(&self, _trace_id: &str) -> Result<Rc<dyn ToolDispatcher>, ToolDispatchError> {
-        Ok(Rc::new(DeferredDockerToolDispatcher {
+        Ok(Rc::new(DeferredNativeToolDispatcher {
             output_limit: self.output_limit,
             runtime: self.runtime.clone(),
             inner: RefCell::new(None),
+            provisioned_workspace: RefCell::new(None),
         }))
     }
 }
 
+/// Backward-compatible name for the stock native dispatcher factory.
+pub type DockerToolDispatcherFactory = NativeToolDispatcherFactory;
+
 /// Trace-local dispatcher whose sandbox cannot be selected before `TraceOpenContext`.
-struct DeferredDockerToolDispatcher {
+struct DeferredNativeToolDispatcher {
     output_limit: usize,
     runtime: Arc<DockerRuntimeFactory>,
     inner: RefCell<Option<Rc<dyn ToolDispatcher>>>,
+    provisioned_workspace: RefCell<Option<ProvisionedWorkspace>>,
 }
 
 #[async_trait(?Send)]
-impl ToolDispatcher for DeferredDockerToolDispatcher {
+impl ToolDispatcher for DeferredNativeToolDispatcher {
     fn backend_identity(&self) -> ToolBackendIdentity {
         self.inner
             .borrow()
@@ -116,7 +122,7 @@ impl ToolDispatcher for DeferredDockerToolDispatcher {
     async fn open_trace(&self, context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError> {
         if self.inner.borrow().is_some() {
             return Err(ToolDispatchError::new(
-                "Docker tool dispatcher trace is already open",
+                "native tool dispatcher trace is already open",
             ));
         }
         let Some(environment) = context.environment else {
@@ -132,27 +138,61 @@ impl ToolDispatcher for DeferredDockerToolDispatcher {
                 "trace-open workspace does not match its resolved environment recipe",
             ));
         }
-        if environment.workspace.mount_workspace {
-            return Err(ToolDispatchError::new(
-                "mounted recorded-agent workspace requires provisioned worker-local content",
-            ));
-        }
-        let clock: Rc<dyn Clock> = crate::clock::RealClock::new();
-        let runtime = (self.runtime)(clock.clone());
-        let sandbox = Rc::new(DockerSessionSandbox::new(
-            environment.clone(),
-            None,
-            context.trace.clone(),
-            context.run_identity.clone(),
-            clock,
-            runtime,
-            self.output_limit,
-        )?);
+        let capabilities = match environment.backend {
+            ToolExecutionBackend::Local => ToolSandboxCapabilities {
+                has_persistent_workspace: true,
+                has_workspace_materialization: true,
+                has_network_disabled: false,
+                has_timeout_recycle: true,
+            },
+            ToolExecutionBackend::Docker => ToolSandboxCapabilities {
+                has_persistent_workspace: true,
+                has_workspace_materialization: true,
+                has_network_disabled: true,
+                has_timeout_recycle: true,
+            },
+        };
+        capabilities.validate(environment)?;
+        let provisioned_workspace = if environment.workspace.mount_workspace {
+            Some(
+                SegmentWorkspaceProvisioner::new(context.segments)
+                    .provision(&environment.workspace)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let sandbox: Rc<dyn ToolSandbox> = match environment.backend {
+            ToolExecutionBackend::Local => {
+                let mut workspace = environment.workspace.clone();
+                if let Some(provisioned) = provisioned_workspace.as_ref() {
+                    workspace.workdir = provisioned.root.to_string_lossy().into_owned();
+                    workspace.mount_workspace = false;
+                }
+                Rc::new(LocalSessionSandbox::with_tokio_processes(
+                    workspace,
+                    context.clock.clone(),
+                    self.output_limit,
+                ))
+            }
+            ToolExecutionBackend::Docker => Rc::new(DockerSessionSandbox::new(
+                environment.clone(),
+                provisioned_workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root.clone()),
+                context.trace.clone(),
+                context.run_identity.clone(),
+                context.clock.clone(),
+                (self.runtime)(context.clock.clone()),
+                self.output_limit,
+            )?),
+        };
         let dispatcher: Rc<dyn ToolDispatcher> = Rc::new(EnvironmentToolDispatcher::new(
             sandbox,
             Rc::new(GuardedToolCommandPolicy),
         ));
         dispatcher.open_trace(context).await?;
+        self.provisioned_workspace.replace(provisioned_workspace);
         self.inner.replace(Some(dispatcher));
         Ok(())
     }
@@ -170,9 +210,12 @@ impl ToolDispatcher for DeferredDockerToolDispatcher {
 
     async fn close_trace(&self, trace: &TraceIdentity) -> Result<(), ToolDispatchError> {
         let Some(dispatcher) = self.inner.take() else {
+            self.provisioned_workspace.take();
             return Ok(());
         };
-        dispatcher.close_trace(trace).await
+        let result = dispatcher.close_trace(trace).await;
+        self.provisioned_workspace.take();
+        result
     }
 }
 
@@ -287,6 +330,8 @@ pub trait ContainerRuntime {
     /// Force-remove one known container with an explicit cleanup bound.
     async fn force_remove(&self, id: &ContainerId, timeout_ns: u64)
     -> Result<(), ToolSandboxError>;
+    /// Start best-effort removal when an opening future is dropped mid-command.
+    fn force_remove_on_drop(&self, _id: &ContainerId) {}
     /// Return only containers carrying this exact label key and value.
     async fn list_by_label(
         &self,
@@ -448,6 +493,24 @@ impl ContainerRuntime for DockerCliRuntime {
         .map(|_| ())
     }
 
+    fn force_remove_on_drop(&self, id: &ContainerId) {
+        let mut command = std::process::Command::new(&self.binary);
+        command
+            .arg("rm")
+            .arg("--force")
+            .arg(id.as_str())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Err(error) = command.spawn() {
+            tracing::warn!(
+                error = %error,
+                container_id = id.as_str(),
+                "could not launch Docker cleanup after trace-open cancellation"
+            );
+        }
+    }
+
     async fn list_by_label(
         &self,
         key: &str,
@@ -560,6 +623,45 @@ enum ContainerState {
     Live(ContainerId),
 }
 
+struct ContainerOpeningGuard<'a> {
+    runtime: &'a dyn ContainerRuntime,
+    cleanup_target: Option<ContainerId>,
+}
+
+impl<'a> ContainerOpeningGuard<'a> {
+    fn new(runtime: &'a dyn ContainerRuntime, container_name: &str) -> Self {
+        Self {
+            runtime,
+            cleanup_target: Some(ContainerId::new(container_name)),
+        }
+    }
+
+    fn created(&mut self, id: ContainerId) {
+        self.cleanup_target = Some(id);
+    }
+
+    fn disarm(&mut self) -> Result<ContainerId, ToolSandboxError> {
+        self.cleanup_target.take().ok_or_else(|| {
+            ToolSandboxError::new("Docker opening guard lost its container identity")
+        })
+    }
+
+    async fn cleanup(&mut self) -> Result<(), ToolSandboxError> {
+        let id = self.disarm()?;
+        self.runtime
+            .force_remove(&id, CONTAINER_REMOVE_TIMEOUT_NS)
+            .await
+    }
+}
+
+impl Drop for ContainerOpeningGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(id) = self.cleanup_target.take() {
+            self.runtime.force_remove_on_drop(&id);
+        }
+    }
+}
+
 /// One trace-owned Docker container and its independently framed exec commands.
 pub struct DockerSessionSandbox {
     environment: ResolvedTraceEnvironment,
@@ -668,12 +770,11 @@ impl DockerSessionSandbox {
         preflight_docker_sandbox(self.runtime.as_ref(), &self.environment)
             .await
             .map_err(|error| ToolSandboxError::new(error.to_string()))?;
+        let mut opening = ContainerOpeningGuard::new(self.runtime.as_ref(), &self.create_spec.name);
         let id = self.runtime.create(&self.create_spec).await?;
+        opening.created(id.clone());
         if let Err(start_error) = self.runtime.start(&id).await {
-            let cleanup = self
-                .runtime
-                .force_remove(&id, CONTAINER_REMOVE_TIMEOUT_NS)
-                .await;
+            let cleanup = opening.cleanup().await;
             return match cleanup {
                 Ok(()) => Err(start_error),
                 Err(cleanup_error) => Err(ToolSandboxError::new(format!(
@@ -681,7 +782,8 @@ impl DockerSessionSandbox {
                 ))),
             };
         }
-        self.container.replace(ContainerState::Live(id));
+        self.container
+            .replace(ContainerState::Live(opening.disarm()?));
         Ok(())
     }
 

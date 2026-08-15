@@ -418,6 +418,9 @@ pub(crate) async fn execute_graph_native(
         rng_root_for_checkpoint(graph.random_seed.or(request.random_seed)),
     )?
     .map(|checkpoint| Rc::new(RefCell::new(checkpoint)));
+    let replay_run_identity = replay_checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.borrow().run.clone());
     if let Some(checkpoint) = replay_checkpoint.as_ref()
         && graph.replay_resume
     {
@@ -492,6 +495,7 @@ pub(crate) async fn execute_graph_native(
         default_max_tokens: default_output_tokens,
         endpoint_runtime_factory,
         segments: input.segments.clone(),
+        replay_run_identity,
         metrics: metrics_config.clone(),
         raw_enabled: request.artifacts.raw_path.is_some(),
         on_failure,

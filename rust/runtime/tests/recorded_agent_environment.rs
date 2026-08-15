@@ -10,7 +10,8 @@ use aiperf_runtime::graph::driver::ReplayTaskIdentity;
 use aiperf_runtime::graph::recorded::agent_recording::RecordedAgentMetadata;
 use aiperf_runtime::graph::tools::{
     CommandDisposition, EnvironmentRecipe, GuardedToolCommandPolicy, PinchWorkspaceStager,
-    ToolCommandPolicy, ToolSandboxCapabilities, WorkspaceEntrySource, resolve_recorded_environment,
+    ToolCommandPolicy, ToolExecutionBackend, ToolSandboxCapabilities, WorkspaceEntrySource,
+    resolve_recorded_environment,
 };
 
 #[test]
@@ -273,6 +274,26 @@ fn recipe_refuses_an_unknown_adapter_even_when_the_family_looks_known() {
     )
     .expect_err("only registered source adapters select environment recipes");
     assert!(error.to_string().contains("adapter"));
+}
+
+#[test]
+fn pinch_without_an_image_selects_local_execution_only_outside_the_scenario() {
+    let task = ReplayTaskIdentity {
+        adapter: "pinchbench".into(),
+        family: "pinchbench-openclaw".into(),
+        task_id: "task-local".into(),
+        primary_role: None,
+    };
+
+    let local =
+        resolve_recorded_environment(&task, &RecordedAgentMetadata::default(), "", None, false)
+            .expect("an absent non-scenario image selects local execution");
+    assert_eq!(local.backend, ToolExecutionBackend::Local);
+    assert!(local.image.is_empty());
+    let scenario_error =
+        resolve_recorded_environment(&task, &RecordedAgentMetadata::default(), "", None, true)
+            .expect_err("the default scenario remains Docker-locked");
+    assert!(scenario_error.to_string().contains("configured image"));
 }
 
 #[test]

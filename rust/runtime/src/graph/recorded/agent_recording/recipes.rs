@@ -5,7 +5,8 @@
 
 use crate::graph::driver::ReplayTaskIdentity;
 use crate::graph::tools::{
-    EnvironmentRecipe, ResolvedTraceEnvironment, TraceEnvironmentError, WorkspaceSpec,
+    EnvironmentRecipe, ResolvedTraceEnvironment, ToolExecutionBackend, TraceEnvironmentError,
+    WorkspaceSpec,
 };
 
 use super::schema::RecordedAgentMetadata;
@@ -21,12 +22,27 @@ pub fn resolve_recorded_environment(
     match task.adapter.as_str() {
         "pinchbench" => {
             if pinch_image.trim().is_empty() {
-                return Err(TraceEnvironmentError::new(
-                    "PinchBench environment requires a configured image",
-                ));
+                if is_scenario {
+                    return Err(TraceEnvironmentError::new(
+                        "PinchBench environment requires a configured image",
+                    ));
+                }
+                return Ok(ResolvedTraceEnvironment {
+                    kind: EnvironmentRecipe::PinchBench,
+                    backend: ToolExecutionBackend::Local,
+                    image: String::new(),
+                    workspace: WorkspaceSpec {
+                        files: Vec::new(),
+                        workdir: "/workspace".into(),
+                        interpreter: vec!["bash".into(), "-lc".into()],
+                        mount_workspace: true,
+                        command_timeout_ns: 30_000_000_000,
+                    },
+                });
             }
             Ok(ResolvedTraceEnvironment {
                 kind: EnvironmentRecipe::PinchBench,
+                backend: ToolExecutionBackend::Docker,
                 image: pinch_image.into(),
                 workspace: WorkspaceSpec {
                     files: Vec::new(),
@@ -47,15 +63,20 @@ pub fn resolve_recorded_environment(
                     })
                     .flatten()
             });
-            let image = image.ok_or_else(|| {
-                TraceEnvironmentError::new(format!(
+            let backend = if image.is_some() {
+                ToolExecutionBackend::Docker
+            } else if is_scenario {
+                return Err(TraceEnvironmentError::new(format!(
                     "SWE-Bench task {:?} has no resolved image",
                     task.task_id
-                ))
-            })?;
+                )));
+            } else {
+                ToolExecutionBackend::Local
+            };
             Ok(ResolvedTraceEnvironment {
                 kind: EnvironmentRecipe::SweBench,
-                image,
+                backend,
+                image: image.unwrap_or_default(),
                 workspace: WorkspaceSpec::image_native(
                     "/testbed",
                     vec!["bash".into(), "-c".into()],

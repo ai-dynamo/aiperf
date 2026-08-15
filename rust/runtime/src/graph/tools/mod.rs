@@ -24,11 +24,12 @@ pub use dispatch::{
 pub use docker::{
     CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerMount, ContainerRuntime,
     DockerCliRuntime, DockerSandboxFactory, DockerSessionSandbox, DockerToolDispatcherFactory,
-    FramedCommandIo, cleanup_recorded_agent_containers, preflight_docker_sandbox,
+    FramedCommandIo, NativeToolDispatcherFactory, cleanup_recorded_agent_containers,
+    preflight_docker_sandbox,
 };
 pub use environment::{
-    EnvironmentRecipe, ResolvedTraceEnvironment, ToolSandboxCapabilities, TraceEnvironmentError,
-    TraceEnvironmentResolver,
+    EnvironmentRecipe, ResolvedTraceEnvironment, ToolExecutionBackend, ToolSandboxCapabilities,
+    TraceEnvironmentError, TraceEnvironmentResolver,
 };
 pub use local::{
     LocalProcessRequest, LocalSessionSandbox, ProcessSession, ProcessSpawner, TokioProcessSpawner,
@@ -37,6 +38,6 @@ pub use policy::{
     CommandDisposition, GuardedToolCommandPolicy, ToolCommandPolicy, ToolCommandResult,
 };
 pub use workspace::{
-    PinchWorkspaceStager, ProvisionedWorkspace, WorkspaceEntrySource, WorkspaceFile,
-    WorkspaceProvisioner, WorkspaceSpec,
+    PinchWorkspaceStager, ProvisionedWorkspace, SegmentWorkspaceProvisioner, WorkspaceEntrySource,
+    WorkspaceFile, WorkspaceProvisioner, WorkspaceSpec,
 };

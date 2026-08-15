@@ -560,6 +560,7 @@ pub(crate) struct GraphBackendFactoryConfig {
     pub(crate) default_max_tokens: usize,
     pub(crate) endpoint_runtime_factory: Arc<dyn GraphEndpointRuntimeFactory>,
     pub(crate) segments: Arc<dyn SegmentStore>,
+    pub(crate) replay_run_identity: Option<crate::graph::replay::ReplayRunIdentity>,
     pub(crate) metrics: MetricsConfig,
     pub(crate) phase: Phase,
     pub(crate) prefill_concurrency: Option<usize>,
@@ -730,6 +731,7 @@ impl TracePlacementFactory for GraphBackendFactory {
             endpoint_runtime,
             materializer: Rc::new(SegmentItemsMaterializer::new(self.config.segments.clone())),
             segments: self.config.segments.clone(),
+            replay_run_identity: self.config.replay_run_identity.clone(),
             observer,
             phase: self.config.phase,
             worker_id,
@@ -758,6 +760,7 @@ struct GraphWorkerBackend {
     endpoint_runtime: Rc<dyn GraphEndpointRuntime>,
     materializer: Rc<SegmentItemsMaterializer>,
     segments: Arc<dyn SegmentStore>,
+    replay_run_identity: Option<crate::graph::replay::ReplayRunIdentity>,
     /// One measurement observer for the worker's whole run, shared by every
     /// trace's sink. Records are uuid-keyed and drained on terminal, so concurrent
     /// traces stay isolated; this avoids constructing a fresh `MetricsAccumulator`
@@ -835,11 +838,18 @@ impl TracePlacement for GraphWorkerBackend {
             self.active
                 .borrow_mut()
                 .insert(lifecycle_id, ActiveGraphTrace::Driver(abort));
-            let opened = Abortable::new(
-                driver.open(&program, &TraceDriverContext { trace: &trace }),
-                registration,
-            )
-            .await;
+            let run_identity = self.replay_run_identity.as_ref().ok_or_else(|| {
+                TraceError::Other(
+                    "recorded replay graph execution is missing its persisted run identity".into(),
+                )
+            })?;
+            let driver_context = TraceDriverContext::for_execution(
+                &trace,
+                &self.clock,
+                self.segments.as_ref(),
+                run_identity,
+            );
+            let opened = Abortable::new(driver.open(&program, &driver_context), registration).await;
             match opened {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
@@ -2161,6 +2171,10 @@ mod tests {
             endpoint_runtime: Rc::new(UnusedGraphEndpointRuntime),
             materializer: Rc::new(SegmentItemsMaterializer::new(segments.clone())),
             segments,
+            replay_run_identity: Some(crate::graph::replay::ReplayRunIdentity::mint(
+                RngRoot::new(Some(1)),
+                "test-run",
+            )),
             observer: Rc::new(NativeMetricsObserver::new(
                 clock,
                 123,
@@ -2370,7 +2384,7 @@ mod tests {
             .create(WorkerIdentity { worker_id: 7 }, &trace, &program.driver)
             .expect("stock execution factories select recorded replay");
         let supplement = driver
-            .run(&program, &TraceDriverContext { trace: &trace })
+            .run(&program, &TraceDriverContext::metadata_only(&trace))
             .await
             .expect("stock recorded replay driver runs its agent-loop composition");
         assert_eq!(supplement.driver_kind, "recorded_replay");

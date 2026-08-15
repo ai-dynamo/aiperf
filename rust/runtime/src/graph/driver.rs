@@ -16,7 +16,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::clock::Clock;
+use crate::dataset::SegmentStore;
 use crate::graph::model::GraphTraceProgram;
+use crate::graph::replay::ReplayRunIdentity;
 use crate::graph::supplement::TraceTerminalSupplement;
 use crate::graph::{agent, tools};
 
@@ -219,14 +222,49 @@ pub struct TraceIdentity {
     pub trace_id: String,
 }
 
+/// Borrowed execution resources owned by normal placement composition.
+pub struct TraceExecutionContext<'a> {
+    /// The worker's execution clock.
+    pub clock: &'a Rc<dyn Clock>,
+    /// Frozen graph segments, including staged workspace content.
+    pub segments: &'a dyn SegmentStore,
+    /// Controller-persisted replay identity used for cleanup scope.
+    pub run_identity: &'a ReplayRunIdentity,
+}
+
 /// Borrowed driver inputs owned by normal placement composition.
-///
-/// The context deliberately carries no HTTP client, timer, process, workspace,
-/// or metric sink. Those resources remain owned by placement and later task
-/// factories; this seam can only return bounded trace facts.
 pub struct TraceDriverContext<'a> {
     /// Trace identity allocated by the placement owner.
     pub trace: &'a TraceIdentity,
+    /// Product execution resources. Metadata-only callers may omit them.
+    pub execution: Option<TraceExecutionContext<'a>>,
+}
+
+impl<'a> TraceDriverContext<'a> {
+    /// Construct a metadata-only context for drivers which do not open tools.
+    pub fn metadata_only(trace: &'a TraceIdentity) -> Self {
+        Self {
+            trace,
+            execution: None,
+        }
+    }
+
+    /// Construct a context backed by worker-owned execution resources.
+    pub fn for_execution(
+        trace: &'a TraceIdentity,
+        clock: &'a Rc<dyn Clock>,
+        segments: &'a dyn SegmentStore,
+        run_identity: &'a ReplayRunIdentity,
+    ) -> Self {
+        Self {
+            trace,
+            execution: Some(TraceExecutionContext {
+                clock,
+                segments,
+                run_identity,
+            }),
+        }
+    }
 }
 
 /// Failure at the trace-driver composition boundary.
@@ -377,7 +415,7 @@ impl Default for RecordedReplayAgentLoopFactories {
             trajectory_sink: Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
             invocation_lease: Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
             lifecycle_lease: Arc::new(agent::InMemoryAgentInvocationLeaseFactoryFactory),
-            tool_dispatcher: Arc::new(tools::DockerToolDispatcherFactory::default()),
+            tool_dispatcher: Arc::new(tools::NativeToolDispatcherFactory::default()),
             tool_decoder: Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
             observation_formatter: Arc::new(tools::InMemoryAgentObservationFormatterFactory),
         }
@@ -680,19 +718,26 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             .map(TraceEnvironmentSpec::resolve)
             .transpose()
             .map_err(|error| TraceDriverError::new(error.to_string()))?;
-        if let Err(error) = dispatcher
-            .open_trace(tools::TraceOpenContext {
-                trace: &self.trace,
-                environment: environment.as_ref(),
-                workspace: environment
-                    .as_ref()
-                    .map(|environment| &environment.workspace),
-                run_label: &self.trace.run_id,
-            })
-            .await
-        {
-            let _ = lifecycle_lease.close().await;
-            return Err(TraceDriverError::new(error.to_string()));
+        if let Some(environment) = environment.as_ref() {
+            let execution = context.execution.as_ref().ok_or_else(|| {
+                TraceDriverError::new(
+                    "recorded replay trace-open requires worker execution context",
+                )
+            })?;
+            if let Err(error) = dispatcher
+                .open_trace(tools::TraceOpenContext {
+                    trace: &self.trace,
+                    environment: Some(environment),
+                    workspace: Some(&environment.workspace),
+                    clock: execution.clock,
+                    segments: execution.segments,
+                    run_identity: execution.run_identity,
+                })
+                .await
+            {
+                let _ = lifecycle_lease.close().await;
+                return Err(TraceDriverError::new(error.to_string()));
+            }
         }
         self.session = Some(RecordedReplayTraceSession {
             dispatcher,
@@ -954,6 +999,8 @@ mod tests {
         environment: Option<tools::ResolvedTraceEnvironment>,
         workspace: Option<tools::WorkspaceSpec>,
         run_label: String,
+        clock_ns: i64,
+        segment_count: usize,
     }
 
     struct RecordingOpenContextDispatcher {
@@ -972,7 +1019,9 @@ mod tests {
                 .push(OwnedTraceOpenContext {
                     environment: context.environment.cloned(),
                     workspace: context.workspace.cloned(),
-                    run_label: context.run_label.to_owned(),
+                    run_label: context.run_identity.label().to_owned(),
+                    clock_ns: context.clock.now_ns(),
+                    segment_count: context.segments.len(),
                 });
             Ok(())
         }
@@ -1302,26 +1351,29 @@ mod tests {
         );
         let environment = tools::ResolvedTraceEnvironment {
             kind: tools::EnvironmentRecipe::SweBench,
+            backend: tools::ToolExecutionBackend::Docker,
             image: "swebench/task:latest".into(),
             workspace: workspace.clone(),
         };
         let mut program = recorded_program(&trace.trace_id);
-        program.environment = Some(TraceEnvironmentSpec {
-            kind: "swebench".into(),
-            data: BTreeMap::from([
-                ("image".into(), Value::String(environment.image.clone())),
-                (
-                    "workspace".into(),
-                    serde_json::to_value(&workspace).expect("workspace serializes"),
-                ),
-            ]),
-        });
+        program.environment = Some(
+            TraceEnvironmentSpec::from_resolved(&environment).expect("environment serializes"),
+        );
         let mut driver = factory
             .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
             .expect("recorded replay driver is created");
 
+        let clock: Rc<dyn crate::clock::Clock> = Rc::new(crate::clock::SimClock::new());
+        let segments = crate::dataset::InMemorySegmentStore::default();
+        let run_identity = crate::graph::replay::ReplayRunIdentity::mint(
+            crate::rng::RngRoot::new(Some(11)),
+            "persisted-environment-run",
+        );
         driver
-            .open(&program, &TraceDriverContext { trace: &trace })
+            .open(
+                &program,
+                &TraceDriverContext::for_execution(&trace, &clock, &segments, &run_identity),
+            )
             .await
             .expect("trace environment opens");
         driver.close().await.expect("trace environment closes");
@@ -1334,7 +1386,9 @@ mod tests {
             [OwnedTraceOpenContext {
                 environment: Some(environment),
                 workspace: Some(workspace),
-                run_label: "run-environment".into(),
+                run_label: "persisted-environment-run".into(),
+                clock_ns: 0,
+                segment_count: 0,
             }]
         );
     }
@@ -1353,6 +1407,7 @@ mod tests {
         };
         let environment = tools::ResolvedTraceEnvironment {
             kind: tools::EnvironmentRecipe::SweBench,
+            backend: tools::ToolExecutionBackend::Docker,
             image: "swebench/task:latest".into(),
             workspace: tools::WorkspaceSpec::image_native(
                 "/testbed",
@@ -1365,13 +1420,21 @@ mod tests {
             vec!["bash".into(), "-lc".into()],
             30_000_000_000,
         );
+        let clock: Rc<dyn crate::clock::Clock> = Rc::new(crate::clock::SimClock::new());
+        let segments = crate::dataset::InMemorySegmentStore::default();
+        let run_identity = crate::graph::replay::ReplayRunIdentity::mint(
+            crate::rng::RngRoot::new(Some(12)),
+            "persisted-stock-environment-run",
+        );
 
         let error = dispatcher
             .open_trace(tools::TraceOpenContext {
                 trace: &trace,
                 environment: Some(&environment),
                 workspace: Some(&wrong_workspace),
-                run_label: &trace.run_id,
+                clock: &clock,
+                segments: &segments,
+                run_identity: &run_identity,
             })
             .await
             .expect_err("stock composition must not substitute another workspace");
@@ -1451,7 +1514,7 @@ mod tests {
                 .expect("recorded replay driver is created");
             supplements.push(
                 driver
-                    .run(&program, &TraceDriverContext { trace })
+                    .run(&program, &TraceDriverContext::metadata_only(trace))
                     .await
                     .expect("recorded replay runs its frozen agent loop"),
             );
@@ -1533,7 +1596,7 @@ mod tests {
             .expect("recorded replay driver is created");
 
         driver
-            .run(&program, &TraceDriverContext { trace: &trace })
+            .run(&program, &TraceDriverContext::metadata_only(&trace))
             .await
             .expect("lifecycle-owned dispatcher executes the selected tool call");
 
@@ -1586,7 +1649,7 @@ mod tests {
             .unwrap();
 
         driver
-            .open(&program, &TraceDriverContext { trace: &trace })
+            .open(&program, &TraceDriverContext::metadata_only(&trace))
             .await
             .unwrap();
         assert!(driver.tool_dispatcher().is_some());
@@ -1621,7 +1684,7 @@ mod tests {
             .expect("recorded replay driver is created");
 
         let error = driver
-            .run(&program, &TraceDriverContext { trace: &trace })
+            .run(&program, &TraceDriverContext::metadata_only(&trace))
             .await
             .expect_err("decoder factory failure rejects the trace");
 
@@ -1656,7 +1719,7 @@ mod tests {
             .expect("recorded replay driver is created");
 
         let error = driver
-            .run(&program, &TraceDriverContext { trace: &trace })
+            .run(&program, &TraceDriverContext::metadata_only(&trace))
             .await
             .expect_err("formatter factory failure rejects the trace");
 
@@ -1693,7 +1756,7 @@ mod tests {
             .run_until(async move {
                 let task = tokio::task::spawn_local(async move {
                     driver
-                        .run(&program, &TraceDriverContext { trace: &trace })
+                        .run(&program, &TraceDriverContext::metadata_only(&trace))
                         .await
                 });
 
@@ -1734,7 +1797,7 @@ mod tests {
             .run_until(async move {
                 let task = tokio::task::spawn_local(async move {
                     driver
-                        .run(&program, &TraceDriverContext { trace: &trace })
+                        .run(&program, &TraceDriverContext::metadata_only(&trace))
                         .await
                 });
                 tokio::task::yield_now().await;

@@ -9,11 +9,14 @@ use std::ffi::OsString;
 use std::future::pending;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
+use futures::future::{AbortHandle, Abortable};
 
-use aiperf_runtime::clock::RealClock;
+use aiperf_runtime::clock::{Clock, RealClock, SimClock};
+use aiperf_runtime::dataset::SegmentPool;
 use aiperf_runtime::graph::driver::TraceIdentity;
 use aiperf_runtime::graph::replay::ReplayRunIdentity;
 use aiperf_runtime::graph::replay::{
@@ -21,10 +24,11 @@ use aiperf_runtime::graph::replay::{
 };
 use aiperf_runtime::graph::tools::{
     CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerRuntime, DockerCliRuntime,
-    DockerSessionSandbox, EnvironmentRecipe, EnvironmentToolDispatcher, FramedCommandIo,
-    GuardedToolCommandPolicy, ResolvedTraceEnvironment, ToolCommandResult, ToolDispatchContext,
-    ToolDispatchRequest, ToolDispatcher, ToolSandbox, ToolSandboxError, WorkspaceSpec,
-    cleanup_recorded_agent_containers, preflight_docker_sandbox,
+    DockerSessionSandbox, DockerToolDispatcherFactory, EnvironmentRecipe,
+    EnvironmentToolDispatcher, FramedCommandIo, GuardedToolCommandPolicy, ResolvedTraceEnvironment,
+    ToolCommandResult, ToolDispatchContext, ToolDispatchRequest, ToolDispatcher,
+    ToolDispatcherFactory, ToolExecutionBackend, ToolSandbox, ToolSandboxError, TraceOpenContext,
+    WorkspaceFile, WorkspaceSpec, cleanup_recorded_agent_containers, preflight_docker_sandbox,
 };
 use aiperf_runtime::rng::RngRoot;
 
@@ -59,11 +63,68 @@ struct FakeRuntime {
     exec_argv: RefCell<Vec<Vec<OsString>>>,
     remove_count: Cell<u8>,
     next_id: Cell<u8>,
+    has_suspended_create: Cell<bool>,
     has_start_failure: Cell<bool>,
+    has_suspended_start: Cell<bool>,
     outputs: RefCell<VecDeque<Vec<Bytes>>>,
     inspected_images: RefCell<Vec<String>>,
     label_queries: RefCell<Vec<(String, String)>>,
     listed: RefCell<Vec<ContainerId>>,
+}
+
+#[derive(Default)]
+struct SharedRuntimeState {
+    created: Vec<ContainerCreateSpec>,
+    removed: usize,
+}
+
+struct SharedRuntime {
+    state: Arc<Mutex<SharedRuntimeState>>,
+}
+
+#[async_trait(?Send)]
+impl ContainerRuntime for SharedRuntime {
+    async fn inspect_image(&self, _image: &str) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn create(&self, spec: &ContainerCreateSpec) -> Result<ContainerId, ToolSandboxError> {
+        self.state.lock().unwrap().created.push(spec.clone());
+        Ok(ContainerId::new("shared-container"))
+    }
+
+    async fn start(&self, _id: &ContainerId) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn open_exec(
+        &self,
+        _id: &ContainerId,
+        _argv: &[OsString],
+    ) -> Result<Box<dyn FramedCommandIo>, ToolSandboxError> {
+        Err(ToolSandboxError::new("test does not execute a command"))
+    }
+
+    async fn force_remove(
+        &self,
+        _id: &ContainerId,
+        _timeout_ns: u64,
+    ) -> Result<(), ToolSandboxError> {
+        self.state.lock().unwrap().removed += 1;
+        Ok(())
+    }
+
+    fn force_remove_on_drop(&self, _id: &ContainerId) {
+        self.state.lock().unwrap().removed += 1;
+    }
+
+    async fn list_by_label(
+        &self,
+        _key: &str,
+        _value: &str,
+    ) -> Result<Vec<ContainerId>, ToolSandboxError> {
+        Ok(Vec::new())
+    }
 }
 
 struct LocalCaptureSandbox;
@@ -98,7 +159,9 @@ impl FakeRuntime {
             exec_argv: RefCell::new(Vec::new()),
             remove_count: Cell::new(0),
             next_id: Cell::new(0),
+            has_suspended_create: Cell::new(false),
             has_start_failure: Cell::new(false),
+            has_suspended_start: Cell::new(false),
             outputs: RefCell::new(outputs.into_iter().collect()),
             inspected_images: RefCell::new(Vec::new()),
             label_queries: RefCell::new(Vec::new()),
@@ -115,6 +178,16 @@ impl FakeRuntime {
         self.has_start_failure.set(true);
         self
     }
+
+    fn with_suspended_start(self) -> Self {
+        self.has_suspended_start.set(true);
+        self
+    }
+
+    fn with_suspended_create(self) -> Self {
+        self.has_suspended_create.set(true);
+        self
+    }
 }
 
 #[async_trait(?Send)]
@@ -126,12 +199,18 @@ impl ContainerRuntime for FakeRuntime {
 
     async fn create(&self, spec: &ContainerCreateSpec) -> Result<ContainerId, ToolSandboxError> {
         self.created.borrow_mut().push(spec.clone());
+        if self.has_suspended_create.get() {
+            return pending().await;
+        }
         let sequence = self.next_id.get();
         self.next_id.set(sequence.saturating_add(1));
         Ok(ContainerId::new(format!("container-{sequence}")))
     }
 
     async fn start(&self, _id: &ContainerId) -> Result<(), ToolSandboxError> {
+        if self.has_suspended_start.get() {
+            return pending().await;
+        }
         if self.has_start_failure.get() {
             return Err(ToolSandboxError::new("fake Docker start failed"));
         }
@@ -183,6 +262,11 @@ impl ContainerRuntime for FakeRuntime {
         Ok(())
     }
 
+    fn force_remove_on_drop(&self, _id: &ContainerId) {
+        self.remove_count
+            .set(self.remove_count.get().saturating_add(1));
+    }
+
     async fn list_by_label(
         &self,
         key: &str,
@@ -195,9 +279,74 @@ impl ContainerRuntime for FakeRuntime {
     }
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn cancellation_while_docker_create_is_pending_removes_by_name_once() {
+    let runtime = Rc::new(FakeRuntime::new([]).with_suspended_create());
+    let sandbox = Rc::new(
+        DockerSessionSandbox::new(
+            swe_environment(),
+            None,
+            trace(),
+            ReplayRunIdentity::mint(RngRoot::new(Some(4)), "persisted-run"),
+            RealClock::new(),
+            runtime.clone(),
+            1024,
+        )
+        .expect("sandbox is constructed"),
+    );
+    let (abort, registration) = AbortHandle::new_pair();
+    let mut opening = Box::pin(Abortable::new(sandbox.open(), registration));
+    tokio::select! {
+        biased;
+        result = &mut opening => panic!("open unexpectedly completed: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(runtime.created.borrow().len(), 1);
+
+    abort.abort();
+    assert!(opening.as_mut().await.is_err());
+    drop(opening);
+    assert_eq!(runtime.remove_count.get(), 1);
+    sandbox.close().await.expect("close remains idempotent");
+    assert_eq!(runtime.remove_count.get(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancellation_while_docker_start_is_pending_removes_the_created_container_once() {
+    let runtime = Rc::new(FakeRuntime::new([]).with_suspended_start());
+    let sandbox = Rc::new(
+        DockerSessionSandbox::new(
+            swe_environment(),
+            None,
+            trace(),
+            ReplayRunIdentity::mint(RngRoot::new(Some(5)), "persisted-run"),
+            RealClock::new(),
+            runtime.clone(),
+            1024,
+        )
+        .expect("sandbox is constructed"),
+    );
+    let (abort, registration) = AbortHandle::new_pair();
+    let mut opening = Box::pin(Abortable::new(sandbox.open(), registration));
+    tokio::select! {
+        biased;
+        result = &mut opening => panic!("open unexpectedly completed: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(runtime.created.borrow().len(), 1);
+
+    abort.abort();
+    assert!(opening.as_mut().await.is_err());
+    drop(opening);
+    assert_eq!(runtime.remove_count.get(), 1);
+    sandbox.close().await.expect("close remains idempotent");
+    assert_eq!(runtime.remove_count.get(), 1);
+}
+
 fn pinch_environment() -> ResolvedTraceEnvironment {
     ResolvedTraceEnvironment {
         kind: EnvironmentRecipe::PinchBench,
+        backend: aiperf_runtime::graph::tools::ToolExecutionBackend::Docker,
         image: "aiperf-recorded-agent-pinchbench:v1".into(),
         workspace: WorkspaceSpec {
             files: Vec::new(),
@@ -206,6 +355,19 @@ fn pinch_environment() -> ResolvedTraceEnvironment {
             mount_workspace: true,
             command_timeout_ns: 30_000_000_000,
         },
+    }
+}
+
+fn swe_environment() -> ResolvedTraceEnvironment {
+    ResolvedTraceEnvironment {
+        kind: EnvironmentRecipe::SweBench,
+        backend: aiperf_runtime::graph::tools::ToolExecutionBackend::Docker,
+        image: "swebench/task:latest".into(),
+        workspace: WorkspaceSpec::image_native(
+            "/testbed",
+            vec!["bash".into(), "-c".into()],
+            60_000_000_000,
+        ),
     }
 }
 
@@ -467,6 +629,154 @@ async fn timeout_recycles_container_and_close_force_removes_once() {
 
     assert_eq!(runtime.created.borrow().len(), 2);
     assert_eq!(runtime.remove_count.get(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stock_dispatcher_materializes_pinch_segments_before_mounting_workspace() {
+    let mut pool = SegmentPool::new();
+    let content = pool
+        .intern_raw(None, b"product workspace bytes\n".to_vec())
+        .expect("workspace bytes are interned");
+    let segments = pool.freeze();
+    let workspace = WorkspaceSpec {
+        files: vec![WorkspaceFile {
+            destination: "nested/input.txt".into(),
+            content,
+            is_executable: false,
+        }],
+        workdir: "/workspace".into(),
+        interpreter: vec!["bash".into(), "-lc".into()],
+        mount_workspace: true,
+        command_timeout_ns: 30_000_000_000,
+    };
+    let environment = ResolvedTraceEnvironment {
+        kind: EnvironmentRecipe::PinchBench,
+        backend: aiperf_runtime::graph::tools::ToolExecutionBackend::Docker,
+        image: "aiperf-recorded-agent-pinchbench:v1".into(),
+        workspace: workspace.clone(),
+    };
+    let trace = TraceIdentity {
+        run_id: "worker-origin".into(),
+        trajectory_id: "trajectory".into(),
+        trace_id: "trace".into(),
+    };
+    let state = Arc::new(Mutex::new(SharedRuntimeState::default()));
+    let observed_clock_ns = Arc::new(Mutex::new(None));
+    let runtime_state = state.clone();
+    let runtime_clock_ns = observed_clock_ns.clone();
+    let dispatcher = DockerToolDispatcherFactory::with_runtime_factory(1024, move |clock| {
+        *runtime_clock_ns.lock().unwrap() = Some(clock.now_ns());
+        Rc::new(SharedRuntime {
+            state: runtime_state.clone(),
+        })
+    })
+    .create(&trace.trace_id)
+    .expect("stock dispatcher is created");
+    let sim_clock = Rc::new(SimClock::new());
+    sim_clock.advance_to(987_654_321);
+    let clock: Rc<dyn Clock> = sim_clock;
+    let run_identity = ReplayRunIdentity::for_checkpoint(
+        "controller-persisted-run",
+        "root",
+        "manifest",
+        BTreeMap::new(),
+        BTreeMap::new(),
+        "cache namespace",
+    );
+
+    dispatcher
+        .open_trace(TraceOpenContext {
+            trace: &trace,
+            environment: Some(&environment),
+            workspace: Some(&workspace),
+            clock: &clock,
+            segments: &segments,
+            run_identity: &run_identity,
+        })
+        .await
+        .expect("Pinch workspace is materialized and mounted");
+
+    let mount_root = state.lock().unwrap().created[0].mounts[0].host_path.clone();
+    assert_eq!(
+        std::fs::read(mount_root.join("nested/input.txt")).expect("mounted file exists"),
+        b"product workspace bytes\n"
+    );
+    assert_eq!(*observed_clock_ns.lock().unwrap(), Some(987_654_321));
+    assert_eq!(
+        state.lock().unwrap().created[0]
+            .labels
+            .get(CONTAINER_RUN_LABEL_KEY)
+            .map(String::as_str),
+        Some("controller-persisted-run")
+    );
+    dispatcher
+        .close_trace(&trace)
+        .await
+        .expect("stock dispatcher closes");
+    assert_eq!(state.lock().unwrap().removed, 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stock_dispatcher_executes_a_local_recipe_without_invoking_docker() {
+    let mut pool = SegmentPool::new();
+    let content = pool
+        .intern_raw(None, b"local product bytes\n".to_vec())
+        .expect("workspace bytes are interned");
+    let segments = pool.freeze();
+    let workspace = WorkspaceSpec {
+        files: vec![WorkspaceFile {
+            destination: "input.txt".into(),
+            content,
+            is_executable: false,
+        }],
+        workdir: "/workspace".into(),
+        interpreter: vec!["bash".into(), "-lc".into()],
+        mount_workspace: true,
+        command_timeout_ns: 5_000_000_000,
+    };
+    let environment = ResolvedTraceEnvironment {
+        kind: EnvironmentRecipe::PinchBench,
+        backend: ToolExecutionBackend::Local,
+        image: String::new(),
+        workspace: workspace.clone(),
+    };
+    let trace = trace();
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let run_identity = ReplayRunIdentity::mint(RngRoot::new(Some(31)), "local-product");
+    let dispatcher = DockerToolDispatcherFactory::with_runtime_factory(1024, |_| {
+        panic!("local recipe must not construct a Docker runtime")
+    })
+    .create(&trace.trace_id)
+    .expect("stock dispatcher is created");
+
+    dispatcher
+        .open_trace(TraceOpenContext {
+            trace: &trace,
+            environment: Some(&environment),
+            workspace: Some(&workspace),
+            clock: &clock,
+            segments: &segments,
+            run_identity: &run_identity,
+        })
+        .await
+        .expect("local recipe opens without Docker");
+    assert_eq!(
+        dispatcher.backend_identity(),
+        aiperf_runtime::graph::tools::ToolBackendIdentity::Local
+    );
+    let result = dispatcher
+        .dispatch(
+            ToolDispatchRequest::new("local-call", "cat input.txt"),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("local recipe executes against the materialized workspace");
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.output, Bytes::from_static(b"local product bytes\n"));
+    dispatcher
+        .close_trace(&trace)
+        .await
+        .expect("local recipe closes");
 }
 
 #[tokio::test(flavor = "current_thread")]

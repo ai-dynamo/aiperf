@@ -8,7 +8,10 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use bytes::Bytes;
 
+use aiperf_runtime::clock::{Clock, SimClock};
+use aiperf_runtime::dataset::InMemorySegmentStore;
 use aiperf_runtime::graph::driver::TraceIdentity;
+use aiperf_runtime::graph::replay::ReplayRunIdentity;
 use aiperf_runtime::graph::tools::{
     CommandDisposition, EnvironmentToolDispatcher, ToolCommandPolicy, ToolCommandResult,
     ToolDispatchContext, ToolDispatchError, ToolDispatchRequest, ToolDispatcher, ToolSandbox,
@@ -157,12 +160,17 @@ async fn dispatcher_continues_after_timeout_when_fake_recycles() {
         trajectory_id: "trajectory".into(),
         trace_id: "trace".into(),
     };
+    let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+    let segments = InMemorySegmentStore::default();
+    let run_identity = ReplayRunIdentity::mint(aiperf_runtime::rng::RngRoot::new(Some(1)), "fake");
     dispatcher
         .open_trace(TraceOpenContext {
             trace: &trace,
             environment: None,
             workspace: None,
-            run_label: "fake",
+            clock: &clock,
+            segments: &segments,
+            run_identity: &run_identity,
         })
         .await
         .expect("sandbox opens");

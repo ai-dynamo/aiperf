@@ -51,12 +51,24 @@ pub enum EnvironmentRecipe {
     SweBench,
 }
 
+/// Concrete execution backend selected while resolving a trace recipe.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolExecutionBackend {
+    /// Execute in a host-local persistent shell.
+    Local,
+    /// Execute in an isolated Docker container.
+    Docker,
+}
+
 /// Fully resolved recipe used only while composing worker-local resources.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedTraceEnvironment {
     /// Recipe family.
     pub kind: EnvironmentRecipe,
+    /// Fully resolved execution backend; workers never infer this from image text.
+    pub backend: ToolExecutionBackend,
     /// Fully selected container image.
     pub image: String,
     /// Staged or image-native workspace policy.
@@ -79,10 +91,14 @@ pub struct ToolSandboxCapabilities {
 impl ToolSandboxCapabilities {
     /// Refuse a backend that cannot enforce this recipe's required isolation.
     pub fn validate(self, recipe: &ResolvedTraceEnvironment) -> Result<(), TraceEnvironmentError> {
-        if !self.has_persistent_workspace || !self.has_network_disabled || !self.has_timeout_recycle
-        {
+        if !self.has_persistent_workspace || !self.has_timeout_recycle {
             return Err(TraceEnvironmentError::new(
-                "tool sandbox cannot provide persistent workspace, disabled network, and timeout recycle",
+                "tool sandbox cannot provide persistent workspace and timeout recycle",
+            ));
+        }
+        if recipe.backend == ToolExecutionBackend::Docker && !self.has_network_disabled {
+            return Err(TraceEnvironmentError::new(
+                "Docker tool sandbox cannot enforce disabled network",
             ));
         }
         if recipe.workspace.mount_workspace && !self.has_workspace_materialization {
