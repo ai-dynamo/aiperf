@@ -13,11 +13,26 @@ use serde::{Deserialize, Serialize};
 use crate::eval::{ArtifactDigest, AttemptId, EvidenceEvent, EvidenceKind};
 
 /// Finite named reward metrics from a verifier artifact.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct RewardDocument {
     /// Named finite reward metrics.
     pub metrics: BTreeMap<String, f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRewardDocument {
+    metrics: BTreeMap<String, f64>,
+}
+
+impl<'de> Deserialize<'de> for RewardDocument {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawRewardDocument::deserialize(deserializer)?;
+        Self::new(raw.metrics).map_err(serde::de::Error::custom)
+    }
 }
 
 impl RewardDocument {

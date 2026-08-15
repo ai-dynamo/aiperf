@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{ArtifactDigest, AttemptId};
 
 /// An immutable score produced by one evaluator over preserved evidence.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct ScoreVersion {
     /// Attempt evaluated by this score.
     pub attempt: AttemptId,
@@ -29,6 +28,39 @@ pub struct ScoreVersion {
     pub rationale: ArtifactDigest,
     /// Identity of the preceding score revision, when this score is a regrade.
     pub predecessor: Option<ArtifactDigest>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawScoreVersion {
+    attempt: AttemptId,
+    version: u32,
+    evaluator: ArtifactDigest,
+    evidence: Vec<ArtifactDigest>,
+    metric: String,
+    value: f64,
+    rationale: ArtifactDigest,
+    predecessor: Option<ArtifactDigest>,
+}
+
+impl<'de> Deserialize<'de> for ScoreVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawScoreVersion::deserialize(deserializer)?;
+        Self::new(
+            raw.attempt,
+            raw.version,
+            raw.evaluator,
+            raw.evidence,
+            raw.metric,
+            raw.value,
+            raw.rationale,
+            raw.predecessor,
+        )
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 impl ScoreVersion {
