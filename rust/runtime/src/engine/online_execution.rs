@@ -1694,8 +1694,12 @@ fn validate_graph_endpoint_profile_references(
     context: &RunContext,
 ) -> Result<()> {
     context.default_endpoint_profile()?;
-    for plan in &bundle.plans {
+    for program in &bundle.programs {
+        let plan = &program.profiling;
         for (node_id, node) in &plan.graph.nodes {
+            let crate::graph::model::ExecutableGraphNode::Llm(node) = node else {
+                continue;
+            };
             if let Some(profile_id) = node.metadata.get("endpoint").and_then(Value::as_str) {
                 context.endpoint_profile(profile_id).with_context(|| {
                     format!(

@@ -8,18 +8,34 @@
 //! segment-trie IR (a graph of [`LlmNode`] + [`StaticEdge`] with
 //! `metadata["arrival_offset_us"]`) can be snapshotted here.
 
-use crate::graph::model::{GraphRecord, LlmNode, ParsedGraph, START_NODE_ID, StaticEdge};
+use crate::graph::model::{
+    ExecutableGraphNode, GraphRecord, LlmNode, ParsedGraph, START_NODE_ID, StaticEdge,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The node's recorded arrival offset in microseconds, or `0.0` when absent.
 ///
 /// Missing, non-numeric, and zero `metadata["arrival_offset_us"]` values resolve
 /// to `0.0`.
-fn arrival_offset_us(node: &LlmNode) -> f64 {
-    node.metadata
-        .get("arrival_offset_us")
-        .and_then(serde_json::Value::as_f64)
-        .unwrap_or(0.0)
+fn arrival_offset_us(node: &ExecutableGraphNode) -> f64 {
+    match node {
+        ExecutableGraphNode::Llm(node) => node
+            .metadata
+            .get("arrival_offset_us")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0),
+        // Tool nodes carry no recorded arrival metadata in the first model.
+        // Keeping them avoids dropping an observation producer during a chop.
+        ExecutableGraphNode::Tool(_) => f64::INFINITY,
+    }
+}
+
+/// Whether a transform must preserve this graph verbatim until tool execution exists.
+fn has_tool_node(graph: &GraphRecord) -> bool {
+    graph
+        .nodes
+        .values()
+        .any(|node| matches!(node, ExecutableGraphNode::Tool(_)))
 }
 
 /// Chop a segment-trie [`ParsedGraph`] to its live frontier at `t*`.
@@ -42,7 +58,7 @@ fn arrival_offset_us(node: &LlmNode) -> f64 {
 ///
 /// Only `graph.graph` is chopped; named graphs and traces remain unchanged.
 pub fn chop_trie_at_tstar(graph: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
-    if t_star_us <= 0.0 {
+    if t_star_us <= 0.0 || has_tool_node(&graph.graph) {
         return graph.clone();
     }
 
@@ -67,7 +83,7 @@ pub fn chop_trie_at_tstar(graph: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
         .map(|nid| format!("{nid}_out"))
         .collect();
 
-    let mut rescoped: BTreeMap<String, LlmNode> = BTreeMap::new();
+    let mut rescoped: BTreeMap<String, ExecutableGraphNode> = BTreeMap::new();
     for nid in &survivor_ids {
         let node = &old_graph.nodes[*nid];
         rescoped.insert(
@@ -94,7 +110,7 @@ pub fn chop_trie_at_tstar(graph: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
 fn chop_edges(
     edges: &[StaticEdge],
     survivors: &BTreeSet<&str>,
-    nodes: &BTreeMap<String, LlmNode>,
+    nodes: &BTreeMap<String, ExecutableGraphNode>,
     t_star_us: f64,
 ) -> Vec<StaticEdge> {
     let mut kept_edges: Vec<StaticEdge> = Vec::new();
@@ -142,22 +158,30 @@ fn chop_edges(
 ///
 /// An input-free node passes through untouched. An `inputs` list whose surviving
 /// subset equals the original is returned unchanged.
-fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) -> LlmNode {
-    if node.inputs.is_empty() {
-        return node.clone();
+fn chop_node_inputs(
+    node: &ExecutableGraphNode,
+    survivor_out_channels: &BTreeSet<String>,
+) -> ExecutableGraphNode {
+    match node {
+        ExecutableGraphNode::Llm(node) => {
+            if node.inputs.is_empty() {
+                return ExecutableGraphNode::Llm(node.clone());
+            }
+            let kept: Vec<_> = node
+                .inputs
+                .iter()
+                .filter(|req| survivor_out_channels.contains(&req.channel))
+                .cloned()
+                .collect();
+            if kept.len() == node.inputs.len() {
+                return ExecutableGraphNode::Llm(node.clone());
+            }
+            let mut out = node.clone();
+            out.inputs = kept;
+            ExecutableGraphNode::Llm(out)
+        }
+        ExecutableGraphNode::Tool(node) => ExecutableGraphNode::Tool(node.clone()),
     }
-    let kept: Vec<_> = node
-        .inputs
-        .iter()
-        .filter(|req| survivor_out_channels.contains(&req.channel))
-        .cloned()
-        .collect();
-    if kept.len() == node.inputs.len() {
-        return node.clone();
-    }
-    let mut out = node.clone();
-    out.inputs = kept;
-    out
 }
 
 /// Chop a segment-trie [`ParsedGraph`] to its extended-warmup handoff frontier.
@@ -206,6 +230,9 @@ pub fn chop_trie_at_frontier(
     drain_end_wall_us: f64,
     residual_cap_us: Option<f64>,
 ) -> ParsedGraph {
+    if has_tool_node(&graph.graph) {
+        return graph.clone();
+    }
     let old_graph = &graph.graph;
 
     // Survivors: post-`t*` AND not-yet-executed, in stable node-id order.
@@ -231,14 +258,16 @@ pub fn chop_trie_at_frontier(
         .map(|nid| format!("{nid}_out"))
         .collect();
 
-    let mut rescoped: BTreeMap<String, LlmNode> = BTreeMap::new();
+    let mut rescoped: BTreeMap<String, ExecutableGraphNode> = BTreeMap::new();
     for nid in &survivor_ids {
         let node = &old_graph.nodes[*nid];
         let mut node = chop_node_inputs(node, &survivor_out_channels);
         // A dropped binding edge's residual must not vanish just because a
         // zero-delay join edge from a surviving predecessor remains.
         // node-level gate, max-combined with any existing node value.
-        if let Some(&residual) = kept_pred_residuals.get(*nid) {
+        if let Some(&residual) = kept_pred_residuals.get(*nid)
+            && let Some(node) = node.as_llm_mut()
+        {
             node.min_start_delay_us = Some(node.min_start_delay_us.unwrap_or(0.0).max(residual));
         }
         rescoped.insert((*nid).to_owned(), node);
@@ -361,10 +390,16 @@ fn chain_key(node_id: &str, node: &LlmNode) -> String {
 pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<String, &LlmNode> {
     let mut chains: BTreeMap<String, Vec<(f64, &str)>> = BTreeMap::new();
     for (nid, node) in &graph.nodes {
-        chains
-            .entry(chain_key(nid, node))
-            .or_default()
-            .push((arrival_offset_us(node), nid.as_str()));
+        let Some(node) = node.as_llm() else {
+            continue;
+        };
+        chains.entry(chain_key(nid, node)).or_default().push((
+            node.metadata
+                .get("arrival_offset_us")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0),
+            nid.as_str(),
+        ));
     }
     let mut boundary: BTreeMap<String, &LlmNode> = BTreeMap::new();
     for members in chains.values_mut() {
@@ -378,7 +413,9 @@ pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<St
         if let Some(nid) = last_pre
             && any_post
         {
-            boundary.insert(nid.to_owned(), &graph.nodes[nid]);
+            if let Some(node) = graph.nodes[nid].as_llm() {
+                boundary.insert(nid.to_owned(), node);
+            }
         }
     }
     boundary
@@ -406,18 +443,24 @@ pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<St
 /// empty graph so the warmup phase finalizes immediately. The worker applies the
 /// warmup `max_tokens` cap downstream; the node remains unchanged.
 pub fn rewrite_for_warmup(parsed: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
+    // The boundary rewrite would otherwise retain only LLM nodes. Until tools
+    // acquire execution semantics, preserve mixed graphs exactly; the execution
+    // boundaries reject them with `TraceError::UnsupportedNode`.
+    if has_tool_node(&parsed.graph) {
+        return parsed.clone();
+    }
     let boundary = if t_star_us > 0.0 {
         warmup_boundary_nodes(&parsed.graph, t_star_us)
     } else {
         BTreeMap::new()
     };
 
-    let mut new_nodes: BTreeMap<String, LlmNode> = BTreeMap::new();
+    let mut new_nodes: BTreeMap<String, ExecutableGraphNode> = BTreeMap::new();
     for (nid, node) in &boundary {
         let mut rewritten = (*node).clone();
         rewritten.inputs = Vec::new();
         rewritten.min_start_delay_us = None;
-        new_nodes.insert(nid.clone(), rewritten);
+        new_nodes.insert(nid.clone(), ExecutableGraphNode::Llm(rewritten));
     }
 
     let new_edges: Vec<StaticEdge> = new_nodes
@@ -447,7 +490,7 @@ mod tests {
     use crate::graph::model::{ChannelRequirement, GraphRecord};
     use serde_json::json;
 
-    fn node(arrival_us: u64, input_channels: &[&str]) -> LlmNode {
+    fn llm_node(arrival_us: u64, input_channels: &[&str]) -> LlmNode {
         let mut metadata = BTreeMap::new();
         metadata.insert("arrival_offset_us".to_owned(), json!(arrival_us));
         LlmNode {
@@ -463,8 +506,17 @@ mod tests {
             min_start_delay_us: None,
             max_tokens: None,
             items: Vec::new(),
+            request: None,
             metadata,
         }
+    }
+
+    fn node(arrival_us: u64, input_channels: &[&str]) -> ExecutableGraphNode {
+        ExecutableGraphNode::Llm(llm_node(arrival_us, input_channels))
+    }
+
+    fn llm(node: &ExecutableGraphNode) -> &LlmNode {
+        node.as_llm().unwrap()
     }
 
     fn edge(
@@ -531,12 +583,12 @@ mod tests {
             vec!["n1".to_owned(), "n2".to_owned()]
         );
         // n1 lost its only pred (n0) -> inputs rescoped to empty.
-        assert!(chopped.graph.nodes["n1"].inputs.is_empty());
+        assert!(llm(&chopped.graph.nodes["n1"]).inputs.is_empty());
         // n2 keeps its surviving-pred requirement on n1_out.
-        assert_eq!(chopped.graph.nodes["n2"].inputs.len(), 1);
-        assert_eq!(chopped.graph.nodes["n2"].inputs[0].channel, "n1_out");
+        assert_eq!(llm(&chopped.graph.nodes["n2"]).inputs.len(), 1);
+        assert_eq!(llm(&chopped.graph.nodes["n2"]).inputs[0].channel, "n1_out");
         // Node-level min_start_delay untouched by the t* chop.
-        assert_eq!(chopped.graph.nodes["n1"].min_start_delay_us, None);
+        assert_eq!(llm(&chopped.graph.nodes["n1"]).min_start_delay_us, None);
 
         // Edges: kept inter-survivor n1->n2 (verbatim), plus re-root START->n1
         // at arrival(1e6) - t*(1e6) = 0.0. n2 keeps its surviving pred so is NOT
@@ -584,13 +636,13 @@ mod tests {
         inputs: &[&str],
         min_start: Option<f64>,
         max_tokens: Option<usize>,
-    ) -> LlmNode {
-        let mut n = node(arrival_us, inputs);
+    ) -> ExecutableGraphNode {
+        let mut n = llm_node(arrival_us, inputs);
         n.min_start_delay_us = min_start;
         n.max_tokens = max_tokens;
         n.metadata
             .insert("conversation_id".to_owned(), json!(chain));
-        n
+        ExecutableGraphNode::Llm(n)
     }
 
     // Four chains at `t* = 1.5e6`: `chainA` straddles t* (boundary = chainA_1),
@@ -668,12 +720,15 @@ mod tests {
 
         // Boundary nodes: inputs cleared, node-level min_start_delay dropped, but
         // max_tokens + trie envelope (arrival metadata) preserved.
-        let d1 = &warmup.graph.nodes["chainD_1"];
+        let d1 = llm(&warmup.graph.nodes["chainD_1"]);
         assert!(d1.inputs.is_empty());
         assert_eq!(d1.min_start_delay_us, None);
         assert_eq!(d1.max_tokens, Some(42));
-        assert_eq!(arrival_offset_us(d1), 1_000_000.0);
-        assert!(warmup.graph.nodes["chainA_1"].inputs.is_empty());
+        assert_eq!(
+            arrival_offset_us(&warmup.graph.nodes["chainD_1"]),
+            1_000_000.0
+        );
+        assert!(llm(&warmup.graph.nodes["chainA_1"]).inputs.is_empty());
 
         // One priming edge per boundary node, rooted at START with NO delay of
         // any kind (bursts at phase start).
@@ -718,11 +773,11 @@ mod tests {
     // A recorded-id node: id uses the Rust `:` ordinal separator and carries
     // the authoritative chain identity in `metadata["conversation_id"]` (as the
     // recorded trie lowerer writes it, `graph/recorded/trie/mod.rs:170`).
-    fn rnode(conversation_id: &str, arrival_us: u64) -> LlmNode {
-        let mut n = node(arrival_us, &[]);
+    fn rnode(conversation_id: &str, arrival_us: u64) -> ExecutableGraphNode {
+        let mut n = llm_node(arrival_us, &[]);
         n.metadata
             .insert("conversation_id".to_owned(), json!(conversation_id));
-        n
+        ExecutableGraphNode::Llm(n)
     }
 
     // One recorded session chain "root" with two `:`-ordinal-id turns straddling
@@ -868,9 +923,9 @@ mod tests {
             vec!["n2".to_owned(), "n3".to_owned()]
         );
         // n2 lost its only pred -> inputs rescoped to empty; n3 keeps n2_out.
-        assert!(chopped.graph.nodes["n2"].inputs.is_empty());
-        assert_eq!(chopped.graph.nodes["n3"].inputs.len(), 1);
-        assert_eq!(chopped.graph.nodes["n3"].inputs[0].channel, "n2_out");
+        assert!(llm(&chopped.graph.nodes["n2"]).inputs.is_empty());
+        assert_eq!(llm(&chopped.graph.nodes["n3"]).inputs.len(), 1);
+        assert_eq!(llm(&chopped.graph.nodes["n3"]).inputs[0].channel, "n2_out");
         // Kept inter-survivor n2->n3 verbatim; re-root START->n2 at residual.
         assert_eq!(
             edge_tuples(&chopped),
@@ -939,8 +994,8 @@ mod tests {
             chopped.graph.nodes.keys().cloned().collect::<Vec<_>>(),
             vec!["n1".to_owned(), "n3".to_owned()]
         );
-        assert!(chopped.graph.nodes["n1"].inputs.is_empty());
-        assert!(chopped.graph.nodes["n3"].inputs.is_empty());
+        assert!(llm(&chopped.graph.nodes["n1"]).inputs.is_empty());
+        assert!(llm(&chopped.graph.nodes["n3"]).inputs.is_empty());
         assert_eq!(
             edge_tuples(&chopped),
             vec![
@@ -996,12 +1051,15 @@ mod tests {
             chopped.graph.nodes.keys().cloned().collect::<Vec<_>>(),
             vec!["a1".to_owned(), "j".to_owned()]
         );
-        assert!(chopped.graph.nodes["a1"].inputs.is_empty());
-        assert_eq!(chopped.graph.nodes["a1"].min_start_delay_us, None);
+        assert!(llm(&chopped.graph.nodes["a1"]).inputs.is_empty());
+        assert_eq!(llm(&chopped.graph.nodes["a1"]).min_start_delay_us, None);
         // j: binding x_out dropped, a1_out kept; residual folded node-level.
-        assert_eq!(chopped.graph.nodes["j"].inputs.len(), 1);
-        assert_eq!(chopped.graph.nodes["j"].inputs[0].channel, "a1_out");
-        assert_eq!(chopped.graph.nodes["j"].min_start_delay_us, Some(799_400.0));
+        assert_eq!(llm(&chopped.graph.nodes["j"]).inputs.len(), 1);
+        assert_eq!(llm(&chopped.graph.nodes["j"]).inputs[0].channel, "a1_out");
+        assert_eq!(
+            llm(&chopped.graph.nodes["j"]).min_start_delay_us,
+            Some(799_400.0)
+        );
         // Kept a1->j verbatim; re-root START->a1 at residual 0. No START->j.
         assert_eq!(
             edge_tuples(&chopped),

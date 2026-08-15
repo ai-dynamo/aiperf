@@ -17,7 +17,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use crate::dataset::{SegmentPool, TextTokenizer};
-use crate::graph::model::{ChannelSpec, GraphRecord, LlmNode, PromptItem, StaticEdge};
+use crate::graph::model::{
+    ChannelSpec, ExecutableGraphNode, GraphRecord, LlmNode, PromptItem, StaticEdge,
+};
 use crate::graph::segment::intern_message;
 use crate::graph::validate::validate;
 use crate::graph::wire::OpenAiChatMessage;
@@ -128,7 +130,7 @@ pub fn fold_replay_and_emit(
     let mut replay_ids: BTreeSet<String> = BTreeSet::new();
     let mut replay_duration_ms: BTreeMap<String, f64> = BTreeMap::new();
     let mut initial_state = trace.initial_state.clone();
-    let mut nodes: BTreeMap<String, LlmNode> = BTreeMap::new();
+    let mut nodes: BTreeMap<String, ExecutableGraphNode> = BTreeMap::new();
 
     for (id, node) in &taken.nodes {
         match node {
@@ -164,15 +166,16 @@ pub fn fold_replay_and_emit(
                 }
                 nodes.insert(
                     id.clone(),
-                    LlmNode {
+                    ExecutableGraphNode::Llm(LlmNode {
                         output: llm.output.clone(),
                         streaming: llm.streaming,
                         inputs: Vec::new(),
                         min_start_delay_us: llm.min_start_delay_us,
                         max_tokens: llm.max_tokens,
                         items,
+                        request: None,
                         metadata,
-                    },
+                    }),
                 );
             }
         }
@@ -427,6 +430,8 @@ traces:
         // summarize kept its terminal marker in metadata.
         assert_eq!(
             folded.graph.nodes["summarize"]
+                .as_llm()
+                .unwrap()
                 .metadata
                 .get("terminal_for_user"),
             Some(&Value::Bool(true))

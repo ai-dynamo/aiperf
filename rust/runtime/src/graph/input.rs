@@ -21,7 +21,7 @@ use crate::graph::lowering::{
     CatalogBranch, CatalogConversation, CatalogPrerequisite, CatalogTurn, GraphCatalog,
     lower_catalog,
 };
-use crate::graph::model::GraphTracePlan;
+use crate::graph::model::{GraphTracePlan, GraphTraceProgram};
 
 /// Inputs supplied to one format-specific Graph-IR compiler.
 pub struct GraphInputConfig {
@@ -45,7 +45,7 @@ pub struct GraphInputMetadata {
 /// Canonical result of one direct graph-input pass.
 pub struct GraphInputBundle {
     /// Complete, owned root-trace commands in authored order.
-    pub plans: Vec<GraphTracePlan>,
+    pub programs: Vec<GraphTraceProgram>,
     /// Immutable content-addressed segment arena referenced by plan handles.
     pub segments: Arc<dyn SegmentStore>,
     /// Static load facts for reporting and validation.
@@ -95,23 +95,28 @@ pub async fn compile_dag_jsonl_input(
         catalog.roots.truncate(limit);
     }
     let lowered = lower_catalog(&catalog).map_err(|error| GraphInputError(error.to_string()))?;
-    let plans = lowered
+    let programs = lowered
         .parsed
         .traces
         .iter()
-        .map(|trace| GraphTracePlan {
-            graph: lowered.parsed.resolve_trace_graph(trace).clone(),
-            trace: trace.clone(),
-            arrival_offset_ns: None,
+        .map(|trace| {
+            GraphTraceProgram::static_graph(GraphTracePlan {
+                graph: lowered.parsed.resolve_trace_graph(trace).clone(),
+                trace: trace.clone(),
+                arrival_offset_ns: None,
+            })
         })
         .collect::<Vec<_>>();
     let metadata = GraphInputMetadata {
         format: "dag_jsonl".to_string(),
-        root_count: plans.len(),
-        node_count: plans.iter().map(|plan| plan.graph.nodes.len()).sum(),
+        root_count: programs.len(),
+        node_count: programs
+            .iter()
+            .map(|program| program.profiling.graph.llm_node_count())
+            .sum(),
     };
     Ok(GraphInputBundle {
-        plans,
+        programs,
         segments: lowered.segments,
         metadata,
     })
@@ -469,56 +474,64 @@ mod tests {
         .unwrap();
         assert_eq!(bundle.metadata.root_count, 1);
         assert_eq!(bundle.metadata.node_count, 4);
-        let graph = &bundle.plans[0].graph;
+        let graph = &bundle.programs[0].profiling.graph;
         let root0 = graph
             .nodes
             .values()
             .find(|node| {
-                node.metadata
-                    .get("conversation_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("root")
-                    && node
-                        .metadata
-                        .get("turn_index")
-                        .and_then(serde_json::Value::as_u64)
-                        == Some(0)
+                node.metadata().and_then(|metadata| {
+                    metadata
+                        .get("conversation_id")
+                        .and_then(serde_json::Value::as_str)
+                }) == Some("root")
+                    && node.metadata().and_then(|metadata| {
+                        metadata
+                            .get("turn_index")
+                            .and_then(serde_json::Value::as_u64)
+                    }) == Some(0)
             })
+            .and_then(crate::graph::model::ExecutableGraphNode::as_llm)
             .unwrap();
         let fork = graph
             .nodes
             .values()
             .find(|node| {
-                node.metadata
-                    .get("conversation_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("fork")
+                node.metadata().and_then(|metadata| {
+                    metadata
+                        .get("conversation_id")
+                        .and_then(serde_json::Value::as_str)
+                }) == Some("fork")
             })
+            .and_then(crate::graph::model::ExecutableGraphNode::as_llm)
             .unwrap();
         let spawn = graph
             .nodes
             .values()
             .find(|node| {
-                node.metadata
-                    .get("conversation_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("spawn")
+                node.metadata().and_then(|metadata| {
+                    metadata
+                        .get("conversation_id")
+                        .and_then(serde_json::Value::as_str)
+                }) == Some("spawn")
             })
+            .and_then(crate::graph::model::ExecutableGraphNode::as_llm)
             .unwrap();
         let joined = graph
             .nodes
             .values()
             .find(|node| {
-                node.metadata
-                    .get("conversation_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("root")
-                    && node
-                        .metadata
-                        .get("turn_index")
-                        .and_then(serde_json::Value::as_u64)
-                        == Some(1)
+                node.metadata().and_then(|metadata| {
+                    metadata
+                        .get("conversation_id")
+                        .and_then(serde_json::Value::as_str)
+                }) == Some("root")
+                    && node.metadata().and_then(|metadata| {
+                        metadata
+                            .get("turn_index")
+                            .and_then(serde_json::Value::as_u64)
+                    }) == Some(1)
             })
+            .and_then(crate::graph::model::ExecutableGraphNode::as_llm)
             .unwrap();
         assert!(fork.items.iter().any(
             |item| matches!(item, crate::graph::model::PromptItem::Splice { splice } if splice == &root0.output)

@@ -25,7 +25,7 @@ use crate::failure::OnFailure;
 use crate::graph::errors::TraceError;
 use crate::graph::execution::TracePlacement;
 use crate::graph::input::GraphInputBundle;
-use crate::graph::model::{GraphTracePlan, ParsedGraph, TraceRecord};
+use crate::graph::model::{GraphTracePlan, GraphTraceProgram, ParsedGraph, TraceRecord};
 use crate::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
 use crate::graph::snapshot::{chop_trie_at_frontier, chop_trie_at_tstar, rewrite_for_warmup};
 use crate::graph::tstar::{PermutationDraw, TStarSampler, WindowTStarSampler, trace_duration_us};
@@ -822,10 +822,12 @@ impl GraphPressureRecycle {
                     );
                     progress.admit(&TraceAdmissionInfo {
                         trace_id: instance_id,
-                        node_count: plan.graph.nodes.len(),
+                        node_count: plan.graph.llm_node_count(),
                         arrival_ns: clock.now_ns(),
                     });
-                    let result = placement.execute_trace(plan).await;
+                    let result = placement
+                        .execute_trace(GraphTraceProgram::static_graph(plan))
+                        .await;
                     // A drain-cancel return ends the lane (a fresh instance would
                     // be rejected instantly); consecutive non-cancel errors back
                     // off exponentially so a deterministically failing server
@@ -1945,7 +1947,7 @@ fn validate_dataset_wrap_policy(
     if allow_wrap {
         return Ok(());
     }
-    let distinct = u64::try_from(input.plans.len()).context("graph root count exceeds u64")?;
+    let distinct = u64::try_from(input.programs.len()).context("graph root count exceeds u64")?;
     for phase in phases {
         let common = phase.common();
         let one_pass =
@@ -1967,6 +1969,36 @@ fn validate_dataset_wrap_policy(
     Ok(())
 }
 
+/// Project generic static programs into the legacy t-star transform input.
+///
+/// The snapshot and handoff transforms currently operate on one static plan.
+/// Refusing a non-static driver or a tool-bearing topology here prevents those
+/// transforms from discarding driver state or executable tool observations.
+fn static_graph_plans(input: &GraphInputBundle) -> Result<Vec<GraphTracePlan>> {
+    input
+        .programs
+        .iter()
+        .map(|program| {
+            if !program.is_static_graph_program() {
+                return Err(anyhow::Error::new(TraceError::UnsupportedDriver(
+                    program.driver.kind.clone(),
+                )));
+            }
+            if let Some((node_id, _)) =
+                program.profiling.graph.nodes.iter().find(|(_, node)| {
+                    !matches!(node, crate::graph::model::ExecutableGraphNode::Llm(_))
+                })
+            {
+                return Err(anyhow::Error::new(TraceError::UnsupportedNode {
+                    node_id: node_id.clone(),
+                    kind: "tool",
+                }));
+            }
+            Ok(program.profiling.clone())
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_graph_phase(
     phase_index: usize,
@@ -1986,8 +2018,9 @@ fn prepare_graph_phase(
     let phase_rng_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
     let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, phase_rng_index);
     let common = phase.common();
+    let input_plans = static_graph_plans(input)?;
     // Warmup and profiling use the same deterministic per-trace snapshot instant.
-    let mut phase_plans = apply_tstar_split(&input.plans, phase, t_star);
+    let mut phase_plans = apply_tstar_split(&input_plans, phase, t_star);
     // Drop any trace whose t*-snapshot is empty: a warmup prime sampled past the
     // trace's last turn, or a profiling chop that keeps nothing, yields a zero-node
     // graph. Admitting one records a "no dispatchable nodes" failure and — worse —
@@ -2009,7 +2042,7 @@ fn prepare_graph_phase(
         common.sessions
     };
     // Cache-pressure recycle (duration) or AgentX lane-prime (unbound + t*).
-    let pressure = build_pressure_recycle(&phase_plans, &input.plans, phase, common, t_star)
+    let pressure = build_pressure_recycle(&phase_plans, &input_plans, phase, common, t_star)
         .with_context(|| {
             format!("preparing warmup cache-pressure recycle for phase {phase_index}")
         })?;
@@ -2108,7 +2141,7 @@ fn prepare_graph_phase(
         None
     } else {
         Some(ProfilingResume {
-            original_plans: Rc::new(input.plans.clone()),
+            original_plans: Rc::new(input_plans),
             phase: phase.clone(),
             t_star,
             session_limit,
@@ -2512,7 +2545,7 @@ struct LaneResumeGraphTraceSource {
 }
 
 impl GraphTraceSource for LaneResumeGraphTraceSource {
-    fn next_trace(&self) -> Result<Option<GraphTracePlan>, GraphWorkloadError> {
+    fn next_trace(&self) -> Result<Option<GraphTraceProgram>, GraphWorkloadError> {
         let idx = self.next_prefix.get();
         if idx < self.prefix.len() {
             self.next_prefix.set(idx + 1);
@@ -2524,7 +2557,7 @@ impl GraphTraceSource for LaneResumeGraphTraceSource {
                 Some(instance_id) => instance_id.clone(),
                 None => format!("{}::resume-lane-{}", plan.trace.id, entry.lane),
             };
-            return Ok(Some(plan));
+            return Ok(Some(GraphTraceProgram::static_graph(plan)));
         }
         self.recycle.next_trace()
     }
@@ -2539,6 +2572,10 @@ fn build_graph_trace_source(
     start_ordinal: u64,
     t_star: TStarWindow,
 ) -> Result<Rc<dyn GraphTraceSource>> {
+    let programs = plans
+        .into_iter()
+        .map(GraphTraceProgram::static_graph)
+        .collect::<Vec<_>>();
     // Pressure and profiling resolve template order from the same sampling draw.
     Ok(match ModuloCellPartition::from_env() {
         Some(partition) if partition.cell_count() > 1 && request_limit.is_none() => {
@@ -2550,7 +2587,7 @@ fn build_graph_trace_source(
             // Partitioned sources serve request-unbounded runs without a resume cursor.
             Rc::new(
                 PartitionedGraphTraceSource::new(
-                    plans,
+                    programs,
                     session_limit,
                     partition.cell_id(),
                     partition.cell_count(),
@@ -2560,7 +2597,7 @@ fn build_graph_trace_source(
         }
         _ => Rc::new(
             CyclingGraphTraceSource::with_budgets_and_sequence(
-                plans,
+                programs,
                 session_limit,
                 request_limit,
                 trace_instances,
@@ -2792,7 +2829,9 @@ mod tests {
     use crate::dataset::SegmentPool;
     use crate::engine::graph_input::{CacheBustTarget, GraphSamplingStrategy};
     use crate::graph::errors::TraceError;
-    use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
+    use crate::graph::model::{
+        ExecutableGraphNode, GraphRecord, GraphTracePlan, GraphTraceProgram, TraceRecord,
+    };
     use crate::graph::tstar::{sampler_random_seed, sampler_shuffle_seed};
     use crate::graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
     use crate::timing::{PhaseReturn, PhaseSend};
@@ -2802,7 +2841,7 @@ mod tests {
     use crate::engine::records::CapturedModelOutput;
 
     fn wrap_policy_input(root_count: usize) -> GraphInputBundle {
-        let plans = (0..root_count)
+        let programs = (0..root_count)
             .map(|index| GraphTracePlan {
                 graph: GraphRecord::default(),
                 trace: TraceRecord {
@@ -2812,9 +2851,10 @@ mod tests {
                 },
                 arrival_offset_ns: None,
             })
+            .map(GraphTraceProgram::static_graph)
             .collect();
         GraphInputBundle {
-            plans,
+            programs,
             segments: Arc::new(SegmentPool::new().freeze()),
             metadata: crate::graph::input::GraphInputMetadata {
                 format: "weka_trace".into(),
@@ -2990,7 +3030,7 @@ mod tests {
             let mut metadata = BTreeMap::new();
             metadata.insert("arrival_offset_us".to_owned(), json!(arrival));
             metadata.insert("conversation_id".to_owned(), json!("n"));
-            LlmNode {
+            ExecutableGraphNode::Llm(LlmNode {
                 output: "out".to_owned(),
                 streaming: true,
                 inputs: inputs
@@ -3003,8 +3043,9 @@ mod tests {
                 min_start_delay_us: None,
                 max_tokens: None,
                 items: Vec::new(),
+                request: None,
                 metadata,
-            }
+            })
         };
         let edge = |source: &str, target: &str| StaticEdge {
             source: source.to_owned(),
@@ -3077,7 +3118,13 @@ mod tests {
             window,
         );
         assert_eq!(node_ids(&split), vec!["n_0".to_owned()]);
-        assert!(split[0].graph.nodes["n_0"].inputs.is_empty());
+        assert!(
+            split[0].graph.nodes["n_0"]
+                .as_llm()
+                .unwrap()
+                .inputs
+                .is_empty()
+        );
         assert_eq!(split[0].graph.edges.len(), 1);
         assert_eq!(split[0].graph.edges[0].source, "START");
         assert_eq!(split[0].graph.edges[0].target, "n_0");
@@ -3729,15 +3776,16 @@ mod tests {
         let mut nodes = BTreeMap::new();
         nodes.insert(
             "n_0".to_owned(),
-            LlmNode {
+            ExecutableGraphNode::Llm(LlmNode {
                 output: "out".to_owned(),
                 streaming: true,
                 inputs: Vec::new(),
                 min_start_delay_us: None,
                 max_tokens: Some(1),
                 items: Vec::new(),
+                request: None,
                 metadata: BTreeMap::new(),
-            },
+            }),
         );
         GraphTracePlan {
             graph: GraphRecord {
@@ -4003,7 +4051,7 @@ mod tests {
             let mut metadata = BTreeMap::new();
             metadata.insert("arrival_offset_us".to_owned(), json!(arrival));
             metadata.insert("conversation_id".to_owned(), json!("n"));
-            LlmNode {
+            ExecutableGraphNode::Llm(LlmNode {
                 output: "out".to_owned(),
                 streaming: true,
                 inputs: inputs
@@ -4016,8 +4064,9 @@ mod tests {
                 min_start_delay_us: None,
                 max_tokens: None,
                 items: Vec::new(),
+                request: None,
                 metadata,
-            }
+            })
         };
         let edge = |source: &str, target: &str| StaticEdge {
             source: source.to_owned(),
@@ -4228,8 +4277,10 @@ mod tests {
 
     #[async_trait::async_trait(?Send)]
     impl crate::graph::execution::TracePlacement for RecycleClockPlacement {
-        async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
-            self.dispatched.borrow_mut().push(plan.trace.id.clone());
+        async fn execute_trace(&self, plan: GraphTraceProgram) -> Result<(), TraceError> {
+            self.dispatched
+                .borrow_mut()
+                .push(plan.profiling.trace.id.clone());
             self.clock.clone().sleep(self.per_trace_ns).await;
             Ok(())
         }
@@ -4325,7 +4376,7 @@ mod tests {
 
     #[async_trait::async_trait(?Send)]
     impl crate::graph::execution::TracePlacement for DeadlinePlacement {
-        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+        async fn execute_trace(&self, _plan: GraphTraceProgram) -> Result<(), TraceError> {
             self.starts.borrow_mut().push(self.clock.now_ns());
             self.clock.clone().sleep(self.per_trace_ns).await;
             if self.cancelled.get() {
@@ -5013,8 +5064,13 @@ mod tests {
             next_prefix: Cell::new(0),
             recycle,
         };
-        let drawn: Vec<String> =
-            std::iter::from_fn(|| source.next_trace().unwrap().map(|plan| plan.trace.id)).collect();
+        let drawn: Vec<String> = std::iter::from_fn(|| {
+            source
+                .next_trace()
+                .unwrap()
+                .map(|plan| plan.profiling.trace.id)
+        })
+        .collect();
         assert_eq!(
             drawn,
             vec![
@@ -5054,8 +5110,13 @@ mod tests {
             next_prefix: Cell::new(0),
             recycle,
         };
-        let drawn: Vec<String> =
-            std::iter::from_fn(|| source.next_trace().unwrap().map(|plan| plan.trace.id)).collect();
+        let drawn: Vec<String> = std::iter::from_fn(|| {
+            source
+                .next_trace()
+                .unwrap()
+                .map(|plan| plan.profiling.trace.id)
+        })
+        .collect();
         assert_eq!(
             drawn,
             vec![
@@ -5114,10 +5175,15 @@ mod tests {
         )
         .unwrap();
         let drawn: Vec<String> = std::iter::from_fn(|| {
-            source
-                .next_trace()
-                .unwrap()
-                .map(|plan| plan.trace.id.split_once("::").unwrap().0.to_owned())
+            source.next_trace().unwrap().map(|plan| {
+                plan.profiling
+                    .trace
+                    .id
+                    .split_once("::")
+                    .unwrap()
+                    .0
+                    .to_owned()
+            })
         })
         .collect();
         assert_eq!(drawn, vec!["b", "c", "a"]);
@@ -5136,10 +5202,15 @@ mod tests {
         )
         .unwrap();
         let drawn: Vec<String> = std::iter::from_fn(|| {
-            source
-                .next_trace()
-                .unwrap()
-                .map(|plan| plan.trace.id.split_once("::").unwrap().0.to_owned())
+            source.next_trace().unwrap().map(|plan| {
+                plan.profiling
+                    .trace
+                    .id
+                    .split_once("::")
+                    .unwrap()
+                    .0
+                    .to_owned()
+            })
         })
         .collect();
         assert_eq!(drawn, vec!["a", "b"]);

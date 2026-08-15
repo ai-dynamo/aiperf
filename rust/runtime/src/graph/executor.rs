@@ -22,7 +22,9 @@ use crate::graph::channels::producers_per_channel;
 use crate::graph::context::{NodeExecutionResult, TraceContext};
 use crate::graph::errors::TraceError;
 use crate::graph::materialize::PromptMaterializer;
-use crate::graph::model::{ChannelSpec, ChannelType, GraphRecord, LlmNode, TraceRecord};
+use crate::graph::model::{
+    ChannelSpec, ChannelType, ExecutableGraphNode, GraphRecord, LlmNode, TraceRecord,
+};
 use crate::graph::policy::{
     NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
     NodeFailurePolicy, NoopNodeDispatchPolicy, ResilientNodeFailurePolicy,
@@ -117,6 +119,16 @@ impl<M: WireMessage> TraceExecutor<M> {
         handle: Handle,
         flags: ExecutorFlags,
     ) -> Result<Rc<Self>, TraceError> {
+        if let Some((node_id, ExecutableGraphNode::Tool(_))) = graph
+            .nodes
+            .iter()
+            .find(|(_, node)| matches!(node, ExecutableGraphNode::Tool(_)))
+        {
+            return Err(TraceError::UnsupportedNode {
+                node_id: node_id.clone(),
+                kind: "tool",
+            });
+        }
         let scheduler =
             Rc::new(Scheduler::new(&graph).map_err(|e| TraceError::Other(e.to_string()))?);
         let producers = Rc::new(producers_per_channel(&graph));
@@ -124,7 +136,10 @@ impl<M: WireMessage> TraceExecutor<M> {
         let node_index = graph
             .nodes
             .iter()
-            .map(|(id, node)| (id.clone(), Rc::new(node.clone())))
+            .filter_map(|(id, node)| {
+                node.as_llm()
+                    .map(|node| (id.clone(), Rc::new(node.clone())))
+            })
             .collect();
         Ok(Rc::new(TraceExecutor {
             graph,
@@ -536,7 +551,11 @@ impl<M: WireMessage> TraceExecutor<M> {
                 gate_us = gate_us.max(dispatch + delay);
             }
         }
-        if let Some(node) = self.graph.nodes.get(node_id)
+        if let Some(node) = self
+            .graph
+            .nodes
+            .get(node_id)
+            .and_then(ExecutableGraphNode::as_llm)
             && let Some(node_min_start) = node.min_start_delay_us
         {
             let anchor = match (self.absolute_start_offsets, self.anchor_wall_us.get()) {

@@ -22,6 +22,7 @@ use crate::dataset::{SegmentPool, TextTokenizer};
 use serde_json::Value;
 
 use crate::graph::input::{GraphInputBundle, GraphInputMetadata};
+use crate::graph::model::GraphTraceProgram;
 
 use super::content::CorpusContentSynthesizer;
 use super::source::load_aiperf_documents;
@@ -70,7 +71,7 @@ pub async fn compile_aiperf_trace_input(
         CorpusContentSynthesizer::new(tokenizer, config.prompt_corpus, config.content_root_seed)?;
     let mut content = owned.as_synthesizer();
     let mut pool = SegmentPool::new();
-    let mut plans = Vec::with_capacity(parsed.len());
+    let mut programs = Vec::with_capacity(parsed.len());
     for trace in parsed {
         let requests = flatten_trace(&trace)?;
         // Each session is its own hash namespace (block ids are per-session salted).
@@ -89,16 +90,19 @@ pub async fn compile_aiperf_trace_input(
         if !source_is_single {
             plan.trace.graph_ref = Some(plan.trace.id.clone());
         }
-        plans.push(plan);
+        programs.push(GraphTraceProgram::static_graph(plan));
     }
-    plans.sort_by(|left, right| left.trace.id.cmp(&right.trace.id));
+    programs.sort_by(|left, right| left.profiling.trace.id.cmp(&right.profiling.trace.id));
     let metadata = GraphInputMetadata {
         format: "aiperf_trace".into(),
-        root_count: plans.len(),
-        node_count: plans.iter().map(|plan| plan.graph.nodes.len()).sum(),
+        root_count: programs.len(),
+        node_count: programs
+            .iter()
+            .map(|program| program.profiling.graph.llm_node_count())
+            .sum(),
     };
     Ok(GraphInputBundle {
-        plans,
+        programs,
         segments: Arc::new(pool.freeze()),
         metadata,
     })
@@ -264,7 +268,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::graph::model::PromptItem;
+    use crate::graph::model::{LlmNode, PromptItem};
 
     fn config(records: Value) -> RecordedTraceInputConfig {
         RecordedTraceInputConfig {
@@ -276,6 +280,12 @@ mod tests {
             prompt_corpus: crate::graph::recorded::PromptCorpus::Sonnet,
             content_root_seed: 42,
         }
+    }
+
+    fn node<'a>(bundle: &'a GraphInputBundle, node_id: &str) -> &'a LlmNode {
+        bundle.programs[0].profiling.graph.nodes[node_id]
+            .as_llm()
+            .unwrap()
     }
 
     fn session() -> Value {
@@ -304,7 +314,7 @@ mod tests {
     }
 
     fn prompt_roles(bundle: &GraphInputBundle, node_id: &str) -> Vec<String> {
-        bundle.plans[0].graph.nodes[node_id]
+        node(bundle, node_id)
             .items
             .iter()
             .map(|item| {
@@ -325,13 +335,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bundle.metadata.format, "aiperf_trace");
-        let graph = &bundle.plans[0].graph;
+        let graph = &bundle.programs[0].profiling.graph;
         assert_eq!(graph.nodes.len(), 2);
         // streaming + model carried through; call 1 continues call 0's prefix.
-        assert!(graph.nodes["42:1"].streaming);
-        assert_eq!(graph.nodes["42:0"].metadata["model"], "m");
-        assert_eq!(graph.nodes["42:0"].metadata["arrival_offset_us"], 0);
-        assert_eq!(graph.nodes["42:1"].metadata["arrival_offset_us"], 1_000_000);
+        assert!(graph.nodes["42:1"].as_llm().unwrap().streaming);
+        assert_eq!(graph.nodes["42:0"].as_llm().unwrap().metadata["model"], "m");
+        assert_eq!(
+            graph.nodes["42:0"].as_llm().unwrap().metadata["arrival_offset_us"],
+            0
+        );
+        assert_eq!(
+            graph.nodes["42:1"].as_llm().unwrap().metadata["arrival_offset_us"],
+            1_000_000
+        );
     }
 
     #[tokio::test]
@@ -349,7 +365,7 @@ mod tests {
     }
 
     fn prompt_token_counts(bundle: &GraphInputBundle, node_id: &str) -> Vec<usize> {
-        bundle.plans[0].graph.nodes[node_id]
+        node(bundle, node_id)
             .items
             .iter()
             .map(|item| {
@@ -403,7 +419,7 @@ mod tests {
         // The shared-prefix messages still dedup to the same pooled handles across
         // calls (identical bytes => a KV cache hits), partial tail and all.
         let handles = |id: &str| {
-            bundle.plans[0].graph.nodes[id]
+            node(&bundle, id)
                 .items
                 .iter()
                 .filter_map(|item| match item {
@@ -436,7 +452,7 @@ mod tests {
             .await
             .unwrap();
         // `max_tokens` equals both response segments: 12 + 7 = 19.
-        assert_eq!(bundle.plans[0].graph.nodes["9:0"].max_tokens, Some(19));
+        assert_eq!(node(&bundle, "9:0").max_tokens, Some(19));
     }
 
     #[tokio::test]
@@ -448,7 +464,7 @@ mod tests {
         let bundle = compile_aiperf_trace_input(config(records), &TiktokenTokenizer::builtin())
             .await
             .unwrap();
-        let graph = &bundle.plans[0].graph;
+        let graph = &bundle.programs[0].profiling.graph;
         assert!(graph.nodes.contains_key("42:0"));
         assert!(graph.nodes.contains_key("777:0"));
     }

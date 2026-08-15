@@ -379,7 +379,7 @@ pub(crate) async fn execute_graph_native(
         select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
     let input = graph.input.clone();
     ensure!(
-        !input.plans.is_empty(),
+        !input.programs.is_empty(),
         "authored Graph-IR input contains no root traces after root limiting"
     );
     let primary_model = request.models.items[0].name.clone();

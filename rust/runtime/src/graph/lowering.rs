@@ -27,8 +27,9 @@ use crate::dataset::{
 };
 
 use crate::graph::model::{
-    ChannelRequirement, ChannelSpec, ChannelType, Count, END_NODE_ID, GraphRecord, LlmNode,
-    ParsedGraph, PromptItem, ReducerName, START_NODE_ID, StaticEdge, TraceRecord,
+    ChannelRequirement, ChannelSpec, ChannelType, Count, END_NODE_ID, ExecutableGraphNode,
+    GraphRecord, LlmNode, LlmRequestSpec, ParsedGraph, PromptItem, ReducerName, START_NODE_ID,
+    StaticEdge, TraceRecord,
 };
 
 const LOWERING_VERSION: &str = "aiperf-authored-dag-v1";
@@ -631,15 +632,23 @@ impl<'a> GraphBuilder<'a> {
         }
         self.graph.nodes.insert(
             node_id.clone(),
-            LlmNode {
+            ExecutableGraphNode::Llm(LlmNode {
                 output,
                 streaming: turn.streaming.unwrap_or(true),
                 inputs: Vec::new(),
                 min_start_delay_us: turn.timestamp_ms.map(|milliseconds| milliseconds * 1_000.0),
                 max_tokens: turn.max_tokens.map(|tokens| tokens as usize),
                 items,
+                request: (turn.tools.is_some()
+                    || turn.model.is_some()
+                    || turn.extra_body.is_some())
+                .then(|| LlmRequestSpec {
+                    tools: turn.tools,
+                    model: turn.model.clone(),
+                    additional_body: turn.extra_body,
+                }),
                 metadata,
-            },
+            }),
         );
         Ok(node_id)
     }
@@ -717,7 +726,13 @@ impl<'a> GraphBuilder<'a> {
             .graph
             .nodes
             .get_mut(node_id)
-            .expect("node was inserted before prerequisites");
+            .and_then(ExecutableGraphNode::as_llm_mut)
+            .ok_or_else(|| {
+                GraphLoweringError::Branch(format!(
+                    "conversation {:?} turn {turn_index} has no LLM node {node_id:?}",
+                    conversation.id
+                ))
+            })?;
         for channel in required_channels {
             if seen.insert(channel.clone()) {
                 inputs.inputs.push(ChannelRequirement {
@@ -843,7 +858,8 @@ mod tests {
         .await
         .unwrap();
         let mut parsed = ParsedGraph::default();
-        for plan in bundle.plans {
+        for program in bundle.programs {
+            let plan = program.profiling;
             let graph_name = format!("dag:{}", plan.trace.id);
             parsed.graphs.insert(graph_name.clone(), plan.graph);
             let mut trace = plan.trace;
@@ -864,11 +880,12 @@ mod tests {
         graph
             .nodes
             .iter()
-            .find(|(_, node)| {
-                node.metadata.get("conversation_id").and_then(Value::as_str) == Some(conversation)
-                    && node.metadata.get("turn_index").and_then(Value::as_u64) == Some(turn)
+            .find_map(|(id, node)| {
+                let node = node.as_llm()?;
+                (node.metadata.get("conversation_id").and_then(Value::as_str) == Some(conversation)
+                    && node.metadata.get("turn_index").and_then(Value::as_u64) == Some(turn))
+                .then_some((id.as_str(), node))
             })
-            .map(|(id, node)| (id.as_str(), node))
             .unwrap()
     }
 
@@ -1072,10 +1089,12 @@ mod tests {
                 graph
                     .nodes
                     .values()
-                    .filter(
-                        |node| node.metadata.get("conversation_id").and_then(Value::as_str)
+                    .filter(|node| {
+                        node.metadata()
+                            .and_then(|metadata| metadata.get("conversation_id"))
+                            .and_then(Value::as_str)
                             == Some("shared")
-                    )
+                    })
                     .count(),
                 1
             );

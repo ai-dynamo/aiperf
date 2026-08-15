@@ -47,17 +47,17 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
 
     // 2. Every node's output and input channels are declared in `state`.
     for (nid, node) in &graph.nodes {
-        if !graph.state.contains_key(&node.output) {
+        if !graph.state.contains_key(node.output()) {
             errors.push(ValidationError(format!(
                 "node {nid:?} writes undeclared channel {:?}",
-                node.output
+                node.output()
             )));
         }
-        for req in &node.inputs {
-            if !graph.state.contains_key(&req.channel) {
+        for channel in node.read_channels() {
+            if !graph.state.contains_key(channel) {
                 errors.push(ValidationError(format!(
                     "node {nid:?} reads undeclared channel {:?}",
-                    req.channel
+                    channel
                 )));
             }
         }
@@ -81,7 +81,7 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
     //    count>producers, AND mutual/cyclic gates (n0 waits on n1, n1 on n0).
     let mut writers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (nid, node) in &graph.nodes {
-        writers.entry(node.output.as_str()).or_default().push(nid);
+        writers.entry(node.output()).or_default().push(nid);
     }
     // `count` target for a requirement: `all` resolves to the channel's total
     // producer count (an unreachable producer then makes it unsatisfiable).
@@ -104,7 +104,7 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
             if !reachable.contains(nid.as_str()) || fireable.contains(nid.as_str()) {
                 continue;
             }
-            let gated = node.inputs.iter().any(|req| {
+            let gated = node.input_requirements().iter().any(|req| {
                 fireable_producers(&req.channel, &fireable) < target(&req.channel, &req.count)
             });
             if !gated {
@@ -122,7 +122,7 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
             continue;
         }
         // Reachable but never fireable: name the blocking input and why.
-        for req in &node.inputs {
+        for req in node.input_requirements() {
             let chan = req.channel.as_str();
             let need = target(chan, &req.count);
             let can = fireable_producers(chan, &fireable);

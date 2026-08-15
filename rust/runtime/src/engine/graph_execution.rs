@@ -24,7 +24,9 @@ use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::ExecutorFlags;
 use crate::graph::materialize::SegmentItemsMaterializer;
-use crate::graph::model::{GraphTracePlan, LlmNode, PromptItem};
+use crate::graph::model::{
+    ExecutableGraphNode, GraphTracePlan, GraphTraceProgram, LlmNode, PromptItem,
+};
 use crate::graph::placement::{
     GraphPlacementError, LocalTracePlacement, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
@@ -160,10 +162,10 @@ impl ObservedRunnerGraphPlacement {
 
 #[async_trait(?Send)]
 impl TracePlacement for ObservedRunnerGraphPlacement {
-    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
-        let trace_id = plan.trace.id.clone();
-        let node_count = plan.graph.nodes.len();
-        let result = self.delegate.execute_trace(plan).await;
+    async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+        let trace_id = program.profiling.trace.id.clone();
+        let node_count = program.profiling.graph.llm_node_count();
+        let result = self.delegate.execute_trace(program).await;
         self.events.emit(GraphExecutionEvent::TraceComplete {
             trace_id,
             node_count,
@@ -767,7 +769,11 @@ struct GraphWorkerBackend {
 
 #[async_trait(?Send)]
 impl TracePlacement for GraphWorkerBackend {
-    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+    async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+        if !program.is_static_graph_program() {
+            return Err(TraceError::UnsupportedDriver(program.driver.kind));
+        }
+        let plan = &program.profiling;
         if self.cancelled.get() {
             return Err(TraceError::Cancelled(format!(
                 "graph trace {:?} was rejected after worker cancellation",
@@ -793,7 +799,18 @@ impl TracePlacement for GraphWorkerBackend {
             clock: self.clock.clone(),
             endpoint_runtime: self.endpoint_runtime.clone(),
             trace_id: plan.trace.id.clone(),
-            nodes: plan.graph.nodes.clone().into_iter().collect(),
+            nodes: plan
+                .graph
+                .nodes
+                .iter()
+                .map(|(node_id, node)| match node {
+                    ExecutableGraphNode::Llm(node) => Ok((node_id.clone(), node.clone())),
+                    ExecutableGraphNode::Tool(_) => Err(TraceError::UnsupportedNode {
+                        node_id: node_id.clone(),
+                        kind: "tool",
+                    }),
+                })
+                .collect::<Result<HashMap<_, _>, _>>()?,
             prepared_metadata: RefCell::new(HashMap::new()),
             segments: self.segments.clone(),
             observer,
@@ -833,7 +850,7 @@ impl TracePlacement for GraphWorkerBackend {
         let execution_id = self.next_execution.get();
         self.next_execution.set(execution_id.saturating_add(1));
         self.active.borrow_mut().insert(execution_id, local.clone());
-        let result = local.execute_trace(plan).await;
+        let result = local.execute_trace(program).await;
         let finalized = sink
             .verify_finalized_records()
             .map_err(|error| TraceError::Other(error.to_string()));
@@ -1371,6 +1388,7 @@ mod tests {
             min_start_delay_us: None,
             max_tokens: None,
             items,
+            request: None,
             metadata: BTreeMap::new(),
         }
     }

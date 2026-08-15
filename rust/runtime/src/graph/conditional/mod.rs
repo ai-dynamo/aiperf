@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::dataset::{DatasetSource, LoadConfig, SegmentPool, TextTokenizer};
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, GraphInputMetadata};
-use crate::graph::model::{GraphTracePlan, TraceRecord};
+use crate::graph::model::{GraphTracePlan, GraphTraceProgram, TraceRecord};
 
 pub use fold::{CompiledPrompts, FoldedTrace, compile_prompts, fold_replay_and_emit};
 pub use model::{
@@ -86,14 +86,14 @@ pub async fn compile_conditional_graph_input(
         None => &doc.traces[..],
     };
 
-    let mut plans = Vec::with_capacity(selected.len());
+    let mut programs = Vec::with_capacity(selected.len());
     for trace in selected {
         let taken = resolve_and_prune(&doc.graph, trace, workload_seed)?;
         let folded = fold_replay_and_emit(&taken, trace, &doc.graph.state, &prompts)?;
         let arrival_offset_ns = trace
             .arrival_time
             .map(|seconds| (seconds * 1_000_000_000.0) as i64);
-        plans.push(GraphTracePlan {
+        programs.push(GraphTraceProgram::static_graph(GraphTracePlan {
             graph: folded.graph,
             trace: TraceRecord {
                 id: trace.id.clone(),
@@ -101,12 +101,15 @@ pub async fn compile_conditional_graph_input(
                 initial_state: folded.initial_state,
             },
             arrival_offset_ns,
-        });
+        }));
     }
 
-    let node_count = plans.iter().map(|plan| plan.graph.nodes.len()).sum();
+    let node_count = programs
+        .iter()
+        .map(|program| program.profiling.graph.llm_node_count())
+        .sum();
     Ok(GraphInputBundle {
-        plans,
+        programs,
         segments: Arc::new(pool.freeze()),
         metadata: GraphInputMetadata {
             format: "conditional_graph".to_string(),
@@ -187,10 +190,11 @@ traces:
 
     fn nodes_of(bundle: &GraphInputBundle, trace_id: &str) -> BTreeSet<String> {
         bundle
-            .plans
+            .programs
             .iter()
-            .find(|plan| plan.trace.id == trace_id)
+            .find(|program| program.profiling.trace.id == trace_id)
             .unwrap()
+            .profiling
             .graph
             .nodes
             .keys()
@@ -202,7 +206,7 @@ traces:
     async fn compiles_each_branch_to_its_pruned_flat_graph() {
         let bundle = compile().await;
         assert_eq!(bundle.metadata.format, "conditional_graph");
-        assert_eq!(bundle.plans.len(), 3);
+        assert_eq!(bundle.programs.len(), 3);
 
         // shopping: route/plan/brandmap/summarize + safety (tool_exec/preprocess folded out).
         assert_eq!(
@@ -235,12 +239,24 @@ traces:
 
         // Replay outputs fold into the shopping trace's seeded channel state.
         let shopping = bundle
-            .plans
+            .programs
             .iter()
-            .find(|plan| plan.trace.id == "t-shopping")
+            .find(|program| program.profiling.trace.id == "t-shopping")
             .unwrap();
-        assert!(shopping.trace.initial_state.contains_key("brand_cands"));
-        assert!(shopping.trace.initial_state.contains_key("preprocessed"));
+        assert!(
+            shopping
+                .profiling
+                .trace
+                .initial_state
+                .contains_key("brand_cands")
+        );
+        assert!(
+            shopping
+                .profiling
+                .trace
+                .initial_state
+                .contains_key("preprocessed")
+        );
     }
 
     // Adapter registration + end-to-end routing of `conditional_graph` through

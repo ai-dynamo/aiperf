@@ -177,8 +177,8 @@ fn assert_topology_parity(weka: &GraphRecord, dynamo: &GraphRecord) {
         serde_json::to_value(&dynamo.state).unwrap()
     );
     for node_id in weka.nodes.keys() {
-        let left = &weka.nodes[node_id];
-        let right = &dynamo.nodes[node_id];
+        let left = weka.nodes[node_id].as_llm().unwrap();
+        let right = dynamo.nodes[node_id].as_llm().unwrap();
         assert_eq!(left.streaming, right.streaming, "streaming: {node_id}");
         assert_eq!(left.max_tokens, right.max_tokens, "max_tokens: {node_id}");
         assert_eq!(
@@ -237,10 +237,10 @@ async fn logical_weka_and_dynamo_traces_materialize_byte_identical_prompts() {
         .await
         .expect("compile Dynamo fixture");
 
-    assert_eq!(weka.plans.len(), 1);
-    assert_eq!(dynamo.plans.len(), 1);
-    let weka_graph = &weka.plans[0].graph;
-    let dynamo_graph = &dynamo.plans[0].graph;
+    assert_eq!(weka.programs.len(), 1);
+    assert_eq!(dynamo.programs.len(), 1);
+    let weka_graph = &weka.programs[0].profiling.graph;
+    let dynamo_graph = &dynamo.programs[0].profiling.graph;
     assert_topology_parity(weka_graph, dynamo_graph);
     assert_eq!(
         message_segments(weka.segments.as_ref()),
@@ -249,10 +249,14 @@ async fn logical_weka_and_dynamo_traces_materialize_byte_identical_prompts() {
     );
 
     for node_id in weka_graph.nodes.keys() {
-        let weka_messages =
-            materialized_messages(weka.segments.clone(), &weka_graph.nodes[node_id]);
-        let dynamo_messages =
-            materialized_messages(dynamo.segments.clone(), &dynamo_graph.nodes[node_id]);
+        let weka_messages = materialized_messages(
+            weka.segments.clone(),
+            weka_graph.nodes[node_id].as_llm().unwrap(),
+        );
+        let dynamo_messages = materialized_messages(
+            dynamo.segments.clone(),
+            dynamo_graph.nodes[node_id].as_llm().unwrap(),
+        );
         assert_eq!(weka_messages, dynamo_messages, "wire messages: {node_id}");
         for message in weka_messages {
             let value: Value = serde_json::from_slice(&message).expect("valid message JSON");

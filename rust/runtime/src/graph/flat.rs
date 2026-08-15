@@ -22,7 +22,7 @@ use tokio::sync::Notify;
 
 use crate::graph::errors::TraceError;
 use crate::graph::materialize::PromptMaterializer;
-use crate::graph::model::{GraphRecord, GraphTracePlan, PromptItem};
+use crate::graph::model::{ExecutableGraphNode, GraphRecord, GraphTracePlan, PromptItem};
 use crate::graph::policy::{
     NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
     NodeFailurePolicy,
@@ -38,14 +38,13 @@ use crate::graph::wire::WireMessage;
 /// prompt splices a channel (even one seeded only by `initial_state`, which
 /// needs no fan-in wait but still needs a real runtime value the flat path's
 /// empty inputs map cannot supply) — is ineligible and falls to the general
-/// `TraceExecutor`. The runtime graph model has only one executable node type
-/// (`LlmNode`); spawn/fork/subgraph/loop/barrier/tool behavior is lowered into
-/// multiple `LlmNode`s + edges before a `GraphRecord` exists, so a multi-node,
-/// fan-in, or splice shape is exactly what this rejects (fails closed).
+/// `TraceExecutor`. A tool node is deliberately ineligible: static tool replay
+/// has no execution semantics yet and must reach the typed refusal in the full
+/// executor instead of being mistaken for an inference request.
 pub fn is_flat_graph(graph: &GraphRecord) -> bool {
     let mut nodes = graph.nodes.values();
     match (nodes.next(), nodes.next()) {
-        (Some(only), None) => {
+        (Some(ExecutableGraphNode::Llm(only)), None) => {
             only.inputs.is_empty()
                 && !only
                     .items
@@ -146,6 +145,12 @@ impl<M: WireMessage + 'static> FlatGraphActor<M> {
         let (node_id, node) = plan.graph.nodes.iter().next().ok_or_else(|| {
             TraceError::Other(format!("flat trace {trace_id:?} has no executable node"))
         })?;
+        let Some(node) = node.as_llm() else {
+            return Err(TraceError::UnsupportedNode {
+                node_id: node_id.clone(),
+                kind: "tool",
+            });
+        };
 
         // No fan-in: inputs are empty; the prompt is materialized from node.items.
         let empty: BTreeMap<String, ChanVal> = BTreeMap::new();
@@ -260,13 +265,17 @@ mod tests {
             min_start_delay_us: None,
             max_tokens: Some(4),
             items,
+            request: None,
             metadata: BTreeMap::new(),
         }
     }
 
     fn graph(nodes: Vec<(&str, LlmNode)>) -> GraphRecord {
         GraphRecord {
-            nodes: nodes.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            nodes: nodes
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), ExecutableGraphNode::Llm(v)))
+                .collect(),
             ..GraphRecord::default()
         }
     }

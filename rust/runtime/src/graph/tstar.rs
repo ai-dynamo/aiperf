@@ -275,7 +275,8 @@ pub fn trace_duration_us(parsed: &ParsedGraph, trace: &TraceRecord) -> f64 {
     graph
         .nodes
         .values()
-        .filter_map(|node| node.metadata.get("arrival_offset_us"))
+        .filter_map(crate::graph::model::ExecutableGraphNode::metadata)
+        .filter_map(|metadata| metadata.get("arrival_offset_us"))
         .filter_map(|value| value.as_f64())
         .fold(0.0_f64, f64::max)
 }
@@ -299,6 +300,7 @@ mod tests {
             min_start_delay_us: None,
             max_tokens: None,
             items: Vec::new(),
+            request: None,
             metadata,
         }
     }
@@ -306,7 +308,10 @@ mod tests {
     fn parsed_with_offsets(offsets: &[Option<u64>]) -> (ParsedGraph, TraceRecord) {
         let mut nodes = BTreeMap::new();
         for (i, off) in offsets.iter().enumerate() {
-            nodes.insert(format!("n{i}"), node_with_offset(*off));
+            nodes.insert(
+                format!("n{i}"),
+                crate::graph::model::ExecutableGraphNode::Llm(node_with_offset(*off)),
+            );
         }
         let graph = GraphRecord {
             nodes,

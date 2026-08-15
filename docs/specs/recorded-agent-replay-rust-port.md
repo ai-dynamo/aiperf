@@ -518,7 +518,7 @@ that no successor reads.
 The canonical node map shall become:
 
 ```rust
-pub enum GraphNode {
+pub enum ExecutableGraphNode {
     Llm(LlmNode),
     Tool(ToolNode),
 }
@@ -567,7 +567,7 @@ The serde representation must be explicitly tagged and reject an unknown node
 kind. Existing LLM-only serialized fixtures remain readable through a deliberate
 compatibility rule rather than an untagged ambiguous enum.
 
-`GraphNode` shall provide kind-specific accessors for read channels, write
+`ExecutableGraphNode` shall provide kind-specific accessors for read channels, write
 channels, static request count, and topology validation. Tool nodes write one
 observation channel and consume no request credit. The first implementation
 uses predetermined recorded commands; future live-reply tool dispatch can add
@@ -1634,7 +1634,7 @@ green workspace:
    execution.
 2. Add the injectable request-profile resolver and exact standard request-body
    lowering, including fallback caps and protected extra-body fields.
-3. Introduce tagged `GraphNode`, serializable `GraphTraceProgram`, registered
+3. Introduce tagged `ExecutableGraphNode`, serializable `GraphTraceProgram`, registered
    `TraceProgramDriver`, and per-dispatch phase context; audit every node/plan
    consumer while preserving generic LLM-only compatibility.
 4. Implement the static and recorded-replay drivers, trace-local warmup, and
@@ -1730,7 +1730,9 @@ agentic SWE evaluation platform. It does not add a public benchmark registry,
 task grader, or live-agent scenario to this port.
 
 1. **Keep the execution node union narrow.** For this port,
-   `GraphNode::{Llm, Tool}` remains canonical. Spawn/join/gate behavior stays
+   `ExecutableGraphNode::{Llm, Tool}` is the lowered runtime IR. It is not the
+   canonical source-semantic model; a future `SemanticGraph` lowers into it
+   through an explicit fidelity and capability report. Spawn/join/gate behavior stays
    expressed through graph topology, channels, and the trace driver;
    checkpoints, evaluators, and experiment control remain lifecycle or
    controller services rather than new executor node variants. This preserves

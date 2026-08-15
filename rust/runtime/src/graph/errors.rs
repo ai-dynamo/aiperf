@@ -12,6 +12,15 @@ pub enum TraceError {
     Store(StoreError),
     /// A configured client cancellation terminated one node and therefore the trace.
     Cancelled(String),
+    /// A graph contains a node kind this executor does not implement yet.
+    UnsupportedNode {
+        /// Stable graph node identifier.
+        node_id: String,
+        /// Serialized node-kind label.
+        kind: &'static str,
+    },
+    /// A trace program selected a driver unavailable at this execution boundary.
+    UnsupportedDriver(String),
     /// Any other structural error (e.g. an unsupported graph topology or a cycle).
     Other(String),
 }
@@ -23,6 +32,8 @@ impl TraceError {
             TraceError::Store(StoreError::Orphaned { .. }) => "orphan",
             TraceError::Store(_) => "store",
             TraceError::Cancelled(_) => "cancelled",
+            TraceError::UnsupportedNode { .. } => "unsupported_node",
+            TraceError::UnsupportedDriver(_) => "unsupported_driver",
             TraceError::Other(_) => "other",
         }
     }
@@ -33,6 +44,12 @@ impl std::fmt::Display for TraceError {
         match self {
             TraceError::Store(e) => write!(f, "{e}"),
             TraceError::Cancelled(message) => f.write_str(message),
+            TraceError::UnsupportedNode { node_id, kind } => {
+                write!(f, "graph node {node_id:?} has unsupported kind {kind:?}")
+            }
+            TraceError::UnsupportedDriver(kind) => {
+                write!(f, "graph trace program has unsupported driver {kind:?}")
+            }
             TraceError::Other(m) => write!(f, "{m}"),
         }
     }

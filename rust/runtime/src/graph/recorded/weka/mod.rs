@@ -15,7 +15,7 @@ use serde_json::value::RawValue;
 use crate::dataset::{DatasetSource, Handle, SegmentPool, TextTokenizer};
 
 use crate::graph::input::{GraphInputBundle, GraphInputMetadata};
-use crate::graph::model::{GraphTracePlan, PromptItem};
+use crate::graph::model::{ExecutableGraphNode, GraphTracePlan, GraphTraceProgram, PromptItem};
 
 use super::content::CorpusShared;
 use super::source::load_weka_documents;
@@ -131,23 +131,26 @@ pub async fn compile_weka_trace_input(
     // baked into each plan by that pool's arena offset in the merged store.
     lowered.sort_by(|(left, _), (right, _)| left.trace.id.cmp(&right.trace.id));
     let mut pool = SegmentPool::new();
-    let mut plans = Vec::with_capacity(lowered.len());
+    let mut programs = Vec::with_capacity(lowered.len());
     for (mut plan, local_pool) in lowered {
         let offset = pool
             .concat_disjoint(local_pool)
             .map_err(|error| RecordedTraceError(error.to_string()))?;
         shift_plan_handles(&mut plan, offset);
-        plans.push(plan);
+        programs.push(GraphTraceProgram::static_graph(plan));
     }
     phase!("merge_pools");
 
     let metadata = GraphInputMetadata {
         format: "weka_trace".into(),
-        root_count: plans.len(),
-        node_count: plans.iter().map(|plan| plan.graph.nodes.len()).sum(),
+        root_count: programs.len(),
+        node_count: programs
+            .iter()
+            .map(|program| program.profiling.graph.llm_node_count())
+            .sum(),
     };
     Ok(GraphInputBundle {
-        plans,
+        programs,
         segments: Arc::new(pool.freeze()),
         metadata,
     })
@@ -228,6 +231,9 @@ fn shift_plan_handles(plan: &mut GraphTracePlan, offset: u32) {
     }
     let bump = u64::from(offset);
     for node in plan.graph.nodes.values_mut() {
+        let ExecutableGraphNode::Llm(node) = node else {
+            continue;
+        };
         for item in &mut node.items {
             if let PromptItem::Seg { seg } = item {
                 *seg = Handle::new(seg.index() + offset);
@@ -244,6 +250,13 @@ fn shift_plan_handles(plan: &mut GraphTracePlan, offset: u32) {
             && let Some(index) = handle.as_u64()
         {
             *handle = Value::from(index + bump);
+        }
+        if let Some(request) = &mut node.request {
+            for handle in [&mut request.tools, &mut request.additional_body] {
+                if let Some(handle) = handle {
+                    *handle = Handle::new(handle.index() + offset);
+                }
+            }
         }
     }
 }
@@ -404,7 +417,7 @@ mod tests {
         let bundle = compile_weka_trace_input(config, &TiktokenTokenizer::builtin())
             .await
             .unwrap();
-        let graph = &bundle.plans[0].graph;
+        let graph = &bundle.programs[0].profiling.graph;
         assert_eq!(graph.nodes.len(), 2);
         let edge = graph
             .edges
@@ -413,7 +426,7 @@ mod tests {
             .unwrap();
         assert_eq!(edge.source, "root:0");
         assert_eq!(edge.delay_after_predecessor_start_us, Some(500_000.0));
-        let handle = match graph.nodes["root:0"].items[0] {
+        let handle = match graph.nodes["root:0"].as_llm().unwrap().items[0] {
             crate::graph::model::PromptItem::Seg { seg } => seg,
             _ => panic!("recorded prompt must use dense segments"),
         };
@@ -451,8 +464,8 @@ mod tests {
         let bundle = compile_weka_trace_input(config, &TiktokenTokenizer::builtin())
             .await
             .expect("the cap must stop the schema scan after one eligible trace");
-        assert_eq!(bundle.plans.len(), 1);
-        assert_eq!(bundle.plans[0].trace.id, "selected");
+        assert_eq!(bundle.programs.len(), 1);
+        assert_eq!(bundle.programs[0].profiling.trace.id, "selected");
     }
 
     #[tokio::test]
@@ -486,7 +499,7 @@ mod tests {
         let bundle = compile_weka_trace_input(config, &TiktokenTokenizer::builtin())
             .await
             .expect("selection must filter before capping");
-        assert_eq!(bundle.plans.len(), 1);
-        assert_eq!(bundle.plans[0].trace.id, "first-eligible");
+        assert_eq!(bundle.programs.len(), 1);
+        assert_eq!(bundle.programs[0].profiling.trace.id, "first-eligible");
     }
 }

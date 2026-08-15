@@ -6,6 +6,8 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+pub use crate::graph::driver::ReplayTaskIdentity;
+
 /// Strict replay-manifest defaults shared by every selected task.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,21 +74,6 @@ pub struct ExpectedCorpusShape {
     pub max_tool_call_duration_ms: f64,
     /// Source tool-command timeout count.
     pub timed_out_tool_calls: u64,
-}
-
-/// Stable task identity retained through replay lowering and reporting.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(deny_unknown_fields)]
-pub struct ReplayTaskIdentity {
-    /// Supported source adapter.
-    pub adapter: String,
-    /// Task-family identifier.
-    pub family: String,
-    /// Upstream task identifier.
-    pub task_id: String,
-    /// Optional descriptive workload role.
-    #[serde(default)]
-    pub primary_role: Option<String>,
 }
 
 /// Strictly modeled task entry in a replay manifest.

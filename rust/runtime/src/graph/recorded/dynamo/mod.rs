@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 use super::BlockHash;
 
 use crate::graph::input::{GraphInputBundle, GraphInputMetadata};
+use crate::graph::model::GraphTraceProgram;
 
 use super::content::CorpusContentSynthesizer;
 use super::source::load_dynamo_documents;
@@ -57,7 +58,7 @@ pub async fn compile_dynamo_trace_input(
         CorpusContentSynthesizer::new(tokenizer, config.prompt_corpus, config.content_root_seed)?;
     let mut content = owned.as_synthesizer();
     let mut pool = SegmentPool::new();
-    let mut plans = Vec::with_capacity(selected.len());
+    let mut programs = Vec::with_capacity(selected.len());
     for (root, session_ids) in selected {
         let requests = build_tree_requests(&chains, &session_ids, block_size)?;
         let graph = lower_recorded_graph(
@@ -72,21 +73,24 @@ pub async fn compile_dynamo_trace_input(
         )?;
         let mut plan = graph_plan(graph, root);
         plan.trace.graph_ref = Some(plan.trace.id.clone());
-        plans.push(plan);
+        programs.push(GraphTraceProgram::static_graph(plan));
     }
-    plans.sort_by(|left, right| left.trace.id.cmp(&right.trace.id));
-    if plans.is_empty() {
+    programs.sort_by(|left, right| left.profiling.trace.id.cmp(&right.profiling.trace.id));
+    if programs.is_empty() {
         return Err(RecordedTraceError(
             "Dynamo selection contains no session trees".into(),
         ));
     }
     let metadata = GraphInputMetadata {
         format: "dynamo_trace".into(),
-        root_count: plans.len(),
-        node_count: plans.iter().map(|plan| plan.graph.nodes.len()).sum(),
+        root_count: programs.len(),
+        node_count: programs
+            .iter()
+            .map(|program| program.profiling.graph.llm_node_count())
+            .sum(),
     };
     Ok(GraphInputBundle {
-        plans,
+        programs,
         segments: Arc::new(pool.freeze()),
         metadata,
     })
@@ -716,15 +720,15 @@ mod tests {
         let bundle = compile_dynamo_trace_input(config, &TiktokenTokenizer::builtin())
             .await
             .unwrap();
-        let graph = &bundle.plans[0].graph;
-        assert!(graph.nodes["root:0"].streaming);
-        assert_eq!(graph.nodes["root:0"].max_tokens, Some(1));
+        let graph = &bundle.programs[0].profiling.graph;
+        assert!(graph.nodes["root:0"].as_llm().unwrap().streaming);
+        assert_eq!(graph.nodes["root:0"].as_llm().unwrap().max_tokens, Some(1));
         assert_eq!(
-            graph.nodes["root:0"].metadata["theoretical_prefix_cache_total_blocks"],
+            graph.nodes["root:0"].as_llm().unwrap().metadata["theoretical_prefix_cache_total_blocks"],
             1
         );
         assert_eq!(
-            graph.nodes["child:0"].metadata["dynamo"]["small_prompt"],
+            graph.nodes["child:0"].as_llm().unwrap().metadata["dynamo"]["small_prompt"],
             true
         );
     }
@@ -750,7 +754,9 @@ mod tests {
         let bundle = compile_dynamo_trace_input(config, &TiktokenTokenizer::builtin())
             .await
             .expect("request is optional in the Dynamo v1 trace schema");
-        let node = &bundle.plans[0].graph.nodes["root:0"];
+        let node = bundle.programs[0].profiling.graph.nodes["root:0"]
+            .as_llm()
+            .unwrap();
         assert_eq!(node.max_tokens, Some(1));
         assert_eq!(node.metadata["input_tokens"], 1);
         assert_eq!(node.metadata["expected"]["input_tokens"], Value::Null);

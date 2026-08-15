@@ -158,7 +158,7 @@ impl fmt::Debug for PreparedRunnerGraphInput {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedRunnerGraphInput")
-            .field("plans", &self.bundle.plans.len())
+            .field("plans", &self.bundle.programs.len())
             .field("format", &self.bundle.metadata.format)
             .field("random_seed", &self.random_seed)
             .field("default_output_tokens", &self.default_output_tokens)
@@ -329,7 +329,7 @@ impl DagJsonlRunnerGraphInputAdapter {
             .map_err(|error| anyhow!(error.to_string()))
             .context("loading and lowering direct authored dag_jsonl Graph-IR input")?;
         ensure!(
-            !bundle.plans.is_empty(),
+            !bundle.programs.is_empty(),
             "authored Graph-IR input contains no root traces after root limiting"
         );
         ensure!(
@@ -385,7 +385,7 @@ impl GraphInputAdapter for ConditionalGraphRunnerGraphInputAdapter {
                 .map_err(|error| anyhow!(error.to_string()))
                 .context("loading and lowering direct authored conditional_graph input")?;
         ensure!(
-            !bundle.plans.is_empty(),
+            !bundle.programs.is_empty(),
             "authored conditional_graph input contains no traces after root limiting"
         );
         ensure!(
@@ -643,7 +643,7 @@ fn finish_recorded_input(
     expected_format: &str,
 ) -> Result<PreparedRunnerGraphInput> {
     ensure!(
-        !bundle.plans.is_empty(),
+        !bundle.programs.is_empty(),
         "recorded Graph-IR input contains no roots after selection"
     );
     ensure!(
@@ -1268,7 +1268,10 @@ mod tests {
         assert_eq!(prepared.bundle.metadata.root_count, 1);
         assert_eq!(prepared.bundle.metadata.node_count, 1);
         assert_eq!(
-            prepared.bundle.plans[0].graph.nodes["root:0"].max_tokens,
+            prepared.bundle.programs[0].profiling.graph.nodes["root:0"]
+                .as_llm()
+                .unwrap()
+                .max_tokens,
             Some(3)
         );
         assert_eq!(prepared.random_seed, Some(91));
@@ -1325,11 +1328,18 @@ mod tests {
         assert_eq!(prepared.bundle.metadata.root_count, 1);
         assert_eq!(prepared.bundle.metadata.node_count, 1);
         assert_eq!(
-            prepared.bundle.plans[0].graph.nodes["root:0"].max_tokens,
+            prepared.bundle.programs[0].profiling.graph.nodes["root:0"]
+                .as_llm()
+                .unwrap()
+                .max_tokens,
             Some(3)
         );
         assert_eq!(
-            prepared.bundle.plans[0].graph.nodes["root:0"].items.len(),
+            prepared.bundle.programs[0].profiling.graph.nodes["root:0"]
+                .as_llm()
+                .unwrap()
+                .items
+                .len(),
             1
         );
     }
@@ -1397,7 +1407,13 @@ mod tests {
         assert_eq!(prepared.bundle.metadata.format, "aiperf_trace");
         assert_eq!(prepared.bundle.metadata.root_count, 1);
         assert_eq!(prepared.bundle.metadata.node_count, 1);
-        assert!(prepared.bundle.plans[0].graph.nodes.contains_key("7:0"));
+        assert!(
+            prepared.bundle.programs[0]
+                .profiling
+                .graph
+                .nodes
+                .contains_key("7:0")
+        );
         assert_eq!(prepared.random_seed, Some(91));
     }
 
@@ -1505,6 +1521,6 @@ mod tests {
         assert_eq!(prepared.bundle.metadata.format, "dynamo_trace");
         assert_eq!(prepared.bundle.metadata.root_count, 1);
         assert_eq!(prepared.bundle.metadata.node_count, 1);
-        assert_eq!(prepared.bundle.plans[0].trace.id, "root");
+        assert_eq!(prepared.bundle.programs[0].profiling.trace.id, "root");
     }
 }

@@ -81,9 +81,9 @@ async fn both_switch_arms_execute_end_to_end() {
         .await
         .expect("graph-ir arm compiles the trace");
     // The graph-ir arm produced a real lowered graph (root + subagent child).
-    assert!(!bundle.plans.is_empty(), "graph-ir produced plans");
+    assert!(!bundle.programs.is_empty(), "graph-ir produced programs");
     assert!(
-        bundle.plans[0].graph.nodes.len() >= 2,
+        bundle.programs[0].profiling.graph.nodes.len() >= 2,
         "graph-ir lowered root + child nodes"
     );
 

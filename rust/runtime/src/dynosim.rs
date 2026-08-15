@@ -30,7 +30,7 @@ use crate::graph::bench::{BenchConfig, build_workload};
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::{ExecutorFlags, TraceExecutor};
 use crate::graph::materialize::SegmentItemsMaterializer;
-use crate::graph::model::{GraphTracePlan, TraceRecord};
+use crate::graph::model::{GraphTraceProgram, TraceRecord};
 use crate::graph::policy::{
     CompositeNodeDispatchPolicy, NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy,
 };
@@ -3474,8 +3474,14 @@ struct DynamoDirectGraphBackend {
 impl TracePlacement for DynamoDirectGraphBackend {
     async fn execute_trace(
         &self,
-        plan: GraphTracePlan,
+        program: GraphTraceProgram,
     ) -> Result<(), crate::graph::errors::TraceError> {
+        if !program.is_static_graph_program() {
+            return Err(crate::graph::errors::TraceError::UnsupportedDriver(
+                program.driver.kind,
+            ));
+        }
+        let plan = &program.profiling;
         let trace_id = plan.trace.id.clone();
         if self.cancelled.get() {
             return Err(crate::graph::errors::TraceError::Cancelled(format!(
@@ -3486,7 +3492,13 @@ impl TracePlacement for DynamoDirectGraphBackend {
             .graph
             .nodes
             .iter()
-            .filter_map(|(node_id, node)| {
+            .map(|(node_id, node)| {
+                let node = node.as_llm().ok_or_else(|| {
+                    crate::graph::errors::TraceError::UnsupportedNode {
+                        node_id: node_id.clone(),
+                        kind: "tool",
+                    }
+                })?;
                 node.metadata
                     .get("input_tokens")
                     .and_then(serde_json::Value::as_u64)
@@ -3499,7 +3511,9 @@ impl TracePlacement for DynamoDirectGraphBackend {
                                 ))
                             })
                     })
+                    .transpose()
             })
+            .filter_map(|result| result.transpose())
             .collect::<std::result::Result<HashMap<_, _>, _>>()?;
         let sink: Rc<dyn GraphSink<GraphMessage>> = Rc::new(DynamoGraphSink {
             backend: self.backend.clone(),
@@ -3529,7 +3543,7 @@ impl TracePlacement for DynamoDirectGraphBackend {
         }
         let local = Rc::new(local);
         self.active.borrow_mut().push(Rc::downgrade(&local));
-        let result = local.execute_trace(plan).await;
+        let result = local.execute_trace(program).await;
         self.active
             .borrow_mut()
             .retain(|active| active.as_ptr() != Rc::as_ptr(&local));

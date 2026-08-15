@@ -22,6 +22,7 @@ pub mod channels;
 pub mod conditional;
 pub mod context;
 pub mod dag_source;
+pub mod driver;
 pub mod errors;
 pub mod execution;
 pub mod executor;

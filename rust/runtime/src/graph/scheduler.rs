@@ -180,9 +180,11 @@ pub fn collapse_leading_start_offsets(graph: &GraphRecord) -> GraphRecord {
         }
     }
     for (nid, node) in new_graph.nodes.iter_mut() {
-        let has_delay = node.min_start_delay_us.unwrap_or(0.0) != 0.0;
-        if has_delay && !has_real_pred.contains(nid.as_str()) {
-            node.min_start_delay_us = Some(0.0);
+        if let Some(node) = node.as_llm_mut() {
+            let has_delay = node.min_start_delay_us.unwrap_or(0.0) != 0.0;
+            if has_delay && !has_real_pred.contains(nid.as_str()) {
+                node.min_start_delay_us = Some(0.0);
+            }
         }
     }
     new_graph
@@ -266,7 +268,13 @@ mod tests {
         let collapsed = collapse_leading_start_offsets(&g);
         assert_eq!(collapsed.edges[0].min_start_delay_us, Some(0.0));
         assert_eq!(
-            collapsed.nodes.get("a").unwrap().min_start_delay_us,
+            collapsed
+                .nodes
+                .get("a")
+                .unwrap()
+                .as_llm()
+                .unwrap()
+                .min_start_delay_us,
             Some(0.0)
         );
     }

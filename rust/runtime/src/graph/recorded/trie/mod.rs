@@ -16,8 +16,8 @@ use crate::dataset::SegmentPool;
 use serde_json::Value;
 
 use crate::graph::model::{
-    ChannelRequirement, ChannelSpec, ChannelType, Count, GraphRecord, LlmNode, PromptItem,
-    ReducerName,
+    ChannelRequirement, ChannelSpec, ChannelType, Count, ExecutableGraphNode, GraphRecord, LlmNode,
+    LlmRequestSpec, PromptItem, ReducerName,
 };
 
 use super::content::RecordedContentSynthesizer;
@@ -164,7 +164,7 @@ pub(crate) fn lower_recorded_graph(
         )?;
         state.insert(emitted.state_key, emitted.state_spec);
         all_edges.extend(emitted.incoming_edges);
-        graph_nodes.insert(emitted.node_id, emitted.node);
+        graph_nodes.insert(emitted.node_id, ExecutableGraphNode::Llm(emitted.node));
     }
 
     subphase!("node_loop (emit+decode+intern)", mark);
@@ -341,6 +341,11 @@ fn emit_one_node(
                 .into_iter()
                 .map(|seg| PromptItem::Seg { seg })
                 .collect(),
+            request: node.request.model.clone().map(|model| LlmRequestSpec {
+                tools: None,
+                model: Some(model),
+                additional_body: None,
+            }),
             metadata,
         };
         Ok(EmittedNode {

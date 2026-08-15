@@ -94,25 +94,31 @@ fn compile_plan(fixture: &str) -> (GraphRecord, TraceRecord, Arc<dyn SegmentStor
     drop(rt);
 
     let plan = bundle
-        .plans
+        .programs
         .into_iter()
-        .find(|p| p.trace.id == TRACE_ID)
+        .find(|program| program.profiling.trace.id == TRACE_ID)
         .expect("selected trace present");
 
     let terminals: Vec<String> = plan
+        .profiling
         .graph
         .nodes
         .iter()
         .filter(|(_, n)| {
-            n.metadata
-                .get("terminal_for_user")
+            n.metadata()
+                .and_then(|metadata| metadata.get("terminal_for_user"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false)
         })
         .map(|(id, _)| id.clone())
         .collect();
 
-    (plan.graph, plan.trace, bundle.segments, terminals)
+    (
+        plan.profiling.graph,
+        plan.profiling.trace,
+        bundle.segments,
+        terminals,
+    )
 }
 
 // ---- mock plumbing (copied from graph_transport_graph.rs) ----

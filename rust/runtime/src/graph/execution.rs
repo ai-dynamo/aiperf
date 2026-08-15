@@ -3,7 +3,7 @@
 
 //! Whole-trace execution and placement boundaries.
 //!
-//! The coordinator submits one complete [`GraphTracePlan`] through
+//! The coordinator submits one complete [`GraphTraceProgram`] through
 //! [`TracePlacement`]. A backend may execute locally, place traces
 //! on thread-per-core workers, or serialize commands to remote workers. Node
 //! turns never cross this boundary: one selected worker owns every firing gate,
@@ -19,7 +19,7 @@ use crate::graph::context::TraceContext;
 use crate::graph::errors::TraceError;
 use crate::graph::executor::{ExecutorFlags, TraceExecutor};
 use crate::graph::materialize::PromptMaterializer;
-use crate::graph::model::GraphTracePlan;
+use crate::graph::model::GraphTraceProgram;
 use crate::graph::policy::{
     NodeDispatchPolicy, NodeFailurePolicy, NoopNodeDispatchPolicy, ResilientNodeFailurePolicy,
 };
@@ -29,13 +29,13 @@ use crate::graph::wire::WireMessage;
 
 /// Object-safe backend for one complete root trace.
 ///
-/// Remote implementations can serialize [`GraphTracePlan`] and return the
+/// Remote implementations can serialize [`GraphTraceProgram`] and return the
 /// terminal result without changing workload scheduling. Dense segment handles
 /// name an immutable catalog that the backend must provision before execution.
 #[async_trait(?Send)]
 pub trait TracePlacement {
     /// Execute one complete trace on one placement target.
-    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError>;
+    async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError>;
 
     /// Gracefully cancel every trace currently executing through this backend.
     ///
@@ -133,7 +133,11 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
 
 #[async_trait(?Send)]
 impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBackend<M> {
-    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+    async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+        if !program.is_static_graph_program() {
+            return Err(TraceError::UnsupportedDriver(program.driver.kind));
+        }
+        let plan = program.profiling;
         if self.cancelled.get() {
             return Err(local_cancellation(&plan.trace.id));
         }
@@ -220,8 +224,8 @@ mod tests {
 
     use super::*;
     use crate::graph::model::{
-        ChannelSpec, ChannelType, GraphRecord, LlmNode, ReducerName, START_NODE_ID, StaticEdge,
-        TraceRecord,
+        ChannelSpec, ChannelType, ExecutableGraphNode, GraphRecord, GraphTracePlan,
+        GraphTraceProgram, LlmNode, ReducerName, START_NODE_ID, StaticEdge, ToolNode, TraceRecord,
     };
     use crate::graph::policy::PrefillSlotNodePolicy;
     use crate::graph::sink::{EchoSink, GraphSink};
@@ -239,7 +243,7 @@ mod tests {
         }
     }
 
-    fn blocked_plan(id: &str) -> GraphTracePlan {
+    fn blocked_plan(id: &str) -> GraphTraceProgram {
         let mut graph = GraphRecord::default();
         graph.state.insert(
             "output".into(),
@@ -250,15 +254,16 @@ mod tests {
         );
         graph.nodes.insert(
             "blocked".into(),
-            LlmNode {
+            ExecutableGraphNode::Llm(LlmNode {
                 output: "output".into(),
                 streaming: true,
                 inputs: Vec::new(),
                 min_start_delay_us: None,
                 max_tokens: Some(1),
                 items: Vec::new(),
+                request: None,
                 metadata: BTreeMap::new(),
-            },
+            }),
         );
         graph.edges.push(StaticEdge {
             source: START_NODE_ID.into(),
@@ -268,7 +273,7 @@ mod tests {
             delay_after_predecessor_start_us: None,
             delay_after_predecessor_first_token_us: None,
         });
-        GraphTracePlan {
+        GraphTraceProgram::static_graph(GraphTracePlan {
             graph,
             trace: TraceRecord {
                 id: id.into(),
@@ -276,7 +281,7 @@ mod tests {
                 initial_state: BTreeMap::new(),
             },
             arrival_offset_ns: None,
-        }
+        })
     }
 
     #[test]
@@ -312,6 +317,45 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(error, TraceError::Cancelled(_)));
+        }));
+    }
+
+    #[test]
+    fn local_backend_refuses_tool_nodes_before_flat_or_inference_dispatch() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+            let clock: Rc<dyn Clock> = Rc::new(crate::clock::SimClock::new());
+            let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(EchoSink);
+            let backend =
+                LocalGraphTraceExecutionBackend::new(clock, Rc::new(EmptyMaterializer), sink);
+            let mut graph = GraphRecord::default();
+            graph.nodes.insert(
+                "tool".into(),
+                ExecutableGraphNode::Tool(ToolNode {
+                    output: "observation".into(),
+                    commands: vec!["pwd".into()],
+                    timeout_ns: None,
+                }),
+            );
+            let error = backend
+                .execute_trace(GraphTraceProgram::static_graph(GraphTracePlan {
+                    graph,
+                    trace: TraceRecord {
+                        id: "tool-trace".into(),
+                        graph_ref: None,
+                        initial_state: BTreeMap::new(),
+                    },
+                    arrival_offset_ns: None,
+                }))
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                TraceError::UnsupportedNode { ref node_id, kind: "tool" } if node_id == "tool"
+            ));
         }));
     }
 

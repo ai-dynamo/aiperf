@@ -1638,7 +1638,7 @@ impl fmt::Debug for PreparedDynosimGraphOperation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedDynosimGraphOperation")
-            .field("roots", &self.input.plans.len())
+            .field("roots", &self.input.programs.len())
             .field("model", &self.model)
             .field("artifact_target", &self.artifact_target)
             .finish_non_exhaustive()
@@ -2409,7 +2409,9 @@ mod tests {
         let factory: Box<dyn OfflineGraphRunFactory> = Box::new(move |clock, backend| {
             Ok(crate::graph::workload::GraphWorkload::new(
                 clock,
-                Rc::new(crate::graph::workload::VecGraphTraceSource::new([plan])),
+                Rc::new(crate::graph::workload::VecGraphTraceSource::new([
+                    crate::graph::model::GraphTraceProgram::static_graph(plan),
+                ])),
                 backend,
             ))
         });

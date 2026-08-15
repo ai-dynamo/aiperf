@@ -19,7 +19,7 @@ use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::graph::execution::LocalGraphTraceExecutionBackend;
 use aiperf_runtime::graph::input::{GraphInputConfig, compile_dag_jsonl_input};
 use aiperf_runtime::graph::materialize::SegmentItemsMaterializer;
-use aiperf_runtime::graph::model::{GraphRecord, TraceRecord};
+use aiperf_runtime::graph::model::{GraphRecord, GraphTraceProgram, TraceRecord};
 use aiperf_runtime::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, FailFastRunFailurePolicy,
 };
@@ -364,9 +364,9 @@ fn lowered_dataset_dag_dispatches_fanout_join_over_real_http() {
         .unwrap()
     });
     drop(runtime);
-    let plan = bundle.plans.into_iter().next().unwrap();
-    let trace = plan.trace;
-    let graph = Rc::new(plan.graph);
+    let program = bundle.programs.into_iter().next().unwrap();
+    let trace = program.profiling.trace;
+    let graph = Rc::new(program.profiling.graph);
     let materializer = Rc::new(SegmentItemsMaterializer::new(bundle.segments));
     let observer = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
@@ -404,15 +404,18 @@ fn graph_policy_cancels_real_http_after_send_without_failing_the_run() {
         "edges": [{"source": "START", "target": "n0"}]
     }))
     .unwrap();
-    let source: Rc<dyn GraphTraceSource> = Rc::new(VecGraphTraceSource::new([GraphTracePlan {
-        graph,
-        trace: TraceRecord {
-            id: "cancel-real".into(),
-            graph_ref: None,
-            initial_state: Default::default(),
-        },
-        arrival_offset_ns: None,
-    }]));
+    let source: Rc<dyn GraphTraceSource> =
+        Rc::new(VecGraphTraceSource::new([GraphTraceProgram::static_graph(
+            GraphTracePlan {
+                graph,
+                trace: TraceRecord {
+                    id: "cancel-real".into(),
+                    graph_ref: None,
+                    initial_state: Default::default(),
+                },
+                arrival_offset_ns: None,
+            },
+        )]));
     let observer = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
     let sink = Rc::new(TransportChatSink::new(

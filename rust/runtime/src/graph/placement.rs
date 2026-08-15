@@ -20,7 +20,7 @@ use tokio::task::{JoinSet, LocalSet};
 
 use crate::graph::errors::TraceError;
 use crate::graph::execution::TracePlacement;
-use crate::graph::model::GraphTracePlan;
+use crate::graph::model::GraphTraceProgram;
 
 /// Default number of complete trace commands buffered per placement worker.
 pub const DEFAULT_GRAPH_WORKER_QUEUE_CAPACITY: usize = 256;
@@ -140,9 +140,9 @@ impl ThreadPerCoreTracePlacement {
 
 #[async_trait(?Send)]
 impl TracePlacement for ThreadPerCoreTracePlacement {
-    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+    async fn execute_trace(&self, plan: GraphTraceProgram) -> Result<(), TraceError> {
         if self.cancelled.get() {
-            return Err(cancelled_trace(&plan.trace.id));
+            return Err(cancelled_trace(&plan.profiling.trace.id));
         }
         let worker_id = self.next_execution_worker().ok_or_else(|| {
             TraceError::Other("graph placement has no worker with positive prefill capacity".into())
@@ -298,7 +298,7 @@ impl LocalTracePlacement {
 
 #[async_trait(?Send)]
 impl TracePlacement for LocalTracePlacement {
-    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+    async fn execute_trace(&self, plan: GraphTraceProgram) -> Result<(), TraceError> {
         self.backend.execute_trace(plan).await
     }
 
@@ -313,7 +313,7 @@ impl TracePlacement for LocalTracePlacement {
 
 enum WorkerCommand {
     Execute {
-        plan: GraphTracePlan,
+        plan: GraphTraceProgram,
         result: oneshot::Sender<Result<(), TraceError>>,
     },
 }
@@ -417,7 +417,7 @@ fn reject_queued_commands(commands: &mut mpsc::Receiver<WorkerCommand>) {
 
 fn reject_command(command: WorkerCommand) {
     let WorkerCommand::Execute { plan, result } = command;
-    let _ = result.send(Err(cancelled_trace(&plan.trace.id)));
+    let _ = result.send(Err(cancelled_trace(&plan.profiling.trace.id)));
 }
 
 fn stop_workers(
@@ -454,7 +454,7 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
-    use crate::graph::model::{GraphRecord, TraceRecord};
+    use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
 
     struct RecordingFactory {
         placements: Arc<Mutex<Vec<(usize, String)>>>,
@@ -508,7 +508,7 @@ mod tests {
 
     #[async_trait(?Send)]
     impl TracePlacement for FanoutWorker {
-        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+        async fn execute_trace(&self, _plan: GraphTraceProgram) -> Result<(), TraceError> {
             Ok(())
         }
 
@@ -555,7 +555,7 @@ mod tests {
 
     #[async_trait(?Send)]
     impl TracePlacement for CancellableWorker {
-        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+        async fn execute_trace(&self, _plan: GraphTraceProgram) -> Result<(), TraceError> {
             self.state.started.store(true, Ordering::SeqCst);
             self.state.wake.notify_waiters();
             loop {
@@ -585,7 +585,7 @@ mod tests {
 
     #[async_trait(?Send)]
     impl TracePlacement for QueueCancellationWorker {
-        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+        async fn execute_trace(&self, _plan: GraphTraceProgram) -> Result<(), TraceError> {
             panic!("a command arriving after cancellation must never execute")
         }
 
@@ -597,11 +597,11 @@ mod tests {
 
     #[async_trait(?Send)]
     impl TracePlacement for RecordingWorker {
-        async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+        async fn execute_trace(&self, plan: GraphTraceProgram) -> Result<(), TraceError> {
             self.placements
                 .lock()
                 .unwrap()
-                .push((self.worker_id, plan.trace.id));
+                .push((self.worker_id, plan.profiling.trace.id));
             Ok(())
         }
 
@@ -614,8 +614,8 @@ mod tests {
         }
     }
 
-    fn plan(id: &str) -> GraphTracePlan {
-        GraphTracePlan {
+    fn plan(id: &str) -> GraphTraceProgram {
+        GraphTraceProgram::static_graph(GraphTracePlan {
             graph: GraphRecord::default(),
             trace: TraceRecord {
                 id: id.into(),
@@ -623,7 +623,7 @@ mod tests {
                 initial_state: BTreeMap::new(),
             },
             arrival_offset_ns: None,
-        }
+        })
     }
 
     #[test]

@@ -137,8 +137,12 @@ fn node_block_ids(node: &LlmNode) -> Vec<i64> {
 /// [`IdentitySource::HashIds`]: crate::dataset::analysis::prefix_cache::IdentitySource::HashIds
 pub fn analyzed_turns_from_graph_input(input: &GraphInputBundle) -> Vec<AnalyzedTurn> {
     let mut ordered: Vec<(u64, AnalyzedTurn)> = Vec::new();
-    for plan in &input.plans {
+    for program in &input.programs {
+        let plan = &program.profiling;
         for (order, node) in plan.graph.nodes.values().enumerate() {
+            let crate::graph::model::ExecutableGraphNode::Llm(node) = node else {
+                continue;
+            };
             let metadata = &node.metadata;
             let conversation_id = metadata
                 .get("conversation_id")
@@ -303,7 +307,10 @@ mod tests {
     use crate::dataset::{Handle, SegmentPool, SegmentStore};
     use crate::engine::records::{CapturedModelOutput, CapturedRecord};
     use crate::graph::input::{GraphInputBundle, GraphInputMetadata};
-    use crate::graph::model::{GraphRecord, GraphTracePlan, LlmNode, PromptItem, TraceRecord};
+    use crate::graph::model::{
+        ExecutableGraphNode, GraphRecord, GraphTracePlan, GraphTraceProgram, LlmNode, PromptItem,
+        TraceRecord,
+    };
     use crate::metrics_core::{Phase, RecordIngest, TokenCounts};
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -335,6 +342,7 @@ mod tests {
                     seg: Handle::new(*index),
                 })
                 .collect(),
+            request: None,
             metadata,
         }
     }
@@ -375,13 +383,19 @@ mod tests {
     fn bundle() -> GraphInputBundle {
         let mut nodes = BTreeMap::new();
         // Turn 1 reuses turn 0's leading handle (1) — a byte-identical prefix.
-        nodes.insert("n0".to_string(), llm_node("conv-a", 0, 64, 16, &[1, 2]));
-        nodes.insert("n1".to_string(), llm_node("conv-a", 1, 96, 16, &[1, 2, 3]));
+        nodes.insert(
+            "n0".to_string(),
+            ExecutableGraphNode::Llm(llm_node("conv-a", 0, 64, 16, &[1, 2])),
+        );
+        nodes.insert(
+            "n1".to_string(),
+            ExecutableGraphNode::Llm(llm_node("conv-a", 1, 96, 16, &[1, 2, 3])),
+        );
         let graph = GraphRecord {
             nodes,
             ..GraphRecord::default()
         };
-        let plans = vec![GraphTracePlan {
+        let programs = vec![GraphTraceProgram::static_graph(GraphTracePlan {
             graph,
             trace: TraceRecord {
                 id: "conv-a".into(),
@@ -389,9 +403,9 @@ mod tests {
                 initial_state: Default::default(),
             },
             arrival_offset_ns: None,
-        }];
+        })];
         GraphInputBundle {
-            plans,
+            programs,
             segments: Arc::new(SegmentPool::new().freeze()) as Arc<dyn SegmentStore>,
             metadata: GraphInputMetadata {
                 format: "dag_jsonl".into(),

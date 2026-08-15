@@ -68,55 +68,73 @@ fn main() {
     // two runs — or a sequential vs a within-trace-parallel build — that send the
     // byte-identical requests print the same digest.
     use aiperf_runtime::dataset::Payload;
-    use aiperf_runtime::graph::model::PromptItem;
+    use aiperf_runtime::graph::model::{ExecutableGraphNode, PromptItem};
     let mut hasher = blake3::Hasher::new();
-    for plan in &bundle.plans {
+    for program in &bundle.programs {
+        let plan = &program.profiling;
         hasher.update(plan.trace.id.as_bytes());
         for (node_id, node) in &plan.graph.nodes {
             hasher.update(node_id.as_bytes());
-            hasher.update(&[node.streaming as u8]);
-            hasher.update(&node.max_tokens.unwrap_or(0).to_le_bytes());
-            for item in &node.items {
-                if let PromptItem::Seg { seg } = item
-                    && let Some(segment) = bundle.segments.segment(*seg)
-                {
-                    match &segment.payload {
-                        Payload::Message { role, wire, .. } => {
-                            hasher.update(role.as_str().as_bytes());
-                            hasher.update(wire);
-                        }
-                        Payload::Text { bytes, .. } => {
-                            hasher.update(bytes);
-                        }
-                        Payload::Raw { wire } => {
-                            hasher.update(wire);
-                        }
-                        Payload::TokenIds { token_ids } => {
-                            for token in token_ids.iter() {
-                                hasher.update(&token.to_le_bytes());
-                            }
-                        }
-                        Payload::Media { bytes, .. } => {
-                            hasher.update(bytes);
-                        }
-                        Payload::TraceHashIds { hash_ids, .. } => {
-                            for id in hash_ids.iter() {
-                                hasher.update(&id.to_le_bytes());
+            match node {
+                ExecutableGraphNode::Llm(node) => {
+                    hasher.update(b"llm");
+                    hasher.update(&[node.streaming as u8]);
+                    hasher.update(&node.max_tokens.unwrap_or(0).to_le_bytes());
+                    for item in &node.items {
+                        if let PromptItem::Seg { seg } = item
+                            && let Some(segment) = bundle.segments.segment(*seg)
+                        {
+                            match &segment.payload {
+                                Payload::Message { role, wire, .. } => {
+                                    hasher.update(role.as_str().as_bytes());
+                                    hasher.update(wire);
+                                }
+                                Payload::Text { bytes, .. } => {
+                                    hasher.update(bytes);
+                                }
+                                Payload::Raw { wire } => {
+                                    hasher.update(wire);
+                                }
+                                Payload::TokenIds { token_ids } => {
+                                    for token in token_ids.iter() {
+                                        hasher.update(&token.to_le_bytes());
+                                    }
+                                }
+                                Payload::Media { bytes, .. } => {
+                                    hasher.update(bytes);
+                                }
+                                Payload::TraceHashIds { hash_ids, .. } => {
+                                    for id in hash_ids.iter() {
+                                        hasher.update(&id.to_le_bytes());
+                                    }
+                                }
                             }
                         }
                     }
+                }
+                ExecutableGraphNode::Tool(node) => {
+                    hasher.update(b"tool");
+                    hasher.update(node.output.as_bytes());
+                    for command in &node.commands {
+                        hasher.update(command.as_bytes());
+                    }
+                    hasher.update(&node.timeout_ns.unwrap_or(0).to_le_bytes());
                 }
             }
         }
     }
     let digest = hasher.finalize();
 
-    let node_count: usize = bundle.plans.iter().map(|p| p.graph.nodes.len()).sum();
+    let node_count: usize = bundle
+        .programs
+        .iter()
+        .map(|program| program.profiling.graph.total_node_count())
+        .sum();
     println!("content_digest={}", digest.to_hex());
     println!(
         "weka full corpus: {plans} traces, {nodes} nodes, {segs} segments in {elapsed:.3?} \
          ({threads} rayon threads)",
-        plans = bundle.plans.len(),
+        plans = bundle.programs.len(),
         nodes = node_count,
         segs = bundle.segments.len(),
     );
