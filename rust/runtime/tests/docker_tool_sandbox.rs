@@ -1,0 +1,300 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Contract coverage for the Docker recorded-agent tool sandbox.
+
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, VecDeque};
+use std::ffi::OsString;
+use std::future::pending;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use async_trait::async_trait;
+use bytes::{Bytes, BytesMut};
+
+use aiperf_runtime::clock::RealClock;
+use aiperf_runtime::graph::driver::TraceIdentity;
+use aiperf_runtime::graph::replay::ReplayRunIdentity;
+use aiperf_runtime::graph::tools::{
+    CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerRuntime,
+    DockerSessionSandbox, EnvironmentRecipe, FramedCommandIo, ResolvedTraceEnvironment,
+    ToolSandbox, ToolSandboxError, WorkspaceSpec, cleanup_recorded_agent_containers,
+    preflight_docker_sandbox,
+};
+use aiperf_runtime::rng::RngRoot;
+
+struct FakeIo {
+    output: VecDeque<Bytes>,
+}
+
+#[async_trait(?Send)]
+impl FramedCommandIo for FakeIo {
+    async fn read(&mut self, output: &mut BytesMut) -> Result<usize, ToolSandboxError> {
+        let chunk = match self.output.pop_front() {
+            Some(chunk) => chunk,
+            None => pending().await,
+        };
+        let count = chunk.len();
+        output.extend_from_slice(&chunk);
+        Ok(count)
+    }
+
+    async fn close(&mut self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+}
+
+struct FakeRuntime {
+    created: RefCell<Vec<ContainerCreateSpec>>,
+    exec_argv: RefCell<Vec<Vec<OsString>>>,
+    remove_count: Cell<u8>,
+    next_id: Cell<u8>,
+    outputs: RefCell<VecDeque<Vec<Bytes>>>,
+    inspected_images: RefCell<Vec<String>>,
+    label_queries: RefCell<Vec<(String, String)>>,
+    listed: RefCell<Vec<ContainerId>>,
+}
+
+impl FakeRuntime {
+    fn new(outputs: impl IntoIterator<Item = Vec<Bytes>>) -> Self {
+        Self {
+            created: RefCell::new(Vec::new()),
+            exec_argv: RefCell::new(Vec::new()),
+            remove_count: Cell::new(0),
+            next_id: Cell::new(0),
+            outputs: RefCell::new(outputs.into_iter().collect()),
+            inspected_images: RefCell::new(Vec::new()),
+            label_queries: RefCell::new(Vec::new()),
+            listed: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn with_listed(self, containers: impl IntoIterator<Item = ContainerId>) -> Self {
+        self.listed.replace(containers.into_iter().collect());
+        self
+    }
+}
+
+#[async_trait(?Send)]
+impl ContainerRuntime for FakeRuntime {
+    async fn inspect_image(&self, image: &str) -> Result<(), ToolSandboxError> {
+        self.inspected_images.borrow_mut().push(image.to_string());
+        Ok(())
+    }
+
+    async fn create_start(
+        &self,
+        spec: &ContainerCreateSpec,
+    ) -> Result<ContainerId, ToolSandboxError> {
+        self.created.borrow_mut().push(spec.clone());
+        let sequence = self.next_id.get();
+        self.next_id.set(sequence.saturating_add(1));
+        Ok(ContainerId::new(format!("container-{sequence}")))
+    }
+
+    async fn open_exec(
+        &self,
+        _id: &ContainerId,
+        argv: &[OsString],
+    ) -> Result<Box<dyn FramedCommandIo>, ToolSandboxError> {
+        self.exec_argv.borrow_mut().push(argv.to_vec());
+        let mut output = self
+            .outputs
+            .borrow_mut()
+            .pop_front()
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        if !output.is_empty() {
+            let script = argv
+                .last()
+                .expect("Docker exec command includes the framed script")
+                .to_string_lossy();
+            let marker = script
+                .split("aiperf-terminal:")
+                .nth(1)
+                .and_then(|tail| tail.split(":%d\\0").next())
+                .expect("framed script includes one terminal marker");
+            output.extend_from_slice(b"\0aiperf-terminal:");
+            output.extend_from_slice(marker.as_bytes());
+            output.extend_from_slice(b":0\0");
+        }
+        Ok(Box::new(FakeIo {
+            output: (!output.is_empty())
+                .then(|| VecDeque::from([Bytes::from(output)]))
+                .unwrap_or_default(),
+        }))
+    }
+
+    async fn force_remove(
+        &self,
+        _id: &ContainerId,
+        _timeout_ns: u64,
+    ) -> Result<(), ToolSandboxError> {
+        self.remove_count
+            .set(self.remove_count.get().saturating_add(1));
+        Ok(())
+    }
+
+    async fn list_by_label(
+        &self,
+        key: &str,
+        value: &str,
+    ) -> Result<Vec<ContainerId>, ToolSandboxError> {
+        self.label_queries
+            .borrow_mut()
+            .push((key.to_string(), value.to_string()));
+        Ok(self.listed.borrow().clone())
+    }
+}
+
+fn pinch_environment() -> ResolvedTraceEnvironment {
+    ResolvedTraceEnvironment {
+        kind: EnvironmentRecipe::PinchBench,
+        image: "aiperf-recorded-agent-pinchbench:v1".into(),
+        workspace: WorkspaceSpec {
+            files: Vec::new(),
+            workdir: "/workspace".into(),
+            interpreter: vec!["bash".into(), "-lc".into()],
+            mount_workspace: true,
+            command_timeout_ns: 30_000_000_000,
+        },
+    }
+}
+
+fn trace() -> TraceIdentity {
+    TraceIdentity {
+        run_id: "run".into(),
+        trajectory_id: "trajectory".into(),
+        trace_id: "trace / untrusted".into(),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn docker_uses_recipe_argv_network_none_and_exact_run_label() {
+    // This catches a Docker backend that weakens isolation, mounts a Pinch
+    // workspace somewhere other than its recipe path, or derives cleanup scope
+    // from an untrusted trace id rather than the controller-minted run identity.
+    let runtime = Rc::new(FakeRuntime::new([vec![Bytes::from_static(b"result")]]));
+    let identity = ReplayRunIdentity::mint(RngRoot::new(Some(17)), "  replay-run-17  ");
+    let sandbox = DockerSessionSandbox::new(
+        pinch_environment(),
+        Some(PathBuf::from("/tmp/pinch-workspace")),
+        trace(),
+        identity,
+        RealClock::new(),
+        runtime.clone(),
+        4096,
+    )
+    .expect("valid Pinch recipe creates a Docker sandbox");
+
+    sandbox
+        .open()
+        .await
+        .expect("container starts before timing");
+    let result = sandbox
+        .run("printf result", None)
+        .await
+        .expect("framed docker exec completes");
+
+    assert_eq!(result.output, Bytes::from_static(b"result"));
+    let created = runtime.created.borrow();
+    assert_eq!(created.len(), 1);
+    assert!(created[0].has_network_disabled);
+    assert_eq!(created[0].workdir, "/workspace");
+    assert_eq!(created[0].image, "aiperf-recorded-agent-pinchbench:v1");
+    assert_eq!(created[0].mounts.len(), 1);
+    assert_eq!(
+        created[0].mounts[0].host_path,
+        PathBuf::from("/tmp/pinch-workspace")
+    );
+    assert_eq!(created[0].mounts[0].container_path, "/workspace");
+    assert_eq!(
+        created[0].labels,
+        BTreeMap::from([(
+            "aiperf.recorded-agent.run-label".to_string(),
+            "replay-run-17".to_string(),
+        )])
+    );
+    assert!(
+        created[0]
+            .name
+            .starts_with("aiperf-recorded-agent-trace-untrusted-")
+    );
+    let argv = runtime.exec_argv.borrow();
+    assert_eq!(argv.len(), 1);
+    assert_eq!(argv[0][0], OsString::from("bash"));
+    assert_eq!(argv[0][1], OsString::from("-lc"));
+    assert!(argv[0][2].to_string_lossy().contains("printf result"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn timeout_recycles_container_and_close_force_removes_once() {
+    // This catches a timeout that leaves descendants in the old container or a
+    // non-idempotent close that widens cleanup beyond the active container.
+    let runtime = Rc::new(FakeRuntime::new([
+        Vec::new(),
+        vec![Bytes::from_static(b"next")],
+    ]));
+    let sandbox = DockerSessionSandbox::new(
+        pinch_environment(),
+        Some(PathBuf::from("/tmp/pinch-workspace")),
+        trace(),
+        ReplayRunIdentity::mint(RngRoot::new(Some(18)), "replay-run-18"),
+        RealClock::new(),
+        runtime.clone(),
+        4096,
+    )
+    .expect("valid Pinch recipe creates a Docker sandbox");
+
+    sandbox.open().await.expect("first container starts");
+    let timed_out = sandbox
+        .run("sleep forever", Some(1))
+        .await
+        .expect("timeout recovers the sandbox");
+    assert!(timed_out.is_timed_out);
+    let next = sandbox
+        .run("printf next", None)
+        .await
+        .expect("recycled container accepts next command");
+    assert_eq!(next.output, Bytes::from_static(b"next"));
+    sandbox
+        .close()
+        .await
+        .expect("close removes active container");
+    sandbox.close().await.expect("second close is idempotent");
+
+    assert_eq!(runtime.created.borrow().len(), 2);
+    assert_eq!(runtime.remove_count.get(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn preflight_and_restart_cleanup_scope_docker_to_the_exact_run_label() {
+    // This catches startup that skips image validation or restart cleanup that
+    // filters a broad prefix and could remove another replay run's container.
+    let runtime =
+        Rc::new(FakeRuntime::new([]).with_listed([ContainerId::new("orphaned-recorded-agent")]));
+    let identity = ReplayRunIdentity::mint(RngRoot::new(Some(19)), "  replay-run-19  ");
+
+    preflight_docker_sandbox(runtime.as_ref(), &pinch_environment())
+        .await
+        .expect("Docker preflight inspects the resolved recipe image");
+    cleanup_recorded_agent_containers(runtime.as_ref(), &identity)
+        .await
+        .expect("label-scoped restart cleanup removes matching containers");
+
+    assert_eq!(
+        runtime.inspected_images.borrow().as_slice(),
+        ["aiperf-recorded-agent-pinchbench:v1"]
+    );
+    assert_eq!(
+        runtime.label_queries.borrow().as_slice(),
+        [(
+            CONTAINER_RUN_LABEL_KEY.to_string(),
+            "replay-run-19".to_string()
+        )]
+    );
+    assert_eq!(runtime.remove_count.get(), 1);
+}

@@ -4,6 +4,7 @@
 //! Tool-dispatch contracts used by recorded-agent trace drivers.
 
 pub mod dispatch;
+pub mod docker;
 pub mod environment;
 pub mod local;
 pub mod policy;
@@ -18,6 +19,11 @@ pub use dispatch::{
     InMemoryToolDispatcherFactory, SandboxCreateContext, ToolDispatchContext, ToolDispatchError,
     ToolDispatchRequest, ToolDispatchResult, ToolDispatcher, ToolDispatcherFactory, ToolSandbox,
     ToolSandboxError, ToolSandboxFactory, TraceOpenContext, close_trace_preserving_primary,
+};
+pub use docker::{
+    CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerMount, ContainerRuntime,
+    DockerCliRuntime, DockerSessionSandbox, FramedCommandIo, cleanup_recorded_agent_containers,
+    preflight_docker_sandbox,
 };
 pub use environment::{
     EnvironmentRecipe, ResolvedTraceEnvironment, ToolSandboxCapabilities, TraceEnvironmentError,
