@@ -76,10 +76,7 @@ pub struct GuardedToolCommandPolicy;
 impl ToolCommandPolicy for GuardedToolCommandPolicy {
     fn evaluate(&self, command: &str) -> Result<CommandDisposition, TraceEnvironmentError> {
         for segment in top_level_segments(command) {
-            let tokens = shell_tokens(segment.trim());
-            if starts_installer(&tokens)
-                || has_shell_control_construct(segment) && contains_installer_token(&tokens)
-            {
+            if segment_starts_installer(segment) {
                 return Ok(CommandDisposition::Synthetic(
                     ToolCommandResult::installer_rejected(),
                 ));
@@ -147,7 +144,12 @@ fn shell_tokens(segment: &str) -> Vec<String> {
     let mut token = String::new();
     let mut quote = None;
     let mut escaped = false;
-    for character in segment.chars() {
+    let characters = segment.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut expansion_depth = 0usize;
+    let mut is_backtick = false;
+    while index < characters.len() {
+        let character = characters[index];
         if escaped {
             token.push(character);
             escaped = false;
@@ -162,13 +164,33 @@ fn shell_tokens(segment: &str) -> Vec<String> {
                 token.push(character);
                 quote
             };
-        } else if character.is_whitespace() && quote.is_none() {
+        } else if quote != Some('\'') && character == '`' {
+            token.push(character);
+            is_backtick = !is_backtick;
+        } else if quote != Some('\'') && character == '$' && characters.get(index + 1) == Some(&'(')
+        {
+            token.push('$');
+            token.push('(');
+            expansion_depth = expansion_depth.saturating_add(1);
+            index += 1;
+        } else if expansion_depth > 0 && character == '(' {
+            token.push(character);
+            expansion_depth = expansion_depth.saturating_add(1);
+        } else if expansion_depth > 0 && character == ')' {
+            token.push(character);
+            expansion_depth -= 1;
+        } else if character.is_whitespace()
+            && quote.is_none()
+            && expansion_depth == 0
+            && !is_backtick
+        {
             if !token.is_empty() {
                 tokens.push(std::mem::take(&mut token));
             }
         } else {
             token.push(character);
         }
+        index += 1;
     }
     if escaped {
         token.push('\\');
@@ -180,68 +202,113 @@ fn shell_tokens(segment: &str) -> Vec<String> {
 }
 
 fn starts_installer(tokens: &[String]) -> bool {
-    let mut tokens = tokens;
-    while tokens.first().is_some_and(|token| is_assignment(token)) {
-        tokens = &tokens[1..];
-    }
-    while matches!(tokens.first().map(String::as_str), Some("sudo" | "env")) {
-        tokens = &tokens[1..];
-        while tokens
-            .first()
-            .is_some_and(|token| is_assignment(token) || token.starts_with('-'))
-        {
-            tokens = &tokens[1..];
-        }
-    }
-    while matches!(
-        tokens.first().map(String::as_str),
-        Some("then" | "do" | "else" | "elif")
-    ) {
-        tokens = &tokens[1..];
-    }
-    matches!(
-        tokens.first().map(String::as_str),
-        Some("pip" | "pip3" | "conda" | "mamba" | "apt" | "apt-get" | "yum" | "dnf" | "apk")
-    ) || matches!(tokens, [python, flag, module, ..]
-        if matches!(python.as_str(), "python" | "python3")
+    let tokens = executable_tokens(tokens);
+    let Some(command) = tokens.first() else {
+        return false;
+    };
+    let command = strip_shell_expansions(command);
+    is_installer_command(&command, tokens[0].as_str())
+        || matches!(tokens, [python, flag, module, ..]
+        if matches!(strip_shell_expansions(python).as_str(), "python" | "python3")
             && flag == "-m" && module == "pip")
 }
 
-fn has_shell_control_construct(segment: &str) -> bool {
-    segment.contains("$(")
-        || segment.contains('`')
-        || segment.contains('{')
-        || segment.contains('}')
-        || segment.contains('(')
-        || segment.contains(')')
-        || shell_tokens(segment).iter().any(|token| {
-            matches!(
-                token.as_str(),
-                "if" | "then" | "fi" | "for" | "while" | "until" | "do" | "done" | "case" | "esac"
-            )
-        })
+fn is_installer_command(command: &str, source_word: &str) -> bool {
+    const INSTALLERS: &[&str] = &[
+        "pip", "pip3", "conda", "mamba", "apt", "apt-get", "yum", "dnf", "apk",
+    ];
+    INSTALLERS.contains(&command)
+        || has_shell_expansion(source_word)
+            && INSTALLERS
+                .iter()
+                .any(|installer| is_subsequence(command, installer))
 }
 
-fn contains_installer_token(tokens: &[String]) -> bool {
-    let tokens =
-        tokens
+fn has_shell_expansion(word: &str) -> bool {
+    word.contains("$(") || word.contains("${") || word.contains('$') || word.contains('`')
+}
+
+fn is_subsequence(candidate: &str, target: &str) -> bool {
+    let mut target = target.chars();
+    candidate
+        .chars()
+        .all(|character| target.any(|target| target == character))
+}
+
+fn executable_tokens(mut tokens: &[String]) -> &[String] {
+    loop {
+        while tokens.first().is_some_and(|token| is_assignment(token)) {
+            tokens = &tokens[1..];
+        }
+        if matches!(
+            tokens.first().map(String::as_str),
+            Some("then" | "do" | "else" | "elif")
+        ) {
+            tokens = &tokens[1..];
+            continue;
+        }
+        if matches!(tokens.first().map(String::as_str), Some("sudo" | "env")) {
+            tokens = &tokens[1..];
+            while tokens
+                .first()
+                .is_some_and(|token| is_assignment(token) || token.starts_with('-'))
+            {
+                tokens = &tokens[1..];
+            }
+            continue;
+        }
+        return tokens;
+    }
+}
+
+fn segment_starts_installer(segment: &str) -> bool {
+    starts_installer(&shell_tokens(segment.trim()))
+        || nested_commands(segment)
             .iter()
-            .map(|token| {
-                strip_shell_expansions(token.trim_matches(|character| {
-                    matches!(character, '$' | '(' | ')' | '{' | '}' | ';')
-                }))
-            })
-            .collect::<Vec<_>>();
-    tokens.iter().any(|token| {
-        matches!(
-            token.as_str(),
-            "pip" | "pip3" | "conda" | "mamba" | "apt" | "apt-get" | "yum" | "dnf" | "apk"
-        )
-    }) || tokens.windows(3).any(|window| {
-        matches!(window, [python, flag, module]
-            if matches!(python.as_str(), "python" | "python3")
-                && flag == "-m" && module == "pip")
-    })
+            .flat_map(|command| top_level_segments(command))
+            .any(segment_starts_installer)
+}
+
+fn nested_commands(segment: &str) -> Vec<String> {
+    let characters = segment.chars().collect::<Vec<_>>();
+    let mut commands = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        if escaped {
+            escaped = false;
+        } else if character == '\\' && quote != Some('\'') {
+            escaped = true;
+        } else if matches!(character, '\'' | '\"') {
+            quote = if quote == Some(character) {
+                None
+            } else if quote.is_none() {
+                Some(character)
+            } else {
+                quote
+            };
+        } else if quote != Some('\'') && character == '$' && characters.get(index + 1) == Some(&'(')
+        {
+            let end = skip_balanced_expansion(&characters, index + 2, '(', ')');
+            if end > index + 2 {
+                commands.push(characters[index + 2..end - 1].iter().collect());
+            }
+            index = end.saturating_sub(1);
+        } else if quote != Some('\'') && character == '`' {
+            let start = index + 1;
+            index += 1;
+            while index < characters.len() && characters[index] != '`' {
+                index += 1;
+            }
+            if index < characters.len() {
+                commands.push(characters[start..index].iter().collect());
+            }
+        }
+        index += 1;
+    }
+    commands
 }
 
 fn strip_shell_expansions(token: &str) -> String {

@@ -103,6 +103,29 @@ fn guarded_policy_blocks_an_installer_spliced_by_command_substitution() {
 }
 
 #[test]
+fn guarded_policy_blocks_an_installer_with_whitespace_in_command_substitution() {
+    // This catches splitting a command substitution into arguments before its
+    // expanded bytes are joined into the executable command word by Bash.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("$(printf a)pt-get install package")
+        .expect("policy keeps command substitutions in their command word");
+    let CommandDisposition::Synthetic(result) = disposition else {
+        panic!("substitution-built installer must become a synthetic result: {disposition:?}");
+    };
+    assert_eq!(result.exit_code, 127);
+}
+
+#[test]
+fn guarded_policy_allows_an_installer_like_argument_to_a_safe_command() {
+    // This catches scanning every argument instead of just the executable
+    // command position; the substitution runs `true`, not an installer.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("echo a$(true)pt-get")
+        .expect("policy parses a safe command with an expanded argument");
+    assert_eq!(disposition, CommandDisposition::Execute);
+}
+
+#[test]
 fn pinch_recipe_refuses_a_sandbox_without_workspace_materialization() {
     // This catches preflight that provisions an empty Pinch workspace on a
     // backend which cannot stage the task's digest-addressed fixture files.
