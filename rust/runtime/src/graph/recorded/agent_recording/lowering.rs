@@ -3,11 +3,10 @@
 
 //! Pure lowering from validated recorded-agent DTOs into executable Graph-IR.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
 use serde_json::value::RawValue;
@@ -15,8 +14,8 @@ use serde_json::{Map, Value};
 
 use crate::dataset::SegmentPool;
 use crate::graph::driver::{ReplayTraceMetadata, TraceDriverSpec};
-use crate::graph::input::{GraphInputBundle, GraphInputMetadata};
-use crate::graph::materialize::validate_additional_body;
+use crate::graph::input::{GraphInputBundle, GraphInputMetadata, GraphInputWarning};
+use crate::graph::materialize::{decode_additional_body_wire, validate_additional_body};
 use crate::graph::model::{
     ChannelSpec, ChannelType, END_NODE_ID, ExecutableGraphNode, GraphRecord, GraphTracePlan,
     GraphTraceProgram, LlmNode, LlmRequestSpec, PromptItem, ReducerName, START_NODE_ID, StaticEdge,
@@ -48,6 +47,8 @@ pub struct ReplayRequestProfile {
     pub is_standard_scenario: bool,
     /// Non-owned request fields selected by profile resolution.
     pub additional_body: Map<String, Value>,
+    /// Non-fatal profile facts retained by pure lowering for the adapter boundary.
+    pub warning_facts: Vec<GraphInputWarning>,
 }
 
 /// Resolve typed request policy without reading recordings or external state.
@@ -68,7 +69,6 @@ pub struct BuiltinReplayRequestProfileResolver {
     use_recorded_model: bool,
     use_recorded_sampling: bool,
     is_standard_scenario: bool,
-    unknown_adapter_warning_emitted: Arc<AtomicBool>,
 }
 
 impl Default for BuiltinReplayRequestProfileResolver {
@@ -80,7 +80,6 @@ impl Default for BuiltinReplayRequestProfileResolver {
             use_recorded_model: false,
             use_recorded_sampling: false,
             is_standard_scenario: false,
-            unknown_adapter_warning_emitted: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -108,7 +107,6 @@ impl BuiltinReplayRequestProfileResolver {
             use_recorded_model,
             use_recorded_sampling,
             is_standard_scenario,
-            unknown_adapter_warning_emitted: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -119,6 +117,7 @@ impl ReplayRequestProfileResolver for BuiltinReplayRequestProfileResolver {
         task: &ReplayTaskIdentity,
     ) -> Result<ReplayRequestProfile, RecordedAgentLoweringError> {
         let mut additional_body = Map::new();
+        let mut warning_facts = Vec::new();
         match task.adapter.as_str() {
             "swebench" => {
                 additional_body.insert("temperature".into(), Value::from(0.7));
@@ -129,12 +128,10 @@ impl ReplayRequestProfileResolver for BuiltinReplayRequestProfileResolver {
             }
             "pinchbench" => {}
             adapter => {
-                if !self
-                    .unknown_adapter_warning_emitted
-                    .swap(true, Ordering::Relaxed)
-                {
-                    tracing::warn!(adapter, task_id = %task.task_id, "recorded-agent task has no inferred request family profile");
-                }
+                warning_facts.push(GraphInputWarning::new(
+                    "agent_recording_unknown_adapter",
+                    BTreeMap::from([("adapter".into(), adapter.into())]),
+                ));
             }
         }
         Ok(ReplayRequestProfile {
@@ -146,6 +143,7 @@ impl ReplayRequestProfileResolver for BuiltinReplayRequestProfileResolver {
             use_recorded_sampling: self.use_recorded_sampling,
             is_standard_scenario: self.is_standard_scenario,
             additional_body,
+            warning_facts,
         })
     }
 }
@@ -181,8 +179,16 @@ pub fn lower_recorded_agent_corpus(
     pool: &mut SegmentPool,
 ) -> Result<GraphInputBundle, RecordedAgentLoweringError> {
     let mut programs = Vec::with_capacity(corpus.traces.len());
+    let mut warning_facts = BTreeSet::new();
     for (ordinal, trace) in corpus.traces.iter().enumerate() {
-        programs.push(lower_trace(trace, ordinal, corpus, resolver, pool)?);
+        programs.push(lower_trace(
+            trace,
+            ordinal,
+            corpus,
+            resolver,
+            pool,
+            &mut warning_facts,
+        )?);
     }
     let metadata = GraphInputMetadata {
         format: "agent_recording".into(),
@@ -191,6 +197,7 @@ pub fn lower_recorded_agent_corpus(
             .iter()
             .map(|program| program.profiling.graph.llm_node_count())
             .sum(),
+        warning_facts: warning_facts.into_iter().collect(),
     };
     Ok(GraphInputBundle {
         programs,
@@ -205,6 +212,7 @@ fn lower_trace(
     corpus: &ValidatedRecordedAgentCorpus,
     resolver: &dyn ReplayRequestProfileResolver,
     pool: &mut SegmentPool,
+    warning_facts: &mut BTreeSet<GraphInputWarning>,
 ) -> Result<GraphTraceProgram, RecordedAgentLoweringError> {
     let identity = trace
         .identity
@@ -221,6 +229,7 @@ fn lower_trace(
             primary_role: None,
         });
     let profile = resolver.resolve(&identity)?;
+    warning_facts.extend(profile.warning_facts.iter().cloned());
     if profile.fallback_max_tokens == 0 {
         return Err(trace_error(
             trace,
@@ -233,7 +242,14 @@ fn lower_trace(
     let manifest_extra = corpus
         .manifest
         .as_ref()
-        .map(|manifest| &manifest.defaults.extra_request_body);
+        .map(|manifest| {
+            let raw = manifest.defaults.extra_request_body.as_ref();
+            let fields =
+                decode_additional_body_wire(raw.get().as_bytes(), "manifest extra_request_body")
+                    .map_err(|error| RecordedAgentLoweringError(error.to_string()))?;
+            Ok::<_, RecordedAgentLoweringError>(ValidatedRawRequestBody { raw, fields })
+        })
+        .transpose()?;
     let fallback_max_tokens = corpus
         .manifest
         .as_ref()
@@ -247,11 +263,6 @@ fn lower_trace(
             )
         })?
         .unwrap_or(profile.fallback_max_tokens);
-    if let Some(extra) = manifest_extra {
-        validate_additional_body(extra, "manifest extra_request_body")
-            .map_err(|error| RecordedAgentLoweringError(error.to_string()))?;
-    }
-
     let mut graph = GraphRecord::default();
     let mut previous_llm: Option<RecordedLlm> = None;
     let mut previous_node: Option<String> = None;
@@ -318,7 +329,7 @@ fn lower_trace(
             event,
             messages,
             &profile,
-            manifest_extra,
+            manifest_extra.as_ref(),
             fallback_max_tokens,
             pool,
         )?;
@@ -389,12 +400,17 @@ struct RecordedLlm<'a> {
     event: &'a RecordedAgentEvent,
 }
 
+struct ValidatedRawRequestBody<'a> {
+    raw: &'a RawValue,
+    fields: Map<String, Value>,
+}
+
 fn lower_llm_node(
     trace: &ValidatedRecordedAgentTrace,
     event: &RecordedAgentEvent,
     messages: &[Box<RawValue>],
     profile: &ReplayRequestProfile,
-    manifest_extra: Option<&Map<String, Value>>,
+    manifest_extra: Option<&ValidatedRawRequestBody<'_>>,
     fallback_max_tokens: usize,
     pool: &mut SegmentPool,
 ) -> Result<LlmNode, RecordedAgentLoweringError> {
@@ -508,7 +524,7 @@ fn intern_tools(
 fn request_body(
     event: &RecordedAgentEvent,
     profile: &ReplayRequestProfile,
-    manifest_extra: Option<&Map<String, Value>>,
+    manifest_extra: Option<&ValidatedRawRequestBody<'_>>,
 ) -> Result<Option<Bytes>, RecordedAgentLoweringError> {
     let request = event
         .provider_request
@@ -523,8 +539,12 @@ fn request_body(
             fields.insert("top_p".into(), Value::from(top_p));
         }
     }
-    if let Some(extra) = manifest_extra {
-        fields.extend(extra.clone());
+    if let Some(extra) = manifest_extra.filter(|extra| !extra.fields.is_empty()) {
+        fields.retain(|key, _| !extra.fields.contains_key(key));
+        if fields.is_empty() {
+            return Ok(Some(Bytes::copy_from_slice(extra.raw.get().as_bytes())));
+        }
+        return compose_request_body(fields, extra.raw);
     }
     validate_additional_body(&fields, "lowered additional request body")
         .map_err(|error| RecordedAgentLoweringError(error.to_string()))?;
@@ -535,6 +555,34 @@ fn request_body(
                 .map_err(Into::into)
         })
         .transpose()
+}
+
+fn compose_request_body(
+    fields: Map<String, Value>,
+    raw_extra: &RawValue,
+) -> Result<Option<Bytes>, RecordedAgentLoweringError> {
+    validate_additional_body(&fields, "lowered additional request body")
+        .map_err(|error| RecordedAgentLoweringError(error.to_string()))?;
+    let generated = serde_json::to_vec(&fields)?;
+    let raw = raw_extra.get().as_bytes();
+    let start = raw.iter().position(|byte| *byte == b'{').ok_or_else(|| {
+        RecordedAgentLoweringError("manifest extra_request_body must be a JSON object".into())
+    })?;
+    let end = raw.iter().rposition(|byte| *byte == b'}').ok_or_else(|| {
+        RecordedAgentLoweringError("manifest extra_request_body must be a JSON object".into())
+    })?;
+    if start >= end || generated.len() < 2 {
+        return Err(RecordedAgentLoweringError(
+            "manifest extra_request_body must be a non-empty JSON object".into(),
+        ));
+    }
+    let mut wire = Vec::with_capacity(generated.len() + raw.len() + 1);
+    wire.push(b'{');
+    wire.extend_from_slice(&generated[1..generated.len() - 1]);
+    wire.push(b',');
+    wire.extend_from_slice(&raw[start + 1..end]);
+    wire.push(b'}');
+    Ok(Some(Bytes::from(wire)))
 }
 
 fn add_tool_node(graph: &mut GraphRecord, node_id: &str, commands: Vec<String>) {

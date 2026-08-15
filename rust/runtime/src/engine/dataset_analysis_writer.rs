@@ -411,6 +411,7 @@ mod tests {
                 format: "dag_jsonl".into(),
                 root_count: 1,
                 node_count: 2,
+                warning_facts: Vec::new(),
             },
         }
     }

@@ -42,8 +42,8 @@ pub struct ReplayDefaults {
     pub replay_max_tokens_from_recording: bool,
     /// Extra generation-cap margin.
     pub replay_max_tokens_margin: u64,
-    /// Extra request-body fields.
-    pub extra_request_body: Map<String, Value>,
+    /// Exact extra request-body object wire.
+    pub extra_request_body: Box<RawValue>,
     /// Whether profiling requests isolate cross-run cache state.
     pub cross_run_cache_isolation: bool,
     /// Whether a trace-local warmup is enabled.

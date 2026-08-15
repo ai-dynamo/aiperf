@@ -3,7 +3,7 @@
 
 //! Canonical direct authored-workload compilation for Graph-IR.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
@@ -40,6 +40,27 @@ pub struct GraphInputMetadata {
     pub root_count: usize,
     /// Total nodes across root-expanded plans.
     pub node_count: usize,
+    /// Deterministic non-fatal facts produced while lowering this input.
+    pub warning_facts: Vec<GraphInputWarning>,
+}
+
+/// One structured non-fatal fact emitted by a graph-input adapter boundary.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GraphInputWarning {
+    /// Stable machine-readable warning code.
+    pub code: String,
+    /// Deterministic named warning context.
+    pub context: BTreeMap<String, String>,
+}
+
+impl GraphInputWarning {
+    /// Construct one warning fact from a stable code and named context.
+    pub fn new(code: impl Into<String>, context: BTreeMap<String, String>) -> Self {
+        Self {
+            code: code.into(),
+            context,
+        }
+    }
 }
 
 /// Canonical result of one direct graph-input pass.
@@ -114,6 +135,7 @@ pub async fn compile_dag_jsonl_input(
             .iter()
             .map(|program| program.profiling.graph.llm_node_count())
             .sum(),
+        warning_facts: Vec::new(),
     };
     Ok(GraphInputBundle {
         programs,

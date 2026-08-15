@@ -6,13 +6,15 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use aiperf_runtime::dataset::Payload;
+use aiperf_runtime::dataset::{Handle, Payload};
+use aiperf_runtime::graph::input::GraphInputWarning;
 use aiperf_runtime::graph::model::{ExecutableGraphNode, PromptItem};
 use aiperf_runtime::graph::recorded::agent_recording::{
     BuiltinReplayRequestProfileResolver, ExpectedCorpusShape, RecordedAgentEvent,
-    RecordedAgentLoweringError, RecordedAgentRecording, RecordedProviderRequest,
-    ReplayRequestProfile, ReplayRequestProfileResolver, ReplayTaskIdentity,
-    ValidatedRecordedAgentCorpus, ValidatedRecordedAgentTrace, lower_recorded_agent_corpus,
+    RecordedAgentLoweringError, RecordedAgentRecording, RecordedAgentReplayManifest,
+    RecordedProviderRequest, ReplayRequestProfile, ReplayRequestProfileResolver,
+    ReplayTaskIdentity, ValidatedRecordedAgentCorpus, ValidatedRecordedAgentTrace,
+    lower_recorded_agent_corpus,
 };
 use aiperf_runtime::graph::segment::SegmentPool;
 use serde_json::{Map, Value, json, value::RawValue};
@@ -43,6 +45,7 @@ impl ReplayRequestProfileResolver for FixtureProfileResolver {
             use_recorded_sampling: true,
             is_standard_scenario: task.adapter == "swebench",
             additional_body,
+            warning_facts: Vec::new(),
         })
     }
 }
@@ -180,6 +183,178 @@ fn lowerer_uses_relative_model_gap_when_tools_are_disabled() {
 }
 
 #[test]
+fn lowerer_materializes_manifest_extra_body_without_reserializing() {
+    let expected = br#"{ "z" : { "second" : 2, "first" : 1 }, "alpha" : [ 3, 2, 1 ] }"#;
+    let mut corpus = fixture_corpus();
+    corpus.traces[0].identity = Some(ReplayTaskIdentity {
+        adapter: "pinchbench".into(),
+        family: "fixture".into(),
+        task_id: "fixture-task".into(),
+        primary_role: None,
+    });
+    corpus.manifest = Some(manifest_with_extra(
+        std::str::from_utf8(expected).expect("fixture is UTF-8"),
+    ));
+    let resolver = BuiltinReplayRequestProfileResolver::new(true, 99, false, false, false, false)
+        .expect("positive fallback cap");
+    let mut pool = SegmentPool::new();
+
+    let bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
+        .expect("manifest recording lowers");
+    let additional_body = bundle.programs[0].profiling.graph.nodes["llm_0"]
+        .as_llm()
+        .and_then(|node| node.request.as_ref())
+        .and_then(|request| request.additional_body)
+        .expect("manifest body is retained");
+    let Payload::Raw { wire } = bundle
+        .segments
+        .get(additional_body)
+        .expect("additional-body segment")
+    else {
+        panic!("additional body must retain raw JSON")
+    };
+
+    assert_eq!(wire.as_ref(), expected);
+}
+
+#[test]
+fn lowerer_merges_profile_fields_without_normalizing_manifest_extra_body() {
+    let extra = br#"{ "top_p" : 0.42, "custom" : { "second" : 2, "first" : 1 } }"#;
+    let expected = br#"{"temperature":0.7,"top_k":20,"min_p":0,"parallel_tool_calls":true, "top_p" : 0.42, "custom" : { "second" : 2, "first" : 1 } }"#;
+    let mut corpus = fixture_corpus();
+    corpus.manifest = Some(manifest_with_extra(
+        std::str::from_utf8(extra).expect("fixture is UTF-8"),
+    ));
+    let resolver = BuiltinReplayRequestProfileResolver::new(true, 99, false, false, false, true)
+        .expect("positive fallback cap");
+    let mut pool = SegmentPool::new();
+
+    let bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
+        .expect("manifest recording lowers");
+    let additional_body = bundle.programs[0].profiling.graph.nodes["llm_0"]
+        .as_llm()
+        .and_then(|node| node.request.as_ref())
+        .and_then(|request| request.additional_body)
+        .expect("merged body is retained");
+    let Payload::Raw { wire } = bundle
+        .segments
+        .get(additional_body)
+        .expect("additional-body segment")
+    else {
+        panic!("additional body must retain raw JSON")
+    };
+
+    assert_eq!(wire.as_ref(), expected);
+}
+
+#[test]
+fn lowerer_reuses_a_shared_message_prefix_handle() {
+    let mut corpus = fixture_corpus();
+    corpus.traces[0].recording.events[0]
+        .provider_request
+        .as_mut()
+        .expect("first model request")
+        .messages = Some(vec![
+        raw(r#"{ "role" : "system", "content" : "shared" }"#),
+        raw(r#"{"role":"user","content":"first"}"#),
+    ]);
+    corpus.traces[0].recording.events[2]
+        .provider_request
+        .as_mut()
+        .expect("second model request")
+        .messages = Some(vec![
+        raw(r#"{ "role" : "system", "content" : "shared" }"#),
+        raw(r#"{"role":"user","content":"second"}"#),
+    ]);
+    let mut pool = SegmentPool::new();
+    let bundle = lower_recorded_agent_corpus(
+        &corpus,
+        &FixtureProfileResolver {
+            execute_tools: false,
+        },
+        &mut pool,
+    )
+    .expect("valid recording lowers");
+    let first = segment_handle(&bundle.programs[0].profiling.graph.nodes["llm_0"]);
+    let second = segment_handle(&bundle.programs[0].profiling.graph.nodes["llm_1"]);
+
+    assert_eq!(first[0], second[0]);
+    assert_eq!(
+        bundle
+            .segments
+            .segment(first[1])
+            .expect("first child")
+            .parent,
+        Some(first[0])
+    );
+    assert_eq!(
+        bundle
+            .segments
+            .segment(second[1])
+            .expect("second child")
+            .parent,
+        Some(second[0])
+    );
+}
+
+#[test]
+fn pinchbench_has_no_inferred_profile_body() {
+    let mut corpus = fixture_corpus();
+    corpus.traces[0].identity = Some(ReplayTaskIdentity {
+        adapter: "pinchbench".into(),
+        family: "fixture".into(),
+        task_id: "fixture-task".into(),
+        primary_role: None,
+    });
+    let resolver = BuiltinReplayRequestProfileResolver::new(true, 99, false, false, false, false)
+        .expect("positive fallback cap");
+    let mut pool = SegmentPool::new();
+
+    let bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
+        .expect("PinchBench recording lowers");
+
+    assert!(
+        bundle.programs[0].profiling.graph.nodes["llm_0"]
+            .as_llm()
+            .and_then(|node| node.request.as_ref())
+            .is_some_and(|request| request.additional_body.is_none())
+    );
+}
+
+#[test]
+fn lowerer_returns_one_deterministic_unknown_adapter_warning_fact() {
+    let mut corpus = fixture_corpus();
+    let unknown = ReplayTaskIdentity {
+        adapter: "unrecognized-adapter".into(),
+        family: "fixture".into(),
+        task_id: "first-task".into(),
+        primary_role: None,
+    };
+    corpus.traces[0].identity = Some(unknown.clone());
+    let mut second = corpus.traces[0].clone();
+    second.trace_id = "second-trace".into();
+    second.identity = Some(ReplayTaskIdentity {
+        task_id: "second-task".into(),
+        ..unknown
+    });
+    corpus.traces.push(second);
+    let resolver = BuiltinReplayRequestProfileResolver::new(true, 99, false, false, false, false)
+        .expect("positive fallback cap");
+    let mut pool = SegmentPool::new();
+
+    let bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
+        .expect("unknown-family recordings still lower");
+
+    assert_eq!(
+        bundle.metadata.warning_facts,
+        vec![GraphInputWarning::new(
+            "agent_recording_unknown_adapter",
+            BTreeMap::from([("adapter".into(), "unrecognized-adapter".into())]),
+        )]
+    );
+}
+
+#[test]
 fn builtin_profile_applies_runner_sampling_and_optional_recorded_overrides() {
     let mut pool = SegmentPool::new();
     let resolver = BuiltinReplayRequestProfileResolver::new(true, 99, false, true, true, false)
@@ -295,6 +470,42 @@ fn fixture_corpus() -> ValidatedRecordedAgentCorpus {
             "fixture-digest".into(),
         )]),
     }
+}
+
+fn segment_handle(node: &ExecutableGraphNode) -> Vec<Handle> {
+    node.as_llm()
+        .expect("LLM node")
+        .items
+        .iter()
+        .map(|item| match item {
+            PromptItem::Seg { seg } => *seg,
+            _ => panic!("recorded message must be a direct segment"),
+        })
+        .collect()
+}
+
+fn manifest_with_extra(extra_request_body: &str) -> RecordedAgentReplayManifest {
+    serde_json::from_str(&format!(
+        r#"{{
+            "name":"fixture", "mode":"replay",
+            "defaults":{{
+                "config":"mixed", "step_limit":1, "cost_limit":0.0,
+                "environment_class":"mixed", "docker_network":"none", "per_inference_timeout":1.0,
+                "fallback_max_output_tokens":99, "temperature":0.7, "top_p":0.8, "top_k":20,
+                "min_p":0.0, "stream_for_timing":true, "raw_openai_stream_for_replay_timing":true,
+                "replay_max_tokens_from_recording":true, "replay_max_tokens_margin":0,
+                "extra_request_body":{extra_request_body}, "cross_run_cache_isolation":true,
+                "warmup":true, "measurement_scope":"agent_run_only"
+            }},
+            "aggregate":{{
+                "total_isl":0, "isl_delta":0, "peak_isl":0, "total_osl":0,
+                "model_calls":0, "tool_calls":0, "tool_duration_ms":0.0,
+                "max_tool_call_duration_ms":0.0, "timed_out_tool_calls":0
+            }},
+            "tasks":[], "attribution":{{}}
+        }}"#
+    ))
+    .expect("valid manifest fixture")
 }
 
 fn model_event(

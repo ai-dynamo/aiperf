@@ -166,13 +166,7 @@ impl GraphRequestMaterializer for SegmentItemsMaterializer {
             .map(|handle| raw_wire(self.inner.store().as_ref(), handle, "additional body"))
             .transpose()?;
         if let Some(body) = additional_body.as_ref() {
-            let value: serde_json::Value = serde_json::from_slice(body).map_err(|error| {
-                GraphRequestMaterializationError(format!("additional body is not JSON: {error}"))
-            })?;
-            let object = value.as_object().ok_or_else(|| {
-                GraphRequestMaterializationError("additional body must be a JSON object".into())
-            })?;
-            validate_additional_body(object, "additional body")?;
+            decode_additional_body_wire(body, "additional body")?;
         }
         Ok(MaterializedGraphRequest {
             messages,
@@ -183,6 +177,21 @@ impl GraphRequestMaterializer for SegmentItemsMaterializer {
             streaming: node.streaming,
         })
     }
+}
+
+/// Validate one preserved JSON body and return its fields without altering its wire bytes.
+pub(crate) fn decode_additional_body_wire(
+    wire: &[u8],
+    origin: &str,
+) -> Result<Map<String, Value>, GraphRequestMaterializationError> {
+    let value: Value = serde_json::from_slice(wire).map_err(|error| {
+        GraphRequestMaterializationError(format!("{origin} is not JSON: {error}"))
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        GraphRequestMaterializationError(format!("{origin} must be a JSON object"))
+    })?;
+    validate_additional_body(object, origin)?;
+    Ok(object.clone())
 }
 
 /// Reject fields that remain under typed request ownership.

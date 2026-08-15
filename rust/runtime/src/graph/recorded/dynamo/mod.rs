@@ -88,6 +88,7 @@ pub async fn compile_dynamo_trace_input(
             .iter()
             .map(|program| program.profiling.graph.llm_node_count())
             .sum(),
+        warning_facts: Vec::new(),
     };
     Ok(GraphInputBundle {
         programs,

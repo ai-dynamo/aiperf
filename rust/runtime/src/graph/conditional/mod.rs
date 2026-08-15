@@ -115,6 +115,7 @@ pub async fn compile_conditional_graph_input(
             format: "conditional_graph".to_string(),
             root_count: selected.len(),
             node_count,
+            warning_facts: Vec::new(),
         },
     })
 }

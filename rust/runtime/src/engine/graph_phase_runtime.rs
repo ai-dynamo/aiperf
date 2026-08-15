@@ -2860,6 +2860,7 @@ mod tests {
                 format: "weka_trace".into(),
                 root_count,
                 node_count: 0,
+                warning_facts: Vec::new(),
             },
         }
     }

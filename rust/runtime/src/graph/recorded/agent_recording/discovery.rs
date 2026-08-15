@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 
+use crate::graph::materialize::decode_additional_body_wire;
+
 use super::schema::{
     ExpectedCorpusShape, RecordedAgentEvent, RecordedAgentRecording, RecordedAgentReplayManifest,
     ReplayTaskIdentity,
@@ -369,6 +371,11 @@ fn validate_manifest(
             path.display()
         )));
     }
+    decode_additional_body_wire(
+        defaults.extra_request_body.get().as_bytes(),
+        "manifest extra_request_body",
+    )
+    .map_err(|error| RecordedAgentInputError(format!("{}: {error}", path.display())))?;
     for task in &manifest.tasks {
         if !matches!(task.identity.adapter.as_str(), "pinchbench" | "swebench")
             || task.identity.family.trim().is_empty()

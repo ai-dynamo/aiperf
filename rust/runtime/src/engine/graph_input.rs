@@ -513,6 +513,13 @@ impl RecordedAgentDatasetInput {
             "recorded-agent adapter {expected_format:?} returned bundle format {:?}",
             bundle.metadata.format
         );
+        for warning in &bundle.metadata.warning_facts {
+            tracing::warn!(
+                warning_code = %warning.code,
+                warning_context = ?warning.context,
+                "recorded-agent graph input warning"
+            );
+        }
         Ok(PreparedRunnerGraphInput {
             bundle,
             random_seed: None,
