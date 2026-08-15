@@ -139,12 +139,38 @@ fn guarded_policy_blocks_an_installer_after_the_command_prefix() {
 }
 
 #[test]
-fn guarded_policy_allows_an_expansion_only_safe_command_word() {
-    // This catches treating an empty static skeleton as a possible installer;
-    // the substitution resolves to `echo`, whose argument is harmless text.
+fn guarded_policy_blocks_an_expansion_only_command_word() {
+    // This catches allowing an opaque executable whose expansion can resolve
+    // to an installer; static policy cannot establish that it is `echo`.
     let disposition = GuardedToolCommandPolicy
         .evaluate("$(printf echo) safe")
         .expect("policy handles an expansion-only executable word");
+    let CommandDisposition::Synthetic(result) = disposition else {
+        panic!("expansion-only executable must become a synthetic result");
+    };
+    assert_eq!(result.exit_code, 127);
+}
+
+#[test]
+fn guarded_policy_blocks_an_expansion_only_installer_command_word() {
+    // This catches an empty static skeleton bypassing installer matching when
+    // the command substitution itself produces the full executable name.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("$(printf apt-get) install package")
+        .expect("policy fails closed for an opaque executable expansion");
+    let CommandDisposition::Synthetic(result) = disposition else {
+        panic!("expansion-only installer must become a synthetic result");
+    };
+    assert_eq!(result.exit_code, 127);
+}
+
+#[test]
+fn guarded_policy_allows_command_query_options() {
+    // This catches treating the `command` builtin's query-only options as an
+    // installer invocation when they merely inspect command resolution.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("command -v apt-get")
+        .expect("policy parses a command query");
     assert_eq!(disposition, CommandDisposition::Execute);
 }
 

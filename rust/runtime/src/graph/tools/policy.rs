@@ -218,8 +218,7 @@ fn is_installer_command(command: &str, source_word: &str) -> bool {
         "pip", "pip3", "conda", "mamba", "apt", "apt-get", "yum", "dnf", "apk",
     ];
     INSTALLERS.contains(&command)
-        || !command.is_empty()
-            && has_shell_expansion(source_word)
+        || has_shell_expansion(source_word)
             && INSTALLERS
                 .iter()
                 .any(|installer| is_subsequence(command, installer))
@@ -260,6 +259,9 @@ fn executable_tokens(mut tokens: &[String]) -> &[String] {
         }
         if matches!(tokens.first().map(String::as_str), Some("command")) {
             tokens = &tokens[1..];
+            if matches!(tokens.first().map(String::as_str), Some("-v" | "-V")) {
+                return &[];
+            }
             while tokens.first().is_some_and(|token| token.starts_with('-')) {
                 tokens = &tokens[1..];
             }
