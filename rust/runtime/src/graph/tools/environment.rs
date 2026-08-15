@@ -42,16 +42,18 @@ pub trait TraceEnvironmentResolver: Send + Sync {
 
 /// Stock recipe family selected from a recorded task identity.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum EnvironmentRecipe {
     /// A staged PinchBench workspace mounted at `/workspace`.
+    #[serde(rename = "pinchbench")]
     PinchBench,
     /// An image-native SWE-Bench task rooted at `/testbed`.
+    #[serde(rename = "swebench")]
     SweBench,
 }
 
 /// Fully resolved recipe used only while composing worker-local resources.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ResolvedTraceEnvironment {
     /// Recipe family.
     pub kind: EnvironmentRecipe,

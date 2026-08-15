@@ -46,6 +46,45 @@ pub struct TraceEnvironmentSpec {
     pub data: BTreeMap<String, Value>,
 }
 
+impl TraceEnvironmentSpec {
+    /// Encode one fully resolved recipe for transport with its graph program.
+    pub fn from_resolved(
+        environment: &tools::ResolvedTraceEnvironment,
+    ) -> Result<Self, tools::TraceEnvironmentError> {
+        let value = serde_json::to_value(environment)
+            .map_err(|error| tools::TraceEnvironmentError::new(error.to_string()))?;
+        let Value::Object(mut fields) = value else {
+            return Err(tools::TraceEnvironmentError::new(
+                "resolved trace environment did not serialize as an object",
+            ));
+        };
+        let kind = fields
+            .remove("kind")
+            .and_then(|kind| kind.as_str().map(str::to_owned))
+            .ok_or_else(|| {
+                tools::TraceEnvironmentError::new(
+                    "resolved trace environment serialized without a recipe kind",
+                )
+            })?;
+        Ok(Self {
+            kind,
+            data: fields.into_iter().collect(),
+        })
+    }
+
+    /// Decode the already-selected transport recipe without consulting metadata.
+    pub fn resolve(&self) -> Result<tools::ResolvedTraceEnvironment, tools::TraceEnvironmentError> {
+        let mut fields = serde_json::Map::from_iter(self.data.clone());
+        fields.insert("kind".into(), Value::String(self.kind.clone()));
+        serde_json::from_value(Value::Object(fields)).map_err(|error| {
+            tools::TraceEnvironmentError::new(format!(
+                "invalid resolved trace environment {:?}: {error}",
+                self.kind
+            ))
+        })
+    }
+}
+
 /// Source facts retained for recorded replay without credentials.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -338,7 +377,7 @@ impl Default for RecordedReplayAgentLoopFactories {
             trajectory_sink: Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
             invocation_lease: Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
             lifecycle_lease: Arc::new(agent::InMemoryAgentInvocationLeaseFactoryFactory),
-            tool_dispatcher: Arc::new(tools::InMemoryToolDispatcherFactory),
+            tool_dispatcher: Arc::new(tools::DockerToolDispatcherFactory::default()),
             tool_decoder: Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
             observation_formatter: Arc::new(tools::InMemoryAgentObservationFormatterFactory),
         }
@@ -635,11 +674,19 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             .await
             .map_err(|error| TraceDriverError::new(error.to_string()))?;
         let mut lifecycle_lease = LifecycleLeaseGuard::new(lease);
+        let environment = program
+            .environment
+            .as_ref()
+            .map(TraceEnvironmentSpec::resolve)
+            .transpose()
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
         if let Err(error) = dispatcher
             .open_trace(tools::TraceOpenContext {
                 trace: &self.trace,
-                environment: None,
-                workspace: None,
+                environment: environment.as_ref(),
+                workspace: environment
+                    .as_ref()
+                    .map(|environment| &environment.workspace),
                 run_label: &self.trace.run_id,
             })
             .await
@@ -902,6 +949,69 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct OwnedTraceOpenContext {
+        environment: Option<tools::ResolvedTraceEnvironment>,
+        workspace: Option<tools::WorkspaceSpec>,
+        run_label: String,
+    }
+
+    struct RecordingOpenContextDispatcher {
+        contexts: Arc<Mutex<Vec<OwnedTraceOpenContext>>>,
+    }
+
+    #[async_trait(?Send)]
+    impl tools::ToolDispatcher for RecordingOpenContextDispatcher {
+        async fn open_trace(
+            &self,
+            context: tools::TraceOpenContext<'_>,
+        ) -> Result<(), tools::ToolDispatchError> {
+            self.contexts
+                .lock()
+                .expect("test open-context log is available")
+                .push(OwnedTraceOpenContext {
+                    environment: context.environment.cloned(),
+                    workspace: context.workspace.cloned(),
+                    run_label: context.run_label.to_owned(),
+                });
+            Ok(())
+        }
+
+        async fn dispatch(
+            &self,
+            request: tools::ToolDispatchRequest,
+            _context: &tools::ToolDispatchContext,
+        ) -> Result<tools::ToolDispatchResult, tools::ToolDispatchError> {
+            Ok(tools::ToolDispatchResult::completed(
+                request.call_id,
+                0,
+                Bytes::new(),
+            ))
+        }
+
+        async fn close_trace(
+            &self,
+            _trace: &TraceIdentity,
+        ) -> Result<(), tools::ToolDispatchError> {
+            Ok(())
+        }
+    }
+
+    struct RecordingOpenContextDispatcherFactory {
+        contexts: Arc<Mutex<Vec<OwnedTraceOpenContext>>>,
+    }
+
+    impl tools::ToolDispatcherFactory for RecordingOpenContextDispatcherFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+        ) -> Result<Rc<dyn tools::ToolDispatcher>, tools::ToolDispatchError> {
+            Ok(Rc::new(RecordingOpenContextDispatcher {
+                contexts: self.contexts.clone(),
+            }))
+        }
+    }
+
     struct CountingToolDecoderFactory {
         calls: Arc<AtomicUsize>,
         identities: Arc<Mutex<Vec<String>>>,
@@ -1160,6 +1270,113 @@ mod tests {
         });
         program.driver = TraceDriverSpec::recorded_replay();
         program
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_driver_opens_tools_with_the_program_environment_and_workspace() {
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let lifecycle = Arc::new(LifecycleCounts::default());
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(RecordingLifecycleLeaseFactoryFactory(lifecycle)),
+                Arc::new(RecordingOpenContextDispatcherFactory {
+                    contexts: contexts.clone(),
+                }),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run-environment".into(),
+            trajectory_id: "trajectory-environment".into(),
+            trace_id: "trace-environment".into(),
+        };
+        let workspace = tools::WorkspaceSpec::image_native(
+            "/testbed",
+            vec!["bash".into(), "-c".into()],
+            60_000_000_000,
+        );
+        let environment = tools::ResolvedTraceEnvironment {
+            kind: tools::EnvironmentRecipe::SweBench,
+            image: "swebench/task:latest".into(),
+            workspace: workspace.clone(),
+        };
+        let mut program = recorded_program(&trace.trace_id);
+        program.environment = Some(TraceEnvironmentSpec {
+            kind: "swebench".into(),
+            data: BTreeMap::from([
+                ("image".into(), Value::String(environment.image.clone())),
+                (
+                    "workspace".into(),
+                    serde_json::to_value(&workspace).expect("workspace serializes"),
+                ),
+            ]),
+        });
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .expect("recorded replay driver is created");
+
+        driver
+            .open(&program, &TraceDriverContext { trace: &trace })
+            .await
+            .expect("trace environment opens");
+        driver.close().await.expect("trace environment closes");
+
+        assert_eq!(
+            contexts
+                .lock()
+                .expect("test open-context log is available")
+                .as_slice(),
+            [OwnedTraceOpenContext {
+                environment: Some(environment),
+                workspace: Some(workspace),
+                run_label: "run-environment".into(),
+            }]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stock_recorded_dispatcher_rejects_a_workspace_other_than_the_resolved_recipe() {
+        let factories = RecordedReplayAgentLoopFactories::default();
+        let dispatcher = factories
+            .tool_dispatcher
+            .create("trace-stock-environment")
+            .expect("stock dispatcher is registered");
+        let trace = TraceIdentity {
+            run_id: "run-stock-environment".into(),
+            trajectory_id: "trajectory-stock-environment".into(),
+            trace_id: "trace-stock-environment".into(),
+        };
+        let environment = tools::ResolvedTraceEnvironment {
+            kind: tools::EnvironmentRecipe::SweBench,
+            image: "swebench/task:latest".into(),
+            workspace: tools::WorkspaceSpec::image_native(
+                "/testbed",
+                vec!["bash".into(), "-c".into()],
+                60_000_000_000,
+            ),
+        };
+        let wrong_workspace = tools::WorkspaceSpec::image_native(
+            "/workspace",
+            vec!["bash".into(), "-lc".into()],
+            30_000_000_000,
+        );
+
+        let error = dispatcher
+            .open_trace(tools::TraceOpenContext {
+                trace: &trace,
+                environment: Some(&environment),
+                workspace: Some(&wrong_workspace),
+                run_label: &trace.run_id,
+            })
+            .await
+            .expect_err("stock composition must not substitute another workspace");
+
+        assert!(error.to_string().contains("does not match"));
     }
 
     #[tokio::test(flavor = "current_thread")]

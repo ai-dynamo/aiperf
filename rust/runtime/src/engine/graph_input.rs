@@ -18,7 +18,7 @@ use crate::graph::conditional::compile_conditional_graph_input;
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
 use crate::graph::recorded::agent_recording::{
     BuiltinReplayRequestProfileResolver, RecordedAgentInputSource, discover_recorded_agent_input,
-    lower_recorded_agent_corpus,
+    lower_recorded_agent_corpus, resolve_recorded_environment,
 };
 use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
@@ -531,9 +531,45 @@ impl RecordedAgentDatasetInput {
         )
         .map_err(|error| anyhow!(error.to_string()))?;
         let mut pool = SegmentPool::new();
-        let bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
+        let mut bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
             .map_err(|error| anyhow!(error.to_string()))
             .context("lowering recorded-agent graph input")?;
+        if execute_tools {
+            let pinch_image = self
+                .graph
+                .as_ref()
+                .and_then(|graph| graph.pinch_image.as_deref())
+                .unwrap_or_default();
+            let tool_image = self
+                .graph
+                .as_ref()
+                .and_then(|graph| graph.tool_image.as_deref());
+            for (program, trace) in bundle.programs.iter_mut().zip(&corpus.traces) {
+                let identity = program
+                    .replay
+                    .as_ref()
+                    .map(|replay| &replay.identity)
+                    .ok_or_else(|| anyhow!("recorded replay program has no task identity"))?;
+                let environment = resolve_recorded_environment(
+                    identity,
+                    &trace.recording.metadata,
+                    pinch_image,
+                    tool_image,
+                    self.standard_scenario,
+                )
+                .map_err(|error| anyhow!(error.to_string()))
+                .with_context(|| {
+                    format!(
+                        "resolving recorded-agent environment for {:?}",
+                        identity.task_id
+                    )
+                })?;
+                program.environment = Some(
+                    crate::graph::driver::TraceEnvironmentSpec::from_resolved(&environment)
+                        .map_err(|error| anyhow!(error.to_string()))?,
+                );
+            }
+        }
         ensure!(
             !bundle.programs.is_empty(),
             "recorded-agent Graph-IR input contains no root traces"
@@ -1456,6 +1492,50 @@ mod tests {
                 .iter()
                 .all(|program| program.driver.kind == "recorded_replay")
         );
+    }
+
+    #[tokio::test]
+    async fn recorded_agent_tool_execution_preserves_each_resolved_environment_recipe() {
+        let fixture_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/recorded_agent_replay");
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "agent_recording",
+            "replay_root": fixture_root,
+            "path": "canonical_manifest.json",
+            "graph": {
+                "execute_tools": true,
+                "pinch_image": "aiperf-recorded-agent-pinchbench:v1"
+            }
+        }));
+
+        let prepared = resolver
+            .load(
+                &input,
+                &GraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("tool-enabled recorded-agent input resolves every recipe");
+
+        for program in &prepared.bundle.programs {
+            let adapter = &program
+                .replay
+                .as_ref()
+                .expect("recorded replay metadata")
+                .identity
+                .adapter;
+            let environment = program
+                .environment
+                .as_ref()
+                .expect("tool-enabled replay retains its environment");
+            assert_eq!(environment.kind, *adapter);
+            assert!(environment.data.contains_key("image"));
+            assert!(environment.data.contains_key("workspace"));
+        }
     }
 
     #[tokio::test]

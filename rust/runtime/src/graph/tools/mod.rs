@@ -23,8 +23,8 @@ pub use dispatch::{
 };
 pub use docker::{
     CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerMount, ContainerRuntime,
-    DockerCliRuntime, DockerSandboxFactory, DockerSessionSandbox, FramedCommandIo,
-    cleanup_recorded_agent_containers, preflight_docker_sandbox,
+    DockerCliRuntime, DockerSandboxFactory, DockerSessionSandbox, DockerToolDispatcherFactory,
+    FramedCommandIo, cleanup_recorded_agent_containers, preflight_docker_sandbox,
 };
 pub use environment::{
     EnvironmentRecipe, ResolvedTraceEnvironment, ToolSandboxCapabilities, TraceEnvironmentError,

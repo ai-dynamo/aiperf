@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
@@ -19,10 +20,14 @@ use tokio::sync::Mutex;
 use crate::clock::Clock;
 use crate::graph::driver::TraceIdentity;
 use crate::graph::replay::ReplayRunIdentity;
+use crate::rng::RngRoot;
 
 use super::{
-    ResolvedTraceEnvironment, ToolCommandResult, ToolSandbox, ToolSandboxCapabilities,
-    ToolSandboxError, TraceEnvironmentError, policy::contains_detaching_command,
+    EnvironmentToolDispatcher, GuardedToolCommandPolicy, ResolvedTraceEnvironment,
+    ToolBackendIdentity, ToolCommandResult, ToolDispatchContext, ToolDispatchError,
+    ToolDispatchRequest, ToolDispatchResult, ToolDispatcher, ToolDispatcherFactory, ToolSandbox,
+    ToolSandboxCapabilities, ToolSandboxError, TraceEnvironmentError, TraceOpenContext,
+    policy::contains_detaching_command,
 };
 
 /// Docker label key whose value is the exact controller-minted replay run label.
@@ -31,6 +36,146 @@ pub const CONTAINER_RUN_LABEL_KEY: &str = "aiperf.recorded-agent.run-label";
 const TERMINAL_PREFIX: &[u8] = b"\0aiperf-terminal:";
 const CONTAINER_REMOVE_TIMEOUT_NS: u64 = 10_000_000_000;
 static CONTAINER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const DEFAULT_TOOL_OUTPUT_LIMIT: usize = 1 << 20;
+type DockerRuntimeFactory = dyn Fn(Rc<dyn Clock>) -> Rc<dyn ContainerRuntime> + Send + Sync;
+
+/// Stock dispatcher factory which defers Docker sandbox creation until trace-open context exists.
+#[derive(Clone)]
+pub struct DockerToolDispatcherFactory {
+    output_limit: usize,
+    runtime: Arc<DockerRuntimeFactory>,
+}
+
+impl Default for DockerToolDispatcherFactory {
+    fn default() -> Self {
+        Self {
+            output_limit: DEFAULT_TOOL_OUTPUT_LIMIT,
+            runtime: Arc::new(|clock| Rc::new(DockerCliRuntime::new(clock))),
+        }
+    }
+}
+
+impl std::fmt::Debug for DockerToolDispatcherFactory {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DockerToolDispatcherFactory")
+            .field("output_limit", &self.output_limit)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DockerToolDispatcherFactory {
+    /// Build the stock factory with an explicit per-command captured-output bound.
+    #[must_use]
+    pub fn with_output_limit(output_limit: usize) -> Self {
+        Self {
+            output_limit: output_limit.max(1),
+            ..Self::default()
+        }
+    }
+
+    /// Build a factory around an injected worker-local Docker process boundary.
+    pub fn with_runtime_factory(
+        output_limit: usize,
+        runtime: impl Fn(Rc<dyn Clock>) -> Rc<dyn ContainerRuntime> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            output_limit: output_limit.max(1),
+            runtime: Arc::new(runtime),
+        }
+    }
+}
+
+impl ToolDispatcherFactory for DockerToolDispatcherFactory {
+    fn create(&self, _trace_id: &str) -> Result<Rc<dyn ToolDispatcher>, ToolDispatchError> {
+        Ok(Rc::new(DeferredDockerToolDispatcher {
+            output_limit: self.output_limit,
+            runtime: self.runtime.clone(),
+            inner: RefCell::new(None),
+        }))
+    }
+}
+
+/// Trace-local dispatcher whose sandbox cannot be selected before `TraceOpenContext`.
+struct DeferredDockerToolDispatcher {
+    output_limit: usize,
+    runtime: Arc<DockerRuntimeFactory>,
+    inner: RefCell<Option<Rc<dyn ToolDispatcher>>>,
+}
+
+#[async_trait(?Send)]
+impl ToolDispatcher for DeferredDockerToolDispatcher {
+    fn backend_identity(&self) -> ToolBackendIdentity {
+        self.inner
+            .borrow()
+            .as_ref()
+            .map_or(ToolBackendIdentity::Local, |dispatcher| {
+                dispatcher.backend_identity()
+            })
+    }
+
+    async fn open_trace(&self, context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError> {
+        if self.inner.borrow().is_some() {
+            return Err(ToolDispatchError::new(
+                "Docker tool dispatcher trace is already open",
+            ));
+        }
+        let Some(environment) = context.environment else {
+            if context.workspace.is_some() {
+                return Err(ToolDispatchError::new(
+                    "trace workspace was provided without a resolved environment",
+                ));
+            }
+            return Ok(());
+        };
+        if context.workspace != Some(&environment.workspace) {
+            return Err(ToolDispatchError::new(
+                "trace-open workspace does not match its resolved environment recipe",
+            ));
+        }
+        if environment.workspace.mount_workspace {
+            return Err(ToolDispatchError::new(
+                "mounted recorded-agent workspace requires provisioned worker-local content",
+            ));
+        }
+        let clock: Rc<dyn Clock> = crate::clock::RealClock::new();
+        let runtime = (self.runtime)(clock.clone());
+        let sandbox = Rc::new(DockerSessionSandbox::new(
+            environment.clone(),
+            None,
+            context.trace.clone(),
+            ReplayRunIdentity::mint(RngRoot::new(None), context.run_label),
+            clock,
+            runtime,
+            self.output_limit,
+        )?);
+        let dispatcher: Rc<dyn ToolDispatcher> = Rc::new(EnvironmentToolDispatcher::new(
+            sandbox,
+            Rc::new(GuardedToolCommandPolicy),
+        ));
+        dispatcher.open_trace(context).await?;
+        self.inner.replace(Some(dispatcher));
+        Ok(())
+    }
+
+    async fn dispatch(
+        &self,
+        request: ToolDispatchRequest,
+        context: &ToolDispatchContext,
+    ) -> Result<ToolDispatchResult, ToolDispatchError> {
+        let dispatcher = self.inner.borrow().clone().ok_or_else(|| {
+            ToolDispatchError::new("recorded-agent tool dispatch has no open environment")
+        })?;
+        dispatcher.dispatch(request, context).await
+    }
+
+    async fn close_trace(&self, trace: &TraceIdentity) -> Result<(), ToolDispatchError> {
+        let Some(dispatcher) = self.inner.take() else {
+            return Ok(());
+        };
+        dispatcher.close_trace(trace).await
+    }
+}
 
 /// Opaque Docker container identifier returned after successful start.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
