@@ -3,9 +3,10 @@
 
 //! Deterministic reward parsing with `reward.json` precedence.
 
-use std::{collections::BTreeMap, fmt::{self, Display, Formatter}};
-
-use serde::Deserialize;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Display, Formatter},
+};
 
 /// Finite named reward metrics from a verifier artifact.
 #[derive(Clone, Debug, PartialEq)]
