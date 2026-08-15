@@ -962,27 +962,30 @@ impl TracePlacement for GraphWorkerBackend {
             (Err(primary), _) => Err(primary),
             (Ok(()), result) => result,
         };
-        let replay_supplement = if result.is_ok() && is_recorded_program {
-            let started = profile_started_ns.get().ok_or_else(|| {
-                TraceError::Other("recorded graph trace completed without profiling start".into())
-            })?;
-            Some(
-                TraceTerminalSupplement::new(
-                    self.run_origin_ns.to_string(),
-                    profiling_trajectory_id,
-                    profiling_trace_id,
-                    self.worker_id,
-                    "recorded_replay",
+        let replay_supplement =
+            if should_emit_replay_supplement(self.phase, is_recorded_program, result.is_ok()) {
+                let started = profile_started_ns.get().ok_or_else(|| {
+                    TraceError::Other(
+                        "recorded graph trace completed without profiling start".into(),
+                    )
+                })?;
+                Some(
+                    TraceTerminalSupplement::new(
+                        self.run_origin_ns.to_string(),
+                        profiling_trajectory_id,
+                        profiling_trace_id,
+                        self.worker_id,
+                        "recorded_replay",
+                    )
+                    .with_profiling_measurements(
+                        self.clock.now_ns().saturating_sub(started) as f64 / 1_000_000.0,
+                        sink.replay_calls.borrow().clone(),
+                        sink.replay_tools.borrow().clone(),
+                    ),
                 )
-                .with_profiling_measurements(
-                    self.clock.now_ns().saturating_sub(started) as f64 / 1_000_000.0,
-                    sink.replay_calls.borrow().clone(),
-                    sink.replay_tools.borrow().clone(),
-                ),
-            )
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         if let Some(mut driver) = opened_driver {
             let close = self.close_driver(lifecycle_id, driver.as_mut()).await;
             let result = match (result, close) {
@@ -1037,6 +1040,12 @@ impl TracePlacement for GraphWorkerBackend {
         slots.set_limit(limit);
         Ok(())
     }
+}
+
+/// Replay terminal facts belong exclusively to successful profiling work. A warmup
+/// trace can prime the same driver session but must never affect replay metrics.
+fn should_emit_replay_supplement(phase: Phase, is_recorded_program: bool, succeeded: bool) -> bool {
+    phase == Phase::Profiling && is_recorded_program && succeeded
 }
 
 impl GraphWorkerBackend {
@@ -2748,6 +2757,17 @@ mod tests {
             target: crate::engine::graph_input::CacheBustTarget::None,
         };
         assert!(cache_bust.marker("trace::abc").is_none());
+    }
+
+    #[test]
+    fn replay_supplement_requires_successful_profiling_work() {
+        assert!(should_emit_replay_supplement(Phase::Profiling, true, true,));
+        assert!(!should_emit_replay_supplement(Phase::Warmup, true, true));
+        assert!(!should_emit_replay_supplement(
+            Phase::Profiling,
+            true,
+            false,
+        ));
     }
 
     #[test]
