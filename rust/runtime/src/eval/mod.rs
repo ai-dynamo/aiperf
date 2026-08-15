@@ -8,9 +8,12 @@ mod execution;
 mod identity;
 mod import;
 mod import_report;
+mod provider;
+mod registry;
 mod score;
 mod semantic;
 mod source;
+mod training;
 mod trial;
 mod verifier;
 
@@ -25,12 +28,15 @@ pub use identity::{
 };
 pub use import::{HarborImportError, HarborImporter, HarborSource, ImportedTask, SourceAcquirer};
 pub use import_report::{ImportDisposition, ImportReport};
+pub use provider::{ProviderCapability, ProviderError, ProviderProfile};
+pub use registry::{RegistryError, RegistryReference};
 pub use score::{ScoreError, ScoreVersion};
 pub use semantic::{
     FidelityError, FidelityOutcome, PairedComparisonError, PairedComparisonSpec, SemanticGraph,
     SemanticNode, lower_semantic_graph,
 };
 pub use source::{EvalDatasetId, EvalDatasetManifest};
+pub use training::{TrainingError, TrajectoryExportManifest};
 pub use trial::{TrialBudget, TrialSpec};
 pub use verifier::{
     ArtifactTransferError, DeclaredArtifactTransfer, RegradeError, RegradeRequest, RewardDocument,
