@@ -27,6 +27,20 @@ use crate::engine::sidecar_input::{
     BuiltinRunnerSidecarInputAdapterResolver, SidecarInputAdapterResolver,
 };
 use crate::graph::driver::TraceProgramDriverFactory;
+use crate::graph::tools::{ContainerRuntime, ResolvedTraceEnvironment, preflight_docker_sandbox};
+
+/// Preflight every Docker-backed recorded-agent recipe before trace provisioning.
+pub async fn preflight_recorded_agent_docker_environments<'a>(
+    runtime: &dyn ContainerRuntime,
+    environments: impl IntoIterator<Item = &'a ResolvedTraceEnvironment>,
+) -> Result<()> {
+    for environment in environments {
+        preflight_docker_sandbox(runtime, environment)
+            .await
+            .map_err(anyhow::Error::from)?;
+    }
+    Ok(())
+}
 
 /// One frozen implementation universe for a fresh runner child.
 ///

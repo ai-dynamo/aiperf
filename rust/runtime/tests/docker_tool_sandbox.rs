@@ -17,12 +17,17 @@ use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::graph::driver::TraceIdentity;
 use aiperf_runtime::graph::replay::ReplayRunIdentity;
 use aiperf_runtime::graph::tools::{
-    CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerRuntime,
+    CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerRuntime, DockerCliRuntime,
     DockerSessionSandbox, EnvironmentRecipe, FramedCommandIo, ResolvedTraceEnvironment,
     ToolSandbox, ToolSandboxError, WorkspaceSpec, cleanup_recorded_agent_containers,
     preflight_docker_sandbox,
 };
 use aiperf_runtime::rng::RngRoot;
+
+#[cfg(feature = "engine")]
+use aiperf_runtime::engine::application::preflight_recorded_agent_docker_environments;
+#[cfg(feature = "engine")]
+use aiperf_runtime::engine::control_hooks::cleanup_recorded_agent_docker_on_shutdown;
 
 struct FakeIo {
     output: VecDeque<Bytes>,
@@ -50,6 +55,7 @@ struct FakeRuntime {
     exec_argv: RefCell<Vec<Vec<OsString>>>,
     remove_count: Cell<u8>,
     next_id: Cell<u8>,
+    has_start_failure: Cell<bool>,
     outputs: RefCell<VecDeque<Vec<Bytes>>>,
     inspected_images: RefCell<Vec<String>>,
     label_queries: RefCell<Vec<(String, String)>>,
@@ -63,6 +69,7 @@ impl FakeRuntime {
             exec_argv: RefCell::new(Vec::new()),
             remove_count: Cell::new(0),
             next_id: Cell::new(0),
+            has_start_failure: Cell::new(false),
             outputs: RefCell::new(outputs.into_iter().collect()),
             inspected_images: RefCell::new(Vec::new()),
             label_queries: RefCell::new(Vec::new()),
@@ -74,6 +81,11 @@ impl FakeRuntime {
         self.listed.replace(containers.into_iter().collect());
         self
     }
+
+    fn with_start_failure(self) -> Self {
+        self.has_start_failure.set(true);
+        self
+    }
 }
 
 #[async_trait(?Send)]
@@ -83,14 +95,18 @@ impl ContainerRuntime for FakeRuntime {
         Ok(())
     }
 
-    async fn create_start(
-        &self,
-        spec: &ContainerCreateSpec,
-    ) -> Result<ContainerId, ToolSandboxError> {
+    async fn create(&self, spec: &ContainerCreateSpec) -> Result<ContainerId, ToolSandboxError> {
         self.created.borrow_mut().push(spec.clone());
         let sequence = self.next_id.get();
         self.next_id.set(sequence.saturating_add(1));
         Ok(ContainerId::new(format!("container-{sequence}")))
+    }
+
+    async fn start(&self, _id: &ContainerId) -> Result<(), ToolSandboxError> {
+        if self.has_start_failure.get() {
+            return Err(ToolSandboxError::new("fake Docker start failed"));
+        }
+        Ok(())
     }
 
     async fn open_exec(
@@ -227,7 +243,45 @@ async fn docker_uses_recipe_argv_network_none_and_exact_run_label() {
     assert_eq!(argv.len(), 1);
     assert_eq!(argv[0][0], OsString::from("bash"));
     assert_eq!(argv[0][1], OsString::from("-lc"));
-    assert!(argv[0][2].to_string_lossy().contains("printf result"));
+    let script = argv[0][2].to_string_lossy();
+    assert!(script.contains("\nprintf result\n"));
+    assert!(!script.contains("'printf result'"));
+    let recipe_argv = argv[0].clone();
+    drop(argv);
+    let output = tokio::process::Command::new(&recipe_argv[0])
+        .args(&recipe_argv[1..])
+        .output()
+        .await
+        .expect("recipe argv runs without Docker");
+    assert!(output.status.success());
+    assert!(output.stdout.starts_with(b"result\0aiperf-terminal:"));
+    assert!(output.stdout.ends_with(b":0\0"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn failed_container_start_force_removes_the_created_orphan() {
+    // This catches a split Docker create/start path that returns the start
+    // error while leaving the just-created detached container behind.
+    let runtime = Rc::new(FakeRuntime::new([]).with_start_failure());
+    let sandbox = DockerSessionSandbox::new(
+        pinch_environment(),
+        Some(PathBuf::from("/tmp/pinch-workspace")),
+        trace(),
+        ReplayRunIdentity::mint(RngRoot::new(Some(20)), "replay-run-20"),
+        RealClock::new(),
+        runtime.clone(),
+        4096,
+    )
+    .expect("valid Pinch recipe creates a Docker sandbox");
+
+    let error = sandbox
+        .open()
+        .await
+        .expect_err("failed Docker start rejects the sandbox");
+
+    assert!(error.to_string().contains("start failed"));
+    assert_eq!(runtime.created.borrow().len(), 1);
+    assert_eq!(runtime.remove_count.get(), 1);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -294,6 +348,65 @@ async fn preflight_and_restart_cleanup_scope_docker_to_the_exact_run_label() {
         [(
             CONTAINER_RUN_LABEL_KEY.to_string(),
             "replay-run-19".to_string()
+        )]
+    );
+    assert_eq!(runtime.remove_count.get(), 1);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn docker_cli_calls_are_clock_bounded() {
+    // This catches a Docker CLI invocation whose `output().await` can hold a
+    // preflight or recovery path forever when the daemon command stops making
+    // progress.
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let script_root = tempfile::tempdir().expect("temporary fake Docker binary root");
+    let script = script_root.path().join("docker");
+    std::fs::write(&script, b"#!/bin/sh\nwhile :; do :; done\n")
+        .expect("fake Docker binary is written");
+    let mut permissions = std::fs::metadata(&script)
+        .expect("fake Docker binary metadata exists")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script, permissions).expect("fake Docker binary is executable");
+    let runtime = DockerCliRuntime::with_binary_and_timeout(
+        PathBuf::from(&script),
+        RealClock::new(),
+        1_000_000,
+    );
+
+    let error = runtime
+        .inspect_image("unreachable-image")
+        .await
+        .expect_err("hung Docker CLI invocation reaches its clock deadline");
+    assert!(error.to_string().contains("timed out"));
+}
+
+#[cfg(feature = "engine")]
+#[tokio::test(flavor = "current_thread")]
+async fn application_preflight_and_shutdown_cleanup_use_the_docker_run_identity_scope() {
+    // This catches product composition that exposes a Docker seam but never
+    // performs preflight or uses an unscoped cleanup path on shutdown.
+    let runtime = Rc::new(FakeRuntime::new([]).with_listed([ContainerId::new("shutdown-orphan")]));
+    let identity = ReplayRunIdentity::mint(RngRoot::new(Some(21)), "replay-run-21");
+
+    preflight_recorded_agent_docker_environments(runtime.as_ref(), [&pinch_environment()])
+        .await
+        .expect("application preflight validates the selected recipe");
+    cleanup_recorded_agent_docker_on_shutdown(runtime.as_ref(), &identity)
+        .await
+        .expect("shutdown cleanup selects only the exact run label");
+
+    assert_eq!(
+        runtime.inspected_images.borrow().as_slice(),
+        ["aiperf-recorded-agent-pinchbench:v1"]
+    );
+    assert_eq!(
+        runtime.label_queries.borrow().as_slice(),
+        [(
+            CONTAINER_RUN_LABEL_KEY.to_string(),
+            "replay-run-21".to_string(),
         )]
     );
     assert_eq!(runtime.remove_count.get(), 1);

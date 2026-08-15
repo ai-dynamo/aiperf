@@ -18,6 +18,8 @@ use crate::engine::control_plane_http::{
     ValidatedControlPlaneProfile,
 };
 use crate::engine::registry::ValidatedEndpointProfileV2;
+use crate::graph::replay::ReplayRunIdentity;
+use crate::graph::tools::{ContainerRuntime, cleanup_recorded_agent_containers};
 use crate::timing::LocalPhaseFuture;
 use crate::transport::core::ConnectionReuseStrategy;
 use crate::transport::http::config::ClientConfig;
@@ -28,6 +30,16 @@ const DEFAULT_RESET_KV_CACHE_PATH: &str = "/reset_prefix_cache";
 const DEFAULT_SERVER_PROFILER_START_PATH: &str = "/start_profile";
 const DEFAULT_SERVER_PROFILER_STOP_PATH: &str = "/stop_profile";
 const CONTROL_RESPONSE_MAX_BYTES: usize = 64 * 1024;
+
+/// Perform restart or signal cleanup for exactly one persisted replay run.
+pub async fn cleanup_recorded_agent_docker_on_shutdown(
+    runtime: &dyn ContainerRuntime,
+    run_identity: &ReplayRunIdentity,
+) -> Result<()> {
+    cleanup_recorded_agent_containers(runtime, run_identity)
+        .await
+        .map_err(anyhow::Error::from)
+}
 
 /// Aggregate outcome for one logical control-hook invocation.
 #[derive(Clone, Debug, Eq, PartialEq)]

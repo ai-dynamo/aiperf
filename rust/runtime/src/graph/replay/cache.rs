@@ -31,6 +31,12 @@ impl ReplayRunIdentity {
             },
         }
     }
+
+    /// Return the persisted opaque label that scopes replay-owned cleanup.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 /// Wire message encoding used by the endpoint formatter.

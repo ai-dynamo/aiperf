@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -130,11 +130,10 @@ pub trait FramedCommandIo {
 pub trait ContainerRuntime {
     /// Refuse a missing or otherwise unusable recipe image before measurement.
     async fn inspect_image(&self, image: &str) -> Result<(), ToolSandboxError>;
-    /// Create and start one detached recipe container.
-    async fn create_start(
-        &self,
-        spec: &ContainerCreateSpec,
-    ) -> Result<ContainerId, ToolSandboxError>;
+    /// Create one detached recipe container without starting it.
+    async fn create(&self, spec: &ContainerCreateSpec) -> Result<ContainerId, ToolSandboxError>;
+    /// Start one previously created detached container.
+    async fn start(&self, id: &ContainerId) -> Result<(), ToolSandboxError>;
     /// Open one stdin-attached exec process using the supplied argv without a shell.
     async fn open_exec(
         &self,
@@ -152,14 +151,53 @@ pub trait ContainerRuntime {
     ) -> Result<Vec<ContainerId>, ToolSandboxError>;
 }
 
-/// Stock argv-only Docker CLI runtime.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DockerCliRuntime;
+/// Stock argv-only Docker CLI runtime with Clock-bounded daemon commands.
+#[derive(Clone)]
+pub struct DockerCliRuntime {
+    binary: PathBuf,
+    clock: Rc<dyn Clock>,
+    command_timeout_ns: u64,
+}
+
+impl DockerCliRuntime {
+    /// Construct the production Docker CLI runtime on this trace's clock.
+    #[must_use]
+    pub fn new(clock: Rc<dyn Clock>) -> Self {
+        Self::with_binary_and_timeout("docker", clock, CONTAINER_REMOVE_TIMEOUT_NS)
+    }
+
+    /// Construct a CLI runtime with a testable binary path and command bound.
+    #[must_use]
+    pub fn with_binary_and_timeout(
+        binary: impl Into<PathBuf>,
+        clock: Rc<dyn Clock>,
+        command_timeout_ns: u64,
+    ) -> Self {
+        Self {
+            binary: binary.into(),
+            clock,
+            command_timeout_ns: command_timeout_ns.max(1),
+        }
+    }
+
+    async fn run(
+        &self,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Vec<u8>, ToolSandboxError> {
+        run_docker(
+            &self.binary,
+            self.clock.clone(),
+            self.command_timeout_ns,
+            args,
+        )
+        .await
+    }
+}
 
 #[async_trait(?Send)]
 impl ContainerRuntime for DockerCliRuntime {
     async fn inspect_image(&self, image: &str) -> Result<(), ToolSandboxError> {
-        run_docker([
+        self.run([
             OsString::from("image"),
             OsString::from("inspect"),
             OsString::from(image),
@@ -168,10 +206,7 @@ impl ContainerRuntime for DockerCliRuntime {
         .map(|_| ())
     }
 
-    async fn create_start(
-        &self,
-        spec: &ContainerCreateSpec,
-    ) -> Result<ContainerId, ToolSandboxError> {
+    async fn create(&self, spec: &ContainerCreateSpec) -> Result<ContainerId, ToolSandboxError> {
         if !spec.has_network_disabled {
             return Err(ToolSandboxError::new(
                 "Docker recorded-agent containers must use network=none",
@@ -201,7 +236,7 @@ impl ContainerRuntime for DockerCliRuntime {
         create.push(OsString::from(&spec.image));
         create.push(OsString::from("sleep"));
         create.push(OsString::from("infinity"));
-        let id = String::from_utf8(run_docker(create).await?).map_err(|error| {
+        let id = String::from_utf8(self.run(create).await?).map_err(|error| {
             ToolSandboxError::new(format!("Docker returned a non-UTF-8 container id: {error}"))
         })?;
         let id = id.trim();
@@ -210,9 +245,13 @@ impl ContainerRuntime for DockerCliRuntime {
                 "Docker create returned an empty container id",
             ));
         }
-        let id = ContainerId::new(id);
-        run_docker([OsString::from("start"), OsString::from(id.as_str())]).await?;
-        Ok(id)
+        Ok(ContainerId::new(id))
+    }
+
+    async fn start(&self, id: &ContainerId) -> Result<(), ToolSandboxError> {
+        self.run([OsString::from("start"), OsString::from(id.as_str())])
+            .await
+            .map(|_| ())
     }
 
     async fn open_exec(
@@ -235,7 +274,12 @@ impl ContainerRuntime for DockerCliRuntime {
             .stdout
             .take()
             .ok_or_else(|| ToolSandboxError::new("Docker exec did not expose stdout"))?;
-        Ok(Box::new(DockerExecIo { child, stdout }))
+        Ok(Box::new(DockerExecIo {
+            child,
+            stdout,
+            clock: self.clock.clone(),
+            command_timeout_ns: self.command_timeout_ns,
+        }))
     }
 
     async fn force_remove(
@@ -244,13 +288,18 @@ impl ContainerRuntime for DockerCliRuntime {
         timeout_ns: u64,
     ) -> Result<(), ToolSandboxError> {
         let timeout_seconds = timeout_ns.saturating_add(999_999_999) / 1_000_000_000;
-        run_docker([
-            OsString::from("rm"),
-            OsString::from("--force"),
-            OsString::from("--time"),
-            OsString::from(timeout_seconds.max(1).to_string()),
-            OsString::from(id.as_str()),
-        ])
+        run_docker(
+            &self.binary,
+            self.clock.clone(),
+            timeout_ns.max(1),
+            [
+                OsString::from("rm"),
+                OsString::from("--force"),
+                OsString::from("--time"),
+                OsString::from(timeout_seconds.max(1).to_string()),
+                OsString::from(id.as_str()),
+            ],
+        )
         .await
         .map(|_| ())
     }
@@ -260,14 +309,15 @@ impl ContainerRuntime for DockerCliRuntime {
         key: &str,
         value: &str,
     ) -> Result<Vec<ContainerId>, ToolSandboxError> {
-        let output = run_docker([
-            OsString::from("ps"),
-            OsString::from("--all"),
-            OsString::from("--quiet"),
-            OsString::from("--filter"),
-            OsString::from(format!("label={key}={value}")),
-        ])
-        .await?;
+        let output = self
+            .run([
+                OsString::from("ps"),
+                OsString::from("--all"),
+                OsString::from("--quiet"),
+                OsString::from("--filter"),
+                OsString::from(format!("label={key}={value}")),
+            ])
+            .await?;
         let output = String::from_utf8(output).map_err(|error| {
             ToolSandboxError::new(format!("Docker listed non-UTF-8 container ids: {error}"))
         })?;
@@ -283,6 +333,8 @@ impl ContainerRuntime for DockerCliRuntime {
 struct DockerExecIo {
     child: Child,
     stdout: ChildStdout,
+    clock: Rc<dyn Clock>,
+    command_timeout_ns: u64,
 }
 
 #[async_trait(?Send)]
@@ -307,11 +359,13 @@ impl FramedCommandIo for DockerExecIo {
         self.child.start_kill().map_err(|error| {
             ToolSandboxError::new(format!("cannot terminate Docker exec: {error}"))
         })?;
-        self.child
-            .wait()
-            .await
-            .map_err(|error| ToolSandboxError::new(format!("cannot reap Docker exec: {error}")))?;
-        Ok(())
+        wait_for_child(
+            &mut self.child,
+            self.clock.clone(),
+            self.command_timeout_ns,
+            "Docker exec",
+        )
+        .await
     }
 }
 
@@ -373,6 +427,48 @@ pub struct DockerSessionSandbox {
     command_gate: Mutex<()>,
 }
 
+/// Worker-local factory retaining the Docker owners for one trace composition.
+#[derive(Clone)]
+pub struct DockerSandboxFactory {
+    runtime: Rc<dyn ContainerRuntime>,
+    clock: Rc<dyn Clock>,
+    output_limit: usize,
+}
+
+impl DockerSandboxFactory {
+    /// Freeze worker-local Docker dependencies before trace-specific creation.
+    pub fn new(
+        runtime: Rc<dyn ContainerRuntime>,
+        clock: Rc<dyn Clock>,
+        output_limit: usize,
+    ) -> Self {
+        Self {
+            runtime,
+            clock,
+            output_limit,
+        }
+    }
+
+    /// Create one Docker sandbox from already resolved and provisioned inputs.
+    pub fn create(
+        &self,
+        environment: ResolvedTraceEnvironment,
+        workspace_root: Option<PathBuf>,
+        trace: TraceIdentity,
+        run_identity: ReplayRunIdentity,
+    ) -> Result<Rc<DockerSessionSandbox>, ToolSandboxError> {
+        Ok(Rc::new(DockerSessionSandbox::new(
+            environment,
+            workspace_root,
+            trace,
+            run_identity,
+            self.clock.clone(),
+            self.runtime.clone(),
+            self.output_limit,
+        )?))
+    }
+}
+
 impl DockerSessionSandbox {
     /// Construct one sandbox without probing Docker; [`ToolSandbox::open`] preflights it.
     pub fn new(
@@ -415,8 +511,8 @@ impl DockerSessionSandbox {
             workspace_root,
             trace,
             run_identity,
-            clock,
-            Rc::new(DockerCliRuntime),
+            clock.clone(),
+            Rc::new(DockerCliRuntime::new(clock.clone())),
             output_limit,
         )
     }
@@ -428,7 +524,19 @@ impl DockerSessionSandbox {
         preflight_docker_sandbox(self.runtime.as_ref(), &self.environment)
             .await
             .map_err(|error| ToolSandboxError::new(error.to_string()))?;
-        let id = self.runtime.create_start(&self.create_spec).await?;
+        let id = self.runtime.create(&self.create_spec).await?;
+        if let Err(start_error) = self.runtime.start(&id).await {
+            let cleanup = self
+                .runtime
+                .force_remove(&id, CONTAINER_REMOVE_TIMEOUT_NS)
+                .await;
+            return match cleanup {
+                Ok(()) => Err(start_error),
+                Err(cleanup_error) => Err(ToolSandboxError::new(format!(
+                    "{start_error}; Docker cleanup after failed container start also failed: {cleanup_error}"
+                ))),
+            };
+        }
         self.container.replace(ContainerState::Live(id));
         Ok(())
     }
@@ -630,8 +738,7 @@ fn command_argv(
     argv.push(OsString::from(program));
     argv.extend(arguments.iter().map(OsString::from));
     argv.push(OsString::from(format!(
-        "exec 2>&1; {{ {}; status=$?; printf '\\0aiperf-terminal:{sentinel}:%d\\0' \"$status\"; exit 0; }}",
-        shell_quote(command)
+        "exec 2>&1\n{command}\nstatus=$?\nprintf '\\0aiperf-terminal:{sentinel}:%d\\0' \"$status\"\nexit 0"
     )));
     Ok(argv)
 }
@@ -654,10 +761,6 @@ fn sanitize_container_component(raw: &str) -> String {
     } else {
         value.chars().take(48).collect()
     }
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn elapsed_ns(started_ns: i64, ended_ns: i64) -> u64 {
@@ -723,20 +826,83 @@ fn find_subsequence(bytes: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-async fn run_docker(args: impl IntoIterator<Item = OsString>) -> Result<Vec<u8>, ToolSandboxError> {
-    let output = Command::new("docker")
-        .args(args)
-        .output()
-        .await
+async fn run_docker(
+    binary: &Path,
+    clock: Rc<dyn Clock>,
+    timeout_ns: u64,
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<Vec<u8>, ToolSandboxError> {
+    let mut command = Command::new(binary);
+    command.args(args);
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    command.kill_on_drop(true);
+    let mut child = command
+        .spawn()
         .map_err(|error| ToolSandboxError::new(format!("cannot run Docker CLI: {error}")))?;
-    if output.status.success() {
-        Ok(output.stdout)
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ToolSandboxError::new("Docker CLI did not expose stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ToolSandboxError::new("Docker CLI did not expose stderr"))?;
+    let completed = {
+        let wait = async {
+            let mut stdout = stdout;
+            let mut stderr = stderr;
+            let mut output = Vec::new();
+            let mut error_output = Vec::new();
+            let (status, output_result, error_result) = tokio::join!(
+                child.wait(),
+                stdout.read_to_end(&mut output),
+                stderr.read_to_end(&mut error_output),
+            );
+            let status = status.map_err(|error| {
+                ToolSandboxError::new(format!("cannot wait for Docker CLI: {error}"))
+            })?;
+            output_result.map_err(|error| {
+                ToolSandboxError::new(format!("cannot read Docker CLI stdout: {error}"))
+            })?;
+            error_result.map_err(|error| {
+                ToolSandboxError::new(format!("cannot read Docker CLI stderr: {error}"))
+            })?;
+            Ok::<_, ToolSandboxError>((status, output, error_output))
+        };
+        tokio::pin!(wait);
+        tokio::select! {
+            result = &mut wait => Some(result?),
+            () = clock.clone().sleep(timeout_ns.min(i64::MAX as u64) as i64) => None,
+        }
+    };
+    let Some((status, stdout, stderr)) = completed else {
+        let _ = child.start_kill();
+        let _ = wait_for_child(&mut child, clock, timeout_ns, "Docker CLI").await;
+        return Err(ToolSandboxError::new("Docker CLI timed out"));
+    };
+    if status.success() {
+        Ok(stdout)
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = String::from_utf8_lossy(&stderr);
         Err(ToolSandboxError::new(format!(
             "Docker CLI exited with {}: {}",
-            output.status,
+            status,
             stderr.trim()
         )))
+    }
+}
+
+async fn wait_for_child(
+    child: &mut Child,
+    clock: Rc<dyn Clock>,
+    timeout_ns: u64,
+    operation: &str,
+) -> Result<(), ToolSandboxError> {
+    tokio::select! {
+        result = child.wait() => result
+            .map(|_| ())
+            .map_err(|error| ToolSandboxError::new(format!("cannot reap {operation}: {error}"))),
+        () = clock.sleep(timeout_ns.min(i64::MAX as u64) as i64) => Err(ToolSandboxError::new(format!("{operation} timed out while reaping"))),
     }
 }
