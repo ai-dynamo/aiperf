@@ -76,6 +76,9 @@ impl ProcessSpawner for TokioProcessSpawner {
         let mut child = command
             .spawn()
             .map_err(|error| ToolSandboxError::new(format!("cannot start local shell: {error}")))?;
+        let process_group_id = child.id().ok_or_else(|| {
+            ToolSandboxError::new("local shell has no process identifier after spawn")
+        })? as i32;
         let stdin = child
             .stdin
             .take()
@@ -86,6 +89,7 @@ impl ProcessSpawner for TokioProcessSpawner {
             .ok_or_else(|| ToolSandboxError::new("local shell did not expose standard output"))?;
         Ok(Box::new(TokioProcessSession {
             child,
+            process_group_id,
             stdin,
             stdout,
         }))
@@ -95,6 +99,7 @@ impl ProcessSpawner for TokioProcessSpawner {
 /// Tokio child-process session with a single combined output pipe.
 struct TokioProcessSession {
     child: Child,
+    process_group_id: i32,
     stdin: ChildStdin,
     stdout: ChildStdout,
 }
@@ -117,11 +122,11 @@ impl ProcessSession for TokioProcessSession {
     }
 
     async fn terminate(&mut self) -> Result<(), ToolSandboxError> {
-        signal_process_group(&self.child, libc::SIGTERM)
+        signal_process_group(self.process_group_id, libc::SIGTERM)
     }
 
     async fn kill(&mut self) -> Result<(), ToolSandboxError> {
-        signal_process_group(&self.child, libc::SIGKILL)
+        signal_process_group(self.process_group_id, libc::SIGKILL)
     }
 
     async fn wait(&mut self) -> Result<(), ToolSandboxError> {
@@ -151,13 +156,13 @@ fn set_session_process_group(command: &mut Command) {
 fn set_session_process_group(_command: &mut Command) {}
 
 #[cfg(unix)]
-fn signal_process_group(child: &Child, signal: libc::c_int) -> Result<(), ToolSandboxError> {
-    let pid = child
-        .id()
-        .ok_or_else(|| ToolSandboxError::new("local shell has no process identifier"))?;
+fn signal_process_group(
+    process_group_id: i32,
+    signal: libc::c_int,
+) -> Result<(), ToolSandboxError> {
     // A negative process identifier targets the session/process group created by
     // `setsid`, including command descendants that outlive their direct parent.
-    let result = unsafe { libc::kill(-(pid as i32), signal) };
+    let result = unsafe { libc::kill(-process_group_id, signal) };
     if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
         Ok(())
     } else {
@@ -169,7 +174,10 @@ fn signal_process_group(child: &Child, signal: libc::c_int) -> Result<(), ToolSa
 }
 
 #[cfg(not(unix))]
-fn signal_process_group(_child: &Child, _signal: libc::c_int) -> Result<(), ToolSandboxError> {
+fn signal_process_group(
+    _process_group_id: i32,
+    _signal: libc::c_int,
+) -> Result<(), ToolSandboxError> {
     Err(ToolSandboxError::new(
         "local shell process-group cleanup requires a Unix host",
     ))
@@ -181,6 +189,7 @@ pub struct LocalSessionSandbox {
     clock: Rc<dyn Clock>,
     spawner: Rc<dyn ProcessSpawner>,
     output_limit: usize,
+    reap_grace_ns: i64,
     session: RefCell<Option<Box<dyn ProcessSession>>>,
     command_gate: Mutex<()>,
 }
@@ -198,6 +207,7 @@ impl LocalSessionSandbox {
             clock,
             spawner,
             output_limit,
+            reap_grace_ns: REAP_GRACE_NS,
             session: RefCell::new(None),
             command_gate: Mutex::new(()),
         }
@@ -210,6 +220,19 @@ impl LocalSessionSandbox {
         output_limit: usize,
     ) -> Self {
         Self::new(workspace, clock, Rc::new(TokioProcessSpawner), output_limit)
+    }
+
+    /// Build a sandbox with a testable grace interval for process reaping.
+    pub fn with_reap_grace(
+        workspace: WorkspaceSpec,
+        clock: Rc<dyn Clock>,
+        spawner: Rc<dyn ProcessSpawner>,
+        output_limit: usize,
+        reap_grace_ns: i64,
+    ) -> Self {
+        let mut sandbox = Self::new(workspace, clock, spawner, output_limit);
+        sandbox.reap_grace_ns = reap_grace_ns.max(1);
+        sandbox
     }
 
     async fn open_unlocked(&self) -> Result<(), ToolSandboxError> {
@@ -236,26 +259,33 @@ impl LocalSessionSandbox {
 
     async fn reap(&self, session: &mut dyn ProcessSession) -> Result<(), ToolSandboxError> {
         let terminate = session.terminate().await;
-        let grace = self.clock.clone().sleep(REAP_GRACE_NS);
+        let grace = self.clock.clone().sleep(self.reap_grace_ns);
         tokio::pin!(grace);
         tokio::select! {
             result = session.wait() => {
-                terminate?;
-                result
+                let kill = session.kill().await;
+                combine_cleanup_results(terminate, combine_cleanup_results(kill, result))
             }
             () = &mut grace => {
-                session.kill().await?;
-                let result = session.wait().await;
-                terminate?;
-                result
+                let kill = session.kill().await;
+                let final_grace = self.clock.clone().sleep(self.reap_grace_ns);
+                tokio::pin!(final_grace);
+                tokio::select! {
+                    result = session.wait() => combine_cleanup_results(terminate, combine_cleanup_results(kill, result)),
+                    () = &mut final_grace => Err(merge_cleanup_error(
+                        combine_cleanup_results(terminate, kill).err(),
+                        ToolSandboxError::new("local shell did not exit after SIGKILL"),
+                    )),
+                }
             }
         }
     }
 
-    async fn discard_session(&self, mut session: Box<dyn ProcessSession>) {
-        if let Err(error) = self.reap(&mut *session).await {
-            tracing::debug!(error = %error, component = "recorded-agent-local-sandbox", "failed to reap unusable local shell");
-        }
+    async fn discard_session(
+        &self,
+        mut session: Box<dyn ProcessSession>,
+    ) -> Result<(), ToolSandboxError> {
+        self.reap(&mut *session).await
     }
 
     async fn terminal_result(
@@ -265,7 +295,11 @@ impl LocalSessionSandbox {
         timeout_ns: Option<u64>,
     ) -> Result<CommandEnd, ToolSandboxError> {
         let timeout_ns = timeout_ns.filter(|timeout| *timeout > 0);
-        let timer = timeout_ns.map(|timeout| self.clock.clone().sleep(timeout as i64));
+        let timer = timeout_ns.map(|timeout| {
+            self.clock
+                .clone()
+                .sleep(timeout.min(i64::MAX as u64) as i64)
+        });
         tokio::pin!(timer);
         let mut wire = BytesMut::new();
         let mut output = Vec::new();
@@ -343,7 +377,7 @@ impl ToolSandbox for LocalSessionSandbox {
         })?;
         let started_ns = self.clock.now_ns();
         if let Err(error) = session.write_all(&command_wire).await {
-            self.discard_session(session).await;
+            self.discard_session(session).await?;
             return Err(error);
         }
         let timeout_ns = timeout_ns.or(Some(self.workspace.command_timeout_ns));
@@ -357,7 +391,10 @@ impl ToolSandbox for LocalSessionSandbox {
                 exit_code,
             }) => {
                 let duration_ns = elapsed_ns(started_ns, self.clock.now_ns());
-                self.session.replace(Some(session));
+                // End this command's outer session after its terminal frame.
+                // The next command opens a fresh session, so descendants that
+                // inherited this pipe cannot contaminate its output.
+                self.discard_session(session).await?;
                 Ok(ToolCommandResult {
                     output: Bytes::from(output),
                     exit_code,
@@ -373,7 +410,7 @@ impl ToolSandbox for LocalSessionSandbox {
                 // The measurement boundary ends before descendant termination,
                 // grace waiting, and session recreation perturb wall-clock timing.
                 let duration_ns = elapsed_ns(started_ns, self.clock.now_ns());
-                self.discard_session(session).await;
+                self.discard_session(session).await?;
                 self.open_unlocked().await?;
                 Ok(ToolCommandResult {
                     output: Bytes::from(output),
@@ -384,7 +421,7 @@ impl ToolSandbox for LocalSessionSandbox {
                 })
             }
             Err(error) => {
-                self.discard_session(session).await;
+                self.discard_session(session).await?;
                 Err(error)
             }
         }
@@ -429,6 +466,27 @@ fn command_wire(
         shell_quote(command),
     )
     .into_bytes())
+}
+
+fn combine_cleanup_results(
+    first: Result<(), ToolSandboxError>,
+    second: Result<(), ToolSandboxError>,
+) -> Result<(), ToolSandboxError> {
+    match (first, second) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(first), Err(second)) => Err(merge_cleanup_error(Some(first), second)),
+    }
+}
+
+fn merge_cleanup_error(
+    first: Option<ToolSandboxError>,
+    second: ToolSandboxError,
+) -> ToolSandboxError {
+    match first {
+        Some(first) => ToolSandboxError::new(format!("{first}; {second}")),
+        None => second,
+    }
 }
 
 fn shell_quote(value: &str) -> String {

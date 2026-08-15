@@ -5,7 +5,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::future::pending;
+use std::future::{Future, pending};
+use std::pin::Pin;
 use std::rc::Rc;
 
 use async_trait::async_trait;
@@ -57,8 +58,8 @@ impl ProcessSession for FakeProcess {
             ToolSandboxError::new(format!("fake command is not UTF-8: {error}"))
         })?;
         let marker = command
-            .split("\\0aiperf-terminal:")
-            .nth(1)
+            .rsplit("\\0aiperf-terminal:")
+            .next()
             .and_then(|tail| tail.split(":%d\\0").next())
             .ok_or_else(|| ToolSandboxError::new("fake cannot find terminal marker"))?;
         let mut frame = self.output_prefix.clone();
@@ -98,6 +99,74 @@ impl ProcessSession for FakeProcess {
 struct FakeSpawner {
     processes: RefCell<VecDeque<Box<dyn ProcessSession>>>,
     requests: RefCell<Vec<LocalProcessRequest>>,
+}
+
+struct FailingCleanupProcess;
+
+#[async_trait(?Send)]
+impl ProcessSession for FailingCleanupProcess {
+    async fn write_all(&mut self, _command: &[u8]) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn read(&mut self, _output: &mut BytesMut) -> Result<usize, ToolSandboxError> {
+        pending().await
+    }
+
+    async fn terminate(&mut self) -> Result<(), ToolSandboxError> {
+        Err(ToolSandboxError::new("terminate failed"))
+    }
+
+    async fn kill(&mut self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn wait(&mut self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+}
+
+struct NeverReapsProcess {
+    kill_count: Rc<Cell<u8>>,
+}
+
+#[async_trait(?Send)]
+impl ProcessSession for NeverReapsProcess {
+    async fn write_all(&mut self, _command: &[u8]) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn read(&mut self, _output: &mut BytesMut) -> Result<usize, ToolSandboxError> {
+        pending().await
+    }
+
+    async fn terminate(&mut self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn kill(&mut self) -> Result<(), ToolSandboxError> {
+        self.kill_count.set(self.kill_count.get().saturating_add(1));
+        Ok(())
+    }
+
+    async fn wait(&mut self) -> Result<(), ToolSandboxError> {
+        pending().await
+    }
+}
+
+struct RecordingClock {
+    sleeps: Rc<RefCell<Vec<i64>>>,
+}
+
+impl Clock for RecordingClock {
+    fn now_ns(&self) -> i64 {
+        0
+    }
+
+    fn sleep(self: Rc<Self>, duration_ns: i64) -> Pin<Box<dyn Future<Output = ()>>> {
+        self.sleeps.borrow_mut().push(duration_ns);
+        Box::pin(pending())
+    }
 }
 
 impl FakeSpawner {
@@ -178,6 +247,125 @@ async fn timeout_kills_descendants_recycles_and_next_command_has_no_stale_output
     assert_eq!(second.output, Bytes::from_static(b"second command output"));
     assert_eq!(termination_count.get(), 1);
     assert_eq!(spawner.requests.borrow().len(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn timeout_refuses_to_report_a_terminal_outcome_when_cleanup_fails() {
+    // This catches cleanup being treated as best-effort, which would report a
+    // timeout and spawn a replacement while the old descendant group survives.
+    let spawner = Rc::new(FakeSpawner::new([
+        Box::new(FailingCleanupProcess) as Box<dyn ProcessSession>,
+        Box::new(FakeProcess::new(b"replacement", [])) as Box<dyn ProcessSession>,
+    ]));
+    let sandbox = sandbox(spawner.clone());
+
+    let error = sandbox
+        .run("sleep forever", Some(10_000_000))
+        .await
+        .expect_err("failed cleanup prevents a timeout result");
+
+    assert_eq!(error.to_string(), "terminate failed");
+    assert_eq!(spawner.requests.borrow().len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn completed_command_cannot_leave_background_output_for_the_next_command() {
+    // This catches a command frame emitted before its background descendants
+    // are terminated, which attributes their later output to the next command.
+    let temporary = tempfile::tempdir().expect("temporary local workspace");
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sandbox = LocalSessionSandbox::with_tokio_processes(
+        real_workspace(temporary.path().to_string_lossy().as_ref()),
+        clock,
+        1024,
+    );
+
+    sandbox
+        .run("(sleep 0.05; printf stale) &", Some(1_000_000_000))
+        .await
+        .expect("command completes after cleaning background descendants");
+    let next = sandbox
+        .run("sleep 0.1; printf next", Some(1_000_000_000))
+        .await
+        .expect("following command completes");
+    sandbox.close().await.expect("session closes");
+
+    assert_eq!(next.output, Bytes::from_static(b"next"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn timeout_kills_a_background_descendant_before_it_can_write() {
+    // This catches a timeout that only kills the persistent shell while an
+    // inner command process group survives and performs a later side effect.
+    let temporary = tempfile::tempdir().expect("temporary local workspace");
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sandbox = LocalSessionSandbox::with_tokio_processes(
+        real_workspace(temporary.path().to_string_lossy().as_ref()),
+        clock,
+        1024,
+    );
+
+    let timeout = sandbox
+        .run(
+            "(sleep 0.05; printf escaped > escaped-state) & sleep 10",
+            Some(10_000_000),
+        )
+        .await
+        .expect("timeout cleanup and replacement succeed");
+    let next = sandbox
+        .run(
+            "sleep 0.1; test ! -e escaped-state && printf clean",
+            Some(1_000_000_000),
+        )
+        .await
+        .expect("next session runs after timeout recovery");
+    sandbox.close().await.expect("session closes");
+
+    assert!(timeout.is_timed_out);
+    assert_eq!(next.output, Bytes::from_static(b"clean"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn final_reap_after_kill_is_clock_bounded() {
+    // This catches an unbounded second `wait()` after SIGKILL that can hold the
+    // worker-local command gate indefinitely when a process implementation misbehaves.
+    let kill_count = Rc::new(Cell::new(0));
+    let spawner = Rc::new(FakeSpawner::new([Box::new(NeverReapsProcess {
+        kill_count: kill_count.clone(),
+    }) as Box<dyn ProcessSession>]));
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sandbox =
+        LocalSessionSandbox::with_reap_grace(workspace(), clock, spawner, 1024, 1_000_000);
+
+    sandbox.open().await.expect("session opens");
+    let error = sandbox
+        .close()
+        .await
+        .expect_err("unreaped process is a bounded infrastructure error");
+
+    assert_eq!(error.to_string(), "local shell did not exit after SIGKILL");
+    assert_eq!(kill_count.get(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn oversized_timeout_saturates_at_the_clock_range() {
+    // This catches a `u64 as i64` wrap that turns a very large authored timeout
+    // into a negative value and silently disables the deadline.
+    let sleeps = Rc::new(RefCell::new(Vec::new()));
+    let clock: Rc<dyn Clock> = Rc::new(RecordingClock {
+        sleeps: sleeps.clone(),
+    });
+    let spawner = Rc::new(FakeSpawner::new([
+        Box::new(FakeProcess::new(b"ok", [])) as Box<dyn ProcessSession>
+    ]));
+    let sandbox = LocalSessionSandbox::new(workspace(), clock, spawner, 1024);
+
+    sandbox
+        .run("printf ok", Some(u64::MAX))
+        .await
+        .expect("saturated deadline still permits a completed command");
+
+    assert_eq!(sleeps.borrow().first(), Some(&i64::MAX));
 }
 
 #[tokio::test(flavor = "current_thread")]
