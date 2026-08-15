@@ -5,6 +5,7 @@
 
 mod evidence;
 mod execution;
+mod health;
 mod identity;
 mod import;
 mod import_report;
@@ -22,6 +23,7 @@ pub use execution::{
     AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract,
     HarborSandboxRecipe, ImmutablePatch, WorkspaceOverlay,
 };
+pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{
     AgentVariantRef, ArtifactDigest, EvalIdentityError, EvalTaskId, EvalTaskRef, ModelIdentity,
     PolicyIdentity, RuntimeIdentity,
