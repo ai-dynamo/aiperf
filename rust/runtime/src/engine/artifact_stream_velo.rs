@@ -684,14 +684,15 @@ mod tests {
             "velo-shipped artifact landed byte-identical"
         );
 
-        // Bounded memory: the transfer must not have grown RSS by anywhere near the
-        // 64 MB file size. Allow a generous 24 MB slack for velo buffers/tokio/zstd,
-        // still far below O(file).
+        // Bounded memory: Velo's pinned transport uses a 4096-frame queue before
+        // sender backpressure reaches this layer. At the compressor's chunk size that
+        // is roughly 32 MiB, plus runtime slack. Keep the ceiling below the 64 MiB
+        // source artifact so a whole-file buffering regression still fails.
         if let (Some(base), Some(peak)) = (baseline, resident_bytes()) {
             let grew = peak.saturating_sub(base);
             assert!(
-                grew < 24 * 1024 * 1024,
-                "RSS grew {grew} bytes during a {payload_len}-byte transfer — not O(chunk)"
+                grew < 48 * 1024 * 1024,
+                "RSS grew {grew} bytes during a {payload_len}-byte transfer — not O(window · chunk)"
             );
         }
     }
