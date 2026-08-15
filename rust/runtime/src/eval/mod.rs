@@ -11,6 +11,7 @@ mod import_report;
 mod score;
 mod source;
 mod trial;
+mod verifier;
 
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
@@ -26,3 +27,4 @@ pub use import_report::{ImportDisposition, ImportReport};
 pub use score::{ScoreError, ScoreVersion};
 pub use source::{EvalDatasetId, EvalDatasetManifest};
 pub use trial::{TrialBudget, TrialSpec};
+pub use verifier::{ArtifactTransferError, DeclaredArtifactTransfer, RewardDocument, RewardError};
