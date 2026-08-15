@@ -55,6 +55,41 @@ ALL_SECTION_FIELDS: frozenset[str] = (
 )
 
 
+# Flags that would replace the dataset the config file declared rather than
+# shape it: its source file, its public-dataset identity, its format. The YAML
+# owns those, and build_dataset drops the corresponding keys in override mode,
+# so the flags must keep erroring instead of appearing to work.
+DATASET_SOURCE_FIELDS: frozenset[str] = frozenset(
+    {
+        "input_file",
+        "public_dataset",
+        "custom_dataset_type",
+        "hf_weka_dataset",
+    }
+)
+
+# INPUT_FIELDS members that build_dataset does not carry -- they land
+# somewhere other than the dataset block (SLOs, phase timing), so routing
+# them is separate work and they stay loud for now.
+_INPUT_NOT_ON_DATASET: frozenset[str] = frozenset(
+    {
+        "goodput",
+        "fixed_schedule",
+        "fixed_schedule_auto_offset",
+        "fixed_schedule_end_offset",
+        "fixed_schedule_start_offset",
+    }
+)
+
+
+# INPUT fields that _apply_dataset_overrides carries onto the dataset block.
+# Used to decide whether a config file lacking a dataset is an error for this
+# invocation or simply nothing to do.
+DATASET_OVERRIDE_FIELDS: frozenset[str] = (
+    INPUT_FIELDS - DATASET_SOURCE_FIELDS - _INPUT_NOT_ON_DATASET
+) - {"headers", "extra_inputs"}
+
+
 def _build_routed_under_config() -> frozenset[str]:
     """Derive the routed set from the resolver's own routing tables.
 
@@ -76,18 +111,14 @@ def _build_routed_under_config() -> frozenset[str]:
         "model_selection_strategy",
     }
 
-    # _apply_input_overrides (headers/extra), _apply_dataset_filter_overrides,
-    # _apply_dataset_synthesis_overrides, _apply_random_pool_batch_size_overrides.
-    inputs = {
-        "headers",
-        "extra_inputs",
-        "dataset_filters",
-        "allow_dataset_wrap",
-        "prompt_batch_size",
-        "image_batch_size",
-        "audio_batch_size",
-        "video_batch_size",
-    } | {field for field in INPUT_FIELDS if field.startswith("synthesis_")}
+    # _apply_input_overrides routes headers/extra onto the endpoint block;
+    # every other dataset-shaping field goes through _apply_dataset_overrides,
+    # which delegates to build_dataset in override mode.
+    #
+    # The exceptions are the fields that would replace the dataset the config
+    # file declared rather than shape it -- source, type, and format. The YAML
+    # owns those, so the flags stay rejected (see DATASET_SOURCE_FIELDS).
+    inputs = (INPUT_FIELDS - DATASET_SOURCE_FIELDS) - _INPUT_NOT_ON_DATASET
 
     # _apply_phase_loadgen_overrides: the phase field map, the rate-series
     # pair, and the AGENTIC_REPLAY fields shared with BasePhaseConfig.
@@ -147,78 +178,12 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         "server_profiler_start_path",
         "server_profiler_stop_path",
         "server_profiler_timeout_seconds",
-        # ----- input: dataset selection / loading -----
-        "custom_dataset_type",
-        "dataset_sampling_strategy",
-        "input_file",
-        "public_dataset",
-        "hf_dataset_subset",
-        "hf_weka_dataset",
-        "goodput",
-        "max_context_length",
-        "random_seed",
-        "cache_bust",
-        "prompt_corpus",
-        "use_think_time_only",
-        "ignore_trace_delays",
-        # ----- input: fixed schedule -----
-        "fixed_schedule",
-        "fixed_schedule_auto_offset",
-        "fixed_schedule_end_offset",
-        "fixed_schedule_start_offset",
-        # ----- input: conversation -----
-        "conversation_num",
-        "conversation_num_dataset_entries",
-        "conversation_turn_mean",
-        "conversation_turn_stddev",
-        "conversation_turn_delay_mean",
-        "conversation_turn_delay_stddev",
-        "conversation_turn_delay_ratio",
-        # ----- input: prompt -----
-        "prompt_input_tokens_mean",
-        "prompt_input_tokens_stddev",
-        "prompt_input_tokens_block_size",
-        "prompt_output_tokens_mean",
-        "prompt_output_tokens_stddev",
-        "prompt_prefix_pool_size",
-        "prompt_prefix_length",
-        "prompt_prefix_shared_system_length",
-        "prompt_prefix_user_context_length",
-        "prompt_sequence_distribution",
-        # ----- input: image -----
-        "image_width_mean",
-        "image_width_stddev",
-        "image_height_mean",
-        "image_height_stddev",
-        "image_format",
-        "image_source",
-        "image_source_sampling",
-        # ----- input: audio -----
-        "audio_length_mean",
-        "audio_length_stddev",
-        "audio_format",
-        "audio_depths",
-        "audio_sample_rates",
-        "audio_num_channels",
-        # ----- input: video -----
-        "video_duration",
-        "video_fps",
-        "video_width",
-        "video_height",
-        "video_synth_type",
-        "video_format",
-        "video_codec",
-        "video_audio_sample_rate",
-        "video_audio_channels",
-        "video_audio_codec",
-        "video_audio_depth",
-        # ----- input: rankings -----
-        "rankings_passages_mean",
-        "rankings_passages_stddev",
-        "rankings_passages_prompt_token_mean",
-        "rankings_passages_prompt_token_stddev",
-        "rankings_query_prompt_token_mean",
-        "rankings_query_prompt_token_stddev",
+        # ----- input: dataset identity, owned by the config file -----
+        # Every other INPUT field now routes through _apply_dataset_overrides;
+        # these would swap the dataset the YAML declared rather than shape it.
+        *DATASET_SOURCE_FIELDS,
+        # ----- input: not carried on the dataset block -----
+        *_INPUT_NOT_ON_DATASET,
         # ----- loadgen: warmup phase -----
         "warmup_arrival_pattern",
         "warmup_concurrency",

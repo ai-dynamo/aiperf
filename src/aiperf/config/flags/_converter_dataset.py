@@ -359,6 +359,19 @@ def _resolve_entries(cli: CLIConfig) -> int | None:
     return None
 
 
+# Per-modality subtables only SyntheticDataset carries. File and public
+# datasets take their values from the trace, and leaking one of these onto
+# them trips extra_forbidden at validation.
+_SYNTHETIC_ONLY_SUBTABLES: tuple[str, ...] = (
+    "prompts",
+    "prefix_prompts",
+    "rankings",
+    "audio",
+    "images",
+    "video",
+)
+
+
 def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig, needs_text: bool) -> None:
     from aiperf.common.enums import DatasetType
 
@@ -376,14 +389,7 @@ def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig, needs_text: bool) -> 
             d["entries"] = entries
             d["_entries_explicit"] = entries_explicit
         # PublicDataset doesn't carry per-modality subtables.
-        for key in (
-            "prompts",
-            "prefix_prompts",
-            "rankings",
-            "audio",
-            "images",
-            "video",
-        ):
+        for key in _SYNTHETIC_ONLY_SUBTABLES:
             d.pop(key, None)
         return
     if cli.input_file:
@@ -393,14 +399,7 @@ def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig, needs_text: bool) -> 
         # FileDataset only carries synthesis + osl as auxiliary fields. The
         # synthetic-only subtables are dropped here; --osl is handled by
         # _apply_file_osl.
-        for key in (
-            "prompts",
-            "prefix_prompts",
-            "rankings",
-            "audio",
-            "images",
-            "video",
-        ):
+        for key in _SYNTHETIC_ONLY_SUBTABLES:
             d.pop(key, None)
         return
     d["type"] = DatasetType.SYNTHETIC
@@ -466,7 +465,15 @@ def _apply_random_corpus_style_and_range_ratio(
     d.setdefault("prompts", {})["random_range_ratio"] = cli.prompt_random_range_ratio
 
 
-def _apply_turns(d: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_turns(d: dict[str, Any], cli: CLIConfig, *, only_set: bool = False) -> None:
+    """Route conversation turn shaping onto the dataset dict.
+
+    ``only_set`` suppresses the companion value each pair normally carries.
+    Setting just ``--conversation-turn-mean`` emits ``stddev`` too, which is
+    the right default when the CLI builds a whole dataset from nothing, but
+    would overwrite a YAML ``turns.stddev`` the user never mentioned when the
+    result is merged as an override.
+    """
     fields_set = cli.model_fields_set
     if (
         "conversation_turn_mean" in fields_set
@@ -476,18 +483,22 @@ def _apply_turns(d: dict[str, Any], cli: CLIConfig) -> None:
         # placeholder; the sweep block carries the full list.
         v = cli.conversation_turn_mean
         turn_mean = v[0] if isinstance(v, list) and v else v
-        d["turns"] = {
-            "mean": turn_mean,
-            "stddev": cli.conversation_turn_stddev,
-        }
+        turns: dict[str, Any] = {}
+        if not only_set or "conversation_turn_mean" in fields_set:
+            turns["mean"] = turn_mean
+        if not only_set or "conversation_turn_stddev" in fields_set:
+            turns["stddev"] = cli.conversation_turn_stddev
+        d["turns"] = turns
     if (
         "conversation_turn_delay_mean" in fields_set
         or "conversation_turn_delay_stddev" in fields_set
     ):
-        d["turn_delay"] = {
-            "mean": cli.conversation_turn_delay_mean,
-            "stddev": cli.conversation_turn_delay_stddev,
-        }
+        turn_delay: dict[str, Any] = {}
+        if not only_set or "conversation_turn_delay_mean" in fields_set:
+            turn_delay["mean"] = cli.conversation_turn_delay_mean
+        if not only_set or "conversation_turn_delay_stddev" in fields_set:
+            turn_delay["stddev"] = cli.conversation_turn_delay_stddev
+        d["turn_delay"] = turn_delay
     if "conversation_turn_delay_ratio" in fields_set:
         d["turn_delay_ratio"] = cli.conversation_turn_delay_ratio
 
@@ -615,7 +626,12 @@ _RANDOM_POOL_BATCH_SIZE_FLAGS: frozenset[str] = frozenset(
 )
 
 
-def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
+def _reject_file_dataset_incompatible(
+    cli: CLIConfig,
+    *,
+    declared_type: Any = None,
+    declared_format: Any = None,
+) -> None:
     """Reject synthetic-only flags on FILE or PUBLIC (trace) datasets.
 
     Flags rejected: prefix prompts, ISL shaping (--isl/--isl-stddev/
@@ -636,15 +652,29 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     ``FileDataset.osl`` / ``PublicDataset.osl`` by ``_apply_file_osl`` as a
     per-record fallback.
     """
-    if not cli.input_file and not _implies_public_dataset(cli):
-        return
-    s = cli.model_fields_set
+    from aiperf.common.enums import DatasetType
     from aiperf.plugin.enums import CustomDatasetType
 
-    is_random_pool = (
-        cli.input_file is not None
-        and cli.custom_dataset_type == CustomDatasetType.RANDOM_POOL
-    )
+    # Under --config the dataset type comes from the YAML, so --input-file is
+    # absent even when the target IS a file dataset. Trust the declared value
+    # when the caller supplies one; fall back to flag inference otherwise.
+    if declared_type is not None:
+        if declared_type not in (DatasetType.FILE, DatasetType.PUBLIC):
+            return
+    elif not cli.input_file and not _implies_public_dataset(cli):
+        return
+    s = cli.model_fields_set
+
+    if declared_type is not None:
+        is_random_pool = (
+            declared_type == DatasetType.FILE
+            and declared_format == CustomDatasetType.RANDOM_POOL
+        )
+    else:
+        is_random_pool = (
+            cli.input_file is not None
+            and cli.custom_dataset_type == CustomDatasetType.RANDOM_POOL
+        )
     batch_size_attrs = _RANDOM_POOL_BATCH_SIZE_FLAGS
     non_batch_violations = [
         flag
@@ -701,15 +731,27 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
         )
 
 
-def _apply_random_pool_batch_sizes(d: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_random_pool_batch_sizes(
+    d: dict[str, Any],
+    cli: CLIConfig,
+    *,
+    declared_format: Any = None,
+) -> None:
     """Route batch-size CLI flags onto FileDataset fields when format is random_pool.
 
     FileDataset has no prompts/images/audio/video sub-configs, so batch sizes
     live as flat fields and are threaded directly to RandomPoolDatasetLoader.
+
+    ``declared_format`` carries the format when a YAML config declared it, in
+    which case ``--input-file`` and ``--custom-dataset-type`` are absent from
+    the CLI and cannot be used to recognize a random_pool dataset.
     """
     from aiperf.plugin.enums import CustomDatasetType
 
-    if not cli.input_file or cli.custom_dataset_type != CustomDatasetType.RANDOM_POOL:
+    if declared_format is not None:
+        if declared_format != CustomDatasetType.RANDOM_POOL:
+            return
+    elif not cli.input_file or cli.custom_dataset_type != CustomDatasetType.RANDOM_POOL:
         return
     s = cli.model_fields_set
     if "prompt_batch_size" in s:
@@ -1174,7 +1216,56 @@ def _determine_needs_text(cli: CLIConfig) -> bool:
 # --- public entrypoint ----------------------------------------------------
 
 
-def build_dataset(cli: CLIConfig) -> dict[str, Any]:
+def _run_dataset_rejections(
+    cli: CLIConfig,
+    *,
+    declared_type: Any = None,
+    declared_format: Any = None,
+) -> None:
+    """Run the flag-compatibility guards for the resolved dataset identity.
+
+    ``declared_type``/``declared_format`` are set when a YAML config file
+    declared them, in which case the guards evaluate against those rather
+    than against flags like ``--input-file`` that the ``--config`` path
+    rejects and therefore never sees.
+    """
+    from aiperf.common.enums import DatasetType
+
+    override_mode = declared_type is not None
+
+    _reject_file_dataset_incompatible(
+        cli, declared_type=declared_type, declared_format=declared_format
+    )
+    _reject_baseten_only_trace_flags(cli)
+    if override_mode:
+        _reject_baseten_trace_unsupported_synthesis(
+            cli,
+            declared_format,
+            dataset_format_source=f"YAML format: {declared_format}",
+        )
+    else:
+        _reject_baseten_trace_unsupported_synthesis(cli, cli.custom_dataset_type)
+    _reject_baseten_trace_extra_input_collisions(cli)
+
+    if cli.dataset_filters and not (
+        _implies_public_dataset(cli) or declared_type == DatasetType.PUBLIC
+    ):
+        if override_mode:
+            # Telling a --config user to pass --public-dataset is bad advice:
+            # the config file owns the type, and that flag is rejected here.
+            raise ValueError(
+                f"--dataset-filter requires a public dataset, but the config "
+                f"file declares type: {declared_type}."
+            )
+        raise ValueError("--dataset-filter requires --public-dataset")
+
+
+def build_dataset(
+    cli: CLIConfig,
+    *,
+    declared_type: Any = None,
+    declared_format: Any = None,
+) -> dict[str, Any]:
     """Build a single dataset entry (without the wrapping ``name`` field).
 
     Discriminates among synthetic / file / public based on the populated
@@ -1184,27 +1275,65 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     when --input-file is set, except batch-size flags when
     ``--custom-dataset-type random_pool`` is the custom dataset type.
 
+    Args:
+        cli: the parsed CLIConfig for this invocation.
+        declared_type: dataset ``type`` when the caller already knows it --
+            i.e. a YAML config file declared it. Supplying it switches this
+            function into *override mode*: the type is read rather than
+            inferred from which flags happen to be populated, defaults are
+            not materialized for values the user did not set, and the keys
+            the config file owns (``type``/``format``/``path``/``dataset``)
+            are stripped from the result. That makes the output safe to
+            deep-merge onto a YAML dataset block.
+        declared_format: dataset ``format`` alongside ``declared_type``, so
+            format-sensitive routing (random_pool batch sizes, baseten trace
+            guards) evaluates against the declared value.
+
     Returns:
-        A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``.
+        A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``,
+        or -- in override mode -- for deep-merging onto an existing dataset dict.
     """
+    from aiperf.common.enums import DatasetType
+
+    override_mode = declared_type is not None
+
     needs_text = _determine_needs_text(cli)
-    _reject_file_dataset_incompatible(cli)
-    _reject_baseten_only_trace_flags(cli)
-    _reject_baseten_trace_unsupported_synthesis(cli, cli.custom_dataset_type)
-    _reject_baseten_trace_extra_input_collisions(cli)
-    if cli.dataset_filters and not _implies_public_dataset(cli):
-        raise ValueError("--dataset-filter requires --public-dataset")
+    _run_dataset_rejections(
+        cli, declared_type=declared_type, declared_format=declared_format
+    )
 
     d = _flat_dataset_fields(cli)
     _attach_subtables(d, cli)
-    _apply_dataset_type(d, cli, needs_text)
+    if override_mode:
+        # The YAML declared the type/format; seed them so the type-aware
+        # helpers below route correctly, then strip them before returning so
+        # the override cannot rewrite what the config file owns.
+        d["type"] = declared_type
+        if declared_format is not None:
+            d.setdefault("format", declared_format)
+        if declared_type in (DatasetType.FILE, DatasetType.PUBLIC):
+            # Same strip _apply_dataset_type performs for these types on the
+            # CLI-only path: neither carries the synthetic per-modality
+            # subtables, and leaking one trips extra_forbidden. Helpers below
+            # (--prompt-corpus, random_pool batch sizes) re-attach what these
+            # types legitimately support.
+            for key in _SYNTHETIC_ONLY_SUBTABLES:
+                d.pop(key, None)
+    else:
+        _apply_dataset_type(d, cli, needs_text)
     _apply_sequence_distribution(d, cli)
     _apply_random_corpus_style_and_range_ratio(d, cli)
-    _apply_turns(d, cli)
+    _apply_turns(d, cli, only_set=override_mode)
     _apply_synthesis(d, cli)
-    _apply_implicit_media_batch(d, cli)
+    if not override_mode:
+        # Materializes batch_size=1 whenever a media-shape flag is set. As an
+        # override that would silently reset a YAML batch size the user never
+        # mentioned, so it is CLI-only-path behavior.
+        _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
-    _apply_random_pool_batch_sizes(d, cli)
+    _apply_random_pool_batch_sizes(
+        d, cli, declared_format=declared_format if override_mode else None
+    )
     # block_size for FILE hash-id traces is owned by _apply_block_size (which
     # also rejects weka / non-hash-id formats). Do not also call
     # _apply_file_block_size — that helper is broader and redundant here.
@@ -1215,6 +1344,12 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_corpus_and_cache_bust(d, cli)
     if "random_seed" in cli.model_fields_set:
         d["random_seed"] = cli.random_seed
+    if override_mode:
+        # The config file owns dataset identity: type, format, and source.
+        # Flags that would change them are rejected up front by
+        # reject_unrouted_cli_flags, so nothing is lost by dropping the keys.
+        for owned in ("type", "format", "path", "dataset"):
+            d.pop(owned, None)
     return d
 
 

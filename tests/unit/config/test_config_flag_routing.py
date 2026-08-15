@@ -74,10 +74,14 @@ def cli(**kwargs: object) -> CLIConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_unrouted_input_flag_raises_naming_the_flag(base_yaml: Path) -> None:
-    """--random-seed is not routed under --config; it must not be dropped."""
-    with pytest.raises(ConfigurationError, match=r"--random-seed"):
-        resolve_config(cli(random_seed=1234), base_yaml)
+def test_unrouted_input_flag_raises_naming_the_flag(
+    base_yaml: Path, tmp_path: Path
+) -> None:
+    """--input-file would swap the dataset the YAML declared, so it errors."""
+    pool = tmp_path / "pool.jsonl"
+    pool.write_text('{"text": "hi"}\n')
+    with pytest.raises(ConfigurationError, match=r"--input-file"):
+        resolve_config(CLIConfig(input_file=str(pool)), base_yaml)
 
 
 def test_unrouted_loadgen_flag_raises(base_yaml: Path) -> None:
@@ -95,16 +99,16 @@ def test_unrouted_endpoint_flag_raises(base_yaml: Path) -> None:
 def test_error_names_every_offending_flag(base_yaml: Path) -> None:
     """All unrouted flags are reported at once, not one per run."""
     with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(random_seed=7, max_context_length=2048), base_yaml)
+        resolve_config(cli(warmup_request_count=3, reset_kv_cache=True), base_yaml)
     message = str(excinfo.value)
-    assert "--random-seed" in message
-    assert "--max-context-length" in message
+    assert "--warmup-request-count" in message
+    assert "--reset-kv-cache" in message
 
 
 def test_error_mentions_config_flag_as_the_cause(base_yaml: Path) -> None:
     """The message must tell users WHY the flag was rejected."""
     with pytest.raises(ConfigurationError, match=r"--config"):
-        resolve_config(cli(random_seed=1234), base_yaml)
+        resolve_config(cli(warmup_request_count=3), base_yaml)
 
 
 # ---------------------------------------------------------------------------
@@ -143,15 +147,15 @@ def test_magic_list_isl_is_routed_as_sweep_parameter(base_yaml: Path) -> None:
     assert resolved.sweep.parameters["datasets.default.prompts.isl.mean"] == [128, 256]
 
 
-def test_scalar_isl_is_still_rejected(base_yaml: Path) -> None:
-    """A scalar --isl has no routing under --config and must error.
+def test_scalar_isl_routes_onto_the_dataset(base_yaml: Path) -> None:
+    """The scalar form reaches the dataset block rather than a sweep.
 
-    Only the magic-list form is promoted to a sweep parameter; the scalar
-    form falls through to the dataset block, which this path does not build.
-    Treating the whole field as routed would re-open the silent drop.
+    The magic-list form becomes a sweep parameter; the scalar form is routed
+    by _apply_dataset_overrides. Both must take effect -- neither may be
+    silently dropped.
     """
-    with pytest.raises(ConfigurationError, match=r"--isl|--prompt-input-tokens-mean"):
-        resolve_config(cli(prompt_input_tokens_mean=128), base_yaml)
+    resolved = resolve_config(cli(prompt_input_tokens_mean=128), base_yaml)
+    assert resolved.benchmark.datasets[0].prompts.isl.mean == 128
 
 
 # ---------------------------------------------------------------------------

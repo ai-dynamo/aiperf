@@ -18,9 +18,6 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pydantic.alias_generators import to_camel
-
-from aiperf.common.enums import DatasetType
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.config.flags._resolver_gpu_telemetry import (
     build_gpu_telemetry_override,
@@ -38,7 +35,7 @@ from aiperf.config.flags._section_fields import (
     OUTPUT_FIELDS,
     SWEEPING_FIELDS,
 )
-from aiperf.plugin.enums import ArrivalPattern, DatasetFormat, PhaseType
+from aiperf.plugin.enums import ArrivalPattern, PhaseType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -117,9 +114,7 @@ def resolve_config(
     yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
     yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
-    _apply_dataset_synthesis_overrides(merged, cli_config)
-    _apply_dataset_filter_overrides(merged, cli_config)
-    _apply_random_pool_batch_size_overrides(merged, cli_config)
+    _apply_dataset_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
@@ -382,219 +377,118 @@ def _apply_input_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
         out.pop("endpoint", None)
 
 
-def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
-    if "dataset_filters" not in cli.model_fields_set:
-        return
+def _locate_yaml_dataset(merged: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the YAML dataset dict that CLI overrides apply to.
 
-    from aiperf.config.flags._converter_dataset import _parse_dataset_filters
-
+    Accepts both the ``benchmark.dataset`` shorthand and the canonical
+    ``benchmark.datasets`` list. With several datasets the override lands on
+    the first, matching the long-standing convention of the dataset-filter and
+    synthesis overlays this function replaces.
+    """
     benchmark = merged.get("benchmark")
     if not isinstance(benchmark, dict):
-        raise ValueError("--dataset-filter requires a public dataset")
-    dataset = benchmark.get("dataset")
-    if not isinstance(dataset, dict):
-        datasets = benchmark.get("datasets")
-        if not isinstance(datasets, list) or not datasets:
-            raise ValueError("--dataset-filter requires a public dataset")
-        if len(datasets) > 1:
-            logger.warning(
-                "--dataset-filter with multiple YAML datasets applies only to "
-                "the first dataset"
-            )
-        dataset = datasets[0]
-    if not isinstance(dataset, dict):
-        raise ValueError("--dataset-filter requires a public dataset")
-    if dataset.get("type") != DatasetType.PUBLIC:
-        raise ValueError("--dataset-filter requires a public dataset")
-    filters = dataset.setdefault("filters", {})
-    filters.update(_parse_dataset_filters(cli.dataset_filters))
-
-
-def _first_yaml_dataset(
-    benchmark: dict[str, Any], *, warn_context: str
-) -> dict[str, Any] | None:
-    """Resolve the singular ``dataset`` or first entry of ``datasets`` from a
-    merged YAML ``benchmark`` mapping. Returns ``None`` if neither is present.
-
-    ``warn_context`` names the flag/feature in the "multiple datasets" warning
-    (e.g. ``"Batch-size flags"``), consistent with the convention shared by
-    ``_apply_dataset_filter_overrides`` and ``_apply_dataset_synthesis_overrides``.
-    """
+        return None
     dataset = benchmark.get("dataset")
     if isinstance(dataset, dict):
         return dataset
-
     datasets = benchmark.get("datasets")
     if not isinstance(datasets, list) or not datasets:
         return None
     if len(datasets) > 1:
         logger.warning(
-            "%s with multiple YAML datasets apply only to the first dataset",
-            warn_context,
+            "Dataset CLI flags with multiple YAML datasets apply only to the "
+            "first dataset"
         )
-    dataset = datasets[0]
-    return dataset if isinstance(dataset, dict) else None
+    first = datasets[0]
+    return first if isinstance(first, dict) else None
 
 
-# Maps CLIConfig attribute name -> (FileDataset field name, CLI flag display name).
-# Used by _apply_random_pool_batch_size_overrides for gating and error messages.
-_RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP: tuple[tuple[str, str, str], ...] = (
-    ("prompt_batch_size", "prompt_batch_size", "--prompt-batch-size"),
-    ("image_batch_size", "image_batch_size", "--image-batch-size"),
-    ("audio_batch_size", "audio_batch_size", "--audio-batch-size"),
-    ("video_batch_size", "video_batch_size", "--video-batch-size"),
-)
+def _snake_to_camel(name: str) -> str:
+    head, *rest = name.split("_")
+    return head + "".join(word[:1].upper() + word[1:] for word in rest)
 
 
-def _apply_random_pool_batch_size_overrides(
-    merged: dict[str, Any], cli: CLIConfig
-) -> None:
-    """Overlay explicit batch-size CLI flags onto a YAML-supplied random_pool dataset.
+def _drop_alias_spellings(base: dict[str, Any], override: dict[str, Any]) -> None:
+    """Remove the camelCase spelling of every key the override sets.
 
-    In the YAML+CLI path ``_apply_input_overrides`` only routes ``headers`` and
-    ``extra_inputs``; every other ``INPUT_FIELDS`` member (including the four
-    batch-size fields added by this PR) was silently discarded.  This function
-    closes that gap for the four fields that ``RandomPoolDatasetLoader`` consumes.
-
-    Gating is on ``cli.model_fields_set`` — not truthiness, not ``is not None``
-    against the field value — so an unset flag never clobbers a YAML-supplied value.
-    Zero is a valid value (``image/audio/video_batch_size=0`` disables that modality).
-
-    Only applies to ``type: file`` datasets. Synthetic and public datasets have no
-    ``format`` field at all, so this function must not touch or reject them here.
-    Note this does NOT mean the flags take effect there: nothing in the YAML+CLI
-    path currently routes batch-size flags onto ``SyntheticDataset.prompts/
-    images/audio/video.batch_size`` (``_apply_input_overrides`` only handles
-    ``headers``/``extra_inputs``), so a batch-size flag against a synthetic YAML
-    dataset has no effect -- a pre-existing gap this function does not close and
-    is out of scope to fix here. It logs a warning rather than dropping the flag
-    silently, since the neighbouring wrong-format case raises loudly. The CLI-only
-    path (no ``--config``) applies these flags correctly; only the YAML+CLI overlay
-    drops them.
-
-    For a ``type: file`` dataset that isn't ``format: random_pool``, a ``ValueError``
-    is raised with a message that names the flag and the format, matching the
-    friendly error the CLI-only path produces instead of letting the ``FileDataset``
-    model validator fire a raw Pydantic trace.
-
-    With multiple YAML datasets the override applies to the first dataset only,
-    consistent with the convention in ``_apply_dataset_synthesis_overrides`` and
-    ``_apply_dataset_filter_overrides``.
+    YAML configs address fields by their camelCase alias (``maxOsl``) while
+    ``build_dataset`` emits the snake_case field name (``max_osl``). Merging
+    the two as-is would leave both spellings of the same field in the dict and
+    let validation pick a winner -- which is exactly the kind of quiet
+    ambiguity this work exists to remove. Deleting the alias first makes the
+    CLI value win outright, whichever spelling the config file used.
     """
-    set_fields = cli.model_fields_set & {
-        cli_attr for cli_attr, _, _ in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
-    }
-    if not set_fields:
-        return
+    for key, value in override.items():
+        alias = _snake_to_camel(key)
+        if alias != key and alias in base:
+            if isinstance(value, dict) and isinstance(base[alias], dict):
+                # Same field, different spelling: keep the YAML's siblings by
+                # folding its sub-dict onto the canonical key before merging.
+                base[key] = deep_merge(base.pop(alias), base.get(key) or {})
+            else:
+                base.pop(alias, None)
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _drop_alias_spellings(base[key], value)
 
-    benchmark = merged.get("benchmark")
-    if not isinstance(benchmark, dict):
-        return
 
-    dataset = _first_yaml_dataset(benchmark, warn_context="Batch-size flags")
+def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    """Overlay explicitly-set dataset flags onto the YAML-supplied dataset.
+
+    Delegates to ``build_dataset`` -- the same builder the CLI-only path uses
+    -- in override mode, so the two paths share one implementation of how a
+    flag maps onto the dataset shape. Previously this file carried a
+    hand-written routing function per field class (synthesis, filters,
+    random_pool batch sizes), each of which had to be kept in step with the
+    converter by hand; anything nobody wrote a function for was silently
+    dropped.
+
+    ``build_dataset`` emits only keys backed by ``cli.model_fields_set``, so
+    an unset flag cannot clobber a YAML value, and the config file keeps
+    ownership of dataset type, format, and source.
+    """
+    from aiperf.config.flags._config_flag_routing import DATASET_OVERRIDE_FIELDS
+    from aiperf.config.flags._converter_dataset import build_dataset
+
+    dataset = _locate_yaml_dataset(merged)
     if dataset is None:
-        return
-    if dataset.get("type") != DatasetType.FILE:
-        # Adjacent to a loud ValueError for a file dataset of the wrong format, so
-        # do not drop this one in silence: the flag genuinely has no effect here.
-        logger.warning(
-            "%s ignored: batch-size flags are only applied to a YAML dataset with "
-            "type: file and format: random_pool (got type: %s). The CLI-only path "
-            "(no --config) applies them normally.",
-            ", ".join(
-                flag
-                for cli_attr, _, flag in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
-                if cli_attr in set_fields
-            ),
-            dataset.get("type"),
-        )
+        if cli.model_fields_set & DATASET_OVERRIDE_FIELDS:
+            from aiperf.config.loader.errors import ConfigurationError
+
+            raise ConfigurationError(
+                "Dataset CLI flags require a dataset in the config file, but "
+                "none was found under benchmark.dataset / benchmark.datasets."
+            )
         return
 
-    # dataset.get("format") reads the raw pre-validation YAML dict, so an omitted
-    # `format:` key reads back as None here even though FileDataset.format defaults
-    # to DatasetFormat.SINGLE_TURN -- fall back to that default so the error message
-    # below reports the actual effective format instead of a misleading "None".
-    fmt = dataset.get("format") or DatasetFormat.SINGLE_TURN
-    if fmt != DatasetFormat.RANDOM_POOL:
-        flag_names = ", ".join(
-            flag
-            for cli_attr, _, flag in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
-            if cli_attr in set_fields
-        )
-        raise ValueError(
-            f"{flag_names} requires format: random_pool on the YAML dataset "
-            f"(got format: {fmt}). Either set format: random_pool in the dataset "
-            "config, or remove these flags."
-        )
-
-    for cli_attr, dataset_field, _ in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP:
-        if cli_attr in set_fields:
-            # FileDataset uses alias_generator=to_camel with extra="forbid": if the
-            # YAML already supplied this field under its camelCase alias (e.g.
-            # promptBatchSize, the shipped template idiom), writing the snake_case
-            # key here leaves both present and Pydantic rejects the snake_case one
-            # as extra. Drop whichever spelling is already there before writing.
-            dataset.pop(to_camel(dataset_field), None)
-            dataset.pop(dataset_field, None)
-            dataset[dataset_field] = getattr(cli, cli_attr)
-
-
-def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
-    """Overlay explicit synthesis flags onto a YAML-supplied dataset."""
-    if not any(
-        field == "allow_dataset_wrap" or field.startswith("synthesis_")
-        for field in cli.model_fields_set
-    ):
-        return
-
-    from aiperf.config.dataset.trace import SynthesisConfig
-    from aiperf.config.flags._converter_dataset import (
-        _apply_synthesis,
-        _reject_baseten_trace_unsupported_synthesis,
+    override = build_dataset(
+        cli,
+        declared_type=dataset.get("type"),
+        declared_format=dataset.get("format"),
     )
+    dataset_flags = cli.model_fields_set & DATASET_OVERRIDE_FIELDS
+    if not override:
+        if dataset_flags:
+            # The flags are routable in principle but produce nothing for this
+            # dataset type -- e.g. --synthesis-* against a synthetic dataset,
+            # where the synthesis block only exists on file/public datasets.
+            # Applying nothing quietly is the bug this work removes.
+            from aiperf.config.flags._config_flag_routing import flag_names_for
+            from aiperf.config.loader.errors import ConfigurationError
 
-    benchmark = merged.get("benchmark")
-    datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
-    if not isinstance(datasets, list) or not datasets:
-        raise ValueError("synthesis flags require a file or public dataset")
-    if len(datasets) > 1:
-        logger.warning(
-            "Synthesis flags with multiple YAML datasets apply only to the first dataset"
-        )
-    dataset = datasets[0]
-    if not isinstance(dataset, dict):
-        raise ValueError("synthesis flags require a file or public dataset")
-    if dataset.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
-        logger.warning(
-            "Synthesis flags require a file or public dataset; ignoring them "
-            "for dataset type %r",
-            dataset.get("type"),
-        )
+            names = sorted((flag_names_for(f) or (f,))[0] for f in dataset_flags)
+            raise ConfigurationError(
+                f"These CLI flags have no effect on a dataset of type "
+                f"{dataset.get('type')!r}: {', '.join(names)}. Remove them, or "
+                f"use a dataset type that supports them."
+            )
         return
 
-    if dataset.get("type") == DatasetType.FILE:
-        _reject_baseten_trace_unsupported_synthesis(
-            cli,
-            dataset.get("format"),
-            dataset_format_source="YAML format: baseten_trace",
-        )
-
-    override = {"type": dataset.get("type")}
-    _apply_synthesis(override, cli)
-    if synthesis := override.get("synthesis"):
-        base = SynthesisConfig.model_validate(
-            dataset.get("synthesis") or {}
-        ).model_dump(by_alias=True, exclude_unset=True)
-        update = SynthesisConfig.model_validate(synthesis).model_dump(
-            by_alias=True, exclude_unset=True
-        )
-        dataset["synthesis"] = deep_merge(base, update)
+    _drop_alias_spellings(dataset, override)
+    merged_dataset = deep_merge(dataset, override)
+    dataset.clear()
+    dataset.update(merged_dataset)
 
 
-# CLI loadgen flag -> phase field. Each entry is (loadgen_attr, phase_key).
-# The CLI help promises "CLI flags override values from the config file";
-# this table makes that real for YAML-supplied phase shapes by overlaying
-# the explicit CLI value onto the resolved profiling phase.
 _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_count", "requests"),
     ("benchmark_duration", "duration"),
