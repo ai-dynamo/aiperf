@@ -335,12 +335,12 @@ impl ToolSandbox for LocalSessionSandbox {
     ) -> Result<ToolCommandResult, ToolSandboxError> {
         let _command_turn = self.command_gate.lock().await;
         self.open_unlocked().await?;
-        let mut session = self.session.borrow_mut().take().ok_or_else(|| {
-            ToolSandboxError::new("local shell disappeared while starting a command")
-        })?;
         let sentinel = uuid::Uuid::new_v4().simple().to_string();
         let frame_prefix = [TERMINAL_PREFIX, sentinel.as_bytes(), b":"].concat();
         let command_wire = command_wire(&self.workspace.interpreter, command, &sentinel)?;
+        let mut session = self.session.borrow_mut().take().ok_or_else(|| {
+            ToolSandboxError::new("local shell disappeared while starting a command")
+        })?;
         let started_ns = self.clock.now_ns();
         if let Err(error) = session.write_all(&command_wire).await {
             self.discard_session(session).await;

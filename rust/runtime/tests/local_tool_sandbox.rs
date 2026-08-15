@@ -202,6 +202,40 @@ async fn sentinel_like_output_is_not_terminal_frame() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn invalid_recipe_does_not_lose_an_open_session() {
+    // This catches validation after taking session ownership, which drops a
+    // live process instead of letting the normal close path reap it.
+    let termination_count = Rc::new(Cell::new(0));
+    let spawner = Rc::new(FakeSpawner::new([
+        Box::new(FakeProcess::with_termination_count(
+            b"",
+            [],
+            termination_count.clone(),
+        )) as Box<dyn ProcessSession>,
+    ]));
+    let mut invalid_workspace = workspace();
+    invalid_workspace.interpreter.clear();
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sandbox = LocalSessionSandbox::new(invalid_workspace, clock, spawner, 1024);
+
+    sandbox
+        .open()
+        .await
+        .expect("session opens before validation");
+    let error = sandbox
+        .run("printf ignored", None)
+        .await
+        .expect_err("empty interpreter is rejected");
+    sandbox.close().await.expect("still-owned session closes");
+
+    assert_eq!(
+        error.to_string(),
+        "local sandbox recipe has no command interpreter"
+    );
+    assert_eq!(termination_count.get(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn persistent_workspace_uses_fresh_interpreters_and_reports_truncation() {
     // This catches a shell loop that loses filesystem state, leaks one command's
     // shell options into the next, or silently drops bytes after its output cap.
