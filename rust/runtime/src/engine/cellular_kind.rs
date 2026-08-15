@@ -13,20 +13,15 @@ pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
     envelope
         .pointer("/run/cfg/datasets")
         .and_then(Value::as_array)
-        .is_some_and(|datasets| {
-            datasets.iter().any(|dataset| {
-                matches!(
-                    dataset.get("format").and_then(Value::as_str),
-                    Some(
-                        "dag_jsonl"
-                            | "conditional_graph"
-                            | "weka_trace"
-                            | "dynamo_trace"
-                            | "agent_recording"
-                    )
-                )
-            })
-        })
+        .is_some_and(|datasets| datasets.iter().any(is_graph_dataset_value))
+}
+
+/// Whether one dataset value selects whole-trace graph cellular execution.
+pub(crate) fn is_graph_dataset_value(dataset: &Value) -> bool {
+    matches!(
+        dataset.get("format").and_then(Value::as_str),
+        Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace" | "agent_recording")
+    )
 }
 
 /// The cellular execution path selected by the dataset format.

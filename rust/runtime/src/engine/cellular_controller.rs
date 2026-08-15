@@ -1811,16 +1811,6 @@ fn dataset_is_single_turn(dataset: &serde_json::Value) -> bool {
     }
 }
 
-/// Whether a dataset value targets a graph program (`dag_jsonl`/`weka_trace`/
-/// `dynamo_trace`). Graph datasets partition by whole trace and take their own cellular
-/// path, so the linear multi-turn gate skips them.
-fn is_graph_dataset_value(dataset: &serde_json::Value) -> bool {
-    matches!(
-        dataset.get("format").and_then(serde_json::Value::as_str),
-        Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace")
-    )
-}
-
 /// Whether a scheduled (non-graph) cellular run dispatches MULTI-turn conversations —
 /// any linear dataset that is not strictly single-turn, or any phase carrying a
 /// `sessions` (`--num-conversations`) budget. Multi-turn continuation runs single-process
@@ -1832,9 +1822,10 @@ fn cellular_run_is_multi_turn(envelope: &serde_json::Value) -> bool {
         .pointer("/run/cfg/datasets")
         .and_then(serde_json::Value::as_array)
         .is_some_and(|datasets| {
-            datasets
-                .iter()
-                .any(|dataset| !is_graph_dataset_value(dataset) && !dataset_is_single_turn(dataset))
+            datasets.iter().any(|dataset| {
+                !crate::engine::cellular_kind::is_graph_dataset_value(dataset)
+                    && !dataset_is_single_turn(dataset)
+            })
         });
     let session_bounded = envelope
         .pointer("/run/cfg/phases")
@@ -1951,13 +1942,10 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         .and_then(serde_json::Value::as_array)
         .context("run cfg has no datasets array")?;
     for dataset in datasets {
-        // Graph programs (dag_jsonl / weka_trace / dynamo_trace) partition by whole
+        // Graph programs (dag_jsonl / weka_trace / dynamo_trace / agent_recording) partition by whole
         // trace via PartitionedGraphTraceSource, so they bypass the scheduled
         // synthetic/single-turn requirement.
-        if matches!(
-            dataset.get("format").and_then(serde_json::Value::as_str),
-            Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace")
-        ) {
+        if crate::engine::cellular_kind::is_graph_dataset_value(dataset) {
             continue;
         }
         let kind = dataset.get("type").and_then(serde_json::Value::as_str);
@@ -2683,7 +2671,7 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 mod tests {
     use super::*;
     use crate::cellular::RecordsShardPartition;
-    use crate::engine::cellular_kind::is_graph_dataset;
+    use crate::engine::cellular_kind::{is_graph_dataset, is_graph_dataset_value};
 
     #[test]
     fn controller_folds_partitioned_replay_supplements_before_writing() {
@@ -2896,7 +2884,7 @@ mod tests {
 
     #[test]
     fn admits_graph_and_linear_file_datasets() {
-        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
+        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace", "agent_recording"] {
             let graph = serde_json::json!({"run": {"cfg": {
                 "transport": {"type": "http"},
                 "datasets": [{"type": "file", "format": graph_format}],
@@ -2908,6 +2896,10 @@ mod tests {
             assert!(
                 is_graph_dataset(&graph),
                 "is_graph_dataset true for {graph_format}"
+            );
+            assert!(
+                is_graph_dataset_value(&graph["run"]["cfg"]["datasets"][0]),
+                "dataset-level graph classification true for {graph_format}"
             );
         }
         let linear = serde_json::json!({"run": {"cfg": {
@@ -2937,6 +2929,21 @@ mod tests {
             !is_graph_dataset(&synthetic),
             "synthetic is not a graph dataset"
         );
+    }
+
+    #[test]
+    fn controller_admits_agent_recording_graph_cells() {
+        let envelope = serde_json::json!({"run": {"cfg": {
+            "transport": {"type": "http"},
+            "datasets": [{"type": "file", "format": "agent_recording", "path": "/recording.json"}],
+            "phases": [{"name": "profiling", "sessions": 2}],
+        }}});
+
+        validate_cellular_run_shape(&envelope).expect("controller must admit agent recording");
+        let kind = CellularRunKind::detect(&envelope);
+        assert_eq!(kind, CellularRunKind::Graph);
+        kind.validate_phases(&envelope, 2)
+            .expect("agent recording cells use graph phase partitioning");
     }
 
     #[test]
