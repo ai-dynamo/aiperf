@@ -13,8 +13,8 @@ leave the dirs behind, and nothing else ever removes them.
 An age-only sweep cannot fix that safely: the dirs are keyed by ``benchmark_id``
 rather than pid, so "old" says nothing about whether a long-running concurrent
 benchmark is still reading one. The owner lock supplies the missing liveness
-signal. The kernel drops an ``flock`` when the holding process dies by ANY
-means, including SIGKILL and ``os._exit``, so:
+signal. The OS drops a file lock when the holding process dies by ANY means,
+including SIGKILL and ``os._exit``, so:
 
 - lock file present and ACQUIRABLE -> its run is gone; the dir is an orphan
 - lock file present and CONTENDED  -> a live run owns the dir; leave it
@@ -22,7 +22,7 @@ means, including SIGKILL and ``os._exit``, so:
   first acquire, so fall back to an age grace and only reclaim a dir old
   enough that no starting run could still be in that window
 
-On a filesystem without ``flock`` support (some NFS and FUSE mounts) liveness
+On a filesystem without file-lock support (some NFS and FUSE mounts) liveness
 is unprovable, so both entry points fail closed: nothing is reclaimed and the
 dir leaks rather than risking deletion out from under a live run.
 """
@@ -46,8 +46,8 @@ _logger = AIPerfLogger(__name__)
 GRAPH_ARTIFACT_DIR_PREFIXES = ("aiperf_graph_segments_", "aiperf_graph_meta_")
 """Directory-name prefixes a graph build creates under the mmap base path."""
 
-OWNER_LOCK_FILENAME = ".aiperf-owner.lock"
-"""Lock file inside each artifact dir, held for the owning run's lifetime."""
+OWNER_LOCK_SUFFIX = ".aiperf-owner.lock"
+"""Suffix for sibling lock files held for the owning run's lifetime."""
 
 OWNER_IDENTITY_FILENAME = ".aiperf-owner.json"
 """Which host owns the dir, so a peer sharing the volume never reclaims it."""
@@ -70,8 +70,13 @@ from having its dir swept out from under it.
 
 
 def owner_lock_path(artifact_dir: Path) -> Path:
-    """The owner-lock path for one artifact dir."""
-    return Path(artifact_dir) / OWNER_LOCK_FILENAME
+    """The sibling owner-lock path for one artifact dir.
+
+    Windows denies deletion of a directory containing an open lock file, so
+    the lock must live outside the directory it protects.
+    """
+    artifact = Path(artifact_dir)
+    return artifact.parent / f".{artifact.name}{OWNER_LOCK_SUFFIX}"
 
 
 def owner_identity_path(artifact_dir: Path) -> Path:

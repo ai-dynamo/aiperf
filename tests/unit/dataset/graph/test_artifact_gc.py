@@ -7,10 +7,10 @@ path, but that path does not run when the process dies abruptly -- the
 ``os._exit`` force-kill in ``cli_runner``, a SIGKILL from the service manager,
 or a hard crash. Those runs orphan multi-GB dirs under the temp root.
 
-The owner lock is what makes a later sweep safe: the kernel drops an ``flock``
-when the holding process dies by ANY means, so a lock that can still be
-acquired proves its run is gone, while a contended one proves a concurrent run
-is still using the dir.
+The owner lock is what makes a later sweep safe: the OS drops a file lock when
+the holding process dies by ANY means, so a lock that can still be acquired
+proves its run is gone, while a contended one proves a concurrent run is still
+using the dir.
 """
 
 from __future__ import annotations
@@ -43,6 +43,13 @@ def _artifact_dir(base: Path, name: str, *, age_seconds: float = 0.0) -> Path:
         old = time.time() - age_seconds
         os.utime(d, (old, old))
     return d
+
+
+def test_owner_lock_path_is_outside_the_artifact_dir(tmp_path: Path) -> None:
+    """Windows must be able to remove the artifact dir while its lock is held."""
+    d = _artifact_dir(tmp_path, "aiperf_graph_segments_lock_location")
+
+    assert owner_lock_path(d).parent == tmp_path
 
 
 def test_sweep_removes_a_dir_whose_owner_process_is_gone(tmp_path: Path) -> None:
