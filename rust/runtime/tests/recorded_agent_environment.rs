@@ -175,6 +175,22 @@ fn guarded_policy_allows_command_query_options() {
 }
 
 #[test]
+fn guarded_policy_allows_command_query_option_clusters() {
+    // This catches examining only the first option after `command`; `-v` and
+    // `-V` remain query-only when preceded or combined with the `-p` option.
+    for command in [
+        "command -p -v apt-get",
+        "command -vp apt-get",
+        "command -pV apt-get",
+    ] {
+        let disposition = GuardedToolCommandPolicy
+            .evaluate(command)
+            .expect("policy parses command option clusters");
+        assert_eq!(disposition, CommandDisposition::Execute, "{command}");
+    }
+}
+
+#[test]
 fn pinch_recipe_refuses_a_sandbox_without_workspace_materialization() {
     // This catches preflight that provisions an empty Pinch workspace on a
     // backend which cannot stage the task's digest-addressed fixture files.

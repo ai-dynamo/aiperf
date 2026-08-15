@@ -259,11 +259,15 @@ fn executable_tokens(mut tokens: &[String]) -> &[String] {
         }
         if matches!(tokens.first().map(String::as_str), Some("command")) {
             tokens = &tokens[1..];
-            if matches!(tokens.first().map(String::as_str), Some("-v" | "-V")) {
-                return &[];
-            }
+            let mut is_query = false;
             while tokens.first().is_some_and(|token| token.starts_with('-')) {
+                is_query |= tokens
+                    .first()
+                    .is_some_and(|token| token.contains('v') || token.contains('V'));
                 tokens = &tokens[1..];
+            }
+            if is_query {
+                return &[];
             }
             continue;
         }
