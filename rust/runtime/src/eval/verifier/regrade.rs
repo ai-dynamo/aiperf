@@ -12,8 +12,7 @@ use crate::eval::{ArtifactDigest, AttemptId, ScoreError, ScoreVersion};
 use super::RewardDocument;
 
 /// Immutable output of a verifier over one preserved evaluation attempt.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct VerifierResult {
     /// Attempt evaluated by this verifier.
     pub attempt: AttemptId,
@@ -25,6 +24,33 @@ pub struct VerifierResult {
     pub reward: RewardDocument,
     /// Immutable verifier rationale artifact.
     pub rationale: ArtifactDigest,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawVerifierResult {
+    attempt: AttemptId,
+    verifier: ArtifactDigest,
+    evidence: Vec<ArtifactDigest>,
+    reward: RewardDocument,
+    rationale: ArtifactDigest,
+}
+
+impl<'de> Deserialize<'de> for VerifierResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawVerifierResult::deserialize(deserializer)?;
+        Self::new(
+            raw.attempt,
+            raw.verifier,
+            raw.evidence,
+            raw.reward,
+            raw.rationale,
+        )
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 impl VerifierResult {
@@ -50,8 +76,7 @@ impl VerifierResult {
 }
 
 /// A request to append one score revision from a pinned verifier result.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct RegradeRequest {
     /// The existing immutable score revision that this regrade follows.
     pub previous: ScoreVersion,
@@ -59,6 +84,24 @@ pub struct RegradeRequest {
     pub result: VerifierResult,
     /// Exact verifier metric to preserve as the score value.
     pub metric: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRegradeRequest {
+    previous: ScoreVersion,
+    result: VerifierResult,
+    metric: String,
+}
+
+impl<'de> Deserialize<'de> for RegradeRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawRegradeRequest::deserialize(deserializer)?;
+        Self::new(raw.previous, raw.result, raw.metric).map_err(serde::de::Error::custom)
+    }
 }
 
 impl RegradeRequest {

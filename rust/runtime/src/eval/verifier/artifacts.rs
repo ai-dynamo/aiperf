@@ -23,11 +23,11 @@ impl DeclaredArtifactTransfer {
         let mut declared = Vec::with_capacity(artifacts.len());
         let mut paths = BTreeSet::new();
         for (path, digest) in artifacts {
-            validate_artifact_path(path)?;
-            if !paths.insert(path) {
-                return Err(ArtifactTransferError::DuplicatePath(path.to_owned()));
+            let path = normalize_artifact_path(path)?;
+            if !paths.insert(path.clone()) {
+                return Err(ArtifactTransferError::DuplicatePath(path));
             }
-            declared.push((path.to_owned(), digest));
+            declared.push((path, digest));
         }
         Ok(Self {
             artifacts: declared,
@@ -40,7 +40,7 @@ impl DeclaredArtifactTransfer {
     }
 }
 
-fn validate_artifact_path(path: &str) -> Result<(), ArtifactTransferError> {
+fn normalize_artifact_path(path: &str) -> Result<String, ArtifactTransferError> {
     let parsed = Path::new(path);
     if !parsed.is_absolute() || parsed == Path::new("/") {
         return Err(ArtifactTransferError::InvalidPath(path.to_owned()));
@@ -53,7 +53,17 @@ fn validate_artifact_path(path: &str) -> Result<(), ArtifactTransferError> {
     }) {
         return Err(ArtifactTransferError::InvalidPath(path.to_owned()));
     }
-    Ok(())
+    Ok(format!(
+        "/{}",
+        parsed
+            .components()
+            .filter_map(|component| match component {
+                Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    ))
 }
 
 /// Invalid artifact declaration for a verifier handoff.
