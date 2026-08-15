@@ -786,6 +786,11 @@ enum ActiveGraphTrace {
 #[async_trait(?Send)]
 impl TracePlacement for GraphWorkerBackend {
     async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+        if self.cancelled.get() {
+            return Err(TraceError::Cancelled(
+                "graph worker was cancelled before opening a trace driver".into(),
+            ));
+        }
         // Driver capability preflight precedes per-trace sink construction. Future
         // environment provisioning uses this same frozen registry before any
         // workspace or sandbox exists.
@@ -848,8 +853,7 @@ impl TracePlacement for GraphWorkerBackend {
             .and_then(|driver| driver.tool_dispatcher());
         if self.cancelled.get() {
             if let Some(mut driver) = opened_driver {
-                let _ = driver.close().await;
-                self.active.borrow_mut().remove(&lifecycle_id);
+                let _ = self.close_driver(lifecycle_id, driver.as_mut()).await;
             }
             return Err(TraceError::Cancelled(format!(
                 "graph trace {:?} was rejected after worker cancellation",
@@ -899,7 +903,8 @@ impl TracePlacement for GraphWorkerBackend {
             cache_bust_marker,
             tool_dispatcher,
             arrivals: Cell::new(0),
-            emitted_records: Cell::new(0),
+            terminal_records: Cell::new(0),
+            profiling_records: Cell::new(0),
         });
         let mut local = LocalGraphTraceExecutionBackend::new(
             self.clock.clone(),
@@ -944,17 +949,7 @@ impl TracePlacement for GraphWorkerBackend {
             (Ok(()), result) => result,
         };
         if let Some(mut driver) = opened_driver {
-            let (abort, registration) = AbortHandle::new_pair();
-            self.active
-                .borrow_mut()
-                .insert(lifecycle_id, ActiveGraphTrace::Driver(abort));
-            let close = Abortable::new(driver.close(), registration)
-                .await
-                .map_err(|_| {
-                    TraceError::Cancelled("graph trace driver was cancelled during close".into())
-                })
-                .and_then(|result| result.map_err(|error| TraceError::Other(error.to_string())));
-            self.active.borrow_mut().remove(&lifecycle_id);
+            let close = self.close_driver(lifecycle_id, driver.as_mut()).await;
             return match (result, close) {
                 (Err(primary), _) => Err(primary),
                 (Ok(()), close) => close,
@@ -993,6 +988,34 @@ impl TracePlacement for GraphWorkerBackend {
         })?;
         slots.set_limit(limit);
         Ok(())
+    }
+}
+
+impl GraphWorkerBackend {
+    /// Close an opened driver through the same registered cancellation boundary
+    /// used while provisioning it. A cancellation that lands between a
+    /// synchronous open and this close is observed immediately rather than
+    /// awaiting a close future that can no longer make progress.
+    async fn close_driver(
+        &self,
+        lifecycle_id: u64,
+        driver: &mut dyn crate::graph::driver::TraceProgramDriver,
+    ) -> Result<(), TraceError> {
+        let (abort, registration) = AbortHandle::new_pair();
+        self.active
+            .borrow_mut()
+            .insert(lifecycle_id, ActiveGraphTrace::Driver(abort.clone()));
+        if self.cancelled.get() {
+            abort.abort();
+        }
+        let close = Abortable::new(driver.close(), registration)
+            .await
+            .map_err(|_| {
+                TraceError::Cancelled("graph trace driver was cancelled during close".into())
+            })
+            .and_then(|result| result.map_err(|error| TraceError::Other(error.to_string())));
+        self.active.borrow_mut().remove(&lifecycle_id);
+        close
     }
 }
 
@@ -1091,11 +1114,12 @@ struct EngineGraphSink {
     /// instance. `None` when cache-bust is disabled.
     cache_bust_marker: Option<String>,
     /// Requests this trace registered with the shared observer (one per dispatched
-    /// node). Compared against `emitted_records` at finalization; a shared
+    /// node). Compared against `terminal_records` at finalization; a shared
     /// worker observer makes its global `arrival_count` cumulative, so the
     /// per-trace invariant is tracked on the sink instead.
     arrivals: Cell<u64>,
-    emitted_records: Cell<u64>,
+    terminal_records: Cell<u64>,
+    profiling_records: Cell<u64>,
     tool_dispatcher: Option<Rc<dyn ToolDispatcher>>,
 }
 
@@ -1349,10 +1373,18 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 http: outcome.http,
             },
         );
-        let ordinal = self.emitted_records.get();
+        let terminal_ordinal = self.terminal_records.get();
+        let profiling_ordinal = self.record_ordinal(emits_profile_events);
         let ingest = self
             .observer
-            .drain_terminal_record(uuid, ordinal)
+            .drain_terminal_record(
+                uuid,
+                if emits_profile_events {
+                    profiling_ordinal
+                } else {
+                    terminal_ordinal
+                },
+            )
             .ok_or_else(|| {
                 anyhow!(
                     "graph trace {:?} could not snapshot terminal node {node_id:?}",
@@ -1379,7 +1411,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 node_id: Some(node_id.to_owned()),
             })?;
         }
-        self.emitted_records.set(ordinal.saturating_add(1));
+        self.did_drain_terminal_record(emits_profile_events);
 
         Ok(match outcome.terminal {
             ReplayTerminalStatus::Completed => GraphReply::from_text(outcome.response_text),
@@ -1390,6 +1422,26 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
 }
 
 impl EngineGraphSink {
+    /// Return the dense ordinal exported with this terminal record. Warmup
+    /// terminals are drained to keep the shared observer bounded, but they do
+    /// not reserve a profiling record row.
+    fn record_ordinal(&self, is_profiling: bool) -> u64 {
+        if is_profiling {
+            self.profiling_records.get()
+        } else {
+            self.terminal_records.get()
+        }
+    }
+
+    fn did_drain_terminal_record(&self, is_profiling: bool) {
+        self.terminal_records
+            .set(self.terminal_records.get().saturating_add(1));
+        if is_profiling {
+            self.profiling_records
+                .set(self.profiling_records.get().saturating_add(1));
+        }
+    }
+
     fn verify_finalized_records(&self) -> Result<()> {
         // The observer is shared across the worker's traces, so its global
         // `arrival_count`/retained counts are cumulative; the per-trace invariant
@@ -1397,7 +1449,7 @@ impl EngineGraphSink {
         // Each emitted record was drained (`take_terminal` removed its slot), so
         // `arrivals == emitted` also implies this trace left nothing retained.
         let arrivals = self.arrivals.get();
-        let emitted = self.emitted_records.get();
+        let emitted = self.terminal_records.get();
         ensure!(
             arrivals == emitted,
             "graph trace {:?} registered {arrivals} requests but emitted {emitted} metric records",
@@ -2030,6 +2082,39 @@ mod tests {
         }
     }
 
+    fn empty_engine_graph_sink() -> EngineGraphSink {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let segments: Arc<dyn SegmentStore> = Arc::new(InMemorySegmentStore::default());
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        EngineGraphSink {
+            clock: clock.clone(),
+            endpoint_runtime: Rc::new(UnusedGraphEndpointRuntime),
+            trace_id: "trace-record-ordinal".into(),
+            nodes: HashMap::new(),
+            prepared_metadata: RefCell::new(HashMap::new()),
+            segments,
+            observer: Rc::new(NativeMetricsObserver::new(
+                clock,
+                123,
+                MetricsConfig::default(),
+            )),
+            phase: Phase::Profiling,
+            worker_id: 7,
+            session_num: 0,
+            model: "test-model".into(),
+            default_max_tokens: 1,
+            run_origin_ns: 123,
+            raw_enabled: false,
+            terminal_nodes: HashSet::new(),
+            events: Arc::new(ChannelRunnerGraphExecutionEventSink::new(sender)),
+            cache_bust_marker: None,
+            arrivals: Cell::new(0),
+            terminal_records: Cell::new(0),
+            profiling_records: Cell::new(0),
+            tool_dispatcher: None,
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn graph_agent_non_static_trace_runs_registered_driver_before_node_dispatch() {
         let created = Arc::new(AtomicUsize::new(0));
@@ -2047,6 +2132,21 @@ mod tests {
 
         assert_eq!(created.load(Ordering::SeqCst), 1);
         assert_eq!(ran.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn warmup_terminal_does_not_shift_first_profiling_record_index() {
+        let sink = empty_engine_graph_sink();
+        assert_eq!(sink.record_ordinal(false), 0);
+        sink.did_drain_terminal_record(false);
+
+        // This ordinal becomes `RecordIngest::request_index`; retaining the
+        // warmup ordinal here would make profile output begin at row one and
+        // leave an empty metrics row at zero.
+        assert_eq!(sink.record_ordinal(true), 0);
+        sink.did_drain_terminal_record(true);
+        assert_eq!(sink.profiling_records.get(), 1);
+        assert_eq!(sink.terminal_records.get(), 2);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2254,6 +2354,46 @@ mod tests {
                 assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.close_started.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_agent_pre_cancelled_trace_never_opens_or_waits_for_blocking_close() {
+        // The close implementation deliberately never resolves. Before the
+        // early cancellation guard this path synchronously opened the lease,
+        // reached the post-open cancellation check, and waited here forever.
+        let lifecycle = Arc::new(PlacementLifecycleCounts::default());
+        let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
+            .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(SuspendingCloseLifecycleFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ));
+        let backend = Rc::new(empty_graph_worker(Arc::new(trace_driver)));
+        backend.cancel_inflight().unwrap();
+
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let mut execution =
+                    Box::pin(backend.execute_trace(empty_recorded_program("trace-pre-cancelled")));
+                let error = tokio::select! {
+                    result = &mut execution => result.expect_err("pre-cancelled trace is rejected"),
+                    _ = async {
+                        for _ in 0..8 {
+                            tokio::task::yield_now().await;
+                        }
+                    } => panic!("pre-cancelled trace waited for lifecycle close"),
+                };
+                assert!(matches!(error, TraceError::Cancelled(_)));
+                assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 0);
+                assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 0);
+                assert!(backend.active.borrow().is_empty());
             })
             .await;
     }
