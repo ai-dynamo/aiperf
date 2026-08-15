@@ -718,26 +718,22 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             .map(TraceEnvironmentSpec::resolve)
             .transpose()
             .map_err(|error| TraceDriverError::new(error.to_string()))?;
-        if let Some(environment) = environment.as_ref() {
-            let execution = context.execution.as_ref().ok_or_else(|| {
-                TraceDriverError::new(
-                    "recorded replay trace-open requires worker execution context",
-                )
-            })?;
-            if let Err(error) = dispatcher
-                .open_trace(tools::TraceOpenContext {
-                    trace: &self.trace,
-                    environment: Some(environment),
-                    workspace: Some(&environment.workspace),
-                    clock: execution.clock,
-                    segments: execution.segments,
-                    run_identity: execution.run_identity,
-                })
-                .await
-            {
-                let _ = lifecycle_lease.close().await;
-                return Err(TraceDriverError::new(error.to_string()));
-            }
+        let execution = context.execution.as_ref().ok_or_else(|| {
+            TraceDriverError::new("recorded replay trace-open requires worker execution context")
+        })?;
+        if let Err(error) = dispatcher
+            .open_trace(tools::TraceOpenContext {
+                trace: &self.trace,
+                environment: environment.as_ref(),
+                workspace: environment.as_ref().map(|environment| &environment.workspace),
+                clock: execution.clock,
+                segments: execution.segments,
+                run_identity: execution.run_identity,
+            })
+            .await
+        {
+            let _ = lifecycle_lease.close().await;
+            return Err(TraceDriverError::new(error.to_string()));
         }
         self.session = Some(RecordedReplayTraceSession {
             dispatcher,
@@ -1647,9 +1643,18 @@ mod tests {
         let mut driver = factory
             .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
             .unwrap();
+        let clock: Rc<dyn crate::clock::Clock> = Rc::new(crate::clock::SimClock::new());
+        let segments = crate::dataset::InMemorySegmentStore::default();
+        let run_identity = crate::graph::replay::ReplayRunIdentity::mint(
+            crate::rng::RngRoot::new(Some(13)),
+            "recorded-replay-session",
+        );
 
         driver
-            .open(&program, &TraceDriverContext::metadata_only(&trace))
+            .open(
+                &program,
+                &TraceDriverContext::for_execution(&trace, &clock, &segments, &run_identity),
+            )
             .await
             .unwrap();
         assert!(driver.tool_dispatcher().is_some());
