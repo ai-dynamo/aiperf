@@ -304,6 +304,7 @@ pub struct RecordedReplayAgentLoopFactories {
     response_store: Arc<dyn agent::AgentResponseStoreFactory>,
     trajectory_sink: Arc<dyn agent::AgentTrajectorySinkFactory>,
     invocation_lease: Arc<dyn agent::InvocationLeaseFactoryFactory>,
+    lifecycle_lease: Arc<dyn agent::AgentInvocationLeaseFactoryFactory>,
     tool_dispatcher: Arc<dyn tools::ToolDispatcherFactory>,
     tool_decoder: Arc<dyn tools::AgentToolCallDecoderFactory>,
     observation_formatter: Arc<dyn tools::AgentObservationFormatterFactory>,
@@ -316,6 +317,7 @@ impl Default for RecordedReplayAgentLoopFactories {
             response_store: Arc::new(agent::InMemoryAgentResponseStoreFactory),
             trajectory_sink: Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
             invocation_lease: Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+            lifecycle_lease: Arc::new(agent::InMemoryAgentInvocationLeaseFactoryFactory),
             tool_dispatcher: Arc::new(tools::InMemoryToolDispatcherFactory),
             tool_decoder: Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
             observation_formatter: Arc::new(tools::InMemoryAgentObservationFormatterFactory),
@@ -330,6 +332,7 @@ impl RecordedReplayAgentLoopFactories {
         response_store: Arc<dyn agent::AgentResponseStoreFactory>,
         trajectory_sink: Arc<dyn agent::AgentTrajectorySinkFactory>,
         invocation_lease: Arc<dyn agent::InvocationLeaseFactoryFactory>,
+        lifecycle_lease: Arc<dyn agent::AgentInvocationLeaseFactoryFactory>,
         tool_dispatcher: Arc<dyn tools::ToolDispatcherFactory>,
         tool_decoder: Arc<dyn tools::AgentToolCallDecoderFactory>,
         observation_formatter: Arc<dyn tools::AgentObservationFormatterFactory>,
@@ -339,6 +342,7 @@ impl RecordedReplayAgentLoopFactories {
             response_store,
             trajectory_sink,
             invocation_lease,
+            lifecycle_lease,
             tool_dispatcher,
             tool_decoder,
             observation_formatter,
@@ -539,6 +543,20 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             .tool_dispatcher
             .create(&self.trace.trace_id)
             .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let lifecycle_lease_factory = self
+            .agent_loop
+            .lifecycle_lease
+            .create(&self.trace.trace_id, tool_dispatcher)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let lifecycle_request = agent::AgentInvocationRequest {
+            identity: invocation.clone(),
+            environment: agent::AgentInvocationEnvironment::Isolated,
+        };
+        let mut lifecycle_lease = lifecycle_lease_factory
+            .open(&lifecycle_request, None)
+            .await
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let dispatcher = lifecycle_lease.dispatcher();
         let tool_decoder = self
             .agent_loop
             .tool_decoder
@@ -554,12 +572,14 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
                 response_store.as_mut(),
                 trajectory_sink.as_mut(),
                 invocation_lease.as_ref(),
-                tool_dispatcher.as_ref(),
+                dispatcher.as_ref(),
                 tool_decoder.as_ref(),
                 observation_formatter.as_ref(),
             )
-            .await
-            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+            .await;
+        let close_result = lifecycle_lease.close().await;
+        let trajectory = trajectory.map_err(|error| TraceDriverError::new(error.to_string()))?;
+        close_result.map_err(|error| TraceDriverError::new(error.to_string()))?;
         if trajectory.run_id != self.trace.run_id
             || trajectory.trajectory_id != self.trace.trajectory_id
             || trajectory.invocation_id != invocation.invocation_id
@@ -583,6 +603,8 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use bytes::Bytes;
 
     use super::*;
 
@@ -722,6 +744,80 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct LifecycleCounts {
+        created: AtomicUsize,
+        opened: AtomicUsize,
+        closed: AtomicUsize,
+        requests: Mutex<Vec<agent::AgentInvocationRequest>>,
+    }
+
+    struct RecordingLifecycleLeaseFactoryFactory(Arc<LifecycleCounts>);
+
+    impl agent::AgentInvocationLeaseFactoryFactory for RecordingLifecycleLeaseFactoryFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+            _root_dispatcher: Rc<dyn tools::ToolDispatcher>,
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseFactory>, agent::AgentLoopError> {
+            self.0.created.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(RecordingLifecycleLeaseFactory(self.0.clone())))
+        }
+    }
+
+    struct RecordingLifecycleLeaseFactory(Arc<LifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLeaseFactory for RecordingLifecycleLeaseFactory {
+        async fn open(
+            &self,
+            request: &agent::AgentInvocationRequest,
+            _parent: Option<&dyn agent::AgentInvocationLease>,
+        ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
+            self.0.opened.fetch_add(1, Ordering::SeqCst);
+            self.0
+                .requests
+                .lock()
+                .expect("test lifecycle request log is available")
+                .push(request.clone());
+            Ok(Box::new(RecordingLifecycleLease(self.0.clone())))
+        }
+    }
+
+    struct RecordingLifecycleLease(Arc<LifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLease for RecordingLifecycleLease {
+        fn dispatcher(&self) -> Rc<dyn tools::ToolDispatcher> {
+            Rc::new(tools::InMemoryToolDispatcher::from_results([
+                tools::ToolDispatchResult::completed("call-1", 0, Bytes::from_static(b"ok")),
+            ]))
+        }
+
+        async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct SingleToolDecoderFactory;
+
+    impl tools::AgentToolCallDecoderFactory for SingleToolDecoderFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+        ) -> Result<Box<dyn tools::AgentToolCallDecoder>, tools::ToolDispatchError> {
+            Ok(Box::new(
+                tools::InMemoryAgentToolCallDecoder::from_call_batches([vec![
+                    tools::AgentToolCall {
+                        call_id: "call-1".into(),
+                        command: "echo test".into(),
+                    },
+                ]]),
+            ))
+        }
+    }
+
     fn recorded_program(trace_id: &str) -> GraphTraceProgram {
         let mut program = GraphTraceProgram::static_graph(crate::graph::model::GraphTracePlan {
             graph: crate::graph::model::GraphRecord::default(),
@@ -745,6 +841,7 @@ mod tests {
         let tool_dispatcher = Arc::new(AtomicUsize::new(0));
         let tool_decoder = Arc::new(AtomicUsize::new(0));
         let observation_formatter = Arc::new(AtomicUsize::new(0));
+        let lifecycle_lease = Arc::new(LifecycleCounts::default());
         let coordinator_identities = Arc::new(Mutex::new(Vec::new()));
         let response_store_identities = Arc::new(Mutex::new(Vec::new()));
         let trajectory_sink_identities = Arc::new(Mutex::new(Vec::new()));
@@ -770,6 +867,9 @@ mod tests {
                     calls: invocation_lease.clone(),
                     identities: invocation_lease_identities.clone(),
                 }),
+                Arc::new(RecordingLifecycleLeaseFactoryFactory(
+                    lifecycle_lease.clone(),
+                )),
                 Arc::new(CountingToolDispatcherFactory {
                     calls: tool_dispatcher.clone(),
                     identities: tool_dispatcher_identities.clone(),
@@ -821,6 +921,9 @@ mod tests {
         ] {
             assert_eq!(calls.load(Ordering::SeqCst), 2);
         }
+        assert_eq!(lifecycle_lease.created.load(Ordering::SeqCst), 2);
+        assert_eq!(lifecycle_lease.opened.load(Ordering::SeqCst), 2);
+        assert_eq!(lifecycle_lease.closed.load(Ordering::SeqCst), 2);
         for identities in [
             &coordinator_identities,
             &response_store_identities,
@@ -836,7 +939,75 @@ mod tests {
             assert_eq!(identities.len(), 2);
             assert_ne!(identities[0], identities[1]);
         }
+        let lifecycle_requests = lifecycle_lease
+            .requests
+            .lock()
+            .expect("test lifecycle request log is available");
+        assert_eq!(lifecycle_requests.len(), 2);
+        assert_ne!(
+            lifecycle_requests[0].identity.invocation_id,
+            lifecycle_requests[1].identity.invocation_id
+        );
         assert_ne!(supplements[0].trace_id, supplements[1].trace_id);
         assert_ne!(supplements[0].trajectory_id, supplements[1].trajectory_id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_replay_driver_opens_and_closes_one_isolated_lifecycle_lease() {
+        let lifecycle = Arc::new(LifecycleCounts::default());
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::new([
+                    agent::AgentTurn::new(
+                        agent::ResponseSelection::Inline {
+                            source: agent::AgentResponseSource::Recorded,
+                            wire: Bytes::from_static(b"selected response"),
+                        },
+                        false,
+                    ),
+                ])),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(RecordingLifecycleLeaseFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(SingleToolDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run-lease".into(),
+            trajectory_id: "trajectory-lease".into(),
+            trace_id: "trace-lease".into(),
+        };
+        let program = recorded_program(&trace.trace_id);
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .expect("recorded replay driver is created");
+
+        driver
+            .run(&program, &TraceDriverContext { trace: &trace })
+            .await
+            .expect("lifecycle-owned dispatcher executes the selected tool call");
+
+        assert_eq!(lifecycle.created.load(Ordering::SeqCst), 1);
+        assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+        assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            lifecycle
+                .requests
+                .lock()
+                .expect("test lifecycle request log is available")
+                .as_slice(),
+            [agent::AgentInvocationRequest {
+                identity: agent::AgentInvocationIdentity {
+                    run_id: "run-lease".into(),
+                    trajectory_id: "trajectory-lease".into(),
+                    invocation_id: "trace-lease::root".into(),
+                    parent_invocation_id: None,
+                },
+                environment: agent::AgentInvocationEnvironment::Isolated,
+            }]
+        );
     }
 }

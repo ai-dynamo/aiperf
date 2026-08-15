@@ -7,12 +7,13 @@ use bytes::Bytes;
 use std::rc::Rc;
 
 use aiperf_runtime::graph::agent::{
-    AgentInvocationEnvironment, AgentInvocationIdentity, AgentInvocationLeaseFactory,
+    AgentInvocationEnvironment, AgentInvocationIdentity, AgentInvocationLeaseFactoryFactory,
     AgentInvocationRequest, AgentResponseSource, AgentResponseStore, AgentTrajectorySinkFactory,
     AgentTurn, AgentTurnCoordinator, DelegatedInvocationTerminal,
-    InMemoryAgentInvocationLeaseFactory, InMemoryAgentResponseStore, InMemoryAgentTrajectorySink,
-    InMemoryAgentTrajectorySinkFactory, InMemoryInvocationLeaseFactory, ResponseSelection,
-    StaticAgentTurnCoordinator, deterministic_delegated_join_order,
+    InMemoryAgentInvocationLeaseFactoryFactory, InMemoryAgentResponseStore,
+    InMemoryAgentTrajectorySink, InMemoryAgentTrajectorySinkFactory,
+    InMemoryInvocationLeaseFactory, ResponseSelection, StaticAgentTurnCoordinator,
+    deterministic_delegated_join_order,
 };
 use aiperf_runtime::graph::driver::{
     AgentContinuationSpec, RecordedReplayTraceProgramDriverFactory, TraceDriverSpec,
@@ -20,7 +21,7 @@ use aiperf_runtime::graph::driver::{
 };
 use aiperf_runtime::graph::tools::{
     AgentToolCall, InMemoryAgentObservationFormatter, InMemoryAgentToolCallDecoder,
-    InMemoryToolDispatcher, ToolDispatchResult,
+    InMemoryToolDispatcher, ToolDispatchResult, ToolDispatcher,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -114,7 +115,10 @@ fn trajectory_sink_factory_retains_distinct_trace_identities() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_order() {
-    let factory = InMemoryAgentInvocationLeaseFactory::new();
+    let root_dispatcher: Rc<dyn ToolDispatcher> = Rc::new(InMemoryToolDispatcher::default());
+    let factory = InMemoryAgentInvocationLeaseFactoryFactory
+        .create("trace-root", root_dispatcher.clone())
+        .expect("trace owns one lifecycle lease factory");
     let root_identity = AgentInvocationIdentity {
         run_id: "run-1".into(),
         trajectory_id: "trajectory-root".into(),
@@ -131,6 +135,7 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
         )
         .await
         .expect("root invocation receives a lease");
+    assert!(Rc::ptr_eq(&root_dispatcher, &root.dispatcher()));
     let child_identity = AgentInvocationIdentity {
         run_id: "run-1".into(),
         trajectory_id: "trajectory-child".into(),
@@ -148,7 +153,7 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
         .await
         .expect("shared child borrows its parent lease");
     assert!(Rc::ptr_eq(&root.dispatcher(), &child.dispatcher()));
-    let isolated = factory
+    let mut isolated = factory
         .open(
             &AgentInvocationRequest {
                 identity: AgentInvocationIdentity {
@@ -178,6 +183,7 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
     .expect("authored ordinals produce deterministic joins");
     assert_eq!(ordered[0].identity.invocation_id, "root");
     child.close().await.expect("child closes before parent");
+    isolated.close().await.expect("isolated child closes");
     root.close().await.expect("parent closes after child");
 }
 

@@ -10,8 +10,9 @@ mod turn;
 
 pub use lease::{
     AgentInvocationEnvironment, AgentInvocationIdentity, AgentInvocationLease,
-    AgentInvocationLeaseFactory, AgentInvocationRequest, DelegatedInvocationTerminal,
-    InMemoryAgentInvocationLeaseFactory, InMemoryInvocationLeaseFactory,
+    AgentInvocationLeaseFactory, AgentInvocationLeaseFactoryFactory, AgentInvocationRequest,
+    DelegatedInvocationTerminal, InMemoryAgentInvocationLeaseFactory,
+    InMemoryAgentInvocationLeaseFactoryFactory, InMemoryInvocationLeaseFactory,
     InMemoryInvocationLeaseFactoryFactory, InvocationLease, InvocationLeaseFactory,
     InvocationLeaseFactoryFactory, deterministic_delegated_join_order,
 };

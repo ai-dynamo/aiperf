@@ -3,7 +3,7 @@
 
 //! Invocation leases for deterministic trace-local agent ownership.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use async_trait::async_trait;
@@ -134,6 +134,32 @@ pub trait AgentInvocationLeaseFactory {
     ) -> Result<Box<dyn AgentInvocationLease>, crate::graph::agent::AgentLoopError>;
 }
 
+/// Frozen factory creating one lifecycle owner for every trace-owned agent loop.
+pub trait AgentInvocationLeaseFactoryFactory: Send + Sync {
+    /// Create one lifecycle owner and transfer its root dispatcher ownership.
+    fn create(
+        &self,
+        trace_id: &str,
+        root_dispatcher: Rc<dyn ToolDispatcher>,
+    ) -> Result<Box<dyn AgentInvocationLeaseFactory>, crate::graph::agent::AgentLoopError>;
+}
+
+/// Stock factory for deterministic trace-local lifecycle owners.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InMemoryAgentInvocationLeaseFactoryFactory;
+
+impl AgentInvocationLeaseFactoryFactory for InMemoryAgentInvocationLeaseFactoryFactory {
+    fn create(
+        &self,
+        _trace_id: &str,
+        root_dispatcher: Rc<dyn ToolDispatcher>,
+    ) -> Result<Box<dyn AgentInvocationLeaseFactory>, crate::graph::agent::AgentLoopError> {
+        Ok(Box::new(
+            InMemoryAgentInvocationLeaseFactory::with_root_dispatcher(root_dispatcher),
+        ))
+    }
+}
+
 /// Deterministic lease that simply retains its injected fake dispatcher.
 pub struct InMemoryAgentInvocationLease {
     dispatcher: Rc<dyn ToolDispatcher>,
@@ -155,6 +181,7 @@ impl AgentInvocationLease for InMemoryAgentInvocationLease {
 /// Deterministic lifecycle fake used by the future live-driver contract tests.
 pub struct InMemoryAgentInvocationLeaseFactory {
     next_dispatcher: Cell<u64>,
+    root_dispatcher: RefCell<Option<Rc<dyn ToolDispatcher>>>,
 }
 
 impl InMemoryAgentInvocationLeaseFactory {
@@ -162,6 +189,15 @@ impl InMemoryAgentInvocationLeaseFactory {
     pub fn new() -> Self {
         Self {
             next_dispatcher: Cell::new(0),
+            root_dispatcher: RefCell::new(None),
+        }
+    }
+
+    /// Construct a per-trace lifecycle owner for an already-created root dispatcher.
+    pub fn with_root_dispatcher(root_dispatcher: Rc<dyn ToolDispatcher>) -> Self {
+        Self {
+            next_dispatcher: Cell::new(0),
+            root_dispatcher: RefCell::new(Some(root_dispatcher)),
         }
     }
 }
@@ -193,9 +229,11 @@ impl AgentInvocationLeaseFactory for InMemoryAgentInvocationLeaseFactory {
                 })?
                 .dispatcher()
         } else {
-            let next = self.next_dispatcher.get();
-            self.next_dispatcher.set(next.saturating_add(1));
-            Rc::new(InMemoryToolDispatcher::default())
+            self.root_dispatcher.borrow_mut().take().unwrap_or_else(|| {
+                let next = self.next_dispatcher.get();
+                self.next_dispatcher.set(next.saturating_add(1));
+                Rc::new(InMemoryToolDispatcher::default())
+            })
         };
         Ok(Box::new(InMemoryAgentInvocationLease {
             dispatcher,
