@@ -1721,3 +1721,50 @@ future-facing seams only:
 - `src/harbor/models/trajectories/` for sequential turns, tool-call/result
   correlation, copied context, continuation, and delegated-agent trajectory
   identity.
+
+## Revision notes: future evaluation-platform compatibility
+
+This revision preserves the recorded-agent replay port's delivery sequence and
+its concrete runtime contracts while reserving compatible seams for a later
+agentic SWE evaluation platform. It does not add a public benchmark registry,
+task grader, or live-agent scenario to this port.
+
+1. **Keep the execution node union narrow.** For this port,
+   `GraphNode::{Llm, Tool}` remains canonical. Spawn/join/gate behavior stays
+   expressed through graph topology, channels, and the trace driver;
+   checkpoints, evaluators, and experiment control remain lifecycle or
+   controller services rather than new executor node variants. This preserves
+   the exhaustive-consumer audit and the LLM-only flat-graph fast path.
+
+2. **Keep terminal checkpoints authoritative.** The initial resume contract is
+   the controller-owned atomic checkpoint written after terminal trace cleanup,
+   with distributed resume explicitly rejected. A later platform may retain an
+   append-only node/tool event journal for diagnostics or recovery research, but
+   it must not claim resumability beyond this terminal checkpoint without a
+   controller-owned distributed protocol.
+
+3. **Preserve both sandbox-sharing modes.** Sequential recorded replay may use
+   the planned shared sandbox lease. Isolation is required for concurrently
+   mutating implementation branches: each branch receives an overlay or cloned
+   workspace and returns an immutable candidate patch/artifact; an explicit
+   selector or merge step alone may update a canonical workspace snapshot.
+
+4. **Treat verification as an external, post-run concern initially.** The
+   replay port's diagnostic/grading hook remains outside the profiling interval
+   and is not required for parity. A later `TaskSpec`/dataset/trial layer may
+   pin sandbox and verifier digests, run a verifier in a separately restored
+   workspace or sandbox, and record task-health verdicts. It must not delay the
+   current manifest/lowering/driver/sandbox implementation sequence.
+
+5. **Make evidence extensible without adding hot-path contention.** The typed
+   terminal supplement and optional trajectory artifact exporter are the first
+   provenance boundary. A later versioned event schema may add run, sample,
+   attempt, span, tool, sandbox, evaluator, and security evidence, but worker
+   state remains local and cells return bounded serializable supplements for
+   controller-owned artifact finalization and folding.
+
+6. **Reserve graph comparison for an experiment layer.** A later experiment
+   controller may run paired graph variants with task, model, seed, sandbox
+   recipe, policy, and budget fixed. It reports quality, cost, latency, and
+   failure-mode deltas independently; it does not alter the replay driver's
+   deterministic response-selection contract.
