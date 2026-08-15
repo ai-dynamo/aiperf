@@ -201,6 +201,18 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
         if !program.is_static_graph_program() {
             return Err(TraceError::UnsupportedDriver(program.driver.kind));
         }
+        if let Some((node_id, _)) = program
+            .profiling
+            .graph
+            .nodes
+            .iter()
+            .find(|(_, node)| matches!(node, crate::graph::model::ExecutableGraphNode::Tool(_)))
+        {
+            return Err(TraceError::UnsupportedNode {
+                node_id: node_id.clone(),
+                kind: "tool",
+            });
+        }
         self.execute_static_trace(
             program.profiling,
             Phase::Profiling,

@@ -27,9 +27,7 @@ use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::ExecutorFlags;
 use crate::graph::materialize::SegmentItemsMaterializer;
-use crate::graph::model::{
-    ExecutableGraphNode, GraphTracePlan, GraphTraceProgram, LlmNode, PromptItem,
-};
+use crate::graph::model::{GraphTracePlan, GraphTraceProgram, LlmNode, PromptItem};
 use crate::graph::placement::{
     GraphPlacementError, LocalTracePlacement, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
@@ -53,6 +51,7 @@ use crate::transport::http::{PreparedEndpointReference, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures::future::{AbortHandle, Abortable};
 use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -780,6 +779,7 @@ struct GraphWorkerBackend {
 
 #[derive(Clone)]
 enum ActiveGraphTrace {
+    Driver(AbortHandle),
     Graph(Rc<LocalGraphTraceExecutionBackend<OpenAiChatMessage>>),
 }
 
@@ -793,6 +793,7 @@ impl TracePlacement for GraphWorkerBackend {
             .capabilities(&program.driver)
             .map_err(|error| TraceError::Other(error.to_string()))?;
         let execution_id = self.next_execution.get();
+        let lifecycle_id = execution_id | (1_u64 << 63);
         self.next_execution.set(execution_id.saturating_add(1));
         let trace_warmup = (!program.is_static_graph_program())
             .then(|| program.warmup.clone())
@@ -816,10 +817,28 @@ impl TracePlacement for GraphWorkerBackend {
                     &program.driver,
                 )
                 .map_err(|error| TraceError::Other(error.to_string()))?;
-            driver
-                .open(&program, &TraceDriverContext { trace: &trace })
-                .await
-                .map_err(|error| TraceError::Other(error.to_string()))?;
+            let (abort, registration) = AbortHandle::new_pair();
+            self.active
+                .borrow_mut()
+                .insert(lifecycle_id, ActiveGraphTrace::Driver(abort));
+            let opened = Abortable::new(
+                driver.open(&program, &TraceDriverContext { trace: &trace }),
+                registration,
+            )
+            .await;
+            match opened {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    self.active.borrow_mut().remove(&lifecycle_id);
+                    return Err(TraceError::Other(error.to_string()));
+                }
+                Err(_) => {
+                    self.active.borrow_mut().remove(&lifecycle_id);
+                    return Err(TraceError::Cancelled(
+                        "graph trace driver was cancelled during open".into(),
+                    ));
+                }
+            }
             opened_driver = Some(driver);
             GraphTraceProgram::static_graph(program.profiling.clone())
         };
@@ -828,6 +847,10 @@ impl TracePlacement for GraphWorkerBackend {
             .as_ref()
             .and_then(|driver| driver.tool_dispatcher());
         if self.cancelled.get() {
+            if let Some(mut driver) = opened_driver {
+                let _ = driver.close().await;
+                self.active.borrow_mut().remove(&lifecycle_id);
+            }
             return Err(TraceError::Cancelled(format!(
                 "graph trace {:?} was rejected after worker cancellation",
                 plan.trace.id
@@ -916,13 +939,26 @@ impl TracePlacement for GraphWorkerBackend {
             .verify_finalized_records()
             .map_err(|error| TraceError::Other(error.to_string()));
         self.active.borrow_mut().remove(&execution_id);
-        let result = finalized.and(result);
+        let result = match (result, finalized) {
+            (Err(primary), _) => Err(primary),
+            (Ok(()), result) => result,
+        };
         if let Some(mut driver) = opened_driver {
-            let close = driver
-                .close()
+            let (abort, registration) = AbortHandle::new_pair();
+            self.active
+                .borrow_mut()
+                .insert(lifecycle_id, ActiveGraphTrace::Driver(abort));
+            let close = Abortable::new(driver.close(), registration)
                 .await
-                .map_err(|error| TraceError::Other(error.to_string()));
-            return result.and(close);
+                .map_err(|_| {
+                    TraceError::Cancelled("graph trace driver was cancelled during close".into())
+                })
+                .and_then(|result| result.map_err(|error| TraceError::Other(error.to_string())));
+            self.active.borrow_mut().remove(&lifecycle_id);
+            return match (result, close) {
+                (Err(primary), _) => Err(primary),
+                (Ok(()), close) => close,
+            };
         }
         result
     }
@@ -933,6 +969,10 @@ impl TracePlacement for GraphWorkerBackend {
         let errors = active
             .iter()
             .filter_map(|trace| match trace {
+                ActiveGraphTrace::Driver(abort) => {
+                    abort.abort();
+                    None
+                }
                 ActiveGraphTrace::Graph(backend) => backend.cancel_inflight().err(),
             })
             .map(|error| error.to_string())
@@ -1266,6 +1306,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
         );
         let first_token_emitted = Cell::new(false);
         let first_token_error = RefCell::new(None);
+        let emits_profile_events = context.trace_subphase == TraceSubphase::Profiling;
         let collected = transport
             .dispatch_collect(
                 PreparedTurn {
@@ -1280,7 +1321,8 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 },
                 self.observer.as_ref(),
                 &|_| {
-                    if !first_token_emitted.replace(true)
+                    if emits_profile_events
+                        && !first_token_emitted.replace(true)
                         && let Err(error) = self.events.emit(GraphExecutionEvent::FirstToken {
                             trace_id: self.trace_id.clone(),
                             uuid,
@@ -1317,23 +1359,26 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                     self.trace_id
                 )
             })?;
-        self.events.emit(GraphExecutionEvent::Record {
-            record: Box::new(CapturedRecord {
-                uuid,
-                x_correlation_id: self.trace_id.clone(),
-                output: CapturedModelOutput::from_parts(
-                    &outcome.response_text,
-                    outcome.model_response.content.as_deref(),
-                    outcome.model_response.reasoning.as_deref(),
-                ),
-                raw: self.raw_enabled.then_some(CapturedHttpExchange {
-                    request_payload: collected.request_payload.clone(),
-                    record: collected.record,
-                }),
-                ingest,
+        let record = CapturedRecord {
+            uuid,
+            x_correlation_id: self.trace_id.clone(),
+            output: CapturedModelOutput::from_parts(
+                &outcome.response_text,
+                outcome.model_response.content.as_deref(),
+                outcome.model_response.reasoning.as_deref(),
+            ),
+            raw: self.raw_enabled.then_some(CapturedHttpExchange {
+                request_payload: collected.request_payload.clone(),
+                record: collected.record,
             }),
-            node_id: Some(node_id.to_owned()),
-        })?;
+            ingest,
+        };
+        if context.trace_subphase == TraceSubphase::Profiling {
+            self.events.emit(GraphExecutionEvent::Record {
+                record: Box::new(record),
+                node_id: Some(node_id.to_owned()),
+            })?;
+        }
         self.emitted_records.set(ordinal.saturating_add(1));
 
         Ok(match outcome.terminal {
@@ -1512,6 +1557,7 @@ mod tests {
         TraceDriverCapabilities, TraceDriverContext, TraceDriverError, TraceDriverSpec,
         TraceIdentity, TraceProgramDriver, TraceProgramDriverFactory, WorkerIdentity,
     };
+    use crate::graph::model::ExecutableGraphNode;
     use crate::graph::supplement::TraceTerminalSupplement;
     use crate::graph::{agent, tools};
     use crate::multiturn::AuthoredInputTokenCounter;
@@ -1604,6 +1650,51 @@ mod tests {
             _context: &TraceDriverContext<'_>,
         ) -> Result<TraceTerminalSupplement, TraceDriverError> {
             unreachable!("placement must use the owned-session lifecycle, not the prepass")
+        }
+    }
+
+    struct OrderedToolDispatcherFactory(Arc<Mutex<Vec<String>>>);
+
+    impl tools::ToolDispatcherFactory for OrderedToolDispatcherFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+        ) -> Result<Rc<dyn tools::ToolDispatcher>, tools::ToolDispatchError> {
+            Ok(Rc::new(OrderedToolDispatcher(self.0.clone())))
+        }
+    }
+
+    struct OrderedToolDispatcher(Arc<Mutex<Vec<String>>>);
+
+    #[async_trait(?Send)]
+    impl tools::ToolDispatcher for OrderedToolDispatcher {
+        async fn open_trace(
+            &self,
+            _context: tools::TraceOpenContext<'_>,
+        ) -> Result<(), tools::ToolDispatchError> {
+            self.0.lock().unwrap().push("open".into());
+            Ok(())
+        }
+
+        async fn dispatch(
+            &self,
+            request: tools::ToolDispatchRequest,
+            _context: &tools::ToolDispatchContext,
+        ) -> Result<tools::ToolDispatchResult, tools::ToolDispatchError> {
+            self.0.lock().unwrap().push(request.command);
+            Ok(tools::ToolDispatchResult::completed(
+                request.call_id,
+                0,
+                Bytes::new(),
+            ))
+        }
+
+        async fn close_trace(
+            &self,
+            _trace: &TraceIdentity,
+        ) -> Result<(), tools::ToolDispatchError> {
+            self.0.lock().unwrap().push("close".into());
+            Ok(())
         }
     }
 
@@ -1756,90 +1847,43 @@ mod tests {
         closed: AtomicUsize,
     }
 
-    struct PlacementLifecycleFactoryFactory(Arc<PlacementLifecycleCounts>);
+    struct SuspendingOpenLifecycleFactoryFactory(Arc<PlacementLifecycleCounts>);
 
-    impl agent::AgentInvocationLeaseFactoryFactory for PlacementLifecycleFactoryFactory {
+    impl agent::AgentInvocationLeaseFactoryFactory for SuspendingOpenLifecycleFactoryFactory {
         fn create(
             &self,
             _trace_id: &str,
             _root_dispatcher: Rc<dyn tools::ToolDispatcher>,
         ) -> Result<Box<dyn agent::AgentInvocationLeaseFactory>, agent::AgentLoopError> {
-            Ok(Box::new(PlacementLifecycleFactory(self.0.clone())))
+            Ok(Box::new(SuspendingOpenLifecycleFactory(self.0.clone())))
         }
     }
 
-    struct PlacementLifecycleFactory(Arc<PlacementLifecycleCounts>);
+    struct SuspendingOpenLifecycleFactory(Arc<PlacementLifecycleCounts>);
 
-    impl agent::AgentInvocationLeaseFactory for PlacementLifecycleFactory {
+    impl agent::AgentInvocationLeaseFactory for SuspendingOpenLifecycleFactory {
         fn begin_open(
             &self,
             _request: &agent::AgentInvocationRequest,
             _parent: Option<&dyn agent::AgentInvocationLease>,
         ) -> Result<Box<dyn agent::AgentInvocationLeaseOpening>, agent::AgentLoopError> {
             self.0.opened.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(PlacementLifecycleOpening(self.0.clone())))
+            Ok(Box::new(SuspendingOpenLifecycleOpening(self.0.clone())))
         }
     }
 
-    struct PlacementLifecycleOpening(Arc<PlacementLifecycleCounts>);
+    struct SuspendingOpenLifecycleOpening(Arc<PlacementLifecycleCounts>);
 
     #[async_trait(?Send)]
-    impl agent::AgentInvocationLeaseOpening for PlacementLifecycleOpening {
+    impl agent::AgentInvocationLeaseOpening for SuspendingOpenLifecycleOpening {
         async fn open(
             &mut self,
         ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
-            Ok(Box::new(PlacementLifecycleLease(self.0.clone())))
+            std::future::pending().await
         }
 
         fn cancel_on_drop(&mut self) {
             self.0.closed.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    struct PlacementLifecycleLease(Arc<PlacementLifecycleCounts>);
-
-    #[async_trait(?Send)]
-    impl agent::AgentInvocationLease for PlacementLifecycleLease {
-        fn dispatcher(&self) -> Rc<dyn tools::ToolDispatcher> {
-            Rc::new(tools::InMemoryToolDispatcher::default())
-        }
-
-        fn close_on_drop(&mut self) {
-            self.0.closed.fetch_add(1, Ordering::SeqCst);
-        }
-
-        async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
-            self.close_on_drop();
-            Ok(())
-        }
-    }
-
-    struct BlockingPlacementCoordinatorFactory;
-
-    impl agent::AgentTurnCoordinatorFactory for BlockingPlacementCoordinatorFactory {
-        fn create(
-            &self,
-            _invocation: &agent::AgentInvocationIdentity,
-            _spec: &agent::AgentTurnCoordinatorSpec,
-        ) -> Result<Box<dyn agent::AgentTurnCoordinator>, agent::AgentLoopError> {
-            Ok(Box::new(BlockingPlacementCoordinator))
-        }
-    }
-
-    struct BlockingPlacementCoordinator;
-
-    #[async_trait(?Send)]
-    impl agent::AgentTurnCoordinator for BlockingPlacementCoordinator {
-        async fn run(
-            &mut self,
-            _response_store: &mut dyn agent::AgentResponseStore,
-            _trajectory: &mut dyn agent::AgentTrajectorySink,
-            _turn_leases: &dyn agent::InvocationLeaseFactory,
-            _invocation_lease: &dyn agent::AgentInvocationLease,
-            _decoder: &dyn tools::AgentToolCallDecoder,
-            _formatter: &dyn tools::AgentObservationFormatter,
-        ) -> Result<agent::AgentTrajectory, agent::AgentLoopError> {
-            std::future::pending().await
         }
     }
 
@@ -1915,6 +1959,42 @@ mod tests {
         program
     }
 
+    fn tool_only_plan(trace_id: &str, commands: &[&str]) -> GraphTracePlan {
+        let mut graph = crate::graph::model::GraphRecord::default();
+        graph.state.insert(
+            "tool-output".into(),
+            crate::graph::model::ChannelSpec {
+                channel_type: crate::graph::model::ChannelType::Messages,
+                reducer: crate::graph::model::ReducerName::AddMessages,
+            },
+        );
+        graph.nodes.insert(
+            "tool".into(),
+            ExecutableGraphNode::Tool(crate::graph::model::ToolNode {
+                output: "tool-output".into(),
+                commands: commands.iter().map(|command| (*command).into()).collect(),
+                timeout_ns: None,
+            }),
+        );
+        graph.edges.push(crate::graph::model::StaticEdge {
+            source: crate::graph::model::START_NODE_ID.into(),
+            target: "tool".into(),
+            delay_after_predecessor_us: None,
+            min_start_delay_us: None,
+            delay_after_predecessor_start_us: None,
+            delay_after_predecessor_first_token_us: None,
+        });
+        GraphTracePlan {
+            graph,
+            trace: crate::graph::model::TraceRecord {
+                id: trace_id.into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        }
+    }
+
     fn empty_graph_worker(trace_driver: Arc<dyn TraceProgramDriverFactory>) -> GraphWorkerBackend {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
         let segments: Arc<dyn SegmentStore> = Arc::new(InMemorySegmentStore::default());
@@ -1979,6 +2059,45 @@ mod tests {
         program.warmup = Some(program.profiling.clone());
         backend.execute_trace(program).await.unwrap();
         assert_eq!(order.lock().unwrap().as_slice(), ["open", "close"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_worker_keeps_recorded_dispatcher_open_for_warmup_profile_and_tool_order() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
+            .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(agent::InMemoryAgentInvocationLeaseFactoryFactory),
+                Arc::new(OrderedToolDispatcherFactory(order.clone())),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ));
+        let backend = empty_graph_worker(Arc::new(trace_driver));
+        let mut program = empty_recorded_program("trace-tool-order");
+        program.warmup = Some(tool_only_plan(
+            "trace-tool-order-warmup",
+            &["warmup-1", "warmup-2"],
+        ));
+        program.profiling = tool_only_plan("trace-tool-order", &["profile-1", "profile-2"]);
+
+        tokio::task::LocalSet::new()
+            .run_until(async { backend.execute_trace(program).await.unwrap() })
+            .await;
+
+        assert_eq!(
+            order.lock().unwrap().as_slice(),
+            [
+                "open",
+                "warmup-1",
+                "warmup-2",
+                "profile-1",
+                "profile-2",
+                "close",
+            ],
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2062,11 +2181,11 @@ mod tests {
         let lifecycle = Arc::new(PlacementLifecycleCounts::default());
         let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
             .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
-                Arc::new(BlockingPlacementCoordinatorFactory),
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
                 Arc::new(agent::InMemoryAgentResponseStoreFactory),
                 Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
                 Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
-                Arc::new(PlacementLifecycleFactoryFactory(lifecycle.clone())),
+                Arc::new(SuspendingOpenLifecycleFactoryFactory(lifecycle.clone())),
                 Arc::new(tools::InMemoryToolDispatcherFactory),
                 Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
                 Arc::new(tools::InMemoryAgentObservationFormatterFactory),
@@ -2081,16 +2200,21 @@ mod tests {
                         .await
                 });
                 tokio::task::yield_now().await;
+                assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
                 backend
                     .cancel_inflight()
-                    .expect("cancellation aborts registered driver work");
+                    .expect("cancellation aborts the registered lifecycle open");
                 let error = task
                     .await
                     .expect("placement task completes after cancellation")
-                    .expect_err("blocked recorded driver is cancelled");
+                    .expect_err("suspended recorded lifecycle open is cancelled");
                 assert!(matches!(error, TraceError::Cancelled(_)));
                 assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+                assert!(
+                    backend.active.borrow().is_empty(),
+                    "cancelling lifecycle open must unregister the active trace"
+                );
             })
             .await;
     }

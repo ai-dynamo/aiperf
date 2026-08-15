@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use aiperf_runtime::clock::{Clock, SimClock};
-use aiperf_runtime::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
+use aiperf_runtime::graph::execution::LocalGraphTraceExecutionBackend;
 use aiperf_runtime::graph::materialize::PromptMaterializer;
 use aiperf_runtime::graph::model::{
-    ChannelSpec, ChannelType, ExecutableGraphNode, GraphRecord, GraphTracePlan, GraphTraceProgram,
-    ReducerName, START_NODE_ID, StaticEdge, ToolNode, TraceRecord,
+    ChannelSpec, ChannelType, ExecutableGraphNode, GraphRecord, GraphTracePlan, ReducerName,
+    START_NODE_ID, StaticEdge, ToolNode, TraceRecord,
 };
 use aiperf_runtime::graph::reducers::ChanVal;
 use aiperf_runtime::graph::sink::{
@@ -131,15 +131,19 @@ async fn tool_only_terminal_executes_commands_in_order_without_native_request() 
     tokio::task::LocalSet::new()
         .run_until(async {
             backend
-                .execute_trace(GraphTraceProgram::static_graph(GraphTracePlan {
-                    graph,
-                    trace: TraceRecord {
-                        id: "tool-only".into(),
-                        graph_ref: None,
-                        initial_state: BTreeMap::new(),
+                .execute_static_trace(
+                    GraphTracePlan {
+                        graph,
+                        trace: TraceRecord {
+                            id: "tool-only".into(),
+                            graph_ref: None,
+                            initial_state: BTreeMap::new(),
+                        },
+                        arrival_offset_ns: None,
                     },
-                    arrival_offset_ns: None,
-                }))
+                    Phase::Profiling,
+                    TraceSubphase::Profiling,
+                )
                 .await
                 .unwrap();
         })
