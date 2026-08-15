@@ -66,6 +66,19 @@ impl ToolCommandResult {
             is_output_truncated: false,
         }
     }
+
+    /// Build the standard rejected-detachment observation.
+    pub fn detaching_rejected() -> Self {
+        Self {
+            output: Bytes::from_static(
+                b"recorded-agent replay blocked a detaching command to preserve sandbox containment",
+            ),
+            exit_code: 127,
+            duration_ns: 0,
+            is_timed_out: false,
+            is_output_truncated: false,
+        }
+    }
 }
 
 /// Evaluates an authored shell command before any sandbox work occurs.
@@ -81,6 +94,11 @@ pub struct GuardedToolCommandPolicy;
 impl ToolCommandPolicy for GuardedToolCommandPolicy {
     fn evaluate(&self, command: &str) -> Result<CommandDisposition, TraceEnvironmentError> {
         for segment in top_level_segments(command) {
+            if segment_starts_detaching_command(segment) {
+                return Ok(CommandDisposition::Synthetic(
+                    ToolCommandResult::detaching_rejected(),
+                ));
+            }
             if segment_starts_installer(segment) {
                 return Ok(CommandDisposition::Synthetic(
                     ToolCommandResult::installer_rejected(),
@@ -89,6 +107,25 @@ impl ToolCommandPolicy for GuardedToolCommandPolicy {
         }
         Ok(CommandDisposition::Execute)
     }
+}
+
+/// Return whether a shell command starts a known process-detachment utility.
+pub(crate) fn contains_detaching_command(command: &str) -> bool {
+    top_level_segments(command)
+        .into_iter()
+        .any(segment_starts_detaching_command)
+}
+
+fn segment_starts_detaching_command(segment: &str) -> bool {
+    let tokens = shell_tokens(segment);
+    let tokens = executable_tokens(&tokens);
+    let Some(command) = tokens.first() else {
+        return false;
+    };
+    matches!(
+        strip_shell_expansions(command).as_str(),
+        "setsid" | "nohup" | "disown"
+    )
 }
 
 fn top_level_segments(command: &str) -> Vec<&str> {

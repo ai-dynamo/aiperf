@@ -15,10 +15,22 @@ use tokio::sync::Mutex;
 
 use crate::clock::Clock;
 
-use super::{ToolCommandResult, ToolSandbox, ToolSandboxError, WorkspaceSpec};
+use super::{
+    ToolCommandResult, ToolSandbox, ToolSandboxError, WorkspaceSpec,
+    policy::contains_detaching_command,
+};
 
 const TERMINAL_PREFIX: &[u8] = b"\0aiperf-terminal:";
 const REAP_GRACE_NS: i64 = 1_000_000_000;
+
+enum SessionState {
+    Idle,
+    Live(Box<dyn ProcessSession>),
+    Poisoned {
+        session: Box<dyn ProcessSession>,
+        error: ToolSandboxError,
+    },
+}
 
 /// Process-launch settings for one persistent local shell session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,7 +202,7 @@ pub struct LocalSessionSandbox {
     spawner: Rc<dyn ProcessSpawner>,
     output_limit: usize,
     reap_grace_ns: i64,
-    session: RefCell<Option<Box<dyn ProcessSession>>>,
+    session: RefCell<SessionState>,
     command_gate: Mutex<()>,
 }
 
@@ -208,7 +220,7 @@ impl LocalSessionSandbox {
             spawner,
             output_limit,
             reap_grace_ns: REAP_GRACE_NS,
-            session: RefCell::new(None),
+            session: RefCell::new(SessionState::Idle),
             command_gate: Mutex::new(()),
         }
     }
@@ -236,8 +248,10 @@ impl LocalSessionSandbox {
     }
 
     async fn open_unlocked(&self) -> Result<(), ToolSandboxError> {
-        if self.session.borrow().is_some() {
-            return Ok(());
+        match &*self.session.borrow() {
+            SessionState::Live(_) => return Ok(()),
+            SessionState::Poisoned { error, .. } => return Err(poisoned_error(error)),
+            SessionState::Idle => {}
         }
         let session = self
             .spawner
@@ -245,14 +259,22 @@ impl LocalSessionSandbox {
                 workdir: PathBuf::from(&self.workspace.workdir),
             })
             .await?;
-        self.session.replace(Some(session));
+        self.session.replace(SessionState::Live(session));
         Ok(())
     }
 
     async fn recycle_unlocked(&self) -> Result<(), ToolSandboxError> {
-        let previous = self.session.borrow_mut().take();
-        if let Some(mut session) = previous {
-            self.reap(&mut *session).await?;
+        let previous = take_session_state(&self.session);
+        match previous {
+            SessionState::Idle => {}
+            SessionState::Live(session) => self.discard_session(session).await?,
+            SessionState::Poisoned { session, error } => {
+                self.session.replace(SessionState::Poisoned {
+                    session,
+                    error: error.clone(),
+                });
+                return Err(poisoned_error(&error));
+            }
         }
         self.open_unlocked().await
     }
@@ -285,7 +307,16 @@ impl LocalSessionSandbox {
         &self,
         mut session: Box<dyn ProcessSession>,
     ) -> Result<(), ToolSandboxError> {
-        self.reap(&mut *session).await
+        match self.reap(&mut *session).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.session.replace(SessionState::Poisoned {
+                    session,
+                    error: error.clone(),
+                });
+                Err(error)
+            }
+        }
     }
 
     async fn terminal_result(
@@ -372,9 +403,7 @@ impl ToolSandbox for LocalSessionSandbox {
         let sentinel = uuid::Uuid::new_v4().simple().to_string();
         let frame_prefix = [TERMINAL_PREFIX, sentinel.as_bytes(), b":"].concat();
         let command_wire = command_wire(&self.workspace.interpreter, command, &sentinel)?;
-        let mut session = self.session.borrow_mut().take().ok_or_else(|| {
-            ToolSandboxError::new("local shell disappeared while starting a command")
-        })?;
+        let mut session = take_live_session(&self.session)?;
         let started_ns = self.clock.now_ns();
         if let Err(error) = session.write_all(&command_wire).await {
             self.discard_session(session).await?;
@@ -438,11 +467,21 @@ impl ToolSandbox for LocalSessionSandbox {
 
     async fn close(&self) -> Result<(), ToolSandboxError> {
         let _command_turn = self.command_gate.lock().await;
-        let session = self.session.borrow_mut().take();
-        if let Some(mut session) = session {
-            self.reap(&mut *session).await?;
+        match take_session_state(&self.session) {
+            SessionState::Idle => Ok(()),
+            SessionState::Live(session) => self.discard_session(session).await,
+            SessionState::Poisoned { mut session, error } => match self.reap(&mut *session).await {
+                Ok(()) => Err(poisoned_error(&error)),
+                Err(retry_error) => {
+                    let error = merge_cleanup_error(Some(error), retry_error);
+                    self.session.replace(SessionState::Poisoned {
+                        session,
+                        error: error.clone(),
+                    });
+                    Err(error)
+                }
+            },
         }
-        Ok(())
     }
 }
 
@@ -456,6 +495,11 @@ fn command_wire(
             "local sandbox recipe has no command interpreter",
         ));
     }
+    if contains_detaching_command(command) {
+        return Err(ToolSandboxError::new(
+            "recorded-agent replay blocked a detaching command to preserve sandbox containment",
+        ));
+    }
     let interpreter = interpreter
         .iter()
         .map(|argument| shell_quote(argument))
@@ -466,6 +510,37 @@ fn command_wire(
         shell_quote(command),
     )
     .into_bytes())
+}
+
+fn take_session_state(session: &RefCell<SessionState>) -> SessionState {
+    std::mem::replace(&mut *session.borrow_mut(), SessionState::Idle)
+}
+
+fn take_live_session(
+    session: &RefCell<SessionState>,
+) -> Result<Box<dyn ProcessSession>, ToolSandboxError> {
+    match take_session_state(session) {
+        SessionState::Live(session) => Ok(session),
+        SessionState::Idle => Err(ToolSandboxError::new(
+            "local shell disappeared while starting a command",
+        )),
+        SessionState::Poisoned {
+            session: poisoned,
+            error,
+        } => {
+            session.replace(SessionState::Poisoned {
+                session: poisoned,
+                error: error.clone(),
+            });
+            Err(poisoned_error(&error))
+        }
+    }
+}
+
+fn poisoned_error(error: &ToolSandboxError) -> ToolSandboxError {
+    ToolSandboxError::new(format!(
+        "local sandbox is poisoned after cleanup failure: {error}"
+    ))
 }
 
 fn combine_cleanup_results(

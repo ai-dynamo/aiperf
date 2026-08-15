@@ -266,6 +266,45 @@ async fn timeout_refuses_to_report_a_terminal_outcome_when_cleanup_fails() {
 
     assert_eq!(error.to_string(), "terminate failed");
     assert_eq!(spawner.requests.borrow().len(), 1);
+
+    let later = sandbox
+        .run("printf replacement", None)
+        .await
+        .expect_err("cleanup failure poisons the sandbox");
+    assert_eq!(
+        later.to_string(),
+        "local sandbox is poisoned after cleanup failure: terminate failed"
+    );
+    assert_eq!(spawner.requests.borrow().len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn detaching_command_is_rejected_without_an_escaped_side_effect() {
+    // This catches accepting `setsid`, which leaves a descendant outside the
+    // shell process group and lets it write after the sandbox has recycled.
+    let temporary = tempfile::tempdir().expect("temporary local workspace");
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sandbox = LocalSessionSandbox::with_tokio_processes(
+        real_workspace(temporary.path().to_string_lossy().as_ref()),
+        clock.clone(),
+        1024,
+    );
+
+    let error = sandbox
+        .run(
+            "setsid bash -c 'sleep 0.05; printf escaped > escaped-state' &",
+            Some(1_000_000_000),
+        )
+        .await
+        .expect_err("detaching command is rejected before execution");
+    clock.clone().sleep(100_000_000).await;
+    sandbox.close().await.expect("opened session closes safely");
+
+    assert_eq!(
+        error.to_string(),
+        "recorded-agent replay blocked a detaching command to preserve sandbox containment"
+    );
+    assert!(!temporary.path().join("escaped-state").exists());
 }
 
 #[tokio::test(flavor = "current_thread")]
