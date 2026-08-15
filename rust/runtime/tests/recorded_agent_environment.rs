@@ -90,6 +90,19 @@ fn guarded_policy_blocks_an_installer_nested_in_shell_control() {
 }
 
 #[test]
+fn guarded_policy_blocks_an_installer_spliced_by_command_substitution() {
+    // This catches a policy that recognizes only the source spelling of a
+    // command word, although Bash removes the substitution before dispatch.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("a$(true)pt-get install package")
+        .expect("policy inspects an expanded command word conservatively");
+    let CommandDisposition::Synthetic(result) = disposition else {
+        panic!("substitution-spliced installer must become a synthetic result");
+    };
+    assert_eq!(result.exit_code, 127);
+}
+
+#[test]
 fn pinch_recipe_refuses_a_sandbox_without_workspace_materialization() {
     // This catches preflight that provisions an empty Pinch workspace on a
     // backend which cannot stage the task's digest-addressed fixture files.

@@ -223,21 +223,80 @@ fn has_shell_control_construct(segment: &str) -> bool {
 }
 
 fn contains_installer_token(tokens: &[String]) -> bool {
-    let tokens = tokens
-        .iter()
-        .map(|token| {
-            token.trim_matches(|character| matches!(character, '$' | '(' | ')' | '{' | '}' | ';'))
-        })
-        .collect::<Vec<_>>();
+    let tokens =
+        tokens
+            .iter()
+            .map(|token| {
+                strip_shell_expansions(token.trim_matches(|character| {
+                    matches!(character, '$' | '(' | ')' | '{' | '}' | ';')
+                }))
+            })
+            .collect::<Vec<_>>();
     tokens.iter().any(|token| {
         matches!(
-            *token,
+            token.as_str(),
             "pip" | "pip3" | "conda" | "mamba" | "apt" | "apt-get" | "yum" | "dnf" | "apk"
         )
     }) || tokens.windows(3).any(|window| {
         matches!(window, [python, flag, module]
-            if matches!(*python, "python" | "python3") && *flag == "-m" && *module == "pip")
+            if matches!(python.as_str(), "python" | "python3")
+                && flag == "-m" && module == "pip")
     })
+}
+
+fn strip_shell_expansions(token: &str) -> String {
+    let characters = token.chars().collect::<Vec<_>>();
+    let mut stripped = String::with_capacity(token.len());
+    let mut index = 0;
+    while index < characters.len() {
+        match characters[index] {
+            '$' if characters.get(index + 1) == Some(&'(') => {
+                index = skip_balanced_expansion(&characters, index + 2, '(', ')');
+            }
+            '$' if characters.get(index + 1) == Some(&'{') => {
+                index = skip_balanced_expansion(&characters, index + 2, '{', '}');
+            }
+            '$' => {
+                index += 1;
+                while characters
+                    .get(index)
+                    .is_some_and(|character| character == &'_' || character.is_ascii_alphanumeric())
+                {
+                    index += 1;
+                }
+            }
+            '`' => {
+                index += 1;
+                while index < characters.len() && characters[index] != '`' {
+                    index += 1;
+                }
+                index += usize::from(index < characters.len());
+            }
+            character => {
+                stripped.push(character);
+                index += 1;
+            }
+        }
+    }
+    stripped
+}
+
+fn skip_balanced_expansion(
+    characters: &[char],
+    mut index: usize,
+    opening: char,
+    closing: char,
+) -> usize {
+    let mut depth = 1usize;
+    while index < characters.len() && depth > 0 {
+        match characters[index] {
+            character if character == opening => depth += 1,
+            character if character == closing => depth -= 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    index
 }
 
 fn is_assignment(token: &str) -> bool {
