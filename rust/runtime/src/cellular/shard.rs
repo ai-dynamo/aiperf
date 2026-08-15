@@ -32,7 +32,7 @@ use std::fmt::{self, Display, Formatter};
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::supplement::GraphPhaseSupplement;
+use crate::graph::supplement::GraphCellSupplement;
 use crate::metrics_core::accumulator::{MetricsAccumulator, MetricsConfig};
 use crate::metrics_core::ingest::RecordIngest;
 use crate::metrics_core::store::ColumnStore;
@@ -44,7 +44,7 @@ pub struct RecordsShardPartition {
     cell_id: u32,
     records: Vec<RecordIngest>,
     #[serde(default)]
-    graph_supplement: Option<GraphPhaseSupplement>,
+    graph_supplement: Option<GraphCellSupplement>,
 }
 
 impl RecordsShardPartition {
@@ -59,7 +59,7 @@ impl RecordsShardPartition {
 
     /// Attach the bounded replay facts produced by this graph cell. These facts are
     /// folded only by the controller after every terminal partition arrives.
-    pub fn with_graph_supplement(mut self, supplement: GraphPhaseSupplement) -> Self {
+    pub fn with_graph_supplement(mut self, supplement: GraphCellSupplement) -> Self {
         self.graph_supplement = Some(supplement);
         self
     }
@@ -80,7 +80,7 @@ impl RecordsShardPartition {
     }
 
     /// Borrows the graph replay facts carried with this terminal partition.
-    pub fn graph_supplement(&self) -> Option<&GraphPhaseSupplement> {
+    pub fn graph_supplement(&self) -> Option<&GraphCellSupplement> {
         self.graph_supplement.as_ref()
     }
 
@@ -310,7 +310,7 @@ pub struct ColumnStorePartition {
     cell_id: u32,
     store: ColumnStore,
     #[serde(default)]
-    graph_supplement: Option<GraphPhaseSupplement>,
+    graph_supplement: Option<GraphCellSupplement>,
 }
 
 impl ColumnStorePartition {
@@ -324,7 +324,7 @@ impl ColumnStorePartition {
     }
 
     /// Attach the bounded replay facts produced by this graph cell or aggregator.
-    pub fn with_graph_supplement(mut self, supplement: GraphPhaseSupplement) -> Self {
+    pub fn with_graph_supplement(mut self, supplement: GraphCellSupplement) -> Self {
         self.graph_supplement = Some(supplement);
         self
     }
@@ -359,7 +359,7 @@ impl ColumnStorePartition {
     }
 
     /// Borrows the graph replay facts carried with this terminal partition.
-    pub fn graph_supplement(&self) -> Option<&GraphPhaseSupplement> {
+    pub fn graph_supplement(&self) -> Option<&GraphCellSupplement> {
         self.graph_supplement.as_ref()
     }
 

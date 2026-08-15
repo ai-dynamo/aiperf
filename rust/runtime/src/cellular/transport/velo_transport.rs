@@ -37,7 +37,7 @@ use super::CellPhaseSignal;
 use super::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,
     CellTransportError, ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION,
-    HANDLER_PHASE_SIGNAL, HANDLER_REGISTER, HANDLER_STORE_PARTITION,
+    HANDLER_PHASE_SIGNAL, HANDLER_PREFLIGHT, HANDLER_REGISTER, HANDLER_STORE_PARTITION,
 };
 
 /// Supplies each cell's serialized (`rmp`) `CellLaunchSpec` by `cell_id`, or
@@ -77,6 +77,7 @@ pub struct VeloControllerTransport {
     /// Notified once every `cell_count` cell has registered — the controller then
     /// triggers the START event (synchronized start).
     all_registered: Arc<Notify>,
+    preflight: Arc<crate::graph::supplement::GraphCellPreflightBarrier>,
 }
 
 impl VeloControllerTransport {
@@ -92,6 +93,9 @@ impl VeloControllerTransport {
     ) -> Result<Self, CellTransportError> {
         let (sender, receiver) = mpsc::channel(1024);
         let all_registered = Arc::new(Notify::new());
+        let preflight = Arc::new(crate::graph::supplement::GraphCellPreflightBarrier::new(
+            cell_count,
+        ));
         let registered = Arc::new(AtomicU32::new(0));
 
         // register (unary): learn the cell, count it toward the start barrier, and
@@ -128,6 +132,27 @@ impl VeloControllerTransport {
                     let bytes = rmp_serde::to_vec(&reply)
                         .map_err(|error| anyhow::anyhow!("encode RegisterReply: {error}"))?;
                     Ok(Some(Bytes::from(bytes)))
+                }
+            })
+            .build(),
+        )
+        .map_err(io)?;
+
+        let preflight_barrier = preflight.clone();
+        velo.register_handler(
+            Handler::am_handler_async(HANDLER_PREFLIGHT, move |ctx: Context| {
+                let preflight_barrier = preflight_barrier.clone();
+                async move {
+                    match rmp_serde::from_slice::<CellMessage>(&ctx.payload) {
+                        Ok(CellMessage::Preflight { cell_id, result }) => {
+                            preflight_barrier.report(cell_id, result);
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!(error = %error, "invalid cellular preflight message")
+                        }
+                    }
+                    Ok(())
                 }
             })
             .build(),
@@ -243,6 +268,7 @@ impl VeloControllerTransport {
             _velo: velo,
             receiver,
             all_registered,
+            preflight,
         })
     }
 
@@ -250,6 +276,13 @@ impl VeloControllerTransport {
     /// this (with a deadline) before triggering the START event.
     pub async fn await_all_registered(&self) {
         self.all_registered.notified().await;
+    }
+
+    /// Wait for every cell to pass its envelope-local preflight before START.
+    pub async fn await_all_preflight(
+        &self,
+    ) -> Result<(), crate::graph::supplement::GraphSupplementError> {
+        self.preflight.await_all().await
     }
 }
 
@@ -315,6 +348,17 @@ impl VeloCellClient {
 impl CellClient for VeloCellClient {
     async fn send(&mut self, message: &CellMessage) -> Result<(), CellTransportError> {
         match message {
+            CellMessage::Preflight { .. } => {
+                let body = rmp_serde::to_vec(message).map_err(encode)?;
+                self.velo
+                    .am_send(HANDLER_PREFLIGHT)
+                    .map_err(io)?
+                    .raw_payload(Bytes::from(body))
+                    .instance(self.controller.instance_id())
+                    .send()
+                    .await
+                    .map_err(io)?;
+            }
             CellMessage::Heartbeat { .. } => {
                 // Fire-and-forget: no ack, so the controller needs no return route.
                 let body = rmp_serde::to_vec(message).map_err(encode)?;
@@ -447,6 +491,9 @@ mod tests {
         let mut partitions = 0;
         for _ in 0..2 {
             match controller.recv().await.expect("recv").expect("some") {
+                CellMessage::Preflight { .. } => {
+                    panic!("preflight uses its dedicated controller barrier");
+                }
                 CellMessage::Heartbeat { cell_id, .. } => {
                     assert_eq!(cell_id, 3);
                     heartbeats += 1;

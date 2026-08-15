@@ -435,6 +435,9 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
         tokio::select! {
             biased;
             message = transport.recv() => match message.with_context(|| format!("aggregator {agg_id} receiving from cell"))? {
+                Some(CellMessage::Preflight { cell_id, .. }) => bail!(
+                    "aggregator {agg_id} received replay preflight from cell {cell_id}; preflight belongs to the controller START barrier"
+                ),
                 Some(CellMessage::StorePartition(partition)) => store_partitions.push(*partition),
                 Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                     counters.issued = counters.issued.saturating_add(heartbeat.counters.issued);
@@ -470,13 +473,19 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
 
     // Merge the subtree's stores associatively, then ship the ONE merged store up to
     // the controller under this aggregator's id (which orders the controller's merge).
-    let replay_supplement = crate::graph::supplement::merge_graph_phase_supplements(
-        store_partitions
-            .iter()
-            .filter_map(|partition| partition.graph_supplement().cloned()),
-    )
-    .context("folding graph replay supplements in cellular aggregator")?;
-    let has_replay_supplement = !replay_supplement.traces.is_empty();
+    let replay_cells = store_partitions
+        .iter()
+        .filter_map(|partition| partition.graph_supplement().cloned())
+        .collect::<Vec<_>>();
+    let expected = replay_cells
+        .iter()
+        .flat_map(|cell| cell.traces.iter())
+        .map(crate::graph::supplement::ReplayTraceInstance::from)
+        .collect();
+    let replay_phase =
+        crate::graph::supplement::merge_graph_cell_supplements(&expected, replay_cells)
+            .context("folding graph replay supplements in cellular aggregator")?;
+    let has_replay_supplement = !replay_phase.traces.is_empty();
     let merged = merge_store_partitions(metrics_config, store_partitions);
     let epoch_ns = heartbeats
         .values()
@@ -494,7 +503,9 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
         merged.column_store().clone(),
         counters,
         epoch_ns,
-        has_replay_supplement.then_some(replay_supplement),
+        has_replay_supplement.then(|| {
+            crate::graph::supplement::GraphCellSupplement::from_phase(agg_id, replay_phase)
+        }),
     )
 }
 

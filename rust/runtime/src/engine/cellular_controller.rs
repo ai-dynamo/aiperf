@@ -28,7 +28,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::engine::cell_launcher::owned_positions;
 use crate::engine::cellular_kind::CellularRunKind;
-use crate::graph::supplement::GraphPhaseSupplement;
+use crate::graph::supplement::{GraphCellSupplement, ReplayTraceInstance};
 
 // The velo transport + launcher wiring is the only part of the controller that
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
@@ -98,9 +98,14 @@ pub struct CellularRunOutcome {
 /// Fold graph replay facts transported by terminal cell partitions. This lives at
 /// the controller boundary so a cell never writes a final replay JSON or CSV shard.
 fn controller_replay_traces(
-    supplements: Vec<GraphPhaseSupplement>,
+    supplements: Vec<GraphCellSupplement>,
 ) -> Result<Vec<crate::graph::replay::ReplayTraceSupplement>> {
-    let merged = crate::graph::supplement::merge_graph_phase_supplements(supplements)
+    let expected = supplements
+        .iter()
+        .flat_map(|cell| cell.traces.iter())
+        .map(ReplayTraceInstance::from)
+        .collect();
+    let merged = crate::graph::supplement::merge_graph_cell_supplements(&expected, supplements)
         .map_err(|error| anyhow!("folding cellular graph replay supplements: {error}"))?;
     Ok(merged
         .traces
@@ -114,7 +119,7 @@ fn controller_replay_traces(
 fn write_controller_replay_artifacts(
     artifacts: &crate::engine::protocol::ArtifactSpec,
     artifact_dir: &Path,
-    supplements: Vec<GraphPhaseSupplement>,
+    supplements: Vec<GraphCellSupplement>,
 ) -> Result<()> {
     use crate::engine::execute::artifact_path;
 
@@ -1008,6 +1013,18 @@ pub fn run_cellular(
                 }
             }
         }
+        // Registration only proves that a cell received its envelope. Every cell must
+        // also finish its replay capability preflight before START, so an unavailable
+        // sandbox/image fails before warmup rather than after trace ownership begins.
+        tokio::select! {
+            result = transport.await_all_preflight() => {
+                result.map_err(|error| anyhow!("cellular replay preflight: {error}"))?;
+            }
+            Some(failure) = failure_rx.recv() => bail!("{failure}"),
+            () = tokio::time::sleep(register_timeout()) => {
+                bail!("cells did not all complete replay preflight within the registration timeout")
+            }
+        }
         if let Some(reset) = endpoint_control_hooks
             .as_ref()
             .and_then(|hooks| hooks.reset_kv_cache.as_ref())
@@ -1041,7 +1058,7 @@ pub fn run_cellular(
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut store_partitions: Vec<ColumnStorePartition> =
             Vec::with_capacity(cell_count as usize);
-        let mut replay_supplements: Vec<GraphPhaseSupplement> = Vec::new();
+        let mut replay_supplements: Vec<GraphCellSupplement> = Vec::new();
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         // The frontend tails this file into AIPerfJob CR status.
         let live_progress_log = std::env::var_os("AIPERF_CELLULAR_HEARTBEAT_LOG")
@@ -1060,6 +1077,9 @@ pub fn run_cellular(
             tokio::select! {
                 biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
+                    Some(CellMessage::Preflight { cell_id, .. }) => bail!(
+                        "cell {cell_id} sent replay preflight through the terminal stream"
+                    ),
                     Some(CellMessage::Partition(partition)) => {
                         if let Some(supplement) = partition.graph_supplement().cloned() {
                             replay_supplements.push(supplement);
@@ -2616,7 +2636,7 @@ mod tests {
 
     #[test]
     fn controller_folds_partitioned_replay_supplements_before_writing() {
-        let mut later = GraphPhaseSupplement::new();
+        let mut later = crate::graph::supplement::GraphPhaseSupplement::new();
         later
             .push(crate::graph::supplement::TraceTerminalSupplement::new(
                 "run".into(),
@@ -2626,7 +2646,7 @@ mod tests {
                 "recorded_replay",
             ))
             .unwrap();
-        let mut first = GraphPhaseSupplement::new();
+        let mut first = crate::graph::supplement::GraphPhaseSupplement::new();
         first
             .push(crate::graph::supplement::TraceTerminalSupplement::new(
                 "run".into(),
@@ -2639,8 +2659,12 @@ mod tests {
         // Arrival order is deliberately reversed. The controller receives the facts
         // from terminal partitions, then the strict writer establishes final order.
         let partitions = [
-            RecordsShardPartition::new(1, Vec::new()).with_graph_supplement(later),
-            RecordsShardPartition::new(0, Vec::new()).with_graph_supplement(first),
+            RecordsShardPartition::new(1, Vec::new()).with_graph_supplement(
+                crate::graph::supplement::GraphCellSupplement::from_phase(1, later),
+            ),
+            RecordsShardPartition::new(0, Vec::new()).with_graph_supplement(
+                crate::graph::supplement::GraphCellSupplement::from_phase(0, first),
+            ),
         ];
         let supplements = partitions
             .iter()

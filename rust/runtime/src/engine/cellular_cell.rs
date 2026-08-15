@@ -539,8 +539,8 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 /// runtime; the velo instance is dropped on return.
 #[cfg(feature = "cellular")]
 pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
-    use crate::cellular::VeloCellClient;
     use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::{CellClient, CellMessage, VeloCellClient};
     use anyhow::Context;
 
     let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV)
@@ -564,12 +564,21 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
         "1" | "true" | "on" | "yes"
     );
     let phaser_handles = phaser_start.then(|| (velo.clone(), controller.clone()));
-    let client = VeloCellClient::connect(velo, controller)
+    let mut client = VeloCellClient::connect(velo, controller)
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
     let reply = client
         .register(cell_id)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
+    let envelope = download_cell_dataset_if_needed(reply.envelope)
+        .context("landing a replay dataset before cellular preflight")?;
+    client
+        .send(&CellMessage::Preflight {
+            cell_id,
+            result: preflight_cell_envelope(&envelope).await,
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} preflight report: {error}"))?;
     // Block until START. Either the phaser reaches generation 1 or the
     // single-shot event triggers — every cell resumes together once the controller has
     // seen the registrations (or immediately, barrier-free). A poisoned event / finalized
@@ -594,7 +603,97 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     // instant as the shared cross-cell timing origin (opt-in), before the cell's
     // per-shard dataset download + run setup skews each cell's local run start.
     crate::engine::cell_origin::capture_cell_shared_origin();
-    Ok(reply.envelope)
+    Ok(envelope)
+}
+
+/// Validate the transportable cell envelope before the controller releases START.
+///
+/// This does not open a workspace or dispatch a request. Driver-specific image and
+/// sandbox checks are reported through the same result channel once their resolved
+/// recipe is available, so any failure fences warmup behind the controller barrier.
+async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct GraphConfig {
+        #[serde(default)]
+        replay_root: Option<std::path::PathBuf>,
+        #[serde(default)]
+        execute_tools: bool,
+        #[serde(default)]
+        tool_image: Option<String>,
+        #[serde(default)]
+        pinch_image: Option<String>,
+        #[serde(default)]
+        standard_scenario: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Dataset {
+        #[serde(default)]
+        format: Option<String>,
+        #[serde(default)]
+        path: Option<std::path::PathBuf>,
+        #[serde(default)]
+        graph: Option<GraphConfig>,
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(envelope)
+        .map_err(|error| format!("decode cellular execute envelope: {error}"))?;
+    let _ = value
+        .pointer("/run/cfg")
+        .ok_or_else(|| "cellular execute envelope has no run cfg".to_owned())?;
+    let Some(raw_dataset) = value.pointer("/run/cfg/datasets/0") else {
+        return Ok(());
+    };
+    let dataset: Dataset = serde_json::from_value(raw_dataset.clone())
+        .map_err(|error| format!("decode cellular replay dataset: {error}"))?;
+    if dataset.format.as_deref() != Some("agent_recording") {
+        return Ok(());
+    }
+    let graph = dataset.graph.unwrap_or(GraphConfig {
+        replay_root: None,
+        execute_tools: false,
+        tool_image: None,
+        pinch_image: None,
+        standard_scenario: false,
+    });
+    if !graph.execute_tools {
+        return Ok(());
+    }
+    let path = dataset
+        .path
+        .ok_or_else(|| "recorded-agent cellular preflight needs dataset.path".to_owned())?;
+    let source = if path.is_dir() {
+        crate::graph::recorded::agent_recording::RecordedAgentInputSource::Directory(path)
+    } else if path.file_name().is_some_and(|name| name == "manifest.json") {
+        crate::graph::recorded::agent_recording::RecordedAgentInputSource::Manifest(path)
+    } else {
+        crate::graph::recorded::agent_recording::RecordedAgentInputSource::Recording(path)
+    };
+    let corpus = crate::graph::recorded::agent_recording::discover_recorded_agent_input(
+        graph.replay_root.as_deref(),
+        source,
+    )
+    .map_err(|error| format!("resolving cellular replay recipes: {error}"))?;
+    let runtime = crate::graph::tools::DockerCliRuntime::new(crate::clock::RealClock::new());
+    for trace in corpus.traces {
+        let Some(identity) = trace.identity.as_ref() else {
+            continue;
+        };
+        let environment = crate::graph::tools::resolve_recorded_environment(
+            identity,
+            &trace.recording.metadata,
+            graph.pinch_image.as_deref().unwrap_or_default(),
+            graph.tool_image.as_deref(),
+            graph.standard_scenario,
+        )
+        .map_err(|error| format!("resolving replay recipe for {}: {error}", trace.trace_id))?;
+        crate::graph::tools::preflight_docker_sandbox(&runtime, &environment)
+            .await
+            .map_err(|error| format!("cell replay preflight for {}: {error}", trace.trace_id))?;
+    }
+    Ok(())
 }
 
 /// Await a named controller-owned phase gate over the cellular phaser.
@@ -903,13 +1002,26 @@ impl CellRecordsShipper {
                 records,
                 epoch_ns,
                 graph_supplement,
-            } => self.ship_records(records, epoch_ns, graph_supplement),
+            } => self.ship_records(
+                records,
+                epoch_ns,
+                graph_supplement.map(|phase| {
+                    crate::graph::supplement::GraphCellSupplement::from_phase(self.cell_id, phase)
+                }),
+            ),
             CellPartitionPayload::Store {
                 store,
                 counters,
                 epoch_ns,
                 graph_supplement,
-            } => self.ship_store(store, counters, epoch_ns, graph_supplement),
+            } => self.ship_store(
+                store,
+                counters,
+                epoch_ns,
+                graph_supplement.map(|phase| {
+                    crate::graph::supplement::GraphCellSupplement::from_phase(self.cell_id, phase)
+                }),
+            ),
         }
     }
 
@@ -926,7 +1038,7 @@ impl CellRecordsShipper {
         &self,
         records: Vec<crate::metrics_core::RecordIngest>,
         epoch_ns: i64,
-        graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
+        graph_supplement: Option<crate::graph::supplement::GraphCellSupplement>,
     ) -> Result<()> {
         use crate::cellular::{
             CellMessage, HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation,
@@ -974,7 +1086,7 @@ impl CellRecordsShipper {
         store: crate::metrics_core::store::ColumnStore,
         counters: crate::cellular::HeartbeatCounters,
         epoch_ns: i64,
-        graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
+        graph_supplement: Option<crate::graph::supplement::GraphCellSupplement>,
     ) -> Result<()> {
         use crate::cellular::{
             CellMessage, ColumnStorePartition, HeartbeatAccumulator, HeartbeatSaturation,

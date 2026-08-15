@@ -51,6 +51,14 @@ pub enum CellPhaseSignal {
 /// framing is needed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CellMessage {
+    /// Result of a cell-local replay capability check, sent after envelope fetch
+    /// and before the controller may release START.
+    Preflight {
+        /// Reporting cell identity.
+        cell_id: u32,
+        /// Successful capability check or a diagnostic refusal.
+        result: Result<(), String>,
+    },
     /// The cell's final counters + saturation + latency sketches. Boxed so it does
     /// not inflate the smaller `Partition` variant's footprint in the channel buffer.
     Heartbeat {
@@ -90,6 +98,8 @@ pub enum CellMessage {
 pub const HANDLER_REGISTER: &str = "aiperf.cell.register";
 /// velo handler name: cell → controller heartbeat (fire-and-forget `am_send`).
 pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";
+/// velo handler name: cell → controller preflight result (fire-and-forget).
+pub const HANDLER_PREFLIGHT: &str = "aiperf.cell.preflight";
 /// velo handler name: cell → controller phase signal (fire-and-forget `am_send`).
 pub const HANDLER_PHASE_SIGNAL: &str = "aiperf.cell.phase_signal";
 /// velo handler name: cell → controller records-shard partition ship (unary; the
