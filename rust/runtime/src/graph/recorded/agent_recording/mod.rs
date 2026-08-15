@@ -5,6 +5,7 @@
 
 mod discovery;
 mod fixture;
+mod lowering;
 mod schema;
 
 #[cfg(test)]
@@ -15,7 +16,11 @@ pub use discovery::{
     ValidatedRecordedAgentTrace, discover_recorded_agent_input,
 };
 pub use fixture::{CanonicalReplayFixture, CanonicalReplayFixtureDigestIndex};
+pub use lowering::{
+    BuiltinReplayRequestProfileResolver, RecordedAgentLoweringError, ReplayRequestProfile,
+    ReplayRequestProfileResolver, lower_recorded_agent_corpus,
+};
 pub use schema::{
-    ExpectedCorpusShape, RecordedAgentRecording, RecordedAgentReplayManifest, ReplayDefaults,
-    ReplayTaskIdentity,
+    ExpectedCorpusShape, RecordedAgentEvent, RecordedAgentRecording, RecordedAgentReplayManifest,
+    RecordedProviderRequest, ReplayDefaults, ReplayTaskIdentity,
 };

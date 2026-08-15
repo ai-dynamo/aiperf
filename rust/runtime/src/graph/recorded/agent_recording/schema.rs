@@ -4,7 +4,7 @@
 //! Serde DTOs for recorded-agent replay input.
 
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, value::RawValue};
 
 pub use crate::graph::driver::ReplayTaskIdentity;
 
@@ -179,10 +179,10 @@ pub struct RecordedAgentEvent {
 pub struct RecordedProviderRequest {
     /// Exact source message array.
     #[serde(default)]
-    pub messages: Option<Vec<Value>>,
+    pub messages: Option<Vec<Box<RawValue>>>,
     /// Exact source tool array.
     #[serde(default)]
-    pub tools: Option<Vec<Value>>,
+    pub tools: Option<Box<RawValue>>,
     /// Optional recorded model override.
     #[serde(default)]
     pub model: Option<String>,

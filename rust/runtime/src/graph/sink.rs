@@ -12,6 +12,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 
+use crate::graph::materialize::MaterializedGraphRequest;
 use crate::graph::wire::WireMessage;
 
 /// Terminal classification returned by a graph sink.
@@ -98,6 +99,24 @@ pub trait GraphSink<M: WireMessage> {
         max_tokens: Option<usize>,
         on_first_token: &dyn Fn(),
     ) -> Result<GraphReply<M>>;
+
+    /// Dispatch a request whose messages and core fields have already been
+    /// materialized. Existing sinks may retain their message-only override
+    /// until their endpoint dialect consumes the optional request fields.
+    async fn dispatch_request(
+        &self,
+        node_id: &str,
+        request: MaterializedGraphRequest,
+        on_first_token: &dyn Fn(),
+    ) -> Result<GraphReply<M>> {
+        self.dispatch(
+            node_id,
+            request.messages,
+            request.max_tokens,
+            on_first_token,
+        )
+        .await
+    }
 
     /// Dispatch with policy-produced directives.
     ///

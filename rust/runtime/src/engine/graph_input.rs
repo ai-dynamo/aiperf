@@ -8,16 +8,22 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use crate::graph::conditional::compile_conditional_graph_input;
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
+use crate::graph::recorded::agent_recording::{
+    BuiltinReplayRequestProfileResolver, RecordedAgentInputSource, discover_recorded_agent_input,
+    lower_recorded_agent_corpus,
+};
 use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
     compile_weka_trace_input,
 };
+use crate::graph::segment::SegmentPool;
 use crate::graph::tstar::{
     PermutationDraw, RecycleDrawMode, sampler_random_seed, sampler_shuffle_seed,
 };
@@ -230,12 +236,13 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn GraphInputAdapter>; 5] = [
+        let adapters: [Arc<dyn GraphInputAdapter>; 6] = [
             Arc::new(DagJsonlRunnerGraphInputAdapter),
             Arc::new(ConditionalGraphRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
             Arc::new(AIPerfTraceRunnerGraphInputAdapter),
+            Arc::new(RecordedAgentRunnerGraphInputAdapter),
         ];
         Self {
             adapters: adapters
@@ -419,6 +426,134 @@ pub struct DynamoTraceRunnerGraphInputAdapter;
 /// Built-in native `aiperf.trace.v1` recorded-trace adapter.
 #[derive(Debug)]
 pub struct AIPerfTraceRunnerGraphInputAdapter;
+
+/// Built-in native Mini-SWE-Agent recording adapter.
+#[derive(Debug)]
+pub struct RecordedAgentRunnerGraphInputAdapter;
+
+#[async_trait(?Send)]
+impl GraphInputAdapter for RecordedAgentRunnerGraphInputAdapter {
+    fn format(&self) -> &'static str {
+        "agent_recording"
+    }
+
+    async fn load(
+        &self,
+        raw: &RawValue,
+        _context: &GraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let input: RecordedAgentDatasetInput =
+            decode_graph_input(raw).context("decoding direct agent_recording graph input")?;
+        input.prepare(self.format())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedAgentDatasetInput {
+    #[serde(rename = "type")]
+    input_type: String,
+    format: String,
+    path: PathBuf,
+    #[serde(default)]
+    replay_root: Option<PathBuf>,
+    #[serde(default)]
+    execute_tools: bool,
+    #[serde(default)]
+    use_recorded_model: bool,
+    #[serde(default)]
+    use_recorded_sampling: bool,
+    #[serde(default = "default_true")]
+    streaming: bool,
+    #[serde(default)]
+    fallback_max_tokens: Option<usize>,
+    #[serde(default)]
+    standard_scenario: bool,
+}
+
+impl RecordedAgentDatasetInput {
+    fn prepare(self, expected_format: &str) -> Result<PreparedRunnerGraphInput> {
+        ensure!(
+            self.input_type == "file",
+            "agent_recording graph input requires type=file"
+        );
+        ensure!(
+            self.format == expected_format,
+            "recorded-agent adapter {expected_format:?} received dataset.format={:?}",
+            self.format
+        );
+        let fallback_max_tokens = self.fallback_max_tokens.unwrap_or(32_768);
+        ensure!(
+            fallback_max_tokens > 0,
+            "agent_recording fallback_max_tokens must be positive"
+        );
+        let source = recorded_agent_source(&self.path, self.replay_root.as_deref())?;
+        let corpus = discover_recorded_agent_input(self.replay_root.as_deref(), source)
+            .map_err(|error| anyhow!(error.to_string()))
+            .context("discovering recorded-agent graph input")?;
+        let resolver = BuiltinReplayRequestProfileResolver::new(
+            self.streaming,
+            fallback_max_tokens,
+            self.execute_tools,
+            self.use_recorded_model,
+            self.use_recorded_sampling,
+            self.standard_scenario,
+        )
+        .map_err(|error| anyhow!(error.to_string()))?;
+        let mut pool = SegmentPool::new();
+        let bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
+            .map_err(|error| anyhow!(error.to_string()))
+            .context("lowering recorded-agent graph input")?;
+        ensure!(
+            !bundle.programs.is_empty(),
+            "recorded-agent Graph-IR input contains no root traces"
+        );
+        ensure!(
+            bundle.metadata.format == expected_format,
+            "recorded-agent adapter {expected_format:?} returned bundle format {:?}",
+            bundle.metadata.format
+        );
+        Ok(PreparedRunnerGraphInput {
+            bundle,
+            random_seed: None,
+            default_output_tokens: fallback_max_tokens,
+            allow_dataset_wrap: false,
+            t_star_window: TStarWindow::default(),
+            cache_bust_target: CacheBustTarget::None,
+        })
+    }
+}
+
+fn recorded_agent_source(
+    path: &PathBuf,
+    replay_root: Option<&std::path::Path>,
+) -> Result<RecordedAgentInputSource> {
+    let candidate = replay_root.map_or_else(|| path.clone(), |root| root.join(path));
+    let metadata = fs::metadata(&candidate)
+        .with_context(|| format!("reading recorded-agent input {}", candidate.display()))?;
+    if metadata.is_dir() {
+        return Ok(RecordedAgentInputSource::Directory(path.clone()));
+    }
+    if candidate
+        .extension()
+        .is_some_and(|extension| extension == "gz")
+    {
+        return Ok(RecordedAgentInputSource::Recording(path.clone()));
+    }
+    let bytes = fs::read(&candidate)
+        .with_context(|| format!("reading recorded-agent input {}", candidate.display()))?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .with_context(|| format!("decoding recorded-agent input {}", candidate.display()))?;
+    let is_recording = value
+        .get("format")
+        .and_then(Value::as_str)
+        .is_some_and(|format| format.starts_with("mini-swe-agent-recording-"));
+    Ok(if is_recording {
+        RecordedAgentInputSource::Recording(path.clone())
+    } else {
+        RecordedAgentInputSource::Manifest(path.clone())
+    })
+}
 
 #[async_trait(?Send)]
 impl GraphInputAdapter for AIPerfTraceRunnerGraphInputAdapter {
@@ -1132,6 +1267,10 @@ fn default_sequential() -> String {
     "sequential".into()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use crate::dataset::TiktokenTokenizer;
@@ -1161,6 +1300,53 @@ mod tests {
                 }
             })))
             .unwrap();
+    }
+
+    #[test]
+    fn stock_resolver_selects_the_strict_recorded_agent_adapter() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        resolver
+            .validate_identity(&raw(json!({
+                "type": "file",
+                "format": "agent_recording",
+                "path": "recording.json"
+            })))
+            .expect("stock composition registers agent_recording");
+    }
+
+    #[tokio::test]
+    async fn recorded_agent_adapter_discovers_and_lowers_the_manifest_corpus() {
+        let fixture_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/recorded_agent_replay");
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "agent_recording",
+            "replay_root": fixture_root,
+            "path": "canonical_manifest.json"
+        }));
+
+        let prepared = resolver
+            .load(
+                &input,
+                &GraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("recorded-agent manifest lowers through the stock adapter");
+
+        assert_eq!(prepared.bundle.metadata.format, "agent_recording");
+        assert_eq!(prepared.bundle.metadata.root_count, 8);
+        assert_eq!(prepared.bundle.metadata.node_count, 168);
+        assert!(
+            prepared
+                .bundle
+                .programs
+                .iter()
+                .all(|program| program.driver.kind == "recorded_replay")
+        );
     }
 
     #[tokio::test]

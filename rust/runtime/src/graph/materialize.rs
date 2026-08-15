@@ -8,6 +8,8 @@
 //! reserializes a message while building a successor prompt.
 
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt::{self, Display};
 use std::sync::Arc;
 
 use crate::dataset::{
@@ -15,7 +17,7 @@ use crate::dataset::{
     SegmentItemsMaterializer as SharedMaterializer, SegmentStore,
 };
 use bytes::Bytes;
-use serde_json::value::RawValue;
+use serde_json::{Map, Value, value::RawValue};
 
 use crate::graph::model::{LlmNode, PromptItem};
 use crate::graph::reducers::ChanVal;
@@ -28,6 +30,51 @@ pub trait PromptMaterializer {
         node: &LlmNode,
         inputs: &BTreeMap<String, ChanVal>,
     ) -> Result<Vec<Bytes>, DatasetError>;
+}
+
+/// Fully typed core request assembled for one graph LLM node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializedGraphRequest {
+    /// Ordered pre-serialized message objects.
+    pub messages: Vec<Bytes>,
+    /// Optional pre-serialized tool array.
+    pub tools: Option<Bytes>,
+    /// Optional typed model override.
+    pub model: Option<String>,
+    /// Optional pre-serialized non-protected request fields.
+    pub additional_body: Option<Bytes>,
+    /// Typed generation cap.
+    pub max_tokens: Option<usize>,
+    /// Typed streaming flag.
+    pub streaming: bool,
+}
+
+/// Failure while resolving typed request fields from the shared segment store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphRequestMaterializationError(pub String);
+
+impl Display for GraphRequestMaterializationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Error for GraphRequestMaterializationError {}
+
+impl From<DatasetError> for GraphRequestMaterializationError {
+    fn from(error: DatasetError) -> Self {
+        Self(error.to_string())
+    }
+}
+
+/// Resolve node-owned request fields after dynamic message assembly.
+pub trait GraphRequestMaterializer {
+    /// Compose prebuilt message wires with the typed fields owned by `node`.
+    fn materialize(
+        &self,
+        node: &LlmNode,
+        messages: Vec<Bytes>,
+    ) -> Result<MaterializedGraphRequest, GraphRequestMaterializationError>;
 }
 
 /// Shared-store plus dynamic-splice materializer.
@@ -92,6 +139,88 @@ impl PromptMaterializer for SegmentItemsMaterializer {
         }
         Ok(messages)
     }
+}
+
+impl GraphRequestMaterializer for SegmentItemsMaterializer {
+    fn materialize(
+        &self,
+        node: &LlmNode,
+        messages: Vec<Bytes>,
+    ) -> Result<MaterializedGraphRequest, GraphRequestMaterializationError> {
+        let Some(spec) = node.request.as_ref() else {
+            return Ok(MaterializedGraphRequest {
+                messages,
+                tools: None,
+                model: None,
+                additional_body: None,
+                max_tokens: node.max_tokens,
+                streaming: node.streaming,
+            });
+        };
+        let tools = spec
+            .tools
+            .map(|handle| raw_wire(self.inner.store().as_ref(), handle, "tools"))
+            .transpose()?;
+        let additional_body = spec
+            .additional_body
+            .map(|handle| raw_wire(self.inner.store().as_ref(), handle, "additional body"))
+            .transpose()?;
+        if let Some(body) = additional_body.as_ref() {
+            let value: serde_json::Value = serde_json::from_slice(body).map_err(|error| {
+                GraphRequestMaterializationError(format!("additional body is not JSON: {error}"))
+            })?;
+            let object = value.as_object().ok_or_else(|| {
+                GraphRequestMaterializationError("additional body must be a JSON object".into())
+            })?;
+            validate_additional_body(object, "additional body")?;
+        }
+        Ok(MaterializedGraphRequest {
+            messages,
+            tools,
+            model: spec.model.clone(),
+            additional_body,
+            max_tokens: node.max_tokens,
+            streaming: node.streaming,
+        })
+    }
+}
+
+/// Reject fields that remain under typed request ownership.
+pub(crate) fn validate_additional_body(
+    body: &Map<String, Value>,
+    origin: &str,
+) -> Result<(), GraphRequestMaterializationError> {
+    const PROTECTED: &[&str] = &[
+        "api_base",
+        "api_key",
+        "custom_llm_provider",
+        "max_tokens",
+        "messages",
+        "model",
+        "stream",
+        "stream_options",
+        "timeout",
+        "tools",
+    ];
+    if let Some(key) = body.keys().find(|key| PROTECTED.contains(&key.as_str())) {
+        return Err(GraphRequestMaterializationError(format!(
+            "{origin} may not override protected request field {key:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn raw_wire(
+    store: &dyn SegmentStore,
+    handle: crate::dataset::Handle,
+    label: &str,
+) -> Result<Bytes, GraphRequestMaterializationError> {
+    let Payload::Raw { wire } = store.get(handle)? else {
+        return Err(GraphRequestMaterializationError(format!(
+            "{label} handle {handle} must reference raw bytes"
+        )));
+    };
+    Ok(wire.clone())
 }
 
 fn raw_message_wires(
