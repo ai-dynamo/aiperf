@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{ArtifactDigest, EvalIdentityError};
 
 /// Stable identifier for one execution attempt of a resolved trial.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AttemptId(String);
 
 impl AttemptId {
@@ -25,6 +24,15 @@ impl AttemptId {
     /// Borrows the attempt identifier.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for AttemptId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 

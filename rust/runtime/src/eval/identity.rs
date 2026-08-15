@@ -8,8 +8,7 @@ use std::fmt::{self, Display, Formatter};
 use serde::{Deserialize, Serialize};
 
 /// A validated `blake3:` artifact digest.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ArtifactDigest(String);
 
 impl ArtifactDigest {
@@ -22,7 +21,7 @@ impl ArtifactDigest {
         if hex.len() != 64
             || !hex
                 .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         {
             return Err(EvalIdentityError::InvalidDigest(value));
         }
@@ -40,9 +39,17 @@ impl ArtifactDigest {
     }
 }
 
+impl<'de> Deserialize<'de> for ArtifactDigest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
 /// A task identifier within the `eval` namespace.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EvalTaskId(String);
 
 impl EvalTaskId {
@@ -58,6 +65,15 @@ impl EvalTaskId {
     /// Borrows the task identifier.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for EvalTaskId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
