@@ -734,4 +734,49 @@ mod tests {
         v["phases"][0]["agentic_cache_warmup_duration"] = json!(30.0);
         assert!(validate(&cfg(v)).is_ok());
     }
+
+    fn recorded_agent_dataset(graph: serde_json::Value, options: serde_json::Value) -> serde_json::Value {
+        json!([{
+            "type": "file",
+            "format": "agent_recording",
+            "sampling": "sequential",
+            "options": options,
+            "path": "/tmp/recording.json",
+            "graph": graph
+        }])
+    }
+
+    #[test]
+    fn recorded_agent_tool_execution_rejects_virtual_transports() {
+        for transport in ["dry_run", "dynosim_offline"] {
+            let mut v = valid_value();
+            v["transport"] = json!({"type": transport});
+            v["datasets"] = recorded_agent_dataset(json!({"execute_tools": true}), json!({}));
+            let err = validate(&cfg(v)).expect_err("virtual transport must be rejected");
+            assert!(err.to_string().contains(transport), "{err}");
+        }
+    }
+
+    #[test]
+    fn recorded_agent_tool_config_rejects_images_without_tools_and_open_loop() {
+        let mut image_without_tools = valid_value();
+        image_without_tools["datasets"] = recorded_agent_dataset(
+            json!({"pinch_image": "pinch:latest"}),
+            json!({}),
+        );
+        let err = validate(&cfg(image_without_tools))
+            .expect_err("tool images require tool execution")
+            .to_string();
+        assert!(err.contains("pinch_image") && err.contains("execute_tools"), "{err}");
+
+        let mut open_loop = valid_value();
+        open_loop["datasets"] = recorded_agent_dataset(
+            json!({"execute_tools": true}),
+            json!({"open_loop_replay": true}),
+        );
+        let err = validate(&cfg(open_loop))
+            .expect_err("open-loop replay cannot retain trace-local tool ordering")
+            .to_string();
+        assert!(err.contains("open_loop_replay"), "{err}");
+    }
 }
