@@ -18,8 +18,8 @@ fn swe_recipe_prefers_nested_image_then_uses_testbed_without_mount() {
     // This catches a resolver that chooses the low-level image fallback before a
     // recording's nested task image, or that accidentally hides image-native files.
     let task = ReplayTaskIdentity {
-        adapter: "minisweagent".into(),
-        family: "swebench".into(),
+        adapter: "swebench".into(),
+        family: "swe-sample".into(),
         task_id: "django__django-11099".into(),
         primary_role: None,
     };
@@ -64,12 +64,38 @@ fn guarded_policy_blocks_an_installer_in_a_quoted_separator_aware_segment() {
 }
 
 #[test]
+fn guarded_policy_blocks_an_installer_after_an_unquoted_newline() {
+    // This catches a policy that treats only punctuation as a shell separator,
+    // allowing a later physical line to install packages in the task image.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("echo safe\napt-get install package")
+        .expect("policy parses the recorded multiline shell command");
+    let CommandDisposition::Synthetic(result) = disposition else {
+        panic!("installer after a newline must become a synthetic result");
+    };
+    assert_eq!(result.exit_code, 127);
+}
+
+#[test]
+fn guarded_policy_blocks_an_installer_nested_in_shell_control() {
+    // This catches command substitution or shell control syntax that hides an
+    // installer behind a non-installer first token in its top-level segment.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("echo $(apt-get install package)")
+        .expect("policy inspects a controlled shell construct conservatively");
+    let CommandDisposition::Synthetic(result) = disposition else {
+        panic!("nested installer must become a synthetic result");
+    };
+    assert_eq!(result.exit_code, 127);
+}
+
+#[test]
 fn pinch_recipe_refuses_a_sandbox_without_workspace_materialization() {
     // This catches preflight that provisions an empty Pinch workspace on a
     // backend which cannot stage the task's digest-addressed fixture files.
     let task = ReplayTaskIdentity {
-        adapter: "minisweagent".into(),
-        family: "pinchbench".into(),
+        adapter: "pinchbench".into(),
+        family: "pinchbench-openclaw".into(),
         task_id: "task-1".into(),
         primary_role: None,
     };
@@ -90,6 +116,28 @@ fn pinch_recipe_refuses_a_sandbox_without_workspace_materialization() {
     .validate(&recipe)
     .expect_err("Pinch staging requires file materialization");
     assert!(error.to_string().contains("materialize"));
+}
+
+#[test]
+fn recipe_refuses_an_unknown_adapter_even_when_the_family_looks_known() {
+    // This catches recipe selection by the descriptive family, which would
+    // accidentally give an unregistered source the SWE-Bench environment.
+    let task = ReplayTaskIdentity {
+        adapter: "unknown".into(),
+        family: "swe-corpus".into(),
+        task_id: "task-1".into(),
+        primary_role: None,
+    };
+
+    let error = resolve_recorded_environment(
+        &task,
+        &RecordedAgentMetadata::default(),
+        "pinch:fixed",
+        Some("low:level"),
+        false,
+    )
+    .expect_err("only registered source adapters select environment recipes");
+    assert!(error.to_string().contains("adapter"));
 }
 
 #[test]

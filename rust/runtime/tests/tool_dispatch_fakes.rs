@@ -15,6 +15,8 @@ use aiperf_runtime::graph::tools::{
     ToolSandboxError, TraceOpenContext, close_trace_preserving_primary,
 };
 
+use tokio::sync::Notify;
+
 struct AllowAll;
 
 impl ToolCommandPolicy for AllowAll {
@@ -48,6 +50,41 @@ impl ToolSandbox for CloseFailsSandbox {
 
     async fn close(&self) -> Result<(), ToolSandboxError> {
         Err(ToolSandboxError::new("close failed"))
+    }
+}
+
+struct BlockingSandbox {
+    events: std::cell::RefCell<Vec<String>>,
+    first_started: Rc<Notify>,
+    release_first: Rc<Notify>,
+}
+
+#[async_trait(?Send)]
+impl ToolSandbox for BlockingSandbox {
+    async fn open(&self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn run(
+        &self,
+        command: &str,
+        _timeout_ns: Option<u64>,
+    ) -> Result<ToolCommandResult, ToolSandboxError> {
+        self.events.borrow_mut().push(format!("start:{command}"));
+        if command == "first" {
+            self.first_started.notify_one();
+            self.release_first.notified().await;
+        }
+        self.events.borrow_mut().push(format!("done:{command}"));
+        Ok(ToolCommandResult::completed(0, Bytes::new()))
+    }
+
+    async fn recycle(&self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ToolSandboxError> {
+        Ok(())
     }
 }
 
@@ -155,4 +192,60 @@ async fn dispatcher_continues_after_timeout_when_fake_recycles() {
         sandbox.events.borrow().clone(),
         ["open", "run:slow", "recycle", "run:fast", "close"]
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatcher_serializes_concurrent_commands_for_one_trace() {
+    // This catches a dispatcher that lets a second call enter the same
+    // persistent sandbox before a prior command has completed.
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let first_started = Rc::new(Notify::new());
+            let release_first = Rc::new(Notify::new());
+            let sandbox = Rc::new(BlockingSandbox {
+                events: std::cell::RefCell::new(Vec::new()),
+                first_started: first_started.clone(),
+                release_first: release_first.clone(),
+            });
+            let dispatcher = Rc::new(EnvironmentToolDispatcher::new(
+                sandbox.clone(),
+                Rc::new(AllowAll),
+            ));
+            let first_dispatcher = dispatcher.clone();
+            let first = tokio::task::spawn_local(async move {
+                first_dispatcher
+                    .dispatch(
+                        ToolDispatchRequest::new("first", "first"),
+                        &ToolDispatchContext::default(),
+                    )
+                    .await
+            });
+            first_started.notified().await;
+            let second_dispatcher = dispatcher.clone();
+            let second = tokio::task::spawn_local(async move {
+                second_dispatcher
+                    .dispatch(
+                        ToolDispatchRequest::new("second", "second"),
+                        &ToolDispatchContext::default(),
+                    )
+                    .await
+            });
+            tokio::task::yield_now().await;
+            assert_eq!(sandbox.events.borrow().as_slice(), ["start:first"]);
+            release_first.notify_one();
+            first
+                .await
+                .expect("first task joins")
+                .expect("first command succeeds");
+            second
+                .await
+                .expect("second task joins")
+                .expect("second command succeeds");
+            assert_eq!(
+                sandbox.events.borrow().as_slice(),
+                ["start:first", "done:first", "start:second", "done:second"]
+            );
+        })
+        .await;
 }

@@ -18,7 +18,7 @@ pub fn resolve_recorded_environment(
     tool_image: Option<&str>,
     is_scenario: bool,
 ) -> Result<ResolvedTraceEnvironment, TraceEnvironmentError> {
-    match task.family.as_str() {
+    match task.adapter.as_str() {
         "pinchbench" => {
             if pinch_image.trim().is_empty() {
                 return Err(TraceEnvironmentError::new(
@@ -63,8 +63,8 @@ pub fn resolve_recorded_environment(
                 ),
             })
         }
-        family => Err(TraceEnvironmentError::new(format!(
-            "recorded environment has no recipe for task family {family:?}"
+        adapter => Err(TraceEnvironmentError::new(format!(
+            "recorded environment has no recipe for adapter {adapter:?}"
         ))),
     }
 }

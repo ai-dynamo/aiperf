@@ -77,7 +77,9 @@ impl ToolCommandPolicy for GuardedToolCommandPolicy {
     fn evaluate(&self, command: &str) -> Result<CommandDisposition, TraceEnvironmentError> {
         for segment in top_level_segments(command) {
             let tokens = shell_tokens(segment.trim());
-            if starts_installer(&tokens) {
+            if starts_installer(&tokens)
+                || has_shell_control_construct(segment) && contains_installer_token(&tokens)
+            {
                 return Ok(CommandDisposition::Synthetic(
                     ToolCommandResult::installer_rejected(),
                 ));
@@ -92,11 +94,18 @@ fn top_level_segments(command: &str) -> Vec<&str> {
     let mut start = 0;
     let mut quote = None;
     let mut escaped = false;
+    let mut is_comment = false;
     let bytes = command.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
         let byte = bytes[index];
-        if escaped {
+        if is_comment {
+            if matches!(byte, b'\n' | b'\r') {
+                segments.push(&command[start..index]);
+                start = index + 1;
+                is_comment = false;
+            }
+        } else if escaped {
             escaped = false;
         } else if byte == b'\\' && quote != Some(b'\'') {
             escaped = true;
@@ -108,7 +117,12 @@ fn top_level_segments(command: &str) -> Vec<&str> {
             } else {
                 quote
             };
-        } else if quote.is_none() && byte == b';' {
+        } else if quote.is_none()
+            && byte == b'#'
+            && (index == start || bytes[index - 1].is_ascii_whitespace())
+        {
+            is_comment = true;
+        } else if quote.is_none() && matches!(byte, b';' | b'\n' | b'\r') {
             segments.push(&command[start..index]);
             start = index + 1;
         } else if quote.is_none()
@@ -179,12 +193,51 @@ fn starts_installer(tokens: &[String]) -> bool {
             tokens = &tokens[1..];
         }
     }
+    while matches!(
+        tokens.first().map(String::as_str),
+        Some("then" | "do" | "else" | "elif")
+    ) {
+        tokens = &tokens[1..];
+    }
     matches!(
         tokens.first().map(String::as_str),
         Some("pip" | "pip3" | "conda" | "mamba" | "apt" | "apt-get" | "yum" | "dnf" | "apk")
     ) || matches!(tokens, [python, flag, module, ..]
         if matches!(python.as_str(), "python" | "python3")
             && flag == "-m" && module == "pip")
+}
+
+fn has_shell_control_construct(segment: &str) -> bool {
+    segment.contains("$(")
+        || segment.contains('`')
+        || segment.contains('{')
+        || segment.contains('}')
+        || segment.contains('(')
+        || segment.contains(')')
+        || shell_tokens(segment).iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "if" | "then" | "fi" | "for" | "while" | "until" | "do" | "done" | "case" | "esac"
+            )
+        })
+}
+
+fn contains_installer_token(tokens: &[String]) -> bool {
+    let tokens = tokens
+        .iter()
+        .map(|token| {
+            token.trim_matches(|character| matches!(character, '$' | '(' | ')' | '{' | '}' | ';'))
+        })
+        .collect::<Vec<_>>();
+    tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "pip" | "pip3" | "conda" | "mamba" | "apt" | "apt-get" | "yum" | "dnf" | "apk"
+        )
+    }) || tokens.windows(3).any(|window| {
+        matches!(window, [python, flag, module]
+            if matches!(*python, "python" | "python3") && *flag == "-m" && *module == "pip")
+    })
 }
 
 fn is_assignment(token: &str) -> bool {

@@ -406,18 +406,26 @@ impl ToolDispatcherFactory for InMemoryToolDispatcherFactory {
 pub struct EnvironmentToolDispatcher {
     sandbox: Rc<dyn ToolSandbox>,
     policy: Rc<dyn ToolCommandPolicy>,
+    command_gate: Rc<tokio::sync::Mutex<()>>,
 }
 
 impl EnvironmentToolDispatcher {
     /// Construct one dispatcher from unwrapped worker-local sandbox and policy owners.
     pub fn new(sandbox: Rc<dyn ToolSandbox>, policy: Rc<dyn ToolCommandPolicy>) -> Self {
-        Self { sandbox, policy }
+        Self {
+            sandbox,
+            policy,
+            // One worker-local persistent shell/container cannot accept a second
+            // command while the first command's output and timeout cleanup run.
+            command_gate: Rc::new(tokio::sync::Mutex::new(())),
+        }
     }
 }
 
 #[async_trait(?Send)]
 impl ToolDispatcher for EnvironmentToolDispatcher {
     async fn open_trace(&self, _context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError> {
+        let _command_turn = self.command_gate.lock().await;
         self.sandbox.open().await.map_err(Into::into)
     }
 
@@ -426,6 +434,7 @@ impl ToolDispatcher for EnvironmentToolDispatcher {
         request: ToolDispatchRequest,
         context: &ToolDispatchContext,
     ) -> Result<ToolDispatchResult, ToolDispatchError> {
+        let _command_turn = self.command_gate.lock().await;
         let result = match self.policy.evaluate(&request.command)? {
             CommandDisposition::Execute => self
                 .sandbox
@@ -444,6 +453,7 @@ impl ToolDispatcher for EnvironmentToolDispatcher {
     }
 
     async fn close_trace(&self, _trace: &TraceIdentity) -> Result<(), ToolDispatchError> {
+        let _command_turn = self.command_gate.lock().await;
         self.sandbox.close().await.map_err(Into::into)
     }
 }
