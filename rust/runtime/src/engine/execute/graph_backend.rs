@@ -7,6 +7,7 @@ use super::*;
 
 pub(crate) struct OnlineGraphPhaseBackendFactory<'a> {
     pub(crate) placement: &'a dyn GraphPlacementFactory,
+    pub(crate) trace_driver: Arc<dyn crate::graph::driver::TraceProgramDriverFactory>,
     pub(crate) worker_count: usize,
     /// The run's injected clock, handed to the placement so a single-reactor
     /// (virtual) run drives its backend on the `SimClock` rather than a
@@ -48,6 +49,7 @@ impl GraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
             cache_bust: self.cache_bust.clone(),
             ignore_trace_delays: self.ignore_trace_delays,
             system_idle_gap_cap_seconds: self.system_idle_gap_cap_seconds,
+            trace_driver: self.trace_driver.clone(),
         }));
         let requires_node_records = self.placement.requires_node_records();
         let placement =

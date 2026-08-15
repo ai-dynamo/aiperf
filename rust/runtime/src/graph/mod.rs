@@ -16,6 +16,7 @@
 //! Dynamo adapter lives in the `aiperf` application crate, so neither this
 //! graph engine nor its clock/measurement leaves acquire a mocker dependency.
 
+pub mod agent;
 pub mod bench;
 pub mod channel_store;
 pub mod channels;
@@ -42,7 +43,9 @@ pub mod scheduler;
 pub mod segment;
 pub mod sink;
 pub mod snapshot;
+pub mod supplement;
 mod syslimits;
+pub mod tools;
 pub mod transport_bench;
 pub mod transport_sink;
 pub mod tstar;

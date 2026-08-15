@@ -19,6 +19,7 @@ use crate::engine::readiness::{
     OnlineReadinessPlanFactory, ReadinessTransportFactory,
 };
 use crate::engine::turn_execution::{HttpExecutionFactory, RequestExecutorFactory};
+use crate::graph::driver::{NativeTraceProgramDriverFactory, TraceProgramDriverFactory};
 
 /// Exact execution-factory universe retained from coordinator construction.
 ///
@@ -34,6 +35,7 @@ use crate::engine::turn_execution::{HttpExecutionFactory, RequestExecutorFactory
 pub struct ExecutionFactories {
     http: Arc<dyn RequestExecutorFactory>,
     graph: Arc<dyn GraphPlacementFactory>,
+    trace_driver: Arc<dyn TraceProgramDriverFactory>,
     readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
     control_plane_http: Arc<dyn ControlPlaneHttpProviderFactory>,
@@ -50,6 +52,7 @@ impl ExecutionFactories {
         Self {
             http,
             graph,
+            trace_driver: Arc::new(NativeTraceProgramDriverFactory),
             readiness_plans,
             readiness_transport,
             control_plane_http: Arc::new(NativeControlPlaneHttpProviderFactory::default()),
@@ -74,6 +77,25 @@ impl ExecutionFactories {
     /// Retain the whole-trace graph-placement factory in a prepared operation.
     pub fn graph_handle(&self) -> Arc<dyn GraphPlacementFactory> {
         self.graph.clone()
+    }
+
+    /// Borrow the frozen trace-driver registry used for capability preflight.
+    pub fn trace_driver(&self) -> &dyn TraceProgramDriverFactory {
+        self.trace_driver.as_ref()
+    }
+
+    /// Retain the frozen trace-driver registry in a prepared graph operation.
+    pub fn trace_driver_handle(&self) -> Arc<dyn TraceProgramDriverFactory> {
+        self.trace_driver.clone()
+    }
+
+    /// Replace the linked trace-driver registry before the application freezes composition.
+    pub fn with_trace_driver_factory(
+        mut self,
+        trace_driver: Arc<dyn TraceProgramDriverFactory>,
+    ) -> Self {
+        self.trace_driver = trace_driver;
+        self
     }
 
     /// Borrow the side-effect-free readiness-plan factory.

@@ -389,10 +389,7 @@ fn lower_trace(
             request_profile_identity: profile.identity,
             comparability_annotations: BTreeMap::new(),
         }),
-        driver: TraceDriverSpec {
-            kind: "recorded_replay".into(),
-            data: BTreeMap::new(),
-        },
+        driver: TraceDriverSpec::recorded_replay(),
     })
 }
 

@@ -20,6 +20,7 @@ use crate::endpoints::{
     Turn,
 };
 use crate::failure::OnFailure;
+use crate::graph::driver::TraceProgramDriverFactory;
 use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::ExecutorFlags;
@@ -564,6 +565,8 @@ pub(crate) struct GraphBackendFactoryConfig {
     /// as soon as its inputs are ready via `ExecutorFlags::ignore_edge_delays`.
     pub(crate) ignore_trace_delays: bool,
     pub(crate) system_idle_gap_cap_seconds: Option<f64>,
+    /// Frozen driver registry used for preflight before any trace-local sink exists.
+    pub(crate) trace_driver: Arc<dyn TraceProgramDriverFactory>,
 }
 
 /// First-turn cache-bust inputs shared by graph workers.
@@ -727,6 +730,7 @@ impl TracePlacementFactory for GraphBackendFactory {
             cache_bust: self.config.cache_bust.clone(),
             ignore_trace_delays: self.config.ignore_trace_delays,
             system_idle_gap_cap_seconds: self.config.system_idle_gap_cap_seconds,
+            trace_driver: self.config.trace_driver.clone(),
             prefill_slots,
             next_session: Cell::new(0),
             next_execution: Cell::new(0),
@@ -760,6 +764,7 @@ struct GraphWorkerBackend {
     cache_bust: Option<GraphCacheBust>,
     ignore_trace_delays: bool,
     system_idle_gap_cap_seconds: Option<f64>,
+    trace_driver: Arc<dyn TraceProgramDriverFactory>,
     prefill_slots: Option<Rc<SlotPool>>,
     next_session: Cell<u64>,
     next_execution: Cell<u64>,
@@ -770,6 +775,12 @@ struct GraphWorkerBackend {
 #[async_trait(?Send)]
 impl TracePlacement for GraphWorkerBackend {
     async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+        // Driver capability preflight precedes per-trace sink construction. Future
+        // environment provisioning uses this same frozen registry before any
+        // workspace or sandbox exists.
+        self.trace_driver
+            .capabilities(&program.driver)
+            .map_err(|error| TraceError::Other(error.to_string()))?;
         if !program.is_static_graph_program() {
             return Err(TraceError::UnsupportedDriver(program.driver.kind));
         }

@@ -194,6 +194,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
         plan,
         request_executor,
         factories.graph(),
+        factories.trace_driver_handle(),
         factories.control_plane_http_handle(),
         registry,
         &BuiltinNativeSidecarResourceFactory,

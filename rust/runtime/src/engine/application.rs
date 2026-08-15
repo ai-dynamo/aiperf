@@ -26,6 +26,7 @@ use crate::engine::protocol_v2::EnvelopeV2;
 use crate::engine::sidecar_input::{
     BuiltinRunnerSidecarInputAdapterResolver, SidecarInputAdapterResolver,
 };
+use crate::graph::driver::TraceProgramDriverFactory;
 
 /// One frozen implementation universe for a fresh runner child.
 ///
@@ -92,5 +93,10 @@ impl Application {
     /// Borrow the exact product registry used by capabilities and execution.
     pub fn product_registry(&self) -> &AIPerfRegistry {
         self.coordinator.product_registry()
+    }
+
+    /// Borrow the trace-driver registry frozen with this application image.
+    pub fn trace_driver_factory(&self) -> &dyn TraceProgramDriverFactory {
+        self.coordinator.execution_factories().trace_driver()
     }
 }

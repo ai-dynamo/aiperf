@@ -4,6 +4,7 @@
 //! Top-level native execution entrypoints, run summaries, and artifact writers.
 
 use super::*;
+use crate::graph::driver::TraceProgramDriverFactory;
 
 /// The single native driver layer: construct the run clock once, then let the
 /// clock drive itself.
@@ -21,6 +22,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     mut plan: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn GraphPlacementFactory,
+    trace_driver: Arc<dyn TraceProgramDriverFactory>,
     control_plane_http: Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
     registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -100,6 +102,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
             real_clock_anchor,
             transport_factory,
             placement,
+            trace_driver,
             control_plane_http.clone(),
             registry,
             sidecar_factory,
@@ -216,6 +219,7 @@ pub(crate) async fn prepare_and_execute_native(
     real_clock_anchor: RealClockAnchor,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn GraphPlacementFactory,
+    trace_driver: Arc<dyn TraceProgramDriverFactory>,
     control_plane_http: Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
     registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -226,6 +230,13 @@ pub(crate) async fn prepare_and_execute_native(
 ) -> Result<NativeReport> {
     if request.dataset.is_graph() {
         validate_graph_request(&request)?;
+        if let NativeDatasetPlan::Graph(graph) = &request.dataset {
+            for program in &graph.input.programs {
+                trace_driver
+                    .capabilities(&program.driver)
+                    .map_err(|error| anyhow!(error.to_string()))?;
+            }
+        }
     }
     let mut accuracy = prepare_static_accuracy(&request).await?;
     let mut sidecars = match sidecar_factory
@@ -274,6 +285,7 @@ pub(crate) async fn prepare_and_execute_native(
         &mut sidecars,
         transport_factory,
         graph_placement,
+        trace_driver,
         registry,
     )
     .await;
@@ -311,6 +323,7 @@ pub(crate) async fn execute_native(
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn GraphPlacementFactory,
+    trace_driver: Arc<dyn TraceProgramDriverFactory>,
     registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     if request.dataset.is_graph() {
@@ -318,7 +331,8 @@ pub(crate) async fn execute_native(
             accuracy.is_none(),
             "graph execution received prepared static-accuracy state"
         );
-        return execute_graph_native(request, sidecars, graph_placement, registry).await;
+        return execute_graph_native(request, sidecars, graph_placement, trace_driver, registry)
+            .await;
     }
     execute_scheduled_native(request, accuracy, sidecars, transport_factory, registry).await
 }
@@ -357,6 +371,7 @@ pub(crate) async fn execute_graph_native(
     request: NativeRunSpec,
     sidecars: &mut PreparedNativeSidecarResources,
     graph_placement: &dyn GraphPlacementFactory,
+    trace_driver: Arc<dyn TraceProgramDriverFactory>,
     registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     let graph = match &request.dataset {
@@ -421,6 +436,7 @@ pub(crate) async fn execute_graph_native(
     });
     let backends = OnlineGraphPhaseBackendFactory {
         placement: graph_placement,
+        trace_driver,
         worker_count: request.workers,
         clock: clock.clone(),
         real_clock_anchor,

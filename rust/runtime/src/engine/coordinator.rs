@@ -398,6 +398,11 @@ impl Coordinator {
     pub fn product_registry(&self) -> &AIPerfRegistry {
         self.product_registry.as_ref()
     }
+
+    /// Borrow the frozen execution factories selected for this application image.
+    pub fn execution_factories(&self) -> &ExecutionFactories {
+        &self.execution_factories
+    }
 }
 
 /// The failed-request count when a run produced errors and zero successes.
