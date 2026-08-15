@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::load::{self, Inputs, Warmup, default_isl};
-use crate::model::dataset::Distribution;
+use crate::model::dataset::{Distribution, RecordedAgentGraphConfig};
 use crate::model::endpoint::{ResetKvCacheConfig, ServerProfilerConfig};
 use crate::model::transport::{DynosimConfig, Transport};
 
@@ -544,6 +544,8 @@ struct Benchmark {
     profiling: Option<PhaseSection>,
     /// Output artifacts block (`dir` is the run's artifact target).
     artifacts: Option<ArtifactsSection>,
+    /// Endpoint and environment provenance for recorded-agent replay.
+    metadata: Option<MetadataSection>,
     /// Goodput SLO thresholds (`benchmark.slos`: metric -> ms).
     slos: Option<std::collections::BTreeMap<String, f64>>,
     /// GPU telemetry policy.
@@ -574,6 +576,16 @@ struct Benchmark {
     /// Relax cross-field validation (`cfg.unsafe_override`).
     #[serde(default, alias = "unsafeOverride")]
     unsafe_override: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MetadataSection {
+    /// Free-form endpoint hardware description.
+    hardware: Option<String>,
+    /// Endpoint placement relative to recorded-agent tool execution.
+    #[serde(default, alias = "endpointPlacement")]
+    endpoint_placement: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1029,6 +1041,8 @@ struct DatasetSection {
     force_min_tokens: Option<bool>,
     /// Recorded-graph / trace synthesis transforms (`TraceSynthesisSpec`).
     synthesis: Option<SynthesisSection>,
+    /// Recorded-agent replay settings (`dataset.graph`).
+    graph: Option<RecordedAgentGraphConfig>,
     /// Synthetic image generation (`synthetic.images`).
     images: Option<ImageSection>,
     /// Synthetic audio generation (`synthetic.audio`).
@@ -1863,6 +1877,7 @@ impl Benchmark {
             .then(|| dataset.as_ref().and_then(|d| d.format.clone()))
             .flatten();
         let is_file = dataset_type == Some("file");
+        let recorded_agent_graph = dataset.as_ref().and_then(|dataset| dataset.graph.clone());
         let (input_file, inline_records, custom_dataset_type) = if is_file {
             let d = dataset.as_ref().expect("file dataset present");
             // A file dataset is either path-backed or carries inline `records:`
@@ -2216,6 +2231,12 @@ impl Benchmark {
         // one profiling phase exists). Explicit `--concurrency`/etc. still flow
         // through `apply_cli_overrides` onto Inputs.
         let multiphase_authored = phases_override.is_some();
+        let hardware_description = self.metadata.as_ref().and_then(|metadata| metadata.hardware.clone());
+        let endpoint_placement = self
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.endpoint_placement.clone())
+            .unwrap_or_else(|| "unknown".to_string());
 
         Ok(Inputs {
             model_names,
@@ -2382,6 +2403,9 @@ impl Benchmark {
             random_seed,
             dataset_random_seed,
             input_file,
+            recorded_agent_graph,
+            hardware_description,
+            endpoint_placement,
             inline_records,
             custom_dataset_type,
             public_dataset,

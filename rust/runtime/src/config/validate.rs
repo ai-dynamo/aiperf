@@ -29,6 +29,7 @@ pub fn validate(cfg: &BenchmarkConfig) -> Result<()> {
     validate_endpoint_profile_names(cfg)?;
     validate_phase_dataset_compatibility(cfg)?;
     validate_cache_bust_compatibility(cfg)?;
+    validate_recorded_agent_replay(cfg)?;
     validate_agentic_cache_warmup(cfg)?;
     Ok(())
 }
@@ -291,6 +292,50 @@ fn validate_cache_bust_compatibility(cfg: &BenchmarkConfig) -> Result<()> {
              Other endpoint formatters do not consume the system message field \
              that hosts the marker.",
             endpoint_type
+        );
+    }
+    Ok(())
+}
+
+/// Validate recorded-agent graph authoring before worker construction.
+fn validate_recorded_agent_replay(cfg: &BenchmarkConfig) -> Result<()> {
+    for dataset in cfg.datasets.as_deref().unwrap_or_default() {
+        let Dataset::File(file) = dataset else {
+            continue;
+        };
+        let Some(graph) = file.graph.as_ref() else {
+            continue;
+        };
+        if file.format.as_deref() != Some("agent_recording") {
+            bail!("dataset.graph is only supported with dataset.format=agent_recording");
+        }
+        for (field, value) in [
+            ("command_timeout_seconds", graph.command_timeout_seconds),
+            (
+                "container_stop_timeout_seconds",
+                graph.container_stop_timeout_seconds,
+            ),
+            (
+                "session_close_grace_seconds",
+                graph.session_close_grace_seconds,
+            ),
+        ] {
+            if !value.is_finite() || value <= 0.0 {
+                bail!("dataset.graph.{field} must be a positive finite number of seconds");
+            }
+        }
+        if graph.tool_image.is_some() && !graph.execute_tools {
+            bail!("dataset.graph.tool_image requires dataset.graph.execute_tools=true");
+        }
+    }
+    if let Some(metadata) = cfg.metadata.as_ref()
+        && !matches!(
+            metadata.endpoint_placement.as_str(),
+            "co_located" | "remote" | "unknown"
+        )
+    {
+        bail!(
+            "metadata.endpoint_placement must be co_located, remote, or unknown"
         );
     }
     Ok(())

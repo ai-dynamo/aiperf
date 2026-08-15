@@ -340,6 +340,61 @@ pub struct Synthetic {
     pub turn_delay_ms: Option<Distribution>,
 }
 
+/// Recorded-agent replay configuration attached to an `agent_recording` file dataset.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedAgentGraphConfig {
+    /// Root directory resolving manifest-relative recordings and task assets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_root: Option<std::path::PathBuf>,
+    /// Execute recorded tool commands instead of retaining their recorded gaps.
+    #[serde(default)]
+    pub execute_tools: bool,
+    /// Fallback image for a low-level tool recipe without an adapter image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_image: Option<String>,
+    /// PinchBench environment image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinch_image: Option<String>,
+    /// Default per-command wall-clock deadline in seconds.
+    #[serde(default = "default_command_timeout_seconds")]
+    pub command_timeout_seconds: f64,
+    /// Docker stop/removal deadline in seconds.
+    #[serde(default = "default_container_stop_timeout_seconds")]
+    pub container_stop_timeout_seconds: f64,
+    /// Session-shell graceful shutdown deadline in seconds.
+    #[serde(default = "default_session_close_grace_seconds")]
+    pub session_close_grace_seconds: f64,
+    /// Select recorded task-family request profiles.
+    #[serde(default = "default_use_family_sampling")]
+    pub use_family_sampling: bool,
+    /// Emit one excluded warmup plan before each replay trace.
+    #[serde(default)]
+    pub emit_warmup: bool,
+    /// Resume an interrupted manifest run.
+    #[serde(default)]
+    pub resume: bool,
+    /// Stop after the first failed replay task.
+    #[serde(default)]
+    pub stop_on_failure: bool,
+}
+
+fn default_command_timeout_seconds() -> f64 {
+    900.0
+}
+
+fn default_container_stop_timeout_seconds() -> f64 {
+    5.0
+}
+
+fn default_session_close_grace_seconds() -> f64 {
+    1.0
+}
+
+fn default_use_family_sampling() -> bool {
+    true
+}
+
 /// A file-backed trace or replay dataset.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileDataset {
@@ -373,6 +428,9 @@ pub struct FileDataset {
     /// Recorded-graph synthesis block set by `--synthesis-*` flags.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<serde_json::Value>,
+    /// Recorded-agent replay settings, present only for `agent_recording` inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph: Option<RecordedAgentGraphConfig>,
     /// Per-conversation cache-bust marker policy (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_bust: Option<CacheBust>,

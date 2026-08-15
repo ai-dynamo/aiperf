@@ -34,6 +34,7 @@ pub mod model;
 pub mod placement;
 pub mod policy;
 pub mod recorded;
+pub mod replay;
 pub mod reducers;
 pub mod run;
 pub mod runtime;

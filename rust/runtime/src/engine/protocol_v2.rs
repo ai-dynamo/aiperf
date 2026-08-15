@@ -975,6 +975,27 @@ pub struct ArtifactSpecV2 {
     /// Request per-conversation breakdowns in the dry-run analysis.
     #[serde(default)]
     pub dataset_analysis_per_conversation: bool,
+    /// Recorded-agent tool timing output path.
+    #[serde(default)]
+    pub graph_tool_time_path: Option<PathBuf>,
+    /// Recorded-agent trace summary output path.
+    #[serde(default)]
+    pub graph_trace_summary_path: Option<PathBuf>,
+    /// Recorded-agent normalized replay metrics JSON output path.
+    #[serde(default)]
+    pub graph_replay_metrics_path: Option<PathBuf>,
+    /// Optional recorded-agent normalized replay metrics CSV output path.
+    #[serde(default)]
+    pub graph_replay_metrics_csv_path: Option<PathBuf>,
+    /// Recorded-agent replay failure output path.
+    #[serde(default)]
+    pub graph_replay_failures_path: Option<PathBuf>,
+    /// Recorded-agent replay provenance output path.
+    #[serde(default)]
+    pub graph_replay_provenance_path: Option<PathBuf>,
+    /// Recorded-agent backend metadata output path.
+    #[serde(default)]
+    pub graph_replay_backend_metadata_path: Option<PathBuf>,
 }
 
 impl ArtifactSpecV2 {
@@ -990,6 +1011,31 @@ impl ArtifactSpecV2 {
             ("artifacts.raw_path", self.raw_path.as_ref()),
             ("artifacts.outputs_path", self.outputs_path.as_ref()),
             ("artifacts.inputs_path", self.inputs_path.as_ref()),
+            ("artifacts.graph_tool_time_path", self.graph_tool_time_path.as_ref()),
+            (
+                "artifacts.graph_trace_summary_path",
+                self.graph_trace_summary_path.as_ref(),
+            ),
+            (
+                "artifacts.graph_replay_metrics_path",
+                self.graph_replay_metrics_path.as_ref(),
+            ),
+            (
+                "artifacts.graph_replay_metrics_csv_path",
+                self.graph_replay_metrics_csv_path.as_ref(),
+            ),
+            (
+                "artifacts.graph_replay_failures_path",
+                self.graph_replay_failures_path.as_ref(),
+            ),
+            (
+                "artifacts.graph_replay_provenance_path",
+                self.graph_replay_provenance_path.as_ref(),
+            ),
+            (
+                "artifacts.graph_replay_backend_metadata_path",
+                self.graph_replay_backend_metadata_path.as_ref(),
+            ),
         ] {
             if let Some(path) = path {
                 validate_relative_artifact_path(path, field)?;

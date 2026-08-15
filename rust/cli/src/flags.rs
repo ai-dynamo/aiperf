@@ -895,8 +895,54 @@ pub struct ProfileFlags {
     pub input_file: Option<PathBuf>,
 
     /// Custom dataset format for `--input-file` (`--custom-dataset-type`).
-    #[arg(long = "custom-dataset-type")]
+    #[arg(long = "custom-dataset-type", conflicts_with = "graph_format")]
     pub custom_dataset_type: Option<String>,
+    /// Direct Graph-IR dataset format (`--graph-format`).
+    #[arg(long = "graph-format")]
+    pub graph_format: Option<String>,
+
+    /// Root for manifest-relative recorded-agent files and task assets.
+    #[arg(long = "graph-replay-root")]
+    pub graph_replay_root: Option<PathBuf>,
+    /// Execute recorded-agent tool commands.
+    #[arg(long = "graph-execute-tools", num_args = 0..=1, default_missing_value = "true")]
+    pub graph_execute_tools: Option<bool>,
+    /// Fallback container image for recorded-agent tool execution.
+    #[arg(long = "graph-tool-image")]
+    pub graph_tool_image: Option<String>,
+    /// PinchBench container image for recorded-agent tool execution.
+    #[arg(long = "graph-pinch-image")]
+    pub graph_pinch_image: Option<String>,
+    /// Recorded-agent per-command timeout in seconds.
+    #[arg(long = "graph-tool-command-timeout")]
+    pub graph_tool_command_timeout: Option<f64>,
+    /// Recorded-agent container-stop timeout in seconds.
+    #[arg(long = "graph-tool-container-stop-timeout")]
+    pub graph_tool_container_stop_timeout: Option<f64>,
+    /// Recorded-agent session-close grace in seconds.
+    #[arg(long = "graph-tool-session-close-grace")]
+    pub graph_tool_session_close_grace: Option<f64>,
+    /// Use recorded-agent task-family request profiles.
+    #[arg(long = "graph-use-family-sampling", num_args = 0..=1, default_missing_value = "true", overrides_with = "no_graph_use_family_sampling")]
+    pub graph_use_family_sampling: Option<bool>,
+    /// Disable recorded-agent task-family request profiles.
+    #[arg(long = "no-graph-use-family-sampling", num_args = 0..=1, default_missing_value = "true")]
+    pub no_graph_use_family_sampling: Option<bool>,
+    /// Emit excluded warmup plans for recorded-agent traces.
+    #[arg(long = "graph-emit-warmup", num_args = 0..=1, default_missing_value = "true")]
+    pub graph_emit_warmup: Option<bool>,
+    /// Resume an interrupted recorded-agent run.
+    #[arg(long = "graph-resume", num_args = 0..=1, default_missing_value = "true")]
+    pub graph_resume: Option<bool>,
+    /// Stop after the first recorded-agent task failure.
+    #[arg(long = "graph-stop-on-failure", num_args = 0..=1, default_missing_value = "true")]
+    pub graph_stop_on_failure: Option<bool>,
+    /// Free-form endpoint hardware provenance for recorded-agent replay.
+    #[arg(long = "hardware-description")]
+    pub hardware_description: Option<String>,
+    /// Endpoint placement relative to recorded-agent tool execution.
+    #[arg(long = "endpoint-placement", value_parser = ["co_located", "remote", "unknown"])]
+    pub endpoint_placement: Option<String>,
 
     /// HuggingFace subset/config for `--public-dataset` or `--hf-dataset`.
     #[arg(long = "hf-subset", visible_alias = "hf-config")]

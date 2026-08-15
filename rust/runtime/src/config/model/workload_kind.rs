@@ -16,11 +16,12 @@ use super::dataset::Dataset;
 ///
 /// Any dataset whose native format token is one of these routes the run through
 /// the `graph` workload; every other dataset uses the `scheduled` workload.
-pub const GRAPH_FORMATS: [&str; 4] = [
+pub const GRAPH_FORMATS: [&str; 5] = [
     "dag_jsonl",
     "conditional_graph",
     "weka_trace",
     "dynamo_trace",
+    "agent_recording",
 ];
 
 /// The workload implementation a run projects onto.
@@ -140,6 +141,7 @@ mod tests {
             prompts: None,
             records: None,
             synthesis: None,
+            graph: None,
             cache_bust: None,
             prefetch_media_urls: false,
         })

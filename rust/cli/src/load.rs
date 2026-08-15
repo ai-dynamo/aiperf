@@ -20,7 +20,8 @@ pub use aiperf_runtime::config::resolve::{
 use crate::flags::ProfileFlags;
 use crate::model::BenchmarkRun;
 use crate::model::dataset::{
-    AudioSpec, Distribution, ImageSpec, PrefixPrompts, VideoAudio, VideoSpec,
+    AudioSpec, Distribution, ImageSpec, PrefixPrompts, RecordedAgentGraphConfig, VideoAudio,
+    VideoSpec,
 };
 use crate::model::endpoint::{
     ConnectionReuse, RequestContentType, ResetKvCacheConfig, ServerProfilerConfig, WaitForModelMode,
@@ -208,6 +209,22 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         None
     };
     let cache_bust = flags.cache_bust.clone().filter(|t| t != "none");
+    let recorded_agent_graph = (flags.graph_format.as_deref() == Some("agent_recording")).then(|| {
+        RecordedAgentGraphConfig {
+            replay_root: flags.graph_replay_root.clone(),
+            execute_tools: flags.graph_execute_tools.unwrap_or(false),
+            tool_image: flags.graph_tool_image.clone(),
+            pinch_image: flags.graph_pinch_image.clone(),
+            command_timeout_seconds: flags.graph_tool_command_timeout.unwrap_or(900.0),
+            container_stop_timeout_seconds: flags.graph_tool_container_stop_timeout.unwrap_or(5.0),
+            session_close_grace_seconds: flags.graph_tool_session_close_grace.unwrap_or(1.0),
+            use_family_sampling: flags.graph_use_family_sampling.unwrap_or(true)
+                && !flags.no_graph_use_family_sampling.unwrap_or(false),
+            emit_warmup: flags.graph_emit_warmup.unwrap_or(false),
+            resume: flags.graph_resume.unwrap_or(false),
+            stop_on_failure: flags.graph_stop_on_failure.unwrap_or(false),
+        }
+    });
 
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
@@ -473,8 +490,17 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .transpose()?,
         runtime_hop_routing: flags.hop_routing()?,
         input_file: flags.input_file.clone(),
+        recorded_agent_graph,
+        hardware_description: flags.hardware_description.clone(),
+        endpoint_placement: flags
+            .endpoint_placement
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string()),
         inline_records: None,
-        custom_dataset_type: flags.custom_dataset_type.clone(),
+        custom_dataset_type: flags
+            .graph_format
+            .clone()
+            .or_else(|| flags.custom_dataset_type.clone()),
         public_dataset,
         hf_subset: flags.hf_subset.clone(),
         hf_dataset: flags.hf_dataset.clone(),

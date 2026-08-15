@@ -54,4 +54,25 @@ pub struct Artifacts {
     /// Emit per-conversation breakdowns in the dry-run analysis.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dataset_analysis_per_conversation: bool,
+    /// Recorded-agent tool timing output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_tool_time_path: Option<String>,
+    /// Recorded-agent trace summary output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_trace_summary_path: Option<String>,
+    /// Recorded-agent normalized replay metrics JSON output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_replay_metrics_path: Option<String>,
+    /// Optional recorded-agent normalized replay metrics CSV output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_replay_metrics_csv_path: Option<String>,
+    /// Recorded-agent failed-task output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_replay_failures_path: Option<String>,
+    /// Recorded-agent replay provenance output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_replay_provenance_path: Option<String>,
+    /// Recorded-agent replay backend metadata output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_replay_backend_metadata_path: Option<String>,
 }

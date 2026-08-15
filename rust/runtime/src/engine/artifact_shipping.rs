@@ -913,6 +913,13 @@ pub fn shippable_relatives(artifacts: &crate::engine::protocol::ArtifactSpec) ->
         artifacts.records_parquet_path.as_ref(),
         artifacts.outputs_path.as_ref(),
         artifacts.inputs_path.as_ref(),
+        artifacts.graph_tool_time_path.as_ref(),
+        artifacts.graph_trace_summary_path.as_ref(),
+        artifacts.graph_replay_metrics_path.as_ref(),
+        artifacts.graph_replay_metrics_csv_path.as_ref(),
+        artifacts.graph_replay_failures_path.as_ref(),
+        artifacts.graph_replay_provenance_path.as_ref(),
+        artifacts.graph_replay_backend_metadata_path.as_ref(),
     ]
     .into_iter()
     .flatten()

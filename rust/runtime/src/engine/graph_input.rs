@@ -12,6 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::config::model::dataset::RecordedAgentGraphConfig;
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use crate::graph::conditional::compile_conditional_graph_input;
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
@@ -455,6 +456,13 @@ struct RecordedAgentDatasetInput {
     input_type: String,
     format: String,
     path: PathBuf,
+    #[serde(default = "default_agent_recording_sampling")]
+    sampling: String,
+    #[serde(default)]
+    options: Map<String, Value>,
+    /// Recorded-agent replay policy projected from `dataset.graph`.
+    #[serde(default)]
+    graph: Option<RecordedAgentGraphConfig>,
     #[serde(default)]
     replay_root: Option<PathBuf>,
     #[serde(default)]
@@ -471,6 +479,10 @@ struct RecordedAgentDatasetInput {
     standard_scenario: bool,
 }
 
+fn default_agent_recording_sampling() -> String {
+    "sequential".to_string()
+}
+
 impl RecordedAgentDatasetInput {
     fn prepare(self, expected_format: &str) -> Result<PreparedRunnerGraphInput> {
         ensure!(
@@ -482,19 +494,36 @@ impl RecordedAgentDatasetInput {
             "recorded-agent adapter {expected_format:?} received dataset.format={:?}",
             self.format
         );
+        ensure!(
+            self.sampling == "sequential",
+            "agent_recording requires dataset.sampling=sequential"
+        );
+        ensure!(
+            self.options.is_empty(),
+            "agent_recording rejects unsupported dataset.options keys"
+        );
         let fallback_max_tokens = self.fallback_max_tokens.unwrap_or(32_768);
         ensure!(
             fallback_max_tokens > 0,
             "agent_recording fallback_max_tokens must be positive"
         );
-        let source = recorded_agent_source(&self.path, self.replay_root.as_deref())?;
-        let corpus = discover_recorded_agent_input(self.replay_root.as_deref(), source)
+        let replay_root = self
+            .graph
+            .as_ref()
+            .and_then(|graph| graph.replay_root.as_deref())
+            .or(self.replay_root.as_deref());
+        let execute_tools = self
+            .graph
+            .as_ref()
+            .map_or(self.execute_tools, |graph| graph.execute_tools);
+        let source = recorded_agent_source(&self.path, replay_root)?;
+        let corpus = discover_recorded_agent_input(replay_root, source)
             .map_err(|error| anyhow!(error.to_string()))
             .context("discovering recorded-agent graph input")?;
         let resolver = BuiltinReplayRequestProfileResolver::new(
             self.streaming,
             fallback_max_tokens,
-            self.execute_tools,
+            execute_tools,
             self.use_recorded_model,
             self.use_recorded_sampling,
             self.standard_scenario,

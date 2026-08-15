@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 use crate::config::model::artifacts::Artifacts;
 use crate::config::model::dataset::{
-    AudioSpec, Dataset, Distribution, ImageSpec, PrefixPrompts, PromptSelection, Prompts, Sampling,
-    Synthetic, VideoSpec,
+    AudioSpec, Dataset, Distribution, ImageSpec, PrefixPrompts, PromptSelection, Prompts,
+    RecordedAgentGraphConfig, Sampling, Synthetic, VideoSpec,
 };
 use crate::config::model::endpoint::{
     ConnectionReuse, Endpoint, EndpointType, RequestContentType, ResetKvCacheConfig,
@@ -25,6 +25,7 @@ use crate::config::model::phase::{AdaptiveScale, Phase, PhaseCommon, PhaseKind, 
 use crate::config::model::rate_series::RateSeries;
 use crate::config::model::runtime::Runtime;
 use crate::config::model::tokenizer::Tokenizer;
+use crate::config::model::config::Metadata;
 use crate::config::model::{BenchmarkConfig, BenchmarkRun, Resolved};
 use crate::config::model::{DispatchMode, HopRouting};
 use crate::config::phase_validate::{apply_cli_loadgen_overlays, normalize_and_validate_phases};
@@ -377,6 +378,12 @@ pub struct Inputs {
     pub dataset_random_seed: Option<u64>,
     /// File-backed dataset path (mutually exclusive with the synthetic path).
     pub input_file: Option<PathBuf>,
+    /// Recorded-agent replay policy for an `agent_recording` file dataset.
+    pub recorded_agent_graph: Option<RecordedAgentGraphConfig>,
+    /// Free-form endpoint hardware provenance.
+    pub hardware_description: Option<String>,
+    /// Endpoint placement relative to tool execution.
+    pub endpoint_placement: String,
     /// Inline file-dataset records authored directly in the config (mutually
     /// exclusive with `input_file`; emitted verbatim as `records` on the wire).
     pub inline_records: Option<serde_json::Value>,
@@ -1091,6 +1098,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
             records: inputs.inline_records.clone(),
             synthesis,
+            graph: inputs.recorded_agent_graph.clone(),
             prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else {
@@ -1350,6 +1358,11 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         }),
         ..Default::default()
     };
+    let is_recorded_agent_replay = inputs.custom_dataset_type.as_deref() == Some("agent_recording");
+    let recorded_agent_executes_tools = inputs
+        .recorded_agent_graph
+        .as_ref()
+        .is_some_and(|graph| graph.execute_tools);
     let mut cfg = BenchmarkConfig {
         models: Some(models),
         endpoint: Some(endpoint),
@@ -1409,9 +1422,27 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     .dataset_analysis
                     .as_ref()
                     .is_some_and(|a| a.per_conversation),
+                graph_tool_time_path: (is_recorded_agent_replay && recorded_agent_executes_tools)
+                    .then(|| "profile_export_graph_tool_time.json".to_string()),
+                graph_trace_summary_path: is_recorded_agent_replay
+                    .then(|| "profile_export_graph_trace_summary.json".to_string()),
+                graph_replay_metrics_path: is_recorded_agent_replay
+                    .then(|| "metrics.json".to_string()),
+                graph_replay_metrics_csv_path: None,
+                graph_replay_failures_path: is_recorded_agent_replay
+                    .then(|| "failures.tsv".to_string()),
+                graph_replay_provenance_path: is_recorded_agent_replay
+                    .then(|| "replay-provenance.json".to_string()),
+                graph_replay_backend_metadata_path: is_recorded_agent_replay
+                    .then(|| "backend-metadata.json".to_string()),
                 ..Default::default()
             }
         }),
+        metadata: (inputs.hardware_description.is_some() || inputs.endpoint_placement != "unknown")
+            .then(|| Metadata {
+                hardware: inputs.hardware_description.clone(),
+                endpoint_placement: inputs.endpoint_placement.clone(),
+            }),
         datasets: Some(vec![dataset]),
         phases: Some(phases),
         export: None,

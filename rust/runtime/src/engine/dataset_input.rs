@@ -127,6 +127,9 @@ pub struct FileDatasetSpec {
     /// Optional native trace transformation and caps.
     #[serde(default)]
     pub synthesis: Option<TraceSynthesisSpec>,
+    /// Recorded-agent replay policy for the `agent_recording` graph adapter.
+    #[serde(default)]
+    pub graph: Option<crate::config::model::dataset::RecordedAgentGraphConfig>,
     /// Dataset-level cache-bust policy; `synthesis.cache_bust_target` wins.
     #[serde(default)]
     pub cache_bust: Option<DatasetCacheBustSpec>,

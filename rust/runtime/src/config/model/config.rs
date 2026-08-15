@@ -40,6 +40,22 @@ pub struct Accuracy {
     pub verbose: bool,
 }
 
+/// User-authored environment provenance for a benchmark run.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Metadata {
+    /// Free-form endpoint hardware description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware: Option<String>,
+    /// Endpoint placement relative to recorded tool execution.
+    #[serde(default = "default_endpoint_placement")]
+    pub endpoint_placement: String,
+}
+
+fn default_endpoint_placement() -> String {
+    "unknown".to_string()
+}
+
 /// The runner-consumed benchmark configuration.
 ///
 /// Unset sections are omitted from serialized requests.
@@ -69,6 +85,9 @@ pub struct BenchmarkConfig {
     /// Native output policy (`cfg.artifacts`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<Artifacts>,
+    /// User-authored environment provenance (`cfg.metadata`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Metadata>,
     /// Canonical single-dataset list (`cfg.datasets`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub datasets: Option<Vec<Dataset>>,

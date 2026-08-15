@@ -245,6 +245,27 @@ pub struct ArtifactSpec {
     /// `dataset_analysis_path` is absent.
     #[serde(default)]
     pub dataset_analysis_per_conversation: bool,
+    /// Recorded-agent tool timing output path.
+    #[serde(default)]
+    pub graph_tool_time_path: Option<PathBuf>,
+    /// Recorded-agent trace summary output path.
+    #[serde(default)]
+    pub graph_trace_summary_path: Option<PathBuf>,
+    /// Recorded-agent normalized replay metrics JSON output path.
+    #[serde(default)]
+    pub graph_replay_metrics_path: Option<PathBuf>,
+    /// Optional recorded-agent normalized replay metrics CSV output path.
+    #[serde(default)]
+    pub graph_replay_metrics_csv_path: Option<PathBuf>,
+    /// Recorded-agent replay failure output path.
+    #[serde(default)]
+    pub graph_replay_failures_path: Option<PathBuf>,
+    /// Recorded-agent replay provenance output path.
+    #[serde(default)]
+    pub graph_replay_provenance_path: Option<PathBuf>,
+    /// Recorded-agent backend metadata output path.
+    #[serde(default)]
+    pub graph_replay_backend_metadata_path: Option<PathBuf>,
 }
 
 pub use crate::engine::sidecar_input::{
