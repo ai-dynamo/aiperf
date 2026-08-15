@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{AgentVariantRef, ArtifactDigest, EvalTaskRef, ModelIdentity, PolicyIdentity, RuntimeIdentity};
+use super::{
+    AgentVariantRef, ArtifactDigest, EvalTaskRef, ModelIdentity, PolicyIdentity, RuntimeIdentity,
+};
 
 /// Positive finite execution budgets resolved into a trial.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -26,7 +28,10 @@ impl TrialBudget {
         if !verifier_seconds.is_finite() || verifier_seconds <= 0.0 {
             return Err(TrialIdentityError::InvalidBudget("verifier_seconds"));
         }
-        Ok(Self { execution_seconds, verifier_seconds })
+        Ok(Self {
+            execution_seconds,
+            verifier_seconds,
+        })
     }
 }
 
@@ -71,7 +76,17 @@ impl TrialSpec {
         if !budget.execution_seconds.is_finite() || !budget.verifier_seconds.is_finite() {
             return Err(TrialIdentityError::InvalidBudget("budget"));
         }
-        Ok(Self { task, agent, model, seed, policy, budget, environment, verifier, runtime })
+        Ok(Self {
+            task,
+            agent,
+            model,
+            seed,
+            policy,
+            budget,
+            environment,
+            verifier,
+            runtime,
+        })
     }
 
     /// Computes the canonical BLAKE3 identity for this fully resolved trial.

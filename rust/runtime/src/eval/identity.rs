@@ -19,7 +19,11 @@ impl ArtifactDigest {
         let Some(hex) = value.strip_prefix("blake3:") else {
             return Err(EvalIdentityError::InvalidDigest(value));
         };
-        if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit()) {
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        {
             return Err(EvalIdentityError::InvalidDigest(value));
         }
         Ok(Self(value))
@@ -70,7 +74,10 @@ pub struct EvalTaskRef {
 impl EvalTaskRef {
     /// Constructs an immutable task reference.
     pub fn new(id: impl Into<String>, digest: ArtifactDigest) -> Result<Self, EvalIdentityError> {
-        Ok(Self { id: EvalTaskId::new(id)?, digest })
+        Ok(Self {
+            id: EvalTaskId::new(id)?,
+            digest,
+        })
     }
 }
 
@@ -103,8 +110,14 @@ pub struct ModelIdentity {
 
 impl ModelIdentity {
     /// Constructs a provider/model pair.
-    pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Result<Self, EvalIdentityError> {
-        Ok(Self { provider: nonempty(provider, "model provider")?, model: nonempty(model, "model")? })
+    pub fn new(
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<Self, EvalIdentityError> {
+        Ok(Self {
+            provider: nonempty(provider, "model provider")?,
+            model: nonempty(model, "model")?,
+        })
     }
 }
 
@@ -144,7 +157,11 @@ impl RuntimeIdentity {
 
 fn nonempty(value: impl Into<String>, field: &'static str) -> Result<String, EvalIdentityError> {
     let value = value.into();
-    if value.trim().is_empty() { Err(EvalIdentityError::Empty(field)) } else { Ok(value) }
+    if value.trim().is_empty() {
+        Err(EvalIdentityError::Empty(field))
+    } else {
+        Ok(value)
+    }
 }
 
 /// Invalid immutable evaluation identity.
