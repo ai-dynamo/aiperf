@@ -7,5 +7,5 @@ mod acquire;
 mod harbor;
 mod normalize;
 
-pub use acquire::{HarborSource, SourceAcquirer};
+pub use acquire::{HarborSource, NativeSourceAcquirer, SourceAcquirer};
 pub use harbor::{HarborImportError, HarborImporter, ImportedTask};
