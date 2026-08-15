@@ -12,7 +12,9 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::graph::tools::{AgentObservationFormatter, AgentToolCallDecoder, ToolDispatchError};
+use crate::graph::tools::{
+    AgentObservationFormatter, AgentToolCallDecoder, ToolDispatchContext, ToolDispatchError,
+};
 
 use super::{
     AgentInvocationIdentity, AgentInvocationLease, AgentResponseHandle, AgentResponseSource,
@@ -230,7 +232,9 @@ impl AgentTurnCoordinator for StaticAgentTurnCoordinator {
             let calls = decoder.decode(&wire)?;
             let mut results = Vec::with_capacity(calls.len());
             for call in &calls {
-                let result = dispatcher.dispatch(call.dispatch_request()).await?;
+                let result = dispatcher
+                    .dispatch(call.dispatch_request(), &ToolDispatchContext::default())
+                    .await?;
                 trajectory.append_tool_result(result.clone())?;
                 results.push(result);
             }

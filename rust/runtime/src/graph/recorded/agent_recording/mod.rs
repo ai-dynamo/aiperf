@@ -6,6 +6,7 @@
 mod discovery;
 mod fixture;
 mod lowering;
+mod recipes;
 mod schema;
 
 #[cfg(test)]
@@ -20,7 +21,8 @@ pub use lowering::{
     BuiltinReplayRequestProfileResolver, RecordedAgentLoweringError, ReplayRequestProfile,
     ReplayRequestProfileResolver, lower_recorded_agent_corpus,
 };
+pub use recipes::resolve_recorded_environment;
 pub use schema::{
-    ExpectedCorpusShape, RecordedAgentEvent, RecordedAgentRecording, RecordedAgentReplayManifest,
-    RecordedProviderRequest, ReplayDefaults, ReplayTaskIdentity,
+    ExpectedCorpusShape, RecordedAgentEvent, RecordedAgentMetadata, RecordedAgentRecording,
+    RecordedAgentReplayManifest, RecordedProviderRequest, ReplayDefaults, ReplayTaskIdentity,
 };

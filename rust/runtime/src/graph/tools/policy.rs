@@ -1,0 +1,197 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Deterministic guarded shell-command policy for recorded replay.
+
+use bytes::Bytes;
+
+use super::environment::TraceEnvironmentError;
+
+/// One command policy decision with explicit agent-visible rejection semantics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandDisposition {
+    /// Send the authored command to the sandbox.
+    Execute,
+    /// Return a synthetic terminal command result without opening the sandbox.
+    Synthetic(ToolCommandResult),
+}
+
+/// Terminal result emitted by one sandbox command attempt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolCommandResult {
+    /// Combined bounded stdout and stderr bytes.
+    pub output: Bytes,
+    /// Process-style result code.
+    pub exit_code: i32,
+    /// Clock-derived command duration in nanoseconds.
+    pub duration_ns: u64,
+    /// Whether execution reached its deadline.
+    pub is_timed_out: bool,
+}
+
+impl ToolCommandResult {
+    /// Build an ordinary terminal command result.
+    pub fn completed(exit_code: i32, output: Bytes) -> Self {
+        Self {
+            output,
+            exit_code,
+            duration_ns: 0,
+            is_timed_out: false,
+        }
+    }
+
+    /// Build a fast deterministic deadline result for a fake or sandbox.
+    pub fn timed_out(output: Bytes) -> Self {
+        Self {
+            output,
+            exit_code: 124,
+            duration_ns: 0,
+            is_timed_out: true,
+        }
+    }
+
+    /// Build the standard rejected-installer observation.
+    pub fn installer_rejected() -> Self {
+        Self {
+            output: Bytes::from_static(
+                b"recorded-agent replay blocked an installer command to preserve the task environment",
+            ),
+            exit_code: 127,
+            duration_ns: 0,
+            is_timed_out: false,
+        }
+    }
+}
+
+/// Evaluates an authored shell command before any sandbox work occurs.
+pub trait ToolCommandPolicy {
+    /// Return a stable execution or synthetic-observation disposition.
+    fn evaluate(&self, command: &str) -> Result<CommandDisposition, TraceEnvironmentError>;
+}
+
+/// Stock policy that rejects package installation in any top-level command segment.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GuardedToolCommandPolicy;
+
+impl ToolCommandPolicy for GuardedToolCommandPolicy {
+    fn evaluate(&self, command: &str) -> Result<CommandDisposition, TraceEnvironmentError> {
+        for segment in top_level_segments(command) {
+            let tokens = shell_tokens(segment.trim());
+            if starts_installer(&tokens) {
+                return Ok(CommandDisposition::Synthetic(
+                    ToolCommandResult::installer_rejected(),
+                ));
+            }
+        }
+        Ok(CommandDisposition::Execute)
+    }
+}
+
+fn top_level_segments(command: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    let bytes = command.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' && quote != Some(b'\'') {
+            escaped = true;
+        } else if matches!(byte, b'\'' | b'\"') {
+            quote = if quote == Some(byte) {
+                None
+            } else if quote.is_none() {
+                Some(byte)
+            } else {
+                quote
+            };
+        } else if quote.is_none() && byte == b';' {
+            segments.push(&command[start..index]);
+            start = index + 1;
+        } else if quote.is_none()
+            && index + 1 < bytes.len()
+            && matches!((byte, bytes[index + 1]), (b'&', b'&') | (b'|', b'|'))
+        {
+            segments.push(&command[start..index]);
+            index += 1;
+            start = index + 1;
+        }
+        index += 1;
+    }
+    if quote.is_some() || escaped {
+        return command.split_whitespace().collect();
+    }
+    segments.push(&command[start..]);
+    segments
+}
+
+fn shell_tokens(segment: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in segment.chars() {
+        if escaped {
+            token.push(character);
+            escaped = false;
+        } else if character == '\\' && quote != Some('\'') {
+            escaped = true;
+        } else if matches!(character, '\'' | '\"') {
+            quote = if quote == Some(character) {
+                None
+            } else if quote.is_none() {
+                Some(character)
+            } else {
+                token.push(character);
+                quote
+            };
+        } else if character.is_whitespace() && quote.is_none() {
+            if !token.is_empty() {
+                tokens.push(std::mem::take(&mut token));
+            }
+        } else {
+            token.push(character);
+        }
+    }
+    if escaped {
+        token.push('\\');
+    }
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+    tokens
+}
+
+fn starts_installer(tokens: &[String]) -> bool {
+    let mut tokens = tokens;
+    while tokens.first().is_some_and(|token| is_assignment(token)) {
+        tokens = &tokens[1..];
+    }
+    while matches!(tokens.first().map(String::as_str), Some("sudo" | "env")) {
+        tokens = &tokens[1..];
+        while tokens
+            .first()
+            .is_some_and(|token| is_assignment(token) || token.starts_with('-'))
+        {
+            tokens = &tokens[1..];
+        }
+    }
+    matches!(
+        tokens.first().map(String::as_str),
+        Some("pip" | "pip3" | "conda" | "mamba" | "apt" | "apt-get" | "yum" | "dnf" | "apk")
+    ) || matches!(tokens, [python, flag, module, ..]
+        if matches!(python.as_str(), "python" | "python3")
+            && flag == "-m" && module == "pip")
+}
+
+fn is_assignment(token: &str) -> bool {
+    token.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+    })
+}

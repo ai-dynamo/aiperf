@@ -12,6 +12,13 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use bytes::Bytes;
 
+use crate::graph::driver::TraceIdentity;
+
+use super::{
+    CommandDisposition, ResolvedTraceEnvironment, ToolCommandPolicy, ToolCommandResult,
+    TraceEnvironmentError, WorkspaceSpec,
+};
+
 /// A recorded tool call ready for execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolDispatchRequest {
@@ -40,6 +47,8 @@ pub struct ToolDispatchResult {
     pub exit_code: i32,
     /// Combined bounded command output.
     pub output: Bytes,
+    /// Clock-derived command duration in nanoseconds.
+    pub duration_ns: u64,
     /// Whether execution reached its deadline.
     pub is_timed_out: bool,
 }
@@ -51,7 +60,19 @@ impl ToolDispatchResult {
             call_id: call_id.into(),
             exit_code,
             output,
+            duration_ns: 0,
             is_timed_out: false,
+        }
+    }
+
+    /// Convert one terminal sandbox command result into an agent-visible result.
+    pub fn from_command(call_id: impl Into<String>, result: ToolCommandResult) -> Self {
+        Self {
+            call_id: call_id.into(),
+            exit_code: result.exit_code,
+            output: result.output,
+            duration_ns: result.duration_ns,
+            is_timed_out: result.is_timed_out,
         }
     }
 }
@@ -75,14 +96,119 @@ impl Display for ToolDispatchError {
 
 impl Error for ToolDispatchError {}
 
+impl From<TraceEnvironmentError> for ToolDispatchError {
+    fn from(error: TraceEnvironmentError) -> Self {
+        Self(error.to_string())
+    }
+}
+
+/// Failure while opening, running, recycling, or closing a tool sandbox.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolSandboxError(String);
+
+impl ToolSandboxError {
+    /// Construct a contextual sandbox-boundary failure.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl Display for ToolSandboxError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Error for ToolSandboxError {}
+
+impl From<ToolSandboxError> for ToolDispatchError {
+    fn from(error: ToolSandboxError) -> Self {
+        Self(error.to_string())
+    }
+}
+
+/// Inputs owned by placement when it opens a trace-local tool dispatcher.
+pub struct TraceOpenContext<'a> {
+    /// Stable run/trajectory/trace identity.
+    pub trace: &'a TraceIdentity,
+    /// Already-resolved recipe, never raw recording metadata.
+    pub environment: Option<&'a ResolvedTraceEnvironment>,
+    /// Staged workspace policy for the selected recipe.
+    pub workspace: Option<&'a WorkspaceSpec>,
+    /// Opaque run label allocated by composition.
+    pub run_label: &'a str,
+}
+
+/// Per-dispatch policy inputs supplied by the trace owner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ToolDispatchContext {
+    /// Authored node timeout, overriding the recipe default when present.
+    pub timeout_ns: Option<u64>,
+}
+
+/// One worker-local sandbox session used by the environment-aware dispatcher.
+#[async_trait(?Send)]
+pub trait ToolSandbox {
+    /// Open the trace-owned session before warmup or profiling begins.
+    async fn open(&self) -> Result<(), ToolSandboxError>;
+    /// Run one command using the selected recipe interpreter and deadline.
+    async fn run(
+        &self,
+        command: &str,
+        timeout_ns: Option<u64>,
+    ) -> Result<ToolCommandResult, ToolSandboxError>;
+    /// Recreate the session after a timed-out command before continuing.
+    async fn recycle(&self) -> Result<(), ToolSandboxError>;
+    /// Release the session after every terminal trace path.
+    async fn close(&self) -> Result<(), ToolSandboxError>;
+}
+
+/// Context required to create one worker-local sandbox.
+pub struct SandboxCreateContext<'a> {
+    /// Identity of the owned trace instance.
+    pub trace: &'a TraceIdentity,
+    /// Resolved recipe selected before placement.
+    pub environment: &'a ResolvedTraceEnvironment,
+    /// Opaque composition-owned label.
+    pub run_label: &'a str,
+}
+
+/// Frozen factory creating one non-shared sandbox per trace instance.
+pub trait ToolSandboxFactory: Send + Sync {
+    /// Return the backend properties available for preflight validation.
+    fn capabilities(&self) -> super::ToolSandboxCapabilities;
+    /// Create a sandbox without re-resolving the task or reading global state.
+    fn create(
+        &self,
+        context: SandboxCreateContext<'_>,
+    ) -> Result<Rc<dyn ToolSandbox>, ToolSandboxError>;
+}
+
 /// Worker-local dispatcher for correlated recorded tool commands.
 #[async_trait(?Send)]
 pub trait ToolDispatcher {
+    /// Open resources owned by this unique trace instance.
+    async fn open_trace(&self, context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError>;
     /// Execute one command and return its terminal result.
     async fn dispatch(
         &self,
         request: ToolDispatchRequest,
+        context: &ToolDispatchContext,
     ) -> Result<ToolDispatchResult, ToolDispatchError>;
+    /// Close this trace's resources after the primary result has been selected.
+    async fn close_trace(&self, trace: &TraceIdentity) -> Result<(), ToolDispatchError>;
+}
+
+/// Close a dispatcher while preserving an earlier trace failure over cleanup failure.
+pub async fn close_trace_preserving_primary(
+    dispatcher: &dyn ToolDispatcher,
+    trace: &TraceIdentity,
+    primary: Result<(), ToolDispatchError>,
+) -> Result<(), ToolDispatchError> {
+    match (primary, dispatcher.close_trace(trace).await) {
+        (Err(primary), _) => Err(primary),
+        (Ok(()), close) => close,
+    }
 }
 
 /// Frozen factory creating one worker-local dispatcher per trace.
@@ -237,9 +363,14 @@ impl InMemoryToolDispatcher {
 
 #[async_trait(?Send)]
 impl ToolDispatcher for InMemoryToolDispatcher {
+    async fn open_trace(&self, _context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError> {
+        Ok(())
+    }
+
     async fn dispatch(
         &self,
         request: ToolDispatchRequest,
+        _context: &ToolDispatchContext,
     ) -> Result<ToolDispatchResult, ToolDispatchError> {
         let result = self.results.borrow_mut().pop_front().ok_or_else(|| {
             ToolDispatchError::new(format!(
@@ -255,6 +386,10 @@ impl ToolDispatcher for InMemoryToolDispatcher {
         }
         Ok(result)
     }
+
+    async fn close_trace(&self, _trace: &TraceIdentity) -> Result<(), ToolDispatchError> {
+        Ok(())
+    }
 }
 
 /// Stock factory for empty deterministic dispatchers.
@@ -264,5 +399,51 @@ pub struct InMemoryToolDispatcherFactory;
 impl ToolDispatcherFactory for InMemoryToolDispatcherFactory {
     fn create(&self, _trace_id: &str) -> Result<Rc<dyn ToolDispatcher>, ToolDispatchError> {
         Ok(Rc::new(InMemoryToolDispatcher::default()))
+    }
+}
+
+/// Environment-aware dispatcher which serializes commands through one sandbox.
+pub struct EnvironmentToolDispatcher {
+    sandbox: Rc<dyn ToolSandbox>,
+    policy: Rc<dyn ToolCommandPolicy>,
+}
+
+impl EnvironmentToolDispatcher {
+    /// Construct one dispatcher from unwrapped worker-local sandbox and policy owners.
+    pub fn new(sandbox: Rc<dyn ToolSandbox>, policy: Rc<dyn ToolCommandPolicy>) -> Self {
+        Self { sandbox, policy }
+    }
+}
+
+#[async_trait(?Send)]
+impl ToolDispatcher for EnvironmentToolDispatcher {
+    async fn open_trace(&self, _context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError> {
+        self.sandbox.open().await.map_err(Into::into)
+    }
+
+    async fn dispatch(
+        &self,
+        request: ToolDispatchRequest,
+        context: &ToolDispatchContext,
+    ) -> Result<ToolDispatchResult, ToolDispatchError> {
+        let result = match self.policy.evaluate(&request.command)? {
+            CommandDisposition::Execute => self
+                .sandbox
+                .run(&request.command, context.timeout_ns)
+                .await
+                .map_err(ToolDispatchError::from)?,
+            CommandDisposition::Synthetic(result) => result,
+        };
+        if result.is_timed_out {
+            self.sandbox
+                .recycle()
+                .await
+                .map_err(ToolDispatchError::from)?;
+        }
+        Ok(ToolDispatchResult::from_command(request.call_id, result))
+    }
+
+    async fn close_trace(&self, _trace: &TraceIdentity) -> Result<(), ToolDispatchError> {
+        self.sandbox.close().await.map_err(Into::into)
     }
 }
