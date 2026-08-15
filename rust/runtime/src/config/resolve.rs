@@ -1567,6 +1567,38 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
     let synthetic_default_dataset =
         loader.is_none() && inputs.public_dataset.is_none() && inputs.input_file.is_none();
 
+    let recorded_agent = if spec.recorded_agent.is_some() {
+        let fixture = crate::graph::recorded::agent_recording::CanonicalReplayFixture::load()
+            .map_err(|error| {
+                anyhow::anyhow!("loading canonical recorded-agent fixture: {error}")
+            })?;
+        let mut recorded =
+            crate::agentx::scenario::RecordedAgentScenarioInputs::canonical(&fixture);
+        let graph = inputs.recorded_agent_graph.as_ref();
+        recorded.dataset_format = inputs.custom_dataset_type.clone().unwrap_or_default();
+        recorded.execute_tools = graph.is_some_and(|graph| graph.execute_tools);
+        recorded.virtual_clock = inputs.transport.is_dry_run();
+        recorded.workers = inputs.runtime_workers.unwrap_or(1);
+        recorded.cells = inputs.runtime_cells;
+        recorded.allow_wrap = inputs.allow_dataset_wrap.unwrap_or(false);
+        recorded.shuffle = inputs.sampling != "sequential";
+        recorded.active_traces = inputs.concurrency.unwrap_or(1);
+        recorded.streaming = inputs.streaming;
+        recorded.use_server_token_count = inputs.use_server_token_count;
+        recorded.input_truncation = inputs.max_context_length.is_some();
+        recorded.sketch_metrics = inputs.sketch_metrics || env_sketch_enabled();
+        recorded.pinch_image = graph
+            .and_then(|graph| graph.pinch_image.clone())
+            .unwrap_or_default();
+        recorded.warmup = graph.is_some_and(|graph| graph.emit_warmup);
+        recorded.hardware_description = inputs.hardware_description.clone();
+        recorded.resume = graph.is_some_and(|graph| graph.resume);
+        recorded.unsafe_override = inputs.unsafe_override;
+        Some(recorded)
+    } else {
+        None
+    };
+
     let lock_inputs = RunLockInputs {
         streaming: inputs.streaming,
         streaming_explicit: inputs.streaming,
@@ -1589,6 +1621,7 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
         cache_bust_explicit: inputs.cache_bust.is_some(),
         unsafe_override: inputs.unsafe_override,
         synthetic_default_dataset,
+        recorded_agent,
     };
 
     let outcome = apply_scenario_locks(&spec, &lock_inputs)?;

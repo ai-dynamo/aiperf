@@ -1247,6 +1247,10 @@ fn lower_graph(
         cache_bust_target: prepared.cache_bust_target,
         ignore_trace_delays: workload.ignore_trace_delays,
         system_idle_gap_cap_seconds: workload.system_idle_gap_cap_seconds,
+        replay_resume: serde_json::from_str::<serde_json::Value>(workload.dataset.get())
+            .ok()
+            .and_then(|dataset| dataset.pointer("/graph/resume").and_then(Value::as_bool))
+            .unwrap_or(false),
     };
     build_common_plan(
         run,

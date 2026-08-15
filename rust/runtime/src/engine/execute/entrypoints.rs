@@ -3,8 +3,14 @@
 
 //! Top-level native execution entrypoints, run summaries, and artifact writers.
 
+use std::collections::BTreeMap;
+
 use super::*;
 use crate::graph::driver::TraceProgramDriverFactory;
+use crate::graph::replay::{
+    CacheIsolationPolicy, CompletedReplayTask, ReplayCheckpoint, ReplayProvenance,
+    ReplayRunIdentity, ReplayTaskClassification, redact_replay_provenance,
+};
 
 /// The single native driver layer: construct the run clock once, then let the
 /// clock drive itself.
@@ -392,11 +398,44 @@ pub(crate) async fn execute_graph_native(
     let tokenizer = build_tokenizer(&request.tokenizer)?;
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
-    let input = graph.input.clone();
+    let mut input = graph.input.clone();
     ensure!(
         !input.programs.is_empty(),
         "authored Graph-IR input contains no root traces after root limiting"
     );
+    let checkpoint_path = request.artifact_dir.join("replay-checkpoint.json");
+    let mut replay_checkpoint = prepare_recorded_replay_checkpoint(
+        &input,
+        graph.replay_resume,
+        &checkpoint_path,
+        rng_root_for_checkpoint(graph.random_seed.or(request.random_seed)),
+    )?;
+    if let Some(checkpoint) = replay_checkpoint.as_ref()
+        && graph.replay_resume
+    {
+        let programs = input
+            .programs
+            .iter()
+            .filter(|program| {
+                let Some(replay) = program.replay.as_ref() else {
+                    return true;
+                };
+                !checkpoint.should_skip(
+                    &replay.identity,
+                    replay.manifest_ordinal,
+                    &replay.source_digest,
+                    &replay.request_profile_identity,
+                    replay.expected_llm_node_count,
+                )
+            })
+            .cloned()
+            .collect();
+        input = Arc::new(crate::graph::input::GraphInputBundle {
+            programs,
+            segments: input.segments.clone(),
+            metadata: input.metadata.clone(),
+        });
+    }
     let primary_model = request.models.items[0].name.clone();
     let default_output_tokens = graph_default_output_tokens;
     let NativeEndpointPlan::Prepared(configured_profiles) = &request.endpoint;
@@ -528,6 +567,24 @@ pub(crate) async fn execute_graph_native(
             .collect::<Vec<_>>();
         crate::graph::replay::write_replay_artifacts(&replay_paths, &replay_traces)
             .map_err(|error| anyhow!("writing recorded replay artifacts: {error}"))?;
+        if let Some(checkpoint) = replay_checkpoint.as_mut() {
+            finalize_recorded_replay_checkpoint(
+                checkpoint,
+                &input,
+                &phased.supplement.traces,
+                &checkpoint_path,
+                request
+                    .artifacts
+                    .graph_replay_failures_path
+                    .as_ref()
+                    .map(|path| request.artifact_dir.join(path)),
+                request
+                    .artifacts
+                    .graph_replay_provenance_path
+                    .as_ref()
+                    .map(|path| request.artifact_dir.join(path)),
+            )?;
+        }
     }
     let phase_stats = phased.phases;
     // Graph exact-fold bounds memory independently of record count by folding each
@@ -875,6 +932,188 @@ pub(crate) async fn execute_graph_native(
         &request.artifacts,
     )?;
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
+}
+
+fn rng_root_for_checkpoint(seed: Option<u64>) -> RngRoot {
+    RngRoot::new(seed)
+}
+
+fn prepare_recorded_replay_checkpoint(
+    input: &Arc<crate::graph::input::GraphInputBundle>,
+    resume: bool,
+    path: &std::path::Path,
+    rng_root: RngRoot,
+) -> Result<Option<ReplayCheckpoint>> {
+    let replay = input
+        .programs
+        .iter()
+        .filter_map(|program| program.replay.as_ref())
+        .collect::<Vec<_>>();
+    if replay.is_empty() {
+        return Ok(None);
+    }
+    let mut recordings = BTreeMap::new();
+    let mut profiles = BTreeMap::new();
+    for trace in &replay {
+        let key = format!("{}:{}", trace.identity.adapter, trace.identity.task_id);
+        recordings.insert(key.clone(), trace.source_digest.clone());
+        profiles.insert(
+            key,
+            blake3::hash(trace.request_profile_identity.as_bytes())
+                .to_hex()
+                .to_string(),
+        );
+    }
+    let manifest_digest = blake3::hash(
+        replay
+            .iter()
+            .flat_map(|trace| {
+                [
+                    trace.source_digest.as_bytes(),
+                    trace.request_profile_identity.as_bytes(),
+                ]
+            })
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>()
+            .as_slice(),
+    )
+    .to_hex()
+    .to_string();
+    let root_digest = blake3::hash(input.metadata.format.as_bytes())
+        .to_hex()
+        .to_string();
+    let namespace_identity = ReplayRunIdentity::mint(rng_root, &manifest_digest);
+    let namespace = CacheIsolationPolicy::first_message_prefix(namespace_identity)
+        .namespace()
+        .ok_or_else(|| anyhow!("recorded replay cache namespace was not created"))?
+        .to_string();
+    let run = ReplayRunIdentity::for_checkpoint(
+        format!("recorded-agent-replay:{manifest_digest}"),
+        root_digest,
+        manifest_digest.clone(),
+        recordings,
+        profiles,
+        namespace,
+    );
+    if resume && path.exists() {
+        return ReplayCheckpoint::read_for_resume(path, &run)
+            .map(Some)
+            .map_err(|error| anyhow!("loading recorded replay checkpoint: {error}"));
+    }
+    let checkpoint = ReplayCheckpoint::new(run, manifest_digest);
+    checkpoint
+        .write_atomic(path)
+        .map_err(|error| anyhow!("persisting recorded replay checkpoint before warmup: {error}"))?;
+    Ok(Some(checkpoint))
+}
+
+fn finalize_recorded_replay_checkpoint(
+    checkpoint: &mut ReplayCheckpoint,
+    input: &Arc<crate::graph::input::GraphInputBundle>,
+    traces: &[crate::graph::supplement::TraceTerminalSupplement],
+    checkpoint_path: &std::path::Path,
+    failures_path: Option<std::path::PathBuf>,
+    provenance_path: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let traces = traces
+        .iter()
+        .map(|trace| (trace.trace_id.as_str(), trace))
+        .collect::<BTreeMap<_, _>>();
+    let mut environment_digests = BTreeMap::new();
+    for program in &input.programs {
+        let Some(replay) = program.replay.as_ref() else {
+            continue;
+        };
+        let key = format!("{}:{}", replay.identity.adapter, replay.identity.task_id);
+        let environment_digest = blake3::hash(
+            serde_json::to_string(&program.environment)
+                .map_err(|error| anyhow!("serializing replay environment identity: {error}"))?
+                .as_bytes(),
+        )
+        .to_hex()
+        .to_string();
+        environment_digests.insert(key, environment_digest.clone());
+        let terminal = traces.get(program.profiling.trace.id.as_str()).copied();
+        let call_count = terminal.map_or(0, |trace| trace.calls.len() as u64);
+        let succeeded = terminal.is_some_and(|trace| trace.completed)
+            && call_count == replay.expected_llm_node_count;
+        let classification = if succeeded {
+            ReplayTaskClassification::Successful
+        } else if terminal.is_some_and(|trace| trace.completed) {
+            ReplayTaskClassification::Partial
+        } else {
+            ReplayTaskClassification::Failed
+        };
+        checkpoint.completed.insert(
+            replay.identity.clone(),
+            CompletedReplayTask {
+                manifest_ordinal: replay.manifest_ordinal,
+                source_digest: replay.source_digest.clone(),
+                request_profile_digest: replay.request_profile_identity.clone(),
+                environment_digest,
+                successful_call_count: call_count,
+                classification: classification.clone(),
+                artifact_offset_start: 0,
+                artifact_offset_end: call_count,
+            },
+        );
+    }
+    let failures = checkpoint
+        .completed
+        .iter()
+        .filter(|(_, completed)| completed.classification != ReplayTaskClassification::Successful)
+        .map(|(task, completed)| {
+            format!(
+                "{}\t{}\t{:?}",
+                task.adapter, task.task_id, completed.classification
+            )
+        })
+        .collect::<Vec<_>>();
+    let complete = failures.is_empty()
+        && checkpoint.completed.len() == checkpoint.run.recording_digests().len();
+    checkpoint
+        .write_atomic(checkpoint_path)
+        .map_err(|error| anyhow!("persisting recorded replay checkpoint after cleanup: {error}"))?;
+    if let Some(path) = failures_path {
+        write_replay_text(
+            &path,
+            &format!("adapter\ttask_id\tclassification\n{}", failures.join("\n")),
+        )?;
+    }
+    if let Some(path) = provenance_path {
+        let provenance = ReplayProvenance {
+            manifest_digest: checkpoint.manifest_digest.clone(),
+            recording_digests: checkpoint.run.recording_digests().clone(),
+            request_profile_digests: checkpoint.run.request_profile_digests().clone(),
+            environment_digests,
+            cache_isolation_mode: "first_message_prefix".to_string(),
+            cache_namespace: None,
+            cache_namespace_digest: checkpoint.run.cache_namespace_digest(),
+            endpoint: None,
+            hardware_description: None,
+            debug_overrides: Vec::new(),
+            comparable: complete,
+        };
+        let bytes = serde_json::to_vec_pretty(&redact_replay_provenance(&provenance))
+            .map_err(|error| anyhow!("serializing replay provenance: {error}"))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| anyhow!("creating replay provenance directory: {error}"))?;
+        }
+        std::fs::write(&path, bytes)
+            .map_err(|error| anyhow!("writing replay provenance {}: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn write_replay_text(path: &std::path::Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| anyhow!("creating replay artifact directory: {error}"))?;
+    }
+    std::fs::write(path, contents)
+        .map_err(|error| anyhow!("writing replay artifact {}: {error}", path.display()))
 }
 
 /// The post-capture metric summaries shared by both executors' finalize tails

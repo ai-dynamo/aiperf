@@ -354,6 +354,17 @@ fn validate_recorded_agent_replay(cfg: &BenchmarkConfig) -> Result<()> {
                 _ => {}
             }
         }
+        if graph.resume
+            && cfg
+                .runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.cells > 1)
+        {
+            bail!(
+                "dataset.graph.resume is incompatible with runtime.cells > 1; \
+                 recorded-agent resume requires one controller-owned cell"
+            );
+        }
     }
     if let Some(metadata) = cfg.metadata.as_ref()
         && !matches!(

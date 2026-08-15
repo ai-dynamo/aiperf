@@ -465,6 +465,8 @@ pub(crate) struct NativeGraphDatasetPlan {
     /// executor fires every node as soon as its inputs are ready.
     pub(crate) ignore_trace_delays: bool,
     pub(crate) system_idle_gap_cap_seconds: Option<f64>,
+    /// Resume recorded-agent replay from the controller-owned checkpoint.
+    pub(crate) replay_resume: bool,
 }
 
 /// A side-channel subsystem that samples over the profiling window requires

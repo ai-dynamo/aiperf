@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Profiling-only cache isolation for recorded-agent replay.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -15,6 +16,18 @@ const NAMESPACE_SUFFIX: &str = " Performance replay cache namespace. Ignore the 
 pub struct ReplayRunIdentity {
     root: RngRoot,
     label: String,
+    checkpoint: Option<ReplayCheckpointIdentity>,
+}
+
+/// Secret-bearing replay identity retained only by protected controller state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReplayCheckpointIdentity {
+    pub(crate) run_id: String,
+    pub(crate) replay_root_digest: String,
+    pub(crate) manifest_digest: String,
+    pub(crate) recording_digests: BTreeMap<String, String>,
+    pub(crate) request_profile_digests: BTreeMap<String, String>,
+    pub(crate) cache_namespace: String,
 }
 
 impl ReplayRunIdentity {
@@ -29,6 +42,35 @@ impl ReplayRunIdentity {
             } else {
                 label.to_string()
             },
+            checkpoint: None,
+        }
+    }
+
+    /// Construct the controller-owned identity persisted in a replay checkpoint.
+    ///
+    /// The cache namespace remains opaque here; callers must use provenance
+    /// redaction before publishing any identity-derived data.
+    #[must_use]
+    pub fn for_checkpoint(
+        run_id: impl Into<String>,
+        replay_root_digest: impl Into<String>,
+        manifest_digest: impl Into<String>,
+        recording_digests: BTreeMap<String, String>,
+        request_profile_digests: BTreeMap<String, String>,
+        cache_namespace: impl Into<String>,
+    ) -> Self {
+        let run_id = run_id.into();
+        Self {
+            root: RngRoot::new(None),
+            label: run_id.clone(),
+            checkpoint: Some(ReplayCheckpointIdentity {
+                run_id,
+                replay_root_digest: replay_root_digest.into(),
+                manifest_digest: manifest_digest.into(),
+                recording_digests,
+                request_profile_digests,
+                cache_namespace: cache_namespace.into(),
+            }),
         }
     }
 
@@ -36,6 +78,56 @@ impl ReplayRunIdentity {
     #[must_use]
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Return replay-root digest retained by a persistent run identity.
+    #[must_use]
+    pub fn replay_root_digest(&self) -> Option<&str> {
+        self.checkpoint
+            .as_ref()
+            .map(|identity| identity.replay_root_digest.as_str())
+    }
+
+    /// Return manifest digest retained by a persistent run identity.
+    #[must_use]
+    pub fn manifest_digest(&self) -> Option<&str> {
+        self.checkpoint
+            .as_ref()
+            .map(|identity| identity.manifest_digest.as_str())
+    }
+
+    /// Return source recording digests retained by a persistent run identity.
+    #[must_use]
+    pub fn recording_digests(&self) -> &BTreeMap<String, String> {
+        static EMPTY: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+        self.checkpoint.as_ref().map_or_else(
+            || EMPTY.get_or_init(BTreeMap::new),
+            |identity| &identity.recording_digests,
+        )
+    }
+
+    /// Return resolved request-profile digests retained by a persistent run identity.
+    #[must_use]
+    pub fn request_profile_digests(&self) -> &BTreeMap<String, String> {
+        static EMPTY: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+        self.checkpoint.as_ref().map_or_else(
+            || EMPTY.get_or_init(BTreeMap::new),
+            |identity| &identity.request_profile_digests,
+        )
+    }
+
+    /// Return the publication-safe digest of the protected cache namespace.
+    #[must_use]
+    pub fn cache_namespace_digest(&self) -> Option<String> {
+        self.checkpoint_identity().map(|identity| {
+            blake3::hash(identity.cache_namespace.as_bytes())
+                .to_hex()
+                .to_string()
+        })
+    }
+
+    pub(crate) fn checkpoint_identity(&self) -> Option<&ReplayCheckpointIdentity> {
+        self.checkpoint.as_ref()
     }
 }
 

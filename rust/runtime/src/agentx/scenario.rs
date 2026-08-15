@@ -9,6 +9,8 @@
 //! `Environment.AGENTX.CONTEXT_OVERFLOW_SUBSTRINGS`).
 
 use crate::agentx::cache_bust::CacheBustTarget;
+use crate::graph::driver::ReplayTaskIdentity;
+use crate::graph::recorded::agent_recording::CanonicalReplayFixture;
 
 /// A named benchmark-scenario invariant lock (Python `ScenarioSpec`). Frozen
 /// truth; the resolver auto-fills defaults and validates user conflicts.
@@ -44,6 +46,8 @@ pub struct ScenarioSpec {
     pub trace_idle_gap_cap_seconds: Option<f64>,
     /// Required cache-bust target.
     pub require_cache_bust: Option<CacheBustTarget>,
+    /// Generic canonical recorded-agent replay policy when this scenario has one.
+    pub recorded_agent: Option<RecordedAgentScenarioLock>,
 }
 
 /// The `inferencex-agentx-mvp` scenario (Python `INFERENCEX_AGENTX_MVP`).
@@ -82,6 +86,48 @@ pub fn inferencex_agentx_mvp() -> ScenarioSpec {
         inter_turn_delay_cap_seconds: None,
         trace_idle_gap_cap_seconds: Some(10.0),
         require_cache_bust: Some(CacheBustTarget::FirstTurnPrefix),
+        recorded_agent: None,
+    }
+}
+
+/// Generic lock data for the registry-owned recorded-agent workload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedAgentScenarioLock {
+    /// Required fixture workload name.
+    pub workload_name: String,
+    /// Required PinchBench image reference.
+    pub pinch_image: String,
+    /// Exact worker and cell cardinality.
+    pub workers: u32,
+    /// Exact cell cardinality.
+    pub cells: u32,
+}
+
+/// The comparable canonical recorded-agent replay scenario.
+#[must_use]
+pub fn recorded_agent_default() -> ScenarioSpec {
+    ScenarioSpec {
+        name: "recorded-agent-default".to_string(),
+        timing_mode: "agentic_replay".to_string(),
+        require_ignore_eos: false,
+        require_use_think_time_only: false,
+        require_streaming: true,
+        forbid_ignore_trace_delays: true,
+        forbid_input_truncation: true,
+        require_loader: vec!["agent_recording".to_string()],
+        min_benchmark_duration_seconds: 0,
+        default_benchmark_duration_seconds: None,
+        default_trajectory_start_min_ratio: None,
+        default_trajectory_start_max_ratio: None,
+        inter_turn_delay_cap_seconds: None,
+        trace_idle_gap_cap_seconds: None,
+        require_cache_bust: None,
+        recorded_agent: Some(RecordedAgentScenarioLock {
+            workload_name: "recorded-agent-eight-v1".to_string(),
+            pinch_image: "aiperf-recorded-agent-pinchbench:v1".to_string(),
+            workers: 1,
+            cells: 1,
+        }),
     }
 }
 
@@ -167,6 +213,7 @@ pub fn loader_allowed(loader: Option<&str>, allowed: &[String]) -> bool {
 pub fn get_scenario(name: &str) -> Option<ScenarioSpec> {
     match name {
         "inferencex-agentx-mvp" => Some(inferencex_agentx_mvp()),
+        "recorded-agent-default" => Some(recorded_agent_default()),
         _ => None,
     }
 }
@@ -185,6 +232,10 @@ pub struct ScenarioOutcome {
     pub submission_valid: Option<bool>,
     /// Reasons submission is invalid.
     pub submission_invalid_reasons: Vec<String>,
+    /// Whether every manifest task completed successfully when completeness is required.
+    pub complete: Option<bool>,
+    /// Stable reasons a result is incomplete.
+    pub incomplete_reasons: Vec<String>,
 }
 
 /// A hard scenario-lock failure (Python `ScenarioLockError`).
@@ -244,6 +295,8 @@ pub struct RunLockInputs {
     /// Whether the dataset is the synthetic CLI default (non-overridable under
     /// `require_loader`).
     pub synthetic_default_dataset: bool,
+    /// Recorded-agent projection for generic registry-backed lock application.
+    pub recorded_agent: Option<RecordedAgentScenarioInputs>,
 }
 
 /// Apply a scenario's invariant locks to `inputs`, composing the decision core
@@ -254,6 +307,32 @@ pub fn apply_scenario_locks(
     spec: &ScenarioSpec,
     inputs: &RunLockInputs,
 ) -> Result<ScenarioOutcome, ScenarioLockError> {
+    if spec.recorded_agent.is_some() {
+        let fixture = CanonicalReplayFixture::load().map_err(|error| ScenarioLockError {
+            violations: vec![ScenarioViolation {
+                flag: "recorded_agent.fixture".to_string(),
+                current_value: "unavailable".to_string(),
+                required_value: "canonical fixture".to_string(),
+                message: error.to_string(),
+            }],
+            bypassable: false,
+        })?;
+        let recorded = inputs
+            .recorded_agent
+            .as_ref()
+            .ok_or_else(|| ScenarioLockError {
+                violations: vec![ScenarioViolation {
+                    flag: "dataset.format".to_string(),
+                    current_value: "<none>".to_string(),
+                    required_value: "agent_recording".to_string(),
+                    message:
+                        "scenario \"recorded-agent-default\" requires an agent recording dataset"
+                            .to_string(),
+                }],
+                bypassable: false,
+            })?;
+        return apply_recorded_agent_scenario_locks(recorded, &fixture);
+    }
     let mut violations: Vec<ScenarioViolation> = Vec::new();
     let mut applied: Vec<String> = Vec::new();
     let record =
@@ -346,6 +425,8 @@ pub fn apply_scenario_locks(
             violations,
             submission_valid: Some(false),
             submission_invalid_reasons: vec!["unsafe_override".to_string()],
+            complete: None,
+            incomplete_reasons: Vec::new(),
         });
     }
     Ok(ScenarioOutcome {
@@ -354,6 +435,301 @@ pub fn apply_scenario_locks(
         violations: Vec::new(),
         submission_valid: Some(true),
         submission_invalid_reasons: Vec::new(),
+        complete: None,
+        incomplete_reasons: Vec::new(),
+    })
+}
+
+/// The resolved fields that the canonical replay lock checks.
+#[derive(Debug, Clone)]
+pub struct RecordedAgentScenarioInputs {
+    /// Ordered source task identity vector.
+    pub task_order: Vec<ReplayTaskIdentity>,
+    /// Canonical fixture manifest digest.
+    pub manifest_digest: String,
+    /// Canonical fixture recording digests.
+    pub recording_digests: std::collections::BTreeMap<String, String>,
+    /// Dataset format identity.
+    pub dataset_format: String,
+    /// Whether task tools execute on the real host.
+    pub execute_tools: bool,
+    /// Whether the active transport uses virtual time.
+    pub virtual_clock: bool,
+    /// Runtime worker count.
+    pub workers: u32,
+    /// Runtime cell count.
+    pub cells: u32,
+    /// Whether a trace can wrap/recycle.
+    pub allow_wrap: bool,
+    /// Whether sampling shuffles task order.
+    pub shuffle: bool,
+    /// Maximum concurrently active traces.
+    pub active_traces: u32,
+    /// Whether endpoint streaming is enabled.
+    pub streaming: bool,
+    /// Whether endpoint usage is authoritative for token counts.
+    pub use_server_token_count: bool,
+    /// Whether client input truncation is enabled.
+    pub input_truncation: bool,
+    /// Whether the metrics path is sketch-only.
+    pub sketch_metrics: bool,
+    /// Selected cache isolation mode.
+    pub cache_isolation_mode: String,
+    /// PinchBench environment image.
+    pub pinch_image: String,
+    /// Whether per-task warmup is enabled.
+    pub warmup: bool,
+    /// Free-form hardware description, with `unknown` allowed.
+    pub hardware_description: Option<String>,
+    /// Whether a prior run requested persistent resume.
+    pub resume: bool,
+    /// Whether the complete manifest reached successful terminal cleanup.
+    pub complete: bool,
+    /// User-authorized bypass for non-hard scenario conflicts.
+    pub unsafe_override: bool,
+}
+
+impl RecordedAgentScenarioInputs {
+    /// Construct the exact canonical lock projection for a fixture.
+    #[must_use]
+    pub fn canonical(fixture: &CanonicalReplayFixture) -> Self {
+        Self {
+            task_order: fixture
+                .manifest
+                .tasks
+                .iter()
+                .map(|task| task.identity.clone())
+                .collect(),
+            manifest_digest: fixture.manifest_digest.clone(),
+            recording_digests: fixture.digest_index.recordings.clone(),
+            dataset_format: "agent_recording".to_string(),
+            execute_tools: true,
+            virtual_clock: false,
+            workers: 1,
+            cells: 1,
+            allow_wrap: false,
+            shuffle: false,
+            active_traces: 1,
+            streaming: true,
+            use_server_token_count: true,
+            input_truncation: false,
+            sketch_metrics: false,
+            cache_isolation_mode: "first_message_prefix".to_string(),
+            pinch_image: "aiperf-recorded-agent-pinchbench:v1".to_string(),
+            warmup: true,
+            hardware_description: Some("unknown".to_string()),
+            resume: false,
+            complete: true,
+            unsafe_override: false,
+        }
+    }
+}
+
+/// Apply the registry-owned canonical replay policy without widening AgentX semantics.
+pub fn apply_recorded_agent_scenario_locks(
+    inputs: &RecordedAgentScenarioInputs,
+    fixture: &CanonicalReplayFixture,
+) -> Result<ScenarioOutcome, ScenarioLockError> {
+    let lock = match recorded_agent_default().recorded_agent {
+        Some(lock) => lock,
+        None => {
+            return Err(ScenarioLockError {
+                violations: vec![ScenarioViolation {
+                    flag: "scenario.registry".to_string(),
+                    current_value: "missing recorded-agent lock".to_string(),
+                    required_value: "recorded-agent lock".to_string(),
+                    message: "recorded-agent-default registry entry is incomplete".to_string(),
+                }],
+                bypassable: false,
+            });
+        }
+    };
+    let mut violations = Vec::new();
+    let mut applied = Vec::new();
+    let mut record = |is_valid: bool, flag: &str, current: String, required: String| {
+        if is_valid {
+            applied.push(flag.to_string());
+        } else {
+            violations.push(ScenarioViolation {
+                flag: flag.to_string(),
+                current_value: current,
+                required_value: required,
+                message: format!("scenario \"recorded-agent-default\" requires {flag}"),
+            });
+        }
+    };
+    record(
+        inputs.dataset_format == "agent_recording",
+        "dataset.format",
+        inputs.dataset_format.clone(),
+        "agent_recording".to_string(),
+    );
+    record(
+        inputs.manifest_digest == fixture.manifest_digest,
+        "dataset.manifest_digest",
+        inputs.manifest_digest.clone(),
+        fixture.manifest_digest.clone(),
+    );
+    record(
+        inputs.recording_digests == fixture.digest_index.recordings,
+        "dataset.recording_digests",
+        "different".to_string(),
+        "canonical digests".to_string(),
+    );
+    let canonical_order = fixture
+        .manifest
+        .tasks
+        .iter()
+        .map(|task| task.identity.clone())
+        .collect::<Vec<_>>();
+    record(
+        inputs.task_order == canonical_order,
+        "dataset.task_order",
+        "different".to_string(),
+        "canonical manifest order".to_string(),
+    );
+    record(
+        inputs.workers == lock.workers,
+        "runtime.workers",
+        inputs.workers.to_string(),
+        lock.workers.to_string(),
+    );
+    record(
+        inputs.cells == lock.cells,
+        "runtime.cells",
+        inputs.cells.to_string(),
+        lock.cells.to_string(),
+    );
+    record(
+        inputs.active_traces == 1,
+        "runtime.active_traces",
+        inputs.active_traces.to_string(),
+        "1".to_string(),
+    );
+    record(
+        !inputs.allow_wrap,
+        "dataset.allow_wrap",
+        inputs.allow_wrap.to_string(),
+        "false".to_string(),
+    );
+    record(
+        !inputs.shuffle,
+        "dataset.shuffle",
+        inputs.shuffle.to_string(),
+        "false".to_string(),
+    );
+    record(
+        inputs.streaming,
+        "endpoint.streaming",
+        inputs.streaming.to_string(),
+        "true".to_string(),
+    );
+    record(
+        inputs.use_server_token_count,
+        "endpoint.use_server_token_count",
+        inputs.use_server_token_count.to_string(),
+        "true".to_string(),
+    );
+    record(
+        !inputs.input_truncation,
+        "dataset.input_truncation",
+        inputs.input_truncation.to_string(),
+        "false".to_string(),
+    );
+    record(
+        !inputs.sketch_metrics,
+        "metrics.sketch",
+        inputs.sketch_metrics.to_string(),
+        "false".to_string(),
+    );
+    record(
+        inputs.cache_isolation_mode == "first_message_prefix",
+        "dataset.cache_isolation",
+        inputs.cache_isolation_mode.clone(),
+        "first_message_prefix".to_string(),
+    );
+    record(
+        inputs.execute_tools,
+        "dataset.graph.execute_tools",
+        inputs.execute_tools.to_string(),
+        "true".to_string(),
+    );
+    record(
+        inputs.pinch_image == lock.pinch_image,
+        "dataset.graph.pinch_image",
+        inputs.pinch_image.clone(),
+        lock.pinch_image,
+    );
+    record(
+        inputs.warmup,
+        "dataset.graph.emit_warmup",
+        inputs.warmup.to_string(),
+        "true".to_string(),
+    );
+    record(
+        inputs
+            .hardware_description
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+        "metadata.hardware",
+        inputs
+            .hardware_description
+            .clone()
+            .unwrap_or_else(|| "<none>".to_string()),
+        "non-empty".to_string(),
+    );
+    record(
+        inputs.complete,
+        "result.complete",
+        inputs.complete.to_string(),
+        "true".to_string(),
+    );
+    if inputs.virtual_clock {
+        return Err(ScenarioLockError {
+            violations: vec![ScenarioViolation {
+                flag: "transport.clock".to_string(),
+                current_value: "virtual".to_string(),
+                required_value: "real".to_string(),
+                message: "recorded-agent tools cannot run on a virtual clock".to_string(),
+            }],
+            bypassable: false,
+        });
+    }
+    if inputs.resume && inputs.cells > 1 {
+        return Err(ScenarioLockError {
+            violations: vec![ScenarioViolation {
+                flag: "runtime.cells".to_string(),
+                current_value: inputs.cells.to_string(),
+                required_value: "1 when resume is enabled".to_string(),
+                message: "recorded-agent resume does not support cells > 1".to_string(),
+            }],
+            bypassable: false,
+        });
+    }
+    if !violations.is_empty() && !inputs.unsafe_override {
+        return Err(ScenarioLockError {
+            violations,
+            bypassable: true,
+        });
+    }
+    let incomplete_reasons = (!inputs.complete)
+        .then(|| vec!["incomplete_replay".to_string()])
+        .unwrap_or_default();
+    let mut invalid_reasons = Vec::new();
+    if !violations.is_empty() {
+        invalid_reasons.extend(["unsafe_override".to_string(), "non_comparable".to_string()]);
+    }
+    if !incomplete_reasons.is_empty() {
+        invalid_reasons.extend(incomplete_reasons.clone());
+    }
+    Ok(ScenarioOutcome {
+        scenario_name: Some("recorded-agent-default".to_string()),
+        applied_locks: applied,
+        violations,
+        submission_valid: Some(invalid_reasons.is_empty()),
+        submission_invalid_reasons: invalid_reasons,
+        complete: Some(inputs.complete),
+        incomplete_reasons,
     })
 }
 
