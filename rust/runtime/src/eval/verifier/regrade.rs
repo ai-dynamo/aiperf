@@ -97,6 +97,7 @@ pub fn regrade(request: RegradeRequest) -> Result<ScoreVersion, RegradeError> {
         .version
         .checked_add(1)
         .ok_or(RegradeError::VersionOverflow)?;
+    let predecessor = request.previous.identity_digest();
     ScoreVersion::new(
         request.previous.attempt,
         version,
@@ -105,7 +106,7 @@ pub fn regrade(request: RegradeRequest) -> Result<ScoreVersion, RegradeError> {
         request.metric,
         value,
         request.result.rationale,
-        Some(request.previous.identity_digest()),
+        Some(predecessor),
     )
     .map_err(RegradeError::InvalidScore)
 }
