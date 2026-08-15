@@ -487,6 +487,43 @@ pub(crate) async fn execute_graph_native(
             "graph phase runtime returned failed traces without failing execution"
         );
     }
+    // Recorded-agent replay artifacts are controller-owned and strict. They must
+    // finish before the generic best-effort exporter tail, so a malformed timing
+    // result fails the run instead of silently publishing a partial scenario.
+    let replay_paths = crate::graph::replay::ReplayArtifactPaths {
+        tool_time_path: request
+            .artifacts
+            .graph_tool_time_path
+            .as_ref()
+            .map(|path| artifact_path(&request.artifact_dir, path, "graph_tool_time_path"))
+            .transpose()?,
+        trace_summary_path: request
+            .artifacts
+            .graph_trace_summary_path
+            .as_ref()
+            .map(|path| artifact_path(&request.artifact_dir, path, "graph_trace_summary_path"))
+            .transpose()?,
+        metrics_json_path: request
+            .artifacts
+            .graph_replay_metrics_path
+            .as_ref()
+            .map(|path| artifact_path(&request.artifact_dir, path, "graph_replay_metrics_path"))
+            .transpose()?,
+        metrics_csv_path: request
+            .artifacts
+            .graph_replay_metrics_csv_path
+            .as_ref()
+            .map(|path| artifact_path(&request.artifact_dir, path, "graph_replay_metrics_csv_path"))
+            .transpose()?,
+    };
+    let replay_traces = phased
+        .supplement
+        .traces
+        .iter()
+        .map(crate::graph::replay::ReplayTraceSupplement::from)
+        .collect::<Vec<_>>();
+    crate::graph::replay::write_replay_artifacts(&replay_paths, &replay_traces)
+        .map_err(|error| anyhow!("writing recorded replay artifacts: {error}"))?;
     let phase_stats = phased.phases;
     // Graph exact-fold bounds memory independently of record count by folding each
     // record immediately. Per-record artifacts stream through `RecordArtifactLane`;

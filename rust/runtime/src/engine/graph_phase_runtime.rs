@@ -28,6 +28,7 @@ use crate::graph::input::GraphInputBundle;
 use crate::graph::model::{GraphTracePlan, GraphTraceProgram, ParsedGraph, TraceRecord};
 use crate::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
 use crate::graph::snapshot::{chop_trie_at_frontier, chop_trie_at_tstar, rewrite_for_warmup};
+use crate::graph::supplement::GraphPhaseSupplement;
 use crate::graph::tstar::{PermutationDraw, TStarSampler, WindowTStarSampler, trace_duration_us};
 use crate::graph::warmup_handoff::{GraphWarmupHandoff, LaneHandoff};
 use crate::graph::workload::{
@@ -95,6 +96,8 @@ pub(crate) struct GraphPhaseRunOutput {
     pub(crate) captured: Vec<CapturedRecord>,
     pub(crate) phases: Vec<PhaseStats>,
     pub(crate) workload: GraphWorkloadReport,
+    /// Successful profiling replay facts folded by the controller in event order.
+    pub(crate) supplement: GraphPhaseSupplement,
 }
 
 /// Validate transport-neutral authored Graph-IR phase policy.
@@ -1219,6 +1222,7 @@ struct GraphPhaseExecution {
     failures: Rc<GraphPhaseFailures>,
     events: RefCell<Option<mpsc::UnboundedReceiver<GraphExecutionEvent>>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
+    supplement: Rc<RefCell<GraphPhaseSupplement>>,
     progress: Rc<GraphPhaseProgress>,
     adaptive_sampler: Option<SharedWindowSampler>,
     sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
@@ -1249,6 +1253,7 @@ impl GraphPhaseExecution {
             .take()
             .ok_or_else(|| anyhow!("graph record receiver was already consumed"))?;
         let captured = self.captured.clone();
+        let supplement = self.supplement.clone();
         let phase_identity = self.phase_identity.clone();
         let sampler = self.adaptive_sampler.clone();
         let progress = self.progress.clone();
@@ -1258,6 +1263,7 @@ impl GraphPhaseExecution {
                 while let Ok(event) = events.try_recv() {
                     ingest_graph_execution_event_for_phase(
                         &captured,
+                        &supplement,
                         sampler.as_ref(),
                         &progress,
                         &phase_identity,
@@ -1278,6 +1284,7 @@ impl GraphPhaseExecution {
                     event = events.recv() => match event {
                         Some(event) => ingest_graph_execution_event_for_phase(
                             &captured,
+                            &supplement,
                             sampler.as_ref(),
                             &progress,
                             &phase_identity,
@@ -1295,6 +1302,7 @@ impl GraphPhaseExecution {
 
 fn ingest_graph_execution_event_for_phase(
     captured: &Rc<RefCell<Vec<CapturedRecord>>>,
+    supplement: &Rc<RefCell<GraphPhaseSupplement>>,
     sampler: Option<&SharedWindowSampler>,
     progress: &GraphPhaseProgress,
     identity: &PhaseIdentity,
@@ -1309,16 +1317,24 @@ fn ingest_graph_execution_event_for_phase(
         });
         record.ingest.profiling_index = identity.profiling_index;
     }
-    ingest_graph_execution_event(captured, sampler, progress, event);
+    ingest_graph_execution_event(captured, supplement, sampler, progress, event);
 }
 
 fn ingest_graph_execution_event(
     captured: &Rc<RefCell<Vec<CapturedRecord>>>,
+    supplement: &Rc<RefCell<GraphPhaseSupplement>>,
     sampler: Option<&SharedWindowSampler>,
     progress: &GraphPhaseProgress,
     event: GraphExecutionEvent,
 ) {
     match event {
+        GraphExecutionEvent::TraceSupplement { supplement: trace } => {
+            if trace.completed
+                && let Err(error) = supplement.borrow_mut().push(trace)
+            {
+                progress.failures.record(error.to_string());
+            }
+        }
         GraphExecutionEvent::FirstToken { trace_id, uuid } => {
             progress.first_token(&trace_id, uuid);
         }
@@ -1519,6 +1535,7 @@ struct GraphPhaseExecutionFactory {
     sidecars: RefCell<HashMap<String, Vec<Rc<dyn ScheduledPhaseSidecar>>>>,
     placements: Vec<Rc<dyn TracePlacement>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
+    supplement: Rc<RefCell<GraphPhaseSupplement>>,
     outcome: Rc<RefCell<GraphWorkloadReport>>,
     /// Run-scoped ledger of terminal WARMUP-phase trace failures, consumed by
     /// [`run_graph_phases`] to abort before PROFILING.
@@ -1634,6 +1651,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             failures: prepared.failures,
             events: RefCell::new(Some(prepared.events)),
             captured: self.captured.clone(),
+            supplement: self.supplement.clone(),
             progress,
             adaptive_sampler,
             sidecars,
@@ -1837,6 +1855,7 @@ pub(crate) async fn run_graph_phases(
     }
 
     let captured = Rc::new(RefCell::new(Vec::new()));
+    let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
     let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
     let placements = prepared
         .iter()
@@ -1873,6 +1892,7 @@ pub(crate) async fn run_graph_phases(
         sidecars: RefCell::new(sidecars),
         placements,
         captured: captured.clone(),
+        supplement: supplement.clone(),
         outcome: outcome.clone(),
         warmup_failed_trace_ids: warmup_failed_trace_ids.clone(),
         warmup_lane_ledger: warmup_lane_ledger.clone(),
@@ -1909,10 +1929,12 @@ pub(crate) async fn run_graph_phases(
         record.ingest.request_index = Some(request_index);
     }
     let workload = std::mem::take(&mut *outcome.borrow_mut());
+    let supplement = std::mem::take(&mut *supplement.borrow_mut());
     Ok(GraphPhaseRunOutput {
         captured,
         phases: phase_stats,
         workload,
+        supplement,
     })
 }
 
@@ -3350,9 +3372,11 @@ mod tests {
         let sampler: SharedWindowSampler =
             Rc::new(RefCell::new(Box::new(TumblingWindowSampler::new(0))));
         let captured = Rc::new(RefCell::new(Vec::new()));
+        let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
 
         ingest_graph_execution_event(
             &captured,
+            &supplement,
             Some(&sampler),
             &progress,
             GraphExecutionEvent::FirstToken {
@@ -3362,6 +3386,7 @@ mod tests {
         );
         ingest_graph_execution_event(
             &captured,
+            &supplement,
             Some(&sampler),
             &progress,
             GraphExecutionEvent::Record {
@@ -3382,6 +3407,34 @@ mod tests {
                 ..PhaseReturn::default()
             }]
         );
+    }
+
+    #[test]
+    fn phase_fold_retains_only_successful_worker_terminal_supplements() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let (progress, _outcome) = progress(sink, failures.clone());
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
+
+        ingest_graph_execution_event(
+            &captured,
+            &supplement,
+            None,
+            &progress,
+            GraphExecutionEvent::TraceSupplement {
+                supplement: crate::graph::supplement::TraceTerminalSupplement::new(
+                    "run".into(),
+                    "trajectory".into(),
+                    "trace-success".into(),
+                    0,
+                    "recorded_replay",
+                ),
+            },
+        );
+
+        assert_eq!(supplement.borrow().traces.len(), 1);
+        assert!(failures.first().is_none());
     }
 
     #[test]
@@ -3674,6 +3727,7 @@ mod tests {
             arrival_ns: 0,
         });
         let captured = Rc::new(RefCell::new(Vec::new()));
+        let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
 
         let feed = |node_id: &str, uuid: u128, canceled: bool, at_ns: i64| {
             clock.advance_to(at_ns);
@@ -3681,6 +3735,7 @@ mod tests {
             record.uuid = Uuid::from_u128(uuid);
             ingest_graph_execution_event(
                 &captured,
+                &supplement,
                 None,
                 &progress,
                 GraphExecutionEvent::Record {
@@ -3727,8 +3782,10 @@ mod tests {
             arrival_ns: 0,
         });
         let captured = Rc::new(RefCell::new(Vec::new()));
+        let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
         ingest_graph_execution_event(
             &captured,
+            &supplement,
             None,
             &progress,
             GraphExecutionEvent::Record {

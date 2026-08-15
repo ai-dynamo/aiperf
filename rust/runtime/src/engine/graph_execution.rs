@@ -35,10 +35,12 @@ use crate::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy, ResilientNodeFailurePolicy,
 };
+use crate::graph::replay::{ReplayCallMeasurement, ToolCallMeasurement};
 use crate::graph::sink::{
     GraphDispatchContext, GraphDispatchOptions, GraphReply, GraphSink, TraceInstanceId,
     TraceSubphase,
 };
+use crate::graph::supplement::TraceTerminalSupplement;
 use crate::graph::tools::{ToolDispatchContext, ToolDispatchRequest, ToolDispatcher};
 use crate::graph::wire::OpenAiChatMessage;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
@@ -84,6 +86,11 @@ pub trait GraphPlacementFactory: Send + Sync {
 
 /// Worker-to-coordinator facts emitted by a graph execution placement.
 pub(crate) enum GraphExecutionEvent {
+    /// Bounded successful profiling facts emitted before the trace terminal.
+    TraceSupplement {
+        /// The completed trace's replay measurements in local completion order.
+        supplement: TraceTerminalSupplement,
+    },
     /// One node crossed its first meaningful token edge.
     FirstToken {
         /// Unique root execution-instance identity.
@@ -803,6 +810,7 @@ impl TracePlacement for GraphWorkerBackend {
         let trace_warmup = (!program.is_static_graph_program())
             .then(|| program.warmup.clone())
             .flatten();
+        let is_recorded_program = !program.is_static_graph_program();
         let mut opened_driver = None;
         let program = if program.is_static_graph_program() {
             program
@@ -848,6 +856,8 @@ impl TracePlacement for GraphWorkerBackend {
             GraphTraceProgram::static_graph(program.profiling.clone())
         };
         let plan = &program.profiling;
+        let profiling_trace_id = plan.trace.id.clone();
+        let profiling_trajectory_id = format!("{}::trajectory", profiling_trace_id);
         let tool_dispatcher = opened_driver
             .as_ref()
             .and_then(|driver| driver.tool_dispatcher());
@@ -905,6 +915,8 @@ impl TracePlacement for GraphWorkerBackend {
             arrivals: Cell::new(0),
             terminal_records: Cell::new(0),
             profiling_records: Cell::new(0),
+            replay_calls: Rc::new(RefCell::new(Vec::new())),
+            replay_tools: Rc::new(RefCell::new(Vec::new())),
         });
         let mut local = LocalGraphTraceExecutionBackend::new(
             self.clock.clone(),
@@ -929,12 +941,14 @@ impl TracePlacement for GraphWorkerBackend {
         self.active
             .borrow_mut()
             .insert(execution_id, ActiveGraphTrace::Graph(local.clone()));
+        let profile_started_ns = Cell::new(None);
         let result = async {
             if let Some(warmup) = trace_warmup {
                 local
                     .execute_static_trace(warmup, Phase::Warmup, TraceSubphase::Warmup)
                     .await?;
             }
+            profile_started_ns.set(Some(self.clock.now_ns()));
             local
                 .execute_static_trace(program.profiling, self.phase, TraceSubphase::Profiling)
                 .await
@@ -948,12 +962,46 @@ impl TracePlacement for GraphWorkerBackend {
             (Err(primary), _) => Err(primary),
             (Ok(()), result) => result,
         };
+        let replay_supplement = if result.is_ok() && is_recorded_program {
+            let started = profile_started_ns.get().ok_or_else(|| {
+                TraceError::Other("recorded graph trace completed without profiling start".into())
+            })?;
+            Some(
+                TraceTerminalSupplement::new(
+                    self.run_origin_ns.to_string(),
+                    profiling_trajectory_id,
+                    profiling_trace_id,
+                    self.worker_id,
+                    "recorded_replay",
+                )
+                .with_profiling_measurements(
+                    self.clock.now_ns().saturating_sub(started) as f64 / 1_000_000.0,
+                    sink.replay_calls.borrow().clone(),
+                    sink.replay_tools.borrow().clone(),
+                ),
+            )
+        } else {
+            None
+        };
         if let Some(mut driver) = opened_driver {
             let close = self.close_driver(lifecycle_id, driver.as_mut()).await;
-            return match (result, close) {
+            let result = match (result, close) {
                 (Err(primary), _) => Err(primary),
                 (Ok(()), close) => close,
             };
+            if result.is_ok() {
+                if let Some(supplement) = replay_supplement {
+                    self.events
+                        .emit(GraphExecutionEvent::TraceSupplement { supplement })?;
+                }
+            }
+            return result;
+        }
+        if result.is_ok() {
+            if let Some(supplement) = replay_supplement {
+                self.events
+                    .emit(GraphExecutionEvent::TraceSupplement { supplement })?;
+            }
         }
         result
     }
@@ -1121,6 +1169,10 @@ struct EngineGraphSink {
     terminal_records: Cell<u64>,
     profiling_records: Cell<u64>,
     tool_dispatcher: Option<Rc<dyn ToolDispatcher>>,
+    /// Completed profiling-only LLM timing facts, retained until the trace terminal.
+    replay_calls: Rc<RefCell<Vec<ReplayCallMeasurement>>>,
+    /// Attempted profiling-only tool timings, retained without command/output bytes.
+    replay_tools: Rc<RefCell<Vec<ToolCallMeasurement>>>,
 }
 
 #[async_trait(?Send)]
@@ -1129,7 +1181,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
         &self,
         node_id: &str,
         node: &crate::graph::model::ToolNode,
-        _context: &GraphDispatchContext,
+        context: &GraphDispatchContext,
     ) -> Result<GraphReply<OpenAiChatMessage>> {
         let dispatcher = self
             .tool_dispatcher
@@ -1145,6 +1197,14 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                     },
                 )
                 .await?;
+            if context.trace_subphase == TraceSubphase::Profiling {
+                self.replay_tools
+                    .borrow_mut()
+                    .push(ToolCallMeasurement::new(
+                        result.duration_ns as f64 / 1_000_000_000.0,
+                        "local",
+                    ));
+            }
             output.push_str(&String::from_utf8_lossy(&result.output));
         }
         Ok(GraphReply::from_text(output))
@@ -1405,6 +1465,35 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             }),
             ingest,
         };
+        if emits_profile_events {
+            let call_index = self.replay_calls.borrow().len();
+            self.replay_calls.borrow_mut().push(ReplayCallMeasurement {
+                trace_id: self.trace_id.clone(),
+                call_index,
+                raw_end_to_end_ms: (outcome.end_ns - outcome.start_ns).max(0) as f64 / 1_000_000.0,
+                raw_inference_ms: (outcome.end_ns - outcome.start_ns).max(0) as f64 / 1_000_000.0,
+                raw_generation_ms: record
+                    .ingest
+                    .first_token_ns
+                    .map(|first| outcome.end_ns.saturating_sub(first).max(0) as f64 / 1_000_000.0)
+                    .unwrap_or_default(),
+                ttft_ms: record.ingest.first_token_ns.map(|first| {
+                    first.saturating_sub(outcome.start_ns).max(0) as f64 / 1_000_000.0
+                }),
+                stream_total_ms: Some(
+                    (outcome.end_ns - outcome.start_ns).max(0) as f64 / 1_000_000.0,
+                ),
+                observed_isl: record.ingest.tokens.input.unwrap_or_default(),
+                observed_osl: record.ingest.tokens.output.unwrap_or_default(),
+                target_osl: max_output_tokens as u64,
+                recorded_prompt_isl: Some(input_tokens),
+                sse_event_count: record.ingest.token_arrival_ns.len() as u64,
+                has_meaningful_output: record.output.response_text.is_some()
+                    || record.output.reasoning_text.is_some(),
+                has_done: matches!(outcome.terminal, ReplayTerminalStatus::Completed),
+                has_required_usage: record.ingest.usage.completion_tokens.unwrap_or_default() > 0,
+            });
+        }
         if context.trace_subphase == TraceSubphase::Profiling {
             self.events.emit(GraphExecutionEvent::Record {
                 record: Box::new(record),
@@ -2050,7 +2139,6 @@ mod tests {
     fn empty_graph_worker(trace_driver: Arc<dyn TraceProgramDriverFactory>) -> GraphWorkerBackend {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
         let segments: Arc<dyn SegmentStore> = Arc::new(InMemorySegmentStore::default());
-        let (sender, _receiver) = mpsc::unbounded_channel();
         GraphWorkerBackend {
             clock: clock.clone(),
             endpoint_runtime: Rc::new(UnusedGraphEndpointRuntime),
@@ -2067,7 +2155,7 @@ mod tests {
             default_max_tokens: 1,
             run_origin_ns: 123,
             raw_enabled: false,
-            events: Arc::new(ChannelRunnerGraphExecutionEventSink::new(sender)),
+            events: Arc::new(DiscardGraphExecutionEvents),
             node_policy: None,
             on_failure: OnFailure::Abort,
             cache_bust: None,
@@ -2079,6 +2167,14 @@ mod tests {
             next_execution: Cell::new(0),
             cancelled: Cell::new(false),
             active: RefCell::new(HashMap::new()),
+        }
+    }
+
+    struct DiscardGraphExecutionEvents;
+
+    impl GraphExecutionEventSink for DiscardGraphExecutionEvents {
+        fn emit(&self, _event: GraphExecutionEvent) -> Result<(), TraceError> {
+            Ok(())
         }
     }
 
@@ -2112,6 +2208,8 @@ mod tests {
             terminal_records: Cell::new(0),
             profiling_records: Cell::new(0),
             tool_dispatcher: None,
+            replay_calls: Rc::new(RefCell::new(Vec::new())),
+            replay_tools: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
