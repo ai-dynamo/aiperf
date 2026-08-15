@@ -126,6 +126,29 @@ fn guarded_policy_allows_an_installer_like_argument_to_a_safe_command() {
 }
 
 #[test]
+fn guarded_policy_blocks_an_installer_after_the_command_prefix() {
+    // This catches treating Bash's `command` builtin as an executable instead
+    // of continuing to the command word it explicitly dispatches.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("command apt-get install package")
+        .expect("policy parses the command builtin prefix");
+    let CommandDisposition::Synthetic(result) = disposition else {
+        panic!("command-prefixed installer must become a synthetic result");
+    };
+    assert_eq!(result.exit_code, 127);
+}
+
+#[test]
+fn guarded_policy_allows_an_expansion_only_safe_command_word() {
+    // This catches treating an empty static skeleton as a possible installer;
+    // the substitution resolves to `echo`, whose argument is harmless text.
+    let disposition = GuardedToolCommandPolicy
+        .evaluate("$(printf echo) safe")
+        .expect("policy handles an expansion-only executable word");
+    assert_eq!(disposition, CommandDisposition::Execute);
+}
+
+#[test]
 fn pinch_recipe_refuses_a_sandbox_without_workspace_materialization() {
     // This catches preflight that provisions an empty Pinch workspace on a
     // backend which cannot stage the task's digest-addressed fixture files.
