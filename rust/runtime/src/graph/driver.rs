@@ -487,6 +487,39 @@ struct RecordedReplayTraceProgramDriver {
     agent_loop: Arc<RecordedReplayAgentLoopFactories>,
 }
 
+/// Ensures the opened lifecycle lease receives cancellation-safe cleanup.
+struct LifecycleLeaseGuard {
+    lease: Box<dyn agent::AgentInvocationLease>,
+    is_closed: bool,
+}
+
+impl LifecycleLeaseGuard {
+    fn new(lease: Box<dyn agent::AgentInvocationLease>) -> Self {
+        Self {
+            lease,
+            is_closed: false,
+        }
+    }
+
+    fn lease(&self) -> &dyn agent::AgentInvocationLease {
+        self.lease.as_ref()
+    }
+
+    async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
+        self.lease.close().await?;
+        self.is_closed = true;
+        Ok(())
+    }
+}
+
+impl Drop for LifecycleLeaseGuard {
+    fn drop(&mut self) {
+        if !self.is_closed {
+            self.lease.close_on_drop();
+        }
+    }
+}
+
 #[async_trait(?Send)]
 impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
     async fn run(
@@ -552,27 +585,41 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             identity: invocation.clone(),
             environment: agent::AgentInvocationEnvironment::Isolated,
         };
-        let mut lifecycle_lease = lifecycle_lease_factory
+        let lifecycle_lease = lifecycle_lease_factory
             .open(&lifecycle_request, None)
             .await
             .map_err(|error| TraceDriverError::new(error.to_string()))?;
-        let dispatcher = lifecycle_lease.dispatcher();
-        let tool_decoder = self
-            .agent_loop
-            .tool_decoder
-            .create(&self.trace.trace_id)
-            .map_err(|error| TraceDriverError::new(error.to_string()))?;
-        let observation_formatter = self
+        let mut lifecycle_lease = LifecycleLeaseGuard::new(lifecycle_lease);
+        let tool_decoder = match self.agent_loop.tool_decoder.create(&self.trace.trace_id) {
+            Ok(decoder) => decoder,
+            Err(error) => {
+                lifecycle_lease
+                    .close()
+                    .await
+                    .map_err(|error| TraceDriverError::new(error.to_string()))?;
+                return Err(TraceDriverError::new(error.to_string()));
+            }
+        };
+        let observation_formatter = match self
             .agent_loop
             .observation_formatter
             .create(&self.trace.trace_id)
-            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        {
+            Ok(formatter) => formatter,
+            Err(error) => {
+                lifecycle_lease
+                    .close()
+                    .await
+                    .map_err(|error| TraceDriverError::new(error.to_string()))?;
+                return Err(TraceDriverError::new(error.to_string()));
+            }
+        };
         let trajectory = coordinator
             .run(
                 response_store.as_mut(),
                 trajectory_sink.as_mut(),
                 invocation_lease.as_ref(),
-                dispatcher.as_ref(),
+                lifecycle_lease.lease(),
                 tool_decoder.as_ref(),
                 observation_formatter.as_ref(),
             )
@@ -794,8 +841,12 @@ mod tests {
             ]))
         }
 
-        async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
+        fn close_on_drop(&mut self) {
             self.0.closed.fetch_add(1, Ordering::SeqCst);
+        }
+
+        async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
+            self.close_on_drop();
             Ok(())
         }
     }
@@ -815,6 +866,57 @@ mod tests {
                     },
                 ]]),
             ))
+        }
+    }
+
+    struct FailingToolDecoderFactory;
+
+    impl tools::AgentToolCallDecoderFactory for FailingToolDecoderFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+        ) -> Result<Box<dyn tools::AgentToolCallDecoder>, tools::ToolDispatchError> {
+            Err(tools::ToolDispatchError::new("decoder factory failed"))
+        }
+    }
+
+    struct FailingObservationFormatterFactory;
+
+    impl tools::AgentObservationFormatterFactory for FailingObservationFormatterFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+        ) -> Result<Box<dyn tools::AgentObservationFormatter>, tools::ToolDispatchError> {
+            Err(tools::ToolDispatchError::new("formatter factory failed"))
+        }
+    }
+
+    struct BlockingCoordinatorFactory;
+
+    impl agent::AgentTurnCoordinatorFactory for BlockingCoordinatorFactory {
+        fn create(
+            &self,
+            _invocation: &agent::AgentInvocationIdentity,
+            _spec: &agent::AgentTurnCoordinatorSpec,
+        ) -> Result<Box<dyn agent::AgentTurnCoordinator>, agent::AgentLoopError> {
+            Ok(Box::new(BlockingCoordinator))
+        }
+    }
+
+    struct BlockingCoordinator;
+
+    #[async_trait(?Send)]
+    impl agent::AgentTurnCoordinator for BlockingCoordinator {
+        async fn run(
+            &mut self,
+            _response_store: &mut dyn agent::AgentResponseStore,
+            _trajectory: &mut dyn agent::AgentTrajectorySink,
+            _leases: &dyn agent::InvocationLeaseFactory,
+            _invocation_lease: &dyn agent::AgentInvocationLease,
+            _decoder: &dyn tools::AgentToolCallDecoder,
+            _formatter: &dyn tools::AgentObservationFormatter,
+        ) -> Result<agent::AgentTrajectory, agent::AgentLoopError> {
+            std::future::pending().await
         }
     }
 
@@ -1009,5 +1111,116 @@ mod tests {
                 environment: agent::AgentInvocationEnvironment::Isolated,
             }]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_replay_closes_lifecycle_lease_when_decoder_factory_fails() {
+        let lifecycle = Arc::new(LifecycleCounts::default());
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(RecordingLifecycleLeaseFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(FailingToolDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run-decoder-error".into(),
+            trajectory_id: "trajectory-decoder-error".into(),
+            trace_id: "trace-decoder-error".into(),
+        };
+        let program = recorded_program(&trace.trace_id);
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .expect("recorded replay driver is created");
+
+        let error = driver
+            .run(&program, &TraceDriverContext { trace: &trace })
+            .await
+            .expect_err("decoder factory failure rejects the trace");
+
+        assert!(error.to_string().contains("decoder factory failed"));
+        assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+        assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_replay_closes_lifecycle_lease_when_formatter_factory_fails() {
+        let lifecycle = Arc::new(LifecycleCounts::default());
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(RecordingLifecycleLeaseFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(FailingObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run-formatter-error".into(),
+            trajectory_id: "trajectory-formatter-error".into(),
+            trace_id: "trace-formatter-error".into(),
+        };
+        let program = recorded_program(&trace.trace_id);
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .expect("recorded replay driver is created");
+
+        let error = driver
+            .run(&program, &TraceDriverContext { trace: &trace })
+            .await
+            .expect_err("formatter factory failure rejects the trace");
+
+        assert!(error.to_string().contains("formatter factory failed"));
+        assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+        assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_replay_drop_fences_lifecycle_lease_while_coordinator_awaits() {
+        let lifecycle = Arc::new(LifecycleCounts::default());
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(BlockingCoordinatorFactory),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(RecordingLifecycleLeaseFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run-cancel".into(),
+            trajectory_id: "trajectory-cancel".into(),
+            trace_id: "trace-cancel".into(),
+        };
+        let program = recorded_program(&trace.trace_id);
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .expect("recorded replay driver is created");
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let task = tokio::task::spawn_local(async move {
+                    driver
+                        .run(&program, &TraceDriverContext { trace: &trace })
+                        .await
+                });
+
+                tokio::task::yield_now().await;
+                task.abort();
+                assert!(task.await.expect_err("task is cancelled").is_cancelled());
+                assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+            })
+            .await;
     }
 }

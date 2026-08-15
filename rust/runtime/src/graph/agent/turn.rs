@@ -12,14 +12,12 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::graph::tools::{
-    AgentObservationFormatter, AgentToolCallDecoder, ToolDispatchError, ToolDispatcher,
-};
+use crate::graph::tools::{AgentObservationFormatter, AgentToolCallDecoder, ToolDispatchError};
 
 use super::{
-    AgentInvocationIdentity, AgentResponseHandle, AgentResponseSource, AgentResponseStore,
-    AgentResponseStoreError, AgentTrajectory, AgentTrajectoryError, AgentTrajectoryResponse,
-    AgentTrajectorySink, InvocationLeaseFactory,
+    AgentInvocationIdentity, AgentInvocationLease, AgentResponseHandle, AgentResponseSource,
+    AgentResponseStore, AgentResponseStoreError, AgentTrajectory, AgentTrajectoryError,
+    AgentTrajectoryResponse, AgentTrajectorySink, InvocationLeaseFactory,
 };
 
 /// Explicit selection of the response bytes used by one turn.
@@ -99,7 +97,7 @@ pub trait AgentTurnCoordinator {
         response_store: &mut dyn AgentResponseStore,
         trajectory: &mut dyn AgentTrajectorySink,
         leases: &dyn InvocationLeaseFactory,
-        dispatcher: &dyn ToolDispatcher,
+        invocation_lease: &dyn AgentInvocationLease,
         decoder: &dyn AgentToolCallDecoder,
         formatter: &dyn AgentObservationFormatter,
     ) -> Result<AgentTrajectory, AgentLoopError>;
@@ -186,11 +184,12 @@ impl AgentTurnCoordinator for StaticAgentTurnCoordinator {
         response_store: &mut dyn AgentResponseStore,
         trajectory: &mut dyn AgentTrajectorySink,
         leases: &dyn InvocationLeaseFactory,
-        dispatcher: &dyn ToolDispatcher,
+        invocation_lease: &dyn AgentInvocationLease,
         decoder: &dyn AgentToolCallDecoder,
         formatter: &dyn AgentObservationFormatter,
     ) -> Result<AgentTrajectory, AgentLoopError> {
         let _lease = leases.acquire();
+        let dispatcher = invocation_lease.dispatcher();
         let mut selected = Vec::<AgentResponseHandle>::with_capacity(self.turns.len());
         for (turn_index, turn) in self.turns.iter().enumerate() {
             let (handle, source, is_reused) = match &turn.selection {

@@ -119,6 +119,8 @@ pub fn deterministic_delegated_join_order(
 pub trait AgentInvocationLease {
     /// Borrow the sole dispatcher authorized for this invocation.
     fn dispatcher(&self) -> Rc<dyn ToolDispatcher>;
+    /// Synchronously fence resources when an owning task is cancelled or dropped.
+    fn close_on_drop(&mut self);
     /// Close child resources before the parent or trace ends.
     async fn close(&mut self) -> Result<(), crate::graph::agent::AgentLoopError>;
 }
@@ -172,8 +174,12 @@ impl AgentInvocationLease for InMemoryAgentInvocationLease {
         self.dispatcher.clone()
     }
 
-    async fn close(&mut self) -> Result<(), crate::graph::agent::AgentLoopError> {
+    fn close_on_drop(&mut self) {
         self.is_closed.set(true);
+    }
+
+    async fn close(&mut self) -> Result<(), crate::graph::agent::AgentLoopError> {
+        self.close_on_drop();
         Ok(())
     }
 }

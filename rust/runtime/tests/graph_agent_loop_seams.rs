@@ -32,11 +32,27 @@ async fn fake_live_loop_reuses_original_wire_and_correlates_tool_results() {
     let mut response_store = InMemoryAgentResponseStore::default();
     let mut trajectory = InMemoryAgentTrajectorySink::default();
     let leases = InMemoryInvocationLeaseFactory::default();
-    let dispatcher = InMemoryToolDispatcher::from_results([ToolDispatchResult::completed(
-        "call-1",
-        0,
-        Bytes::from_static(b"tool output"),
-    )]);
+    let root_dispatcher: Rc<dyn ToolDispatcher> = Rc::new(InMemoryToolDispatcher::from_results([
+        ToolDispatchResult::completed("call-1", 0, Bytes::from_static(b"tool output")),
+    ]));
+    let lifecycle_factory = InMemoryAgentInvocationLeaseFactoryFactory
+        .create("trace-loop", root_dispatcher)
+        .expect("trace creates one lifecycle owner");
+    let mut lifecycle_lease = lifecycle_factory
+        .open(
+            &AgentInvocationRequest {
+                identity: AgentInvocationIdentity {
+                    run_id: "run-loop".into(),
+                    trajectory_id: "trajectory-loop".into(),
+                    invocation_id: "trace-loop::root".into(),
+                    parent_invocation_id: None,
+                },
+                environment: AgentInvocationEnvironment::Isolated,
+            },
+            None,
+        )
+        .await
+        .expect("root lifecycle lease opens");
     let original = response_store
         .intern(
             AgentResponseSource::Recorded,
@@ -67,7 +83,7 @@ async fn fake_live_loop_reuses_original_wire_and_correlates_tool_results() {
             &mut response_store,
             &mut trajectory,
             &leases,
-            &dispatcher,
+            lifecycle_lease.as_ref(),
             &decoder,
             &formatter,
         )
@@ -100,6 +116,10 @@ async fn fake_live_loop_reuses_original_wire_and_correlates_tool_results() {
         trace.dispatched_prompt_bytes,
         u64::try_from(trace.subsequent_dispatch_prompts[0].len()).expect("prompt length fits u64")
     );
+    lifecycle_lease
+        .close()
+        .await
+        .expect("loop lifecycle lease closes");
 }
 
 #[test]
