@@ -285,6 +285,43 @@ async fn failed_container_start_force_removes_the_created_orphan() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn docker_recipe_wrapper_emits_a_terminal_frame_after_raw_shell_exit() {
+    // This catches appending the terminal frame after a raw command that calls
+    // `exit`, which leaves Docker exec at EOF and misclassifies a normal
+    // nonzero tool result as sandbox infrastructure failure.
+    let runtime = Rc::new(FakeRuntime::new([vec![Bytes::from_static(b"begin")]]));
+    let sandbox = DockerSessionSandbox::new(
+        pinch_environment(),
+        Some(PathBuf::from("/tmp/pinch-workspace")),
+        trace(),
+        ReplayRunIdentity::mint(RngRoot::new(Some(22)), "replay-run-22"),
+        RealClock::new(),
+        runtime.clone(),
+        4096,
+    )
+    .expect("valid Pinch recipe creates a Docker sandbox");
+
+    sandbox
+        .open()
+        .await
+        .expect("container starts before timing");
+    let result = sandbox
+        .run("printf begin; exit 7", None)
+        .await
+        .expect("fake framed command completes");
+    assert_eq!(result.exit_code, 0);
+    let argv = runtime.exec_argv.borrow()[0].clone();
+    let output = tokio::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .output()
+        .await
+        .expect("recipe argv executes without Docker");
+    assert!(output.status.success());
+    assert!(output.stdout.starts_with(b"begin\0aiperf-terminal:"));
+    assert!(output.stdout.ends_with(b":7\0"));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn timeout_recycles_container_and_close_force_removes_once() {
     // This catches a timeout that leaves descendants in the old container or a
     // non-idempotent close that widens cleanup beyond the active container.

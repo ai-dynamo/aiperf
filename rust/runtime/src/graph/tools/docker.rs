@@ -738,7 +738,7 @@ fn command_argv(
     argv.push(OsString::from(program));
     argv.extend(arguments.iter().map(OsString::from));
     argv.push(OsString::from(format!(
-        "exec 2>&1\n{command}\nstatus=$?\nprintf '\\0aiperf-terminal:{sentinel}:%d\\0' \"$status\"\nexit 0"
+        "exec 2>&1\n(\n{command}\n)\nstatus=$?\nprintf '\\0aiperf-terminal:{sentinel}:%d\\0' \"$status\"\nexit 0"
     )));
     Ok(argv)
 }
