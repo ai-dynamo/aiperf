@@ -14,6 +14,7 @@ use anyhow::{Result, bail};
 use super::model::config::BenchmarkConfig;
 use super::model::dataset::{CacheBustTarget, Dataset};
 use super::model::phase::{Phase, PhaseKind, PhaseRole};
+use super::model::transport::Transport;
 
 /// Validate the cross-field invariants of a lowered [`BenchmarkConfig`].
 ///
@@ -326,6 +327,32 @@ fn validate_recorded_agent_replay(cfg: &BenchmarkConfig) -> Result<()> {
         }
         if graph.tool_image.is_some() && !graph.execute_tools {
             bail!("dataset.graph.tool_image requires dataset.graph.execute_tools=true");
+        }
+        if graph.pinch_image.is_some() && !graph.execute_tools {
+            bail!("dataset.graph.pinch_image requires dataset.graph.execute_tools=true");
+        }
+        if file
+            .options
+            .get("open_loop_replay")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        {
+            bail!(
+                "dataset.options.open_loop_replay is incompatible with agent_recording; \
+                 replay traces retain sequential tool dependencies"
+            );
+        }
+        if graph.execute_tools {
+            match cfg.transport.as_ref() {
+                Some(Transport::DryRun(_)) => bail!(
+                    "dataset.graph.execute_tools=true is incompatible with transport.type=dry_run"
+                ),
+                Some(Transport::DynosimOffline(_)) => bail!(
+                    "dataset.graph.execute_tools=true is incompatible with \
+                     transport.type=dynosim_offline"
+                ),
+                _ => {}
+            }
         }
     }
     if let Some(metadata) = cfg.metadata.as_ref()
