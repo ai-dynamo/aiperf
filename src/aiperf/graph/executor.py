@@ -438,9 +438,11 @@ class TraceExecutor:
         producer genuinely failed must still surface as a trace error, so the
         walk is a real reachability test rather than a trace-wide flag check.
 
-        Breadth-first over the static successor relation from each overflowed
-        node. Overflow is rare (at most a handful of nodes per trace) and this
-        runs only on the orphan path, so the walk is not hot.
+        Depth-first over the static successor relation from each overflowed
+        node. Order is irrelevant to the result -- this is an any-path
+        reachability test, not a shortest-path one. Overflow is rare (at most a
+        handful of nodes per trace) and this runs only on the orphan path, so
+        the walk is not hot.
         """
         if not ctx.overflow_terminated_nodes:
             return False
