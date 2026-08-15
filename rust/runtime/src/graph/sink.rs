@@ -13,7 +13,53 @@ use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::graph::materialize::MaterializedGraphRequest;
+use crate::graph::model::ToolNode;
 use crate::graph::wire::WireMessage;
+use crate::metrics_core::Phase;
+
+/// Stable identity for one placed trace invocation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TraceInstanceId(String);
+
+impl TraceInstanceId {
+    /// Construct an identity from the workload-assigned trace instance id.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Borrow the workload-assigned identity.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Lifecycle section within one indivisible trace program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TraceSubphase {
+    /// Trace-local setup warmup, excluded from profiling folds.
+    Warmup,
+    /// The measured trace program.
+    Profiling,
+}
+
+impl TraceSubphase {
+    /// Whether a node in this section must produce a native inference record.
+    pub fn requires_native_request_record(self, is_llm_node: bool) -> bool {
+        let _ = self;
+        is_llm_node
+    }
+}
+
+/// Typed provenance carried with every graph request dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphDispatchContext {
+    /// Metric phase used for request credits and record partitioning.
+    pub phase: Phase,
+    /// Trace-local lifecycle section.
+    pub trace_subphase: TraceSubphase,
+    /// Workload-assigned invocation identity.
+    pub trace_instance: TraceInstanceId,
+}
 
 /// Terminal classification returned by a graph sink.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +135,15 @@ impl<M: WireMessage> GraphReply<M> {
 /// single-threaded per trace (`Rc`/`RefCell`), so sinks need not be `Send`.
 #[async_trait(?Send)]
 pub trait GraphSink<M: WireMessage> {
+    /// Execute one predetermined tool node without creating an inference record.
+    async fn dispatch_tool_node(
+        &self,
+        node_id: &str,
+        _node: &ToolNode,
+        _context: &GraphDispatchContext,
+    ) -> Result<GraphReply<M>> {
+        anyhow::bail!("graph sink does not support tool node {node_id:?}")
+    }
     /// Dispatch a node's materialized prompt. `on_first_token` must be invoked
     /// the moment the reply's first output token is observed (before the reply
     /// completes), so the executor can gate first-token-anchored successors.
@@ -116,6 +171,23 @@ pub trait GraphSink<M: WireMessage> {
             on_first_token,
         )
         .await
+    }
+
+    /// Dispatch one fully materialized request with trace lifecycle provenance.
+    ///
+    /// The default preserves the existing generic sink contract. Native sinks
+    /// override it to retain the typed request fields and metric partition.
+    async fn dispatch_request_with_context(
+        &self,
+        node_id: &str,
+        request: MaterializedGraphRequest,
+        _context: &GraphDispatchContext,
+        options: GraphDispatchOptions,
+        on_first_token: &dyn Fn(),
+    ) -> Result<GraphReply<M>> {
+        let _ = options;
+        self.dispatch_request(node_id, request, on_first_token)
+            .await
     }
 
     /// Dispatch with policy-produced directives.

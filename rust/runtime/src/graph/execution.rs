@@ -24,8 +24,9 @@ use crate::graph::policy::{
     NodeDispatchPolicy, NodeFailurePolicy, NoopNodeDispatchPolicy, ResilientNodeFailurePolicy,
 };
 use crate::graph::runtime::Handle;
-use crate::graph::sink::GraphSink;
+use crate::graph::sink::{GraphSink, TraceSubphase};
 use crate::graph::wire::WireMessage;
+use crate::metrics_core::Phase;
 
 /// Object-safe backend for one complete root trace.
 ///
@@ -129,23 +130,23 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
         self.flags = flags;
         self
     }
-}
 
-#[async_trait(?Send)]
-impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBackend<M> {
-    async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
-        if !program.is_static_graph_program() {
-            return Err(TraceError::UnsupportedDriver(program.driver.kind));
-        }
-        let plan = program.profiling;
+    /// Execute a static trace in one explicit lifecycle partition.
+    pub async fn execute_static_trace(
+        &self,
+        plan: crate::graph::model::GraphTracePlan,
+        phase: Phase,
+        trace_subphase: TraceSubphase,
+    ) -> Result<(), TraceError> {
         if self.cancelled.get() {
             return Err(local_cancellation(&plan.trace.id));
         }
 
-        // Flat fast path: an eligible single-node trace runs as one admitted,
-        // measured dispatch over the same sink, with no scheduler / channel
-        // store / trace context. Cancellation rides a `TraceContext`-free latch.
-        if !self.force_full
+        // The flat path predates typed dispatch context, so retain it only for
+        // ordinary profiling. Trace-local warmup always takes the canonical
+        // executor path and consequently preserves its record partition.
+        if trace_subphase == TraceSubphase::Profiling
+            && !self.force_full
             && !crate::graph::flat::flatgraph_disabled()
             && crate::graph::flat::is_flat_graph(&plan.graph)
         {
@@ -164,7 +165,6 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
                 .borrow_mut()
                 .retain(|weak| !weak.ptr_eq(&Rc::downgrade(&abort)));
             return match result {
-                // Match the general executor: a cancelled trace reports Cancelled.
                 Ok(()) if abort.is_tripped() => Err(local_cancellation(&trace_id)),
                 other => other,
             };
@@ -173,7 +173,7 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
         #[cfg(test)]
         self.executor_built.set(true);
         let handle = Handle::new(self.clock.clone());
-        let executor = TraceExecutor::new_with_policies(
+        let executor = TraceExecutor::new_with_policies_and_dispatch_context(
             Rc::new(plan.graph),
             self.materializer.clone(),
             self.sink.clone(),
@@ -181,6 +181,8 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
             self.node_failure.clone(),
             handle.clone(),
             self.flags,
+            phase,
+            trace_subphase,
         )?;
         let context = executor.build_context(plan.trace)?;
         self.active.borrow_mut().push(Rc::downgrade(&context));
@@ -190,6 +192,21 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
             .borrow_mut()
             .retain(|active| active.as_ptr() != Rc::as_ptr(&context));
         context.abort.borrow().clone().map_or_else(|| Ok(()), Err)
+    }
+}
+
+#[async_trait(?Send)]
+impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBackend<M> {
+    async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+        if !program.is_static_graph_program() {
+            return Err(TraceError::UnsupportedDriver(program.driver.kind));
+        }
+        self.execute_static_trace(
+            program.profiling,
+            Phase::Profiling,
+            TraceSubphase::Profiling,
+        )
+        .await
     }
 
     fn cancel_inflight(&self) -> Result<(), TraceError> {

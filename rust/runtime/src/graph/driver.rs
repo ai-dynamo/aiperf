@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -259,6 +260,25 @@ impl TraceDriverCapabilities {
 /// Trace-local program driver selected through [`TraceDriverSpec`].
 #[async_trait(?Send)]
 pub trait TraceProgramDriver {
+    /// Open resources that must remain owned for the complete trace program.
+    async fn open(
+        &mut self,
+        _program: &GraphTraceProgram,
+        _context: &TraceDriverContext<'_>,
+    ) -> Result<(), TraceDriverError> {
+        Ok(())
+    }
+
+    /// Borrow the trace-local tool dispatcher after [`Self::open`].
+    fn tool_dispatcher(&self) -> Option<Rc<dyn tools::ToolDispatcher>> {
+        None
+    }
+
+    /// Release resources after the profiling graph reaches its terminal path.
+    async fn close(&mut self) -> Result<(), TraceDriverError> {
+        Ok(())
+    }
+
     /// Run one program and return bounded terminal facts to placement.
     async fn run(
         &mut self,
@@ -476,6 +496,7 @@ impl TraceProgramDriverFactory for RecordedReplayTraceProgramDriverFactory {
             worker,
             trace: trace.clone(),
             agent_loop: self.agent_loop.clone(),
+            session: None,
         }))
     }
 }
@@ -485,6 +506,12 @@ struct RecordedReplayTraceProgramDriver {
     worker: WorkerIdentity,
     trace: TraceIdentity,
     agent_loop: Arc<RecordedReplayAgentLoopFactories>,
+    session: Option<RecordedReplayTraceSession>,
+}
+
+struct RecordedReplayTraceSession {
+    dispatcher: Rc<dyn tools::ToolDispatcher>,
+    lifecycle_lease: LifecycleLeaseGuard,
 }
 
 /// Ensures the opened lifecycle lease receives cancellation-safe cleanup.
@@ -561,6 +588,91 @@ impl Drop for LifecycleOpeningGuard {
 
 #[async_trait(?Send)]
 impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
+    async fn open(
+        &mut self,
+        program: &GraphTraceProgram,
+        context: &TraceDriverContext<'_>,
+    ) -> Result<(), TraceDriverError> {
+        if self.session.is_some() {
+            return Err(TraceDriverError::new(
+                "recorded replay trace session is already open",
+            ));
+        }
+        if program.driver.kind != "recorded_replay" || self.trace != *context.trace {
+            return Err(TraceDriverError::new(
+                "recorded replay driver received another program",
+            ));
+        }
+        let invocation = agent::AgentInvocationIdentity {
+            run_id: self.trace.run_id.clone(),
+            trajectory_id: self.trace.trajectory_id.clone(),
+            invocation_id: format!("{}::root", self.trace.trace_id),
+            parent_invocation_id: None,
+        };
+        let dispatcher = self
+            .agent_loop
+            .tool_dispatcher
+            .create(&self.trace.trace_id)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let factory = self
+            .agent_loop
+            .lifecycle_lease
+            .create(&self.trace.trace_id, dispatcher.clone())
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let mut opening = LifecycleOpeningGuard::new(
+            factory
+                .begin_open(
+                    &agent::AgentInvocationRequest {
+                        identity: invocation,
+                        environment: agent::AgentInvocationEnvironment::Isolated,
+                    },
+                    None,
+                )
+                .map_err(|error| TraceDriverError::new(error.to_string()))?,
+        );
+        let lease = opening
+            .open()
+            .await
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let mut lifecycle_lease = LifecycleLeaseGuard::new(lease);
+        if let Err(error) = dispatcher
+            .open_trace(tools::TraceOpenContext {
+                trace: &self.trace,
+                environment: None,
+                workspace: None,
+                run_label: &self.trace.run_id,
+            })
+            .await
+        {
+            let _ = lifecycle_lease.close().await;
+            return Err(TraceDriverError::new(error.to_string()));
+        }
+        self.session = Some(RecordedReplayTraceSession {
+            dispatcher,
+            lifecycle_lease,
+        });
+        Ok(())
+    }
+
+    fn tool_dispatcher(&self) -> Option<Rc<dyn tools::ToolDispatcher>> {
+        self.session
+            .as_ref()
+            .map(|session| session.dispatcher.clone())
+    }
+
+    async fn close(&mut self) -> Result<(), TraceDriverError> {
+        let Some(mut session) = self.session.take() else {
+            return Ok(());
+        };
+        let close_dispatcher = session.dispatcher.close_trace(&self.trace).await;
+        let close_lease = session.lifecycle_lease.close().await;
+        match (close_dispatcher, close_lease) {
+            (Err(error), _) => Err(TraceDriverError::new(error.to_string())),
+            (Ok(()), Err(error)) => Err(TraceDriverError::new(error.to_string())),
+            (Ok(()), Ok(())) => Ok(()),
+        }
+    }
+
     async fn run(
         &mut self,
         program: &GraphTraceProgram,
@@ -1227,6 +1339,43 @@ mod tests {
                 environment: agent::AgentInvocationEnvironment::Isolated,
             }]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_replay_session_stays_open_until_placement_closes_it() {
+        // This catches restoring the old prepass: it opened and closed the
+        // environment before the placement could dispatch warmup/profile work.
+        let lifecycle = Arc::new(LifecycleCounts::default());
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(RecordingLifecycleLeaseFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run".into(),
+            trajectory_id: "trajectory".into(),
+            trace_id: "trace".into(),
+        };
+        let program = recorded_program(&trace.trace_id);
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .unwrap();
+
+        driver
+            .open(&program, &TraceDriverContext { trace: &trace })
+            .await
+            .unwrap();
+        assert!(driver.tool_dispatcher().is_some());
+        assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 0);
+        driver.close().await.unwrap();
+        assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

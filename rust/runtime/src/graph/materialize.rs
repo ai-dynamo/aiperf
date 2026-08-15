@@ -30,6 +30,25 @@ pub trait PromptMaterializer {
         node: &LlmNode,
         inputs: &BTreeMap<String, ChanVal>,
     ) -> Result<Vec<Bytes>, DatasetError>;
+
+    /// Compose typed request fields after dynamic prompt assembly.
+    ///
+    /// Lightweight materializers retain the message-only contract; the shared
+    /// segment materializer overrides this to resolve node-owned raw fields.
+    fn materialize_request(
+        &self,
+        node: &LlmNode,
+        messages: Vec<Bytes>,
+    ) -> Result<MaterializedGraphRequest, GraphRequestMaterializationError> {
+        Ok(MaterializedGraphRequest {
+            messages,
+            tools: None,
+            model: None,
+            additional_body: None,
+            max_tokens: node.max_tokens,
+            streaming: node.streaming,
+        })
+    }
 }
 
 /// Fully typed core request assembled for one graph LLM node.
@@ -138,6 +157,14 @@ impl PromptMaterializer for SegmentItemsMaterializer {
             }
         }
         Ok(messages)
+    }
+
+    fn materialize_request(
+        &self,
+        node: &LlmNode,
+        messages: Vec<Bytes>,
+    ) -> Result<MaterializedGraphRequest, GraphRequestMaterializationError> {
+        GraphRequestMaterializer::materialize(self, node, messages)
     }
 }
 

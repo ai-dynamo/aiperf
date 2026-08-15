@@ -32,8 +32,11 @@ use crate::graph::policy::{
 use crate::graph::reducers::ChanVal;
 use crate::graph::runtime::Handle;
 use crate::graph::scheduler::Scheduler;
-use crate::graph::sink::{GraphReply, GraphReplyStatus, GraphSink};
+use crate::graph::sink::{
+    GraphDispatchContext, GraphReply, GraphReplyStatus, GraphSink, TraceInstanceId, TraceSubphase,
+};
 use crate::graph::wire::WireMessage;
+use crate::metrics_core::Phase;
 
 /// The post-run channel snapshot for one trace.
 #[derive(Debug, Clone)]
@@ -64,7 +67,7 @@ pub struct TraceExecutor<M: WireMessage> {
     /// `Rc`-shared handle to each node, built once at construction. `fire` clones
     /// the `Rc` (a pointer bump) instead of deep-cloning the whole `LlmNode`
     /// (its `items`/`inputs` vectors and channel strings) on every firing.
-    node_index: BTreeMap<String, Rc<LlmNode>>,
+    node_index: BTreeMap<String, Rc<ExecutableGraphNode>>,
     scheduler: Rc<Scheduler>,
     /// Run-immutable channel specs and declared-producer counts, allocated once
     /// and `Rc`-shared into every per-trace store instead of deep-cloned per
@@ -80,6 +83,8 @@ pub struct TraceExecutor<M: WireMessage> {
     ignore_edge_delays: bool,
     absolute_start_offsets: bool,
     system_idle_gap_cap_ms: Option<f64>,
+    dispatch_phase: Phase,
+    trace_subphase: TraceSubphase,
     anchor_wall_us: Cell<Option<f64>>,
 }
 
@@ -119,16 +124,32 @@ impl<M: WireMessage> TraceExecutor<M> {
         handle: Handle,
         flags: ExecutorFlags,
     ) -> Result<Rc<Self>, TraceError> {
-        if let Some((node_id, ExecutableGraphNode::Tool(_))) = graph
-            .nodes
-            .iter()
-            .find(|(_, node)| matches!(node, ExecutableGraphNode::Tool(_)))
-        {
-            return Err(TraceError::UnsupportedNode {
-                node_id: node_id.clone(),
-                kind: "tool",
-            });
-        }
+        Self::new_with_policies_and_dispatch_context(
+            graph,
+            materializer,
+            sink,
+            node_policy,
+            failure_policy,
+            handle,
+            flags,
+            Phase::Profiling,
+            TraceSubphase::Profiling,
+        )
+    }
+
+    /// Construct with explicit request metric partition and trace subphase.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_policies_and_dispatch_context(
+        graph: Rc<GraphRecord>,
+        materializer: Rc<dyn PromptMaterializer>,
+        sink: Rc<dyn GraphSink<M>>,
+        node_policy: Rc<dyn NodeDispatchPolicy>,
+        failure_policy: Rc<dyn NodeFailurePolicy>,
+        handle: Handle,
+        flags: ExecutorFlags,
+        dispatch_phase: Phase,
+        trace_subphase: TraceSubphase,
+    ) -> Result<Rc<Self>, TraceError> {
         let scheduler =
             Rc::new(Scheduler::new(&graph).map_err(|e| TraceError::Other(e.to_string()))?);
         let producers = Rc::new(producers_per_channel(&graph));
@@ -136,10 +157,7 @@ impl<M: WireMessage> TraceExecutor<M> {
         let node_index = graph
             .nodes
             .iter()
-            .filter_map(|(id, node)| {
-                node.as_llm()
-                    .map(|node| (id.clone(), Rc::new(node.clone())))
-            })
+            .map(|(id, node)| (id.clone(), Rc::new(node.clone())))
             .collect();
         Ok(Rc::new(TraceExecutor {
             graph,
@@ -156,6 +174,8 @@ impl<M: WireMessage> TraceExecutor<M> {
             ignore_edge_delays: flags.ignore_edge_delays,
             absolute_start_offsets: flags.absolute_start_offsets,
             system_idle_gap_cap_ms: flags.system_idle_gap_cap_ms,
+            dispatch_phase,
+            trace_subphase,
             anchor_wall_us: Cell::new(None),
         }))
     }
@@ -227,13 +247,22 @@ impl<M: WireMessage> TraceExecutor<M> {
             )));
             return;
         };
-        let outcome = self.clone().run_node(&node_id, &node, &ctx).await;
+        let (outcome, output) = match node.as_ref() {
+            ExecutableGraphNode::Llm(node) => (
+                self.clone().run_node(&node_id, node, &ctx).await,
+                &node.output,
+            ),
+            ExecutableGraphNode::Tool(node) => (
+                self.clone().run_tool_node(&node_id, node, &ctx).await,
+                &node.output,
+            ),
+        };
         let (result, err) = match outcome {
             Ok(result) => (result, None),
             Err(e) => (None, Some(e)),
         };
         let success = result.is_some();
-        self.finalize_node(&node_id, &node, &ctx, success);
+        self.finalize_node(&node_id, output, &ctx, success);
         if let Some(e) = err {
             ctx.set_abort(e);
             return;
@@ -242,6 +271,30 @@ impl<M: WireMessage> TraceExecutor<M> {
             return;
         }
         self.schedule_successors(&node_id, &ctx);
+    }
+
+    async fn run_tool_node(
+        self: Rc<Self>,
+        node_id: &str,
+        node: &crate::graph::model::ToolNode,
+        ctx: &Rc<TraceContext>,
+    ) -> Result<Option<NodeExecutionResult>, TraceError> {
+        let reply = self
+            .sink
+            .dispatch_tool_node(
+                node_id,
+                node,
+                &GraphDispatchContext {
+                    phase: self.dispatch_phase,
+                    trace_subphase: self.trace_subphase,
+                    trace_instance: TraceInstanceId::new(ctx.trace_id.to_string()),
+                },
+            )
+            .await
+            .map_err(|error| TraceError::Other(error.to_string()))?;
+        let value = self.reply_value_for_output(&node.output, reply);
+        self.publish_write(node_id, &node.output, value, ctx)?;
+        Ok(Some(NodeExecutionResult))
     }
 
     async fn run_node(
@@ -271,6 +324,10 @@ impl<M: WireMessage> TraceExecutor<M> {
         let messages: Vec<Bytes> = self
             .materializer
             .build(node, &inputs)
+            .map_err(|error| TraceError::Other(error.to_string()))?;
+        let request = self
+            .materializer
+            .materialize_request(node, messages)
             .map_err(|error| TraceError::Other(error.to_string()))?;
 
         let info = NodeDispatchInfo {
@@ -317,10 +374,15 @@ impl<M: WireMessage> TraceExecutor<M> {
         // request (and, under a virtual clock, its remaining modeled latency).
         // Without this select the node would run to its full terminal and keep
         // scheduling successors long past the boundary.
-        let dispatch = self.sink.dispatch_with_options(
+        let dispatch_context = GraphDispatchContext {
+            phase: self.dispatch_phase,
+            trace_subphase: self.trace_subphase,
+            trace_instance: TraceInstanceId::new(ctx.trace_id.to_string()),
+        };
+        let dispatch = self.sink.dispatch_request_with_context(
             node_id,
-            messages,
-            node.max_tokens,
+            request,
+            &dispatch_context,
             options,
             &on_first_token,
         );
@@ -400,7 +462,11 @@ impl<M: WireMessage> TraceExecutor<M> {
     /// channel gets a one-element `[message]` list (empty on no content); a
     /// value-typed channel gets the serialized message (or `null`).
     fn reply_value(&self, node: &LlmNode, reply: GraphReply<M>) -> ChanVal {
-        let messages = self.channel_is_messages(&node.output);
+        self.reply_value_for_output(&node.output, reply)
+    }
+
+    fn reply_value_for_output(&self, output: &str, reply: GraphReply<M>) -> ChanVal {
+        let messages = self.channel_is_messages(output);
         match reply.message {
             Some(m) => {
                 let mv = serde_json::to_value(m).unwrap_or(Value::Null);
@@ -416,12 +482,16 @@ impl<M: WireMessage> TraceExecutor<M> {
                     ChanVal::Val(mv)
                 }
             }
-            None => self.empty_value(node),
+            None => self.empty_value_for_output(output),
         }
     }
 
     fn empty_value(&self, node: &LlmNode) -> ChanVal {
-        if self.channel_is_messages(&node.output) {
+        self.empty_value_for_output(&node.output)
+    }
+
+    fn empty_value_for_output(&self, output: &str) -> ChanVal {
+        if self.channel_is_messages(output) {
             ChanVal::encoded_messages(Vec::new())
         } else {
             ChanVal::Val(Value::Null)
@@ -456,7 +526,7 @@ impl<M: WireMessage> TraceExecutor<M> {
         }
     }
 
-    fn finalize_node(&self, node_id: &str, node: &LlmNode, ctx: &Rc<TraceContext>, success: bool) {
+    fn finalize_node(&self, node_id: &str, output: &str, ctx: &Rc<TraceContext>, success: bool) {
         ctx.node_finish_wall_us
             .borrow_mut()
             .insert(node_id.to_string(), self.loop_wall_us());
@@ -466,9 +536,7 @@ impl<M: WireMessage> TraceExecutor<M> {
             .borrow_mut()
             .insert(node_id.to_string());
         ctx.notify_first_token();
-        for channel in node.write_channels() {
-            let _ = ctx.store.mark_producer_done(channel, success);
-        }
+        let _ = ctx.store.mark_producer_done(output, success);
     }
 
     fn schedule_successors(self: &Rc<Self>, node_id: &str, ctx: &Rc<TraceContext>) {
