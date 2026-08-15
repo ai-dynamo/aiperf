@@ -47,6 +47,34 @@ impl RewardDocument {
     }
 }
 
+/// Result of parsing a reward artifact and any mandatory evaluator evidence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RewardParseOutcome {
+    /// Parsed finite reward metrics, or the exact parse failure.
+    pub reward: Result<RewardDocument, RewardError>,
+    /// Typed evaluator evidence for a parse failure.
+    pub evidence: Option<EvidenceEvent>,
+}
+
+/// Parses a verifier reward and records malformed input as evaluator evidence.
+pub fn parse_reward_with_evidence(
+    attempt: AttemptId,
+    sequence: u64,
+    reward_json: Option<&[u8]>,
+    reward_txt: Option<&[u8]>,
+) -> RewardParseOutcome {
+    match RewardDocument::parse(reward_json, reward_txt) {
+        Ok(reward) => RewardParseOutcome {
+            reward: Ok(reward),
+            evidence: None,
+        },
+        Err(error) => RewardParseOutcome {
+            evidence: Some(invalid_reward_evidence(attempt, sequence, &error)),
+            reward: Err(error),
+        },
+    }
+}
+
 /// Creates typed evaluator evidence for a malformed or absent verifier reward.
 pub fn invalid_reward_evidence(
     attempt: AttemptId,

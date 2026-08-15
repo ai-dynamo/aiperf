@@ -13,4 +13,7 @@ pub use execution::{
     VerifierExecutionError, VerifierMode, VerifierSandboxFactory, prepare_verifier,
 };
 pub use regrade::{RegradeError, RegradeRequest, VerifierResult, regrade};
-pub use reward::{RewardDocument, RewardError, invalid_reward_evidence};
+pub use reward::{
+    RewardDocument, RewardError, RewardParseOutcome, invalid_reward_evidence,
+    parse_reward_with_evidence,
+};
