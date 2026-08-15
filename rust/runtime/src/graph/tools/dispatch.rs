@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt::{self, Display};
+use std::rc::Rc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -84,6 +85,12 @@ pub trait ToolDispatcher {
     ) -> Result<ToolDispatchResult, ToolDispatchError>;
 }
 
+/// Frozen factory creating one worker-local dispatcher per trace.
+pub trait ToolDispatcherFactory: Send + Sync {
+    /// Create a fresh dispatcher for the trace-owned agent loop.
+    fn create(&self, trace_id: &str) -> Result<Rc<dyn ToolDispatcher>, ToolDispatchError>;
+}
+
 /// Provider-neutral decoded tool call retained before command dispatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentToolCall {
@@ -106,6 +113,12 @@ pub trait AgentToolCallDecoder {
     fn decode(&self, response_wire: &Bytes) -> Result<Vec<AgentToolCall>, ToolDispatchError>;
 }
 
+/// Frozen factory creating one decoder per trace-owned agent loop.
+pub trait AgentToolCallDecoderFactory: Send + Sync {
+    /// Create a fresh response decoder.
+    fn create(&self, trace_id: &str) -> Result<Box<dyn AgentToolCallDecoder>, ToolDispatchError>;
+}
+
 /// Formats correlated command results for the subsequent request materialization.
 pub trait AgentObservationFormatter {
     /// Format observations in call order after correlation validation.
@@ -114,6 +127,15 @@ pub trait AgentObservationFormatter {
         calls: &[AgentToolCall],
         results: &[ToolDispatchResult],
     ) -> Result<Vec<Bytes>, ToolDispatchError>;
+}
+
+/// Frozen factory creating one observation formatter per trace-owned agent loop.
+pub trait AgentObservationFormatterFactory: Send + Sync {
+    /// Create a fresh observation formatter.
+    fn create(
+        &self,
+        trace_id: &str,
+    ) -> Result<Box<dyn AgentObservationFormatter>, ToolDispatchError>;
 }
 
 /// Deterministic decoder fake that yields authored call batches in turn order.
@@ -136,6 +158,16 @@ impl AgentToolCallDecoder for InMemoryAgentToolCallDecoder {
         self.calls.borrow_mut().pop_front().ok_or_else(|| {
             ToolDispatchError::new("no deterministic decoded tool-call batch remains")
         })
+    }
+}
+
+/// Stock factory for empty deterministic tool-call decoders.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InMemoryAgentToolCallDecoderFactory;
+
+impl AgentToolCallDecoderFactory for InMemoryAgentToolCallDecoderFactory {
+    fn create(&self, _trace_id: &str) -> Result<Box<dyn AgentToolCallDecoder>, ToolDispatchError> {
+        Ok(Box::new(InMemoryAgentToolCallDecoder::default()))
     }
 }
 
@@ -175,6 +207,19 @@ impl AgentObservationFormatter for InMemoryAgentObservationFormatter {
     }
 }
 
+/// Stock factory for deterministic observation formatters.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InMemoryAgentObservationFormatterFactory;
+
+impl AgentObservationFormatterFactory for InMemoryAgentObservationFormatterFactory {
+    fn create(
+        &self,
+        _trace_id: &str,
+    ) -> Result<Box<dyn AgentObservationFormatter>, ToolDispatchError> {
+        Ok(Box::new(InMemoryAgentObservationFormatter))
+    }
+}
+
 /// Deterministic worker-local dispatcher used by driver tests.
 #[derive(Default)]
 pub struct InMemoryToolDispatcher {
@@ -209,5 +254,15 @@ impl ToolDispatcher for InMemoryToolDispatcher {
             )));
         }
         Ok(result)
+    }
+}
+
+/// Stock factory for empty deterministic dispatchers.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InMemoryToolDispatcherFactory;
+
+impl ToolDispatcherFactory for InMemoryToolDispatcherFactory {
+    fn create(&self, _trace_id: &str) -> Result<Rc<dyn ToolDispatcher>, ToolDispatchError> {
+        Ok(Rc::new(InMemoryToolDispatcher::default()))
     }
 }

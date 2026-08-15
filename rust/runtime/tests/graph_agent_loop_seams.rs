@@ -198,7 +198,7 @@ fn recorded_driver_refuses_load_resume_and_delegation_before_provisioning() {
             ..TraceDriverSpec::recorded_replay()
         },
     ] {
-        let error = RecordedReplayTraceProgramDriverFactory
+        let error = RecordedReplayTraceProgramDriverFactory::default()
             .capabilities(&spec)
             .expect_err("recorded replay supports fresh, non-delegated invocations only");
         assert!(error.to_string().contains("recorded_replay"));

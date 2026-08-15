@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,7 @@ use serde_json::Value;
 
 use crate::graph::model::GraphTraceProgram;
 use crate::graph::supplement::TraceTerminalSupplement;
+use crate::graph::{agent, tools};
 
 /// Stable replay task identity shared by input discovery and graph programs.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -283,12 +285,91 @@ pub trait TraceProgramDriverFactory: Send + Sync {
 }
 
 /// Stock factory for strict recorded replay.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RecordedReplayTraceProgramDriverFactory;
+#[derive(Clone)]
+pub struct RecordedReplayTraceProgramDriverFactory {
+    agent_loop: Arc<RecordedReplayAgentLoopFactories>,
+}
+
+impl Default for RecordedReplayTraceProgramDriverFactory {
+    fn default() -> Self {
+        Self {
+            agent_loop: Arc::new(RecordedReplayAgentLoopFactories::default()),
+        }
+    }
+}
+
+/// Frozen factories required to compose one recorded agent loop per trace.
+pub struct RecordedReplayAgentLoopFactories {
+    coordinator: Arc<dyn agent::AgentTurnCoordinatorFactory>,
+    response_store: Arc<dyn agent::AgentResponseStoreFactory>,
+    trajectory_sink: Arc<dyn agent::AgentTrajectorySinkFactory>,
+    invocation_lease: Arc<dyn agent::InvocationLeaseFactoryFactory>,
+    tool_dispatcher: Arc<dyn tools::ToolDispatcherFactory>,
+    tool_decoder: Arc<dyn tools::AgentToolCallDecoderFactory>,
+    observation_formatter: Arc<dyn tools::AgentObservationFormatterFactory>,
+}
+
+impl Default for RecordedReplayAgentLoopFactories {
+    fn default() -> Self {
+        Self {
+            coordinator: Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+            response_store: Arc::new(agent::InMemoryAgentResponseStoreFactory),
+            trajectory_sink: Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+            invocation_lease: Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+            tool_dispatcher: Arc::new(tools::InMemoryToolDispatcherFactory),
+            tool_decoder: Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+            observation_formatter: Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+        }
+    }
+}
+
+impl RecordedReplayAgentLoopFactories {
+    /// Freeze every worker-local agent-loop factory used by recorded replay.
+    pub fn new(
+        coordinator: Arc<dyn agent::AgentTurnCoordinatorFactory>,
+        response_store: Arc<dyn agent::AgentResponseStoreFactory>,
+        trajectory_sink: Arc<dyn agent::AgentTrajectorySinkFactory>,
+        invocation_lease: Arc<dyn agent::InvocationLeaseFactoryFactory>,
+        tool_dispatcher: Arc<dyn tools::ToolDispatcherFactory>,
+        tool_decoder: Arc<dyn tools::AgentToolCallDecoderFactory>,
+        observation_formatter: Arc<dyn tools::AgentObservationFormatterFactory>,
+    ) -> Self {
+        Self {
+            coordinator,
+            response_store,
+            trajectory_sink,
+            invocation_lease,
+            tool_dispatcher,
+            tool_decoder,
+            observation_formatter,
+        }
+    }
+}
+
+impl RecordedReplayTraceProgramDriverFactory {
+    /// Replace the frozen worker-local agent-loop composition before application setup.
+    pub fn with_agent_loop_factories(
+        mut self,
+        agent_loop: RecordedReplayAgentLoopFactories,
+    ) -> Self {
+        self.agent_loop = Arc::new(agent_loop);
+        self
+    }
+}
 
 /// Stock registry over the built-in static and recorded-replay driver families.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NativeTraceProgramDriverFactory;
+#[derive(Clone)]
+pub struct NativeTraceProgramDriverFactory {
+    recorded_replay: RecordedReplayTraceProgramDriverFactory,
+}
+
+impl Default for NativeTraceProgramDriverFactory {
+    fn default() -> Self {
+        Self {
+            recorded_replay: RecordedReplayTraceProgramDriverFactory::default(),
+        }
+    }
+}
 
 impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {
     fn capabilities(
@@ -301,7 +382,7 @@ impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {
                 capabilities.validate(spec, &spec.kind)?;
                 Ok(capabilities)
             }
-            "recorded_replay" => RecordedReplayTraceProgramDriverFactory.capabilities(spec),
+            "recorded_replay" => self.recorded_replay.capabilities(spec),
             _ => Err(TraceDriverError::new(format!(
                 "no linked trace program driver for {:?}",
                 spec.kind
@@ -320,9 +401,7 @@ impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {
                 self.capabilities(spec)?;
                 Ok(Box::new(StaticGraphTraceProgramDriver { worker }))
             }
-            "recorded_replay" => {
-                RecordedReplayTraceProgramDriverFactory.create(worker, trace, spec)
-            }
+            "recorded_replay" => self.recorded_replay.create(worker, trace, spec),
             _ => Err(TraceDriverError::new(format!(
                 "no linked trace program driver for {:?}",
                 spec.kind
@@ -392,6 +471,7 @@ impl TraceProgramDriverFactory for RecordedReplayTraceProgramDriverFactory {
         Ok(Box::new(RecordedReplayTraceProgramDriver {
             worker,
             trace: trace.clone(),
+            agent_loop: self.agent_loop.clone(),
         }))
     }
 }
@@ -400,6 +480,7 @@ impl TraceProgramDriverFactory for RecordedReplayTraceProgramDriverFactory {
 struct RecordedReplayTraceProgramDriver {
     worker: WorkerIdentity,
     trace: TraceIdentity,
+    agent_loop: Arc<RecordedReplayAgentLoopFactories>,
 }
 
 #[async_trait(?Send)]
@@ -419,6 +500,74 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
                 "recorded replay driver cannot run a different trace invocation",
             ));
         }
+        let invocation = agent::AgentInvocationIdentity {
+            run_id: self.trace.run_id.clone(),
+            trajectory_id: self.trace.trajectory_id.clone(),
+            invocation_id: format!("{}::root", self.trace.trace_id),
+            parent_invocation_id: None,
+        };
+        let coordinator_spec = agent::AgentTurnCoordinatorSpec {
+            kind: "static".into(),
+            data: BTreeMap::new(),
+        };
+        let mut coordinator = self
+            .agent_loop
+            .coordinator
+            .create(&invocation, &coordinator_spec)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let mut response_store = self
+            .agent_loop
+            .response_store
+            .create(&self.trace.trace_id)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let mut trajectory_sink = self
+            .agent_loop
+            .trajectory_sink
+            .create(
+                &self.trace.run_id,
+                &self.trace.trajectory_id,
+                &invocation.invocation_id,
+            )
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let invocation_lease = self
+            .agent_loop
+            .invocation_lease
+            .create(&self.trace.trace_id)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let tool_dispatcher = self
+            .agent_loop
+            .tool_dispatcher
+            .create(&self.trace.trace_id)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let tool_decoder = self
+            .agent_loop
+            .tool_decoder
+            .create(&self.trace.trace_id)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let observation_formatter = self
+            .agent_loop
+            .observation_formatter
+            .create(&self.trace.trace_id)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let trajectory = coordinator
+            .run(
+                response_store.as_mut(),
+                trajectory_sink.as_mut(),
+                invocation_lease.as_ref(),
+                tool_dispatcher.as_ref(),
+                tool_decoder.as_ref(),
+                observation_formatter.as_ref(),
+            )
+            .await
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        if trajectory.run_id != self.trace.run_id
+            || trajectory.trajectory_id != self.trace.trajectory_id
+            || trajectory.invocation_id != invocation.invocation_id
+        {
+            return Err(TraceDriverError::new(
+                "recorded replay trajectory sink returned mismatched identities",
+            ));
+        }
         Ok(TraceTerminalSupplement::new(
             context.trace.run_id.clone(),
             context.trace.trajectory_id.clone(),
@@ -426,5 +575,109 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             self.worker.worker_id,
             "recorded_replay",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    struct CountingCoordinatorFactory(Arc<AtomicUsize>);
+
+    impl agent::AgentTurnCoordinatorFactory for CountingCoordinatorFactory {
+        fn create(
+            &self,
+            invocation: &agent::AgentInvocationIdentity,
+            spec: &agent::AgentTurnCoordinatorSpec,
+        ) -> Result<Box<dyn agent::AgentTurnCoordinator>, agent::AgentLoopError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            agent::StaticAgentTurnCoordinatorFactory::default().create(invocation, spec)
+        }
+    }
+
+    struct CountingResponseStoreFactory(Arc<AtomicUsize>);
+
+    impl agent::AgentResponseStoreFactory for CountingResponseStoreFactory {
+        fn create(
+            &self,
+            trace_id: &str,
+        ) -> Result<Box<dyn agent::AgentResponseStore>, agent::AgentResponseStoreError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            agent::InMemoryAgentResponseStoreFactory.create(trace_id)
+        }
+    }
+
+    struct CountingTrajectorySinkFactory(Arc<AtomicUsize>);
+
+    impl agent::AgentTrajectorySinkFactory for CountingTrajectorySinkFactory {
+        fn create(
+            &self,
+            run_id: &str,
+            trajectory_id: &str,
+            invocation_id: &str,
+        ) -> Result<Box<dyn agent::AgentTrajectorySink>, agent::AgentTrajectoryError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            agent::InMemoryAgentTrajectorySinkFactory.create(run_id, trajectory_id, invocation_id)
+        }
+    }
+
+    struct CountingLeaseFactoryFactory(Arc<AtomicUsize>);
+
+    impl agent::InvocationLeaseFactoryFactory for CountingLeaseFactoryFactory {
+        fn create(
+            &self,
+            trace_id: &str,
+        ) -> Result<Box<dyn agent::InvocationLeaseFactory>, agent::AgentLoopError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            agent::InMemoryInvocationLeaseFactoryFactory.create(trace_id)
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_replay_driver_composes_fresh_agent_loop_factories_per_trace() {
+        let coordinator = Arc::new(AtomicUsize::new(0));
+        let response_store = Arc::new(AtomicUsize::new(0));
+        let trajectory_sink = Arc::new(AtomicUsize::new(0));
+        let invocation_lease = Arc::new(AtomicUsize::new(0));
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(CountingCoordinatorFactory(coordinator.clone())),
+                Arc::new(CountingResponseStoreFactory(response_store.clone())),
+                Arc::new(CountingTrajectorySinkFactory(trajectory_sink.clone())),
+                Arc::new(CountingLeaseFactoryFactory(invocation_lease.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run-1".into(),
+            trajectory_id: "trajectory-1".into(),
+            trace_id: "trace-1".into(),
+        };
+        let mut program = GraphTraceProgram::static_graph(crate::graph::model::GraphTracePlan {
+            graph: crate::graph::model::GraphRecord::default(),
+            trace: crate::graph::model::TraceRecord {
+                id: trace.trace_id.clone(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        });
+        program.driver = TraceDriverSpec::recorded_replay();
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .expect("recorded replay driver is created");
+        driver
+            .run(&program, &TraceDriverContext { trace: &trace })
+            .await
+            .expect("recorded replay runs its frozen agent loop");
+
+        assert_eq!(coordinator.load(Ordering::SeqCst), 1);
+        assert_eq!(response_store.load(Ordering::SeqCst), 1);
+        assert_eq!(trajectory_sink.load(Ordering::SeqCst), 1);
+        assert_eq!(invocation_lease.load(Ordering::SeqCst), 1);
     }
 }

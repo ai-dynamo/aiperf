@@ -6,7 +6,10 @@
 pub mod dispatch;
 
 pub use dispatch::{
-    AgentObservationFormatter, AgentToolCall, AgentToolCallDecoder,
-    InMemoryAgentObservationFormatter, InMemoryAgentToolCallDecoder, InMemoryToolDispatcher,
+    AgentObservationFormatter, AgentObservationFormatterFactory, AgentToolCall,
+    AgentToolCallDecoder, AgentToolCallDecoderFactory, InMemoryAgentObservationFormatter,
+    InMemoryAgentObservationFormatterFactory, InMemoryAgentToolCallDecoder,
+    InMemoryAgentToolCallDecoderFactory, InMemoryToolDispatcher, InMemoryToolDispatcherFactory,
     ToolDispatchError, ToolDispatchRequest, ToolDispatchResult, ToolDispatcher,
+    ToolDispatcherFactory,
 };

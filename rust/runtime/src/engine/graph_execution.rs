@@ -1422,6 +1422,7 @@ mod tests {
 
     use super::*;
     use crate::clock::SimClock;
+    use crate::dataset::InMemorySegmentStore;
     use crate::endpoints::{
         ChatEndpoint, EffectiveEndpointConfig, Endpoint, EndpointDescriptor, EndpointFactory,
         EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
@@ -1496,8 +1497,22 @@ mod tests {
         }
     }
 
+    struct UnusedGraphEndpointRuntime;
+
+    impl GraphEndpointRuntime for UnusedGraphEndpointRuntime {
+        fn materialize(&self, _input: GraphEndpointRequest) -> Result<GraphEndpointDispatch> {
+            Err(anyhow!(
+                "empty graph test must not materialize an endpoint request"
+            ))
+        }
+
+        fn transport_label(&self) -> &'static str {
+            "test"
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn non_static_trace_runs_the_registered_driver_before_graph_execution() {
+    async fn graph_agent_non_static_trace_runs_registered_driver_before_node_dispatch() {
         let created = Arc::new(AtomicUsize::new(0));
         let ran = Arc::new(AtomicUsize::new(0));
         let factory = RecordingTraceDriverFactory {
@@ -1515,13 +1530,45 @@ mod tests {
         });
         program.driver = TraceDriverSpec::recorded_replay();
 
-        let supplement = run_non_static_trace_driver(&factory, 7, 123, &program)
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let segments: Arc<dyn SegmentStore> = Arc::new(InMemorySegmentStore::default());
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let backend = GraphWorkerBackend {
+            clock: clock.clone(),
+            endpoint_runtime: Rc::new(UnusedGraphEndpointRuntime),
+            materializer: Rc::new(SegmentItemsMaterializer::new(segments.clone())),
+            segments,
+            observer: Rc::new(NativeMetricsObserver::new(
+                clock,
+                123,
+                MetricsConfig::default(),
+            )),
+            phase: Phase::Profiling,
+            worker_id: 7,
+            model: "test-model".into(),
+            default_max_tokens: 1,
+            run_origin_ns: 123,
+            raw_enabled: false,
+            events: Arc::new(ChannelRunnerGraphExecutionEventSink::new(sender)),
+            node_policy: None,
+            on_failure: OnFailure::Abort,
+            cache_bust: None,
+            ignore_trace_delays: false,
+            system_idle_gap_cap_seconds: None,
+            trace_driver: Arc::new(factory),
+            prefill_slots: None,
+            next_session: Cell::new(0),
+            next_execution: Cell::new(0),
+            cancelled: Cell::new(false),
+            active: RefCell::new(HashMap::new()),
+        };
+        backend
+            .execute_trace(program)
             .await
-            .expect("registered driver runs for a non-static trace");
+            .expect("registered driver runs before empty graph dispatch");
 
         assert_eq!(created.load(Ordering::SeqCst), 1);
         assert_eq!(ran.load(Ordering::SeqCst), 1);
-        assert_eq!(supplement.trace_id, "trace-1");
     }
 
     #[test]

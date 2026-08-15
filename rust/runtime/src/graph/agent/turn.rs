@@ -137,6 +137,12 @@ pub struct StaticAgentTurnCoordinatorFactory {
     turns: Vec<AgentTurn>,
 }
 
+impl Default for StaticAgentTurnCoordinatorFactory {
+    fn default() -> Self {
+        Self::new([])
+    }
+}
+
 impl StaticAgentTurnCoordinatorFactory {
     /// Construct a factory whose each invocation receives an independent turn cursor.
     pub fn new(turns: impl IntoIterator<Item = AgentTurn>) -> Self {

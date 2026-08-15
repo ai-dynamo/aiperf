@@ -11,8 +11,9 @@ mod turn;
 pub use lease::{
     AgentInvocationEnvironment, AgentInvocationIdentity, AgentInvocationLease,
     AgentInvocationLeaseFactory, AgentInvocationRequest, DelegatedInvocationTerminal,
-    InMemoryAgentInvocationLeaseFactory, InMemoryInvocationLeaseFactory, InvocationLease,
-    InvocationLeaseFactory, deterministic_delegated_join_order,
+    InMemoryAgentInvocationLeaseFactory, InMemoryInvocationLeaseFactory,
+    InMemoryInvocationLeaseFactoryFactory, InvocationLease, InvocationLeaseFactory,
+    InvocationLeaseFactoryFactory, deterministic_delegated_join_order,
 };
 pub use response_store::{
     AgentResponseHandle, AgentResponseSource, AgentResponseStore, AgentResponseStoreError,

@@ -22,10 +22,32 @@ pub trait InvocationLeaseFactory {
     fn acquire(&self) -> InvocationLease;
 }
 
+/// Frozen factory creating one worker-local lease factory per trace.
+pub trait InvocationLeaseFactoryFactory: Send + Sync {
+    /// Create a fresh lease factory for one trace-owned agent loop.
+    fn create(
+        &self,
+        trace_id: &str,
+    ) -> Result<Box<dyn InvocationLeaseFactory>, crate::graph::agent::AgentLoopError>;
+}
+
 /// Worker-local deterministic lease factory.
 #[derive(Default)]
 pub struct InMemoryInvocationLeaseFactory {
     next: Cell<u64>,
+}
+
+/// Stock factory for trace-local deterministic invocation leases.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InMemoryInvocationLeaseFactoryFactory;
+
+impl InvocationLeaseFactoryFactory for InMemoryInvocationLeaseFactoryFactory {
+    fn create(
+        &self,
+        _trace_id: &str,
+    ) -> Result<Box<dyn InvocationLeaseFactory>, crate::graph::agent::AgentLoopError> {
+        Ok(Box::new(InMemoryInvocationLeaseFactory::default()))
+    }
 }
 
 impl InvocationLeaseFactory for InMemoryInvocationLeaseFactory {

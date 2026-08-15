@@ -52,7 +52,7 @@ impl ExecutionFactories {
         Self {
             http,
             graph,
-            trace_driver: Arc::new(NativeTraceProgramDriverFactory),
+            trace_driver: Arc::new(NativeTraceProgramDriverFactory::default()),
             readiness_plans,
             readiness_transport,
             control_plane_http: Arc::new(NativeControlPlaneHttpProviderFactory::default()),
