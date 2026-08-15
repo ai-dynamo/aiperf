@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use crate::engine::graph_phase_runtime::GraphTraceTerminalCallback;
 use crate::graph::driver::TraceProgramDriverFactory;
 use crate::graph::replay::{
     CacheIsolationPolicy, CompletedReplayTask, ReplayCheckpoint, ReplayProvenance,
@@ -404,12 +405,16 @@ pub(crate) async fn execute_graph_native(
         "authored Graph-IR input contains no root traces after root limiting"
     );
     let checkpoint_path = request.artifact_dir.join("replay-checkpoint.json");
-    let mut replay_checkpoint = prepare_recorded_replay_checkpoint(
+    if graph.replay_resume && ModuloCellPartition::from_env().is_some() {
+        bail!("recorded-agent resume requires one controller-owned cell; cells > 1 is unsupported");
+    }
+    let replay_checkpoint = prepare_recorded_replay_checkpoint(
         &input,
         graph.replay_resume,
         &checkpoint_path,
         rng_root_for_checkpoint(graph.random_seed.or(request.random_seed)),
-    )?;
+    )?
+    .map(|checkpoint| Rc::new(RefCell::new(checkpoint)));
     if let Some(checkpoint) = replay_checkpoint.as_ref()
         && graph.replay_resume
     {
@@ -420,7 +425,7 @@ pub(crate) async fn execute_graph_native(
                 let Some(replay) = program.replay.as_ref() else {
                     return true;
                 };
-                !checkpoint.should_skip(
+                !checkpoint.borrow().should_skip(
                     &replay.identity,
                     replay.manifest_ordinal,
                     &replay.source_digest,
@@ -500,6 +505,13 @@ pub(crate) async fn execute_graph_native(
         .iter()
         .map(|phase| compose_phase_sidecars(phase, sidecars))
         .collect::<Result<Vec<_>>>()?;
+    let terminal_callback = replay_checkpoint
+        .as_ref()
+        .filter(|_| ModuloCellPartition::from_env().is_none())
+        .map(|checkpoint| {
+            recorded_replay_terminal_callback(&input, checkpoint.clone(), checkpoint_path.clone())
+        })
+        .transpose()?;
     create_run_artifacts(&request)?;
     let phased = run_graph_phases(
         &request.phases,
@@ -514,6 +526,7 @@ pub(crate) async fn execute_graph_native(
         phase_sidecars,
         &backends,
         on_failure,
+        terminal_callback,
     )
     .await?;
     // Under `Abort` (the graph default) the fail-fast policy latches the run on
@@ -567,9 +580,9 @@ pub(crate) async fn execute_graph_native(
             .collect::<Vec<_>>();
         crate::graph::replay::write_replay_artifacts(&replay_paths, &replay_traces)
             .map_err(|error| anyhow!("writing recorded replay artifacts: {error}"))?;
-        if let Some(checkpoint) = replay_checkpoint.as_mut() {
+        if let Some(checkpoint) = replay_checkpoint.as_ref() {
             finalize_recorded_replay_checkpoint(
-                checkpoint,
+                &mut checkpoint.borrow_mut(),
                 &input,
                 &phased.supplement.traces,
                 &checkpoint_path,
@@ -963,9 +976,15 @@ fn prepare_recorded_replay_checkpoint(
         recordings.insert(key.clone(), trace.source_digest.clone());
         profiles.insert(
             key.clone(),
-            blake3::hash(trace.request_profile_identity.as_bytes())
-                .to_hex()
-                .to_string(),
+            blake3::hash(
+                serde_json::to_vec(&program.profiling)
+                    .map_err(|error| {
+                        anyhow!("serializing effective replay request profile: {error}")
+                    })?
+                    .as_slice(),
+            )
+            .to_hex()
+            .to_string(),
         );
         environments.insert(
             key,
@@ -1031,6 +1050,84 @@ fn prepare_recorded_replay_checkpoint(
         .write_atomic(path)
         .map_err(|error| anyhow!("persisting recorded replay checkpoint before warmup: {error}"))?;
     Ok(Some(checkpoint))
+}
+
+fn recorded_replay_terminal_callback(
+    input: &Arc<crate::graph::input::GraphInputBundle>,
+    checkpoint: Rc<RefCell<ReplayCheckpoint>>,
+    checkpoint_path: std::path::PathBuf,
+) -> Result<GraphTraceTerminalCallback> {
+    let mut tasks = BTreeMap::new();
+    for program in &input.programs {
+        let Some(replay) = program.replay.as_ref() else {
+            continue;
+        };
+        let environment_digest = blake3::hash(
+            serde_json::to_string(&program.environment)
+                .map_err(|error| anyhow!("serializing replay environment identity: {error}"))?
+                .as_bytes(),
+        )
+        .to_hex()
+        .to_string();
+        if tasks
+            .insert(
+                program.profiling.trace.id.clone(),
+                (
+                    replay.identity.clone(),
+                    replay.manifest_ordinal,
+                    replay.source_digest.clone(),
+                    replay.request_profile_identity.clone(),
+                    environment_digest,
+                    replay.expected_llm_node_count,
+                ),
+            )
+            .is_some()
+        {
+            bail!(
+                "recorded replay checkpoint has duplicate trace id {:?}",
+                program.profiling.trace.id
+            );
+        }
+    }
+    Ok(Rc::new(move |trace| {
+        let Some((
+            identity,
+            manifest_ordinal,
+            source_digest,
+            profile_digest,
+            environment_digest,
+            expected,
+        )) = tasks.get(&trace.trace_id)
+        else {
+            bail!(
+                "recorded replay terminal trace {:?} has no controller checkpoint task",
+                trace.trace_id
+            );
+        };
+        let call_count = trace.calls.len() as u64;
+        let classification = if trace.completed && call_count == *expected {
+            ReplayTaskClassification::Successful
+        } else {
+            ReplayTaskClassification::Partial
+        };
+        let mut checkpoint = checkpoint.borrow_mut();
+        checkpoint.completed.insert(
+            identity.clone(),
+            CompletedReplayTask {
+                manifest_ordinal: *manifest_ordinal,
+                source_digest: source_digest.clone(),
+                request_profile_digest: profile_digest.clone(),
+                environment_digest: environment_digest.clone(),
+                successful_call_count: call_count,
+                classification,
+                artifact_offset_start: 0,
+                artifact_offset_end: call_count,
+            },
+        );
+        checkpoint.write_atomic(&checkpoint_path).map_err(|error| {
+            anyhow!("persisting recorded replay checkpoint after terminal task cleanup: {error}")
+        })
+    }))
 }
 
 fn finalize_recorded_replay_checkpoint(

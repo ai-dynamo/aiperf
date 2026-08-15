@@ -9,6 +9,10 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::driver::ReplayTaskIdentity;
@@ -151,6 +155,7 @@ impl ReplayCheckpoint {
             ReplayResumeError::new("checkpoint identity is missing persistent replay fields")
         })?;
         let disk = ReplayCheckpointDisk {
+            version: 2,
             run_id: identity.run_id.clone(),
             replay_root_digest: identity.replay_root_digest.clone(),
             manifest_digest: identity.manifest_digest.clone(),
@@ -158,14 +163,15 @@ impl ReplayCheckpoint {
             request_profile_digests: identity.request_profile_digests.clone(),
             environment_digests: identity.environment_digests.clone(),
             cache_namespace: identity.cache_namespace.clone(),
-            completed: self
-                .completed
-                .iter()
-                .map(|(identity, completed)| CheckpointTask {
-                    identity: identity.clone(),
-                    completed: completed.clone(),
-                })
-                .collect(),
+            completed: CheckpointTasks(
+                self.completed
+                    .iter()
+                    .map(|(identity, completed)| CheckpointTask {
+                        identity: identity.clone(),
+                        completed: completed.clone(),
+                    })
+                    .collect(),
+            ),
         };
         let bytes = serde_json::to_vec(&disk).map_err(|error| {
             ReplayResumeError::new(format!("serializing replay checkpoint: {error}"))
@@ -180,6 +186,11 @@ impl ReplayCheckpoint {
         let mut file = fs::File::create(&temporary).map_err(|error| {
             ReplayResumeError::new(format!("creating replay checkpoint: {error}"))
         })?;
+        #[cfg(unix)]
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| {
+                ReplayResumeError::new(format!("protecting replay checkpoint: {error}"))
+            })?;
         file.write_all(&bytes).map_err(|error| {
             ReplayResumeError::new(format!("writing replay checkpoint: {error}"))
         })?;
@@ -207,6 +218,12 @@ impl ReplayCheckpoint {
         let disk: ReplayCheckpointDisk = serde_json::from_slice(&bytes).map_err(|error| {
             ReplayResumeError::new(format!("parsing replay checkpoint: {error}"))
         })?;
+        if disk.version > 2 {
+            return Err(ReplayResumeError::new(format!(
+                "unsupported replay checkpoint schema version {}",
+                disk.version
+            )));
+        }
         let checkpoint = Self {
             run: ReplayRunIdentity::for_checkpoint_with_environment(
                 disk.run_id,
@@ -218,11 +235,7 @@ impl ReplayCheckpoint {
                 disk.cache_namespace,
             ),
             manifest_digest: disk.manifest_digest,
-            completed: disk
-                .completed
-                .into_iter()
-                .map(|task| (task.identity, task.completed))
-                .collect(),
+            completed: completed_map(disk.completed.0)?,
         };
         checkpoint.validate_resume(run)?;
         Ok(checkpoint)
@@ -264,6 +277,12 @@ impl ReplayCheckpoint {
         let disk: ReplayCheckpointDisk = serde_json::from_slice(&bytes).map_err(|error| {
             ReplayResumeError::new(format!("parsing replay checkpoint: {error}"))
         })?;
+        if disk.version > 2 {
+            return Err(ReplayResumeError::new(format!(
+                "unsupported replay checkpoint schema version {}",
+                disk.version
+            )));
+        }
         Ok(Self {
             run: ReplayRunIdentity::for_checkpoint_with_environment(
                 disk.run_id,
@@ -275,11 +294,7 @@ impl ReplayCheckpoint {
                 disk.cache_namespace,
             ),
             manifest_digest: disk.manifest_digest,
-            completed: disk
-                .completed
-                .into_iter()
-                .map(|task| (task.identity, task.completed))
-                .collect(),
+            completed: completed_map(disk.completed.0)?,
         })
     }
 
@@ -335,6 +350,8 @@ impl ReplayCheckpoint {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReplayCheckpointDisk {
+    #[serde(default = "checkpoint_schema_v1")]
+    version: u8,
     run_id: String,
     replay_root_digest: String,
     manifest_digest: String,
@@ -343,7 +360,29 @@ struct ReplayCheckpointDisk {
     #[serde(default)]
     environment_digests: BTreeMap<String, String>,
     cache_namespace: String,
+    completed: CheckpointTasks,
+}
+
+fn checkpoint_schema_v1() -> u8 {
+    1
+}
+
+fn completed_map(
     completed: Vec<CheckpointTask>,
+) -> Result<BTreeMap<ReplayTaskIdentity, CompletedReplayTask>, ReplayResumeError> {
+    let mut entries = BTreeMap::new();
+    for entry in completed {
+        if entries
+            .insert(entry.identity.clone(), entry.completed)
+            .is_some()
+        {
+            return Err(ReplayResumeError::new(format!(
+                "replay checkpoint contains duplicate task identity {}:{}",
+                entry.identity.adapter, entry.identity.task_id
+            )));
+        }
+    }
+    Ok(entries)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -351,6 +390,67 @@ struct ReplayCheckpointDisk {
 struct CheckpointTask {
     identity: ReplayTaskIdentity,
     completed: CompletedReplayTask,
+}
+
+/// Current vector checkpoint entries with a reader for the historical map form.
+#[derive(Serialize)]
+struct CheckpointTasks(Vec<CheckpointTask>);
+
+impl<'de> Deserialize<'de> for CheckpointTasks {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CheckpointTasksVisitor;
+
+        impl<'de> Visitor<'de> for CheckpointTasksVisitor {
+            type Value = CheckpointTasks;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a vector of checkpoint tasks or a legacy task map")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut tasks = Vec::new();
+                while let Some(task) = sequence.next_element::<CheckpointTask>()? {
+                    tasks.push(task);
+                }
+                Ok(CheckpointTasks(tasks))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut tasks = Vec::new();
+                let mut keys = BTreeMap::new();
+                while let Some((key, completed)) =
+                    map.next_entry::<String, CompletedReplayTask>()?
+                {
+                    if keys.insert(key.clone(), ()).is_some() {
+                        return Err(de::Error::custom(format!(
+                            "replay checkpoint legacy task map contains duplicate key {key:?}"
+                        )));
+                    }
+                    let identity = serde_json::from_str(&key).map_err(|error| {
+                        de::Error::custom(format!(
+                            "replay checkpoint legacy task key must be a JSON replay identity: {error}"
+                        ))
+                    })?;
+                    tasks.push(CheckpointTask {
+                        identity,
+                        completed,
+                    });
+                }
+                Ok(CheckpointTasks(tasks))
+            }
+        }
+
+        deserializer.deserialize_any(CheckpointTasksVisitor)
+    }
 }
 
 /// Failure loading, writing, or validating persistent replay state.

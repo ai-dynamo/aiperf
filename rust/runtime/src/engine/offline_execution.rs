@@ -1698,6 +1698,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                         &backends,
                         // Co-simulation uses fail-fast graph execution.
                         OnFailure::for_graph_default(),
+                        None,
                     )
                     .await?;
                     Ok(OfflineGraphExecution {

@@ -28,7 +28,7 @@ use crate::graph::input::GraphInputBundle;
 use crate::graph::model::{GraphTracePlan, GraphTraceProgram, ParsedGraph, TraceRecord};
 use crate::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
 use crate::graph::snapshot::{chop_trie_at_frontier, chop_trie_at_tstar, rewrite_for_warmup};
-use crate::graph::supplement::GraphPhaseSupplement;
+use crate::graph::supplement::{GraphPhaseSupplement, TraceTerminalSupplement};
 use crate::graph::tstar::{PermutationDraw, TStarSampler, WindowTStarSampler, trace_duration_us};
 use crate::graph::warmup_handoff::{GraphWarmupHandoff, LaneHandoff};
 use crate::graph::workload::{
@@ -99,6 +99,9 @@ pub(crate) struct GraphPhaseRunOutput {
     /// Successful profiling replay facts folded by the controller in event order.
     pub(crate) supplement: GraphPhaseSupplement,
 }
+
+/// Controller-owned action performed after a successful terminal trace is folded.
+pub(crate) type GraphTraceTerminalCallback = Rc<dyn Fn(&TraceTerminalSupplement) -> Result<()>>;
 
 /// Validate transport-neutral authored Graph-IR phase policy.
 pub(crate) fn validate_graph_phases(phases: &[PhaseSpec]) -> Result<()> {
@@ -1223,6 +1226,7 @@ struct GraphPhaseExecution {
     events: RefCell<Option<mpsc::UnboundedReceiver<GraphExecutionEvent>>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     supplement: Rc<RefCell<GraphPhaseSupplement>>,
+    terminal_callback: Option<GraphTraceTerminalCallback>,
     progress: Rc<GraphPhaseProgress>,
     adaptive_sampler: Option<SharedWindowSampler>,
     sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
@@ -1254,6 +1258,7 @@ impl GraphPhaseExecution {
             .ok_or_else(|| anyhow!("graph record receiver was already consumed"))?;
         let captured = self.captured.clone();
         let supplement = self.supplement.clone();
+        let terminal_callback = self.terminal_callback.clone();
         let phase_identity = self.phase_identity.clone();
         let sampler = self.adaptive_sampler.clone();
         let progress = self.progress.clone();
@@ -1267,6 +1272,7 @@ impl GraphPhaseExecution {
                         sampler.as_ref(),
                         &progress,
                         &phase_identity,
+                        terminal_callback.as_ref(),
                         event,
                     );
                 }
@@ -1288,6 +1294,7 @@ impl GraphPhaseExecution {
                             sampler.as_ref(),
                             &progress,
                             &phase_identity,
+                            terminal_callback.as_ref(),
                             event,
                         ),
                         None => return,
@@ -1306,6 +1313,7 @@ fn ingest_graph_execution_event_for_phase(
     sampler: Option<&SharedWindowSampler>,
     progress: &GraphPhaseProgress,
     identity: &PhaseIdentity,
+    terminal_callback: Option<&GraphTraceTerminalCallback>,
     mut event: GraphExecutionEvent,
 ) {
     if let GraphExecutionEvent::Record { record, .. } = &mut event {
@@ -1317,7 +1325,14 @@ fn ingest_graph_execution_event_for_phase(
         });
         record.ingest.profiling_index = identity.profiling_index;
     }
-    ingest_graph_execution_event(captured, supplement, sampler, progress, event);
+    ingest_graph_execution_event(
+        captured,
+        supplement,
+        sampler,
+        progress,
+        terminal_callback,
+        event,
+    );
 }
 
 fn ingest_graph_execution_event(
@@ -1325,14 +1340,23 @@ fn ingest_graph_execution_event(
     supplement: &Rc<RefCell<GraphPhaseSupplement>>,
     sampler: Option<&SharedWindowSampler>,
     progress: &GraphPhaseProgress,
+    terminal_callback: Option<&GraphTraceTerminalCallback>,
     event: GraphExecutionEvent,
 ) {
     match event {
         GraphExecutionEvent::TraceSupplement { supplement: trace } => {
-            if trace.completed
-                && let Err(error) = supplement.borrow_mut().push(trace)
-            {
-                progress.failures.record(error.to_string());
+            if trace.completed {
+                if let Err(error) = supplement.borrow_mut().push(trace.clone()) {
+                    progress.failures.record(error.to_string());
+                    return;
+                }
+                if let Some(callback) = terminal_callback
+                    && let Err(error) = callback(&trace)
+                {
+                    progress.failures.record(format!(
+                        "persisting successful graph trace checkpoint: {error:#}"
+                    ));
+                }
             }
         }
         GraphExecutionEvent::FirstToken { trace_id, uuid } => {
@@ -1536,6 +1560,7 @@ struct GraphPhaseExecutionFactory {
     placements: Vec<Rc<dyn TracePlacement>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     supplement: Rc<RefCell<GraphPhaseSupplement>>,
+    terminal_callback: Option<GraphTraceTerminalCallback>,
     outcome: Rc<RefCell<GraphWorkloadReport>>,
     /// Run-scoped ledger of terminal WARMUP-phase trace failures, consumed by
     /// [`run_graph_phases`] to abort before PROFILING.
@@ -1652,6 +1677,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             events: RefCell::new(Some(prepared.events)),
             captured: self.captured.clone(),
             supplement: self.supplement.clone(),
+            terminal_callback: self.terminal_callback.clone(),
             progress,
             adaptive_sampler,
             sidecars,
@@ -1816,6 +1842,7 @@ pub(crate) async fn run_graph_phases(
     phase_sidecars: Vec<Vec<Rc<dyn ScheduledPhaseSidecar>>>,
     backends: &dyn GraphPhaseBackendFactory,
     on_failure: OnFailure,
+    terminal_callback: Option<GraphTraceTerminalCallback>,
 ) -> Result<GraphPhaseRunOutput> {
     validate_dataset_wrap_policy(phases, input, allow_dataset_wrap || cache_bust_enabled)?;
     ensure!(
@@ -1893,6 +1920,7 @@ pub(crate) async fn run_graph_phases(
         placements,
         captured: captured.clone(),
         supplement: supplement.clone(),
+        terminal_callback,
         outcome: outcome.clone(),
         warmup_failed_trace_ids: warmup_failed_trace_ids.clone(),
         warmup_lane_ledger: warmup_lane_ledger.clone(),
@@ -2845,15 +2873,18 @@ fn graph_adaptive_config(
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
+    use std::collections::BTreeMap;
     use std::rc::Rc;
 
     use crate::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
     use crate::dataset::SegmentPool;
     use crate::engine::graph_input::{CacheBustTarget, GraphSamplingStrategy};
+    use crate::graph::driver::ReplayTaskIdentity;
     use crate::graph::errors::TraceError;
     use crate::graph::model::{
         ExecutableGraphNode, GraphRecord, GraphTracePlan, GraphTraceProgram, TraceRecord,
     };
+    use crate::graph::replay::{CompletedReplayTask, ReplayCheckpoint, ReplayRunIdentity};
     use crate::graph::tstar::{sampler_random_seed, sampler_shuffle_seed};
     use crate::graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
     use crate::timing::{PhaseReturn, PhaseSend};
@@ -3379,6 +3410,7 @@ mod tests {
             &supplement,
             Some(&sampler),
             &progress,
+            None,
             GraphExecutionEvent::FirstToken {
                 trace_id: "trace-adaptive".into(),
                 uuid: Uuid::nil(),
@@ -3389,6 +3421,7 @@ mod tests {
             &supplement,
             Some(&sampler),
             &progress,
+            None,
             GraphExecutionEvent::Record {
                 record: Box::new(record),
                 node_id: None,
@@ -3422,6 +3455,7 @@ mod tests {
             &supplement,
             None,
             &progress,
+            None,
             GraphExecutionEvent::TraceSupplement {
                 supplement: crate::graph::supplement::TraceTerminalSupplement::new(
                     "run".into(),
@@ -3435,6 +3469,86 @@ mod tests {
 
         assert_eq!(supplement.borrow().traces.len(), 1);
         assert!(failures.first().is_none());
+    }
+
+    #[test]
+    fn successful_trace_checkpoint_survives_a_later_trace_failure() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let (progress, _outcome) = progress(sink, failures.clone());
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
+        let output = tempfile::tempdir().expect("checkpoint directory");
+        let path = output.path().join("checkpoint.json");
+        let task = ReplayTaskIdentity {
+            adapter: "adapter".into(),
+            family: "family".into(),
+            task_id: "task".into(),
+            primary_role: None,
+        };
+        let run = ReplayRunIdentity::for_checkpoint(
+            "run",
+            "root",
+            "manifest",
+            BTreeMap::from([("adapter:task".into(), "recording".into())]),
+            BTreeMap::from([("adapter:task".into(), "profile".into())]),
+            "namespace",
+        );
+        let checkpoint = Rc::new(RefCell::new(ReplayCheckpoint::new(run.clone(), "manifest")));
+        let checkpoint_for_callback = checkpoint.clone();
+        let callback_path = path.clone();
+        let callback_task = task.clone();
+        let callback: GraphTraceTerminalCallback = Rc::new(move |trace| {
+            checkpoint_for_callback.borrow_mut().completed.insert(
+                callback_task.clone(),
+                CompletedReplayTask::successful(
+                    0,
+                    "recording",
+                    "profile",
+                    "environment",
+                    trace.calls.len() as u64,
+                ),
+            );
+            checkpoint_for_callback
+                .borrow()
+                .write_atomic(&callback_path)
+                .map_err(|error| anyhow!(error.to_string()))
+        });
+
+        ingest_graph_execution_event(
+            &captured,
+            &supplement,
+            None,
+            &progress,
+            Some(&callback),
+            GraphExecutionEvent::TraceSupplement {
+                supplement: crate::graph::supplement::TraceTerminalSupplement::new(
+                    "run".into(),
+                    "trajectory".into(),
+                    "first".into(),
+                    0,
+                    "recorded_replay",
+                ),
+            },
+        );
+        ingest_graph_execution_event(
+            &captured,
+            &supplement,
+            None,
+            &progress,
+            None,
+            GraphExecutionEvent::TraceComplete {
+                trace_id: "second".into(),
+                node_count: 0,
+                requires_node_records: false,
+                result: Err(TraceError::Other("interrupted after first task".into())),
+            },
+        );
+
+        assert!(failures.first().is_some());
+        let restored = ReplayCheckpoint::read_for_resume(&path, &run)
+            .expect("first successful task remains durable after later failure");
+        assert!(restored.should_skip(&task, 0, "recording", "profile", 0));
     }
 
     #[test]
@@ -3738,6 +3852,7 @@ mod tests {
                 &supplement,
                 None,
                 &progress,
+                None,
                 GraphExecutionEvent::Record {
                     record: Box::new(record),
                     node_id: Some(node_id.to_owned()),
@@ -3788,6 +3903,7 @@ mod tests {
             &supplement,
             None,
             &progress,
+            None,
             GraphExecutionEvent::Record {
                 record: Box::new(graph_phase_record("tmpl-a::inst-a", false, false)),
                 node_id: None,

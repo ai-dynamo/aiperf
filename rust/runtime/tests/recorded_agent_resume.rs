@@ -188,3 +188,128 @@ fn resume_recovers_the_persisted_namespace_before_validating_an_unseeded_run() {
     .expect("only the namespace is recovered from protected checkpoint state");
     assert!(ReplayCheckpoint::read_for_resume(&path, &changed_profile).is_err());
 }
+
+#[test]
+fn resume_migrates_legacy_completed_map_and_rejects_invalid_entries() {
+    let output = tempfile::tempdir().expect("temporary checkpoint directory");
+    let path = output.path().join("checkpoint.json");
+    let replay_task = task();
+    let completed = CompletedReplayTask::successful(0, "recording", "profile", "environment", 4);
+    let legacy_key = serde_json::to_string(&replay_task).expect("serialize legacy task key");
+    let mut checkpoint = serde_json::json!({
+        "run_id": "opaque-run-id",
+        "replay_root_digest": "root",
+        "manifest_digest": "manifest",
+        "recording_digests": { "pinchbench:task_meeting_council_budget": "recording" },
+        "request_profile_digests": { "pinchbench:task_meeting_council_budget": "profile" },
+        "cache_namespace": "persisted namespace",
+        "completed": { legacy_key.clone(): completed },
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&checkpoint).expect("serialize legacy checkpoint"),
+    )
+    .expect("write legacy checkpoint");
+
+    let run = ReplayCheckpoint::restore_run_identity(
+        &path,
+        "opaque-run-id",
+        "root",
+        "manifest",
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "recording".into(),
+        )]),
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "profile".into(),
+        )]),
+        BTreeMap::new(),
+    )
+    .expect("recover legacy checkpoint namespace");
+    let restored =
+        ReplayCheckpoint::read_for_resume(&path, &run).expect("migrate legacy completed map");
+    assert!(restored.should_skip(&replay_task, 0, "recording", "profile", 4));
+
+    checkpoint["completed"] = serde_json::json!({ "not-an-identity": completed });
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&checkpoint).expect("serialize invalid legacy checkpoint"),
+    )
+    .expect("write invalid legacy checkpoint");
+    assert!(ReplayCheckpoint::read_for_resume(&path, &run).is_err());
+
+    let alternate_legacy_key = r#"{"family":"pinchbench-openclaw","adapter":"pinchbench","task_id":"task_meeting_council_budget","primary_role":null}"#;
+    checkpoint["completed"] = serde_json::json!({
+        legacy_key: completed,
+        alternate_legacy_key: completed,
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&checkpoint).expect("serialize duplicate legacy checkpoint"),
+    )
+    .expect("write duplicate legacy checkpoint");
+    assert!(
+        ReplayCheckpoint::restore_run_identity(
+            &path,
+            "opaque-run-id",
+            "root",
+            "manifest",
+            BTreeMap::from([(
+                "pinchbench:task_meeting_council_budget".into(),
+                "recording".into(),
+            )]),
+            BTreeMap::from([(
+                "pinchbench:task_meeting_council_budget".into(),
+                "profile".into(),
+            )]),
+            BTreeMap::new(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn resume_rejects_duplicate_vector_task_identities() {
+    let output = tempfile::tempdir().expect("temporary checkpoint directory");
+    let path = output.path().join("checkpoint.json");
+    let replay_task = task();
+    let completed = CompletedReplayTask::successful(0, "recording", "profile", "environment", 4);
+    let checkpoint = serde_json::json!({
+        "version": 2,
+        "run_id": "opaque-run-id",
+        "replay_root_digest": "root",
+        "manifest_digest": "manifest",
+        "recording_digests": { "pinchbench:task_meeting_council_budget": "recording" },
+        "request_profile_digests": { "pinchbench:task_meeting_council_budget": "profile" },
+        "environment_digests": {},
+        "cache_namespace": "persisted namespace",
+        "completed": [
+            { "identity": replay_task, "completed": completed },
+            { "identity": replay_task, "completed": completed }
+        ],
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&checkpoint).expect("serialize duplicate checkpoint"),
+    )
+    .expect("write duplicate checkpoint");
+
+    let run = ReplayCheckpoint::restore_run_identity(
+        &path,
+        "opaque-run-id",
+        "root",
+        "manifest",
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "recording".into(),
+        )]),
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "profile".into(),
+        )]),
+        BTreeMap::new(),
+    )
+    .expect_err("duplicate entries must fail before identity recovery");
+    assert!(run.to_string().contains("duplicate task identity"));
+}
