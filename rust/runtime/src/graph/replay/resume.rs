@@ -218,7 +218,7 @@ impl ReplayCheckpoint {
         let disk: ReplayCheckpointDisk = serde_json::from_slice(&bytes).map_err(|error| {
             ReplayResumeError::new(format!("parsing replay checkpoint: {error}"))
         })?;
-        if disk.version > 2 {
+        if !(1..=2).contains(&disk.version) {
             return Err(ReplayResumeError::new(format!(
                 "unsupported replay checkpoint schema version {}",
                 disk.version
@@ -277,7 +277,7 @@ impl ReplayCheckpoint {
         let disk: ReplayCheckpointDisk = serde_json::from_slice(&bytes).map_err(|error| {
             ReplayResumeError::new(format!("parsing replay checkpoint: {error}"))
         })?;
-        if disk.version > 2 {
+        if !(1..=2).contains(&disk.version) {
             return Err(ReplayResumeError::new(format!(
                 "unsupported replay checkpoint schema version {}",
                 disk.version

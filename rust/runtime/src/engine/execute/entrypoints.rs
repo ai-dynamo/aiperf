@@ -405,7 +405,9 @@ pub(crate) async fn execute_graph_native(
         "authored Graph-IR input contains no root traces after root limiting"
     );
     let checkpoint_path = request.artifact_dir.join("replay-checkpoint.json");
-    if graph.replay_resume && ModuloCellPartition::from_env().is_some() {
+    if graph.replay_resume
+        && replay_resume_cell_partition_is_unsupported(ModuloCellPartition::from_env())
+    {
         bail!("recorded-agent resume requires one controller-owned cell; cells > 1 is unsupported");
     }
     let replay_checkpoint = prepare_recorded_replay_checkpoint(
@@ -949,6 +951,10 @@ pub(crate) async fn execute_graph_native(
 
 fn rng_root_for_checkpoint(seed: Option<u64>) -> RngRoot {
     RngRoot::new(seed)
+}
+
+fn replay_resume_cell_partition_is_unsupported(partition: Option<ModuloCellPartition>) -> bool {
+    partition.is_some_and(|partition| partition.cell_count() > 1)
 }
 
 fn prepare_recorded_replay_checkpoint(
@@ -1530,6 +1536,17 @@ pub(crate) fn finish_with_shutdown<T>(
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn replay_resume_allows_identity_cell_partition_but_rejects_multi_cell() {
+        assert!(!replay_resume_cell_partition_is_unsupported(None));
+        assert!(!replay_resume_cell_partition_is_unsupported(Some(
+            ModuloCellPartition::new(0, 1).expect("identity cell partition"),
+        )));
+        assert!(replay_resume_cell_partition_is_unsupported(Some(
+            ModuloCellPartition::new(0, 2).expect("multi-cell partition"),
+        )));
+    }
 
     #[test]
     fn user_files_write_exact_pre_rendered_utf8_after_artifact_creation() {

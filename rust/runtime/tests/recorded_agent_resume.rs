@@ -313,3 +313,39 @@ fn resume_rejects_duplicate_vector_task_identities() {
     .expect_err("duplicate entries must fail before identity recovery");
     assert!(run.to_string().contains("duplicate task identity"));
 }
+
+#[test]
+fn resume_rejects_zero_and_future_checkpoint_schema_versions() {
+    let output = tempfile::tempdir().expect("temporary checkpoint directory");
+    let path = output.path().join("checkpoint.json");
+    let run = ReplayRunIdentity::for_checkpoint(
+        "opaque-run-id",
+        "root",
+        "manifest",
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "recording".into(),
+        )]),
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "profile".into(),
+        )]),
+        "persisted namespace",
+    );
+    ReplayCheckpoint::new(run.clone(), "manifest")
+        .write_atomic(&path)
+        .expect("write current checkpoint");
+    let mut checkpoint: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read checkpoint"))
+            .expect("parse checkpoint");
+
+    for version in [0, 3] {
+        checkpoint["version"] = serde_json::json!(version);
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&checkpoint).expect("serialize versioned checkpoint"),
+        )
+        .expect("write versioned checkpoint");
+        assert!(ReplayCheckpoint::read_for_resume(&path, &run).is_err());
+    }
+}
