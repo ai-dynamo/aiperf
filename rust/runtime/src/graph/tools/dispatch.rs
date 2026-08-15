@@ -51,6 +51,8 @@ pub struct ToolDispatchResult {
     pub duration_ns: u64,
     /// Whether execution reached its deadline.
     pub is_timed_out: bool,
+    /// Whether the sandbox dropped output after reaching its capture bound.
+    pub is_output_truncated: bool,
 }
 
 impl ToolDispatchResult {
@@ -62,6 +64,7 @@ impl ToolDispatchResult {
             output,
             duration_ns: 0,
             is_timed_out: false,
+            is_output_truncated: false,
         }
     }
 
@@ -73,6 +76,7 @@ impl ToolDispatchResult {
             output: result.output,
             duration_ns: result.duration_ns,
             is_timed_out: result.is_timed_out,
+            is_output_truncated: result.is_output_truncated,
         }
     }
 }
@@ -157,6 +161,10 @@ pub trait ToolSandbox {
         command: &str,
         timeout_ns: Option<u64>,
     ) -> Result<ToolCommandResult, ToolSandboxError>;
+    /// Whether this backend itself replaces a session before returning timeout.
+    fn recovers_timed_out_commands(&self) -> bool {
+        false
+    }
     /// Recreate the session after a timed-out command before continuing.
     async fn recycle(&self) -> Result<(), ToolSandboxError>;
     /// Release the session after every terminal trace path.
@@ -443,7 +451,7 @@ impl ToolDispatcher for EnvironmentToolDispatcher {
                 .map_err(ToolDispatchError::from)?,
             CommandDisposition::Synthetic(result) => result,
         };
-        if result.is_timed_out {
+        if result.is_timed_out && !self.sandbox.recovers_timed_out_commands() {
             self.sandbox
                 .recycle()
                 .await

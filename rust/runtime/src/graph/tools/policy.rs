@@ -27,6 +27,8 @@ pub struct ToolCommandResult {
     pub duration_ns: u64,
     /// Whether execution reached its deadline.
     pub is_timed_out: bool,
+    /// Whether the combined output exceeded the sandbox capture bound.
+    pub is_output_truncated: bool,
 }
 
 impl ToolCommandResult {
@@ -37,6 +39,7 @@ impl ToolCommandResult {
             exit_code,
             duration_ns: 0,
             is_timed_out: false,
+            is_output_truncated: false,
         }
     }
 
@@ -47,6 +50,7 @@ impl ToolCommandResult {
             exit_code: 124,
             duration_ns: 0,
             is_timed_out: true,
+            is_output_truncated: false,
         }
     }
 
@@ -59,6 +63,7 @@ impl ToolCommandResult {
             exit_code: 127,
             duration_ns: 0,
             is_timed_out: false,
+            is_output_truncated: false,
         }
     }
 }

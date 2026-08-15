@@ -5,6 +5,7 @@
 
 pub mod dispatch;
 pub mod environment;
+pub mod local;
 pub mod policy;
 pub mod workspace;
 
@@ -21,6 +22,9 @@ pub use dispatch::{
 pub use environment::{
     EnvironmentRecipe, ResolvedTraceEnvironment, ToolSandboxCapabilities, TraceEnvironmentError,
     TraceEnvironmentResolver,
+};
+pub use local::{
+    LocalProcessRequest, LocalSessionSandbox, ProcessSession, ProcessSpawner, TokioProcessSpawner,
 };
 pub use policy::{
     CommandDisposition, GuardedToolCommandPolicy, ToolCommandPolicy, ToolCommandResult,
