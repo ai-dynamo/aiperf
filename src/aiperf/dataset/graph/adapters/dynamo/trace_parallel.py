@@ -241,6 +241,15 @@ class _GroupingScan(DynamoIngestScan):
     session_start_ms: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass(slots=True, frozen=True)
+class _SerialFallbackSelection:
+    """Selection already resolved by the grouping scan for serial lowering."""
+
+    session_ids: frozenset[str]
+    stats: SelectionStats
+    tree_count: int
+
+
 def _open_raw(path: Path) -> IO[bytes]:
     """Open a segment for raw BYTE line iteration (gzip transparently)."""
     if path.suffix.lower() == ".gz":
@@ -577,6 +586,30 @@ def _decode_batch_result(
 # --- orchestration ---------------------------------------------------------
 
 
+def _parallel_dispatch_decision(roots: list[str]) -> tuple[int, str | None]:
+    """Resolve worker count and explain why a selected corpus stays serial."""
+    if len(roots) <= _dynamo_threshold():
+        return 0, f"{len(roots):,} trees <= threshold"
+    workers = _dynamo_workers(item_count=len(roots))
+    if workers <= 1:
+        return workers, f"resolved worker count={workers}"
+    return workers, None
+
+
+def _record_serial_fallback(
+    fallback_out: list[_SerialFallbackSelection] | None,
+    *,
+    root_of: dict[str, str],
+    stats: SelectionStats | None,
+    tree_count: int,
+) -> None:
+    """Carry a completed scan selection into the caller's serial build."""
+    if stats is not None and fallback_out is not None:
+        fallback_out.append(
+            _SerialFallbackSelection(frozenset(root_of), stats, tree_count)
+        )
+
+
 def maybe_build_fused_parallel(
     path: str | Path,
     *,
@@ -591,6 +624,7 @@ def maybe_build_fused_parallel(
     max_osl: int | None = None,
     streaming: bool | None = None,
     selection_out: list[SelectionStats] | None = None,
+    fallback_out: list[_SerialFallbackSelection] | None = None,
 ) -> list[ParsedGraph] | None:
     """Fuse read+build across a process pool, or ``None`` to stay serial.
 
@@ -612,8 +646,9 @@ def maybe_build_fused_parallel(
     by ``--max-context-length`` and capped at ``--num-dataset-entries`` (arrival-ordered
     order), and ONLY the selected trees are shuffled + built. When both are ``None``
     no selection runs and the output stays byte-identical. ``selection_out``
-    receives the :class:`SelectionStats` only when the pool path actually builds
-    (a decline hands selection to the serial path, which appends its own).
+    receives the :class:`SelectionStats` when the pool path builds;
+    ``fallback_out`` carries the selected sessions and stats to the caller when
+    dispatch declines so the serial path can reuse the scan.
     """
     started = perf_counter()
 
@@ -630,6 +665,7 @@ def maybe_build_fused_parallel(
 
     root_of = root_of_sessions(scan.request_end_sessions, scan.parent_link)
     roots = _roots_in_arrival_order(scan, root_of)
+    tree_count = len(roots)
 
     stats: SelectionStats | None = None
     if select:
@@ -641,21 +677,25 @@ def maybe_build_fused_parallel(
             max_context_length=max_context_length,
         )
         if not roots:
-            # Every tree filtered out: defer to the serial path so it raises the
-            # precise EmptyDynamoTraceError (and appends the authoritative stats).
+            _record_serial_fallback(
+                fallback_out,
+                root_of=root_of,
+                stats=stats,
+                tree_count=tree_count,
+            )
             return None
 
-    if len(roots) <= _dynamo_threshold():
-        _logger.info(
-            f"Dynamo load: parallel build declined ({len(roots):,} trees <= "
-            "threshold); serial path will handle it"
+    workers, decline_reason = _parallel_dispatch_decision(roots)
+    if decline_reason is not None:
+        _record_serial_fallback(
+            fallback_out,
+            root_of=root_of,
+            stats=stats,
+            tree_count=tree_count,
         )
-        return None
-    workers = _dynamo_workers(item_count=len(roots))
-    if workers <= 1:
         _logger.info(
-            f"Dynamo load: parallel build declined (resolved worker count="
-            f"{workers}); serial path will handle it"
+            f"Dynamo load: parallel build declined ({decline_reason}); "
+            "serial path will handle it"
         )
         return None
 
@@ -697,6 +737,72 @@ def maybe_build_fused_parallel(
         f"{perf_counter() - started:.2f}s ({len(result):,} trees)"
     )
     return result
+
+
+def _stream_serial_selected_payloads(
+    path: str | Path,
+    *,
+    root_of: dict[str, str],
+    roots: list[str],
+    stats: SelectionStats | None,
+    tree_count: int,
+    content_root_seed: int,
+    idle_gap_cap_seconds: float | None,
+    content_tokenizer: str | None,
+    prompt_corpus: str,
+    release_replay: bool,
+    max_depth: int,
+    num_dataset_entries: int | None,
+    max_context_length: int | None,
+    max_osl: int | None,
+    streaming: bool | None,
+) -> Iterator[TraceSegmentPayload]:
+    """Lower the scan-selected sessions serially without rescanning selection."""
+    from aiperf.dataset.graph.adapters.dynamo.trace import (
+        _build_trees_flat,
+        _collect_chains,
+        _finalize_parsed_graph,
+    )
+    from aiperf.dataset.graph.segment_trie.store_builder import (
+        iter_trace_segment_payloads,
+    )
+
+    if stats is not None:
+        log_selection_summary(
+            stats,
+            source=str(path),
+            num_dataset_entries=num_dataset_entries,
+            max_context_length=max_context_length,
+        )
+    if not roots:
+        raise GraphParseError(
+            f"{path}: all {tree_count:,} session-trees were rejected by "
+            f"max_context_length={max_context_length}; nothing to build"
+        )
+    try:
+        chains = _collect_chains(
+            path,
+            None,
+            max_depth=max_depth,
+            selected_session_ids=frozenset(root_of),
+        )
+        per_tree = _build_trees_flat(
+            chains,
+            content_root_seed=content_root_seed,
+            idle_gap_cap_seconds=idle_gap_cap_seconds,
+            content_tokenizer=content_tokenizer,
+            prompt_corpus=prompt_corpus,
+            release_replay=release_replay,
+            direct_store=None,
+            max_osl=max_osl,
+            streaming=streaming,
+        )
+        parsed = _finalize_parsed_graph(per_tree, tag="from-dynamo-trace")
+    except ValueError as exc:
+        raise GraphParseError(str(exc)) from exc
+    _logger.info("Dynamo load: fallback payload lowering started")
+    yield from iter_trace_segment_payloads(parsed)
+    _logger.info("Dynamo load: fallback payload lowering complete")
 
 
 def stream_dynamo_trace_segment_payloads(
@@ -749,6 +855,7 @@ def stream_dynamo_trace_segment_payloads(
     # recorded TIMELINE instead of of the alphabet (see
     # ``trace.order_trees_by_recorded_start``). Must match the fused path above.
     roots = _roots_in_arrival_order(scan, root_of)
+    tree_count = len(roots)
     stats: SelectionStats | None = None
     if select:
         roots, root_of, stats = _select_roots_filter_then_cap(
@@ -758,40 +865,27 @@ def stream_dynamo_trace_segment_payloads(
             num_dataset_entries=num_dataset_entries,
             max_context_length=max_context_length,
         )
-    workers = _dynamo_workers(item_count=len(roots)) if roots else 0
-    if not roots or len(roots) <= _dynamo_threshold() or workers <= 1:
-        from aiperf.dataset.graph.adapters.dynamo.trace import from_dynamo_trace
-        from aiperf.dataset.graph.segment_trie.store_builder import (
-            iter_trace_segment_payloads,
+    workers, decline_reason = _parallel_dispatch_decision(roots)
+    if decline_reason is not None:
+        yield from _stream_serial_selected_payloads(
+            path,
+            root_of=root_of,
+            roots=roots,
+            stats=stats,
+            tree_count=tree_count,
+            content_root_seed=content_root_seed,
+            idle_gap_cap_seconds=idle_gap_cap_seconds,
+            content_tokenizer=content_tokenizer,
+            prompt_corpus=prompt_corpus,
+            release_replay=release_replay,
+            max_depth=max_depth,
+            num_dataset_entries=num_dataset_entries,
+            max_context_length=max_context_length,
+            max_osl=max_osl,
+            streaming=streaming,
         )
-
-        try:
-            parsed = from_dynamo_trace(
-                path,
-                content_root_seed=content_root_seed,
-                idle_gap_cap_seconds=idle_gap_cap_seconds,
-                content_tokenizer=content_tokenizer,
-                prompt_corpus=prompt_corpus,
-                release_replay=release_replay,
-                num_dataset_entries=num_dataset_entries,
-                max_context_length=max_context_length,
-                max_osl=max_osl,
-                streaming=streaming,
-                ignore_trace_delays=ignore_trace_delays,
-            )
-        except ValueError as exc:
-            raise GraphParseError(str(exc)) from exc
-        payload_iter = iter_trace_segment_payloads(parsed)
-        _logger.info("Dynamo load: fallback payload lowering started")
-        yield from payload_iter
-        _logger.info("Dynamo load: fallback payload lowering complete")
         return
 
-    # AFTER the fallback returns, mirroring ``maybe_build_fused_parallel``: the
-    # serial fallback re-selects inside ``from_dynamo_trace``, which logs the
-    # summary itself, so logging before the branch double-reported it on every
-    # run small enough to decline -- including every ``--num-dataset-entries``
-    # below the parallel threshold, the exact case this summary exists for.
     if stats is not None:
         log_selection_summary(
             stats,

@@ -38,6 +38,7 @@ class Scheduler:
     )
 
     def __init__(self, graph: GraphRecord) -> None:
+        _reject_start_anchored_start_edge(graph.edges)
         static_succ: dict[str, list[str]] = defaultdict(list)
         start_anchored_succ: dict[str, list[str]] = defaultdict(list)
         static_pred_edges: dict[str, list[StaticEdge]] = defaultdict(list)
@@ -99,6 +100,21 @@ class Scheduler:
         return [
             t for t in self._start_anchored_succ.get(node_id, []) if t != END_NODE_ID
         ]
+
+
+def _reject_start_anchored_start_edge(edges: list[StaticEdge]) -> None:
+    """Reject an edge whose start anchor refers to the virtual START node."""
+    for edge in edges:
+        if (
+            edge.source == START_NODE_ID
+            and edge.delay_after_predecessor_start_us is not None
+        ):
+            raise NotImplementedError(
+                f"edge {START_NODE_ID!r} -> {edge.target!r}: "
+                "delay_after_predecessor_start_us is unsupported on the "
+                "virtual START node because START is never dispatched. Use "
+                "min_start_delay_us for a trace-entry delay."
+            )
 
 
 def _reject_unanchored_first_token_edge(

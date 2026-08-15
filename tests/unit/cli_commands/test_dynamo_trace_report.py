@@ -186,14 +186,39 @@ def test_limit_stops_new_sessions_but_keeps_existing(tmp_path: Path) -> None:
     trace = _write_trace(
         tmp_path,
         [
-            _request_end(session_id="s-a", ts_ms=1_000),
-            _request_end(session_id="s-b", ts_ms=2_000),
-            _request_end(session_id="s-a", ts_ms=3_000),
+            _request_end(session_id="s-z", ts_ms=1_000),
+            _request_end(session_id="s-a", ts_ms=2_000),
+            _request_end(session_id="s-z", ts_ms=3_000),
         ],
     )
     report = aggregate_by_session(trace, limit=1)
-    assert [row["session_id"] for row in report.rows] == ["s-a"]
+    assert [row["session_id"] for row in report.rows] == ["s-z"]
     assert report.rows[0]["request_count"] == 2
+
+
+def test_limit_does_not_lower_sessions_beyond_cap(tmp_path: Path) -> None:
+    """Parent cycles outside the admitted set cannot poison a bounded report."""
+    trace = _write_trace(
+        tmp_path,
+        [
+            _request_end(session_id="s-keep", ts_ms=1_000),
+            _request_end(
+                session_id="s-a",
+                parent_session_id="s-b",
+                ts_ms=2_000,
+            ),
+            _request_end(
+                session_id="s-b",
+                parent_session_id="s-a",
+                ts_ms=3_000,
+            ),
+        ],
+    )
+
+    report = aggregate_by_session(trace, limit=1)
+
+    assert [row["session_id"] for row in report.rows] == ["s-keep"]
+    assert report.skipped_over_limit == 2
 
 
 @pytest.mark.parametrize(

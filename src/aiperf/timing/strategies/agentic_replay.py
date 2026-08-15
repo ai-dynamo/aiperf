@@ -6,8 +6,8 @@ Phase-aware timing strategy for the ``agentic_replay`` timing mode (spec §4.2).
 
 Each trajectory is a wall-clock snapshot of a trace at a sampled instant t*
 (by default anywhere in the trace's recorded duration; the range is
-configurable via ``trajectory_start_{min,max}_ratio`` and the
-inferencex-agentx-mvp scenario widens it to 0-100%). Every stream (root + each
+configurable via ``trajectory_start_{min,max}_ratio``; the
+inferencex-agentx-mvp scenario explicitly pins the same 0-100% window). Every stream (root + each
 subagent chain) splits at t*: turns before t* are history, turns at/after t*
 are profiled.
 

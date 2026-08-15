@@ -41,6 +41,31 @@ def _mixed_graph() -> GraphRecord:
     )
 
 
+@pytest.mark.parametrize("delay_us", [0.0, 1_000.0])
+def test_scheduler_rejects_start_anchored_virtual_start_edge(
+    delay_us: float,
+) -> None:
+    """Virtual START never dispatches, so its start-anchored successor cannot fire."""
+    graph = GraphRecord(
+        nodes={"a": _llm("a")},
+        edges=[
+            StaticEdge(
+                source="START",
+                target="a",
+                delay_after_predecessor_start_us=delay_us,
+            )
+        ],
+        state={},
+    )
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        Scheduler(graph)
+
+    message = str(exc_info.value)
+    assert message.startswith("edge 'START' -> 'a': ")
+    assert "delay_after_predecessor_start_us" in message
+
+
 def test_scheduler_rejects_mixed_anchor_fan_in_naming_node_and_edges() -> None:
     with pytest.raises(NotImplementedError) as exc_info:
         Scheduler(_mixed_graph())
@@ -107,6 +132,33 @@ def test_mixed_anchor_fan_in_rejected_at_every_scheduler_entry_point(
     """Both the executor and static analysis build the Scheduler, so a mixed-anchor graph fails at load instead of firing early and spurious-cycling later."""
     with pytest.raises(NotImplementedError, match="mixed-anchor fan-in"):
         entry_point(_mixed_graph())
+
+
+@pytest.mark.parametrize(
+    "entry_point",
+    [
+        param(_construct_executor, id="executor_construction"),
+        param(_run_static_analysis, id="elaborate_trace_static_analysis"),
+    ],
+)  # fmt: skip
+def test_start_anchored_virtual_start_rejected_at_every_scheduler_entry_point(
+    entry_point: Callable[[GraphRecord], None],
+) -> None:
+    """Every Scheduler consumer rejects a zero-delay start anchor on START."""
+    graph = GraphRecord(
+        nodes={"a": _llm("a")},
+        edges=[
+            StaticEdge(
+                source="START",
+                target="a",
+                delay_after_predecessor_start_us=0.0,
+            )
+        ],
+        state={},
+    )
+
+    with pytest.raises(NotImplementedError, match="virtual START"):
+        entry_point(graph)
 
 
 def test_start_edge_plus_start_anchored_edge_is_mixed_too() -> None:

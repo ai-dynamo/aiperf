@@ -44,6 +44,10 @@ Validate an AIPerf config file.
 
 Dynamo agent-trace tooling. Use `aiperf dynamo trace-report` to aggregate metrics from a captured trace.
 
+### [`dynamo trace-report`](#aiperf-dynamo-trace-report)
+
+Aggregate Dynamo agent-trace metrics. Streams `request_end` records, groups them by session (`parent_session_id` gives the subagent hierarchy), and prints a trace-wide rollup: pooled percentiles for token counts, timings, kv_hit_rate and queue_depth, plus KV-block prefix reuse and a theoretical infinite-cache hit rate. Use `--per-session` for the one-row-per-session listing.
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -299,6 +303,41 @@ Path to an AIPerf YAML config to validate.
 ## `aiperf dynamo`
 
 Dynamo agent-trace tooling. Use `aiperf dynamo trace-report` to aggregate metrics from a captured trace.
+
+<hr/>
+
+## `aiperf dynamo trace-report`
+
+Aggregate Dynamo agent-trace metrics. Streams `request_end` records, groups them by session (`parent_session_id` gives the subagent hierarchy), and prints a trace-wide rollup: pooled percentiles for token counts, timings, kv_hit_rate and queue_depth, plus KV-block prefix reuse and a theoretical infinite-cache hit rate. Use `--per-session` for the one-row-per-session listing.
+
+### `--path` `<str>` _(Required)_
+
+Path to a Dynamo agent-trace `.jsonl`, `.jsonl.gz`, segmented prefix, or directory of segments.
+
+### `--format` `<str>`
+
+Output format. Default: table.
+<br/>_Default: `table`_
+
+### `--session-id` `<str>`
+
+Restrict to records matching this agent_context.session_id.
+
+### `--limit` `<int>`
+
+Stop accumulating new sessions once N distinct session ids are seen.
+
+### `--per-session`, `--no-per-session`
+
+Print the per-session listing (one row per session) instead of the trace-wide rollup. Ignored for json/csv.
+
+### `--output-file` `<str>`
+
+Also write the full report as JSON to this path.
+
+### `--write-ingest-sidecar`, `--no-write-ingest-sidecar`
+
+Write reusable Dynamo ingest metadata beside the trace.
 
 <hr/>
 

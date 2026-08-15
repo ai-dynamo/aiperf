@@ -1516,6 +1516,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         the context (mirroring the session path) and a record is emitted unless
         the dispatch path already sent one.
         """
+        self.task_stats.total += 1
         credit = credit_context.credit
         segment_store = self._graph_store_reader(credit_context)
         if segment_store is None:
@@ -1695,7 +1696,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         credit = credit_context.credit
         pool_key = (credit.trace_id, credit.node_ordinal)
-        self.task_stats.total += 1
         try:
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
@@ -2315,7 +2315,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         metric calculation and error tracking.
 
         Flow:
-        1. Update task statistics (success/failure counts; ``total`` is bumped at dispatch)
+        1. Update task statistics (success/failure counts; graph ``total`` is
+           bumped when graph-credit processing begins)
         2. Wrap record in InferenceResultsMessage
         3. Push to RecordProcessor via PUSH socket (fire-and-forget)
 

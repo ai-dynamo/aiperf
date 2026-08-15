@@ -171,6 +171,7 @@ def _collect_chains(
     session_id_filter: str | None,
     *,
     max_depth: int,
+    selected_session_ids: set[str] | frozenset[str] | None = None,
     duplicate_out: list[int] | None = None,
     skipped_out: list[int] | None = None,
 ) -> dict[str, _Chain]:
@@ -178,7 +179,9 @@ def _collect_chains(
     started = perf_counter()
     _logger.info(f"Dynamo load: reading trace records from {path}")
     by_session, parent_link, skipped_no_context, duplicates = _collect_records(
-        path, session_id_filter
+        path,
+        session_id_filter,
+        selected_session_ids=selected_session_ids,
     )
     if duplicate_out is not None:
         duplicate_out.append(duplicates)
@@ -359,6 +362,9 @@ def from_dynamo_trace(
     # (a single-session filter is one tree -> never parallel). Returns None below
     # the tree-count threshold / for a single tree, and the serial
     # read-then-build path below runs instead.
+    fallback_session_ids: frozenset[str] | None = None
+    fallback_stats: SelectionStats | None = None
+    fallback_tree_count = 0
     if (
         direct_store is None
         and session_id_filter is None
@@ -368,6 +374,7 @@ def from_dynamo_trace(
     ):
         from aiperf.dataset.graph.adapters.dynamo import trace_parallel
 
+        fallback_selection: list[trace_parallel._SerialFallbackSelection] = []
         fused = trace_parallel.maybe_build_fused_parallel(
             path,
             content_root_seed=content_root_seed,
@@ -381,6 +388,7 @@ def from_dynamo_trace(
             num_dataset_entries=num_dataset_entries,
             max_context_length=max_context_length,
             selection_out=selection_out,
+            fallback_out=fallback_selection,
         )
         if fused is not None:
             _logger.info(
@@ -388,14 +396,44 @@ def from_dynamo_trace(
                 f"{perf_counter() - load_started:.2f}s ({len(fused):,} trees)"
             )
             return _finalize_parsed_graph(fused, tag=tag)
+        if fallback_selection:
+            fallback_session_ids = fallback_selection[0].session_ids
+            fallback_stats = fallback_selection[0].stats
+            fallback_tree_count = fallback_selection[0].tree_count
         _logger.info(
             f"Dynamo load: using serial read/build path after parallel dispatch "
             f"check ({perf_counter() - load_started:.2f}s)"
         )
 
-    chains = _collect_chains(path, session_id_filter, max_depth=max_depth)
+    selection_resolved = False
+    if fallback_stats is not None:
+        selection_resolved = True
+        from aiperf.dataset.graph.adapters.shared.selection import (
+            log_selection_summary,
+        )
+
+        log_selection_summary(
+            fallback_stats,
+            source=str(path),
+            num_dataset_entries=num_dataset_entries,
+            max_context_length=max_context_length,
+        )
+        if selection_out is not None:
+            selection_out.append(fallback_stats)
+        if not fallback_session_ids:
+            raise EmptyDynamoTraceError(
+                f"{path}: all {fallback_tree_count:,} session-trees were rejected "
+                f"by max_context_length={max_context_length}; nothing to build"
+            )
+
+    chains = _collect_chains(
+        path,
+        session_id_filter,
+        max_depth=max_depth,
+        selected_session_ids=fallback_session_ids,
+    )
     _logger.info(f"Dynamo load: grouping {len(chains):,} sessions into session trees")
-    if (
+    if not selection_resolved and (
         num_dataset_entries is not None
         or max_context_length is not None
         or max_isl is not None
@@ -1242,6 +1280,8 @@ class _SkipCounter:
 def _collect_records(
     path: str | Path,
     session_id_filter: str | None,
+    *,
+    selected_session_ids: set[str] | frozenset[str] | None = None,
 ) -> tuple[dict[str, list[AgentTraceRecord]], dict[str, str], int, int]:
     """Group records by session; also build the parent map and a skip counter.
 
@@ -1249,14 +1289,16 @@ def _collect_records(
     ``skipped_no_context`` counts non-request records dropped for carrying no
     ``agent_context`` and no synthetic session identity.
 
-    This is the SINGLE point where every dynamo record is materialized before
-    lowering: the streaming reader is fully drained into ``by_session`` here, so
-    all ``H`` recorded ``input_sequence_hashes`` slots are simultaneously live
-    (the "record-window plateau") before a single ``TrieRequest`` exists. Read-
-    time interning of each record's replay hashes (via :func:`_intern_replay_hashes`,
-    below) is therefore the ONLY interception that caps that plateau -- and it
-    also carries the canonical objects on into lowering, since the ``list()``
-    copy in ``dynamo_trie_nodes`` preserves element identity.
+    This is the SINGLE point where selected Dynamo records are materialized
+    before lowering. The streaming reader is fully drained here, but an optional
+    selected-session set from the hash-free grouping scan filters records before
+    their replay arrays are interned or retained. Without that set, all ``H``
+    recorded ``input_sequence_hashes`` slots are simultaneously live (the
+    "record-window plateau") before a single ``TrieRequest`` exists. Read-time
+    interning of each retained record's replay hashes (via
+    :func:`_intern_replay_hashes`, below) caps that plateau and carries the
+    canonical objects on into lowering, since the ``list()`` copy in
+    ``dynamo_trie_nodes`` preserves element identity.
 
     ``intern`` is a PER-PARSE ``dict[int, int]`` local: born before the read loop,
     dead when this function returns (before lowering), never module/global state
@@ -1278,6 +1320,11 @@ def _collect_records(
         on_duplicate=skipped.count_duplicate,
         synthesize_contextless_requests=True,
     ):
+        if (
+            selected_session_ids is not None
+            and ctx.session_id not in selected_session_ids
+        ):
+            continue
         _intern_replay_hashes(record, intern)
         by_session[ctx.session_id].append(record)
         # AgentContext is stamped per request from headers, so records of one

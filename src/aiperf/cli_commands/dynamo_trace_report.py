@@ -42,7 +42,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypedDict
 
 import orjson
 from cyclopts import App, Parameter
@@ -61,11 +61,16 @@ from rich.table import Table
 from aiperf.common.environment import Environment
 from aiperf.common.finite import scrub_non_finite
 from aiperf.dataset.graph.adapters.dynamo.trace import (
+    _Chain,
     _collect_chains,
+    _guard_chain_forest,
+    _records_to_chain,
     analyze_dynamo_chains_trie,
 )
 from aiperf.dataset.graph.adapters.dynamo.trace_reader import (
     AgentTraceRecord,
+    EmptyDynamoTraceError,
+    iter_session_records,
     load_ingest_sidecar,
     resolve_parent,
     scan_dynamo_trace,
@@ -186,14 +191,32 @@ class CorpusStats:
     """Distinct `trace_block_size` values; >1 means the trace mixes block sizes."""
 
 
+class SessionTraceRow(TypedDict):
+    """Stable serialized schema for one session in a Dynamo trace report."""
+
+    session_id: str
+    parent_session_id: str | None
+    parent_session_id_conflict: bool
+    child_session_count: int
+    request_count: int
+    models: list[str]
+    decode_worker_count: int
+    prefill_worker_count: int
+    decode_workers: list[int]
+    prefill_workers: list[int]
+    time_range_ms: list[int | None]
+    replay_records: int
+    metrics: dict[str, dict[str, float]]
+
+
 @dataclass(slots=True)
 class SessionTraceReport:
     """Per-session aggregation result for one Dynamo agent trace."""
 
-    rows: list[dict[str, Any]]
+    rows: list[SessionTraceRow]
     """Per-session aggregate dicts, sorted by session_id."""
     skipped_no_agent_context: int
-    """Unusable context-free `request_end` records skipped by the fold."""
+    """Context-free non-request records skipped by the canonical fold."""
     duplicate_records: int
     """Duplicated `request_end` records skipped (same session_id + request_id).
 
@@ -212,7 +235,7 @@ class SessionTraceReport:
 
     @property
     def total_records(self) -> int:
-        """Every `request_end` record seen, across all skip classes."""
+        """Report denominator across retained request_end and skipped classes."""
         return (
             self.corpus.request_count
             + self.skipped_no_agent_context
@@ -385,7 +408,7 @@ def _count_children(aggs: dict[str, _SessionAggregate]) -> None:
             parent_agg.child_session_count += 1
 
 
-def _to_dict(agg: _SessionAggregate) -> dict[str, Any]:
+def _to_dict(agg: _SessionAggregate) -> SessionTraceRow:
     """Serialize a `_SessionAggregate` into a JSON-safe dict."""
     return {
         "session_id": agg.session_id,
@@ -402,6 +425,92 @@ def _to_dict(agg: _SessionAggregate) -> dict[str, Any]:
         "replay_records": agg.replay_records,
         "metrics": {f: _percentiles(vs) for f, vs in agg.metrics.items()},
     }
+
+
+def _raise_empty_trace(path: str | Path, skipped_no_context: int) -> None:
+    """Raise the same precise empty-input error as the shared chain collector."""
+    if skipped_no_context:
+        raise EmptyDynamoTraceError(
+            f"{path}: {skipped_no_context:,} non-request records had no "
+            "agent_context and could not be assigned a session"
+        )
+    raise EmptyDynamoTraceError(f"{path}: no trace records found")
+
+
+def _chains_from_limited_records(
+    records: dict[str, list[AgentTraceRecord]],
+    parent_link: dict[str, str],
+) -> dict[str, _Chain]:
+    """Sort retained records and validate only their selected session forest."""
+    chains: dict[str, _Chain] = {}
+    for sid, session_records in records.items():
+        session_records.sort(key=lambda record: record.event_time_unix_ms)
+        chain = _records_to_chain(
+            session_records,
+            session_id=sid,
+            parent_session_id=parent_link.get(sid),
+        )
+        if chain.turns:
+            chains[sid] = chain
+    selected_parent_link = {
+        sid: parent for sid, parent in parent_link.items() if sid in chains
+    }
+    _guard_chain_forest(
+        chains,
+        selected_parent_link,
+        max_depth=Environment.DYNAMO.MAX_SUBAGENT_DEPTH,
+    )
+    return chains
+
+
+def _collect_limited_chains(
+    path: str | Path,
+    *,
+    session_id: str | None,
+    limit: int,
+) -> tuple[dict[str, _Chain], int, int, int]:
+    """Retain request records only for the first ``limit`` sessions seen."""
+    records: dict[str, list[AgentTraceRecord]] = defaultdict(list)
+    parent_link: dict[str, str] = {}
+    admitted: set[str] = set()
+    skipped_over_limit = 0
+    skipped_no_context = 0
+    duplicate_records = 0
+    request_end_seen = 0
+
+    def _count_no_context(_record: AgentTraceRecord) -> None:
+        nonlocal skipped_no_context
+        skipped_no_context += 1
+
+    def _count_duplicate(_record: AgentTraceRecord) -> None:
+        nonlocal duplicate_records
+        duplicate_records += 1
+
+    for ctx, record in iter_session_records(
+        path,
+        session_id=session_id,
+        on_no_context=_count_no_context,
+        on_duplicate=_count_duplicate,
+        synthesize_contextless_requests=True,
+    ):
+        parent = resolve_parent(ctx)
+        if parent is not None and ctx.session_id not in parent_link:
+            parent_link[ctx.session_id] = parent
+        if record.event_type != "request_end":
+            continue
+        request_end_seen += 1
+        if ctx.session_id not in admitted:
+            if len(admitted) >= limit:
+                skipped_over_limit += 1
+                continue
+            admitted.add(ctx.session_id)
+        records[ctx.session_id].append(record)
+
+    if not request_end_seen:
+        _raise_empty_trace(path, skipped_no_context)
+
+    chains = _chains_from_limited_records(records, parent_link)
+    return chains, skipped_no_context, duplicate_records, skipped_over_limit
 
 
 def aggregate_by_session(
@@ -433,19 +542,27 @@ def aggregate_by_session(
     """
     aggs: dict[str, _SessionAggregate] = {}
     corpus = _CorpusAggregate()
-    duplicate_count: list[int] = []
-    skipped_no_context: list[int] = []
-    chains = _collect_chains(
-        path,
-        session_id,
-        max_depth=Environment.DYNAMO.MAX_SUBAGENT_DEPTH,
-        duplicate_out=duplicate_count,
-        skipped_out=skipped_no_context,
-    )
-    admitted = set(sorted(chains)[:limit] if limit is not None else chains)
-    skipped_over_limit = sum(
-        len(chain.turns) for sid, chain in chains.items() if sid not in admitted
-    )
+    if limit is None:
+        duplicate_count: list[int] = []
+        skipped_no_context: list[int] = []
+        chains = _collect_chains(
+            path,
+            session_id,
+            max_depth=Environment.DYNAMO.MAX_SUBAGENT_DEPTH,
+            duplicate_out=duplicate_count,
+            skipped_out=skipped_no_context,
+        )
+        duplicate_records = duplicate_count[0] if duplicate_count else 0
+        skipped_no_agent_context = skipped_no_context[0] if skipped_no_context else 0
+        skipped_over_limit = 0
+    else:
+        (
+            chains,
+            skipped_no_agent_context,
+            duplicate_records,
+            skipped_over_limit,
+        ) = _collect_limited_chains(path, session_id=session_id, limit=limit)
+    admitted = set(chains)
     for sid in sorted(admitted):
         chain = chains[sid]
         agg = _SessionAggregate(
@@ -473,8 +590,8 @@ def aggregate_by_session(
         progress.update(progress_task, description="Finalizing trace(s)")
     report = SessionTraceReport(
         rows=[_to_dict(aggs[k]) for k in sorted(aggs)],
-        skipped_no_agent_context=skipped_no_context[0] if skipped_no_context else 0,
-        duplicate_records=duplicate_count[0] if duplicate_count else 0,
+        skipped_no_agent_context=skipped_no_agent_context,
+        duplicate_records=duplicate_records,
         corpus=_build_corpus_stats(corpus, aggs, trie_analysis=trie_analysis),
         skipped_over_limit=skipped_over_limit,
     )
@@ -515,7 +632,7 @@ def _format_json(report: SessionTraceReport) -> str:
     ).decode("utf-8")
 
 
-def _format_csv(rows: list[dict[str, Any]]) -> str:
+def _format_csv(rows: list[SessionTraceRow]) -> str:
     """One row per session; columns are flat session facts plus per-metric percentiles."""
     buf = io.StringIO()
     base_cols = [
@@ -657,7 +774,7 @@ def _format_skips(report: SessionTraceReport, console: Console) -> None:
         )
 
 
-def _format_table(rows: list[dict[str, Any]], console: Console) -> None:
+def _format_table(rows: list[SessionTraceRow], console: Console) -> None:
     """Render a Rich table with one column-block per metric (p50/p95/mean)."""
     if not rows:
         console.print("[dim](no request_end records)[/dim]")
@@ -817,7 +934,7 @@ def dynamo_trace_report(
         total = report.total_records
         if report.skipped_no_agent_context:
             sys.stderr.write(
-                f"skipped {report.skipped_no_agent_context} of {total} request_end "
+                f"skipped {report.skipped_no_agent_context} of {total} trace "
                 f"records ({_pct(report.skipped_no_agent_context, total)}) "
                 "without request identity\n"
             )
@@ -844,6 +961,7 @@ def dynamo_trace_report(
 
 __all__ = [
     "CorpusStats",
+    "SessionTraceRow",
     "SessionTraceReport",
     "aggregate_by_session",
     "app",

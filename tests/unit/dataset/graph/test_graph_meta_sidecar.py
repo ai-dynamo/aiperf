@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""graph_meta sidecar codec: the [header, parsed-graph] frame round-trips, and any malformed frame is rejected so the caller re-parses."""
+"""Graph metadata sidecars round-trip, and malformed mandatory sidecars fail."""
 
 from __future__ import annotations
 
@@ -66,6 +66,39 @@ def test_sidecar_filename_constant() -> None:
     ],
 )  # fmt: skip
 def test_decode_rejects_malformed_frame(frame: bytes) -> None:
-    """Anything that is not a well-formed [header, parsed-graph] frame raises so the caller falls back to re-parsing."""
+    """Anything other than a valid frame is rejected without a parse fallback."""
     with pytest.raises((msgspec.DecodeError, ValueError)):
         decode_graph_meta_sidecar(frame)
+
+
+@pytest.mark.parametrize(
+    ("frame", "actual_type"),
+    [
+        param(msgspec.msgpack.encode([["header"], b"blob"]), "list", id="header"),
+        param(
+            msgspec.msgpack.encode(
+                [
+                    {
+                        "kind": "parsed_graph",
+                        "schema_version": GRAPH_META_SCHEMA_VERSION,
+                        "source_fingerprint": {},
+                    },
+                    "blob",
+                ]
+            ),
+            "str",
+            id="blob",
+        ),
+    ],
+)  # fmt: skip
+def test_decode_wrong_element_type_reports_shape_and_remediation(
+    frame: bytes, actual_type: str
+) -> None:
+    """Wrong element types identify the observed shape and recovery action."""
+    with pytest.raises(ValueError) as exc_info:
+        decode_graph_meta_sidecar(frame)
+
+    message = str(exc_info.value)
+    assert "expected header dict and blob bytes" in message
+    assert actual_type in message
+    assert "rebuild the graph store" in message

@@ -29,13 +29,19 @@ from typing import Any
 
 import pytest
 
+from aiperf.common.environment import Environment
+from aiperf.dataset.graph.adapters.dynamo import trace as dynamo_trace
 from aiperf.dataset.graph.adapters.dynamo import trace_parallel
-from aiperf.dataset.graph.adapters.dynamo.trace import root_of_sessions
+from aiperf.dataset.graph.adapters.dynamo.trace import (
+    from_dynamo_trace,
+    root_of_sessions,
+)
 from aiperf.dataset.graph.adapters.dynamo.trace_parallel import (
     _roots_in_arrival_order,
     _scan_grouping,
 )
 from aiperf.dataset.graph.adapters.shared import selection as shared_selection
+from aiperf.dataset.graph.segment_trie.store_builder import iter_trace_segment_payloads
 
 from .conftest import write_jsonl
 
@@ -132,3 +138,97 @@ def test_streaming_payload_path_selects_in_arrival_order(
     # entry point must NOT also log. ``log_selection_summary`` documents
     # "exactly once no matter how the build parallelizes".
     assert len(summaries) == 1
+
+
+def test_serial_fallbacks_reuse_scan_and_materialize_selected_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A capped fallback scans once and retains descendants plus synthetic roots."""
+    root = _record(0)
+    root["agent_context"] = {"session_id": "root", "trajectory_id": "root"}
+    root["request"]["request_id"] = "root-request"
+    root["request"]["request_received_ms"] = T0
+    root["event_time_unix_ms"] = T0 + 1_000
+    child = _record(1)
+    child["agent_context"] = {
+        "session_id": "child",
+        "trajectory_id": "child",
+        "parent_session_id": "root",
+    }
+    child["request"]["request_id"] = "child-request"
+    child["request"]["request_received_ms"] = T0 + 100
+    child["event_time_unix_ms"] = T0 + 1_100
+    synthetic = _record(2)
+    synthetic.pop("agent_context")
+    synthetic["request"]["request_id"] = "synthetic"
+    synthetic["request"]["request_received_ms"] = T0 + 10_000
+    synthetic["event_time_unix_ms"] = T0 + 11_000
+    dropped = _record(3)
+    dropped["agent_context"] = {"session_id": "drop", "trajectory_id": "drop"}
+    dropped["request"]["request_id"] = "drop-request"
+    dropped["request"]["request_received_ms"] = T0 + 20_000
+    dropped["event_time_unix_ms"] = T0 + 21_000
+    path = write_jsonl(tmp_path / "selected.jsonl", [root, child, synthetic, dropped])
+
+    reference = list(
+        iter_trace_segment_payloads(
+            from_dynamo_trace(
+                path,
+                content_root_seed=42,
+                num_dataset_entries=2,
+                analysis_out=[],
+            )
+        )
+    )
+
+    scan_calls = 0
+    real_scan = trace_parallel._scan_grouping
+
+    def _count_scan(*args, **kwargs):
+        nonlocal scan_calls
+        scan_calls += 1
+        return real_scan(*args, **kwargs)
+
+    materialized: list[str] = []
+    real_records_to_chain = dynamo_trace._records_to_chain
+
+    def _capture_chain(recs, *, session_id, parent_session_id):
+        materialized.append(session_id)
+        return real_records_to_chain(
+            recs,
+            session_id=session_id,
+            parent_session_id=parent_session_id,
+        )
+
+    monkeypatch.setattr(trace_parallel, "_scan_grouping", _count_scan)
+    monkeypatch.setattr(dynamo_trace, "_records_to_chain", _capture_chain)
+    monkeypatch.setattr(Environment.DATASET, "DYNAMO_GRAPH_PARALLEL_THRESHOLD", 100)
+
+    direct = list(
+        iter_trace_segment_payloads(
+            from_dynamo_trace(path, content_root_seed=42, num_dataset_entries=2)
+        )
+    )
+
+    assert direct == reference
+    assert scan_calls == 1
+    assert set(materialized) == {"root", "child", "request-synthetic"}
+
+    scan_calls = 0
+    materialized.clear()
+    actual = list(
+        trace_parallel.stream_dynamo_trace_segment_payloads(
+            path,
+            content_root_seed=42,
+            idle_gap_cap_seconds=None,
+            content_tokenizer=None,
+            prompt_corpus="coding",
+            release_replay=False,
+            max_depth=32,
+            num_dataset_entries=2,
+        )
+    )
+
+    assert actual == reference
+    assert scan_calls == 1
+    assert set(materialized) == {"root", "child", "request-synthetic"}

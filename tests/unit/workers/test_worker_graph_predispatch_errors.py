@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, MagicMock
 import orjson
 import pytest
 
-from aiperf.common.models import ErrorDetails
+from aiperf.common.models import (
+    ErrorDetails,
+    RequestRecord,
+    TextResponse,
+    WorkerTaskStats,
+)
 from aiperf.credit.structs import CreditContext
 from aiperf.graph.dynamic_pool import GraphPoolMissingError
 from aiperf.workers.worker import Worker
@@ -21,6 +26,18 @@ from tests.unit.workers.conftest import (
     make_graph_worker,
     sole_sent_record,
 )
+
+
+def _track_task_stats(self: MagicMock) -> WorkerTaskStats:
+    """Make the mocked result sink apply the real completion accounting."""
+    stats = WorkerTaskStats()
+    self.task_stats = stats
+
+    async def _finish(record: RequestRecord) -> None:
+        stats.task_finished(record.valid)
+
+    self._send_inference_result_message.side_effect = _finish
+    return stats
 
 
 @pytest.mark.asyncio
@@ -37,6 +54,7 @@ async def test_store_missing_credit_emits_error_record() -> None:
         return None
 
     self = make_graph_worker(MagicMock(side_effect=_reader))
+    stats = _track_task_stats(self)
     ctx = make_graph_credit_context()
     await self._process_graph_credit(ctx, "x-req-1", None)
 
@@ -47,6 +65,7 @@ async def test_store_missing_credit_emits_error_record() -> None:
     assert record.request_info.x_correlation_id == ctx.credit.x_correlation_id
     # Credit-return semantics preserved: the context still carries the error.
     assert ctx.error is store_error
+    assert (stats.total, stats.failed, stats.in_progress) == (1, 1, 0)
     # Nothing was dispatched to the inference server.
     self.inference_client.send_request.assert_not_awaited()
     # The drop-message path appends a SECOND record for the same credit unless
@@ -60,6 +79,7 @@ async def test_envelope_missing_credit_emits_error_record(tmp_path: Path) -> Non
     """An unaddressable node ordinal sends a GraphEnvelopeMissing error record."""
     client = await graph_client_with_node(tmp_path)
     self = make_graph_worker(MagicMock(return_value=client))
+    stats = _track_task_stats(self)
     ctx = make_graph_credit_context(node_ordinal=7)
     await self._process_graph_credit(ctx, "x-req-2", None)
 
@@ -68,6 +88,7 @@ async def test_envelope_missing_credit_emits_error_record(tmp_path: Path) -> Non
     assert record.error.type == "GraphEnvelopeMissing"
     assert record.valid is False
     assert ctx.error is record.error
+    assert (stats.total, stats.failed, stats.in_progress) == (1, 1, 0)
     self.inference_client.send_request.assert_not_awaited()
 
 
@@ -90,6 +111,7 @@ async def test_pool_missing_credit_emits_error_record(
         worker_mod, "materialize_graph_request_unified", _raise_pool_missing
     )
     self = make_graph_worker(MagicMock(return_value=client))
+    stats = _track_task_stats(self)
     ctx = make_graph_credit_context()
     await self._process_graph_credit(ctx, "x-req-3", None)
 
@@ -100,6 +122,7 @@ async def test_pool_missing_credit_emits_error_record(
     # The context keeps the raw prefixed string the dispatch adapter sniffs.
     assert isinstance(ctx.error, str)
     assert ctx.error.startswith("aiperf.graph.pool_missing:")
+    assert (stats.total, stats.failed, stats.in_progress) == (1, 1, 0)
     self.inference_client.send_request.assert_not_awaited()
 
 
@@ -108,15 +131,23 @@ async def test_successful_dispatch_sends_single_record(tmp_path: Path) -> None:
     """Control: the happy path still sends exactly one (dispatch-built) record."""
     client = await graph_client_with_node(tmp_path)
     self = make_graph_worker(MagicMock(return_value=client))
-    self._dispatch_graph_request = AsyncMock()
+    stats = _track_task_stats(self)
+    self._dispatch_graph_request = types.MethodType(
+        Worker._dispatch_graph_request, self
+    )
+    self.inference_client.send_request.return_value = RequestRecord(
+        start_perf_ns=100,
+        responses=[TextResponse(perf_ns=200, text="ok")],
+    )
     self._build_graph_request_info = MagicMock(return_value=MagicMock())
     ctx = make_graph_credit_context()
     await self._process_graph_credit(ctx, "x-req-4", None)
 
-    self._dispatch_graph_request.assert_awaited_once()
-    # No synthetic pre-dispatch record on the happy path.
-    self._send_inference_result_message.assert_not_awaited()
+    self.inference_client.send_request.assert_awaited_once()
+    self._send_inference_result_message.assert_awaited_once()
     assert ctx.error is None
+    assert ctx.record_emitted is True
+    assert (stats.total, stats.completed, stats.in_progress) == (1, 1, 0)
 
 
 @pytest.mark.asyncio
@@ -135,6 +166,7 @@ async def test_unexpected_exception_emits_error_record_and_credit_attribution(
 
     monkeypatch.setattr(worker_mod, "read_node_envelope", _raise_decode_error)
     self = make_graph_worker(MagicMock(return_value=MagicMock()))
+    stats = _track_task_stats(self)
     self._prefill_concurrency_enabled = False
     self.credit_return_push_client.send = AsyncMock()
     # Drive the full credit task so the CreditReturn built in its finally is
@@ -157,6 +189,7 @@ async def test_unexpected_exception_emits_error_record_and_credit_attribution(
     assert credit_return.error is not None, (
         "an escaped exception must not be counted as a completed request"
     )
+    assert (stats.total, stats.failed, stats.in_progress) == (1, 1, 0)
     self.inference_client.send_request.assert_not_awaited()
 
 

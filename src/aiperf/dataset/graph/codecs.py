@@ -88,7 +88,11 @@ def decode_graph_meta_sidecar(
         raise ValueError("graph_meta sidecar frame must be [header, blob]")
     header, blob = frame
     if not isinstance(header, dict) or not isinstance(blob, bytes):
-        raise ValueError("graph_meta sidecar frame has the wrong shape")
+        raise ValueError(
+            "graph_meta sidecar frame has the wrong shape: expected header "
+            f"dict and blob bytes, got {type(header).__name__} and "
+            f"{type(blob).__name__}; rebuild the graph store"
+        )
     if "source_fingerprint" not in header or "schema_version" not in header:
         raise ValueError("graph_meta sidecar header missing required keys")
     if header.get("kind") != _SIDECAR_KIND_PARSED_GRAPH:
