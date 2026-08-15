@@ -4,6 +4,7 @@
 //! Immutable evaluation identities and evidence contracts.
 
 mod evidence;
+mod execution;
 mod identity;
 mod import;
 mod import_report;
@@ -12,6 +13,10 @@ mod source;
 mod trial;
 
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
+pub use execution::{
+    AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract, HarborSandboxRecipe,
+    ImmutablePatch, WorkspaceOverlay,
+};
 pub use identity::{
     AgentVariantRef, ArtifactDigest, EvalIdentityError, EvalTaskId, EvalTaskRef, ModelIdentity,
     PolicyIdentity, RuntimeIdentity,
