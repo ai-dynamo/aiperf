@@ -16,8 +16,8 @@ mod verifier;
 
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
-    AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract, HarborSandboxRecipe,
-    ImmutablePatch, WorkspaceOverlay,
+    AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract,
+    HarborSandboxRecipe, ImmutablePatch, WorkspaceOverlay,
 };
 pub use identity::{
     AgentVariantRef, ArtifactDigest, EvalIdentityError, EvalTaskId, EvalTaskRef, ModelIdentity,
@@ -27,8 +27,8 @@ pub use import::{HarborImportError, HarborImporter, HarborSource, ImportedTask, 
 pub use import_report::{ImportDisposition, ImportReport};
 pub use score::{ScoreError, ScoreVersion};
 pub use semantic::{
-    lower_semantic_graph, FidelityError, FidelityOutcome, PairedComparisonError, PairedComparisonSpec,
-    SemanticGraph, SemanticNode,
+    FidelityError, FidelityOutcome, PairedComparisonError, PairedComparisonSpec, SemanticGraph,
+    SemanticNode, lower_semantic_graph,
 };
 pub use source::{EvalDatasetId, EvalDatasetManifest};
 pub use trial::{TrialBudget, TrialSpec};

@@ -13,11 +13,16 @@ struct MemoryAcquirer {
 }
 
 impl SourceAcquirer for MemoryAcquirer {
-    fn acquire(&self, source: &HarborSource) -> Result<Vec<u8>, aiperf_runtime::eval::HarborImportError> {
+    fn acquire(
+        &self,
+        source: &HarborSource,
+    ) -> Result<Vec<u8>, aiperf_runtime::eval::HarborImportError> {
         self.packages
             .get(source.location())
             .cloned()
-            .ok_or_else(|| aiperf_runtime::eval::HarborImportError::Unavailable(source.location().to_owned()))
+            .ok_or_else(|| {
+                aiperf_runtime::eval::HarborImportError::Unavailable(source.location().to_owned())
+            })
     }
 }
 
@@ -32,12 +37,20 @@ fn local_import_preserves_source_digest_and_normalizes_task() {
     .to_vec();
     let source = HarborSource::local("fixtures/repair-1").unwrap();
     let mut acquirer = MemoryAcquirer::default();
-    acquirer.packages.insert(source.location().to_owned(), bytes.clone());
+    acquirer
+        .packages
+        .insert(source.location().to_owned(), bytes.clone());
 
     let imported = HarborImporter::new(&acquirer).import(&source).unwrap();
 
-    assert_eq!(imported.report.source_digest, ArtifactDigest::from_bytes(&bytes));
-    assert_eq!(imported.report.disposition, ImportDisposition::LosslessNormalized);
+    assert_eq!(
+        imported.report.source_digest,
+        ArtifactDigest::from_bytes(&bytes)
+    );
+    assert_eq!(
+        imported.report.disposition,
+        ImportDisposition::LosslessNormalized
+    );
     assert_eq!(imported.task.id.as_str(), "repair-1");
 }
 

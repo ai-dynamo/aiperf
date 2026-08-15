@@ -17,7 +17,10 @@ pub struct RewardDocument {
 
 impl RewardDocument {
     /// Parses finite metrics from `reward.json`, falling back to `reward.txt` only when absent.
-    pub fn parse(reward_json: Option<&[u8]>, reward_txt: Option<&[u8]>) -> Result<Self, RewardError> {
+    pub fn parse(
+        reward_json: Option<&[u8]>,
+        reward_txt: Option<&[u8]>,
+    ) -> Result<Self, RewardError> {
         let metrics = match reward_json {
             Some(bytes) => serde_json::from_slice::<BTreeMap<String, f64>>(bytes)
                 .map_err(|error| RewardError::InvalidJson(error.to_string()))?,
@@ -31,8 +34,12 @@ impl RewardDocument {
 }
 
 fn parse_text_reward(bytes: &[u8]) -> Result<BTreeMap<String, f64>, RewardError> {
-    let text = std::str::from_utf8(bytes).map_err(|error| RewardError::InvalidText(error.to_string()))?;
-    let value = text.trim().parse::<f64>().map_err(|error| RewardError::InvalidText(error.to_string()))?;
+    let text =
+        std::str::from_utf8(bytes).map_err(|error| RewardError::InvalidText(error.to_string()))?;
+    let value = text
+        .trim()
+        .parse::<f64>()
+        .map_err(|error| RewardError::InvalidText(error.to_string()))?;
     Ok(BTreeMap::from([("reward".to_owned(), value)]))
 }
 
@@ -55,7 +62,9 @@ impl Display for RewardError {
             Self::Absent => formatter.write_str("verifier reward is absent"),
             Self::InvalidJson(error) => write!(formatter, "invalid reward.json: {error}"),
             Self::InvalidText(error) => write!(formatter, "invalid reward.txt: {error}"),
-            Self::NonFiniteOrEmpty => formatter.write_str("reward metrics must be finite and nonempty"),
+            Self::NonFiniteOrEmpty => {
+                formatter.write_str("reward metrics must be finite and nonempty")
+            }
         }
     }
 }

@@ -18,7 +18,10 @@ pub struct HarborSandboxRecipe {
 
 impl HarborSandboxRecipe {
     /// Creates a recipe that pins an image by digest and an absolute work directory.
-    pub fn new(image: impl Into<String>, workdir: impl Into<String>) -> Result<Self, EvalExecutionError> {
+    pub fn new(
+        image: impl Into<String>,
+        workdir: impl Into<String>,
+    ) -> Result<Self, EvalExecutionError> {
         let image = image.into();
         let workdir = workdir.into();
         if !image.starts_with("sha256:") || image.len() != 71 {
@@ -32,6 +35,8 @@ impl HarborSandboxRecipe {
 
     /// Returns an immutable digest for the complete recipe identity.
     pub fn identity_digest(&self) -> ArtifactDigest {
-        ArtifactDigest::from_bytes(format!("image={}\u{1f}workdir={}", self.image, self.workdir).as_bytes())
+        ArtifactDigest::from_bytes(
+            format!("image={}\u{1f}workdir={}", self.image, self.workdir).as_bytes(),
+        )
     }
 }

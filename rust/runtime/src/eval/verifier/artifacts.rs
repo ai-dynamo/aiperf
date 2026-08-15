@@ -23,7 +23,9 @@ impl DeclaredArtifactTransfer {
             }
             declared.push((path.to_owned(), digest));
         }
-        Ok(Self { artifacts: declared })
+        Ok(Self {
+            artifacts: declared,
+        })
     }
 
     /// Returns the complete declared artifact transfer, excluding workspace state.
@@ -42,7 +44,9 @@ pub enum ArtifactTransferError {
 impl Display for ArtifactTransferError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RelativePath(path) => write!(formatter, "artifact path must be absolute: {path:?}"),
+            Self::RelativePath(path) => {
+                write!(formatter, "artifact path must be absolute: {path:?}")
+            }
         }
     }
 }

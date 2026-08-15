@@ -81,7 +81,9 @@ impl Display for EvalExecutionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRecipe(field) => write!(formatter, "invalid sandbox recipe {field}"),
-            Self::MissingCapability(capability) => write!(formatter, "missing sandbox capability {capability:?}"),
+            Self::MissingCapability(capability) => {
+                write!(formatter, "missing sandbox capability {capability:?}")
+            }
             Self::InvalidWorkspace(reason) => write!(formatter, "invalid workspace {reason}"),
         }
     }

@@ -11,7 +11,10 @@ pub enum HarborSource {
     /// A package supplied from a caller-controlled local source location.
     Local(String),
     /// A package at a pinned Git revision.
-    PinnedGit { repository: String, revision: String },
+    PinnedGit {
+        repository: String,
+        revision: String,
+    },
     /// An immutable registry package reference.
     Registry(String),
 }

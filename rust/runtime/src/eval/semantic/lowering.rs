@@ -70,7 +70,11 @@ impl std::error::Error for FidelityError {}
 
 /// Verifies that every semantic node has an exact native lowering.
 pub fn lower_semantic_graph(graph: &SemanticGraph) -> Result<FidelityOutcome, FidelityError> {
-    if graph.nodes.iter().any(|node| matches!(node, SemanticNode::Barrier)) {
+    if graph
+        .nodes
+        .iter()
+        .any(|node| matches!(node, SemanticNode::Barrier))
+    {
         return Err(FidelityError::Unsupported(FidelityOutcome::Unsupported));
     }
     Ok(FidelityOutcome::Exact)

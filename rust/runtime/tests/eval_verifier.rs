@@ -23,7 +23,8 @@ fn reward_json_precedes_reward_txt_and_preserves_multiple_metrics() {
 
 #[test]
 fn declared_artifact_transfer_excludes_undeclared_workspace() {
-    let transfer = DeclaredArtifactTransfer::new(vec![("/results/patch.diff", digest('a'))]).unwrap();
+    let transfer =
+        DeclaredArtifactTransfer::new(vec![("/results/patch.diff", digest('a'))]).unwrap();
 
     assert_eq!(transfer.artifacts().len(), 1);
     assert!(DeclaredArtifactTransfer::new(vec![("relative/path", digest('b'))]).is_err());
@@ -32,8 +33,10 @@ fn declared_artifact_transfer_excludes_undeclared_workspace() {
 #[test]
 fn regrade_appends_score_without_changing_original_attempt() {
     let attempt = AttemptId::new("attempt-1").unwrap();
-    let original = ScoreVersion::new(attempt.clone(), 0, digest('a'), vec![digest('b')], 0.0).unwrap();
-    let regrade = ScoreVersion::new(attempt.clone(), 1, digest('c'), vec![digest('b')], 1.0).unwrap();
+    let original =
+        ScoreVersion::new(attempt.clone(), 0, digest('a'), vec![digest('b')], 0.0).unwrap();
+    let regrade =
+        ScoreVersion::new(attempt.clone(), 1, digest('c'), vec![digest('b')], 1.0).unwrap();
 
     assert_eq!(original.attempt, attempt);
     assert_ne!(original.identity_digest(), regrade.identity_digest());

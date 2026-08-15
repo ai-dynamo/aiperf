@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::eval::{
-    lower_semantic_graph, FidelityOutcome, PairedComparisonSpec, SemanticGraph, SemanticNode,
+    FidelityOutcome, PairedComparisonSpec, SemanticGraph, SemanticNode, lower_semantic_graph,
 };
 
 #[test]

@@ -28,10 +28,22 @@ impl PairedComparisonSpec {
         let model = model.into();
         let policy = policy.into();
         let image = image.into();
-        if task.trim().is_empty() || model.trim().is_empty() || policy.trim().is_empty() || image.trim().is_empty() || budget_seconds == 0 {
+        if task.trim().is_empty()
+            || model.trim().is_empty()
+            || policy.trim().is_empty()
+            || image.trim().is_empty()
+            || budget_seconds == 0
+        {
             return Err(PairedComparisonError::InvalidBaseline);
         }
-        Ok(Self { task, model, seed, policy, image, budget_seconds })
+        Ok(Self {
+            task,
+            model,
+            seed,
+            policy,
+            image,
+            budget_seconds,
+        })
     }
 
     /// Accepts only a comparison that preserves every baseline dimension.
@@ -57,7 +69,9 @@ impl std::fmt::Display for PairedComparisonError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidBaseline => formatter.write_str("paired baseline must be complete"),
-            Self::ChangedBaseline => formatter.write_str("paired comparison changed a fixed baseline"),
+            Self::ChangedBaseline => {
+                formatter.write_str("paired comparison changed a fixed baseline")
+            }
         }
     }
 }

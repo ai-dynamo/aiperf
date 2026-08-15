@@ -7,7 +7,7 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::eval::{ArtifactDigest, EvalTaskRef, ImportDisposition, ImportReport};
 
-use super::{normalize, HarborSource, SourceAcquirer};
+use super::{HarborSource, SourceAcquirer, normalize};
 
 /// Native normalized representation of one imported task package.
 #[derive(Clone, Debug, PartialEq, Eq)]
