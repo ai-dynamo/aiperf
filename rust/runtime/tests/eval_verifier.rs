@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvidenceKind, RewardDocument, RewardError,
+    ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvidenceKind, RewardDocument,
     ScoreVersion, VerifierMode, VerifierSandboxFactory, invalid_reward_evidence, prepare_verifier,
 };
 
@@ -37,11 +37,13 @@ fn malformed_reward_becomes_evaluator_evidence() {
 fn declared_artifact_transfer_refuses_workspace_paths_and_duplicates() {
     assert!(DeclaredArtifactTransfer::new(vec![("relative/path", digest('a'))]).is_err());
     assert!(DeclaredArtifactTransfer::new(vec![("/../../agent-secret", digest('a'))]).is_err());
-    assert!(DeclaredArtifactTransfer::new(vec![
-        ("/results/patch.diff", digest('a')),
-        ("/results/patch.diff", digest('b')),
-    ])
-    .is_err());
+    assert!(
+        DeclaredArtifactTransfer::new(vec![
+            ("/results/patch.diff", digest('a')),
+            ("/results/patch.diff", digest('b')),
+        ])
+        .is_err()
+    );
 }
 
 #[test]

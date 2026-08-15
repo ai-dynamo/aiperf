@@ -10,6 +10,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::eval::{ArtifactDigest, AttemptId, EvidenceEvent, EvidenceKind};
+
 /// Finite named reward metrics from a verifier artifact.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +45,21 @@ impl RewardDocument {
         }
         Ok(Self { metrics })
     }
+}
+
+/// Creates typed evaluator evidence for a malformed or absent verifier reward.
+pub fn invalid_reward_evidence(
+    attempt: AttemptId,
+    sequence: u64,
+    error: &RewardError,
+) -> EvidenceEvent {
+    EvidenceEvent::new(
+        attempt,
+        sequence,
+        EvidenceKind::Evaluator,
+        ArtifactDigest::from_bytes(error.to_string().as_bytes()),
+        None,
+    )
 }
 
 fn parse_text_reward(bytes: &[u8]) -> Result<BTreeMap<String, f64>, RewardError> {

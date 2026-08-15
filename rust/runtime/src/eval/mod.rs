@@ -35,5 +35,5 @@ pub use trial::{TrialBudget, TrialSpec};
 pub use verifier::{
     ArtifactTransferError, DeclaredArtifactTransfer, RegradeError, RegradeRequest, RewardDocument,
     RewardError, VerifierExecutionError, VerifierMode, VerifierResult, VerifierSandboxFactory,
-    prepare_verifier, regrade,
+    invalid_reward_evidence, prepare_verifier, regrade,
 };
