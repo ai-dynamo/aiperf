@@ -1587,6 +1587,7 @@ mod tests {
     #[derive(Default)]
     struct PlacementLifecycleCounts {
         opened: AtomicUsize,
+        close_started: AtomicUsize,
         closed: AtomicUsize,
     }
 
@@ -1673,6 +1674,64 @@ mod tests {
             _decoder: &dyn tools::AgentToolCallDecoder,
             _formatter: &dyn tools::AgentObservationFormatter,
         ) -> Result<agent::AgentTrajectory, agent::AgentLoopError> {
+            std::future::pending().await
+        }
+    }
+
+    struct SuspendingCloseLifecycleFactoryFactory(Arc<PlacementLifecycleCounts>);
+
+    impl agent::AgentInvocationLeaseFactoryFactory for SuspendingCloseLifecycleFactoryFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+            _root_dispatcher: Rc<dyn tools::ToolDispatcher>,
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseFactory>, agent::AgentLoopError> {
+            Ok(Box::new(SuspendingCloseLifecycleFactory(self.0.clone())))
+        }
+    }
+
+    struct SuspendingCloseLifecycleFactory(Arc<PlacementLifecycleCounts>);
+
+    impl agent::AgentInvocationLeaseFactory for SuspendingCloseLifecycleFactory {
+        fn begin_open(
+            &self,
+            _request: &agent::AgentInvocationRequest,
+            _parent: Option<&dyn agent::AgentInvocationLease>,
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseOpening>, agent::AgentLoopError> {
+            self.0.opened.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(SuspendingCloseLifecycleOpening(self.0.clone())))
+        }
+    }
+
+    struct SuspendingCloseLifecycleOpening(Arc<PlacementLifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLeaseOpening for SuspendingCloseLifecycleOpening {
+        async fn open(
+            &mut self,
+        ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
+            Ok(Box::new(SuspendingCloseLifecycleLease(self.0.clone())))
+        }
+
+        fn cancel_on_drop(&mut self) {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct SuspendingCloseLifecycleLease(Arc<PlacementLifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLease for SuspendingCloseLifecycleLease {
+        fn dispatcher(&self) -> Rc<dyn tools::ToolDispatcher> {
+            Rc::new(tools::InMemoryToolDispatcher::default())
+        }
+
+        fn close_on_drop(&mut self) {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+        }
+
+        async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
+            self.0.close_started.fetch_add(1, Ordering::SeqCst);
             std::future::pending().await
         }
     }
@@ -1813,6 +1872,45 @@ mod tests {
                     .expect_err("blocked recorded driver is cancelled");
                 assert!(matches!(error, TraceError::Cancelled(_)));
                 assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_agent_cancellation_fences_lifecycle_lease_while_async_close_awaits() {
+        let lifecycle = Arc::new(PlacementLifecycleCounts::default());
+        let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
+            .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(SuspendingCloseLifecycleFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ));
+        let backend = Rc::new(empty_graph_worker(Arc::new(trace_driver)));
+        let task_backend = backend.clone();
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let task = tokio::task::spawn_local(async move {
+                    task_backend
+                        .execute_trace(empty_recorded_program("trace-close-cancel"))
+                        .await
+                });
+                tokio::task::yield_now().await;
+                backend
+                    .cancel_inflight()
+                    .expect("cancellation aborts driver closing its lease");
+                let error = task
+                    .await
+                    .expect("placement task completes after cancellation")
+                    .expect_err("async close is cancelled");
+                assert!(matches!(error, TraceError::Cancelled(_)));
+                assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.close_started.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
             })
             .await;

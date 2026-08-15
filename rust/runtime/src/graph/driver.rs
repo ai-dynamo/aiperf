@@ -490,14 +490,21 @@ struct RecordedReplayTraceProgramDriver {
 /// Ensures the opened lifecycle lease receives cancellation-safe cleanup.
 struct LifecycleLeaseGuard {
     lease: Box<dyn agent::AgentInvocationLease>,
-    has_close_been_attempted: bool,
+    close_state: LifecycleLeaseCloseState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LifecycleLeaseCloseState {
+    Open,
+    Closing,
+    Finished,
 }
 
 impl LifecycleLeaseGuard {
     fn new(lease: Box<dyn agent::AgentInvocationLease>) -> Self {
         Self {
             lease,
-            has_close_been_attempted: false,
+            close_state: LifecycleLeaseCloseState::Open,
         }
     }
 
@@ -506,14 +513,16 @@ impl LifecycleLeaseGuard {
     }
 
     async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
-        self.has_close_been_attempted = true;
-        self.lease.close().await
+        self.close_state = LifecycleLeaseCloseState::Closing;
+        let result = self.lease.close().await;
+        self.close_state = LifecycleLeaseCloseState::Finished;
+        result
     }
 }
 
 impl Drop for LifecycleLeaseGuard {
     fn drop(&mut self) {
-        if !self.has_close_been_attempted {
+        if self.close_state != LifecycleLeaseCloseState::Finished {
             self.lease.close_on_drop();
         }
     }
