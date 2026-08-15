@@ -241,14 +241,13 @@ impl ReplayCheckpoint {
         Ok(checkpoint)
     }
 
-    /// Recover the protected namespace from disk before validating a resumed run.
+    /// Recover the protected run id and namespace from disk before validating a resumed run.
     ///
     /// A second unseeded invocation cannot reproduce the namespace by minting it
     /// again, so the controller must build its comparison identity from this
     /// protected checkpoint value.
     pub fn restore_run_identity(
         path: &Path,
-        run_id: impl Into<String>,
         replay_root_digest: impl Into<String>,
         manifest_digest: impl Into<String>,
         recording_digests: BTreeMap<String, String>,
@@ -260,7 +259,7 @@ impl ReplayCheckpoint {
             ReplayResumeError::IdentityMismatch("checkpoint has no persistent identity".into())
         })?;
         Ok(ReplayRunIdentity::for_checkpoint_with_environment(
-            run_id,
+            identity.run_id.clone(),
             replay_root_digest,
             manifest_digest,
             recording_digests,
@@ -310,7 +309,8 @@ impl ReplayCheckpoint {
                 "resume run has no persistent identity".into(),
             ));
         };
-        if saved.replay_root_digest != current.replay_root_digest
+        if saved.run_id != current.run_id
+            || saved.replay_root_digest != current.replay_root_digest
             || saved.manifest_digest != current.manifest_digest
             || saved.recording_digests != current.recording_digests
             || saved.request_profile_digests != current.request_profile_digests

@@ -148,7 +148,6 @@ fn resume_recovers_the_persisted_namespace_before_validating_an_unseeded_run() {
         .expect("checkpoint is durable before warmup");
     let resumed = ReplayCheckpoint::restore_run_identity(
         &path,
-        "opaque-run-id",
         "root",
         "manifest",
         BTreeMap::from([(
@@ -162,6 +161,11 @@ fn resume_recovers_the_persisted_namespace_before_validating_an_unseeded_run() {
         BTreeMap::new(),
     )
     .expect("resume uses the persisted raw namespace instead of minting another one");
+    assert_eq!(
+        resumed.label(),
+        "opaque-run-id",
+        "resume must restore the cleanup-scoping run id persisted before warmup"
+    );
     let checkpoint = ReplayCheckpoint::read_for_resume(&path, &resumed)
         .expect("unseeded second invocation validates");
     assert_eq!(
@@ -172,7 +176,6 @@ fn resume_recovers_the_persisted_namespace_before_validating_an_unseeded_run() {
 
     let changed_profile = ReplayCheckpoint::restore_run_identity(
         &path,
-        "opaque-run-id",
         "root",
         "manifest",
         BTreeMap::from([(
@@ -213,7 +216,6 @@ fn resume_migrates_legacy_completed_map_and_rejects_invalid_entries() {
 
     let run = ReplayCheckpoint::restore_run_identity(
         &path,
-        "opaque-run-id",
         "root",
         "manifest",
         BTreeMap::from([(
@@ -252,7 +254,6 @@ fn resume_migrates_legacy_completed_map_and_rejects_invalid_entries() {
     assert!(
         ReplayCheckpoint::restore_run_identity(
             &path,
-            "opaque-run-id",
             "root",
             "manifest",
             BTreeMap::from([(
@@ -297,7 +298,6 @@ fn resume_rejects_duplicate_vector_task_identities() {
 
     let run = ReplayCheckpoint::restore_run_identity(
         &path,
-        "opaque-run-id",
         "root",
         "manifest",
         BTreeMap::from([(

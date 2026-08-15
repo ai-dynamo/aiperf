@@ -1032,7 +1032,6 @@ fn prepare_recorded_replay_checkpoint(
     if resume && path.exists() {
         let run = ReplayCheckpoint::restore_run_identity(
             path,
-            format!("recorded-agent-replay:{manifest_digest}"),
             root_digest,
             manifest_digest,
             recordings,
@@ -1044,13 +1043,18 @@ fn prepare_recorded_replay_checkpoint(
             .map(Some)
             .map_err(|error| anyhow!("loading recorded replay checkpoint: {error}"));
     }
-    let namespace_identity = ReplayRunIdentity::mint(rng_root, &manifest_digest);
+    let run_id = format!(
+        "recorded-agent-replay:{}:{}",
+        manifest_digest.chars().take(12).collect::<String>(),
+        Uuid::new_v4().simple()
+    );
+    let namespace_identity = ReplayRunIdentity::mint(rng_root, &run_id);
     let namespace = CacheIsolationPolicy::first_message_prefix(namespace_identity)
         .namespace()
         .ok_or_else(|| anyhow!("recorded replay cache namespace was not created"))?
         .to_string();
     let run = ReplayRunIdentity::for_checkpoint_with_environment(
-        format!("recorded-agent-replay:{manifest_digest}"),
+        run_id,
         root_digest,
         manifest_digest.clone(),
         recordings,
@@ -1543,6 +1547,79 @@ pub(crate) fn finish_with_shutdown<T>(
 mod tests {
 
     use super::*;
+
+    fn recorded_replay_input() -> Arc<crate::graph::input::GraphInputBundle> {
+        let plan = crate::graph::model::GraphTracePlan {
+            graph: crate::graph::model::GraphRecord::default(),
+            trace: crate::graph::model::TraceRecord {
+                id: "trace-1".into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        };
+        let mut program = crate::graph::model::GraphTraceProgram::static_graph(plan);
+        program.driver = crate::graph::driver::TraceDriverSpec::recorded_replay();
+        program.replay = Some(crate::graph::driver::ReplayTraceMetadata {
+            manifest_ordinal: 0,
+            identity: crate::graph::driver::ReplayTaskIdentity {
+                adapter: "pinchbench".into(),
+                family: "pinchbench".into(),
+                task_id: "task-1".into(),
+                primary_role: None,
+            },
+            source_digest: "source-digest".into(),
+            normalization_target_digest: None,
+            target_output_tokens: Vec::new(),
+            expected_llm_node_count: 0,
+            expected_tool_node_count: 0,
+            request_profile_identity: "profile-id".into(),
+            comparability_annotations: BTreeMap::new(),
+        });
+        Arc::new(crate::graph::input::GraphInputBundle {
+            programs: vec![program],
+            segments: Arc::new(crate::dataset::InMemorySegmentStore::default()),
+            metadata: crate::graph::input::GraphInputMetadata {
+                format: "agent_recording".into(),
+                root_count: 1,
+                node_count: 0,
+                warning_facts: Vec::new(),
+            },
+        })
+    }
+
+    #[test]
+    fn new_recorded_replay_checkpoints_get_distinct_resume_stable_run_ids() {
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let first_path = first_dir.path().join("replay-checkpoint.json");
+        let second_path = second_dir.path().join("replay-checkpoint.json");
+        let input = recorded_replay_input();
+
+        let first =
+            prepare_recorded_replay_checkpoint(&input, false, &first_path, RngRoot::new(Some(7)))
+                .unwrap()
+                .unwrap();
+        let second =
+            prepare_recorded_replay_checkpoint(&input, false, &second_path, RngRoot::new(Some(7)))
+                .unwrap()
+                .unwrap();
+
+        assert_ne!(
+            first.run.label(),
+            second.run.label(),
+            "concurrent same-manifest runs need disjoint Docker cleanup labels"
+        );
+        let resumed =
+            prepare_recorded_replay_checkpoint(&input, true, &first_path, RngRoot::new(Some(7)))
+                .unwrap()
+                .unwrap();
+        assert_eq!(resumed.run.label(), first.run.label());
+        assert_eq!(
+            resumed.run.cache_namespace_digest(),
+            first.run.cache_namespace_digest()
+        );
+    }
 
     #[test]
     fn replay_resume_allows_identity_cell_partition_but_rejects_multi_cell() {

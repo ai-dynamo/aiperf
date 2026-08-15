@@ -539,7 +539,11 @@ pub fn run_cellular(
         let format = envelope
             .pointer("/run/cfg/datasets/0/format")
             .and_then(serde_json::Value::as_str);
-        Some(build_dataset_serve_plan(format, source)?)
+        let replay_root = envelope
+            .pointer("/run/cfg/datasets/0/graph/replay_root")
+            .and_then(serde_json::Value::as_str)
+            .map(Path::new);
+        Some(build_dataset_serve_plan(format, source, replay_root)?)
     } else {
         None
     };
@@ -2051,6 +2055,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
 fn build_dataset_serve_plan(
     format: Option<&str>,
     source: &Path,
+    replay_root: Option<&Path>,
 ) -> Result<(
     std::collections::HashMap<String, PathBuf>,
     crate::engine::artifact_shipping::DatasetManifest,
@@ -2068,8 +2073,34 @@ fn build_dataset_serve_plan(
 
     let is_graph_format = matches!(
         format,
-        Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace" | "aiperf_trace")
+        Some(
+            "dag_jsonl"
+                | "conditional_graph"
+                | "weka_trace"
+                | "dynamo_trace"
+                | "aiperf_trace"
+                | "agent_recording"
+        )
     );
+    if format == Some("agent_recording") {
+        if let Some(root) = replay_root.or_else(|| source.is_dir().then_some(source)) {
+            return build_recorded_replay_root_serve_plan(source, root);
+        }
+        ensure!(
+            source.is_file(),
+            "cross-host recorded-agent input {} is not a single file and has no replay root",
+            source.display()
+        );
+        let name = file_name(source)?;
+        return Ok((
+            std::iter::once((name.clone(), source.to_path_buf())).collect(),
+            DatasetManifest {
+                kind: "file".into(),
+                base_name: name.clone(),
+                files: vec![name],
+            },
+        ));
+    }
     if is_graph_format {
         let (kind, base_name, files) =
             enumerate_recorded_trace_files(format.expect("matched Some above"), source)
@@ -2125,6 +2156,97 @@ fn build_dataset_serve_plan(
             },
         ))
     }
+}
+
+fn build_recorded_replay_root_serve_plan(
+    source: &Path,
+    replay_root: &Path,
+) -> Result<(
+    std::collections::HashMap<String, PathBuf>,
+    crate::engine::artifact_shipping::DatasetManifest,
+)> {
+    use crate::engine::artifact_shipping::DatasetManifest;
+
+    let root_metadata = std::fs::symlink_metadata(replay_root)
+        .with_context(|| format!("inspecting replay root {}", replay_root.display()))?;
+    ensure!(
+        root_metadata.is_dir() && !root_metadata.file_type().is_symlink(),
+        "recorded-agent replay root {} must be a real directory",
+        replay_root.display()
+    );
+    let root = replay_root
+        .canonicalize()
+        .with_context(|| format!("canonicalizing replay root {}", replay_root.display()))?;
+    let source = if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        root.join(source)
+    }
+    .canonicalize()
+    .with_context(|| format!("canonicalizing recorded-agent source {}", source.display()))?;
+    ensure!(
+        source.starts_with(&root),
+        "recorded-agent source {} escapes replay root {}",
+        source.display(),
+        root.display()
+    );
+    let base_name = source
+        .strip_prefix(&root)
+        .map_err(|error| anyhow!(error.to_string()))?
+        .to_str()
+        .ok_or_else(|| anyhow!("recorded-agent source path is not UTF-8"))?
+        .replace(std::path::MAIN_SEPARATOR, "/");
+
+    let mut pending = vec![root.clone()];
+    let mut entries = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let mut children = std::fs::read_dir(&directory)
+            .with_context(|| format!("reading replay root directory {}", directory.display()))?
+            .collect::<std::io::Result<Vec<_>>>()?;
+        children.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in children {
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("inspecting replay-root entry {}", path.display()))?;
+            ensure!(
+                !metadata.file_type().is_symlink(),
+                "recorded-agent replay root contains forbidden symlink {}",
+                path.display()
+            );
+            if metadata.is_dir() {
+                pending.push(path);
+            } else {
+                ensure!(
+                    metadata.is_file(),
+                    "recorded-agent replay root contains unsupported entry {}",
+                    path.display()
+                );
+                let relative = path
+                    .strip_prefix(&root)
+                    .map_err(|error| anyhow!(error.to_string()))?
+                    .to_str()
+                    .ok_or_else(|| anyhow!("replay-root path is not UTF-8"))?
+                    .replace(std::path::MAIN_SEPARATOR, "/");
+                entries.push((relative, path));
+            }
+        }
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    ensure!(
+        !entries.is_empty(),
+        "recorded-agent replay root {} contains no files",
+        root.display()
+    );
+    let files = entries.iter().map(|entry| entry.0.clone()).collect();
+    let map = entries.into_iter().collect();
+    Ok((
+        map,
+        DatasetManifest {
+            kind: "replay_root".into(),
+            base_name,
+            files,
+        },
+    ))
 }
 
 /// Phase `type`s whose dispatch count is exactly the `requests` budget and whose
@@ -3002,7 +3124,7 @@ mod tests {
 
         let file = tmp.path().join("trace.dag.jsonl");
         std::fs::write(&file, b"{}\n").unwrap();
-        let (map, manifest) = build_dataset_serve_plan(Some("dag_jsonl"), &file).unwrap();
+        let (map, manifest) = build_dataset_serve_plan(Some("dag_jsonl"), &file, None).unwrap();
         assert_eq!(manifest.kind, "file");
         assert_eq!(manifest.files, vec!["trace.dag.jsonl".to_owned()]);
         assert_eq!(map.len(), 1);
@@ -3012,7 +3134,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.json"), b"{}").unwrap();
         std::fs::write(dir.join("b.json"), b"{}").unwrap();
-        let (map, manifest) = build_dataset_serve_plan(Some("weka_trace"), &dir).unwrap();
+        let (map, manifest) = build_dataset_serve_plan(Some("weka_trace"), &dir, None).unwrap();
         assert_eq!(manifest.kind, "dir");
         let mut names = manifest.files.clone();
         names.sort();
@@ -3022,23 +3144,78 @@ mod tests {
         std::fs::write(tmp.path().join("seg.000000.jsonl.gz"), b"{}\n").unwrap();
         std::fs::write(tmp.path().join("seg.000001.jsonl.gz"), b"{}\n").unwrap();
         let prefix = tmp.path().join("seg.jsonl.gz");
-        let (map, manifest) = build_dataset_serve_plan(Some("dynamo_trace"), &prefix).unwrap();
+        let (map, manifest) =
+            build_dataset_serve_plan(Some("dynamo_trace"), &prefix, None).unwrap();
         assert_eq!(manifest.kind, "prefix");
         assert_eq!(manifest.base_name, "seg.jsonl.gz");
         assert_eq!(map.len(), 2);
         assert!(map.contains_key("seg.000000.jsonl.gz"));
 
         assert!(
-            build_dataset_serve_plan(Some("dag_jsonl"), &dir).is_err(),
+            build_dataset_serve_plan(Some("dag_jsonl"), &dir, None).is_err(),
             "a dag_jsonl directory must fail closed (single-file loader)"
         );
         let missing = tmp.path().join("nope.jsonl");
-        assert!(build_dataset_serve_plan(Some("weka_trace"), &missing).is_err());
-        assert!(build_dataset_serve_plan(Some("single_turn"), &missing).is_err());
+        assert!(build_dataset_serve_plan(Some("weka_trace"), &missing, None).is_err());
+        assert!(build_dataset_serve_plan(Some("single_turn"), &missing, None).is_err());
         let scheduled = tmp.path().join("prompts.jsonl");
         std::fs::write(&scheduled, b"{}\n").unwrap();
-        let (_map, manifest) = build_dataset_serve_plan(Some("single_turn"), &scheduled).unwrap();
+        let (_map, manifest) =
+            build_dataset_serve_plan(Some("single_turn"), &scheduled, None).unwrap();
         assert_eq!(manifest.kind, "file");
+    }
+
+    #[test]
+    fn agent_recording_serve_plan_preserves_rooted_task_pack_assets() {
+        let replay_root = tempfile::tempdir().unwrap();
+        let recording = replay_root.path().join("recordings/trace.json");
+        let manifest_path = replay_root
+            .path()
+            .join("benchmark/pinchbench/manifest.yaml");
+        let task_path = replay_root
+            .path()
+            .join("benchmark/pinchbench/tasks/task.yaml");
+        let asset_path = replay_root
+            .path()
+            .join("benchmark/pinchbench/assets/input.txt");
+        for path in [&recording, &manifest_path, &task_path, &asset_path] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"fixture").unwrap();
+        }
+
+        let (files, manifest) = build_dataset_serve_plan(
+            Some("agent_recording"),
+            replay_root.path(),
+            Some(replay_root.path()),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.kind, "replay_root");
+        assert_eq!(manifest.base_name, "");
+        assert!(files.contains_key("recordings/trace.json"));
+        assert!(files.contains_key("benchmark/pinchbench/manifest.yaml"));
+        assert!(files.contains_key("benchmark/pinchbench/tasks/task.yaml"));
+        assert!(files.contains_key("benchmark/pinchbench/assets/input.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_recording_serve_plan_rejects_symlinks_in_replay_root() {
+        use std::os::unix::fs::symlink;
+
+        let replay_root = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        symlink(outside.path(), replay_root.path().join("escaped-asset")).unwrap();
+
+        let error = build_dataset_serve_plan(
+            Some("agent_recording"),
+            replay_root.path(),
+            Some(replay_root.path()),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("forbidden symlink"), "{error}");
     }
 
     #[test]

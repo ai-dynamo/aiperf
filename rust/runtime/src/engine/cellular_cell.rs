@@ -417,7 +417,39 @@ pub fn cellular_file_dataset_path(envelope: &serde_json::Value) -> Option<std::p
 /// under the system temp dir), created on demand. Distinct from the velo scratch so
 /// a shipped dataset never collides with the cell's fetch/ship sockets.
 fn cell_dataset_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("aiperf-cell-dataset-{}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "aiperf-cell-dataset-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ))
+}
+
+fn rewrite_cell_dataset_paths(
+    envelope: &mut serde_json::Value,
+    local_path: &std::path::Path,
+    local_replay_root: Option<&std::path::Path>,
+) -> Result<()> {
+    use anyhow::Context;
+
+    let dataset = envelope
+        .pointer_mut("/run/cfg/datasets/0")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("cell envelope dataset is not an object")?;
+    dataset.insert(
+        "path".to_owned(),
+        serde_json::Value::String(local_path.to_string_lossy().into_owned()),
+    );
+    if let Some(replay_root) = local_replay_root {
+        let graph = dataset
+            .get_mut("graph")
+            .and_then(serde_json::Value::as_object_mut)
+            .context("recorded-agent cell envelope graph is not an object")?;
+        graph.insert(
+            "replay_root".to_owned(),
+            serde_json::Value::String(replay_root.to_string_lossy().into_owned()),
+        );
+    }
+    Ok(())
 }
 
 /// Before the cell compiles its dataset, ship the controller's `file`/`path`
@@ -467,7 +499,7 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
     let _ = &source_path; // presence gated the ship; the controller owns the file set
     let dest_dir = cell_dataset_dir();
     let fetch_authority = authority.clone();
-    let local_path = std::thread::spawn(move || -> Result<std::path::PathBuf> {
+    let (local_path, local_replay_root) = std::thread::spawn(move || -> Result<_> {
         use crate::engine::artifact_shipping::{
             fetch_dataset_manifest, reconstruct_shipped_dataset,
         };
@@ -479,23 +511,18 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
             let manifest = fetch_dataset_manifest(&fetch_authority)
                 .await
                 .context("cell fetching dataset manifest from controller")?;
-            reconstruct_shipped_dataset(&fetch_authority, &manifest, &dest_dir)
+            let is_replay_root = manifest.kind == "replay_root";
+            let path = reconstruct_shipped_dataset(&fetch_authority, &manifest, &dest_dir)
                 .await
-                .context("cell reconstructing shipped dataset from controller")
+                .context("cell reconstructing shipped dataset from controller")?;
+            Ok((path, is_replay_root.then_some(dest_dir)))
         })
     })
     .join()
     .map_err(|_| anyhow::anyhow!("cell dataset-download thread panicked"))??;
 
     // Rewrite the cell's envelope to compile from the landed cell-local copy.
-    envelope
-        .pointer_mut("/run/cfg/datasets/0")
-        .and_then(serde_json::Value::as_object_mut)
-        .context("cell envelope dataset is not an object")?
-        .insert(
-            "path".to_owned(),
-            serde_json::Value::String(local_path.to_string_lossy().into_owned()),
-        );
+    rewrite_cell_dataset_paths(&mut envelope, &local_path, local_replay_root.as_deref())?;
     serde_json::to_vec(&envelope).context("re-serializing cell envelope after dataset download")
 }
 
@@ -1201,5 +1228,34 @@ mod tests {
                 "should not ship {none}"
             );
         }
+    }
+
+    #[test]
+    fn landed_agent_recording_rewrites_dataset_and_replay_root_together() {
+        let mut envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            "type": "file",
+            "format": "agent_recording",
+            "path": "/controller/replay/recordings/trace.json",
+            "graph": {
+                "replay_root": "/controller/replay",
+                "execute_tools": true
+            }
+        }]}}});
+
+        rewrite_cell_dataset_paths(
+            &mut envelope,
+            std::path::Path::new("/cell/replay/recordings/trace.json"),
+            Some(std::path::Path::new("/cell/replay")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            envelope.pointer("/run/cfg/datasets/0/path"),
+            Some(&serde_json::json!("/cell/replay/recordings/trace.json"))
+        );
+        assert_eq!(
+            envelope.pointer("/run/cfg/datasets/0/graph/replay_root"),
+            Some(&serde_json::json!("/cell/replay"))
+        );
     }
 }

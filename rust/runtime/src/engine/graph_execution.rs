@@ -863,6 +863,7 @@ impl TracePlacement for GraphWorkerBackend {
                     ));
                 }
             }
+            self.active.borrow_mut().remove(&lifecycle_id);
             opened_driver = Some(driver);
             GraphTraceProgram::static_graph(program.profiling.clone())
         };
@@ -874,7 +875,7 @@ impl TracePlacement for GraphWorkerBackend {
             .and_then(|driver| driver.tool_dispatcher());
         if self.cancelled.get() {
             if let Some(mut driver) = opened_driver {
-                let _ = self.close_driver(lifecycle_id, driver.as_mut()).await;
+                let _ = self.close_driver(driver.as_mut()).await;
             }
             return Err(TraceError::Cancelled(format!(
                 "graph trace {:?} was rejected after worker cancellation",
@@ -1003,7 +1004,7 @@ impl TracePlacement for GraphWorkerBackend {
                 None
             };
         if let Some(mut driver) = opened_driver {
-            let close = self.close_driver(lifecycle_id, driver.as_mut()).await;
+            let close = self.close_driver(driver.as_mut()).await;
             let result = match (result, close) {
                 (Err(primary), _) => Err(primary),
                 (Ok(()), close) => close,
@@ -1065,30 +1066,28 @@ fn should_emit_replay_supplement(phase: Phase, is_recorded_program: bool, succee
 }
 
 impl GraphWorkerBackend {
-    /// Close an opened driver through the same registered cancellation boundary
-    /// used while provisioning it. A cancellation that lands between a
-    /// synchronous open and this close is observed immediately rather than
-    /// awaiting a close future that can no longer make progress.
+    /// Close an opened driver to completion before returning cancellation.
+    ///
+    /// Driver open remains cancellable because its opening guards can perform
+    /// synchronous rollback. Once open succeeds, however, dispatcher and sandbox
+    /// teardown is asynchronous and owns external resources. Dropping that future
+    /// would leak them, so cancellation becomes the terminal result only after the
+    /// bounded driver close finishes.
     async fn close_driver(
         &self,
-        lifecycle_id: u64,
         driver: &mut dyn crate::graph::driver::TraceProgramDriver,
     ) -> Result<(), TraceError> {
-        let (abort, registration) = AbortHandle::new_pair();
-        self.active
-            .borrow_mut()
-            .insert(lifecycle_id, ActiveGraphTrace::Driver(abort.clone()));
-        if self.cancelled.get() {
-            abort.abort();
-        }
-        let close = Abortable::new(driver.close(), registration)
+        let close = driver
+            .close()
             .await
-            .map_err(|_| {
-                TraceError::Cancelled("graph trace driver was cancelled during close".into())
-            })
-            .and_then(|result| result.map_err(|error| TraceError::Other(error.to_string())));
-        self.active.borrow_mut().remove(&lifecycle_id);
-        close
+            .map_err(|error| TraceError::Other(error.to_string()));
+        if self.cancelled.get() {
+            Err(TraceError::Cancelled(
+                "graph trace driver finished teardown after cancellation".into(),
+            ))
+        } else {
+            close
+        }
     }
 }
 
@@ -2015,6 +2014,55 @@ mod tests {
         closed: AtomicUsize,
     }
 
+    struct CleanupRecordingContainerRuntime {
+        removed: Arc<AtomicUsize>,
+    }
+
+    #[async_trait(?Send)]
+    impl tools::ContainerRuntime for CleanupRecordingContainerRuntime {
+        async fn inspect_image(&self, _image: &str) -> Result<(), tools::ToolSandboxError> {
+            Ok(())
+        }
+
+        async fn create(
+            &self,
+            _spec: &tools::ContainerCreateSpec,
+        ) -> Result<tools::ContainerId, tools::ToolSandboxError> {
+            Ok(tools::ContainerId::new("cancellation-cleanup"))
+        }
+
+        async fn start(&self, _id: &tools::ContainerId) -> Result<(), tools::ToolSandboxError> {
+            Ok(())
+        }
+
+        async fn open_exec(
+            &self,
+            _id: &tools::ContainerId,
+            _argv: &[std::ffi::OsString],
+        ) -> Result<Box<dyn tools::FramedCommandIo>, tools::ToolSandboxError> {
+            Err(tools::ToolSandboxError::new(
+                "cleanup test must not execute a Docker command",
+            ))
+        }
+
+        async fn force_remove(
+            &self,
+            _id: &tools::ContainerId,
+            _timeout_ns: u64,
+        ) -> Result<(), tools::ToolSandboxError> {
+            self.removed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn list_by_label(
+            &self,
+            _key: &str,
+            _value: &str,
+        ) -> Result<Vec<tools::ContainerId>, tools::ToolSandboxError> {
+            Ok(Vec::new())
+        }
+    }
+
     struct SuspendingOpenLifecycleFactoryFactory(Arc<PlacementLifecycleCounts>);
 
     impl agent::AgentInvocationLeaseFactoryFactory for SuspendingOpenLifecycleFactoryFactory {
@@ -2055,7 +2103,10 @@ mod tests {
         }
     }
 
-    struct SuspendingCloseLifecycleFactoryFactory(Arc<PlacementLifecycleCounts>);
+    struct SuspendingCloseLifecycleFactoryFactory {
+        counts: Arc<PlacementLifecycleCounts>,
+        release: Arc<tokio::sync::Notify>,
+    }
 
     impl agent::AgentInvocationLeaseFactoryFactory for SuspendingCloseLifecycleFactoryFactory {
         fn create(
@@ -2063,11 +2114,17 @@ mod tests {
             _trace_id: &str,
             _root_dispatcher: Rc<dyn tools::ToolDispatcher>,
         ) -> Result<Box<dyn agent::AgentInvocationLeaseFactory>, agent::AgentLoopError> {
-            Ok(Box::new(SuspendingCloseLifecycleFactory(self.0.clone())))
+            Ok(Box::new(SuspendingCloseLifecycleFactory {
+                counts: self.counts.clone(),
+                release: self.release.clone(),
+            }))
         }
     }
 
-    struct SuspendingCloseLifecycleFactory(Arc<PlacementLifecycleCounts>);
+    struct SuspendingCloseLifecycleFactory {
+        counts: Arc<PlacementLifecycleCounts>,
+        release: Arc<tokio::sync::Notify>,
+    }
 
     impl agent::AgentInvocationLeaseFactory for SuspendingCloseLifecycleFactory {
         fn begin_open(
@@ -2075,27 +2132,39 @@ mod tests {
             _request: &agent::AgentInvocationRequest,
             _parent: Option<&dyn agent::AgentInvocationLease>,
         ) -> Result<Box<dyn agent::AgentInvocationLeaseOpening>, agent::AgentLoopError> {
-            self.0.opened.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(SuspendingCloseLifecycleOpening(self.0.clone())))
+            self.counts.opened.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(SuspendingCloseLifecycleOpening {
+                counts: self.counts.clone(),
+                release: self.release.clone(),
+            }))
         }
     }
 
-    struct SuspendingCloseLifecycleOpening(Arc<PlacementLifecycleCounts>);
+    struct SuspendingCloseLifecycleOpening {
+        counts: Arc<PlacementLifecycleCounts>,
+        release: Arc<tokio::sync::Notify>,
+    }
 
     #[async_trait(?Send)]
     impl agent::AgentInvocationLeaseOpening for SuspendingCloseLifecycleOpening {
         async fn open(
             &mut self,
         ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
-            Ok(Box::new(SuspendingCloseLifecycleLease(self.0.clone())))
+            Ok(Box::new(SuspendingCloseLifecycleLease {
+                counts: self.counts.clone(),
+                release: self.release.clone(),
+            }))
         }
 
         fn cancel_on_drop(&mut self) {
-            self.0.closed.fetch_add(1, Ordering::SeqCst);
+            self.counts.closed.fetch_add(1, Ordering::SeqCst);
         }
     }
 
-    struct SuspendingCloseLifecycleLease(Arc<PlacementLifecycleCounts>);
+    struct SuspendingCloseLifecycleLease {
+        counts: Arc<PlacementLifecycleCounts>,
+        release: Arc<tokio::sync::Notify>,
+    }
 
     #[async_trait(?Send)]
     impl agent::AgentInvocationLease for SuspendingCloseLifecycleLease {
@@ -2104,12 +2173,14 @@ mod tests {
         }
 
         fn close_on_drop(&mut self) {
-            self.0.closed.fetch_add(1, Ordering::SeqCst);
+            self.counts.closed.fetch_add(1, Ordering::SeqCst);
         }
 
         async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
-            self.0.close_started.fetch_add(1, Ordering::SeqCst);
-            std::future::pending().await
+            self.counts.close_started.fetch_add(1, Ordering::SeqCst);
+            self.release.notified().await;
+            self.counts.closed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -2449,16 +2520,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn graph_agent_cancellation_fences_lifecycle_lease_while_async_close_awaits() {
+    async fn graph_agent_cancellation_awaits_async_close_before_returning_cancelled() {
         let lifecycle = Arc::new(PlacementLifecycleCounts::default());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let removed = Arc::new(AtomicUsize::new(0));
+        let runtime_removed = removed.clone();
         let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
             .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
                 Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
                 Arc::new(agent::InMemoryAgentResponseStoreFactory),
                 Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
                 Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
-                Arc::new(SuspendingCloseLifecycleFactoryFactory(lifecycle.clone())),
-                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(SuspendingCloseLifecycleFactoryFactory {
+                    counts: lifecycle.clone(),
+                    release: release.clone(),
+                }),
+                Arc::new(tools::DockerToolDispatcherFactory::with_runtime_factory(
+                    1024,
+                    move |_| {
+                        Rc::new(CleanupRecordingContainerRuntime {
+                            removed: runtime_removed.clone(),
+                        })
+                    },
+                )),
                 Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
                 Arc::new(tools::InMemoryAgentObservationFormatterFactory),
             ));
@@ -2466,19 +2550,45 @@ mod tests {
         let task_backend = backend.clone();
         tokio::task::LocalSet::new()
             .run_until(async move {
-                let task = tokio::task::spawn_local(async move {
-                    task_backend
-                        .execute_trace(empty_recorded_program("trace-close-cancel"))
-                        .await
-                });
+                let mut program = empty_recorded_program("trace-close-cancel");
+                let environment = tools::ResolvedTraceEnvironment {
+                    kind: tools::EnvironmentRecipe::SweBench,
+                    backend: tools::ToolExecutionBackend::Docker,
+                    image: "recorded-agent-test:latest".into(),
+                    workspace: tools::WorkspaceSpec::image_native(
+                        "/testbed",
+                        vec!["bash".into(), "-c".into()],
+                        5_000_000_000,
+                    ),
+                };
+                program.environment = Some(
+                    crate::graph::driver::TraceEnvironmentSpec::from_resolved(&environment)
+                        .unwrap(),
+                );
+                let task =
+                    tokio::task::spawn_local(
+                        async move { task_backend.execute_trace(program).await },
+                    );
                 tokio::task::yield_now().await;
                 backend
                     .cancel_inflight()
-                    .expect("cancellation aborts driver closing its lease");
+                    .expect("cancellation marks the trace terminal");
+                tokio::task::yield_now().await;
+                assert_eq!(lifecycle.close_started.load(Ordering::SeqCst), 1);
+                assert_eq!(
+                    removed.load(Ordering::SeqCst),
+                    1,
+                    "stock Docker dispatcher removes its container before teardown waits"
+                );
+                assert!(
+                    !task.is_finished(),
+                    "post-open cancellation must await bounded driver teardown"
+                );
+                release.notify_one();
                 let error = task
                     .await
-                    .expect("placement task completes after cancellation")
-                    .expect_err("async close is cancelled");
+                    .expect("placement task completes after teardown")
+                    .expect_err("cancellation remains the terminal result");
                 assert!(matches!(error, TraceError::Cancelled(_)));
                 assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.close_started.load(Ordering::SeqCst), 1);
@@ -2493,13 +2603,17 @@ mod tests {
         // early cancellation guard this path synchronously opened the lease,
         // reached the post-open cancellation check, and waited here forever.
         let lifecycle = Arc::new(PlacementLifecycleCounts::default());
+        let release = Arc::new(tokio::sync::Notify::new());
         let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
             .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
                 Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
                 Arc::new(agent::InMemoryAgentResponseStoreFactory),
                 Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
                 Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
-                Arc::new(SuspendingCloseLifecycleFactoryFactory(lifecycle.clone())),
+                Arc::new(SuspendingCloseLifecycleFactoryFactory {
+                    counts: lifecycle.clone(),
+                    release,
+                }),
                 Arc::new(tools::InMemoryToolDispatcherFactory),
                 Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
                 Arc::new(tools::InMemoryAgentObservationFormatterFactory),

@@ -1050,7 +1050,10 @@ cancellation, phase grace escalation, timeout, placement shutdown, and a
 partially opened sandbox. A close failure is recorded as infrastructure detail.
 It becomes the trace error only when no earlier trace error exists; it never
 masks the primary cause. Cancellation waits for bounded cleanup before the
-placement reports terminal.
+placement reports terminal. Driver provisioning remains cancellable until open
+succeeds. After that boundary, cancellation stops graph work but does not abort
+or detach the driver-close future: dispatcher/sandbox cleanup is awaited exactly
+once, and the original cancellation or trace failure remains primary.
 
 Workspace paths are rooted in a run/cell-owned tool directory and use a
 sanitized execution-instance slug. They never derive a filesystem path directly
@@ -1114,10 +1117,15 @@ silently substitute an empty workspace: recorded requests do not depend on live
 tool observations, so such a mistake can otherwise produce plausible request
 parity with meaningless near-zero tool timings.
 
-Fixture handles travel with the existing segment-store/cellular dataset
-contract. A cell does not need the controller's `replay_root`; it needs the
-shipped segments and resolved container images. Materialization verifies each
-content digest before opening the sandbox.
+Fixture handles remain part of the existing segment-store contract. A local
+worker receives the prepared graph and its immutable segments. For a cross-host
+cellular run, the controller instead ships the validated `agent_recording`
+`replay_root` tree with safe relative paths, including the selected recording,
+task-pack manifest/task files, and nested assets. The cell reconstructs that tree
+without following symlinks, rewrites both `dataset.path` and
+`dataset.graph.replay_root`, and then performs the normal input preparation so
+its graph programs and content-addressed workspace handles are cell-local.
+Materialization verifies each content digest before opening the sandbox.
 
 ### Local sandbox
 
@@ -1254,12 +1262,15 @@ and all profiling requests within one run share the exact namespace. Warmup
 requests have no marker. The A/B harness normalizes only the 32 digit values
 while asserting template, scope, placement, and unmodified warmup.
 
-The controller persists the opaque run identity and cache namespace before any
-warmup. `--graph-resume` requires the same artifact root, manifest digest,
-recording digests, resolved request profiles, and namespace. A mismatch fails
-closed rather than creating a mixed-namespace run. The namespace is sensitive
-benchmark state: normal reports include its digest and mode, while the raw value
-is stored only in the protected resume checkpoint.
+The controller allocates a distinct opaque run identity for every new invocation
+and persists it with the cache namespace before any warmup. The exact identity
+scopes container labels and cleanup; concurrent runs of the same manifest never
+share it. `--graph-resume` restores that persisted identity and namespace and
+requires the same artifact root, manifest digest, recording digests, and resolved
+request/environment profiles. A mismatch fails closed rather than creating a
+mixed-namespace run. The namespace is sensitive benchmark state: normal reports
+include its digest and mode, while the raw value is stored only in the protected
+resume checkpoint.
 
 ### Resume, completeness, and provenance
 
@@ -1532,6 +1543,13 @@ every distinct Docker image its partition may resolve and to the Docker runtime,
 or to local execution prerequisites when the scenario is not active. Preflight
 capability validation occurs on every cell before the phase barrier. A partial
 preflight fails the run before warmup or profiling begins.
+
+Cross-host dataset shipping treats `agent_recording` as a graph format. When a
+replay root is authored, the controller allowlists and streams the rooted file
+tree with its relative hierarchy intact; absolute paths, parent traversal,
+duplicate destinations, symlinks, and non-file entries fail closed. Cells land
+the tree in a unique process-owned directory and rewrite the recording path and
+replay root together before recipe preflight.
 
 Cell workspaces live under the cell's exclusive artifact root. Final graph
 supplements travel through the cellular protocol rather than artifact-file

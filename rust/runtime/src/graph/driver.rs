@@ -725,7 +725,9 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             .open_trace(tools::TraceOpenContext {
                 trace: &self.trace,
                 environment: environment.as_ref(),
-                workspace: environment.as_ref().map(|environment| &environment.workspace),
+                workspace: environment
+                    .as_ref()
+                    .map(|environment| &environment.workspace),
                 clock: execution.clock,
                 segments: execution.segments,
                 run_identity: execution.run_identity,

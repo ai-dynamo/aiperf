@@ -53,7 +53,7 @@ pub const ZSTD_CONTENT_ENCODING: &str = "zstd";
 /// The controller derives this from the graph loader's OWN enumeration
 /// (`crate::graph::recorded::enumerate_recorded_trace_files`), so the shipped set
 /// is byte-for-byte the set a 1-cell run reads. The cell reconstructs the files
-/// under a cell-local directory preserving their (flat) relative names, then
+/// under a cell-local directory preserving their relative names, then
 /// rewrites `datasets/0.path` per [`kind`](Self::kind):
 /// - `"file"` / `"prefix"`: `path` = `<dest>/<base_name>` (a single file, or the
 ///   re-globbable segmented-prefix stem);
@@ -65,8 +65,8 @@ pub struct DatasetManifest {
     /// The original trace path's file name — the stem the cell rewrites
     /// `datasets/0.path` around for the `file`/`prefix` kinds.
     pub base_name: String,
-    /// The relative (flat) file names to fetch, in the loader's read order. Each
-    /// is a single path component (loaders never recurse), served by
+    /// The relative file names to fetch, in loader order. Graph shards remain
+    /// flat; rooted replay packs may contain validated nested paths, served by
     /// `GET /dataset/{name}` and re-fetched by the cell in this order.
     pub files: Vec<String>,
 }
@@ -355,7 +355,7 @@ impl ArtifactUploadServer {
         let app = Router::new()
             .route("/cell/{cell_id}/artifact/{*file}", post(upload_artifact))
             .route("/cell/{cell_id}/done", post(cell_done))
-            .route("/dataset/{name}", get(serve_dataset))
+            .route("/dataset/{*name}", get(serve_dataset))
             .route("/dataset-manifest", get(serve_dataset_manifest))
             // The body is streamed frame by frame (bounded); lift the default 2 MB
             // request-body cap so a large records.jsonl upload is not truncated.
@@ -763,7 +763,7 @@ pub async fn fetch_dataset_to_file(authority: &str, name: &str, dest: &Path) -> 
 
     let request = hyper::Request::builder()
         .method("GET")
-        .uri(format!("/dataset/{name}"))
+        .uri(dataset_request_path(name))
         .header(hyper::header::HOST, authority)
         .body(Empty::<Bytes>::new())
         .context("building dataset fetch request")?;
@@ -801,6 +801,18 @@ pub async fn fetch_dataset_to_file(authority: &str, name: &str, dest: &Path) -> 
         Ok(Err(error)) => Err(error).with_context(|| format!("writing dataset {name:?}")),
         Err(join) => bail!("dataset writer task panicked: {join}"),
     }
+}
+
+fn dataset_request_path(name: &str) -> String {
+    let encoded = name
+        .split('/')
+        .map(|component| {
+            percent_encoding::utf8_percent_encode(component, percent_encoding::NON_ALPHANUMERIC)
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("/dataset/{encoded}")
 }
 
 /// Fetch the multi-file dataset [`DatasetManifest`] over `GET /dataset-manifest`.
@@ -845,20 +857,75 @@ pub async fn fetch_dataset_manifest(authority: &str) -> Result<DatasetManifest> 
     serde_json::from_slice(&bytes).context("decoding dataset manifest")
 }
 
-/// Validate a manifest-supplied relative file name: it must be a single, non-empty
-/// `Normal` path component (no `/`, no `..`, no absolute root). The loaders never
-/// recurse, so every shipped name is a flat file name; this fails closed on any
-/// traversal attempt even though the manifest comes from the trusted controller.
+/// Validate a manifest-supplied relative path without allowing traversal.
 fn validate_dataset_relname(name: &str) -> Result<()> {
     ensure!(!name.is_empty(), "empty dataset file name");
     let path = Path::new(name);
-    let mut components = path.components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(_)), None) => Ok(()),
-        _ => {
-            bail!("dataset file name {name:?} is not a single flat component (traversal rejected)")
+    let normalized = path.components().collect::<PathBuf>();
+    ensure!(
+        !path.is_absolute()
+            && name.split('/').all(|component| !component.is_empty())
+            && path
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)))
+            && normalized == path,
+        "dataset file name {name:?} is not a safe relative path (traversal rejected)"
+    );
+    Ok(())
+}
+
+fn prepare_dataset_destination(dest_dir: &Path, relative: &Path) -> Result<PathBuf> {
+    match std::fs::symlink_metadata(dest_dir) {
+        Ok(metadata) => ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "cell dataset root {} is not a real directory",
+            dest_dir.display()
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(dest_dir)
+                .with_context(|| format!("creating cell dataset dir {}", dest_dir.display()))?;
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspecting cell dataset dir {}", dest_dir.display()));
         }
     }
+    let destination = dest_dir.join(relative);
+    let mut current = dest_dir.to_path_buf();
+    if let Some(parent) = relative.parent() {
+        for component in parent.components() {
+            let Component::Normal(component) = component else {
+                bail!("dataset destination contains a non-normal component")
+            };
+            current.push(component);
+            match std::fs::symlink_metadata(&current) {
+                Ok(metadata) => ensure!(
+                    metadata.is_dir() && !metadata.file_type().is_symlink(),
+                    "cell dataset parent {} is not a real directory",
+                    current.display()
+                ),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    std::fs::create_dir(&current).with_context(|| {
+                        format!("creating cell dataset parent {}", current.display())
+                    })?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("inspecting cell dataset parent {}", current.display())
+                    });
+                }
+            }
+        }
+    }
+    if std::fs::symlink_metadata(&destination)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        bail!(
+            "cell dataset destination {} is a symlink",
+            destination.display()
+        );
+    }
+    Ok(destination)
 }
 
 /// Reconstruct a shipped directory / segmented-prefix / single-file graph trace
@@ -866,34 +933,41 @@ fn validate_dataset_relname(name: &str) -> Result<()> {
 /// point at.
 ///
 /// Fetches every file named in `manifest` (in order) via the bounded-memory
-/// [`fetch_dataset_to_file`], landing each at `dest_dir/<name>` preserving its flat
+/// [`fetch_dataset_to_file`], landing each at `dest_dir/<name>` preserving its
 /// relative name (each name is path-validated). Each file streams independently, so
 /// peak memory is O(chunk) regardless of the number or size of shards. Returns:
 /// - `"dir"` → `dest_dir` (the loader scans the reconstructed directory);
-/// - `"file"` / `"prefix"` → `dest_dir/base_name` (a single file, or the
-///   re-globbable segmented-prefix stem beside its landed shards).
+/// - `"file"` / `"prefix"` / `"replay_root"` → `dest_dir/base_name` (a single
+///   file, segmented-prefix stem, or recording beneath its replay root).
 pub async fn reconstruct_shipped_dataset(
     authority: &str,
     manifest: &DatasetManifest,
     dest_dir: &Path,
 ) -> Result<PathBuf> {
-    std::fs::create_dir_all(dest_dir)
-        .with_context(|| format!("creating cell dataset dir {}", dest_dir.display()))?;
+    let mut seen = HashSet::new();
     for name in &manifest.files {
         validate_dataset_relname(name)
             .with_context(|| format!("validating shipped dataset file {name:?}"))?;
-        let dest = dest_dir.join(name);
+        ensure!(
+            seen.insert(name),
+            "duplicate dataset manifest path {name:?}"
+        );
+        let dest = prepare_dataset_destination(dest_dir, Path::new(name))?;
         fetch_dataset_to_file(authority, name, &dest)
             .await
             .with_context(|| format!("fetching shipped dataset file {name:?}"))?;
     }
     match manifest.kind.as_str() {
         "dir" => Ok(dest_dir.to_path_buf()),
-        "file" | "prefix" => {
-            validate_dataset_relname(&manifest.base_name).with_context(|| {
-                format!("validating dataset base name {:?}", manifest.base_name)
-            })?;
-            Ok(dest_dir.join(&manifest.base_name))
+        "file" | "prefix" | "replay_root" => {
+            if manifest.kind == "replay_root" && manifest.base_name.is_empty() {
+                Ok(dest_dir.to_path_buf())
+            } else {
+                validate_dataset_relname(&manifest.base_name).with_context(|| {
+                    format!("validating dataset base name {:?}", manifest.base_name)
+                })?;
+                Ok(dest_dir.join(&manifest.base_name))
+            }
         }
         other => bail!("unknown dataset manifest kind {other:?}"),
     }
@@ -1224,7 +1298,8 @@ mod tests {
     #[test]
     fn dataset_relname_validation_rejects_traversal() {
         assert!(validate_dataset_relname("shard-000.jsonl").is_ok());
-        for bad in ["", "../x", "a/b", "/etc/passwd", ".", "sub/deep.json"] {
+        assert!(validate_dataset_relname("sub/deep.json").is_ok());
+        for bad in ["", "../x", "a/../b", "/etc/passwd", ".", "a//b"] {
             assert!(
                 validate_dataset_relname(bad).is_err(),
                 "must reject {bad:?}"
@@ -1337,6 +1412,51 @@ mod tests {
         for shard in shard_names {
             assert!(cell_dir.join(shard).is_file(), "shard {shard} landed");
         }
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn manifest_reconstructs_nested_replay_assets_without_flattening() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let recording = source.join("recordings/trace.json");
+        let asset = source.join("benchmark/pinchbench/assets/input.txt");
+        std::fs::create_dir_all(recording.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+        std::fs::write(&recording, b"recording").unwrap();
+        std::fs::write(&asset, b"workspace asset").unwrap();
+        let datasets = HashMap::from([
+            ("recordings/trace.json".to_owned(), recording),
+            ("benchmark/pinchbench/assets/input.txt".to_owned(), asset),
+        ]);
+        let manifest = DatasetManifest {
+            kind: "replay_root".to_owned(),
+            base_name: "recordings/trace.json".to_owned(),
+            files: vec![
+                "recordings/trace.json".to_owned(),
+                "benchmark/pinchbench/assets/input.txt".to_owned(),
+            ],
+        };
+        let server = ArtifactUploadServer::start_with_dataset_plan(
+            "127.0.0.1:0".parse().unwrap(),
+            dir.path().join("controller-temp"),
+            HashSet::new(),
+            datasets,
+            Some(manifest.clone()),
+        )
+        .await
+        .unwrap();
+        let landed = dir.path().join("landed");
+        let rewritten =
+            reconstruct_shipped_dataset(&server.local_addr().to_string(), &manifest, &landed)
+                .await
+                .unwrap();
+
+        assert_eq!(rewritten, landed.join("recordings/trace.json"));
+        assert_eq!(
+            std::fs::read(landed.join("benchmark/pinchbench/assets/input.txt")).unwrap(),
+            b"workspace asset"
+        );
         server.shutdown().await;
     }
 
