@@ -4,9 +4,11 @@
 //! Native sandbox recipes, agent contracts, and immutable workspace overlays.
 
 mod agent;
+mod coordinator;
 mod recipe;
 mod workspace;
 
 pub use agent::{AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract};
+pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
 pub use recipe::HarborSandboxRecipe;
 pub use workspace::{ImmutablePatch, WorkspaceOverlay};

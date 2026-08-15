@@ -21,7 +21,8 @@ mod verifier;
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
     AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract,
-    HarborSandboxRecipe, ImmutablePatch, WorkspaceOverlay,
+    HarborEvaluationCoordinator, HarborEvaluationError, HarborSandboxRecipe, ImmutablePatch,
+    WorkspaceOverlay,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

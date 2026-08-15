@@ -30,7 +30,7 @@ pub trait VerifierSandboxFactory {
 
 /// Materializes the declared artifact handoff in the selected verifier sandbox.
 pub fn prepare_verifier(
-    factory: &impl VerifierSandboxFactory,
+    factory: &(impl VerifierSandboxFactory + ?Sized),
     mode: VerifierMode,
     transfer: &DeclaredArtifactTransfer,
 ) -> Result<(), VerifierExecutionError> {
