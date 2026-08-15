@@ -38,7 +38,7 @@ impl VerifierSandboxFactory for IsolatedVerifier {
 #[test]
 fn separate_verifier_receives_only_declared_artifacts_at_exact_paths() {
     let verifier = IsolatedVerifier {
-        files: RefCell::new(BTreeMap::from([("/agent/secret".to_owned(), digest('s'))])),
+        files: RefCell::new(BTreeMap::from([("/agent/secret".to_owned(), digest('c'))])),
     };
     let transfer = DeclaredArtifactTransfer::new(vec![
         ("/results/patch.diff", digest('a')),
