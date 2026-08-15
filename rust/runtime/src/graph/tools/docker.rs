@@ -144,7 +144,7 @@ impl ToolDispatcher for DeferredDockerToolDispatcher {
             environment.clone(),
             None,
             context.trace.clone(),
-            ReplayRunIdentity::mint(RngRoot::new(None), context.run_label),
+            context.run_identity.clone(),
             clock,
             runtime,
             self.output_limit,
