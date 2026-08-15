@@ -229,8 +229,39 @@ impl AgentTurnCoordinator for StaticAgentTurnCoordinator {
                 trajectory.append_tool_result(result.clone())?;
                 results.push(result);
             }
-            trajectory.append_observations(formatter.format(&calls, &results)?)?;
+            let observations = formatter.format(&calls, &results)?;
+            trajectory.append_observations(observations.clone())?;
+            if turn_index + 1 < self.turns.len() {
+                trajectory.append_subsequent_dispatch_prompt(build_subsequent_dispatch_prompt(
+                    &wire,
+                    &observations,
+                )?)?;
+            }
         }
         Ok(trajectory.snapshot())
     }
+}
+
+fn build_subsequent_dispatch_prompt(
+    selected_response: &Bytes,
+    observations: &[Bytes],
+) -> Result<Bytes, AgentLoopError> {
+    let observation_bytes = observations.iter().try_fold(0usize, |total, observation| {
+        total
+            .checked_add(observation.len())
+            .ok_or_else(|| AgentLoopError::new("agent observation prompt length overflow"))
+    })?;
+    let separators = observations.len();
+    let capacity = selected_response
+        .len()
+        .checked_add(observation_bytes)
+        .and_then(|total| total.checked_add(separators))
+        .ok_or_else(|| AgentLoopError::new("agent dispatch prompt length overflow"))?;
+    let mut prompt = Vec::with_capacity(capacity);
+    prompt.extend_from_slice(selected_response);
+    for observation in observations {
+        prompt.push(b'\n');
+        prompt.extend_from_slice(observation);
+    }
+    Ok(Bytes::from(prompt))
 }

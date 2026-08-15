@@ -20,7 +20,9 @@ use crate::endpoints::{
     Turn,
 };
 use crate::failure::OnFailure;
-use crate::graph::driver::TraceProgramDriverFactory;
+use crate::graph::driver::{
+    TraceDriverContext, TraceIdentity, TraceProgramDriverFactory, WorkerIdentity,
+};
 use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::ExecutorFlags;
@@ -781,9 +783,22 @@ impl TracePlacement for GraphWorkerBackend {
         self.trace_driver
             .capabilities(&program.driver)
             .map_err(|error| TraceError::Other(error.to_string()))?;
-        if !program.is_static_graph_program() {
-            return Err(TraceError::UnsupportedDriver(program.driver.kind));
-        }
+        let program = if program.is_static_graph_program() {
+            program
+        } else {
+            let _supplement = run_non_static_trace_driver(
+                self.trace_driver.as_ref(),
+                self.worker_id,
+                self.run_origin_ns,
+                &program,
+            )
+            .await?;
+            // The registered driver owns non-static turn selection. The existing
+            // graph executor still owns ordinary lowered-node dispatch, so it
+            // receives the driver's static data-plane projection until Task 7
+            // folds the returned supplement into terminal artifacts.
+            GraphTraceProgram::static_graph(program.profiling.clone())
+        };
         let plan = &program.profiling;
         if self.cancelled.get() {
             return Err(TraceError::Cancelled(format!(
@@ -895,6 +910,26 @@ impl TracePlacement for GraphWorkerBackend {
         slots.set_limit(limit);
         Ok(())
     }
+}
+
+async fn run_non_static_trace_driver(
+    factory: &dyn TraceProgramDriverFactory,
+    worker_id: usize,
+    run_origin_ns: i64,
+    program: &GraphTraceProgram,
+) -> Result<crate::graph::supplement::TraceTerminalSupplement, TraceError> {
+    let trace = TraceIdentity {
+        run_id: run_origin_ns.to_string(),
+        trajectory_id: format!("{}::trajectory", program.profiling.trace.id),
+        trace_id: program.profiling.trace.id.clone(),
+    };
+    let mut driver = factory
+        .create(WorkerIdentity { worker_id }, &trace, &program.driver)
+        .map_err(|error| TraceError::Other(error.to_string()))?;
+    driver
+        .run(program, &TraceDriverContext { trace: &trace })
+        .await
+        .map_err(|error| TraceError::Other(error.to_string()))
 }
 
 /// Authored node dispatch metadata decoded once per node from the immutable
@@ -1381,6 +1416,10 @@ fn uniquify_dynamo_session_headers(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait;
+
     use super::*;
     use crate::clock::SimClock;
     use crate::endpoints::{
@@ -1388,6 +1427,11 @@ mod tests {
         EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
         RawEndpointConfig, StatelessEndpointFactory,
     };
+    use crate::graph::driver::{
+        TraceDriverCapabilities, TraceDriverContext, TraceDriverError, TraceDriverSpec,
+        TraceIdentity, TraceProgramDriver, TraceProgramDriverFactory, WorkerIdentity,
+    };
+    use crate::graph::supplement::TraceTerminalSupplement;
     use crate::multiturn::AuthoredInputTokenCounter;
     use crate::transport::core::ConnectionReuseStrategy;
 
@@ -1402,6 +1446,82 @@ mod tests {
             request: None,
             metadata: BTreeMap::new(),
         }
+    }
+
+    struct RecordingTraceDriverFactory {
+        created: Arc<AtomicUsize>,
+        ran: Arc<AtomicUsize>,
+    }
+
+    impl TraceProgramDriverFactory for RecordingTraceDriverFactory {
+        fn capabilities(
+            &self,
+            _spec: &TraceDriverSpec,
+        ) -> Result<TraceDriverCapabilities, TraceDriverError> {
+            Ok(TraceDriverCapabilities::default())
+        }
+
+        fn create(
+            &self,
+            _worker: WorkerIdentity,
+            _trace: &TraceIdentity,
+            _spec: &TraceDriverSpec,
+        ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError> {
+            self.created.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(RecordingTraceDriver {
+                ran: self.ran.clone(),
+            }))
+        }
+    }
+
+    struct RecordingTraceDriver {
+        ran: Arc<AtomicUsize>,
+    }
+
+    #[async_trait(?Send)]
+    impl TraceProgramDriver for RecordingTraceDriver {
+        async fn run(
+            &mut self,
+            _program: &GraphTraceProgram,
+            context: &TraceDriverContext<'_>,
+        ) -> Result<TraceTerminalSupplement, TraceDriverError> {
+            self.ran.fetch_add(1, Ordering::SeqCst);
+            Ok(TraceTerminalSupplement::new(
+                context.trace.run_id.clone(),
+                context.trace.trajectory_id.clone(),
+                context.trace.trace_id.clone(),
+                7,
+                "recording",
+            ))
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn non_static_trace_runs_the_registered_driver_before_graph_execution() {
+        let created = Arc::new(AtomicUsize::new(0));
+        let ran = Arc::new(AtomicUsize::new(0));
+        let factory = RecordingTraceDriverFactory {
+            created: created.clone(),
+            ran: ran.clone(),
+        };
+        let mut program = GraphTraceProgram::static_graph(GraphTracePlan {
+            graph: crate::graph::model::GraphRecord::default(),
+            trace: crate::graph::model::TraceRecord {
+                id: "trace-1".into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        });
+        program.driver = TraceDriverSpec::recorded_replay();
+
+        let supplement = run_non_static_trace_driver(&factory, 7, 123, &program)
+            .await
+            .expect("registered driver runs for a non-static trace");
+
+        assert_eq!(created.load(Ordering::SeqCst), 1);
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        assert_eq!(supplement.trace_id, "trace-1");
     }
 
     #[test]

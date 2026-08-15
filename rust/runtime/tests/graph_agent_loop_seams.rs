@@ -8,10 +8,11 @@ use std::rc::Rc;
 
 use aiperf_runtime::graph::agent::{
     AgentInvocationEnvironment, AgentInvocationIdentity, AgentInvocationLeaseFactory,
-    AgentInvocationRequest, AgentResponseSource, AgentResponseStore, AgentTurn,
-    AgentTurnCoordinator, DelegatedInvocationTerminal, InMemoryAgentInvocationLeaseFactory,
-    InMemoryAgentResponseStore, InMemoryAgentTrajectorySink, InMemoryInvocationLeaseFactory,
-    ResponseSelection, StaticAgentTurnCoordinator, deterministic_delegated_join_order,
+    AgentInvocationRequest, AgentResponseSource, AgentResponseStore, AgentTrajectorySinkFactory,
+    AgentTurn, AgentTurnCoordinator, DelegatedInvocationTerminal,
+    InMemoryAgentInvocationLeaseFactory, InMemoryAgentResponseStore, InMemoryAgentTrajectorySink,
+    InMemoryAgentTrajectorySinkFactory, InMemoryInvocationLeaseFactory, ResponseSelection,
+    StaticAgentTurnCoordinator, deterministic_delegated_join_order,
 };
 use aiperf_runtime::graph::driver::{
     AgentContinuationSpec, RecordedReplayTraceProgramDriverFactory, TraceDriverSpec,
@@ -88,12 +89,32 @@ async fn fake_live_loop_reuses_original_wire_and_correlates_tool_results() {
         trace.observations,
         [Bytes::from_static(b"call-1:tool output")]
     );
+    assert_eq!(
+        trace.subsequent_dispatch_prompts,
+        [Bytes::from_static(
+            b"{\"tool_calls\":[{\"id\":\"call-1\"}]}\ncall-1:tool output"
+        )]
+    );
+    assert_eq!(
+        trace.dispatched_prompt_bytes,
+        u64::try_from(trace.subsequent_dispatch_prompts[0].len()).expect("prompt length fits u64")
+    );
+}
+
+#[test]
+fn trajectory_sink_factory_retains_distinct_trace_identities() {
+    let sink = InMemoryAgentTrajectorySinkFactory
+        .create("run-1", "trajectory-1", "invocation-1")
+        .expect("factory creates a trace-local sink");
+    let trace = sink.snapshot();
+    assert_eq!(trace.run_id, "run-1");
+    assert_eq!(trace.trajectory_id, "trajectory-1");
+    assert_eq!(trace.invocation_id, "invocation-1");
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_order() {
-    let dispatcher = Rc::new(InMemoryToolDispatcher::default());
-    let factory = InMemoryAgentInvocationLeaseFactory::new(dispatcher);
+    let factory = InMemoryAgentInvocationLeaseFactory::new();
     let root_identity = AgentInvocationIdentity {
         run_id: "run-1".into(),
         trajectory_id: "trajectory-root".into(),
@@ -127,6 +148,22 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
         .await
         .expect("shared child borrows its parent lease");
     assert!(Rc::ptr_eq(&root.dispatcher(), &child.dispatcher()));
+    let isolated = factory
+        .open(
+            &AgentInvocationRequest {
+                identity: AgentInvocationIdentity {
+                    run_id: "run-1".into(),
+                    trajectory_id: "trajectory-isolated".into(),
+                    invocation_id: "isolated".into(),
+                    parent_invocation_id: None,
+                },
+                environment: AgentInvocationEnvironment::Isolated,
+            },
+            None,
+        )
+        .await
+        .expect("isolated invocation receives its own dispatcher");
+    assert!(!Rc::ptr_eq(&root.dispatcher(), &isolated.dispatcher()));
 
     let ordered = deterministic_delegated_join_order(vec![
         DelegatedInvocationTerminal {
@@ -154,6 +191,12 @@ fn recorded_driver_refuses_load_resume_and_delegation_before_provisioning() {
             checkpoint: "prior-checkpoint".into(),
         }),
         TraceDriverSpec::recorded_replay().with_delegation(),
+        TraceDriverSpec {
+            data: [("unexpected".into(), serde_json::Value::Null)]
+                .into_iter()
+                .collect(),
+            ..TraceDriverSpec::recorded_replay()
+        },
     ] {
         let error = RecordedReplayTraceProgramDriverFactory
             .capabilities(&spec)

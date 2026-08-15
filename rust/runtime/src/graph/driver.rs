@@ -369,6 +369,11 @@ impl TraceProgramDriverFactory for RecordedReplayTraceProgramDriverFactory {
                 spec.kind
             )));
         }
+        if !spec.data.is_empty() {
+            return Err(TraceDriverError::new(
+                "trace driver \"recorded_replay\" does not accept driver-specific data",
+            ));
+        }
         let capabilities = TraceDriverCapabilities {
             has_response_reuse: true,
             ..TraceDriverCapabilities::default()

@@ -30,6 +30,10 @@ pub struct AgentTrajectory {
     pub tool_results: Vec<ToolDispatchResult>,
     /// Formatted tool observations supplied to the subsequent request build.
     pub observations: Vec<Bytes>,
+    /// Complete prompts constructed for subsequent live dispatches.
+    pub subsequent_dispatch_prompts: Vec<Bytes>,
+    /// Exact byte total across [`Self::subsequent_dispatch_prompts`].
+    pub dispatched_prompt_bytes: u64,
     /// Typed response ownership retained beside every selected wire.
     pub responses: Vec<AgentTrajectoryResponse>,
 }
@@ -75,6 +79,11 @@ pub trait AgentTrajectorySink {
     /// Append ordered observation bytes before the next request is materialized.
     fn append_observations(&mut self, observations: Vec<Bytes>)
     -> Result<(), AgentTrajectoryError>;
+    /// Retain the exact prompt bytes sent to a later model dispatch.
+    fn append_subsequent_dispatch_prompt(
+        &mut self,
+        prompt: Bytes,
+    ) -> Result<(), AgentTrajectoryError>;
     /// Snapshot the accumulated bounded trajectory facts.
     fn snapshot(&self) -> AgentTrajectory;
 }
@@ -120,6 +129,23 @@ impl AgentTrajectorySink for InMemoryAgentTrajectorySink {
         Ok(())
     }
 
+    fn append_subsequent_dispatch_prompt(
+        &mut self,
+        prompt: Bytes,
+    ) -> Result<(), AgentTrajectoryError> {
+        let prompt_len = u64::try_from(prompt.len())
+            .map_err(|_| AgentTrajectoryError("agent dispatch prompt length exceeds u64".into()))?;
+        let mut trajectory = self.trajectory.borrow_mut();
+        trajectory.dispatched_prompt_bytes = trajectory
+            .dispatched_prompt_bytes
+            .checked_add(prompt_len)
+            .ok_or_else(|| {
+                AgentTrajectoryError("agent dispatch prompt byte total overflow".into())
+            })?;
+        trajectory.subsequent_dispatch_prompts.push(prompt);
+        Ok(())
+    }
+
     fn snapshot(&self) -> AgentTrajectory {
         self.trajectory.borrow().clone()
     }
@@ -143,11 +169,18 @@ pub struct InMemoryAgentTrajectorySinkFactory;
 impl AgentTrajectorySinkFactory for InMemoryAgentTrajectorySinkFactory {
     fn create(
         &self,
-        _run_id: &str,
-        _trajectory_id: &str,
-        _invocation_id: &str,
+        run_id: &str,
+        trajectory_id: &str,
+        invocation_id: &str,
     ) -> Result<Box<dyn AgentTrajectorySink>, AgentTrajectoryError> {
-        Ok(Box::new(InMemoryAgentTrajectorySink::default()))
+        Ok(Box::new(InMemoryAgentTrajectorySink {
+            trajectory: RefCell::new(AgentTrajectory {
+                run_id: run_id.into(),
+                trajectory_id: trajectory_id.into(),
+                invocation_id: invocation_id.into(),
+                ..AgentTrajectory::default()
+            }),
+        }))
     }
 }
 

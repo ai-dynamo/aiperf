@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use async_trait::async_trait;
 
-use crate::graph::tools::ToolDispatcher;
+use crate::graph::tools::{InMemoryToolDispatcher, ToolDispatcher};
 /// One trace-local invocation lease.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvocationLease {
@@ -132,13 +132,21 @@ impl AgentInvocationLease for InMemoryAgentInvocationLease {
 
 /// Deterministic lifecycle fake used by the future live-driver contract tests.
 pub struct InMemoryAgentInvocationLeaseFactory {
-    dispatcher: Rc<dyn ToolDispatcher>,
+    next_dispatcher: Cell<u64>,
 }
 
 impl InMemoryAgentInvocationLeaseFactory {
-    /// Construct a lease factory around the sole test dispatcher.
-    pub fn new(dispatcher: Rc<dyn ToolDispatcher>) -> Self {
-        Self { dispatcher }
+    /// Construct a fake that gives every isolated lease its own dispatcher.
+    pub fn new() -> Self {
+        Self {
+            next_dispatcher: Cell::new(0),
+        }
+    }
+}
+
+impl Default for InMemoryAgentInvocationLeaseFactory {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -163,7 +171,9 @@ impl AgentInvocationLeaseFactory for InMemoryAgentInvocationLeaseFactory {
                 })?
                 .dispatcher()
         } else {
-            self.dispatcher.clone()
+            let next = self.next_dispatcher.get();
+            self.next_dispatcher.set(next.saturating_add(1));
+            Rc::new(InMemoryToolDispatcher::default())
         };
         Ok(Box::new(InMemoryAgentInvocationLease {
             dispatcher,
