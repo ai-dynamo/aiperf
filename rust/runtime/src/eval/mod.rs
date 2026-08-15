@@ -32,4 +32,7 @@ pub use semantic::{
 };
 pub use source::{EvalDatasetId, EvalDatasetManifest};
 pub use trial::{TrialBudget, TrialSpec};
-pub use verifier::{ArtifactTransferError, DeclaredArtifactTransfer, RewardDocument, RewardError};
+pub use verifier::{
+    ArtifactTransferError, DeclaredArtifactTransfer, RegradeError, RegradeRequest, RewardDocument,
+    RewardError, VerifierResult, regrade,
+};

@@ -8,8 +8,11 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
+use serde::{Deserialize, Serialize};
+
 /// Finite named reward metrics from a verifier artifact.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct RewardDocument {
     /// Named finite reward metrics.
     pub metrics: BTreeMap<String, f64>,
@@ -26,7 +29,16 @@ impl RewardDocument {
                 .map_err(|error| RewardError::InvalidJson(error.to_string()))?,
             None => parse_text_reward(reward_txt.ok_or(RewardError::Absent)?)?,
         };
-        if metrics.is_empty() || metrics.values().any(|value| !value.is_finite()) {
+        Self::new(metrics)
+    }
+
+    /// Creates a verified finite nonempty reward document.
+    pub fn new(metrics: BTreeMap<String, f64>) -> Result<Self, RewardError> {
+        if metrics.is_empty()
+            || metrics
+                .iter()
+                .any(|(name, value)| name.trim().is_empty() || !value.is_finite())
+        {
             return Err(RewardError::NonFiniteOrEmpty);
         }
         Ok(Self { metrics })

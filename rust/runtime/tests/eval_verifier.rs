@@ -31,13 +31,19 @@ fn declared_artifact_transfer_excludes_undeclared_workspace() {
 }
 
 #[test]
-fn regrade_appends_score_without_changing_original_attempt() {
+fn initial_score_pins_metric_rationale_and_evidence() {
     let attempt = AttemptId::new("attempt-1").unwrap();
-    let original =
-        ScoreVersion::new(attempt.clone(), 0, digest('a'), vec![digest('b')], 0.0).unwrap();
-    let regrade =
-        ScoreVersion::new(attempt.clone(), 1, digest('c'), vec![digest('b')], 1.0).unwrap();
+    let score = ScoreVersion::initial(
+        attempt.clone(),
+        digest('a'),
+        vec![digest('b')],
+        "reward",
+        0.0,
+        digest('c'),
+    )
+    .unwrap();
 
-    assert_eq!(original.attempt, attempt);
-    assert_ne!(original.identity_digest(), regrade.identity_digest());
+    assert_eq!(score.attempt, attempt);
+    assert_eq!(score.metric, "reward");
+    assert_eq!(score.rationale, digest('c'));
 }
