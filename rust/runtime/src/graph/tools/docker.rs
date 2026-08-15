@@ -20,7 +20,6 @@ use tokio::sync::Mutex;
 use crate::clock::Clock;
 use crate::graph::driver::TraceIdentity;
 use crate::graph::replay::ReplayRunIdentity;
-use crate::rng::RngRoot;
 
 use super::{
     EnvironmentToolDispatcher, GuardedToolCommandPolicy, ResolvedTraceEnvironment,
