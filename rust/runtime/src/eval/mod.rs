@@ -28,7 +28,10 @@ pub use identity::{
     AgentVariantRef, ArtifactDigest, EvalIdentityError, EvalTaskId, EvalTaskRef, ModelIdentity,
     PolicyIdentity, RuntimeIdentity,
 };
-pub use import::{HarborImportError, HarborImporter, HarborSource, ImportedTask, SourceAcquirer};
+pub use import::{
+    HarborImportError, HarborImporter, HarborSource, ImportedTask, NativeSourceAcquirer,
+    SourceAcquirer,
+};
 pub use import_report::{ImportDisposition, ImportReport};
 pub use provider::{ProviderCapability, ProviderError, ProviderProfile};
 pub use registry::{RegistryError, RegistryReference};
