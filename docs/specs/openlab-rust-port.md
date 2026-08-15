@@ -24,7 +24,7 @@ adds cross-thread shared-state contention.
 The parity baseline is:
 
 - AIPerf Python branch `ajc/open-lab` at
-  `ec56f3eca0dd0241bc6d71457f17177718f3994e`.
+  `244222b5999f48d89799f25ee946eedd81831117`.
 - Open LAB `main` at
   `b8897f5de1664ad6de9cd669a96c3ba5d379e81e`.
 
@@ -32,15 +32,17 @@ Claims in this record were derived from executable source and tests at those
 revisions. Prose in the source branch's handoff record is supporting context,
 not authority where it disagrees with code.
 
-The Rust design deliberately corrects four source-branch limitations found in
+The Rust design deliberately corrects five source-branch limitations found in
 that audit: it applies cache isolation to the first wire message as upstream
 Open LAB does (the Python branch searches only for a system role); starts trace
 wall measurement after sandbox open (the Python implementation currently starts
 its timer before `open_trace` despite the dispatch seam documenting setup as
 excluded); folds supplements through workers and cells instead of letting phase
-instances write a shared file; and makes artifact/export failure explicit rather
-than warning and silently losing the measurement. These are parity and runtime
-integrity fixes, not optional scope reductions.
+instances write a shared file; derives artifact backend identity from actual
+per-trace selection and reports heterogeneous runs as `mixed` instead of
+mislabeling them from the run-level fallback; and makes artifact/export failure
+explicit rather than warning and silently losing the measurement. These are
+parity and runtime integrity fixes, not optional scope reductions.
 
 ## Built
 
@@ -88,7 +90,8 @@ The native port shall implement all behavior at the pinned Python branch HEAD:
    execution is enabled; otherwise represent their elapsed gap as edge timing.
 4. Execute tools in a per-trace local or Docker sandbox.
 5. Issue one authored warmup request per recording before profiling.
-6. Apply task-family wire sampling and one run-scoped cache-isolation prefix.
+6. Apply task-family wire sampling and one run-scoped profiling cache-isolation
+   prefix while leaving upstream-equivalent warmup unmodified.
 7. Enforce the `openlab-default` scenario as resolved configuration locks.
 8. Emit tool-time and trace-summary artifacts from merged profiling results.
 9. Prove wire and lifecycle parity with unit, product E2E, and A/B tests.
@@ -115,6 +118,9 @@ request shall expose one consistent vocabulary:
 | `--graph-format openlab_recording` | `dataset.format: openlab_recording` | Select the native adapter. | Format discovery where already supported; explicit under the scenario. |
 | `--graph-execute-tools` | `dataset.graph.execute_tools` | Lower and execute completed recorded commands. | `false` |
 | `--graph-tool-image <image>` | `dataset.graph.tool_image` | Use one Docker sandbox per trace; absent selects local execution outside the scenario. | absent |
+| `--graph-tool-command-timeout <seconds>` | `dataset.graph.command_timeout_seconds` | Per-command wall-clock ceiling when a node has no authored override. | `900.0` |
+| `--graph-tool-container-stop-timeout <seconds>` | `dataset.graph.container_stop_timeout_seconds` | Bound Docker force-removal during recycle or close. | `5.0` |
+| `--graph-tool-session-close-grace <seconds>` | `dataset.graph.session_close_grace_seconds` | Grace for a session shell to exit before its process group is killed. | `1.0` |
 | `--graph-use-family-sampling` / `--no-graph-use-family-sampling` | `dataset.graph.use_family_sampling` | Overlay Open LAB family defaults. | `true` for this adapter |
 | `--graph-emit-warmup` | `dataset.graph.emit_warmup` | Compile one corpus-authored warmup plan per recording. | `false` |
 
@@ -127,9 +133,13 @@ the native CLI and YAML surfaces into the same typed runner input.
 `--graph-tool-image` without tool execution is rejected as inert configuration.
 Tool execution plus open-loop graph replay is rejected: replaying recorded
 tool gaps while also measuring real tool time would double-pace the trajectory.
-The tool timeout is a typed positive finite duration with one documented
-default; it is injected into the sandbox request rather than read from a global
-environment variable in the execution hot path.
+All three timeout fields are positive finite seconds and project to integer
+nanoseconds before worker construction. An authored `ToolNode.timeout_ns` wins
+over `command_timeout_seconds`; Open LAB lowering authors no override, so its
+commands use the 900-second default. Container-stop and session-close bounds
+apply only to cleanup/recycle and never inflate the recorded command duration.
+The values are injected into the sandbox factory rather than read from global
+environment variables in the execution hot path.
 
 The strict protocol shall add artifact paths for the two graph supplements:
 
@@ -305,6 +315,12 @@ pub struct ToolNode {
 }
 ```
 
+`TraceRecord` shall additionally carry an optional strict `ToolSandboxSpec`
+whose `container` selects that trace's Docker image. Open LAB lowering populates
+it from `metadata.docker_image`. A non-empty per-trace container wins over the
+run-level `dataset.graph.tool_image`; the latter is the fallback for PinchBench
+or another recording without task-image metadata.
+
 The serde representation must be explicitly tagged and reject an unknown node
 kind. Existing LLM-only serialized fixtures remain readable through a deliberate
 compatibility rule rather than an untagged ambiguous enum.
@@ -382,8 +398,10 @@ a typed infrastructure error that aborts the trace.
 The stock dispatcher owns one sandbox per unique trace instance, not per trace
 template. Concurrent repetitions of the same recording therefore receive
 different workspaces and process/container identities. It executes commands in
-node order, concatenates observations in command order, and stops a command
-batch after a timeout if the sandbox had to recycle.
+node order and concatenates observations in command order. After a command
+timeout, a successful session/container recycle permits the next recorded
+command to run. The batch stops only when recycle fails, which is a sandbox
+infrastructure error rather than a timeout outcome.
 
 Tests inject a deterministic fake dispatcher or fake sandbox directly. Product
 composition registers local and Docker factories without teaching the graph
@@ -510,17 +528,21 @@ not contribute to profiling artifacts or metrics.
 Corpus-authored warmup and the existing t-star/cache-pressure warmup are
 different concepts. Phase preparation shall represent their source explicitly,
 reject an unsupported ambiguous combination, and never run a generic snapshot
-rewrite over tool nodes. Warmup and profiling share the same run-scoped cache
-isolation namespace so the warmup primes the exact prefix used by the measured
-trajectory.
+rewrite over tool nodes. Corpus-authored Open LAB warmups are cache-isolation
+exempt: upstream sends the user-only warmup through the unwrapped live model,
+then applies the run namespace only to profiling replay. The warmup primes the
+endpoint and client path, not the measured trajectory's isolated token prefix.
 
 ### Run-scoped cache isolation
 
 Open LAB's `isolate_replay_messages` prefixes the first wire message once per
 replay invocation with a random namespace. Native parity shall mint one marker
 per benchmark run from the existing deterministic RNG namespace plus the run's
-unique benchmark identity, then reuse it across every warmup and profiling trace
-instance in that run. A different benchmark run receives a different marker.
+unique benchmark identity, then reuse it across every profiling trace instance
+in that run. A different benchmark run receives a different marker. The
+corpus-authored warmup plan carries an explicit cache-isolation exemption; this
+phase-aware choice is part of plan metadata or prepared phase policy rather than
+an id-string convention.
 
 The transform targets the first wire message, not only the first message whose
 role is `system`. This is the upstream contract and supports recordings without
@@ -531,16 +553,21 @@ content according to the endpoint dialect. The marker is applied once during
 materialization and is never persisted back into the immutable segment store.
 
 The marker text need not reproduce Open LAB's random digits byte for byte, but
-the cache semantics are normative: cross-run prefixes differ and all requests
-within one run share the namespace. The A/B harness normalizes the marker text
-while asserting its scope and placement.
+the cache semantics are normative: cross-run profiling prefixes differ and all
+profiling requests within one run share the namespace. Warmup requests have no
+marker. The A/B harness normalizes profiling marker text while asserting its
+scope and placement, and asserts that warmup stays unmodified.
 
 ### Result propagation and artifact folding
 
 `TracePlacement::execute_trace` shall return a typed terminal value rather than
 discarding the executor's trace result. Its graph supplement contains only
-bounded trace-level data plus command durations/outcomes required by configured
-artifacts. It does not contain request bodies or duplicate captured records.
+bounded trace-level data plus command measurements required by configured
+artifacts. Combined command stdout/stderr remains in the worker-local graph
+observation channel and is not copied into the coordinator event. A command
+measurement carries duration, return code, timeout flag, and resolved backend;
+it does not contain request bodies, command text, output, or duplicate captured
+records.
 
 `GraphExecutionEvent::TraceComplete` shall carry:
 
@@ -549,7 +576,7 @@ artifacts. It does not contain request bodies or duplicate captured records.
 - terminal classification;
 - trace start/end or finite wall duration;
 - ordered LLM durations;
-- ordered tool-command results; and
+- ordered bounded tool-command measurements; and
 - cleanup diagnostics.
 
 The phase coordinator folds events in completion order into a
@@ -558,6 +585,15 @@ multi-worker run merges worker supplements at the coordinator. A cellular run
 serializes one associative `GraphCellSupplement` with the existing cell
 partition, and the controller merges cells in stable cell-id order. Supplement
 schema versions are explicit and mixed versions fail closed.
+
+Every terminal classification is retained for progress, failure, cancellation,
+and cleanup diagnostics. Timing artifact folds include only traces whose graph
+executor completed successfully, matching the Python branch's
+`_record_trace_timing(await executor.run(...))` boundary. Failed, refused, and
+cancelled traces—and their partial LLM/tool measurements—do not contribute to
+either artifact. Their terminal diagnostics remain available through the normal
+error/report path. A successful trace with attempted tool commands increments
+the tool artifact's `trace_count` once.
 
 No worker, trace, or cell writes the final shared JSON paths. This avoids races,
 works with exact-fold/sketch record modes, and gives cellular execution one
@@ -579,10 +615,13 @@ is complete and before the cell/controller artifact barrier reports success.
 }
 ```
 
-`backend` is `local` or `docker:<image>`. `durations_s` preserves execution
-order in single-placement runs and stable cell/worker merge order otherwise;
-median is computed over a sorted copy. The artifact is omitted when no profiling
-tool command was attempted.
+`backend` is `local` or `docker:<image>` when every included command used one
+resolved backend, and `mixed` when a corpus used more than one local/image
+identity. This keeps the pinned artifact schema while accurately representing
+per-trace `ToolSandboxSpec` selection. `durations_s` preserves execution order in
+single-placement runs and stable cell/worker merge order otherwise; median is
+computed over a sorted copy. The artifact is omitted when no successful
+profiling trace attempted a tool command.
 
 `profile_export_graph_trace_summary.json` has:
 
@@ -620,9 +659,10 @@ Trace order is deterministic and documented; completion order is retained for
 single placement, while distributed merges use `(cell_id, worker_id,
 completion_ordinal)`.
 
-The trace summary is emitted for profiling even when tool execution is disabled;
-the tool-time artifact requires attempted profiling commands. Neither artifact
-contains warmup data.
+The trace summary is emitted for successful profiling traces even when tool
+execution is disabled; the tool-time artifact requires attempted commands on a
+successful profiling trace. Neither artifact contains warmup or partial
+failed/cancelled trace data.
 
 ### Error taxonomy and observability
 
@@ -654,16 +694,18 @@ never crosses worker threads, and command execution never holds a lock across
 `.await`.
 
 Cellular partitioning remains trace-level. Every cell host must have access to
-the selected Docker image and Docker runtime, or to the local execution
-prerequisites when the scenario is not active. Preflight capability validation
-occurs on every cell before the phase barrier. A partial preflight fails the run
-before warmup or profiling begins.
+every distinct Docker image its partition may resolve and to the Docker runtime,
+or to local execution prerequisites when the scenario is not active. Preflight
+capability validation occurs on every cell before the phase barrier. A partial
+preflight fails the run before warmup or profiling begins.
 
 Cell workspaces live under the cell's exclusive artifact root. Final graph
 supplements travel through the cellular protocol rather than artifact-file
 concatenation. Controller merge checks that all expected cells supplied a
-supplement and that backend/image identity agrees. Missing cells, mixed backend
-labels, duplicate trace-instance ids, or non-finite durations fail closed.
+compatible supplement. Missing cells, duplicate trace-instance ids, unknown
+backend identities, or non-finite durations fail closed. Valid heterogeneous
+backend/image identities merge normally and produce the scalar artifact label
+`mixed`.
 
 Cancellation and force escalation broadcast through existing placement control.
 Each worker stops admitting traces, terminates active command trees/containers,
@@ -684,7 +726,7 @@ normalizes only deliberate client differences:
   scope;
 - Open LAB's legacy `max_tokens` versus an endpoint's equivalent modern
   `max_completion_tokens` spelling where dialect selection requires it;
-- AIPerf's `stream_options.include_usage`; and
+- Open LAB's `stream_options.include_usage`; and
 - LiteLLM's client-only `drop_params`.
 
 It does not normalize messages, roles, content, tools, tool-call ids, model,
@@ -706,14 +748,14 @@ Implementation is complete only when these behaviors are covered:
 | DTO/discovery | JSON and gzip; sorted shallow directory; sniffed manifest skip; malformed explicit file; finite timestamps; duplicate/empty errors. |
 | Lowering | exact message/tool bytes; prefix interning across calls/traces; output-cap floor; family and recorded-sampling precedence; relative timing; trailing tools; control-flow versus genuine tool failures. |
 | Graph model | serde compatibility; topology/read/write channels; LLM versus total counts; flat-path refusal; every heterogeneous-node consumer audited. |
-| Warmup | one plan per recording; stable id; exact prompt/cap/tools/sampling; WARMUP-only dispatch; no tools; shared run cache marker. |
-| Cache isolation | first-message string, structured, null, and no-system cases; one marker within a run; a different marker across runs; no segment-store mutation. |
-| Dispatcher | fake injection; lifecycle order; sequential command results; nonzero and timeout outcomes; infrastructure abort; close-error precedence. |
+| Warmup | one plan per recording; stable id; exact prompt/cap/tools/sampling; WARMUP-only dispatch; no tools; explicit cache-isolation exemption. |
+| Cache isolation | first-message string, structured, null, and no-system cases; one profiling marker within a run; a different marker across runs; unmodified warmup; no segment-store mutation. |
+| Dispatcher | fake injection; lifecycle order; sequential command results; nonzero and timeout outcomes; continuation after successful timeout recycle; recovery failure abort; close-error precedence. |
 | Local sandbox | persistent workspace; fresh shell semantics; combined output; sentinel collision; output bound; timeout descendant kill and clean recycle; idempotent open/close. |
 | Docker sandbox | argv construction; network none; mount/workdir; unique names; startup error; timeout container recycle; bounded force cleanup; fake runtime injection. |
 | Phase/placement | setup and cleanup excluded from trace wall time; cancellation cleanup; LLM-only request accounting; multi-worker fold determinism; no shared-file writes. |
-| Cellular | per-cell preflight; trace ownership; supplement serialization/fold; missing/duplicate/mixed-backend refusal; controller-only artifacts. |
-| Artifacts | exact schemas; finite zero guards; warmup exclusion; deterministic ordering; median/fractions/counts; artifact allowlist and sweep retention. |
+| Cellular | per-cell distinct-image preflight; trace ownership; supplement serialization/fold; missing/duplicate/unknown-backend refusal; valid mixed-backend merge; controller-only artifacts. |
+| Artifacts | exact schemas; successful-terminal-only inclusion; finite zero guards; warmup/partial-terminal exclusion; deterministic ordering; single and `mixed` backend labels; median/fractions/counts; artifact allowlist and sweep retention. |
 | Product E2E | native binary against deterministic `aiperf-mock-server`, raw records and request bodies inspected; local and opt-in Docker tool execution. |
 | A/B | real Open LAB and AIPerf subprocesses, warmup plus profiling body parity, scenario locks, normalized differences limited to the explicit list. |
 
