@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::eval::{
-    AgentVariantRef, ArtifactDigest, EvalTaskRef, ImportDisposition, ImportReport, ModelIdentity,
-    PolicyIdentity, RuntimeIdentity, TrialBudget, TrialSpec,
+    AgentVariantRef, ArtifactDigest, AttemptId, EvalDatasetManifest, EvalTaskRef, EvidenceEvent,
+    EvidenceKind, ImportDisposition, ImportReport, ModelIdentity, PolicyIdentity, RuntimeIdentity,
+    ScoreVersion, TrialBudget, TrialSpec,
 };
 
 fn digest(seed: char) -> ArtifactDigest {
@@ -40,4 +41,24 @@ fn import_report_rejects_unknown_disposition() {
     }"#;
     assert!(serde_json::from_str::<ImportReport>(report).is_err());
     assert_eq!(ImportDisposition::Unsupported.as_str(), "unsupported");
+}
+
+#[test]
+fn evaluation_evidence_and_scores_are_append_only_identity_records() {
+    let task = EvalTaskRef::new("task-1", digest('a')).unwrap();
+    let manifest = EvalDatasetManifest::new("suite-v1", "2026.08", vec![task.clone()]).unwrap();
+    let attempt = AttemptId::new("attempt-1").unwrap();
+    let event = EvidenceEvent::new(
+        attempt.clone(),
+        0,
+        EvidenceKind::Agent,
+        digest('b'),
+        None,
+    );
+    let score = ScoreVersion::new(attempt, 0, digest('c'), vec![event.identity_digest()], 1.0).unwrap();
+
+    assert_eq!(manifest.tasks, vec![task]);
+    assert_eq!(event.identity_digest(), event.identity_digest());
+    assert!(score.identity_digest().as_str().starts_with("blake3:"));
+    assert!(ScoreVersion::new(AttemptId::new("attempt-1").unwrap(), 0, digest('c'), vec![], f64::NAN).is_err());
 }
