@@ -116,7 +116,12 @@ def test_sweep_ignores_unrelated_directories(tmp_path: Path) -> None:
 
 
 def test_acquired_owner_lock_blocks_a_sweep_of_that_dir(tmp_path: Path) -> None:
-    """The lock a run holds for its own dir is exactly what the sweep tests."""
+    """The lock a run holds for its own dir is exactly what the sweep tests.
+
+    Windows removes the marker when ``FileLock.release`` closes normally,
+    unlike POSIX. Reclaiming a crash-surviving free marker is covered by
+    ``test_sweep_removes_a_dir_whose_owner_process_is_gone`` instead.
+    """
     d = _artifact_dir(tmp_path, "aiperf_graph_segments_owned", age_seconds=3600)
 
     lock = acquire_owner_lock(d)
@@ -126,8 +131,6 @@ def test_acquired_owner_lock_blocks_a_sweep_of_that_dir(tmp_path: Path) -> None:
         assert d.is_dir()
     finally:
         lock.release()
-
-    assert sweep_orphaned_graph_artifacts(tmp_path) == [d]
 
 
 def test_acquire_owner_lock_returns_none_when_another_run_holds_it(
