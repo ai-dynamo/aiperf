@@ -2231,7 +2231,10 @@ impl Benchmark {
         // one profiling phase exists). Explicit `--concurrency`/etc. still flow
         // through `apply_cli_overrides` onto Inputs.
         let multiphase_authored = phases_override.is_some();
-        let hardware_description = self.metadata.as_ref().and_then(|metadata| metadata.hardware.clone());
+        let hardware_description = self
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.hardware.clone());
         let endpoint_placement = self
             .metadata
             .as_ref()

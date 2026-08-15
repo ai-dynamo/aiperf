@@ -1011,7 +1011,10 @@ impl ArtifactSpecV2 {
             ("artifacts.raw_path", self.raw_path.as_ref()),
             ("artifacts.outputs_path", self.outputs_path.as_ref()),
             ("artifacts.inputs_path", self.inputs_path.as_ref()),
-            ("artifacts.graph_tool_time_path", self.graph_tool_time_path.as_ref()),
+            (
+                "artifacts.graph_tool_time_path",
+                self.graph_tool_time_path.as_ref(),
+            ),
             (
                 "artifacts.graph_trace_summary_path",
                 self.graph_trace_summary_path.as_ref(),

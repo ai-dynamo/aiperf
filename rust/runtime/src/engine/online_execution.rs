@@ -1683,7 +1683,10 @@ fn build_common_plan(
             graph_replay_metrics_csv_path: run.artifacts.graph_replay_metrics_csv_path.clone(),
             graph_replay_failures_path: run.artifacts.graph_replay_failures_path.clone(),
             graph_replay_provenance_path: run.artifacts.graph_replay_provenance_path.clone(),
-            graph_replay_backend_metadata_path: run.artifacts.graph_replay_backend_metadata_path.clone(),
+            graph_replay_backend_metadata_path: run
+                .artifacts
+                .graph_replay_backend_metadata_path
+                .clone(),
         },
         sidecars,
         user_files: run.artifacts.user_files.clone(),

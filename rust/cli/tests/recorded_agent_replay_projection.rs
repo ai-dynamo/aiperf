@@ -17,7 +17,12 @@ fn graph_projection(run: &aiperf_cli::model::BenchmarkRun) -> Value {
 fn json_subset(value: &Value, keys: &[&str]) -> Value {
     let object = value.as_object().expect("config is an object");
     keys.iter()
-        .map(|key| ((*key).to_string(), object.get(*key).cloned().expect("projected key")))
+        .map(|key| {
+            (
+                (*key).to_string(),
+                object.get(*key).cloned().expect("projected key"),
+            )
+        })
         .collect::<serde_json::Map<_, _>>()
         .into()
 }
@@ -25,13 +30,37 @@ fn json_subset(value: &Value, keys: &[&str]) -> Value {
 #[test]
 fn cli_and_yaml_project_identical_agent_recording_graph_config() {
     let flags = ProfileFlags::try_parse_from([
-        "aiperf", "--model", "model", "--url", "http://127.0.0.1:8000", "--endpoint-type", "chat",
-        "--input-file", "/tmp/recording.json", "--graph-format", "agent_recording",
-        "--graph-replay-root", "/tmp/replay", "--graph-execute-tools", "--graph-tool-image", "tools:latest",
-        "--graph-pinch-image", "pinch:latest", "--graph-tool-command-timeout", "9.5",
-        "--graph-tool-container-stop-timeout", "4", "--graph-tool-session-close-grace", "1.5",
-        "--no-graph-use-family-sampling", "--graph-emit-warmup", "--graph-stop-on-failure",
-        "--hardware-description", "unknown", "--endpoint-placement", "remote",
+        "aiperf",
+        "--model",
+        "model",
+        "--url",
+        "http://127.0.0.1:8000",
+        "--endpoint-type",
+        "chat",
+        "--input-file",
+        "/tmp/recording.json",
+        "--graph-format",
+        "agent_recording",
+        "--graph-replay-root",
+        "/tmp/replay",
+        "--graph-execute-tools",
+        "--graph-tool-image",
+        "tools:latest",
+        "--graph-pinch-image",
+        "pinch:latest",
+        "--graph-tool-command-timeout",
+        "9.5",
+        "--graph-tool-container-stop-timeout",
+        "4",
+        "--graph-tool-session-close-grace",
+        "1.5",
+        "--no-graph-use-family-sampling",
+        "--graph-emit-warmup",
+        "--graph-stop-on-failure",
+        "--hardware-description",
+        "unknown",
+        "--endpoint-placement",
+        "remote",
     ])
     .expect("profile flags parse");
     let cli_run = aiperf_cli::load::resolve(&flags).expect("CLI resolves");

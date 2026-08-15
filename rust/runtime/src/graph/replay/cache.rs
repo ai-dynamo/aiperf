@@ -56,9 +56,10 @@ impl CacheIsolationPolicy {
     /// Create one replay-run-scoped first-message prefix policy.
     #[must_use]
     pub fn first_message_prefix(identity: ReplayRunIdentity) -> Self {
-        let mut generator = identity
-            .root
-            .derive(&format!("recorded-agent-replay-cache-namespace:{}", identity.label));
+        let mut generator = identity.root.derive(&format!(
+            "recorded-agent-replay-cache-namespace:{}",
+            identity.label
+        ));
         let digits = (0..32)
             .map(|_| (generator.random_u64() % 10).to_string())
             .collect::<Vec<_>>()
@@ -118,7 +119,9 @@ pub fn apply_first_message_prefix(
     dialect: ReplayMessageDialect,
 ) -> Result<Vec<Value>, ReplayCacheError> {
     let Some(first) = messages.first() else {
-        return Err(ReplayCacheError("recorded replay has no messages to prefix".to_string()));
+        return Err(ReplayCacheError(
+            "recorded replay has no messages to prefix".to_string(),
+        ));
     };
     let mut first = first.clone();
     let object = first.as_object_mut().ok_or_else(|| {
@@ -138,12 +141,14 @@ pub fn apply_first_message_prefix(
         }
         Value::Array(_) => {
             return Err(ReplayCacheError(
-                "structured recorded replay content requires the OpenAI Responses dialect".to_string(),
+                "structured recorded replay content requires the OpenAI Responses dialect"
+                    .to_string(),
             ));
         }
         _ => {
             return Err(ReplayCacheError(
-                "recorded replay's first message content must be string, array, or null".to_string(),
+                "recorded replay's first message content must be string, array, or null"
+                    .to_string(),
             ));
         }
     }

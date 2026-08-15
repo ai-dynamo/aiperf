@@ -361,9 +361,7 @@ fn validate_recorded_agent_replay(cfg: &BenchmarkConfig) -> Result<()> {
             "co_located" | "remote" | "unknown"
         )
     {
-        bail!(
-            "metadata.endpoint_placement must be co_located, remote, or unknown"
-        );
+        bail!("metadata.endpoint_placement must be co_located, remote, or unknown");
     }
     Ok(())
 }
@@ -762,7 +760,10 @@ mod tests {
         assert!(validate(&cfg(v)).is_ok());
     }
 
-    fn recorded_agent_dataset(graph: serde_json::Value, options: serde_json::Value) -> serde_json::Value {
+    fn recorded_agent_dataset(
+        graph: serde_json::Value,
+        options: serde_json::Value,
+    ) -> serde_json::Value {
         json!([{
             "type": "file",
             "format": "agent_recording",
@@ -787,14 +788,15 @@ mod tests {
     #[test]
     fn recorded_agent_tool_config_rejects_images_without_tools_and_open_loop() {
         let mut image_without_tools = valid_value();
-        image_without_tools["datasets"] = recorded_agent_dataset(
-            json!({"pinch_image": "pinch:latest"}),
-            json!({}),
-        );
+        image_without_tools["datasets"] =
+            recorded_agent_dataset(json!({"pinch_image": "pinch:latest"}), json!({}));
         let err = validate(&cfg(image_without_tools))
             .expect_err("tool images require tool execution")
             .to_string();
-        assert!(err.contains("pinch_image") && err.contains("execute_tools"), "{err}");
+        assert!(
+            err.contains("pinch_image") && err.contains("execute_tools"),
+            "{err}"
+        );
 
         let mut open_loop = valid_value();
         open_loop["datasets"] = recorded_agent_dataset(

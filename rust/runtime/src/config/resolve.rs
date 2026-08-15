@@ -11,6 +11,7 @@
 use std::path::PathBuf;
 
 use crate::config::model::artifacts::Artifacts;
+use crate::config::model::config::Metadata;
 use crate::config::model::dataset::{
     AudioSpec, Dataset, Distribution, ImageSpec, PrefixPrompts, PromptSelection, Prompts,
     RecordedAgentGraphConfig, Sampling, Synthetic, VideoSpec,
@@ -25,7 +26,6 @@ use crate::config::model::phase::{AdaptiveScale, Phase, PhaseCommon, PhaseKind, 
 use crate::config::model::rate_series::RateSeries;
 use crate::config::model::runtime::Runtime;
 use crate::config::model::tokenizer::Tokenizer;
-use crate::config::model::config::Metadata;
 use crate::config::model::{BenchmarkConfig, BenchmarkRun, Resolved};
 use crate::config::model::{DispatchMode, HopRouting};
 use crate::config::phase_validate::{apply_cli_loadgen_overlays, normalize_and_validate_phases};

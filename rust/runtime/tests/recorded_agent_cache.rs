@@ -21,7 +21,11 @@ fn first_message_prefix_handles_string_array_and_null_without_store_mutation() {
         .split(' ')
         .collect::<Vec<_>>();
     assert_eq!(digits.len(), 32);
-    assert!(digits.iter().all(|digit| digit.len() == 1 && digit.as_bytes()[0].is_ascii_digit()));
+    assert!(
+        digits
+            .iter()
+            .all(|digit| digit.len() == 1 && digit.as_bytes()[0].is_ascii_digit())
+    );
 
     let string_messages = vec![
         json!({"role": "user", "content": "hello", "preserved": {"x": 1}}),
@@ -63,19 +67,29 @@ fn first_message_prefix_handles_string_array_and_null_without_store_mutation() {
         .expect("warmup is unmodified");
     let profile_marker_count = string_profile
         .iter()
-        .filter(|message| message["content"].as_str().is_some_and(|content| content.contains(namespace)))
+        .filter(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains(namespace))
+        })
         .count();
     let warmup_marker_count = warmup
         .iter()
-        .filter(|message| message["content"].as_str().is_some_and(|content| content.contains(namespace)))
+        .filter(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains(namespace))
+        })
         .count();
     assert_eq!(profile_marker_count, 1);
     assert_eq!(warmup_marker_count, 0);
 
-    assert!(apply_first_message_prefix(
-        &[json!({"role": "user", "content": 42})],
-        namespace,
-        ReplayMessageDialect::OpenAiChat,
-    )
-    .is_err());
+    assert!(
+        apply_first_message_prefix(
+            &[json!({"role": "user", "content": 42})],
+            namespace,
+            ReplayMessageDialect::OpenAiChat,
+        )
+        .is_err()
+    );
 }

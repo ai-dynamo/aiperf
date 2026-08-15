@@ -60,7 +60,8 @@ fn graph_config_and_all_replay_artifact_paths_round_trip_strictly() {
         .expect("typed run projects to protocol");
     authored.validate_outer().expect("artifact paths validate");
     assert_eq!(authored.workload.id.as_str(), "graph");
-    let graph: Value = serde_json::from_str(authored.workload.config.get()).expect("graph config JSON");
+    let graph: Value =
+        serde_json::from_str(authored.workload.config.get()).expect("graph config JSON");
     assert_eq!(graph["dataset"]["graph"]["execute_tools"], true);
     assert_eq!(graph["dataset"]["graph"]["command_timeout_seconds"], 9.5);
     assert_eq!(
@@ -68,7 +69,10 @@ fn graph_config_and_all_replay_artifact_paths_round_trip_strictly() {
         Some(std::path::Path::new("metrics.csv"))
     );
     assert_eq!(
-        authored.artifacts.graph_replay_backend_metadata_path.as_deref(),
+        authored
+            .artifacts
+            .graph_replay_backend_metadata_path
+            .as_deref(),
         Some(std::path::Path::new("backend.json"))
     );
 
