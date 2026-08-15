@@ -16,11 +16,15 @@ use bytes::{Bytes, BytesMut};
 use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::graph::driver::TraceIdentity;
 use aiperf_runtime::graph::replay::ReplayRunIdentity;
+use aiperf_runtime::graph::replay::{
+    ReplayArtifactPaths, ReplayTraceSupplement, ToolCallMeasurement, write_replay_artifacts,
+};
 use aiperf_runtime::graph::tools::{
     CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerRuntime, DockerCliRuntime,
-    DockerSessionSandbox, EnvironmentRecipe, FramedCommandIo, ResolvedTraceEnvironment,
-    ToolSandbox, ToolSandboxError, WorkspaceSpec, cleanup_recorded_agent_containers,
-    preflight_docker_sandbox,
+    DockerSessionSandbox, EnvironmentRecipe, EnvironmentToolDispatcher, FramedCommandIo,
+    GuardedToolCommandPolicy, ResolvedTraceEnvironment, ToolCommandResult, ToolDispatchContext,
+    ToolDispatchRequest, ToolDispatcher, ToolSandbox, ToolSandboxError, WorkspaceSpec,
+    cleanup_recorded_agent_containers, preflight_docker_sandbox,
 };
 use aiperf_runtime::rng::RngRoot;
 
@@ -60,6 +64,31 @@ struct FakeRuntime {
     inspected_images: RefCell<Vec<String>>,
     label_queries: RefCell<Vec<(String, String)>>,
     listed: RefCell<Vec<ContainerId>>,
+}
+
+struct LocalCaptureSandbox;
+
+#[async_trait(?Send)]
+impl ToolSandbox for LocalCaptureSandbox {
+    async fn open(&self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn run(
+        &self,
+        _command: &str,
+        _timeout_ns: Option<u64>,
+    ) -> Result<ToolCommandResult, ToolSandboxError> {
+        Ok(ToolCommandResult::completed(0, Bytes::new()))
+    }
+
+    async fn recycle(&self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ToolSandboxError> {
+        Ok(())
+    }
 }
 
 impl FakeRuntime {
@@ -186,6 +215,85 @@ fn trace() -> TraceIdentity {
         trajectory_id: "trajectory".into(),
         trace_id: "trace / untrusted".into(),
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_capture_uses_local_docker_and_mixed_backend_labels() {
+    let docker_runtime = Rc::new(FakeRuntime::new([vec![Bytes::from_static(b"docker")]]));
+    let docker = Rc::new(
+        DockerSessionSandbox::new(
+            pinch_environment(),
+            Some(PathBuf::from("/tmp/pinch-workspace")),
+            trace(),
+            ReplayRunIdentity::mint(RngRoot::new(Some(29)), "replay-run-29"),
+            RealClock::new(),
+            docker_runtime,
+            4096,
+        )
+        .expect("valid Docker sandbox"),
+    );
+    let docker_dispatcher =
+        EnvironmentToolDispatcher::new(docker, Rc::new(GuardedToolCommandPolicy));
+    let docker_result = docker_dispatcher
+        .dispatch(
+            ToolDispatchRequest::new("docker-call", "printf docker"),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("Docker tool dispatch completes");
+    let local_dispatcher = EnvironmentToolDispatcher::new(
+        Rc::new(LocalCaptureSandbox),
+        Rc::new(GuardedToolCommandPolicy),
+    );
+    let local_result = local_dispatcher
+        .dispatch(
+            ToolDispatchRequest::new("local-call", "printf local"),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("local tool dispatch completes");
+    let artifact_dir = tempfile::tempdir().expect("artifact directory");
+    let tool_path = artifact_dir.path().join("tool-time.json");
+    let tools = vec![
+        ToolCallMeasurement::new(
+            local_result.duration_ns as f64 / 1_000_000_000.0,
+            local_dispatcher.backend_identity().artifact_label(),
+        )
+        .with_call_index(0),
+        ToolCallMeasurement::new(
+            docker_result.duration_ns as f64 / 1_000_000_000.0,
+            docker_dispatcher.backend_identity().artifact_label(),
+        )
+        .with_call_index(1),
+    ];
+    write_replay_artifacts(
+        &ReplayArtifactPaths {
+            tool_time_path: Some(tool_path.clone()),
+            ..ReplayArtifactPaths::default()
+        },
+        &[ReplayTraceSupplement {
+            trace_id: "trace".into(),
+            trajectory_id: "trajectory".into(),
+            worker_id: 0,
+            completed: true,
+            calls: Vec::new(),
+            tools,
+            trace_wall_ms: 1.0,
+        }],
+    )
+    .expect("capture writes strict tool-time artifact");
+    let tool_time: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(tool_path).expect("tool-time artifact"))
+            .expect("strict tool-time JSON");
+    assert_eq!(tool_time["backend"], "mixed");
+    assert_eq!(
+        docker_dispatcher.backend_identity().artifact_label(),
+        "docker:aiperf-recorded-agent-pinchbench:v1"
+    );
+    assert_eq!(
+        local_dispatcher.backend_identity().artifact_label(),
+        "local"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

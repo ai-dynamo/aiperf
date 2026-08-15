@@ -191,6 +191,10 @@ pub struct ToolDispatchContext {
 /// One worker-local sandbox session used by the environment-aware dispatcher.
 #[async_trait(?Send)]
 pub trait ToolSandbox {
+    /// Concrete execution backend used by this trace-owned sandbox.
+    fn backend_identity(&self) -> ToolBackendIdentity {
+        ToolBackendIdentity::Local
+    }
     /// Open the trace-owned session before warmup or profiling begins.
     async fn open(&self) -> Result<(), ToolSandboxError>;
     /// Run one command using the selected recipe interpreter and deadline.
@@ -457,7 +461,6 @@ pub struct EnvironmentToolDispatcher {
     sandbox: Rc<dyn ToolSandbox>,
     policy: Rc<dyn ToolCommandPolicy>,
     command_gate: Rc<tokio::sync::Mutex<()>>,
-    backend_identity: ToolBackendIdentity,
 }
 
 impl EnvironmentToolDispatcher {
@@ -469,14 +472,7 @@ impl EnvironmentToolDispatcher {
             // One worker-local persistent shell/container cannot accept a second
             // command while the first command's output and timeout cleanup run.
             command_gate: Rc::new(tokio::sync::Mutex::new(())),
-            backend_identity: ToolBackendIdentity::Local,
         }
-    }
-
-    /// Bind the validated local or `docker:<image>` artifact identity.
-    pub fn with_backend_identity(mut self, backend_identity: ToolBackendIdentity) -> Self {
-        self.backend_identity = backend_identity;
-        self
     }
 }
 
@@ -507,7 +503,7 @@ mod tests {
 #[async_trait(?Send)]
 impl ToolDispatcher for EnvironmentToolDispatcher {
     fn backend_identity(&self) -> ToolBackendIdentity {
-        self.backend_identity.clone()
+        self.sandbox.backend_identity()
     }
     async fn open_trace(&self, _context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError> {
         let _command_turn = self.command_gate.lock().await;

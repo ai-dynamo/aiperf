@@ -576,6 +576,10 @@ impl DockerSessionSandbox {
 
 #[async_trait(?Send)]
 impl ToolSandbox for DockerSessionSandbox {
+    fn backend_identity(&self) -> crate::graph::tools::ToolBackendIdentity {
+        crate::graph::tools::ToolBackendIdentity::Docker(self.environment.image.clone())
+    }
+
     async fn open(&self) -> Result<(), ToolSandboxError> {
         let _command_turn = self.command_gate.lock().await;
         self.open_unlocked().await
