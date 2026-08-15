@@ -595,6 +595,19 @@ Inputs, endpoints, and graph:
   sandbox and verifier contracts, provider-neutral trajectory evidence, task-health
   governance, paired graph-variant experiments, and distinct replay-fidelity,
   system-performance, and task-quality results.
+- [`docs/specs/dag-v3-graph-ir-extraction.md`](docs/specs/dag-v3-graph-ir-extraction.md) —
+  decision record for extracting durable graph semantics and behavioral tests from
+  the historical DAG-v3 branch while rejecting its universal Python node executor.
+- [`docs/specs/semantic-agent-graph.md`](docs/specs/semantic-agent-graph.md) —
+  native Rust semantic graph, lowering, transform-closure, and source-fidelity
+  contract for captured and live agent/application workflows.
+- [`docs/specs/harbor-replacement-platform.md`](docs/specs/harbor-replacement-platform.md) —
+  pure native-Rust Harbor replacement bar: compatibility import tiers,
+  task/agent/verifier contracts, regrading, and graph-aware differentiators.
+- [`docs/specs/harbor-native-rust-implementation.md`](docs/specs/harbor-native-rust-implementation.md) —
+  native-Rust Harbor delivery architecture: isolated `eval` identities/evidence,
+  source import, sandbox/agent/verifier execution, regrade, semantic experiments,
+  and parallel P1/P2 tracks.
 - [`docs/specs/graph-ir-system-idle-gap.md`](docs/specs/graph-ir-system-idle-gap.md) — Graph-IR system idle-gap cap at the centralized node firing gate.
 - [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
   the model-independent-branching contract: pinned/recorded/weighted conditional
