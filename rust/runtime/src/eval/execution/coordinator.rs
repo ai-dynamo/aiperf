@@ -7,8 +7,7 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::eval::{
     DeclaredArtifactTransfer, HarborImportError, HarborImporter, HarborSource, ImportedTask,
-    SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory,
-    prepare_verifier,
+    SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory, prepare_verifier,
 };
 
 use super::{EvalExecutionError, EvalSandboxFactory, HarborAgentContract, HarborSandboxRecipe};

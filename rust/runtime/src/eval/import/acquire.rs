@@ -57,9 +57,9 @@ impl HarborSource {
         }
         if package_path.trim().is_empty()
             || package_path.starts_with('/')
-            || package_path.split('/').any(|component| {
-                component.is_empty() || component == "." || component == ".."
-            })
+            || package_path
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
         {
             return Err(HarborImportError::InvalidSource("Git package path"));
         }

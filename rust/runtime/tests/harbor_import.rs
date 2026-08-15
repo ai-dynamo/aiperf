@@ -89,7 +89,10 @@ fn native_acquirer_reads_local_and_pinned_git_package_bytes() {
     let repository = temporary.path().join("task-repository");
     fs::create_dir(&repository).unwrap();
     run_git(&repository, ["init"]);
-    run_git(&repository, ["config", "user.email", "eval@example.invalid"]);
+    run_git(
+        &repository,
+        ["config", "user.email", "eval@example.invalid"],
+    );
     run_git(&repository, ["config", "user.name", "Native Eval"]);
     let package_path = repository.join("task.json");
     fs::write(&package_path, package).unwrap();
@@ -103,12 +106,8 @@ fn native_acquirer_reads_local_and_pinned_git_package_bytes() {
     assert_eq!(
         acquirer
             .acquire(
-                &HarborSource::pinned_git(
-                    repository.to_string_lossy(),
-                    revision,
-                    "task.json",
-                )
-                .unwrap(),
+                &HarborSource::pinned_git(repository.to_string_lossy(), revision, "task.json",)
+                    .unwrap(),
             )
             .unwrap(),
         package

@@ -64,7 +64,8 @@ fn local_harbor_task_runs_through_native_p0_lifecycle_without_harbor_runtime() {
         "/work",
     )
     .unwrap();
-    let transfer = DeclaredArtifactTransfer::new(vec![("/results/patch.diff", digest('c'))]).unwrap();
+    let transfer =
+        DeclaredArtifactTransfer::new(vec![("/results/patch.diff", digest('c'))]).unwrap();
 
     let imported = coordinator
         .prepare(
@@ -99,9 +100,13 @@ fn local_harbor_task_runs_through_native_p0_lifecycle_without_harbor_runtime() {
     )
     .unwrap();
 
-    let regraded = regrade(RegradeRequest::new(original.clone(), result, "reward").unwrap()).unwrap();
+    let regraded =
+        regrade(RegradeRequest::new(original.clone(), result, "reward").unwrap()).unwrap();
 
-    assert_eq!(imported.report.source_digest, ArtifactDigest::from_bytes(package));
+    assert_eq!(
+        imported.report.source_digest,
+        ArtifactDigest::from_bytes(package)
+    );
     assert_eq!(sandbox.opened.get(), 1);
     assert_eq!(
         *verifier.received.borrow(),

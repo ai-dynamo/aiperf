@@ -126,5 +126,8 @@ fn native_coordinator_imports_preflights_opens_and_prepares_declared_verifier() 
     assert_eq!(imported.task.id.as_str(), "repair-1");
     assert!(sandbox.opened.get());
     assert_eq!(*verifier.modes.borrow(), vec![VerifierMode::Separate]);
-    assert_eq!(*verifier.artifacts.borrow(), vec![transfer.artifacts().to_vec()]);
+    assert_eq!(
+        *verifier.artifacts.borrow(),
+        vec![transfer.artifacts().to_vec()]
+    );
 }
