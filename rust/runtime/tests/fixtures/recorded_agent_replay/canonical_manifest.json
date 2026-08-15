@@ -1,0 +1,65 @@
+{
+  "name": "recorded-agent-eight-v1",
+  "description": "Default 8-trace agentic replay workload.",
+  "mode": "replay",
+  "selection_date": "2026-07-23",
+  "recording_refresh_date": "2026-08-07",
+  "selection_rationale": [
+    "Contains five OpenClaw-conditioned PinchBench trajectories and three SWE-bench trajectories.",
+    "Exercises realistic full agentic flows with model calls, tool calls, prompt growth, and output generation.",
+    "Keeps individual tool calls bounded while emphasizing prefill and prompt-growth behavior.",
+    "Keeps the routine workload bounded enough for practical local endpoint comparisons."
+  ],
+  "defaults": {
+    "config": "mixed",
+    "step_limit": 150,
+    "cost_limit": 0,
+    "environment_class": "mixed",
+    "docker_network": "none",
+    "per_inference_timeout": 300,
+    "fallback_max_output_tokens": 32768,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "stream_for_timing": true,
+    "raw_openai_stream_for_replay_timing": true,
+    "replay_max_tokens_from_recording": true,
+    "replay_max_tokens_margin": 0,
+    "extra_request_body": {},
+    "cross_run_cache_isolation": true,
+    "warmup": true,
+    "measurement_scope": "agent_run_only"
+  },
+  "aggregate": {
+    "total_isl": 2499441,
+    "isl_delta": 192314,
+    "peak_isl": 56000,
+    "total_osl": 30883,
+    "model_calls": 168,
+    "tool_calls": 172,
+    "tool_duration_ms": 35923.59589,
+    "max_tool_call_duration_ms": 4312.283731,
+    "timed_out_tool_calls": 0
+  },
+  "family_counts": {
+    "pinchbench-openclaw": 5,
+    "swe-sample": 1,
+    "swe-corpus": 2
+  },
+  "tasks": [
+    {"family": "pinchbench-openclaw", "adapter": "pinchbench", "task_id": "task_meeting_council_budget", "recording": "recordings/pinchbench-openclaw-task_meeting_council_budget-recording.json", "primary_role": "osl-heavy"},
+    {"family": "pinchbench-openclaw", "adapter": "pinchbench", "task_id": "task_meeting_council_votes", "recording": "recordings/pinchbench-openclaw-task_meeting_council_votes-recording.json", "primary_role": "isl-heavy-prefill"},
+    {"family": "pinchbench-openclaw", "adapter": "pinchbench", "task_id": "task_k8s_debugging", "recording": "recordings/pinchbench-openclaw-task_k8s_debugging-recording.json", "primary_role": "coverage-balance"},
+    {"family": "pinchbench-openclaw", "adapter": "pinchbench", "task_id": "task_meeting_searchable_index", "recording": "recordings/pinchbench-openclaw-task_meeting_searchable_index-recording.json", "primary_role": "typical-1"},
+    {"family": "pinchbench-openclaw", "adapter": "pinchbench", "task_id": "task_skill_search", "recording": "recordings/pinchbench-openclaw-task_skill_search-recording.json", "primary_role": "typical-2"},
+    {"family": "swe-sample", "adapter": "swebench", "task_id": "django__django-15851", "recording": "recordings/swe-sample-django__django-15851.json", "primary_role": "typical-3"},
+    {"family": "swe-corpus", "adapter": "swebench", "task_id": "django__django-14500", "recording": "recordings/swe-corpus-django__django-14500.json.gz", "primary_role": "tool-heavy"},
+    {"family": "swe-corpus", "adapter": "swebench", "task_id": "sphinx-doc__sphinx-10614", "recording": "recordings/swe-corpus-sphinx-doc__sphinx-10614.json.gz", "primary_role": "isl-heavy-accumulated"}
+  ],
+  "attribution": {
+    "pinchbench": "Derived from PinchBench tasks and recordings; see benchmark/pinchbench/ATTRIBUTION.md.",
+    "swe_bench": "SWE tasks are derived from SWE-bench Lite and SWE-bench Verified, MIT licensed.",
+    "mini_swe_agent": "Generated and replayed with mini-swe-agent, MIT licensed."
+  }
+}

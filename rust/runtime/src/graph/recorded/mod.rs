@@ -3,6 +3,7 @@
 
 //! Recorded-trace compilation shared by WEKA, Dynamo, and AIPerf trace inputs.
 
+pub mod agent_recording;
 mod aiperf_trace;
 mod content;
 mod dynamo;

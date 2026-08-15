@@ -82,6 +82,10 @@ tests/scripts/.chaos_runs/
 # Rust build artifacts
 target/
 
+# Canonical recorded-agent corpus is supplied separately; only its manifest and
+# digest index are committed under this fixture root.
+rust/runtime/tests/fixtures/recorded_agent_replay/recordings/
+
 # Node.js dependencies
 node_modules/
 

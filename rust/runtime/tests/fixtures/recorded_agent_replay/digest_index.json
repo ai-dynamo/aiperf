@@ -1,0 +1,13 @@
+{
+  "manifest": "0e624e781bf55a8529c86c65b70614c86211a8392d5ff2aee7dd27a02e79c83b",
+  "recordings": {
+    "pinchbench:task_k8s_debugging": "c5bf152f4ab7ef02a417cbaac416338dfc46b1deb9b492c975041f3a84f5e400",
+    "pinchbench:task_meeting_council_budget": "1f2cc920c263dde6ce8c65301c07e8ac3defaf96514efb75f297e915da008b14",
+    "pinchbench:task_meeting_council_votes": "846ffa2508eb5156589a06282a2e822c274a7e9dce1c1bf0e7c7ca1a2144d2e8",
+    "pinchbench:task_meeting_searchable_index": "0247a4cf270894ce4e6c08aba1303cab99e0680f351c0ed53cad168563df0127",
+    "pinchbench:task_skill_search": "aafca94c58da5b7ae070d6b6fb52388cf89774decfeb2edc0309b6db7bdee155",
+    "swebench:django__django-14500": "c7b210d576de708563bc8c2a9ba50b9809216cc7569c0552857d64ae64cf57f2",
+    "swebench:django__django-15851": "9df708d1fd423a262e5e9687240f0b2bdd4370577b97fd5a544188d0b391dd9b",
+    "swebench:sphinx-doc__sphinx-10614": "d8537cdcf12bc0501355273373a0b19d8fd88b43b60fc4a4d674cb0226262195"
+  }
+}
