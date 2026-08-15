@@ -584,6 +584,10 @@ Inputs, endpoints, and graph:
 - [`docs/specs/graph-runtime.md`](docs/specs/graph-runtime.md) — the Graph-IR runtime:
   deterministic async dataflow, the recorded-trace compilers, and the
   trajectory-snapshot/warmup-priming subsystem.
+- [`docs/specs/openlab-rust-port.md`](docs/specs/openlab-rust-port.md) — the planned
+  full native Open LAB recording replay port: strict lowering, typed LLM/tool nodes,
+  injectable tool and sandbox seams, corpus warmup, run-scoped cache isolation,
+  folded timing artifacts, scenario locks, and subprocess A/B parity gates.
 - [`docs/specs/graph-ir-system-idle-gap.md`](docs/specs/graph-ir-system-idle-gap.md) — Graph-IR system idle-gap cap at the centralized node firing gate.
 - [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
   the model-independent-branching contract: pinned/recorded/weighted conditional
