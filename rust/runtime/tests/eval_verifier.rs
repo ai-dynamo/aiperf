@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvidenceKind, RewardDocument,
-    ScoreVersion, VerifierMode, VerifierSandboxFactory, invalid_reward_evidence, prepare_verifier,
+    ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvidenceKind, RewardDocument, ScoreVersion,
+    VerifierMode, VerifierSandboxFactory, invalid_reward_evidence, parse_reward_with_evidence,
+    prepare_verifier,
 };
 
 fn digest(seed: char) -> ArtifactDigest {
@@ -34,16 +35,27 @@ fn malformed_reward_becomes_evaluator_evidence() {
 }
 
 #[test]
+fn reward_parser_returns_evaluator_evidence_for_a_malformed_document() {
+    let outcome = parse_reward_with_evidence(
+        AttemptId::new("attempt-1").unwrap(),
+        3,
+        Some(b"not-json"),
+        None,
+    );
+
+    assert!(outcome.reward.is_err());
+    assert_eq!(outcome.evidence.unwrap().kind, EvidenceKind::Evaluator);
+}
+
+#[test]
 fn declared_artifact_transfer_refuses_workspace_paths_and_duplicates() {
     assert!(DeclaredArtifactTransfer::new(vec![("relative/path", digest('a'))]).is_err());
     assert!(DeclaredArtifactTransfer::new(vec![("/../../agent-secret", digest('a'))]).is_err());
-    assert!(
-        DeclaredArtifactTransfer::new(vec![
-            ("/results/patch.diff", digest('a')),
-            ("/results/patch.diff", digest('b')),
-        ])
-        .is_err()
-    );
+    assert!(DeclaredArtifactTransfer::new(vec![
+        ("/results/patch.diff", digest('a')),
+        ("/results/patch.diff", digest('b')),
+    ])
+    .is_err());
 }
 
 #[test]
