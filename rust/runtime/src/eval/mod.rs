@@ -34,5 +34,6 @@ pub use source::{EvalDatasetId, EvalDatasetManifest};
 pub use trial::{TrialBudget, TrialSpec};
 pub use verifier::{
     ArtifactTransferError, DeclaredArtifactTransfer, RegradeError, RegradeRequest, RewardDocument,
-    RewardError, VerifierResult, regrade,
+    RewardError, VerifierExecutionError, VerifierMode, VerifierResult, VerifierSandboxFactory,
+    prepare_verifier, regrade,
 };

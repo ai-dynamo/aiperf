@@ -3,7 +3,11 @@
 
 //! Exact artifact declarations for an isolated verifier handoff.
 
-use std::fmt::{self, Display, Formatter};
+use std::{
+    collections::BTreeSet,
+    fmt::{self, Display, Formatter},
+    path::{Component, Path},
+};
 
 use crate::eval::ArtifactDigest;
 
@@ -17,9 +21,11 @@ impl DeclaredArtifactTransfer {
     /// Creates a transfer containing only absolute, explicitly declared artifact paths.
     pub fn new(artifacts: Vec<(&str, ArtifactDigest)>) -> Result<Self, ArtifactTransferError> {
         let mut declared = Vec::with_capacity(artifacts.len());
+        let mut paths = BTreeSet::new();
         for (path, digest) in artifacts {
-            if !path.starts_with('/') {
-                return Err(ArtifactTransferError::RelativePath(path.to_owned()));
+            validate_artifact_path(path)?;
+            if !paths.insert(path) {
+                return Err(ArtifactTransferError::DuplicatePath(path.to_owned()));
             }
             declared.push((path.to_owned(), digest));
         }
@@ -34,19 +40,41 @@ impl DeclaredArtifactTransfer {
     }
 }
 
+fn validate_artifact_path(path: &str) -> Result<(), ArtifactTransferError> {
+    let parsed = Path::new(path);
+    if !parsed.is_absolute() || parsed == Path::new("/") {
+        return Err(ArtifactTransferError::InvalidPath(path.to_owned()));
+    }
+    if parsed.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::CurDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(ArtifactTransferError::InvalidPath(path.to_owned()));
+    }
+    Ok(())
+}
+
 /// Invalid artifact declaration for a verifier handoff.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArtifactTransferError {
-    /// Artifact paths must be absolute within the verifier sandbox.
-    RelativePath(String),
+    /// Artifact paths must be absolute, non-root, and free from traversal.
+    InvalidPath(String),
+    /// Artifact paths must identify exactly one immutable artifact.
+    DuplicatePath(String),
 }
 
 impl Display for ArtifactTransferError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RelativePath(path) => {
-                write!(formatter, "artifact path must be absolute: {path:?}")
+            Self::InvalidPath(path) => {
+                write!(
+                    formatter,
+                    "artifact path must be absolute and isolated: {path:?}"
+                )
             }
+            Self::DuplicatePath(path) => write!(formatter, "artifact path is duplicated: {path:?}"),
         }
     }
 }

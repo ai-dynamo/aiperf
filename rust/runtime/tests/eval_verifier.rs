@@ -26,11 +26,13 @@ fn reward_json_precedes_reward_txt_and_preserves_multiple_metrics() {
 fn declared_artifact_transfer_refuses_workspace_paths_and_duplicates() {
     assert!(DeclaredArtifactTransfer::new(vec![("relative/path", digest('a'))]).is_err());
     assert!(DeclaredArtifactTransfer::new(vec![("/../../agent-secret", digest('a'))]).is_err());
-    assert!(DeclaredArtifactTransfer::new(vec![
-        ("/results/patch.diff", digest('a')),
-        ("/results/patch.diff", digest('b')),
-    ])
-    .is_err());
+    assert!(
+        DeclaredArtifactTransfer::new(vec![
+            ("/results/patch.diff", digest('a')),
+            ("/results/patch.diff", digest('b')),
+        ])
+        .is_err()
+    );
 }
 
 #[test]
@@ -42,7 +44,10 @@ fn separate_verifier_materializes_only_declared_artifacts_in_fresh_sandbox() {
     prepare_verifier(&sandbox, VerifierMode::Separate, &transfer).unwrap();
 
     assert_eq!(sandbox.mode(), Some(VerifierMode::Separate));
-    assert_eq!(sandbox.artifacts(), &[("/results/patch.diff".to_owned(), digest('a'))]);
+    assert_eq!(
+        sandbox.artifacts(),
+        vec![("/results/patch.diff".to_owned(), digest('a'))]
+    );
 }
 
 #[test]
