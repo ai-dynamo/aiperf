@@ -90,6 +90,28 @@ fn guarded_policy_blocks_an_installer_nested_in_shell_control() {
 }
 
 #[test]
+fn guarded_policy_blocks_detachment_nested_in_shell_control() {
+    // This catches checking only the top-level executable while a nested shell
+    // payload or command substitution starts a process outside containment.
+    for command in ["bash -c 'setsid true &'", "echo $(setsid true)"] {
+        let disposition = GuardedToolCommandPolicy
+            .evaluate(command)
+            .expect("policy inspects nested detaching commands");
+        let CommandDisposition::Synthetic(result) = disposition else {
+            panic!("nested detaching command must become a synthetic result: {command}");
+        };
+        assert_eq!(result.exit_code, 127, "{command}");
+        assert!(
+            result
+                .output
+                .windows(b"detaching".len())
+                .any(|window| window == b"detaching"),
+            "{command}"
+        );
+    }
+}
+
+#[test]
 fn guarded_policy_blocks_an_installer_spliced_by_command_substitution() {
     // This catches a policy that recognizes only the source spelling of a
     // command word, although Bash removes the substitution before dispatch.

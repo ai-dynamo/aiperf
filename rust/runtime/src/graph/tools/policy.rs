@@ -117,15 +117,48 @@ pub(crate) fn contains_detaching_command(command: &str) -> bool {
 }
 
 fn segment_starts_detaching_command(segment: &str) -> bool {
-    let tokens = shell_tokens(segment);
-    let tokens = executable_tokens(&tokens);
-    let Some(command) = tokens.first() else {
-        return false;
+    let tokens = shell_tokens(segment.trim());
+    starts_detaching_command(&tokens)
+        || nested_commands(segment)
+            .iter()
+            .flat_map(|command| top_level_segments(command))
+            .any(segment_starts_detaching_command)
+        || shell_command_payloads(&tokens)
+            .iter()
+            .flat_map(|command| top_level_segments(command))
+            .any(segment_starts_detaching_command)
+}
+
+fn starts_detaching_command(tokens: &[String]) -> bool {
+    let tokens = executable_tokens(tokens);
+    tokens.first().is_some_and(|command| {
+        matches!(
+            strip_shell_expansions(command).as_str(),
+            "setsid" | "nohup" | "disown"
+        )
+    })
+}
+
+fn shell_command_payloads(tokens: &[String]) -> Vec<&str> {
+    let tokens = executable_tokens(tokens);
+    let Some(executable) = tokens.first() else {
+        return Vec::new();
     };
-    matches!(
-        strip_shell_expansions(command).as_str(),
-        "setsid" | "nohup" | "disown"
-    )
+    let executable = strip_shell_expansions(executable);
+    let executable = executable.rsplit('/').next().unwrap_or(&executable);
+    if !matches!(executable, "bash" | "sh" | "zsh") {
+        return Vec::new();
+    }
+    let mut arguments = tokens[1..].iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--" {
+            break;
+        }
+        if argument.starts_with('-') && argument.contains('c') {
+            return arguments.next().map(String::as_str).into_iter().collect();
+        }
+    }
+    Vec::new()
 }
 
 fn top_level_segments(command: &str) -> Vec<&str> {

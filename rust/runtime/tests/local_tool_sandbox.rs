@@ -308,6 +308,32 @@ async fn detaching_command_is_rejected_without_an_escaped_side_effect() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn nested_detaching_constructs_are_rejected_before_execution() {
+    // This catches a direct sandbox check that only inspects top-level words,
+    // allowing a nested shell payload or command substitution to call `setsid`.
+    let temporary = tempfile::tempdir().expect("temporary local workspace");
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sandbox = LocalSessionSandbox::with_tokio_processes(
+        real_workspace(temporary.path().to_string_lossy().as_ref()),
+        clock,
+        1024,
+    );
+
+    for command in ["bash -c 'setsid true &'", "echo $(setsid true)"] {
+        let error = sandbox
+            .run(command, Some(1_000_000_000))
+            .await
+            .expect_err("nested detachment is rejected before execution");
+        assert_eq!(
+            error.to_string(),
+            "recorded-agent replay blocked a detaching command to preserve sandbox containment",
+            "{command}"
+        );
+    }
+    sandbox.close().await.expect("opened session closes safely");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn completed_command_cannot_leave_background_output_for_the_next_command() {
     // This catches a command frame emitted before its background descendants
     // are terminated, which attributes their later output to the next command.
