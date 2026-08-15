@@ -1497,6 +1497,52 @@ mod tests {
         }
     }
 
+    /// Test-only observer that delegates to the frozen native driver registry.
+    struct ObservedStockTraceDriverFactory {
+        inner: Arc<dyn TraceProgramDriverFactory>,
+        created: Arc<AtomicUsize>,
+        ran: Arc<AtomicUsize>,
+    }
+
+    impl TraceProgramDriverFactory for ObservedStockTraceDriverFactory {
+        fn capabilities(
+            &self,
+            spec: &TraceDriverSpec,
+        ) -> Result<TraceDriverCapabilities, TraceDriverError> {
+            self.inner.capabilities(spec)
+        }
+
+        fn create(
+            &self,
+            worker: WorkerIdentity,
+            trace: &TraceIdentity,
+            spec: &TraceDriverSpec,
+        ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError> {
+            self.created.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(ObservedStockTraceDriver {
+                inner: self.inner.create(worker, trace, spec)?,
+                ran: self.ran.clone(),
+            }))
+        }
+    }
+
+    struct ObservedStockTraceDriver {
+        inner: Box<dyn TraceProgramDriver>,
+        ran: Arc<AtomicUsize>,
+    }
+
+    #[async_trait(?Send)]
+    impl TraceProgramDriver for ObservedStockTraceDriver {
+        async fn run(
+            &mut self,
+            program: &GraphTraceProgram,
+            context: &TraceDriverContext<'_>,
+        ) -> Result<TraceTerminalSupplement, TraceDriverError> {
+            self.ran.fetch_add(1, Ordering::SeqCst);
+            self.inner.run(program, context).await
+        }
+    }
+
     struct UnusedGraphEndpointRuntime;
 
     impl GraphEndpointRuntime for UnusedGraphEndpointRuntime {
@@ -1511,29 +1557,25 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn graph_agent_non_static_trace_runs_registered_driver_before_node_dispatch() {
-        let created = Arc::new(AtomicUsize::new(0));
-        let ran = Arc::new(AtomicUsize::new(0));
-        let factory = RecordingTraceDriverFactory {
-            created: created.clone(),
-            ran: ran.clone(),
-        };
+    fn empty_recorded_program(trace_id: &str) -> GraphTraceProgram {
         let mut program = GraphTraceProgram::static_graph(GraphTracePlan {
             graph: crate::graph::model::GraphRecord::default(),
             trace: crate::graph::model::TraceRecord {
-                id: "trace-1".into(),
+                id: trace_id.into(),
                 graph_ref: None,
                 initial_state: BTreeMap::new(),
             },
             arrival_offset_ns: None,
         });
         program.driver = TraceDriverSpec::recorded_replay();
+        program
+    }
 
+    fn empty_graph_worker(trace_driver: Arc<dyn TraceProgramDriverFactory>) -> GraphWorkerBackend {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
         let segments: Arc<dyn SegmentStore> = Arc::new(InMemorySegmentStore::default());
         let (sender, _receiver) = mpsc::unbounded_channel();
-        let backend = GraphWorkerBackend {
+        GraphWorkerBackend {
             clock: clock.clone(),
             endpoint_runtime: Rc::new(UnusedGraphEndpointRuntime),
             materializer: Rc::new(SegmentItemsMaterializer::new(segments.clone())),
@@ -1555,18 +1597,65 @@ mod tests {
             cache_bust: None,
             ignore_trace_delays: false,
             system_idle_gap_cap_seconds: None,
-            trace_driver: Arc::new(factory),
+            trace_driver,
             prefill_slots: None,
             next_session: Cell::new(0),
             next_execution: Cell::new(0),
             cancelled: Cell::new(false),
             active: RefCell::new(HashMap::new()),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_agent_non_static_trace_runs_registered_driver_before_node_dispatch() {
+        let created = Arc::new(AtomicUsize::new(0));
+        let ran = Arc::new(AtomicUsize::new(0));
+        let factory = RecordingTraceDriverFactory {
+            created: created.clone(),
+            ran: ran.clone(),
         };
+        let program = empty_recorded_program("trace-1");
+        let backend = empty_graph_worker(Arc::new(factory));
         backend
             .execute_trace(program)
             .await
             .expect("registered driver runs before empty graph dispatch");
 
+        assert_eq!(created.load(Ordering::SeqCst), 1);
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_agent_stock_execution_factories_run_recorded_replay_driver_through_placement() {
+        let trace_driver =
+            crate::engine::execution_factories::native_execution_factories().trace_driver_handle();
+        let trace = TraceIdentity {
+            run_id: "run-stock".into(),
+            trajectory_id: "trajectory-stock".into(),
+            trace_id: "trace-stock".into(),
+        };
+        let program = empty_recorded_program(&trace.trace_id);
+        let mut driver = trace_driver
+            .create(WorkerIdentity { worker_id: 7 }, &trace, &program.driver)
+            .expect("stock execution factories select recorded replay");
+        let supplement = driver
+            .run(&program, &TraceDriverContext { trace: &trace })
+            .await
+            .expect("stock recorded replay driver runs its agent-loop composition");
+        assert_eq!(supplement.driver_kind, "recorded_replay");
+        assert_eq!(supplement.trace_id, trace.trace_id);
+
+        let created = Arc::new(AtomicUsize::new(0));
+        let ran = Arc::new(AtomicUsize::new(0));
+        let backend = empty_graph_worker(Arc::new(ObservedStockTraceDriverFactory {
+            inner: trace_driver,
+            created: created.clone(),
+            ran: ran.clone(),
+        }));
+        backend
+            .execute_trace(program)
+            .await
+            .expect("graph worker placement runs the stock recorded replay driver");
         assert_eq!(created.load(Ordering::SeqCst), 1);
         assert_eq!(ran.load(Ordering::SeqCst), 1);
     }

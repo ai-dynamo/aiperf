@@ -580,11 +580,16 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
-    struct CountingCoordinatorFactory(Arc<AtomicUsize>);
+    struct CountingCoordinatorFactory {
+        calls: Arc<AtomicUsize>,
+        identities: Arc<Mutex<Vec<String>>>,
+    }
 
     impl agent::AgentTurnCoordinatorFactory for CountingCoordinatorFactory {
         fn create(
@@ -592,24 +597,38 @@ mod tests {
             invocation: &agent::AgentInvocationIdentity,
             spec: &agent::AgentTurnCoordinatorSpec,
         ) -> Result<Box<dyn agent::AgentTurnCoordinator>, agent::AgentLoopError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identities
+                .lock()
+                .expect("test factory identity log is available")
+                .push(invocation.invocation_id.clone());
             agent::StaticAgentTurnCoordinatorFactory::default().create(invocation, spec)
         }
     }
 
-    struct CountingResponseStoreFactory(Arc<AtomicUsize>);
+    struct CountingResponseStoreFactory {
+        calls: Arc<AtomicUsize>,
+        identities: Arc<Mutex<Vec<String>>>,
+    }
 
     impl agent::AgentResponseStoreFactory for CountingResponseStoreFactory {
         fn create(
             &self,
             trace_id: &str,
         ) -> Result<Box<dyn agent::AgentResponseStore>, agent::AgentResponseStoreError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identities
+                .lock()
+                .expect("test factory identity log is available")
+                .push(trace_id.into());
             agent::InMemoryAgentResponseStoreFactory.create(trace_id)
         }
     }
 
-    struct CountingTrajectorySinkFactory(Arc<AtomicUsize>);
+    struct CountingTrajectorySinkFactory {
+        calls: Arc<AtomicUsize>,
+        identities: Arc<Mutex<Vec<String>>>,
+    }
 
     impl agent::AgentTrajectorySinkFactory for CountingTrajectorySinkFactory {
         fn create(
@@ -618,21 +637,103 @@ mod tests {
             trajectory_id: &str,
             invocation_id: &str,
         ) -> Result<Box<dyn agent::AgentTrajectorySink>, agent::AgentTrajectoryError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identities
+                .lock()
+                .expect("test factory identity log is available")
+                .push(format!("{run_id}/{trajectory_id}/{invocation_id}"));
             agent::InMemoryAgentTrajectorySinkFactory.create(run_id, trajectory_id, invocation_id)
         }
     }
 
-    struct CountingLeaseFactoryFactory(Arc<AtomicUsize>);
+    struct CountingLeaseFactoryFactory {
+        calls: Arc<AtomicUsize>,
+        identities: Arc<Mutex<Vec<String>>>,
+    }
 
     impl agent::InvocationLeaseFactoryFactory for CountingLeaseFactoryFactory {
         fn create(
             &self,
             trace_id: &str,
         ) -> Result<Box<dyn agent::InvocationLeaseFactory>, agent::AgentLoopError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identities
+                .lock()
+                .expect("test factory identity log is available")
+                .push(trace_id.into());
             agent::InMemoryInvocationLeaseFactoryFactory.create(trace_id)
         }
+    }
+
+    struct CountingToolDispatcherFactory {
+        calls: Arc<AtomicUsize>,
+        identities: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl tools::ToolDispatcherFactory for CountingToolDispatcherFactory {
+        fn create(
+            &self,
+            trace_id: &str,
+        ) -> Result<Rc<dyn tools::ToolDispatcher>, tools::ToolDispatchError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identities
+                .lock()
+                .expect("test factory identity log is available")
+                .push(trace_id.into());
+            tools::InMemoryToolDispatcherFactory.create(trace_id)
+        }
+    }
+
+    struct CountingToolDecoderFactory {
+        calls: Arc<AtomicUsize>,
+        identities: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl tools::AgentToolCallDecoderFactory for CountingToolDecoderFactory {
+        fn create(
+            &self,
+            trace_id: &str,
+        ) -> Result<Box<dyn tools::AgentToolCallDecoder>, tools::ToolDispatchError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identities
+                .lock()
+                .expect("test factory identity log is available")
+                .push(trace_id.into());
+            tools::InMemoryAgentToolCallDecoderFactory.create(trace_id)
+        }
+    }
+
+    struct CountingObservationFormatterFactory {
+        calls: Arc<AtomicUsize>,
+        identities: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl tools::AgentObservationFormatterFactory for CountingObservationFormatterFactory {
+        fn create(
+            &self,
+            trace_id: &str,
+        ) -> Result<Box<dyn tools::AgentObservationFormatter>, tools::ToolDispatchError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identities
+                .lock()
+                .expect("test factory identity log is available")
+                .push(trace_id.into());
+            tools::InMemoryAgentObservationFormatterFactory.create(trace_id)
+        }
+    }
+
+    fn recorded_program(trace_id: &str) -> GraphTraceProgram {
+        let mut program = GraphTraceProgram::static_graph(crate::graph::model::GraphTracePlan {
+            graph: crate::graph::model::GraphRecord::default(),
+            trace: crate::graph::model::TraceRecord {
+                id: trace_id.into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        });
+        program.driver = TraceDriverSpec::recorded_replay();
+        program
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -641,43 +742,101 @@ mod tests {
         let response_store = Arc::new(AtomicUsize::new(0));
         let trajectory_sink = Arc::new(AtomicUsize::new(0));
         let invocation_lease = Arc::new(AtomicUsize::new(0));
+        let tool_dispatcher = Arc::new(AtomicUsize::new(0));
+        let tool_decoder = Arc::new(AtomicUsize::new(0));
+        let observation_formatter = Arc::new(AtomicUsize::new(0));
+        let coordinator_identities = Arc::new(Mutex::new(Vec::new()));
+        let response_store_identities = Arc::new(Mutex::new(Vec::new()));
+        let trajectory_sink_identities = Arc::new(Mutex::new(Vec::new()));
+        let invocation_lease_identities = Arc::new(Mutex::new(Vec::new()));
+        let tool_dispatcher_identities = Arc::new(Mutex::new(Vec::new()));
+        let tool_decoder_identities = Arc::new(Mutex::new(Vec::new()));
+        let observation_formatter_identities = Arc::new(Mutex::new(Vec::new()));
         let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
             RecordedReplayAgentLoopFactories::new(
-                Arc::new(CountingCoordinatorFactory(coordinator.clone())),
-                Arc::new(CountingResponseStoreFactory(response_store.clone())),
-                Arc::new(CountingTrajectorySinkFactory(trajectory_sink.clone())),
-                Arc::new(CountingLeaseFactoryFactory(invocation_lease.clone())),
-                Arc::new(tools::InMemoryToolDispatcherFactory),
-                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
-                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+                Arc::new(CountingCoordinatorFactory {
+                    calls: coordinator.clone(),
+                    identities: coordinator_identities.clone(),
+                }),
+                Arc::new(CountingResponseStoreFactory {
+                    calls: response_store.clone(),
+                    identities: response_store_identities.clone(),
+                }),
+                Arc::new(CountingTrajectorySinkFactory {
+                    calls: trajectory_sink.clone(),
+                    identities: trajectory_sink_identities.clone(),
+                }),
+                Arc::new(CountingLeaseFactoryFactory {
+                    calls: invocation_lease.clone(),
+                    identities: invocation_lease_identities.clone(),
+                }),
+                Arc::new(CountingToolDispatcherFactory {
+                    calls: tool_dispatcher.clone(),
+                    identities: tool_dispatcher_identities.clone(),
+                }),
+                Arc::new(CountingToolDecoderFactory {
+                    calls: tool_decoder.clone(),
+                    identities: tool_decoder_identities.clone(),
+                }),
+                Arc::new(CountingObservationFormatterFactory {
+                    calls: observation_formatter.clone(),
+                    identities: observation_formatter_identities.clone(),
+                }),
             ),
         );
-        let trace = TraceIdentity {
-            run_id: "run-1".into(),
-            trajectory_id: "trajectory-1".into(),
-            trace_id: "trace-1".into(),
-        };
-        let mut program = GraphTraceProgram::static_graph(crate::graph::model::GraphTracePlan {
-            graph: crate::graph::model::GraphRecord::default(),
-            trace: crate::graph::model::TraceRecord {
-                id: trace.trace_id.clone(),
-                graph_ref: None,
-                initial_state: BTreeMap::new(),
+        let traces = [
+            TraceIdentity {
+                run_id: "run-a".into(),
+                trajectory_id: "trajectory-a".into(),
+                trace_id: "trace-a".into(),
             },
-            arrival_offset_ns: None,
-        });
-        program.driver = TraceDriverSpec::recorded_replay();
-        let mut driver = factory
-            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
-            .expect("recorded replay driver is created");
-        driver
-            .run(&program, &TraceDriverContext { trace: &trace })
-            .await
-            .expect("recorded replay runs its frozen agent loop");
+            TraceIdentity {
+                run_id: "run-b".into(),
+                trajectory_id: "trajectory-b".into(),
+                trace_id: "trace-b".into(),
+            },
+        ];
+        let mut supplements = Vec::new();
+        for trace in &traces {
+            let program = recorded_program(&trace.trace_id);
+            let mut driver = factory
+                .create(WorkerIdentity { worker_id: 0 }, trace, &program.driver)
+                .expect("recorded replay driver is created");
+            supplements.push(
+                driver
+                    .run(&program, &TraceDriverContext { trace })
+                    .await
+                    .expect("recorded replay runs its frozen agent loop"),
+            );
+        }
 
-        assert_eq!(coordinator.load(Ordering::SeqCst), 1);
-        assert_eq!(response_store.load(Ordering::SeqCst), 1);
-        assert_eq!(trajectory_sink.load(Ordering::SeqCst), 1);
-        assert_eq!(invocation_lease.load(Ordering::SeqCst), 1);
+        for calls in [
+            &coordinator,
+            &response_store,
+            &trajectory_sink,
+            &invocation_lease,
+            &tool_dispatcher,
+            &tool_decoder,
+            &observation_formatter,
+        ] {
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+        }
+        for identities in [
+            &coordinator_identities,
+            &response_store_identities,
+            &trajectory_sink_identities,
+            &invocation_lease_identities,
+            &tool_dispatcher_identities,
+            &tool_decoder_identities,
+            &observation_formatter_identities,
+        ] {
+            let identities = identities
+                .lock()
+                .expect("test factory identity log is available");
+            assert_eq!(identities.len(), 2);
+            assert_ne!(identities[0], identities[1]);
+        }
+        assert_ne!(supplements[0].trace_id, supplements[1].trace_id);
+        assert_ne!(supplements[0].trajectory_id, supplements[1].trajectory_id);
     }
 }
