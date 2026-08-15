@@ -63,6 +63,8 @@ use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{NativeTransportExecution, ValidatedEndpointProfileV2};
 
+const TRACE_DRIVER_CLOSE_TIMEOUT_NS: i64 = 10_000_000_000;
+
 /// Composition seam for whole-trace graph execution placement.
 ///
 /// The coordinator owns admission policy; this factory owns trace placement.
@@ -1070,21 +1072,39 @@ impl GraphWorkerBackend {
     ///
     /// Driver open remains cancellable because its opening guards can perform
     /// synchronous rollback. Once open succeeds, however, dispatcher and sandbox
-    /// teardown is asynchronous and owns external resources. Dropping that future
-    /// would leak them, so cancellation becomes the terminal result only after the
-    /// bounded driver close finishes.
+    /// teardown is asynchronous and owns external resources. The worker therefore
+    /// awaits close until its Clock-driven bound, after which driver RAII performs
+    /// synchronous fallback fencing. Cancellation becomes terminal only after that
+    /// teardown boundary finishes or expires.
     async fn close_driver(
         &self,
         driver: &mut dyn crate::graph::driver::TraceProgramDriver,
     ) -> Result<(), TraceError> {
-        let close = driver
-            .close()
-            .await
-            .map_err(|error| TraceError::Other(error.to_string()));
+        let close = driver.close();
+        tokio::pin!(close);
+        let timeout = self.clock.clone().sleep(TRACE_DRIVER_CLOSE_TIMEOUT_NS);
+        tokio::pin!(timeout);
+        let (close, has_timed_out) = tokio::select! {
+            biased;
+            result = &mut close => (
+                result.map_err(|error| TraceError::Other(error.to_string())),
+                false,
+            ),
+            () = &mut timeout => (
+                Err(TraceError::Other(format!(
+                    "graph trace driver teardown timed out after {} seconds",
+                    TRACE_DRIVER_CLOSE_TIMEOUT_NS / 1_000_000_000,
+                ))),
+                true,
+            ),
+        };
         if self.cancelled.get() {
-            Err(TraceError::Cancelled(
-                "graph trace driver finished teardown after cancellation".into(),
-            ))
+            let message = if has_timed_out {
+                "graph trace driver teardown timed out after cancellation"
+            } else {
+                "graph trace driver finished teardown after cancellation"
+            };
+            Err(TraceError::Cancelled(message.into()))
         } else {
             close
         }
@@ -2236,6 +2256,13 @@ mod tests {
 
     fn empty_graph_worker(trace_driver: Arc<dyn TraceProgramDriverFactory>) -> GraphWorkerBackend {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        empty_graph_worker_with_clock(trace_driver, clock)
+    }
+
+    fn empty_graph_worker_with_clock(
+        trace_driver: Arc<dyn TraceProgramDriverFactory>,
+        clock: Rc<dyn Clock>,
+    ) -> GraphWorkerBackend {
         let segments: Arc<dyn SegmentStore> = Arc::new(InMemorySegmentStore::default());
         GraphWorkerBackend {
             clock: clock.clone(),
@@ -2592,6 +2619,97 @@ mod tests {
                 assert!(matches!(error, TraceError::Cancelled(_)));
                 assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.close_started.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_agent_cancellation_bounds_never_resolving_close_with_execution_clock() {
+        let lifecycle = Arc::new(PlacementLifecycleCounts::default());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let removed = Arc::new(AtomicUsize::new(0));
+        let runtime_removed = removed.clone();
+        let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
+            .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(SuspendingCloseLifecycleFactoryFactory {
+                    counts: lifecycle.clone(),
+                    release,
+                }),
+                Arc::new(tools::DockerToolDispatcherFactory::with_runtime_factory(
+                    1024,
+                    move |_| {
+                        Rc::new(CleanupRecordingContainerRuntime {
+                            removed: runtime_removed.clone(),
+                        })
+                    },
+                )),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ));
+        let clock = Rc::new(SimClock::new());
+        let backend = Rc::new(empty_graph_worker_with_clock(
+            Arc::new(trace_driver),
+            clock.clone(),
+        ));
+        let task_backend = backend.clone();
+
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let mut program = empty_recorded_program("trace-close-timeout");
+                let environment = tools::ResolvedTraceEnvironment {
+                    kind: tools::EnvironmentRecipe::SweBench,
+                    backend: tools::ToolExecutionBackend::Docker,
+                    image: "recorded-agent-test:latest".into(),
+                    workspace: tools::WorkspaceSpec::image_native(
+                        "/testbed",
+                        vec!["bash".into(), "-c".into()],
+                        5_000_000_000,
+                    ),
+                };
+                program.environment = Some(
+                    crate::graph::driver::TraceEnvironmentSpec::from_resolved(&environment)
+                        .unwrap(),
+                );
+                let task =
+                    tokio::task::spawn_local(
+                        async move { task_backend.execute_trace(program).await },
+                    );
+                for _ in 0..8 {
+                    if lifecycle.close_started.load(Ordering::SeqCst) == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(lifecycle.close_started.load(Ordering::SeqCst), 1);
+                backend.cancel_inflight().unwrap();
+                assert_eq!(removed.load(Ordering::SeqCst), 1);
+
+                clock.advance_to(9_999_999_999);
+                tokio::task::yield_now().await;
+                assert!(!task.is_finished(), "driver close expired before its bound");
+                clock.advance_to(10_000_000_000);
+                for _ in 0..8 {
+                    if task.is_finished() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert!(
+                    task.is_finished(),
+                    "Clock deadline must bound a never-resolving driver close"
+                );
+                let error = task
+                    .await
+                    .unwrap()
+                    .expect_err("cancellation remains primary after close timeout");
+                assert!(matches!(error, TraceError::Cancelled(_)));
+                assert!(error.to_string().contains("timed out"), "{error}");
+                assert_eq!(removed.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
             })
             .await;

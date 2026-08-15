@@ -1050,10 +1050,13 @@ cancellation, phase grace escalation, timeout, placement shutdown, and a
 partially opened sandbox. A close failure is recorded as infrastructure detail.
 It becomes the trace error only when no earlier trace error exists; it never
 masks the primary cause. Cancellation waits for bounded cleanup before the
-placement reports terminal. Driver provisioning remains cancellable until open
-succeeds. After that boundary, cancellation stops graph work but does not abort
-or detach the driver-close future: dispatcher/sandbox cleanup is awaited exactly
-once, and the original cancellation or trace failure remains primary.
+placement reports terminal. The placement-level driver-close boundary is capped
+at 10 seconds by the injected execution `Clock`; an expiry drops the close future
+inline so its RAII fallback fences remaining lifecycle state, never as detached
+work. Driver provisioning remains cancellable until open succeeds. After that
+boundary, cancellation stops graph work but does not immediately abort or detach
+the driver-close future: dispatcher/sandbox cleanup is awaited exactly once until
+the bound, and the original cancellation or trace failure remains primary.
 
 Workspace paths are rooted in a run/cell-owned tool directory and use a
 sanitized execution-instance slug. They never derive a filesystem path directly
