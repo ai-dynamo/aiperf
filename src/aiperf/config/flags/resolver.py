@@ -83,7 +83,13 @@ def resolve_config(
         return convert_cli_to_aiperf(cli_config)
 
     from aiperf.config import AIPerfConfig
+    from aiperf.config.flags._config_flag_routing import reject_unrouted_cli_flags
     from aiperf.config.loader import load_config_dict
+
+    # Fail before any merging: a flag this path cannot route would otherwise
+    # be dropped without a word, handing the user a benchmark that silently
+    # ignored what they asked for.
+    reject_unrouted_cli_flags(cli_config)
 
     yaml_dict = load_config_dict(config_file)
     _normalize_loaded_benchmark_shorthands(yaml_dict)
