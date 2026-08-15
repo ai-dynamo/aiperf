@@ -93,12 +93,12 @@ pub struct GuardedToolCommandPolicy;
 
 impl ToolCommandPolicy for GuardedToolCommandPolicy {
     fn evaluate(&self, command: &str) -> Result<CommandDisposition, TraceEnvironmentError> {
+        if contains_detaching_command(command) {
+            return Ok(CommandDisposition::Synthetic(
+                ToolCommandResult::detaching_rejected(),
+            ));
+        }
         for segment in top_level_segments(command) {
-            if segment_starts_detaching_command(segment) {
-                return Ok(CommandDisposition::Synthetic(
-                    ToolCommandResult::detaching_rejected(),
-                ));
-            }
             if segment_starts_installer(segment) {
                 return Ok(CommandDisposition::Synthetic(
                     ToolCommandResult::installer_rejected(),
@@ -114,6 +114,10 @@ pub(crate) fn contains_detaching_command(command: &str) -> bool {
     top_level_segments(command)
         .into_iter()
         .any(segment_starts_detaching_command)
+        || grouped_commands(command)
+            .iter()
+            .flat_map(|group| top_level_segments(group))
+            .any(segment_starts_detaching_command)
 }
 
 fn segment_starts_detaching_command(segment: &str) -> bool {
@@ -154,12 +158,21 @@ fn shell_command_payloads(tokens: &[String]) -> Vec<&str> {
         return Vec::new();
     }
     let mut has_command_option = false;
+    let mut needs_option_argument = false;
     for argument in &tokens[1..] {
         if !has_command_option {
             has_command_option = argument == "--command"
                 || argument.starts_with('-')
                     && !argument.starts_with("--")
                     && argument[1..].contains('c');
+            continue;
+        }
+        if needs_option_argument {
+            needs_option_argument = false;
+            continue;
+        }
+        if matches!(argument.as_str(), "-o" | "-O" | "--option" | "--shopt") {
+            needs_option_argument = true;
             continue;
         }
         if argument == "--" || argument.starts_with('-') {
@@ -437,7 +450,7 @@ fn grouped_commands(segment: &str) -> Vec<String> {
             && (character == '('
                 || index == 0
                 || characters[index - 1].is_ascii_whitespace()
-                || matches!(characters[index - 1], ';' | '|' | '&'))
+                || matches!(characters[index - 1], ';' | '|' | '&' | ')'))
         {
             let closing = if character == '(' { ')' } else { '}' };
             let end = skip_balanced_expansion(&characters, index + 1, character, closing);
