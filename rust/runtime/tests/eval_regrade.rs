@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::eval::{
-    regrade, ArtifactDigest, AttemptId, RegradeError, RegradeRequest, RewardDocument, ScoreVersion,
-    VerifierResult,
+    ArtifactDigest, AttemptId, RegradeError, RegradeRequest, RewardDocument, ScoreVersion,
+    VerifierResult, regrade,
 };
 
 fn digest(seed: char) -> ArtifactDigest {
@@ -66,7 +66,8 @@ fn regrade_refuses_an_unknown_metric_without_falling_back() {
     )
     .unwrap();
 
-    let error = regrade(RegradeRequest::new(previous(attempt), result, "reward").unwrap()).unwrap_err();
+    let error =
+        regrade(RegradeRequest::new(previous(attempt), result, "reward").unwrap()).unwrap_err();
 
     assert_eq!(error, RegradeError::MetricNotFound("reward".to_owned()));
 }
@@ -83,7 +84,12 @@ fn regrade_refuses_mismatched_attempt_lineage() {
     .unwrap();
 
     let error = regrade(
-        RegradeRequest::new(previous(AttemptId::new("attempt-1").unwrap()), result, "accuracy").unwrap(),
+        RegradeRequest::new(
+            previous(AttemptId::new("attempt-1").unwrap()),
+            result,
+            "accuracy",
+        )
+        .unwrap(),
     )
     .unwrap_err();
 
