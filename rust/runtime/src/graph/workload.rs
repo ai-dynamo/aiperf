@@ -22,7 +22,7 @@ use async_trait::async_trait;
 
 use crate::graph::errors::TraceError;
 use crate::graph::execution::TracePlacement;
-pub use crate::graph::model::GraphTraceProgram;
+pub use crate::graph::model::{GraphTracePlan, GraphTraceProgram};
 use crate::graph::policy::{ContinueRunFailurePolicy, RunFailurePolicy};
 use crate::graph::tstar::PermutationDraw;
 
