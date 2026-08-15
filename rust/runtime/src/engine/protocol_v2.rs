@@ -30,6 +30,7 @@ use crate::engine::sidecar_input::{
     AuthoredSidecarInput, CONTENT_SERVER_SIDECAR_ID, GPU_TELEMETRY_SIDECAR_ID,
     LIVE_STREAMING_SIDECAR_ID, NETWORK_LATENCY_SIDECAR_ID, SERVER_METRICS_SIDECAR_ID,
 };
+use crate::graph::supplement::PlannedReplayTraceInstance;
 
 /// Authored runner protocol version.
 pub const PROTOCOL_V2: u32 = 2;
@@ -319,6 +320,9 @@ pub struct BenchmarkRunWireV2 {
     /// Deterministic root seed when authored.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Controller-authored recorded-replay assignments for this cell.
+    #[serde(default)]
+    pub planned_replay_traces: BTreeSet<PlannedReplayTraceInstance>,
     /// Envelope-level template variables.
     #[serde(default)]
     pub variables: BTreeMap<String, Value>,
@@ -406,6 +410,9 @@ impl BenchmarkRunWireV2 {
             workload_config["ignore_trace_delays"] = serde_json::json!(cfg.ignore_trace_delays);
             workload_config["recorded_agent_default"] =
                 serde_json::json!(cfg.scenario.as_deref() == Some("recorded-agent-default"));
+            workload_config["planned_replay_traces"] =
+                serde_json::to_value(&self.planned_replay_traces)
+                    .map_err(|error| anyhow!("run.planned_replay_traces: {error}"))?;
             if matches!(
                 cfg.weka_semantics.as_deref(),
                 Some("legacy") | Some("agentx")

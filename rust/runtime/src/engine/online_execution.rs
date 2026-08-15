@@ -1255,7 +1255,7 @@ fn lower_graph(
             .and_then(|dataset| dataset.pointer("/graph/resume").and_then(Value::as_bool))
             .unwrap_or(false),
     };
-    build_common_plan(
+    let mut plan = build_common_plan(
         run,
         workload.worker_count,
         NativeDatasetPlan::Graph(Box::new(dataset)),
@@ -1265,7 +1265,9 @@ fn lower_graph(
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
         Some(transport),
-    )
+    )?;
+    plan.planned_replay_traces = workload.planned_replay_traces.clone();
+    Ok(plan)
 }
 
 fn validate_canonical_recorded_agent_bundle(
@@ -1705,6 +1707,7 @@ fn build_common_plan(
     Ok(NativeRunSpec {
         benchmark_id: run.identity.benchmark_id.clone(),
         random_seed: run.identity.random_seed,
+        planned_replay_traces: std::collections::BTreeSet::new(),
         workers,
         artifact_dir: run.artifact_target.clone(),
         models: run.models.clone(),

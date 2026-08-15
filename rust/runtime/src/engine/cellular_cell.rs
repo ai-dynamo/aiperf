@@ -612,32 +612,6 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
 /// sandbox checks are reported through the same result channel once their resolved
 /// recipe is available, so any failure fences warmup behind the controller barrier.
 async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct GraphConfig {
-        #[serde(default)]
-        replay_root: Option<std::path::PathBuf>,
-        #[serde(default)]
-        execute_tools: bool,
-        #[serde(default)]
-        tool_image: Option<String>,
-        #[serde(default)]
-        pinch_image: Option<String>,
-        #[serde(default)]
-        standard_scenario: bool,
-    }
-
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Dataset {
-        #[serde(default)]
-        format: Option<String>,
-        #[serde(default)]
-        path: Option<std::path::PathBuf>,
-        #[serde(default)]
-        graph: Option<GraphConfig>,
-    }
-
     let value: serde_json::Value = serde_json::from_slice(envelope)
         .map_err(|error| format!("decode cellular execute envelope: {error}"))?;
     let _ = value
@@ -646,18 +620,15 @@ async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
     let Some(raw_dataset) = value.pointer("/run/cfg/datasets/0") else {
         return Ok(());
     };
-    let dataset: Dataset = serde_json::from_value(raw_dataset.clone())
-        .map_err(|error| format!("decode cellular replay dataset: {error}"))?;
-    if dataset.format.as_deref() != Some("agent_recording") {
+    let dataset: crate::engine::dataset_input::FileDatasetSpec =
+        serde_json::from_value(raw_dataset.clone())
+            .map_err(|error| format!("decode cellular replay dataset: {error}"))?;
+    if dataset.format != "agent_recording" {
         return Ok(());
     }
-    let graph = dataset.graph.unwrap_or(GraphConfig {
-        replay_root: None,
-        execute_tools: false,
-        tool_image: None,
-        pinch_image: None,
-        standard_scenario: false,
-    });
+    let Some(graph) = dataset.graph else {
+        return Ok(());
+    };
     if !graph.execute_tools {
         return Ok(());
     }
@@ -686,7 +657,7 @@ async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
             &trace.recording.metadata,
             graph.pinch_image.as_deref().unwrap_or_default(),
             graph.tool_image.as_deref(),
-            graph.standard_scenario,
+            false,
         )
         .map_err(|error| format!("resolving replay recipe for {}: {error}", trace.trace_id))?;
         crate::graph::tools::preflight_docker_sandbox(&runtime, &environment)
@@ -905,6 +876,9 @@ pub enum CellPartitionPayload {
         epoch_ns: i64,
         /// Successful profiling graph replay facts, if this is a graph cell.
         graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
+        /// Controller-authored replay assignments carried in this cell's envelope.
+        expected_replay_traces:
+            std::collections::BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance>,
     },
     /// FOLD-AND-DROP (exact-fold or sketch): the folded store plus its exact counters.
     Store {
@@ -916,6 +890,9 @@ pub enum CellPartitionPayload {
         epoch_ns: i64,
         /// Successful profiling graph replay facts, if this is a graph cell.
         graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
+        /// Controller-authored replay assignments carried in this cell's envelope.
+        expected_replay_traces:
+            std::collections::BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance>,
     },
 }
 
@@ -1002,11 +979,13 @@ impl CellRecordsShipper {
                 records,
                 epoch_ns,
                 graph_supplement,
+                expected_replay_traces,
             } => self.ship_records(
                 records,
                 epoch_ns,
                 graph_supplement.map(|phase| {
                     crate::graph::supplement::GraphCellSupplement::from_phase(self.cell_id, phase)
+                        .with_expected_traces(expected_replay_traces)
                 }),
             ),
             CellPartitionPayload::Store {
@@ -1014,12 +993,14 @@ impl CellRecordsShipper {
                 counters,
                 epoch_ns,
                 graph_supplement,
+                expected_replay_traces,
             } => self.ship_store(
                 store,
                 counters,
                 epoch_ns,
                 graph_supplement.map(|phase| {
                     crate::graph::supplement::GraphCellSupplement::from_phase(self.cell_id, phase)
+                        .with_expected_traces(expected_replay_traces)
                 }),
             ),
         }

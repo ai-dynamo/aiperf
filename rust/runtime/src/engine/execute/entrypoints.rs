@@ -381,6 +381,7 @@ pub(crate) async fn execute_graph_native(
     trace_driver: Arc<dyn TraceProgramDriverFactory>,
     registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
+    let planned_replay_traces = request.planned_replay_traces.clone();
     let graph = match &request.dataset {
         NativeDatasetPlan::Graph(graph) => graph,
         NativeDatasetPlan::PreparedLinear(_) | NativeDatasetPlan::StaticAccuracy(_) => {
@@ -824,6 +825,7 @@ pub(crate) async fn execute_graph_native(
                     counters,
                     epoch_ns,
                     graph_supplement: Some(phased.supplement.clone()),
+                    expected_replay_traces: planned_replay_traces.clone(),
                 }
             } else {
                 let records: Vec<RecordIngest> = captured
@@ -834,6 +836,7 @@ pub(crate) async fn execute_graph_native(
                     records,
                     epoch_ns,
                     graph_supplement: Some(phased.supplement.clone()),
+                    expected_replay_traces: planned_replay_traces.clone(),
                 }
             };
             (shipper, payload)

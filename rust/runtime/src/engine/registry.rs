@@ -876,6 +876,10 @@ pub struct GraphWorkloadConfigV2 {
     /// Whether the resolved run selected the canonical recorded-agent scenario.
     #[serde(default)]
     pub recorded_agent_default: bool,
+    /// Controller-authored finite recorded-replay assignments for this cell.
+    #[serde(default)]
+    pub planned_replay_traces:
+        std::collections::BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance>,
 }
 
 impl Debug for GraphWorkloadConfigV2 {

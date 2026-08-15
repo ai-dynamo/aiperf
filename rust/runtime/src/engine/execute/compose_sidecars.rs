@@ -867,6 +867,7 @@ pub(crate) async fn execute_native_inner(
                     counters,
                     epoch_ns,
                     graph_supplement: None,
+                    expected_replay_traces: std::collections::BTreeSet::new(),
                 }
             } else {
                 let records: Vec<RecordIngest> = captured
@@ -877,6 +878,7 @@ pub(crate) async fn execute_native_inner(
                     records,
                     epoch_ns,
                     graph_supplement: None,
+                    expected_replay_traces: std::collections::BTreeSet::new(),
                 }
             };
             (shipper, payload)

@@ -17,7 +17,13 @@ pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
             datasets.iter().any(|dataset| {
                 matches!(
                     dataset.get("format").and_then(Value::as_str),
-                    Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace")
+                    Some(
+                        "dag_jsonl"
+                            | "conditional_graph"
+                            | "weka_trace"
+                            | "dynamo_trace"
+                            | "agent_recording"
+                    )
                 )
             })
         })
@@ -88,8 +94,15 @@ mod tests {
         let graph = json!({"run": {"cfg": {"datasets": [
             {"type": "file", "format": "dag_jsonl", "path": "/t.jsonl"}
         ]}}});
+        let recorded_agent = json!({"run": {"cfg": {"datasets": [
+            {"type": "file", "format": "agent_recording", "path": "/manifest.json"}
+        ]}}});
         let scheduled = json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
         assert_eq!(CellularRunKind::detect(&graph), CellularRunKind::Graph);
+        assert_eq!(
+            CellularRunKind::detect(&recorded_agent),
+            CellularRunKind::Graph
+        );
         assert_eq!(
             CellularRunKind::detect(&scheduled),
             CellularRunKind::Scheduled

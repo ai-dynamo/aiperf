@@ -28,7 +28,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::engine::cell_launcher::owned_positions;
 use crate::engine::cellular_kind::CellularRunKind;
-use crate::graph::supplement::{GraphCellSupplement, ReplayTraceInstance};
+use crate::graph::supplement::GraphCellSupplement;
 
 // The velo transport + launcher wiring is the only part of the controller that
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
@@ -98,14 +98,18 @@ pub struct CellularRunOutcome {
 /// Fold graph replay facts transported by terminal cell partitions. This lives at
 /// the controller boundary so a cell never writes a final replay JSON or CSV shard.
 fn controller_replay_traces(
+    expected: &BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance>,
     supplements: Vec<GraphCellSupplement>,
 ) -> Result<Vec<crate::graph::replay::ReplayTraceSupplement>> {
-    let expected = supplements
+    let reported = supplements
         .iter()
-        .flat_map(|cell| cell.traces.iter())
-        .map(ReplayTraceInstance::from)
-        .collect();
-    let merged = crate::graph::supplement::merge_graph_cell_supplements(&expected, supplements)
+        .flat_map(|supplement| supplement.expected_traces.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        &reported == expected,
+        "cellular replay terminal assignments differ from the controller-authored plan"
+    );
+    let merged = crate::graph::supplement::merge_graph_cell_supplements(expected, supplements)
         .map_err(|error| anyhow!("folding cellular graph replay supplements: {error}"))?;
     Ok(merged
         .traces
@@ -119,6 +123,7 @@ fn controller_replay_traces(
 fn write_controller_replay_artifacts(
     artifacts: &crate::engine::protocol::ArtifactSpec,
     artifact_dir: &Path,
+    expected: &BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance>,
     supplements: Vec<GraphCellSupplement>,
 ) -> Result<()> {
     use crate::engine::execute::artifact_path;
@@ -145,7 +150,7 @@ fn write_controller_replay_artifacts(
             .map(|path| artifact_path(artifact_dir, path, "graph_replay_metrics_csv_path"))
             .transpose()?,
     };
-    let traces = controller_replay_traces(supplements)?;
+    let traces = controller_replay_traces(expected, supplements)?;
     crate::graph::replay::write_replay_artifacts(&paths, &traces)
         .map_err(|error| anyhow!("writing cellular recorded replay artifacts: {error}"))
 }
@@ -802,12 +807,27 @@ pub fn run_cellular(
         // Precompute each cell's sliced execute envelope; the register handler serves
         // it as that cell's spec (replacing the stdin pipe).
         let mut specs: Vec<Vec<u8>> = Vec::with_capacity(cell_count as usize);
+        let mut expected_replay_traces = BTreeSet::new();
         for cell_id in 0..cell_count {
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
             std::fs::create_dir_all(&cell_dir)
                 .with_context(|| format!("creating cell {cell_id} artifact dir"))?;
             let cell_envelope =
                 build_cell_envelope(envelope, kind, cell_id, cell_count, &cell_dir, injected_seed)?;
+            let planned: BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance> =
+                cell_envelope
+                    .pointer("/run/planned_replay_traces")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .context("decoding controller-authored replay trace assignments")?
+                    .unwrap_or_default();
+            for identity in planned {
+                ensure!(
+                    expected_replay_traces.insert(identity.clone()),
+                    "controller replay assignment duplicated {identity:?}"
+                );
+            }
             specs.push(
                 serde_json::to_vec(&cell_envelope)
                     .with_context(|| format!("serializing cell {cell_id} envelope"))?,
@@ -1218,7 +1238,12 @@ pub fn run_cellular(
 
         if kind == CellularRunKind::Graph {
             if let Some(artifact_dir) = report_path.parent() {
-                write_controller_replay_artifacts(&artifacts, artifact_dir, replay_supplements)?;
+                write_controller_replay_artifacts(
+                    &artifacts,
+                    artifact_dir,
+                    &expected_replay_traces,
+                    replay_supplements,
+                )?;
             }
         }
 
@@ -1589,6 +1614,27 @@ fn build_cell_envelope(
     injected_seed: Option<u64>,
 ) -> Result<serde_json::Value> {
     let mut cell = envelope.clone();
+    let expected_replay_traces = if kind == CellularRunKind::Graph
+        && cell
+            .pointer("/run/cfg/datasets/0/format")
+            .and_then(serde_json::Value::as_str)
+            == Some("agent_recording")
+    {
+        let dataset = cell
+            .pointer("/run/cfg/datasets/0")
+            .context("cellular graph run has no dataset")?;
+        let phases = cell
+            .pointer("/run/cfg/phases")
+            .cloned()
+            .context("cellular graph run has no phases")?;
+        let phases: Vec<crate::engine::protocol::PhaseSpec> = serde_json::from_value(phases)
+            .context("decoding cellular graph phases for replay assignment planning")?;
+        crate::engine::graph_input::plan_recorded_agent_cell_assignments(
+            dataset, &phases, cell_id, cell_count,
+        )?
+    } else {
+        BTreeSet::new()
+    };
     let run = cell
         .get_mut("run")
         .and_then(serde_json::Value::as_object_mut)
@@ -1596,6 +1642,11 @@ fn build_cell_envelope(
     run.insert(
         "artifact_dir".to_owned(),
         serde_json::Value::String(cell_dir.to_string_lossy().into_owned()),
+    );
+    run.insert(
+        "planned_replay_traces".to_owned(),
+        serde_json::to_value(expected_replay_traces)
+            .context("serializing controller-authored replay trace assignments")?,
     );
     // Share the controller-derived seed with every cell when the author gave none, so
     // all cells compose the identical dataset space (the same value goes to each cell).
@@ -2660,15 +2711,33 @@ mod tests {
         // from terminal partitions, then the strict writer establishes final order.
         let partitions = [
             RecordsShardPartition::new(1, Vec::new()).with_graph_supplement(
-                crate::graph::supplement::GraphCellSupplement::from_phase(1, later),
+                crate::graph::supplement::GraphCellSupplement::from_phase(1, later)
+                    .with_expected_traces(BTreeSet::from([
+                        crate::graph::supplement::PlannedReplayTraceInstance::new(
+                            1,
+                            "trajectory-z",
+                            "trace-z",
+                        ),
+                    ])),
             ),
             RecordsShardPartition::new(0, Vec::new()).with_graph_supplement(
-                crate::graph::supplement::GraphCellSupplement::from_phase(0, first),
+                crate::graph::supplement::GraphCellSupplement::from_phase(0, first)
+                    .with_expected_traces(BTreeSet::from([
+                        crate::graph::supplement::PlannedReplayTraceInstance::new(
+                            0,
+                            "trajectory-a",
+                            "trace-a",
+                        ),
+                    ])),
             ),
         ];
         let supplements = partitions
             .iter()
             .filter_map(|partition| partition.graph_supplement().cloned())
+            .collect::<Vec<_>>();
+        let expected = supplements
+            .iter()
+            .flat_map(|supplement| supplement.expected_traces.iter().cloned())
             .collect();
         let artifact_dir = tempfile::tempdir().unwrap();
         let artifacts: crate::engine::protocol::ArtifactSpec = serde_json::from_value(
@@ -2676,7 +2745,8 @@ mod tests {
         )
         .unwrap();
 
-        write_controller_replay_artifacts(&artifacts, artifact_dir.path(), supplements).unwrap();
+        write_controller_replay_artifacts(&artifacts, artifact_dir.path(), &expected, supplements)
+            .unwrap();
 
         let summary: serde_json::Value = serde_json::from_slice(
             &std::fs::read(artifact_dir.path().join("trace-summary.json")).unwrap(),

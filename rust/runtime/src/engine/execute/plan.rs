@@ -162,6 +162,9 @@ pub(crate) fn native_scheduled_resources(phases: &[PhaseSpec]) -> NativeSchedule
 pub(crate) struct NativeRunSpec {
     pub(crate) benchmark_id: String,
     pub(crate) random_seed: Option<u64>,
+    /// Controller-authored recorded-replay identities expected from this cell.
+    pub(crate) planned_replay_traces:
+        std::collections::BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance>,
     pub(crate) workers: usize,
     pub(crate) artifact_dir: PathBuf,
     pub(crate) models: ModelsSpec,

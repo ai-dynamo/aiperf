@@ -21,6 +21,12 @@ pub struct TraceTerminalSupplement {
     pub trajectory_id: String,
     /// Graph trace identity.
     pub trace_id: String,
+    /// Controller-authored placement identity, when this trace ran in a cell.
+    ///
+    /// Unlike [`Self::run_id`], this exists before dispatch and survives an
+    /// aggregator fold without adopting the aggregator's cell id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_identity: Option<PlannedReplayTraceInstance>,
     /// Owning worker ordinal.
     pub worker_id: usize,
     /// Registered driver that emitted this bounded result.
@@ -35,7 +41,7 @@ pub struct TraceTerminalSupplement {
     pub tools: Vec<ToolCallMeasurement>,
 }
 
-/// Stable replay-trace identity used to verify a cellular terminal fold.
+/// Runtime replay-trace identity retained for measurements and artifacts.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 pub struct ReplayTraceInstance {
@@ -54,6 +60,42 @@ impl From<&TraceTerminalSupplement> for ReplayTraceInstance {
             trajectory_id: trace.trajectory_id.clone(),
             trace_id: trace.trace_id.clone(),
         }
+    }
+}
+
+/// Controller-authored identity of one assigned recorded-replay trace.
+///
+/// This deliberately excludes the runtime `run_id`, which is minted only when a
+/// worker starts execution. `trace_id` is the resolved plan instance id (including
+/// its deterministic `::instance-N` ordinal), so it is unique within a cell's
+/// planned assignment before any request is dispatched.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedReplayTraceInstance {
+    /// Cell assigned by the controller before START.
+    pub cell_id: u32,
+    /// Planned trace-local trajectory identity.
+    pub trajectory_id: String,
+    /// Planned graph trace instance identity.
+    pub trace_id: String,
+}
+
+impl PlannedReplayTraceInstance {
+    /// Construct one controller-owned replay assignment identity.
+    pub fn new(
+        cell_id: u32,
+        trajectory_id: impl Into<String>,
+        trace_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            cell_id,
+            trajectory_id: trajectory_id.into(),
+            trace_id: trace_id.into(),
+        }
+    }
+
+    fn from_terminal(cell_id: u32, trace: &TraceTerminalSupplement) -> Self {
+        Self::new(cell_id, &trace.trajectory_id, &trace.trace_id)
     }
 }
 
@@ -91,6 +133,9 @@ pub struct GraphCellSupplement {
     pub cell_id: u32,
     /// Terminal trace facts in the cell's worker/completion order.
     pub traces: Vec<TraceTerminalSupplement>,
+    /// Trace instances assigned to this cell before dispatch begins.
+    #[serde(default)]
+    pub expected_traces: BTreeSet<PlannedReplayTraceInstance>,
     /// Concrete tool backends selected by this cell.
     pub backend_identities: BTreeSet<ReplayBackendIdentity>,
 }
@@ -105,6 +150,7 @@ impl GraphCellSupplement {
         Self {
             schema_version: 1,
             cell_id,
+            expected_traces: BTreeSet::new(),
             traces,
             backend_identities,
         }
@@ -119,6 +165,15 @@ impl GraphCellSupplement {
             .map(|tool| ReplayBackendIdentity::from_wire(tool.backend.clone()))
             .collect();
         Self::new(cell_id, phase.traces, backend_identities)
+    }
+
+    /// Replace terminal-derived expectations with the controller-authored assignment.
+    pub fn with_expected_traces(
+        mut self,
+        expected_traces: BTreeSet<PlannedReplayTraceInstance>,
+    ) -> Self {
+        self.expected_traces = expected_traces;
+        self
     }
 }
 
@@ -190,6 +245,7 @@ impl TraceTerminalSupplement {
             run_id,
             trajectory_id,
             trace_id,
+            planned_identity: None,
             worker_id,
             driver_kind: driver_kind.into(),
             completed: true,
@@ -197,6 +253,12 @@ impl TraceTerminalSupplement {
             calls: Vec::new(),
             tools: Vec::new(),
         }
+    }
+
+    /// Attach the controller-authored assignment without replacing runtime facts.
+    pub fn with_planned_identity(mut self, identity: PlannedReplayTraceInstance) -> Self {
+        self.planned_identity = Some(identity);
+        self
     }
 
     /// Attach bounded profiling facts after the graph executor reaches success.
@@ -285,7 +347,7 @@ where
 /// controller must supply the expected instance set from the resolved trace programs;
 /// it is never reconstructed from controller-local replay paths.
 pub fn merge_graph_cell_supplements<I>(
-    expected: &BTreeSet<ReplayTraceInstance>,
+    expected: &BTreeSet<PlannedReplayTraceInstance>,
     supplements: I,
 ) -> Result<GraphPhaseSupplement, GraphSupplementError>
 where
@@ -311,6 +373,20 @@ where
         for backend in &cell.backend_identities {
             backend.validate()?;
         }
+        let observed_backends = cell
+            .traces
+            .iter()
+            .flat_map(|trace| trace.tools.iter())
+            .map(|tool| ReplayBackendIdentity::from_wire(tool.backend.clone()))
+            .collect::<BTreeSet<_>>();
+        for backend in &observed_backends {
+            backend.validate()?;
+        }
+        if cell.backend_identities != observed_backends {
+            return Err(GraphSupplementError::BackendAllowlistMismatch {
+                cell_id: cell.cell_id,
+            });
+        }
         let mut traces = cell.traces.into_iter().enumerate().collect::<Vec<_>>();
         traces.sort_by_key(|(completion, trace)| (trace.worker_id, *completion));
         for (_, trace) in traces {
@@ -322,12 +398,22 @@ where
             }
             if !trace.trace_wall_ms.is_finite()
                 || trace.tools.iter().any(|tool| !tool.duration_s.is_finite())
+                || trace.calls.iter().any(|call| {
+                    !call.raw_end_to_end_ms.is_finite()
+                        || !call.raw_inference_ms.is_finite()
+                        || !call.raw_generation_ms.is_finite()
+                        || call.ttft_ms.is_some_and(|value| !value.is_finite())
+                        || call.stream_total_ms.is_some_and(|value| !value.is_finite())
+                })
             {
                 return Err(GraphSupplementError::NonFiniteDuration {
                     trace_id: trace.trace_id,
                 });
             }
-            let identity = ReplayTraceInstance::from(&trace);
+            let identity = trace
+                .planned_identity
+                .clone()
+                .unwrap_or_else(|| PlannedReplayTraceInstance::from_terminal(cell.cell_id, &trace));
             if !expected.contains(&identity) {
                 return Err(GraphSupplementError::UnknownTrace { identity });
             }
@@ -359,13 +445,21 @@ pub enum GraphSupplementError {
     /// A cell or trace used a version the controller cannot safely fold.
     SchemaMismatch { actual: u32, expected: u32 },
     /// Two terminal supplements claimed the same replay trace instance.
-    DuplicateTrace { identity: ReplayTraceInstance },
+    DuplicateTrace {
+        identity: PlannedReplayTraceInstance,
+    },
     /// A controller-expected trace never reached a terminal cell supplement.
-    MissingTrace { identity: ReplayTraceInstance },
+    MissingTrace {
+        identity: PlannedReplayTraceInstance,
+    },
     /// A cell supplied a trace the resolved program did not own.
-    UnknownTrace { identity: ReplayTraceInstance },
+    UnknownTrace {
+        identity: PlannedReplayTraceInstance,
+    },
     /// The cell claimed a non-concrete or unsupported backend identity.
     UnknownBackend { backend: String },
+    /// A cell declared a backend that its trace-terminal facts did not use.
+    BackendAllowlistMismatch { cell_id: u32 },
     /// A terminal duration cannot safely reach an artifact boundary.
     NonFiniteDuration { trace_id: String },
     /// Two terminal supplements claimed the same cell partition.
@@ -407,6 +501,10 @@ impl std::fmt::Display for GraphSupplementError {
             Self::UnknownBackend { backend } => {
                 write!(formatter, "unknown cellular replay backend {backend:?}")
             }
+            Self::BackendAllowlistMismatch { cell_id } => write!(
+                formatter,
+                "cell {cell_id} replay backend allowlist does not match trace facts"
+            ),
             Self::NonFiniteDuration { trace_id } => write!(
                 formatter,
                 "cellular replay trace {trace_id:?} has a non-finite duration"

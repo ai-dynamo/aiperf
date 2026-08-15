@@ -6,8 +6,9 @@
 use std::collections::BTreeSet;
 
 use aiperf_runtime::graph::supplement::{
-    GraphCellPreflightBarrier, GraphCellSupplement, GraphSupplementError, ReplayBackendIdentity,
-    ReplayTraceInstance, TraceTerminalSupplement, merge_graph_cell_supplements,
+    GraphCellPreflightBarrier, GraphCellSupplement, GraphSupplementError,
+    PlannedReplayTraceInstance, ReplayBackendIdentity, TraceTerminalSupplement,
+    merge_graph_cell_supplements,
 };
 
 fn trace(trace_id: &str, worker_id: usize) -> TraceTerminalSupplement {
@@ -23,8 +24,8 @@ fn trace(trace_id: &str, worker_id: usize) -> TraceTerminalSupplement {
 #[test]
 fn merge_rejects_missing_duplicate_or_unknown_backend_supplement() {
     let expected = BTreeSet::from([
-        ReplayTraceInstance::from(&trace("one", 0)),
-        ReplayTraceInstance::from(&trace("two", 1)),
+        PlannedReplayTraceInstance::new(0, "trajectory-one", "one"),
+        PlannedReplayTraceInstance::new(0, "trajectory-two", "two"),
     ]);
     let missing = GraphCellSupplement::new(0, vec![trace("one", 0)], BTreeSet::new());
     assert!(matches!(
@@ -49,6 +50,47 @@ fn merge_rejects_missing_duplicate_or_unknown_backend_supplement() {
         merge_graph_cell_supplements(&expected, [unknown]),
         Err(GraphSupplementError::UnknownBackend { .. })
     ));
+}
+
+#[test]
+fn merge_matches_controller_plan_without_runtime_run_identity() {
+    let expected = BTreeSet::from([PlannedReplayTraceInstance::new(3, "trajectory-one", "one")]);
+    let terminal = TraceTerminalSupplement::new(
+        "runtime-origin-minted-after-start".into(),
+        "trajectory-one".into(),
+        "one".into(),
+        4,
+        "recorded_replay",
+    )
+    .with_planned_identity(PlannedReplayTraceInstance::new(3, "trajectory-one", "one"));
+    let cell = GraphCellSupplement::new(3, vec![terminal], BTreeSet::new())
+        .with_expected_traces(expected.clone());
+
+    assert!(merge_graph_cell_supplements(&expected, [cell]).is_ok());
+}
+
+#[test]
+fn aggregator_fold_preserves_original_cell_assignment() {
+    let expected = BTreeSet::from([
+        PlannedReplayTraceInstance::new(0, "trajectory-one", "one"),
+        PlannedReplayTraceInstance::new(1, "trajectory-two", "two"),
+    ]);
+    let traces = vec![
+        trace("one", 0).with_planned_identity(PlannedReplayTraceInstance::new(
+            0,
+            "trajectory-one",
+            "one",
+        )),
+        trace("two", 0).with_planned_identity(PlannedReplayTraceInstance::new(
+            1,
+            "trajectory-two",
+            "two",
+        )),
+    ];
+    let aggregate =
+        GraphCellSupplement::new(7, traces, BTreeSet::new()).with_expected_traces(expected.clone());
+
+    assert!(merge_graph_cell_supplements(&expected, [aggregate]).is_ok());
 }
 
 #[tokio::test]

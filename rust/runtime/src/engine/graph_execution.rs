@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::body_plan::RequestBody;
+use crate::cellular::{CellPartition, ModuloCellPartition};
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::dataset::{Handle, Payload, SegmentStore};
 use crate::dispatch::collector::ReplayTerminalStatus;
@@ -40,7 +41,7 @@ use crate::graph::sink::{
     GraphDispatchContext, GraphDispatchOptions, GraphReply, GraphSink, TraceInstanceId,
     TraceSubphase,
 };
-use crate::graph::supplement::TraceTerminalSupplement;
+use crate::graph::supplement::{PlannedReplayTraceInstance, TraceTerminalSupplement};
 use crate::graph::tools::{ToolDispatchContext, ToolDispatchRequest, ToolDispatcher};
 use crate::graph::wire::OpenAiChatMessage;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
@@ -972,11 +973,16 @@ impl TracePlacement for GraphWorkerBackend {
                 Some(
                     TraceTerminalSupplement::new(
                         self.run_origin_ns.to_string(),
-                        profiling_trajectory_id,
-                        profiling_trace_id,
+                        profiling_trajectory_id.clone(),
+                        profiling_trace_id.clone(),
                         self.worker_id,
                         "recorded_replay",
                     )
+                    .with_planned_identity(PlannedReplayTraceInstance::new(
+                        ModuloCellPartition::from_env().map_or(0, |partition| partition.cell_id()),
+                        profiling_trajectory_id,
+                        profiling_trace_id,
+                    ))
                     .with_profiling_measurements(
                         self.clock.now_ns().saturating_sub(started) as f64 / 1_000_000.0,
                         sink.replay_calls.borrow().clone(),

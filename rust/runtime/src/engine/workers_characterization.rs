@@ -369,6 +369,7 @@ mod tests {
         NativeRunSpec {
             benchmark_id: "characterization".into(),
             random_seed: Some(7),
+            planned_replay_traces: std::collections::BTreeSet::new(),
             workers,
             artifact_dir: artifact_dir.to_path_buf(),
             models: models(),
@@ -2176,6 +2177,7 @@ mod tests {
         NativeRunSpec {
             benchmark_id: "characterization-accuracy".into(),
             random_seed: Some(7),
+            planned_replay_traces: std::collections::BTreeSet::new(),
             workers,
             artifact_dir: artifact_dir.to_path_buf(),
             models: models(),

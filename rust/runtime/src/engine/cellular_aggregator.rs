@@ -479,8 +479,7 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
         .collect::<Vec<_>>();
     let expected = replay_cells
         .iter()
-        .flat_map(|cell| cell.traces.iter())
-        .map(crate::graph::supplement::ReplayTraceInstance::from)
+        .flat_map(|cell| cell.expected_traces.iter().cloned())
         .collect();
     let replay_phase =
         crate::graph::supplement::merge_graph_cell_supplements(&expected, replay_cells)
@@ -505,6 +504,7 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
         epoch_ns,
         has_replay_supplement.then(|| {
             crate::graph::supplement::GraphCellSupplement::from_phase(agg_id, replay_phase)
+                .with_expected_traces(expected)
         }),
     )
 }
