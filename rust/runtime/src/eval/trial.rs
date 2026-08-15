@@ -99,7 +99,6 @@ fn canonical_trial_bytes(trial: &TrialSpec) -> Vec<u8> {
     )
     .into_bytes()
 }
-}
 
 /// Failed resolved-trial validation.
 #[derive(Clone, Debug, PartialEq, Eq)]
