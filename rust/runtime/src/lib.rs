@@ -49,6 +49,7 @@ pub mod config;
 pub mod content_server;
 pub mod dataset;
 pub mod dispatch;
+pub mod eval;
 pub mod endpoints;
 pub mod extensions;
 pub mod gpu_telemetry;
