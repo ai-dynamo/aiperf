@@ -590,6 +590,11 @@ Inputs, endpoints, and graph:
   environment/sandbox/metrics seams, a future live/delegated-agent loop boundary,
   trace-local warmup, normalized timing, safe resume, cellular-safe folds, and
   parity gates.
+- [`docs/specs/agentic-eval-platform.md`](docs/specs/agentic-eval-platform.md) —
+  planned agentic SWE evaluation substrate: immutable task/dataset/trial identities,
+  sandbox and verifier contracts, provider-neutral trajectory evidence, task-health
+  governance, paired graph-variant experiments, and distinct replay-fidelity,
+  system-performance, and task-quality results.
 - [`docs/specs/graph-ir-system-idle-gap.md`](docs/specs/graph-ir-system-idle-gap.md) — Graph-IR system idle-gap cap at the centralized node firing gate.
 - [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
   the model-independent-branching contract: pinned/recorded/weighted conditional
