@@ -32,6 +32,7 @@ use std::fmt::{self, Display, Formatter};
 
 use serde::{Deserialize, Serialize};
 
+use crate::graph::supplement::GraphPhaseSupplement;
 use crate::metrics_core::accumulator::{MetricsAccumulator, MetricsConfig};
 use crate::metrics_core::ingest::RecordIngest;
 use crate::metrics_core::store::ColumnStore;
@@ -42,12 +43,25 @@ use crate::metrics_core::store::ColumnStore;
 pub struct RecordsShardPartition {
     cell_id: u32,
     records: Vec<RecordIngest>,
+    #[serde(default)]
+    graph_supplement: Option<GraphPhaseSupplement>,
 }
 
 impl RecordsShardPartition {
     /// Wraps a cell's captured records as its partition.
     pub fn new(cell_id: u32, records: Vec<RecordIngest>) -> Self {
-        Self { cell_id, records }
+        Self {
+            cell_id,
+            records,
+            graph_supplement: None,
+        }
+    }
+
+    /// Attach the bounded replay facts produced by this graph cell. These facts are
+    /// folded only by the controller after every terminal partition arrives.
+    pub fn with_graph_supplement(mut self, supplement: GraphPhaseSupplement) -> Self {
+        self.graph_supplement = Some(supplement);
+        self
     }
 
     /// The identifier of the cell that produced this partition.
@@ -63,6 +77,11 @@ impl RecordsShardPartition {
     /// Consumes the partition, returning the owned records.
     pub fn into_records(self) -> Vec<RecordIngest> {
         self.records
+    }
+
+    /// Borrows the graph replay facts carried with this terminal partition.
+    pub fn graph_supplement(&self) -> Option<&GraphPhaseSupplement> {
+        self.graph_supplement.as_ref()
     }
 
     /// The number of captured records.
@@ -290,12 +309,24 @@ impl RecordsShard for DirectRecordsShard {
 pub struct ColumnStorePartition {
     cell_id: u32,
     store: ColumnStore,
+    #[serde(default)]
+    graph_supplement: Option<GraphPhaseSupplement>,
 }
 
 impl ColumnStorePartition {
     /// Wraps a cell's populated column store as its partition.
     pub fn from_store(cell_id: u32, store: ColumnStore) -> Self {
-        Self { cell_id, store }
+        Self {
+            cell_id,
+            store,
+            graph_supplement: None,
+        }
+    }
+
+    /// Attach the bounded replay facts produced by this graph cell or aggregator.
+    pub fn with_graph_supplement(mut self, supplement: GraphPhaseSupplement) -> Self {
+        self.graph_supplement = Some(supplement);
+        self
     }
 
     /// Builds an accumulator's store into a partition for `cell_id`.
@@ -303,6 +334,7 @@ impl ColumnStorePartition {
         Self {
             cell_id,
             store: accumulator.column_store().clone(),
+            graph_supplement: None,
         }
     }
 
@@ -324,6 +356,11 @@ impl ColumnStorePartition {
     /// Consumes the partition, returning the owned column store.
     pub fn into_store(self) -> ColumnStore {
         self.store
+    }
+
+    /// Borrows the graph replay facts carried with this terminal partition.
+    pub fn graph_supplement(&self) -> Option<&GraphPhaseSupplement> {
+        self.graph_supplement.as_ref()
     }
 
     /// Appends another partition's rows into this one (ascending `cell_id` order).

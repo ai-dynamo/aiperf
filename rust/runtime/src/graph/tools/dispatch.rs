@@ -28,6 +28,44 @@ pub struct ToolDispatchRequest {
     pub command: String,
 }
 
+/// Validated execution backend identity retained in replay artifacts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolBackendIdentity {
+    /// Commands execute in the host-local sandbox.
+    Local,
+    /// Commands execute in a pinned Docker image.
+    Docker(String),
+}
+
+impl ToolBackendIdentity {
+    /// Parse the only concrete backend labels permitted in a per-command artifact.
+    pub fn parse(value: impl AsRef<str>) -> Result<Self, ToolDispatchError> {
+        let value = value.as_ref();
+        if value == "local" {
+            return Ok(Self::Local);
+        }
+        let Some(image) = value.strip_prefix("docker:") else {
+            return Err(ToolDispatchError::new(format!(
+                "unsupported tool backend identity {value:?}; expected local or docker:<image>"
+            )));
+        };
+        if image.is_empty() || image.contains(char::is_whitespace) {
+            return Err(ToolDispatchError::new(
+                "docker tool backend identity must include a non-whitespace image",
+            ));
+        }
+        Ok(Self::Docker(image.into()))
+    }
+
+    /// Stable artifact label, including the Docker discriminator.
+    pub fn artifact_label(&self) -> String {
+        match self {
+            Self::Local => "local".into(),
+            Self::Docker(image) => format!("docker:{image}"),
+        }
+    }
+}
+
 impl ToolDispatchRequest {
     /// Construct a correlated command request.
     pub fn new(call_id: impl Into<String>, command: impl Into<String>) -> Self {
@@ -195,6 +233,10 @@ pub trait ToolSandboxFactory: Send + Sync {
 /// Worker-local dispatcher for correlated recorded tool commands.
 #[async_trait(?Send)]
 pub trait ToolDispatcher {
+    /// Resolved artifact backend identity for every command from this dispatcher.
+    fn backend_identity(&self) -> ToolBackendIdentity {
+        ToolBackendIdentity::Local
+    }
     /// Open resources owned by this unique trace instance.
     async fn open_trace(&self, context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError>;
     /// Execute one command and return its terminal result.
@@ -415,6 +457,7 @@ pub struct EnvironmentToolDispatcher {
     sandbox: Rc<dyn ToolSandbox>,
     policy: Rc<dyn ToolCommandPolicy>,
     command_gate: Rc<tokio::sync::Mutex<()>>,
+    backend_identity: ToolBackendIdentity,
 }
 
 impl EnvironmentToolDispatcher {
@@ -426,12 +469,46 @@ impl EnvironmentToolDispatcher {
             // One worker-local persistent shell/container cannot accept a second
             // command while the first command's output and timeout cleanup run.
             command_gate: Rc::new(tokio::sync::Mutex::new(())),
+            backend_identity: ToolBackendIdentity::Local,
+        }
+    }
+
+    /// Bind the validated local or `docker:<image>` artifact identity.
+    pub fn with_backend_identity(mut self, backend_identity: ToolBackendIdentity) -> Self {
+        self.backend_identity = backend_identity;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolBackendIdentity;
+
+    #[test]
+    fn backend_identity_accepts_only_concrete_local_or_docker_labels() {
+        assert_eq!(
+            ToolBackendIdentity::parse("local")
+                .unwrap()
+                .artifact_label(),
+            "local"
+        );
+        assert_eq!(
+            ToolBackendIdentity::parse("docker:registry/pinch:latest")
+                .unwrap()
+                .artifact_label(),
+            "docker:registry/pinch:latest"
+        );
+        for invalid in ["mixed", "docker:", "remote", "docker:has space"] {
+            assert!(ToolBackendIdentity::parse(invalid).is_err(), "{invalid}");
         }
     }
 }
 
 #[async_trait(?Send)]
 impl ToolDispatcher for EnvironmentToolDispatcher {
+    fn backend_identity(&self) -> ToolBackendIdentity {
+        self.backend_identity.clone()
+    }
     async fn open_trace(&self, _context: TraceOpenContext<'_>) -> Result<(), ToolDispatchError> {
         let _command_turn = self.command_gate.lock().await;
         self.sandbox.open().await.map_err(Into::into)

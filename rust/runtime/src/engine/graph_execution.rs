@@ -1198,12 +1198,14 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 )
                 .await?;
             if context.trace_subphase == TraceSubphase::Profiling {
-                self.replay_tools
-                    .borrow_mut()
-                    .push(ToolCallMeasurement::new(
+                let call_index = self.replay_tools.borrow().len();
+                self.replay_tools.borrow_mut().push(
+                    ToolCallMeasurement::new(
                         result.duration_ns as f64 / 1_000_000_000.0,
-                        "local",
-                    ));
+                        dispatcher.backend_identity().artifact_label(),
+                    )
+                    .with_call_index(call_index),
+                );
             }
             output.push_str(&String::from_utf8_lossy(&result.output));
         }

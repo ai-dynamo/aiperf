@@ -28,6 +28,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::engine::cell_launcher::owned_positions;
 use crate::engine::cellular_kind::CellularRunKind;
+use crate::graph::supplement::GraphPhaseSupplement;
 
 // The velo transport + launcher wiring is the only part of the controller that
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
@@ -92,6 +93,56 @@ pub struct CellularRunOutcome {
     pub cell_count: u32,
     /// The merged record count across all cells.
     pub record_count: usize,
+}
+
+/// Fold graph replay facts transported by terminal cell partitions. This lives at
+/// the controller boundary so a cell never writes a final replay JSON or CSV shard.
+fn controller_replay_traces(
+    supplements: Vec<GraphPhaseSupplement>,
+) -> Result<Vec<crate::graph::replay::ReplayTraceSupplement>> {
+    let merged = crate::graph::supplement::merge_graph_phase_supplements(supplements)
+        .map_err(|error| anyhow!("folding cellular graph replay supplements: {error}"))?;
+    Ok(merged
+        .traces
+        .iter()
+        .map(crate::graph::replay::ReplayTraceSupplement::from)
+        .collect())
+}
+
+/// Write the strict recorded-replay artifacts from controller-folded cell facts.
+/// This runs before the generic best-effort exporter lane.
+fn write_controller_replay_artifacts(
+    artifacts: &crate::engine::protocol::ArtifactSpec,
+    artifact_dir: &Path,
+    supplements: Vec<GraphPhaseSupplement>,
+) -> Result<()> {
+    use crate::engine::execute::artifact_path;
+
+    let paths = crate::graph::replay::ReplayArtifactPaths {
+        tool_time_path: artifacts
+            .graph_tool_time_path
+            .as_ref()
+            .map(|path| artifact_path(artifact_dir, path, "graph_tool_time_path"))
+            .transpose()?,
+        trace_summary_path: artifacts
+            .graph_trace_summary_path
+            .as_ref()
+            .map(|path| artifact_path(artifact_dir, path, "graph_trace_summary_path"))
+            .transpose()?,
+        metrics_json_path: artifacts
+            .graph_replay_metrics_path
+            .as_ref()
+            .map(|path| artifact_path(artifact_dir, path, "graph_replay_metrics_path"))
+            .transpose()?,
+        metrics_csv_path: artifacts
+            .graph_replay_metrics_csv_path
+            .as_ref()
+            .map(|path| artifact_path(artifact_dir, path, "graph_replay_metrics_csv_path"))
+            .transpose()?,
+    };
+    let traces = controller_replay_traces(supplements)?;
+    crate::graph::replay::write_replay_artifacts(&paths, &traces)
+        .map_err(|error| anyhow!("writing cellular recorded replay artifacts: {error}"))
 }
 
 /// Removes the controller's per-cell scratch tree on any exit path — a normal
@@ -990,6 +1041,7 @@ pub fn run_cellular(
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut store_partitions: Vec<ColumnStorePartition> =
             Vec::with_capacity(cell_count as usize);
+        let mut replay_supplements: Vec<GraphPhaseSupplement> = Vec::new();
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         // The frontend tails this file into AIPerfJob CR status.
         let live_progress_log = std::env::var_os("AIPERF_CELLULAR_HEARTBEAT_LOG")
@@ -1008,8 +1060,18 @@ pub fn run_cellular(
             tokio::select! {
                 biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
-                    Some(CellMessage::Partition(partition)) => partitions.push(partition),
-                    Some(CellMessage::StorePartition(partition)) => store_partitions.push(*partition),
+                    Some(CellMessage::Partition(partition)) => {
+                        if let Some(supplement) = partition.graph_supplement().cloned() {
+                            replay_supplements.push(supplement);
+                        }
+                        partitions.push(partition);
+                    }
+                    Some(CellMessage::StorePartition(partition)) => {
+                        if let Some(supplement) = partition.graph_supplement().cloned() {
+                            replay_supplements.push(supplement);
+                        }
+                        store_partitions.push(*partition);
+                    }
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
                         // Emit the running cross-cell aggregate for live CR-status progress.
@@ -1133,6 +1195,12 @@ pub fn run_cellular(
         }
         std::fs::write(report_path, json)
             .with_context(|| format!("writing merged report to {}", report_path.display()))?;
+
+        if kind == CellularRunKind::Graph {
+            if let Some(artifact_dir) = report_path.parent() {
+                write_controller_replay_artifacts(&artifacts, artifact_dir, replay_supplements)?;
+            }
+        }
 
         // Run the native export plane on the merged report, exactly as the
         // single-process path does in coordinator::persist_prepared_report. The
@@ -2543,7 +2611,65 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cellular::RecordsShardPartition;
     use crate::engine::cellular_kind::is_graph_dataset;
+
+    #[test]
+    fn controller_folds_partitioned_replay_supplements_before_writing() {
+        let mut later = GraphPhaseSupplement::new();
+        later
+            .push(crate::graph::supplement::TraceTerminalSupplement::new(
+                "run".into(),
+                "trajectory-z".into(),
+                "trace-z".into(),
+                1,
+                "recorded_replay",
+            ))
+            .unwrap();
+        let mut first = GraphPhaseSupplement::new();
+        first
+            .push(crate::graph::supplement::TraceTerminalSupplement::new(
+                "run".into(),
+                "trajectory-a".into(),
+                "trace-a".into(),
+                0,
+                "recorded_replay",
+            ))
+            .unwrap();
+        // Arrival order is deliberately reversed. The controller receives the facts
+        // from terminal partitions, then the strict writer establishes final order.
+        let partitions = [
+            RecordsShardPartition::new(1, Vec::new()).with_graph_supplement(later),
+            RecordsShardPartition::new(0, Vec::new()).with_graph_supplement(first),
+        ];
+        let supplements = partitions
+            .iter()
+            .filter_map(|partition| partition.graph_supplement().cloned())
+            .collect();
+        let artifact_dir = tempfile::tempdir().unwrap();
+        let artifacts: crate::engine::protocol::ArtifactSpec = serde_json::from_value(
+            serde_json::json!({"graph_trace_summary_path": "trace-summary.json"}),
+        )
+        .unwrap();
+
+        write_controller_replay_artifacts(&artifacts, artifact_dir.path(), supplements).unwrap();
+
+        let summary: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(artifact_dir.path().join("trace-summary.json")).unwrap(),
+        )
+        .unwrap();
+        let trace_ids = summary["traces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|trace| trace["trace_id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(trace_ids, ["trace-a", "trace-z"]);
+        assert!(
+            !artifact_dir.path().join("cell-0").exists(),
+            "only the controller artifact directory receives final replay files"
+        );
+    }
 
     /// The hub-mode bootstrap (`AIPERF_CELLULAR_HUB` path): `build_cellular_hub` mounts
     /// the cell↔controller + `/artifact` + discovery plugins on one velo, serves the

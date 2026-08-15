@@ -106,6 +106,34 @@ impl GraphPhaseSupplement {
         self.traces.push(supplement);
         Ok(())
     }
+
+    /// Fold terminal facts from another completed partition, retaining their
+    /// controller-selected terminal facts for the final deterministic artifact sort.
+    pub fn extend(&mut self, other: GraphPhaseSupplement) -> Result<(), GraphSupplementError> {
+        if other.schema_version != self.schema_version {
+            return Err(GraphSupplementError::new(format!(
+                "cannot fold phase supplement schema {} into phase schema {}",
+                other.schema_version, self.schema_version
+            )));
+        }
+        self.traces.extend(other.traces);
+        Ok(())
+    }
+}
+
+/// Fold graph replay supplements from terminal partitions. Empty cells contribute
+/// no facts; all non-empty inputs must use the stock compatible schema.
+pub fn merge_graph_phase_supplements<I>(
+    supplements: I,
+) -> Result<GraphPhaseSupplement, GraphSupplementError>
+where
+    I: IntoIterator<Item = GraphPhaseSupplement>,
+{
+    let mut merged = GraphPhaseSupplement::new();
+    for supplement in supplements {
+        merged.extend(supplement)?;
+    }
+    Ok(merged)
 }
 
 impl Default for GraphPhaseSupplement {

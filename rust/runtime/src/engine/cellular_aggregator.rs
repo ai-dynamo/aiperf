@@ -470,6 +470,13 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
 
     // Merge the subtree's stores associatively, then ship the ONE merged store up to
     // the controller under this aggregator's id (which orders the controller's merge).
+    let replay_supplement = crate::graph::supplement::merge_graph_phase_supplements(
+        store_partitions
+            .iter()
+            .filter_map(|partition| partition.graph_supplement().cloned()),
+    )
+    .context("folding graph replay supplements in cellular aggregator")?;
+    let has_replay_supplement = !replay_supplement.traces.is_empty();
     let merged = merge_store_partitions(metrics_config, store_partitions);
     let epoch_ns = heartbeats
         .values()
@@ -487,6 +494,7 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
         merged.column_store().clone(),
         counters,
         epoch_ns,
+        has_replay_supplement.then_some(replay_supplement),
     )
 }
 

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::graph::supplement::TraceTerminalSupplement;
+use crate::graph::tools::ToolBackendIdentity;
 
 use super::{
     ReplayCallMeasurement, ReplayCallMetrics, ReplayMetricsError, ReplayMetricsPolicy,
@@ -32,6 +33,9 @@ pub struct ReplayArtifactPaths {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolCallMeasurement {
+    /// Stable attempted-command order within the trace.
+    #[serde(default)]
+    pub call_index: usize,
     /// Measured command duration in seconds.
     pub duration_s: f64,
     /// Resolved execution backend identity.
@@ -42,9 +46,16 @@ impl ToolCallMeasurement {
     /// Construct one bounded command measurement.
     pub fn new(duration_s: f64, backend: impl Into<String>) -> Self {
         Self {
+            call_index: 0,
             duration_s,
             backend: backend.into(),
         }
+    }
+
+    /// Attach the trace-local command order captured by the graph sink.
+    pub fn with_call_index(mut self, call_index: usize) -> Self {
+        self.call_index = call_index;
+        self
     }
 }
 
@@ -53,6 +64,10 @@ impl ToolCallMeasurement {
 pub struct ReplayTraceSupplement {
     /// Stable trace identity.
     pub trace_id: String,
+    /// Stable recorded trajectory identity for tie-free output ordering.
+    pub trajectory_id: String,
+    /// Stable owner identity for equal trace/trajectory inputs.
+    pub worker_id: usize,
     /// True only when the full profiling graph executor completed successfully.
     pub completed: bool,
     /// Completed LLM measurements in source-call order.
@@ -67,6 +82,8 @@ impl From<&TraceTerminalSupplement> for ReplayTraceSupplement {
     fn from(supplement: &TraceTerminalSupplement) -> Self {
         Self {
             trace_id: supplement.trace_id.clone(),
+            trajectory_id: supplement.trajectory_id.clone(),
+            worker_id: supplement.worker_id,
             completed: supplement.completed,
             calls: supplement.calls.clone(),
             tools: supplement.tools.clone(),
@@ -84,43 +101,63 @@ pub fn write_replay_artifacts(
     traces: &[ReplayTraceSupplement],
 ) -> Result<(), ReplayMetricsError> {
     let policy = StockReplayMetricsPolicy;
-    let successful = traces
+    let mut successful = traces
         .iter()
         .filter(|trace| trace.completed)
         .collect::<Vec<_>>();
+    successful.sort_by(replay_trace_order);
     for trace in &successful {
         ensure_finite_nonnegative(trace.trace_wall_ms, "trace_wall_ms")?;
         for tool in &trace.tools {
             ensure_finite_nonnegative(tool.duration_s, "tool duration")?;
+            ToolBackendIdentity::parse(&tool.backend)
+                .map_err(|error| ReplayMetricsError::new(error.to_string()))?;
         }
     }
-    let folded = successful
+    let mut folded = successful
         .iter()
         .map(|trace| fold_trace(&policy, trace))
         .collect::<Result<Vec<_>, _>>()?;
+    folded.sort_by(|left, right| left.trace_id.cmp(&right.trace_id));
 
     if let Some(path) = &paths.tool_time_path {
-        let tools = successful
-            .iter()
-            .flat_map(|trace| trace.tools.iter())
-            .collect::<Vec<_>>();
+        let mut tools = Vec::new();
+        for trace in &successful {
+            let mut trace_tools = trace.tools.iter().collect::<Vec<_>>();
+            trace_tools.sort_by_key(|tool| tool.call_index);
+            if trace_tools
+                .windows(2)
+                .any(|pair| pair[0].call_index == pair[1].call_index)
+            {
+                return Err(ReplayMetricsError::new(
+                    "replay trace contains duplicate tool call indices",
+                ));
+            }
+            tools.extend(trace_tools);
+        }
         if !tools.is_empty() {
             let durations_s = tools.iter().map(|tool| tool.duration_s).collect::<Vec<_>>();
-            let total_s = rounded(durations_s.iter().sum::<f64>());
+            let total_s = rounded(checked_sum(durations_s.iter().copied(), "tool total")?);
+            ensure_finite_nonnegative(total_s, "tool total")?;
             let mut sorted = durations_s.clone();
             sorted.sort_by(f64::total_cmp);
+            let command_count = durations_s.len();
+            let mean_s = rounded(total_s / command_count as f64);
+            let median_s = rounded(median(&sorted)?);
+            ensure_finite_nonnegative(mean_s, "tool mean")?;
+            ensure_finite_nonnegative(median_s, "tool median")?;
             write_json(
                 path,
                 &ToolTimeArtifact {
-                    command_count: durations_s.len(),
+                    command_count,
                     trace_count: successful
                         .iter()
                         .filter(|trace| !trace.tools.is_empty())
                         .count(),
                     backend: backend_label(&tools),
                     total_s,
-                    mean_s: rounded(total_s / durations_s.len() as f64),
-                    median_s: rounded(median(&sorted)),
+                    mean_s,
+                    median_s,
                     max_s: sorted.last().copied().unwrap_or_default(),
                     durations_s,
                 },
@@ -130,23 +167,41 @@ pub fn write_replay_artifacts(
     if let Some(path) = &paths.trace_summary_path {
         let traces = successful
             .iter()
-            .map(|trace| TraceSummary {
-                trace_id: trace.trace_id.clone(),
-                total_s: rounded(trace.trace_wall_ms / 1_000.0),
-                model_s: rounded(
-                    trace
-                        .calls
-                        .iter()
-                        .map(|call| call.raw_inference_ms)
-                        .sum::<f64>()
-                        / 1_000.0,
-                ),
-                tool_s: rounded(trace.tools.iter().map(|tool| tool.duration_s).sum()),
-                model_calls: trace.calls.len(),
-                tool_calls: trace.tools.len(),
+            .map(|trace| {
+                let total_s = rounded(trace.trace_wall_ms / 1_000.0);
+                let model_s = rounded(
+                    checked_sum(
+                        trace
+                            .calls
+                            .iter()
+                            .map(|call| call.raw_inference_ms.max(0.0)),
+                        "trace model total",
+                    )? / 1_000.0,
+                );
+                let tool_s = rounded(checked_sum(
+                    trace.tools.iter().map(|tool| tool.duration_s),
+                    "trace tool total",
+                )?);
+                for (name, value) in [
+                    ("trace total", total_s),
+                    ("trace model", model_s),
+                    ("trace tool", tool_s),
+                ] {
+                    ensure_finite_nonnegative(value, name)?;
+                }
+                ensure_finite_fraction(model_s, total_s, "trace model fraction")?;
+                ensure_finite_fraction(tool_s, total_s, "trace tool fraction")?;
+                Ok(TraceSummary {
+                    trace_id: trace.trace_id.clone(),
+                    total_s,
+                    model_s,
+                    tool_s,
+                    model_calls: trace.calls.len(),
+                    tool_calls: trace.tools.len(),
+                })
             })
-            .collect::<Vec<_>>();
-        write_json(path, &TraceSummaryArtifact::new(traces))?;
+            .collect::<Result<Vec<_>, ReplayMetricsError>>()?;
+        write_json(path, &TraceSummaryArtifact::new(traces)?)?;
     }
     if let Some(path) = &paths.metrics_json_path {
         write_json(path, &ReplayMetricsArtifact::new(folded.clone())?)?;
@@ -161,11 +216,20 @@ fn fold_trace(
     policy: &dyn ReplayMetricsPolicy,
     trace: &ReplayTraceSupplement,
 ) -> Result<ReplayTraceMetrics, ReplayMetricsError> {
-    let calls = trace
+    let mut calls = trace
         .calls
         .iter()
         .map(|call| policy.analyze_call(call))
         .collect::<Result<Vec<ReplayCallMetrics>, _>>()?;
+    calls.sort_by_key(|call| call.call_index);
+    if calls
+        .windows(2)
+        .any(|pair| pair[0].call_index == pair[1].call_index)
+    {
+        return Err(ReplayMetricsError::new(
+            "replay trace contains duplicate LLM call indices",
+        ));
+    }
     policy.fold_trace(
         &calls,
         &TraceTerminalSupplement::new(
@@ -176,6 +240,16 @@ fn fold_trace(
             "recorded_replay",
         ),
     )
+}
+
+fn replay_trace_order(
+    left: &&ReplayTraceSupplement,
+    right: &&ReplayTraceSupplement,
+) -> std::cmp::Ordering {
+    left.trace_id
+        .cmp(&right.trace_id)
+        .then_with(|| left.trajectory_id.cmp(&right.trajectory_id))
+        .then_with(|| left.worker_id.cmp(&right.worker_id))
 }
 
 fn ensure_finite_nonnegative(value: f64, name: &str) -> Result<(), ReplayMetricsError> {
@@ -264,18 +338,48 @@ fn backend_label(tools: &[&ToolCallMeasurement]) -> String {
         .map(|tool| tool.backend.as_str())
         .unwrap_or("local");
     if tools.iter().all(|tool| tool.backend == first) {
-        first.into()
+        first.to_owned()
     } else {
         "mixed".into()
     }
 }
 
-fn median(sorted: &[f64]) -> f64 {
+fn median(sorted: &[f64]) -> Result<f64, ReplayMetricsError> {
     match sorted.len() {
-        0 => 0.0,
-        n if n % 2 == 1 => sorted[n / 2],
-        n => (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0,
+        0 => Ok(0.0),
+        n if n % 2 == 1 => Ok(sorted[n / 2]),
+        n => checked_add(sorted[n / 2 - 1] / 2.0, sorted[n / 2] / 2.0, "tool median"),
     }
+}
+
+fn checked_add(left: f64, right: f64, name: &str) -> Result<f64, ReplayMetricsError> {
+    let value = left + right;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(ReplayMetricsError::new(format!(
+            "{name} overflowed to a non-finite value"
+        )))
+    }
+}
+
+fn checked_sum(
+    values: impl IntoIterator<Item = f64>,
+    name: &str,
+) -> Result<f64, ReplayMetricsError> {
+    values.into_iter().try_fold(0.0, |total, value| {
+        ensure_finite_nonnegative(value, name)?;
+        checked_add(total, value, name)
+    })
+}
+
+fn ensure_finite_fraction(value: f64, total: f64, name: &str) -> Result<(), ReplayMetricsError> {
+    if total > 0.0 && !(value / total).is_finite() {
+        return Err(ReplayMetricsError::new(format!(
+            "{name} overflowed to a non-finite value"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -298,13 +402,37 @@ struct TraceSummaryArtifact {
 }
 
 impl TraceSummaryArtifact {
-    fn new(traces: Vec<TraceSummary>) -> Self {
-        let total_s = rounded(traces.iter().map(|trace| trace.total_s).sum::<f64>());
-        let model_s = rounded(traces.iter().map(|trace| trace.model_s).sum::<f64>());
-        let tool_s = rounded(traces.iter().map(|trace| trace.tool_s).sum::<f64>());
-        let model_calls = traces.iter().map(|trace| trace.model_calls).sum();
-        let tool_calls = traces.iter().map(|trace| trace.tool_calls).sum();
-        Self {
+    fn new(traces: Vec<TraceSummary>) -> Result<Self, ReplayMetricsError> {
+        let total_s = rounded(checked_sum(
+            traces.iter().map(|trace| trace.total_s),
+            "trace total",
+        )?);
+        let model_s = rounded(checked_sum(
+            traces.iter().map(|trace| trace.model_s),
+            "model total",
+        )?);
+        let tool_s = rounded(checked_sum(
+            traces.iter().map(|trace| trace.tool_s),
+            "tool total",
+        )?);
+        let model_calls = checked_usize_sum(
+            traces.iter().map(|trace| trace.model_calls),
+            "model call count",
+        )?;
+        let tool_calls = checked_usize_sum(
+            traces.iter().map(|trace| trace.tool_calls),
+            "tool call count",
+        )?;
+        for (name, value) in [
+            ("trace total", total_s),
+            ("model total", model_s),
+            ("tool total", tool_s),
+        ] {
+            ensure_finite_nonnegative(value, name)?;
+        }
+        ensure_finite_fraction(model_s, total_s, "aggregate model fraction")?;
+        ensure_finite_fraction(tool_s, total_s, "aggregate tool fraction")?;
+        Ok(Self {
             trace_count: traces.len(),
             aggregate: TraceSummaryAggregate {
                 total_s,
@@ -316,8 +444,19 @@ impl TraceSummaryArtifact {
                 tool_calls,
             },
             traces,
-        }
+        })
     }
+}
+
+fn checked_usize_sum(
+    values: impl IntoIterator<Item = usize>,
+    name: &str,
+) -> Result<usize, ReplayMetricsError> {
+    values.into_iter().try_fold(0_usize, |total, value| {
+        total
+            .checked_add(value)
+            .ok_or_else(|| ReplayMetricsError::new(format!("{name} overflowed usize")))
+    })
 }
 
 #[derive(Serialize)]
@@ -390,7 +529,14 @@ fn fraction(value: f64, total: f64) -> f64 {
 
 /// Keep decimal artifact output stable across associative finite additions.
 fn rounded(value: f64) -> f64 {
-    (value * 1_000_000_000_000.0).round() / 1_000_000_000_000.0
+    if !value.is_finite() {
+        return value;
+    }
+    let scaled = value * 1_000_000_000_000.0;
+    if !scaled.is_finite() {
+        return value;
+    }
+    scaled.round() / 1_000_000_000_000.0
 }
 
 #[derive(Serialize)]
@@ -402,31 +548,32 @@ struct ReplayMetricsArtifact {
 
 impl ReplayMetricsArtifact {
     fn new(traces: Vec<ReplayTraceMetrics>) -> Result<Self, ReplayMetricsError> {
-        let sum = |values: Vec<Option<f64>>| {
-            values
-                .into_iter()
-                .collect::<Option<Vec<_>>>()
-                .map(|values| values.into_iter().sum::<f64>())
-        };
+        for trace in &traces {
+            validate_metrics_trace(trace)?;
+        }
         let aggregate = ReplayMetricsAggregate {
-            normalized_end_to_end_ms: sum(traces
-                .iter()
-                .map(|trace| trace.normalized_end_to_end_ms)
-                .collect()),
-            normalized_inference_ms: sum(traces
-                .iter()
-                .map(|trace| trace.normalized_inference_ms)
-                .collect()),
-            normalized_generation_ms: sum(traces
-                .iter()
-                .map(|trace| trace.normalized_generation_ms)
-                .collect()),
-            ttft_ms: sum(traces.iter().map(|trace| trace.ttft_ms).collect()),
+            normalized_end_to_end_ms: checked_option_sum(
+                traces.iter().map(|trace| trace.normalized_end_to_end_ms),
+                "normalized end-to-end",
+            )?,
+            normalized_inference_ms: checked_option_sum(
+                traces.iter().map(|trace| trace.normalized_inference_ms),
+                "normalized inference",
+            )?,
+            normalized_generation_ms: checked_option_sum(
+                traces.iter().map(|trace| trace.normalized_generation_ms),
+                "normalized generation",
+            )?,
+            ttft_ms: checked_option_sum(traces.iter().map(|trace| trace.ttft_ms), "ttft")?,
             observed_osl: traces
                 .iter()
                 .flat_map(|trace| trace.calls.iter())
                 .map(|call| call.observed_osl)
-                .sum(),
+                .try_fold(0_u64, |total, value| {
+                    total.checked_add(value).ok_or_else(|| {
+                        ReplayMetricsError::new("observed OSL aggregate overflowed u64")
+                    })
+                })?,
         };
         for value in [
             aggregate.normalized_end_to_end_ms,
@@ -449,6 +596,45 @@ impl ReplayMetricsArtifact {
             traces,
         })
     }
+}
+
+fn checked_option_sum(
+    values: impl IntoIterator<Item = Option<f64>>,
+    name: &str,
+) -> Result<Option<f64>, ReplayMetricsError> {
+    let mut total = 0.0;
+    for value in values {
+        let Some(value) = value else { return Ok(None) };
+        total = checked_add(total, value, name)?;
+    }
+    Ok(Some(total))
+}
+
+fn validate_metrics_trace(trace: &ReplayTraceMetrics) -> Result<(), ReplayMetricsError> {
+    for call in &trace.calls {
+        for (name, value) in [
+            ("raw end-to-end", call.raw_end_to_end_ms),
+            ("raw inference", call.raw_inference_ms),
+            ("raw generation", call.raw_generation_ms),
+        ] {
+            if !value.is_finite() {
+                return Err(ReplayMetricsError::new(format!("{name} is non-finite")));
+            }
+        }
+        for (name, value) in [
+            ("ttft", call.ttft_ms),
+            ("stream total", call.stream_total_ms),
+            ("normalized generation", call.normalized_generation_ms),
+            ("normalized stream", call.normalized_stream_total_ms),
+            ("normalized inference", call.normalized_inference_ms),
+            ("normalized end-to-end", call.normalized_end_to_end_ms),
+        ] {
+            if value.is_some_and(|value| !value.is_finite()) {
+                return Err(ReplayMetricsError::new(format!("{name} is non-finite")));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]

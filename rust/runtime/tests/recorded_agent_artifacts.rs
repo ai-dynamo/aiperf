@@ -26,16 +26,20 @@ fn tool_time_schema_excludes_failed_trace_and_reports_mixed_backend() {
         &[
             ReplayTraceSupplement {
                 trace_id: "successful".into(),
+                trajectory_id: "trajectory-successful".into(),
+                worker_id: 0,
                 completed: true,
                 calls: vec![ReplayCallMeasurement::completed("successful", 0)],
                 tools: vec![
-                    ToolCallMeasurement::new(0.2, "local"),
-                    ToolCallMeasurement::new(0.4, "docker:pinch:latest"),
+                    ToolCallMeasurement::new(0.2, "local").with_call_index(0),
+                    ToolCallMeasurement::new(0.4, "docker:pinch:latest").with_call_index(1),
                 ],
                 trace_wall_ms: 1_000.0,
             },
             ReplayTraceSupplement {
                 trace_id: "failed".into(),
+                trajectory_id: "trajectory-failed".into(),
+                worker_id: 1,
                 completed: false,
                 calls: vec![ReplayCallMeasurement::completed("failed", 0)],
                 tools: vec![ToolCallMeasurement::new(99.0, "local")],
@@ -61,4 +65,34 @@ fn tool_time_schema_excludes_failed_trace_and_reports_mixed_backend() {
             "durations_s": [0.2, 0.4]
         })
     );
+}
+
+#[test]
+fn strict_writer_rejects_nonfinite_overflow_and_unknown_backend_before_json() {
+    let output = tempfile::tempdir().expect("temporary output directory");
+    let path = output.path().join("tool-time.json");
+    let paths = ReplayArtifactPaths {
+        tool_time_path: Some(path.clone()),
+        ..ReplayArtifactPaths::default()
+    };
+    for tool in [
+        ToolCallMeasurement::new(f64::NAN, "local"),
+        ToolCallMeasurement::new(f64::MAX, "local"),
+        ToolCallMeasurement::new(1.0, "remote"),
+    ] {
+        let trace = ReplayTraceSupplement {
+            trace_id: "strict".into(),
+            trajectory_id: "trajectory-strict".into(),
+            worker_id: 0,
+            completed: true,
+            calls: Vec::new(),
+            tools: vec![tool.clone().with_call_index(0), tool.with_call_index(1)],
+            trace_wall_ms: 1.0,
+        };
+        assert!(write_replay_artifacts(&paths, &[trace]).is_err());
+        assert!(
+            !path.exists(),
+            "strict failure must not serialize JSON null"
+        );
+    }
 }

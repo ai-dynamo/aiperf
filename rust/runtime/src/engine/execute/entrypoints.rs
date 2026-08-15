@@ -516,14 +516,19 @@ pub(crate) async fn execute_graph_native(
             .map(|path| artifact_path(&request.artifact_dir, path, "graph_replay_metrics_csv_path"))
             .transpose()?,
     };
-    let replay_traces = phased
-        .supplement
-        .traces
-        .iter()
-        .map(crate::graph::replay::ReplayTraceSupplement::from)
-        .collect::<Vec<_>>();
-    crate::graph::replay::write_replay_artifacts(&replay_paths, &replay_traces)
-        .map_err(|error| anyhow!("writing recorded replay artifacts: {error}"))?;
+    // A cellular child ships the foldable supplement in its terminal partition. The
+    // controller is the sole final-artifact owner; writing here would publish one
+    // scratch shard per cell and race the controller's merged report.
+    if ModuloCellPartition::from_env().is_none() {
+        let replay_traces = phased
+            .supplement
+            .traces
+            .iter()
+            .map(crate::graph::replay::ReplayTraceSupplement::from)
+            .collect::<Vec<_>>();
+        crate::graph::replay::write_replay_artifacts(&replay_paths, &replay_traces)
+            .map_err(|error| anyhow!("writing recorded replay artifacts: {error}"))?;
+    }
     let phase_stats = phased.phases;
     // Graph exact-fold bounds memory independently of record count by folding each
     // record immediately. Per-record artifacts stream through `RecordArtifactLane`;
@@ -746,13 +751,18 @@ pub(crate) async fn execute_graph_native(
                     store: accumulator.column_store().clone(),
                     counters,
                     epoch_ns,
+                    graph_supplement: Some(phased.supplement.clone()),
                 }
             } else {
                 let records: Vec<RecordIngest> = captured
                     .iter()
                     .map(|record| record.ingest.clone())
                     .collect();
-                CellPartitionPayload::Records { records, epoch_ns }
+                CellPartitionPayload::Records {
+                    records,
+                    epoch_ns,
+                    graph_supplement: Some(phased.supplement.clone()),
+                }
             };
             (shipper, payload)
         },

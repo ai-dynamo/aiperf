@@ -329,12 +329,6 @@ impl ReplayMetricsPolicy for StockReplayMetricsPolicy {
             ));
         }
         let valid = calls.iter().all(ReplayCallMetrics::is_valid);
-        let sum = |values: Vec<Option<f64>>| {
-            values
-                .into_iter()
-                .collect::<Option<Vec<_>>>()
-                .map(|values| values.into_iter().sum())
-        };
         Ok(ReplayTraceMetrics {
             trace_id: trace.trace_id.clone(),
             calls: calls
@@ -354,30 +348,34 @@ impl ReplayMetricsPolicy for StockReplayMetricsPolicy {
                 .collect(),
             normalized_end_to_end_ms: valid
                 .then(|| {
-                    sum(calls
-                        .iter()
-                        .map(|call| call.normalized_end_to_end_ms)
-                        .collect())
+                    checked_option_sum(
+                        calls.iter().map(|call| call.normalized_end_to_end_ms),
+                        "normalized end-to-end",
+                    )
                 })
+                .transpose()?
                 .flatten(),
             normalized_inference_ms: valid
                 .then(|| {
-                    sum(calls
-                        .iter()
-                        .map(|call| call.normalized_inference_ms)
-                        .collect())
+                    checked_option_sum(
+                        calls.iter().map(|call| call.normalized_inference_ms),
+                        "normalized inference",
+                    )
                 })
+                .transpose()?
                 .flatten(),
             normalized_generation_ms: valid
                 .then(|| {
-                    sum(calls
-                        .iter()
-                        .map(|call| call.normalized_generation_ms)
-                        .collect())
+                    checked_option_sum(
+                        calls.iter().map(|call| call.normalized_generation_ms),
+                        "normalized generation",
+                    )
                 })
+                .transpose()?
                 .flatten(),
             ttft_ms: valid
-                .then(|| sum(calls.iter().map(|call| call.ttft_ms).collect()))
+                .then(|| checked_option_sum(calls.iter().map(|call| call.ttft_ms), "ttft"))
+                .transpose()?
                 .flatten(),
             isl_delta: calls
                 .iter()
@@ -392,9 +390,33 @@ impl ReplayMetricsPolicy for StockReplayMetricsPolicy {
                         }
                     })
                 })
-                .sum(),
+                .try_fold(0_u64, |total, delta| {
+                    total.checked_add(delta).ok_or_else(|| {
+                        ReplayMetricsError::new("replay ISL delta sum overflowed u64")
+                    })
+                })?,
         })
     }
+}
+
+fn checked_option_sum(
+    values: impl IntoIterator<Item = Option<f64>>,
+    name: &str,
+) -> Result<Option<f64>, ReplayMetricsError> {
+    let mut total = 0.0;
+    for value in values {
+        let Some(value) = value else { return Ok(None) };
+        if !value.is_finite() {
+            return Err(ReplayMetricsError::new(format!("{name} is non-finite")));
+        }
+        total += value;
+        if !total.is_finite() {
+            return Err(ReplayMetricsError::new(format!(
+                "{name} overflowed to a non-finite value"
+            )));
+        }
+    }
+    Ok(Some(total))
 }
 
 fn finite_positive(value: Option<f64>, reason: &str, reasons: &mut Vec<String>) -> Option<f64> {

@@ -866,13 +866,18 @@ pub(crate) async fn execute_native_inner(
                     store: accumulator.column_store().clone(),
                     counters,
                     epoch_ns,
+                    graph_supplement: None,
                 }
             } else {
                 let records: Vec<RecordIngest> = captured
                     .iter()
                     .map(|record| record.ingest.clone())
                     .collect();
-                CellPartitionPayload::Records { records, epoch_ns }
+                CellPartitionPayload::Records {
+                    records,
+                    epoch_ns,
+                    graph_supplement: None,
+                }
             };
             (shipper, payload)
         },

@@ -804,6 +804,8 @@ pub enum CellPartitionPayload {
         records: Vec<crate::metrics_core::RecordIngest>,
         /// Run span stamped where the partition was captured.
         epoch_ns: i64,
+        /// Successful profiling graph replay facts, if this is a graph cell.
+        graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
     },
     /// FOLD-AND-DROP (exact-fold or sketch): the folded store plus its exact counters.
     Store {
@@ -813,6 +815,8 @@ pub enum CellPartitionPayload {
         counters: crate::cellular::HeartbeatCounters,
         /// Run span stamped where the partition was captured.
         epoch_ns: i64,
+        /// Successful profiling graph replay facts, if this is a graph cell.
+        graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
     },
 }
 
@@ -895,14 +899,17 @@ impl CellRecordsShipper {
     /// [`Self::ship_store`] by shape.
     pub fn ship_payload(&self, payload: CellPartitionPayload) -> Result<()> {
         match payload {
-            CellPartitionPayload::Records { records, epoch_ns } => {
-                self.ship_records(records, epoch_ns)
-            }
+            CellPartitionPayload::Records {
+                records,
+                epoch_ns,
+                graph_supplement,
+            } => self.ship_records(records, epoch_ns, graph_supplement),
             CellPartitionPayload::Store {
                 store,
                 counters,
                 epoch_ns,
-            } => self.ship_store(store, counters, epoch_ns),
+                graph_supplement,
+            } => self.ship_store(store, counters, epoch_ns, graph_supplement),
         }
     }
 
@@ -919,6 +926,7 @@ impl CellRecordsShipper {
         &self,
         records: Vec<crate::metrics_core::RecordIngest>,
         epoch_ns: i64,
+        graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
     ) -> Result<()> {
         use crate::cellular::{
             CellMessage, HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation,
@@ -942,7 +950,10 @@ impl CellRecordsShipper {
             errored,
         };
         let heartbeat = heartbeat.snapshot(epoch_ns, counters, HeartbeatSaturation::default());
-        let partition = RecordsShardPartition::new(self.cell_id, records);
+        let mut partition = RecordsShardPartition::new(self.cell_id, records);
+        if let Some(supplement) = graph_supplement {
+            partition = partition.with_graph_supplement(supplement);
+        }
         self.ship(heartbeat, CellMessage::Partition(partition))
     }
 
@@ -963,6 +974,7 @@ impl CellRecordsShipper {
         store: crate::metrics_core::store::ColumnStore,
         counters: crate::cellular::HeartbeatCounters,
         epoch_ns: i64,
+        graph_supplement: Option<crate::graph::supplement::GraphPhaseSupplement>,
     ) -> Result<()> {
         use crate::cellular::{
             CellMessage, ColumnStorePartition, HeartbeatAccumulator, HeartbeatSaturation,
@@ -972,7 +984,10 @@ impl CellRecordsShipper {
             counters,
             HeartbeatSaturation::default(),
         );
-        let partition = ColumnStorePartition::from_store(self.cell_id, store);
+        let mut partition = ColumnStorePartition::from_store(self.cell_id, store);
+        if let Some(supplement) = graph_supplement {
+            partition = partition.with_graph_supplement(supplement);
+        }
         self.ship(heartbeat, CellMessage::StorePartition(Box::new(partition)))
     }
 

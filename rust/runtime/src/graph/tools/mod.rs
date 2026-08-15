@@ -16,9 +16,10 @@ pub use dispatch::{
     AgentToolCallDecoder, AgentToolCallDecoderFactory, EnvironmentToolDispatcher,
     InMemoryAgentObservationFormatter, InMemoryAgentObservationFormatterFactory,
     InMemoryAgentToolCallDecoder, InMemoryAgentToolCallDecoderFactory, InMemoryToolDispatcher,
-    InMemoryToolDispatcherFactory, SandboxCreateContext, ToolDispatchContext, ToolDispatchError,
-    ToolDispatchRequest, ToolDispatchResult, ToolDispatcher, ToolDispatcherFactory, ToolSandbox,
-    ToolSandboxError, ToolSandboxFactory, TraceOpenContext, close_trace_preserving_primary,
+    InMemoryToolDispatcherFactory, SandboxCreateContext, ToolBackendIdentity, ToolDispatchContext,
+    ToolDispatchError, ToolDispatchRequest, ToolDispatchResult, ToolDispatcher,
+    ToolDispatcherFactory, ToolSandbox, ToolSandboxError, ToolSandboxFactory, TraceOpenContext,
+    close_trace_preserving_primary,
 };
 pub use docker::{
     CONTAINER_RUN_LABEL_KEY, ContainerCreateSpec, ContainerId, ContainerMount, ContainerRuntime,
