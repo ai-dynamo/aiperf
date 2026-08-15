@@ -33,8 +33,8 @@ their exact legacy behavior):
   - ``BranchOrchestrator`` -> :meth:`register_descendants` at every spawn/seed
     and :meth:`on_descendant_done` at every descendant-terminal point.
   - ``CreditCallbackHandler`` -> :meth:`on_root_terminal` after the root's final
-    turn return is intercepted (so final-turn spawns are registered first), and
-    :meth:`release_all` at phase teardown.
+    turn return is intercepted (so final-turn spawns are registered first).
+  - ``PhaseRunner`` -> :meth:`release_all` at phase teardown.
   - ``AgenticReplayStrategy`` -> :meth:`set_drain_callback` to recycle a drained
     lane.
 """
@@ -43,9 +43,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.environment import Environment
 from aiperf.common.phase import PhaseRuntimeKey
+
+if TYPE_CHECKING:
+    from aiperf.timing.concurrency import ConcurrencyManager
 
 _logger = AIPerfLogger(__name__)
 
@@ -63,6 +68,12 @@ class _TreeState:
     """Descendants currently live or registered-pending (any depth)."""
     released: bool = False
     """Set once the slot has been released; guards against double release."""
+    owns_slot: bool = True
+    """False for a tree RESURRECTED after retirement (see register_descendants).
+    Such a tree never re-acquired a session slot -- its slot was handed back when
+    it first drained -- so it must not release one again. Releasing on behalf of
+    a resurrected tree permanently raises the session concurrency ceiling, since
+    ``asyncio.Semaphore.release`` has no upper bound."""
 
     @property
     def drained(self) -> bool:
@@ -78,10 +89,14 @@ class SessionTreeRegistry:
     mutations are atomic without locking.
     """
 
-    def __init__(self, concurrency_manager) -> None:
+    def __init__(self, concurrency_manager: ConcurrencyManager | None = None) -> None:
         """Args:
         concurrency_manager: provides ``release_session_slot(phase)`` -- the
-            same semaphore the issuer acquires from.
+            same semaphore the issuer acquires from. ``None`` puts the registry
+            in finality-only mode (the agent graph / DAG-lineage wiring): trees are
+            tracked and retired for the finality queries, but no slot is ever
+            released -- the callback handler still owns slot release there, and
+            graph descendants inherit the root's slot.
         """
         self._concurrency_manager = concurrency_manager
         self._trees: dict[str, _TreeState] = {}
@@ -93,6 +108,21 @@ class SessionTreeRegistry:
         # subagents -- otherwise it would open at outstanding=0 and drain on the
         # FIRST child completion while siblings still run (premature drain).
         self._pending_descendants: dict[str, int] = {}
+        # Roots whose tree already RETIRED (drained), mapped to the phase they
+        # were opened under. A descendant's final-turn SPAWN registers its
+        # grandchildren AFTER that descendant's own on_descendant_done drained
+        # the tree (callback order: the child-completion decrement precedes the
+        # return-intercept that spawns). Without this ledger those grandchildren
+        # would buffer into a retired root that nothing drains, and is_tree_final
+        # could never answer True for them. register_descendants consults it to
+        # RESURRECT the tree root-terminal instead. Cleared at teardown.
+        #
+        # Bounded FIFO (dicts are insertion-ordered): unbounded, this retains one
+        # entry per retired tree for the whole PROFILING phase -- hundreds of MB
+        # on a long high-throughput durability ramp. The late final-turn SPAWN it
+        # exists to catch lands within a handful of retirements, so any real
+        # window is orders of magnitude below the cap.
+        self._retired_roots: dict[str, PhaseRuntimeKey] = {}
         # Peak simultaneously-open trees == peak session-slot occupancy. The
         # whole point of per-tree accounting is that this never exceeds the
         # configured concurrency; logged at teardown so any overshoot is visible.
@@ -142,6 +172,9 @@ class SessionTreeRegistry:
         # Fold in any descendants registered before this tree was opened (the
         # snapshot path seeds subagents before the lane/root slot is acquired).
         state.outstanding += self._pending_descendants.pop(root_corr, 0)
+        # A freshly-opened tree supersedes any stale retired record for the same
+        # id (correlation ids are unique, so this is defensive).
+        self._retired_roots.pop(root_corr, None)
         self._trees[root_corr] = state
         if len(self._trees) > self._peak_open:
             self._peak_open = len(self._trees)
@@ -160,6 +193,44 @@ class SessionTreeRegistry:
         """True when this registry is tracking ``root_corr`` (engagement gate)."""
         return root_corr in self._trees
 
+    def root_terminal(self, root_correlation_id: str) -> bool | None:
+        """True when the tree's root has returned its terminal turn; None if unknown.
+
+        Queried at credit-issue time while the tree is still live (a descendant
+        being issued keeps it in ``_trees``). A fully drained tree has been
+        retired and reads as unknown/None.
+        """
+        state = self._trees.get(root_correlation_id)
+        if state is None:
+            return None
+        return not state.root_pending
+
+    def is_last_tree_request(
+        self,
+        root_correlation_id: str,
+        *,
+        is_final_turn: bool,
+        is_root_credit: bool,
+        has_branches: bool,
+    ) -> bool:
+        """Conservative: True only when this credit is provably the tree's last request.
+
+        ``has_branches`` means "this turn declares ANY branch (FORK or SPAWN)
+        and will therefore spawn descendants on its return". It must NOT be the
+        FORK-only ``has_forks`` flag: SPAWN children register with this registry
+        only at return-intercept, AFTER the issuer stamped finality, so a
+        spawning final turn would otherwise read as last while its children are
+        pending (wrong-True, violating the conservative contract).
+        """
+        if not is_final_turn or has_branches:
+            return False
+        state = self._trees.get(root_correlation_id)
+        if state is None:
+            return False
+        if is_root_credit:
+            return state.outstanding <= 0
+        return (not state.root_pending) and state.outstanding == 1
+
     def register_descendants(self, root_corr: str, n: int = 1) -> None:
         """Add ``n`` descendants (spawned or snapshot-seeded) to a tree.
 
@@ -173,6 +244,24 @@ class SessionTreeRegistry:
             return
         state = self._trees.get(root_corr)
         if state is None:
+            # RETIRED root: a descendant's final-turn SPAWN registers its
+            # grandchildren after that descendant's own on_descendant_done
+            # drained the tree. The root was terminal at retire (``drained``
+            # requires ``not root_pending``), so recreate the tree
+            # root-terminal with these descendants outstanding -- keeping
+            # is_tree_final answerable and the count coherent (the
+            # grandchildren re-drain it when they finish).
+            retired_phase = self._retired_roots.pop(root_corr, None)
+            if retired_phase is not None:
+                self._trees[root_corr] = _TreeState(
+                    phase=retired_phase,
+                    root_pending=False,
+                    outstanding=n,
+                    owns_slot=False,
+                )
+                if len(self._trees) > self._peak_open:
+                    self._peak_open = len(self._trees)
+                return
             # Tree not opened yet (snapshot seeds descendants before the lane
             # slot is acquired). Buffer so open_tree folds them in -- NOT a
             # no-op, or the tree would open unaware of these subagents and drain
@@ -237,29 +326,55 @@ class SessionTreeRegistry:
             return False
         state.released = True
         self._trees.pop(root_corr, None)
+        # Remember the retired root (with its phase) so a late final-turn SPAWN
+        # can RESURRECT it instead of silently buffering. See register_descendants.
+        self._retired_roots[root_corr] = state.phase
+        max_window = Environment.AGENTX.RECYCLE_GUARD_MAX_WINDOW
+        while len(self._retired_roots) > max_window:
+            self._retired_roots.pop(next(iter(self._retired_roots)))
+        if self._concurrency_manager is None or not state.owns_slot:
+            # A resurrected tree holds no slot, so there is nothing to hand back
+            # and no lane to recycle -- its lane was already recycled on the
+            # first drain, and firing _on_drain again only logs a spurious
+            # "unknown correlation" warning.
+            return True
         self._concurrency_manager.release_session_slot(state.phase)
         if self._on_drain is not None:
             self._on_drain(root_corr, state.phase)
         return True
 
-    def release_all(self, phase: PhaseRuntimeKey) -> int:
+    def release_all(self, phase: PhaseRuntimeKey | None = None) -> int:
         """Release every still-open tree's slot for ``phase`` at teardown.
 
         Replaces the callback handler's ``in_flight_sessions`` release loop when
         the registry is engaged. Does NOT fire the drain callback (teardown must
-        not recycle). Returns the number of slots released.
+        not recycle). ``phase=None`` retires every tree regardless of phase (the
+        finality-only wiring creates the registry per-phase, so that is its
+        common teardown call). Returns the number of trees retired.
         """
         to_release = [
             root_corr
             for root_corr, state in self._trees.items()
-            if state.phase == phase and not state.released
+            if (phase is None or state.phase == phase) and not state.released
         ]
         for root_corr in to_release:
             state = self._trees.pop(root_corr, None)
             if state is None or state.released:
                 continue
             state.released = True
-            self._concurrency_manager.release_session_slot(phase)
+            if self._concurrency_manager is not None and state.owns_slot:
+                self._concurrency_manager.release_session_slot(state.phase)
+        # With the trees above retired, any pending/retired descendant
+        # accounting refers to no live tree. A full teardown drops both buffers;
+        # a phase-scoped call clears only that phase's retired roots
+        # (``_pending_descendants`` carries no phase and is left untouched).
+        if phase is None:
+            self._pending_descendants.clear()
+            self._retired_roots.clear()
+        else:
+            self._retired_roots = {
+                r: p for r, p in self._retired_roots.items() if p != phase
+            }
         return len(to_release)
 
     def open_count(self, phase: PhaseRuntimeKey | None = None) -> int:

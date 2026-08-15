@@ -453,6 +453,36 @@ def test_trajectory_ratios_auto_filled_when_default() -> None:
     assert phase.trajectory_start_max_ratio == 1.0
 
 
+def test_trajectory_ratios_scenario_applied_counts_as_explicit() -> None:
+    """A scenario-applied ratio must reach the agent-graph t* resolver.
+
+    ``resolve_graph_tstar_window`` treats an unset (``None``) graph window as
+    OFF, so a scenario auto-fill has to leave a non-``None`` value or the
+    scenario's window is a silent no-op. It reads the value itself rather than
+    the ``_..._explicitly_set`` snapshots precisely so an assignment counts --
+    the snapshots stay frozen for the validator's own conflict check.
+    """
+    from aiperf.config.phases import resolve_graph_tstar_window
+
+    run = _build_run(streaming=True, extra={"ignore_eos": True})
+    phase = run.cfg.get_profiling_phases()[0]
+    # The "never authored" state the scenario auto-fill acts on is simply None.
+    phase.trajectory_start_min_ratio = None
+    phase.trajectory_start_max_ratio = None
+    phase.model_fields_set.discard("trajectory_start_min_ratio")
+    phase.model_fields_set.discard("trajectory_start_max_ratio")
+    phase._trajectory_start_min_ratio_explicitly_set = False
+    phase._trajectory_start_max_ratio_explicitly_set = False
+    assert resolve_graph_tstar_window(phase) == (0.0, 0.0)
+
+    apply_scenario(run)
+
+    assert resolve_graph_tstar_window(phase)[1] == 1.0
+    # The validator's own snapshot stays frozen -- the two readers ask different
+    # questions and must not share one flag.
+    assert phase._trajectory_start_max_ratio_explicitly_set is False
+
+
 def test_trajectory_ratios_explicit_honored() -> None:
     run = _build_run(
         streaming=True,

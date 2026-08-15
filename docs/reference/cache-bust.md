@@ -144,11 +144,12 @@ These targets are **phase-aware**: the marker is present only during warmup and 
 profiling. This is the opposite of the RID targets, which are phase-agnostic (same marker in both
 phases) so warmup primes profiling.
 
-> **Incompatibility with `agentic_replay`:** These targets cannot be used with the
-> `agentic_replay` timing mode. In agentic replay, the same session object spans the
-> WARMUP→PROFILING boundary and Turn objects mutated during warmup would carry the
-> `[warmup]` marker into profiling credits. Use `cache_bust=none` for `agentic_replay`
-> workloads, or one of the RID-based targets for per-trajectory isolation.
+> **Replay-mode incompatibility:** These targets cannot be used with `agentic_replay`
+> or `agent_graph`. Agentic replay retains the same mutable session across the
+> WARMUP→PROFILING boundary. Agent Graph materializes payloads outside that session
+> path and does not yet consume the credit's phase-aware marker, so it would stamp
+> `[warmup]` during profiling too. Use `cache_bust=none` or an RID-based target for
+> either replay mode.
 
 ### `warmup_isolation_system`
 

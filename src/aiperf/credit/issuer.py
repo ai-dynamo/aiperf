@@ -14,6 +14,7 @@ Key responsibilities:
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.graph.ids import template_id
 from aiperf.timing.replay_dependencies import ReplayIssueGate
 from aiperf.timing.strategies.cache_bust import (
     WARMUP_ISOLATION_MARKER,
@@ -115,6 +117,15 @@ class CreditIssuer:
         self._cancellation_policy = cancellation_policy
         self._lifecycle = lifecycle
         self._url_selection_strategy = url_selection_strategy
+        # Per-TEMPLATE URL affinity for sticky graph credits, keyed by the
+        # nonce-stripped template id and minted DETERMINISTICALLY from it
+        # (`_stable_graph_url_index`) so the WARMUP priming issuer and the
+        # PROFILING replay issuer -- separate per-phase objects -- land every
+        # instance/recycle of one template on the same backend. Entries
+        # persist for the issuer's lifetime BY DESIGN (a recycle after
+        # end_graph_trace must reuse the primed backend); the issuer is
+        # per-phase and the map is bounded by the corpus's template count.
+        self._graph_url_affinity: dict[str, int] = {}
         # Tree accounting defaults to PROFILING-only (WARMUP keeps the legacy
         # in-flight teardown release), but ``session_tree_registry_enabled``
         # overrides that gate so accelerated agentic warmup -- which DOES open
@@ -241,6 +252,33 @@ class CreditIssuer:
             self._session_tree_registry.open_tree(
                 turn.effective_root_correlation_id, self._phase_key, root_pending=True
             )
+
+    def _finality_for_issue(self, turn: TurnToSend) -> tuple[bool | None, bool]:
+        """Issue-time lineage finality from ``SessionTreeRegistry`` state.
+
+        Conservative by spec: returns ``None``/``False`` whenever indeterminate
+        (including the non-DAG path where no registry is engaged).
+        """
+        registry = self._session_tree_registry
+        if registry is None:
+            return None, False
+        root_id = turn.effective_root_correlation_id
+        is_root = turn.parent_correlation_id is None
+        is_parent_final: bool | None = None
+        if not is_root and turn.parent_correlation_id == root_id:
+            # v1: parent finality is determinable only when the parent IS the
+            # root (the registry tracks per-tree, not per-intermediate-node).
+            is_parent_final = registry.root_terminal(root_id)
+        is_tree_final = registry.is_last_tree_request(
+            root_id,
+            is_final_turn=turn.is_final_turn,
+            is_root_credit=is_root,
+            # Any-mode branch flag, NOT the FORK-only has_forks: a final turn
+            # declaring SPAWN branches spawns descendants at return-intercept,
+            # after this stamp, so it must never read as tree-final.
+            has_branches=turn.has_branches,
+        )
+        return is_parent_final, is_tree_final
 
     def release_lane_credit(self) -> None:
         """Release a session slot directly (legacy / non-registry path).
@@ -429,15 +467,34 @@ class CreditIssuer:
         )
 
         # Get URL index from strategy (for multi-URL load balancing).
-        # Only advance the round-robin when a session starts (turn 0 or a
-        # mid-trace resume). Continuations reuse the url_index stored in the
-        # worker's UserSession.
-        is_session_start = turn.turn_index == 0 or turn.is_session_start
-        url_index = (
-            self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_session_start
-            else None
-        )
+        # Sticky graph credits get per-template URL affinity minted
+        # deterministically from the nonce-stripped template identity (NOT the
+        # per-trajectory ``x_correlation_id``, which embeds a fresh uuid and
+        # would let warmup priming and profiling replay land on
+        # different backends); linear turns only advance the round-robin when a
+        # session starts (turn 0 or a mid-trace resume) -- continuations reuse
+        # the url_index stored in the worker's UserSession.
+        if turn.trace_id is not None and self._url_selection_strategy:
+            # Key on the nonce-stripped TEMPLATE id: instance ids carry fresh
+            # nonces ({template}::{nonce}), and a nonce-bearing key would
+            # silently re-shuffle URLs between warmup and profiling.
+            affinity_key = template_id(turn.trace_id)
+            if affinity_key in self._graph_url_affinity:
+                url_index = self._graph_url_affinity[affinity_key]
+            else:
+                url_index = self._stable_graph_url_index(
+                    affinity_key, self._url_selection_strategy
+                )
+                self._graph_url_affinity[affinity_key] = url_index
+        else:
+            is_session_start = turn.turn_index == 0 or turn.is_session_start
+            url_index = (
+                self._url_selection_strategy.next_url_index()
+                if self._url_selection_strategy and is_session_start
+                else None
+            )
+
+        is_parent_final, is_tree_final = self._finality_for_issue(turn)
 
         cache_bust_marker = turn.cache_bust_marker
         cache_bust_target_for_credit = turn.cache_bust_target
@@ -466,11 +523,16 @@ class CreditIssuer:
             root_correlation_id=turn.root_correlation_id,
             counts_toward_phase_target=turn.counts_toward_phase_target,
             has_forks=turn.has_forks,
+            is_parent_final=is_parent_final,
+            is_tree_final=is_tree_final,
             no_request=turn.no_request,
             branch_mode=turn.branch_mode,
             cache_bust_marker=cache_bust_marker,
             cache_bust_target=cache_bust_target_for_credit,
             max_tokens_override=turn.max_tokens_override,
+            trace_id=turn.trace_id,
+            node_ordinal=turn.node_ordinal,
+            first_token_event=turn.first_token_event,
         )
 
         await self._credit_router.send_credit(credit=credit)
@@ -482,6 +544,132 @@ class CreditIssuer:
             self._progress.all_credits_sent_event.set()
 
         return not is_final_credit
+
+    async def issue_graph_credit(self, turn: TurnToSend) -> bool:
+        """Issue an agent-graph credit, BYPASSING the linear session-slot lifecycle.
+
+        Graph traces are a fan-out DAG: the executor fires nodes in dataflow-
+        readiness order, not the linear ``turn_index==0`` -> ``num_turns-1``
+        sequence the session-slot acquire/release arithmetic assumes. Engaging
+        ``acquire_session_slot`` (turn0) here would either fail to acquire (the
+        first-fired node is rarely ordinal 0) or leak the slot (the terminal
+        node's ordinal rarely equals ``num_turns-1``), deadlocking the phase
+        once every slot leaks. Trace-admission concurrency is owned by the
+        ``AgentGraphReplayStrategy`` instead.
+
+        A prefill slot is STILL acquired per request (per-request prompt-
+        processing back-pressure is orthogonal to session accounting). The
+        ``can_send_any_turn`` stop gate is honored so cancellation /
+        duration / request-count caps still apply.
+
+        The matching release-side bypass lives in
+        ``CreditCallbackHandler._release_slots_for_return`` (gated on
+        ``credit.trace_id is not None``), so a graph credit never touches the
+        session-slot counter on either side.
+
+        Returns:
+            True iff the credit was placed on the wire.
+        """
+        # Graph credits use the DAG-child stop gate, NOT ``can_send_any_turn``.
+        # ``AgentGraphReplayStrategy`` owns completion (a trace is DONE when its
+        # executor drains), so the linear ``SessionCountStopCondition``
+        # (``--num-conversations``) must NOT truncate a fan-out DAG mid-trace --
+        # it opts out of DAG-child gating for exactly this reason. Cancellation,
+        # duration, and ``--request-count`` still apply.
+        if not self._stop_checker.can_send_dag_child_turn():
+            return False
+        acquired = await self._concurrency_manager.acquire_prefill_slot(
+            self._phase_key, self._stop_checker.can_send_dag_child_turn
+        )
+        if not acquired:
+            return False
+        await self._issue_credit_internal(turn)
+        return True
+
+    def _stable_graph_url_index(
+        self, affinity_key: str, strategy: URLSelectionStrategyProtocol
+    ) -> int:
+        """Deterministically map a graph template onto a URL index.
+
+        The mapping must be a pure function of TEMPLATE identity, NOT of mint
+        order: warmup priming and profiling replay run in SEPARATE per-phase
+        issuers, and every instance/recycle of one template must land on the
+        backend that primed its KV -- so the key (the nonce-stripped template
+        id) hashes deterministically onto the URL list. Distribution across a
+        corpus's templates is statistically uniform under the hash.
+
+        Args:
+            affinity_key: The nonce-stripped template id to map.
+            strategy: The configured URL selection strategy (the caller gates on
+                a configured strategy, so this is never None here).
+
+        Raises:
+            ValueError: If the strategy exposes an empty ``urls``. The built-in
+                ``RoundRobinURLSampler`` rejects that at construction, but the
+                ``url_selection_strategy`` plugin category is extensible, so a
+                third-party strategy could reach here; there is no valid
+                fallback (``next_url_index`` divides by ``len(urls)``).
+        """
+        urls = strategy.urls
+        if not urls:
+            raise ValueError(
+                f"URL selection strategy {type(strategy).__name__} exposes an "
+                "empty 'urls'; cannot map graph template "
+                f"'{affinity_key}' onto a URL index."
+            )
+        digest = hashlib.sha256(affinity_key.encode()).digest()
+        return int.from_bytes(digest[:8], "big") % len(urls)
+
+    async def end_graph_trace(self, trace_id: str) -> None:
+        """Close a graph instance's sticky lifecycle (router session only).
+
+        Called ONCE per instance by ``AgentGraphReplayStrategy`` at the
+        adapter-reap points (all in-flight dispatches for the instance
+        drained, or phase teardown for retained adapters). Forwards to the
+        router, which closes the instance's sticky session and notifies the
+        sticky worker (``GraphTraceEnd``). URL affinity is deliberately NOT
+        evicted: it keys on the nonce-stripped template, and a recycle of the
+        template must land on the backend that primed its KV. Idempotent end
+        to end.
+        """
+        await self._credit_router.end_graph_trace(trace_id)
+
+    def mark_graph_sending_complete(self) -> None:
+        """Signal that a graph phase will issue no further credits.
+
+        ``AgentGraphReplayStrategy`` owns completion: a graph credit NEVER trips
+        ``is_final_credit`` (``CreditCounter.increment_sent`` returns False for
+        every ``trace_id``-carrying credit), so the issuer never auto-freezes
+        the sent counts or sets ``all_credits_sent_event`` the way it does for
+        linear phases (``_issue_credit_internal``). The strategy calls this once
+        its executors have all drained -- i.e. every node-dispatch that will
+        ever be issued has been issued -- to freeze the authoritative
+        ``final_requests_sent`` (the per-node record count) and unblock the
+        ``PhaseRunner``'s ``_wait_for_sending_complete``.
+
+        Idempotent: setting an already-set ``asyncio.Event`` is a no-op, and
+        re-freezing simply re-snapshots the (now stable) sent counters.
+        """
+        self._progress.freeze_sent_counts()
+        self._progress.all_credits_sent_event.set()
+
+    def graph_all_returned(self) -> bool:
+        """True iff every issued graph credit has returned or cancelled.
+
+        Reads the same ``check_all_returned_or_cancelled`` predicate the
+        callback handler uses; meaningful only AFTER
+        ``mark_graph_sending_complete`` has frozen ``final_requests_sent``.
+        """
+        return self._progress.check_all_returned_or_cancelled()
+
+    def set_graph_all_returned_event(self) -> None:
+        """Set the phase's all-credits-returned event for a graph phase.
+
+        Used by ``AgentGraphReplayStrategy`` only in the degenerate
+        no-credits-issued case (an empty trace set), where no credit return
+        will ever fire the event via the callback handler.
+        """
+        self._progress.all_credits_returned_event.set()
 
     async def dispatch_first_turn(self, sampled_session: SampledSession) -> bool:
         """Dispatch the first turn of a mid-run DAG child session.
@@ -587,6 +775,7 @@ class CreditIssuer:
             # the sampled root plan and counts.
             counts_toward_phase_target=pending.parent_agent_depth == 0,
             has_forks=pending.parent_has_forks_on_gated_turn,
+            has_branches=pending.parent_has_branches_on_gated_turn,
             no_request=pending.parent_no_request_on_gated_turn,
             branch_mode=pending.parent_branch_mode,
             cache_bust_marker=pending.parent_cache_bust_marker,

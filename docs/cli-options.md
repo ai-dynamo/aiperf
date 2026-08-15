@@ -40,6 +40,10 @@ Expand a sweep config and print the resulting variations.
 
 Validate an AIPerf config file.
 
+### [`dynamo`](#aiperf-dynamo)
+
+Dynamo agent-trace tooling. Use `aiperf dynamo trace-report` to aggregate metrics from a captured trace.
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -292,6 +296,12 @@ Path to an AIPerf YAML config to validate.
 
 <hr/>
 
+## `aiperf dynamo`
+
+Dynamo agent-trace tooling. Use `aiperf dynamo trace-report` to aggregate metrics from a captured trace.
+
+<hr/>
+
 ## `aiperf profile`
 
 Run the Profile subcommand.
@@ -533,7 +543,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset` and `--graph-format`. Explicitly selects the custom loader and bypasses graph auto-detection.
 <br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
@@ -548,8 +558,13 @@ For weka_trace inputs, emit Turn.delay using only the recorded per-request `thin
 
 #### `--max-context-length` `<int>`
 
-Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.
+Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Recorded graph (`dynamo_trace`) replay also forwards this into synthesis as a peak-context filter. Not a DatasetManager tokenize filter; rejected for explicit non-Weka trace/pool formats.
 <br/>_Constraints: ≥ 1_
+
+#### `--graph-format` `<str>`
+
+Select the recorded-graph format for `--input-file`, overriding graph-adapter auto-detection. Registered names: `dynamo_trace`. Requires `--input-file`. Mutually exclusive with --custom-dataset-type.
+<br/>_Choices: [`dynamo_trace`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -558,7 +573,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
+PERMIT trace-replay dataset selection to wrap (reuse the finite trace pool) when the requested load exceeds the number of eligible traces. This is a permission, NOT an instruction: on its own it never duplicates traffic. What it does is stop `--concurrency` exceeding the distinct loaded trace count from being a hard configuration error. Actual reuse happens only when a stop condition (`--request-count` / `--benchmark-duration` / `--num-conversations`) keeps asking for work after the corpus is exhausted, at which point lanes recycle the pool. `--allow-dataset-wrap` permits it; `--no-allow-dataset-wrap` forbids it. Unset (the default, None) defers to a derived default computed at resolution time and surfaced on `run.resolved.allow_dataset_wrap`: permitted when a cache-bust target is active (distinct markers keep replayed traffic from colliding in the server KV cache), forbidden otherwise. Consumed by the agentic-replay trajectory source, and by the agent-graph replay strategy ONLY on its closed-loop path (`--no-open-loop-replay`) -- under the DEFAULT open-loop replay every trace runs exactly once at its recorded start, so there are no lanes to fill, over-subscription is a harmless unused ceiling, and this flag has no effect. Ignored by synthetic/public datasets.
 
 #### `--random-seed` `<int>`
 
@@ -659,17 +674,17 @@ Collapse idle gaps between consecutive requests (across all sessions) to at most
 
 #### `--replay-speedup` `<float>`
 
-Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader. Maps to FileDataset ``replay_speedup``.
+Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Supported by Baseten and Dynamo graph trace loaders. Maps to FileDataset ``replay_speedup``.
 <br/>_Constraints: > 0.0_
 
 #### `--open-loop-replay`, `--no-open-loop-replay`
 
-Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Pass `--no-open-loop-replay` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_replay``.
+Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Pass `--no-open-loop-replay` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Also honored by Dynamo graph trace replay. Maps to FileDataset ``open_loop_replay``.
 <br/>_Default: `True`_
 
 #### `--open-loop-strict`
 
-In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_strict``.
+In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Also honored by Dynamo graph trace replay. Maps to FileDataset ``open_loop_strict``.
 <br/>_Flag (no value required)_
 
 #### `--omit-kv-hints`
@@ -705,7 +720,7 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 
 #### `--cache-bust` `<str>`
 
-Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay timing mode. 'none' disables the feature (default). See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples.
+Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay and agent_graph timing modes. 'none' disables the feature (default). See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples.
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
 
@@ -730,7 +745,7 @@ Length of shared system prompt in tokens. This prompt is identical across all se
 
 #### `--user-context-prompt-length` `<int>`
 
-Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Requires --num-dataset-entries to be specified. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt, generated on demand per session (the pool size follows --num-dataset-entries, default 100). Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
 <br/>_Constraints: ≥ 1_
 
 ### Input Sequence Length (ISL)
@@ -1079,7 +1094,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size: fixed-schedule runs use the number of records in the trace, graph workloads stay unbounded (a single corpus pass), and every other unbounded run falls back to `10` requests. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -1107,19 +1122,19 @@ Abort the run early when (failed_records / total_records) exceeds this ratio. De
 
 #### `--trajectory-start-min-ratio` `<float>`
 
-AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.
+Lower bound (inclusive) on the random start position within each trajectory, as a fraction of the trace's total turn count. The two timing modes read this default DIFFERENTLY. AGENTIC_REPLAY: the 0.0/1.0 defaults apply and open the full trace. AGENT_GRAPH: these defaults do NOT apply -- the t* window is OFF (every trace replays in full from t*=0) unless you name the flag explicitly, because the graph path resolves an unset phase value as a closed window (see config.phases.resolve_graph_tstar_window). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
-<br/>_Default: `0.25`_
+<br/>_Default: `0.0`_
 
 #### `--trajectory-start-max-ratio` `<float>`
 
-AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.
+Upper bound (inclusive) on the random start position within each trajectory, as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup. The two timing modes read this default DIFFERENTLY. AGENTIC_REPLAY: the 0.0/1.0 defaults apply and open the full trace. AGENT_GRAPH: these defaults do NOT apply -- the t* window is OFF (every trace replays in full from t*=0) unless you name the flag explicitly, because the graph path resolves an unset phase value as a closed window (see config.phases.resolve_graph_tstar_window).
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
-<br/>_Default: `0.75`_
+<br/>_Default: `1.0`_
 
 #### `--burst-phase-starts`
 
-AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp, synchronized start), e.g. for a throughput-oriented run rather than a faithful arrival replay.
+AGENTIC_REPLAY and AGENT_GRAPH: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp), e.g. for a throughput-oriented run rather than a faithful arrival replay. SCOPE on AGENT_GRAPH: this collapses the per-trace LEADING offsets only. It does NOT synchronize traces with each other under the default --open-loop-replay, where each trace is still held to its own recorded start timestamp; pass --no-open-loop-replay for that.
 <br/>_Flag (no value required)_
 
 #### `--trace-idle-gap-cap-seconds` `<float>`
@@ -1147,12 +1162,12 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
-The maximum number of warmup requests to send before benchmarking. If not set and no --warmup-duration is set, then no warmup phase will be used.
+The maximum number of warmup requests to send before benchmarking. If none of --warmup-request-count, --num-warmup-sessions, or --warmup-duration is set, then no warmup phase will be used.
 <br/>_Constraints: > 0_
 
 #### `--warmup-duration` `<float>`
 
-The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
+The maximum duration in seconds for the warmup phase. Every warmup cap that is set (--warmup-request-count, --num-warmup-sessions, --warmup-duration) applies independently, and the warmup phase ends as soon as the first one is reached. If none of them are set, no warmup phase will be used.
 <br/>_Constraints: > 0_
 
 #### `--agentic-cache-warmup-duration` `<float>`
@@ -1167,7 +1182,7 @@ AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier
 
 #### `--num-warmup-sessions` `<int>`
 
-The number of sessions to use for the warmup phase. If not set, it will use the `--warmup-request-count` value.
+The number of sessions to use for the warmup phase. Applies independently of `--warmup-request-count` and `--warmup-duration`; the warmup phase ends at whichever cap is reached first.
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-concurrency` `<int>`
@@ -1191,7 +1206,7 @@ The arrival pattern to use for the warmup phase. If not set, it will use the `--
 
 #### `--warmup-grace-period` `<float>`
 
-The grace period in seconds to wait for responses after warmup phase ends. Only applies when warmup is enabled. Responses received within this period are included in warmup completion. If not set, waits indefinitely for all warmup responses.
+The grace period in seconds to wait for responses after warmup phase ends. Requires `--warmup-duration`: grace_period applies only to duration-bounded warmup phases, and is rejected when warmup is triggered solely by `--warmup-request-count` / `--num-warmup-sessions`. Responses received within this period are included in warmup completion. If not set, waits indefinitely for all warmup responses.
 <br/>_Constraints: ≥ 0_
 
 #### `--warmup-concurrency-ramp-duration` `<float>`
@@ -1527,7 +1542,7 @@ Acquisition function override for the Optuna BoTorch sampler. Only consulted whe
 
 #### `--optuna-terminator` `<str>`
 
-Optional posterior-regret stopping rule layered on top of the three-signal convergence check. Only consulted when --search-planner=optuna. ``regret`` selects Optuna's ``RegretBoundEvaluator`` (Makarova et al. 2022, https://proceedings.mlr.press/v188/makarova22a.html). ``emmr`` selects ``EMMREvaluator`` (Ishibashi et al. 2023, https://proceedings.mlr.press/v206/ishibashi23a.html). Both are in the same family as Wilson 2024's PRB stopping rule and ship in Optuna core (no extra dep). ``none`` (default) disables; convergence is then driven by --search-max-iterations / --improvement-patience / --plateau-cv only.
+Optional posterior-regret stopping rule layered on top of the three-signal convergence check. Only consulted when --search-planner=optuna. ``regret`` selects Optuna's ``RegretBoundEvaluator`` (Makarova et al. 2022, https://proceedings.mlr.press/v188/makarova22a.html). ``emmr`` selects ``EMMREvaluator`` (Ishibashi et al. 2023, https://proceedings.mlr.press/v206/ishibashi23a.html). Both are in the same family as Wilson 2024's PRB stopping rule and ship in Optuna core (no extra dep). ``none`` (default) disables; convergence is then driven by --search-max-iterations and the YAML-only ``improvement_patience`` / ``plateau_threshold`` sweep settings only.
 
 #### `--search-percentile-pooling` `<str>`
 
@@ -1551,7 +1566,7 @@ Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. F
 
 #### `--search-recipe` `<str>`
 
-Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
+Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with the recipe-defining --search-* flags (--search-space, --search-metric, --search-stat, --search-direction, --search-planner, --optuna-*, --search-percentile-pooling, --bo-constraint-mode); the tunable budget/seed knobs (--search-max-iterations, --search-initial-points, --search-random-seed) are accepted alongside a BO recipe. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
 
 #### `--ttft-sla-ms` `<float>`
 
@@ -1842,7 +1857,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 ### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `spec_decode_adapter`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `graph_adapter`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `spec_decode_adapter`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 ### `--name` `<str>`
 
@@ -2095,7 +2110,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset` and `--graph-format`. Explicitly selects the custom loader and bypasses graph auto-detection.
 <br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
@@ -2110,8 +2125,13 @@ For weka_trace inputs, emit Turn.delay using only the recorded per-request `thin
 
 #### `--max-context-length` `<int>`
 
-Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.
+Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Recorded graph (`dynamo_trace`) replay also forwards this into synthesis as a peak-context filter. Not a DatasetManager tokenize filter; rejected for explicit non-Weka trace/pool formats.
 <br/>_Constraints: ≥ 1_
+
+#### `--graph-format` `<str>`
+
+Select the recorded-graph format for `--input-file`, overriding graph-adapter auto-detection. Registered names: `dynamo_trace`. Requires `--input-file`. Mutually exclusive with --custom-dataset-type.
+<br/>_Choices: [`dynamo_trace`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -2120,7 +2140,7 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 #### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
 
-Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled or an active --cache-bust target already keeps repeated-trace traffic distinct.
+PERMIT trace-replay dataset selection to wrap (reuse the finite trace pool) when the requested load exceeds the number of eligible traces. This is a permission, NOT an instruction: on its own it never duplicates traffic. What it does is stop `--concurrency` exceeding the distinct loaded trace count from being a hard configuration error. Actual reuse happens only when a stop condition (`--request-count` / `--benchmark-duration` / `--num-conversations`) keeps asking for work after the corpus is exhausted, at which point lanes recycle the pool. `--allow-dataset-wrap` permits it; `--no-allow-dataset-wrap` forbids it. Unset (the default, None) defers to a derived default computed at resolution time and surfaced on `run.resolved.allow_dataset_wrap`: permitted when a cache-bust target is active (distinct markers keep replayed traffic from colliding in the server KV cache), forbidden otherwise. Consumed by the agentic-replay trajectory source, and by the agent-graph replay strategy ONLY on its closed-loop path (`--no-open-loop-replay`) -- under the DEFAULT open-loop replay every trace runs exactly once at its recorded start, so there are no lanes to fill, over-subscription is a harmless unused ceiling, and this flag has no effect. Ignored by synthetic/public datasets.
 
 #### `--random-seed` `<int>`
 
@@ -2221,17 +2241,17 @@ Collapse idle gaps between consecutive requests (across all sessions) to at most
 
 #### `--replay-speedup` `<float>`
 
-Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader. Maps to FileDataset ``replay_speedup``.
+Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Supported by Baseten and Dynamo graph trace loaders. Maps to FileDataset ``replay_speedup``.
 <br/>_Constraints: > 0.0_
 
 #### `--open-loop-replay`, `--no-open-loop-replay`
 
-Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Pass `--no-open-loop-replay` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_replay``.
+Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Pass `--no-open-loop-replay` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Also honored by Dynamo graph trace replay. Maps to FileDataset ``open_loop_replay``.
 <br/>_Default: `True`_
 
 #### `--open-loop-strict`
 
-In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_strict``.
+In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Also honored by Dynamo graph trace replay. Maps to FileDataset ``open_loop_strict``.
 <br/>_Flag (no value required)_
 
 #### `--omit-kv-hints`
@@ -2267,7 +2287,7 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 
 #### `--cache-bust` `<str>`
 
-Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay timing mode. 'none' disables the feature (default). See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples.
+Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay and agent_graph timing modes. 'none' disables the feature (default). See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples.
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
 
@@ -2292,7 +2312,7 @@ Length of shared system prompt in tokens. This prompt is identical across all se
 
 #### `--user-context-prompt-length` `<int>`
 
-Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Requires --num-dataset-entries to be specified. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt, generated on demand per session (the pool size follows --num-dataset-entries, default 100). Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
 <br/>_Constraints: ≥ 1_
 
 ### Input Sequence Length (ISL)
@@ -2641,7 +2661,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size: fixed-schedule runs use the number of records in the trace, graph workloads stay unbounded (a single corpus pass), and every other unbounded run falls back to `10` requests. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -2669,19 +2689,19 @@ Abort the run early when (failed_records / total_records) exceeds this ratio. De
 
 #### `--trajectory-start-min-ratio` `<float>`
 
-AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.
+Lower bound (inclusive) on the random start position within each trajectory, as a fraction of the trace's total turn count. The two timing modes read this default DIFFERENTLY. AGENTIC_REPLAY: the 0.0/1.0 defaults apply and open the full trace. AGENT_GRAPH: these defaults do NOT apply -- the t* window is OFF (every trace replays in full from t*=0) unless you name the flag explicitly, because the graph path resolves an unset phase value as a closed window (see config.phases.resolve_graph_tstar_window). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
-<br/>_Default: `0.25`_
+<br/>_Default: `0.0`_
 
 #### `--trajectory-start-max-ratio` `<float>`
 
-AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.
+Upper bound (inclusive) on the random start position within each trajectory, as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup. The two timing modes read this default DIFFERENTLY. AGENTIC_REPLAY: the 0.0/1.0 defaults apply and open the full trace. AGENT_GRAPH: these defaults do NOT apply -- the t* window is OFF (every trace replays in full from t*=0) unless you name the flag explicitly, because the graph path resolves an unset phase value as a closed window (see config.phases.resolve_graph_tstar_window).
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
-<br/>_Default: `0.75`_
+<br/>_Default: `1.0`_
 
 #### `--burst-phase-starts`
 
-AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp, synchronized start), e.g. for a throughput-oriented run rather than a faithful arrival replay.
+AGENTIC_REPLAY and AGENT_GRAPH: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp), e.g. for a throughput-oriented run rather than a faithful arrival replay. SCOPE on AGENT_GRAPH: this collapses the per-trace LEADING offsets only. It does NOT synchronize traces with each other under the default --open-loop-replay, where each trace is still held to its own recorded start timestamp; pass --no-open-loop-replay for that.
 <br/>_Flag (no value required)_
 
 #### `--trace-idle-gap-cap-seconds` `<float>`
@@ -2709,12 +2729,12 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
-The maximum number of warmup requests to send before benchmarking. If not set and no --warmup-duration is set, then no warmup phase will be used.
+The maximum number of warmup requests to send before benchmarking. If none of --warmup-request-count, --num-warmup-sessions, or --warmup-duration is set, then no warmup phase will be used.
 <br/>_Constraints: > 0_
 
 #### `--warmup-duration` `<float>`
 
-The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
+The maximum duration in seconds for the warmup phase. Every warmup cap that is set (--warmup-request-count, --num-warmup-sessions, --warmup-duration) applies independently, and the warmup phase ends as soon as the first one is reached. If none of them are set, no warmup phase will be used.
 <br/>_Constraints: > 0_
 
 #### `--agentic-cache-warmup-duration` `<float>`
@@ -2729,7 +2749,7 @@ AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier
 
 #### `--num-warmup-sessions` `<int>`
 
-The number of sessions to use for the warmup phase. If not set, it will use the `--warmup-request-count` value.
+The number of sessions to use for the warmup phase. Applies independently of `--warmup-request-count` and `--warmup-duration`; the warmup phase ends at whichever cap is reached first.
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-concurrency` `<int>`
@@ -2753,7 +2773,7 @@ The arrival pattern to use for the warmup phase. If not set, it will use the `--
 
 #### `--warmup-grace-period` `<float>`
 
-The grace period in seconds to wait for responses after warmup phase ends. Only applies when warmup is enabled. Responses received within this period are included in warmup completion. If not set, waits indefinitely for all warmup responses.
+The grace period in seconds to wait for responses after warmup phase ends. Requires `--warmup-duration`: grace_period applies only to duration-bounded warmup phases, and is rejected when warmup is triggered solely by `--warmup-request-count` / `--num-warmup-sessions`. Responses received within this period are included in warmup completion. If not set, waits indefinitely for all warmup responses.
 <br/>_Constraints: ≥ 0_
 
 #### `--warmup-concurrency-ramp-duration` `<float>`
@@ -3089,7 +3109,7 @@ Acquisition function override for the Optuna BoTorch sampler. Only consulted whe
 
 #### `--optuna-terminator` `<str>`
 
-Optional posterior-regret stopping rule layered on top of the three-signal convergence check. Only consulted when --search-planner=optuna. ``regret`` selects Optuna's ``RegretBoundEvaluator`` (Makarova et al. 2022, https://proceedings.mlr.press/v188/makarova22a.html). ``emmr`` selects ``EMMREvaluator`` (Ishibashi et al. 2023, https://proceedings.mlr.press/v206/ishibashi23a.html). Both are in the same family as Wilson 2024's PRB stopping rule and ship in Optuna core (no extra dep). ``none`` (default) disables; convergence is then driven by --search-max-iterations / --improvement-patience / --plateau-cv only.
+Optional posterior-regret stopping rule layered on top of the three-signal convergence check. Only consulted when --search-planner=optuna. ``regret`` selects Optuna's ``RegretBoundEvaluator`` (Makarova et al. 2022, https://proceedings.mlr.press/v188/makarova22a.html). ``emmr`` selects ``EMMREvaluator`` (Ishibashi et al. 2023, https://proceedings.mlr.press/v206/ishibashi23a.html). Both are in the same family as Wilson 2024's PRB stopping rule and ship in Optuna core (no extra dep). ``none`` (default) disables; convergence is then driven by --search-max-iterations and the YAML-only ``improvement_patience`` / ``plateau_threshold`` sweep settings only.
 
 #### `--search-percentile-pooling` `<str>`
 
@@ -3113,7 +3133,7 @@ Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. F
 
 #### `--search-recipe` `<str>`
 
-Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
+Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with the recipe-defining --search-* flags (--search-space, --search-metric, --search-stat, --search-direction, --search-planner, --optuna-*, --search-percentile-pooling, --bo-constraint-mode); the tunable budget/seed knobs (--search-max-iterations, --search-initial-points, --search-random-seed) are accepted alongside a BO recipe. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
 
 #### `--ttft-sla-ms` `<float>`
 

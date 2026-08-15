@@ -253,6 +253,21 @@ navigation:
     path: reference/yaml-config-roadmap.md
   - page: Mocking a ROCm Environment
     path: reference/mock-amdsmi.md
+  - section: Agent Graph & Replay Internals
+    collapsed: true
+    contents:
+    - page: Graph Ingest & Build Pipeline
+      path: reference/graph-ingest-build-pipeline.md
+    - page: Graph Segment Unified Store
+      path: reference/graph-segment-unified-store.md
+    - page: AIPerf Graph Async Dataflow Runtime Architecture
+      path: reference/graph-async-dataflow-runtime.md
+    - page: Graph Worker Materialization
+      path: reference/graph-worker-materialization.md
+    - page: Agent Graph Timestamp Replay Specification
+      path: reference/graph-timestamp-replay-spec.md
+    - page: Graph Runtime Troubleshooting
+      path: reference/graph-runtime-troubleshooting.md
 
 - section: Server Metrics
   collapsed: true

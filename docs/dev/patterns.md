@@ -14,12 +14,12 @@ lazily loaded via import strings in `aiperf.cli` — modules are only imported
 when their command is invoked:
 
 ```python
-# aiperf/cli.py — register with lazy import strings
+# In the top-level `aiperf.cli` app — register with lazy import strings
 app.command("aiperf.cli_commands.profile:app", name="profile")
 ```
 
 ```python
-# aiperf/cli_commands/profile.py — thin command definition
+# In `aiperf.cli_commands.profile` — thin command definition
 from cyclopts import App
 from aiperf.config.flags import CLIConfig
 
@@ -51,8 +51,8 @@ def profile(*, cli_config: CLIConfig) -> None:
 - Export a single `App` named `app`.
 - Hyphenate multi-word commands: `App(name="analyze-trace")`.
 - Keep module-level imports minimal; heavy deps go inside the function body.
-- Heavy implementation logic lives in a `cli.py` inside the owning domain
-  package (e.g. `aiperf/plugin/cli.py`), lazily imported at call time.
+- Heavy implementation logic lives in a `cli` module inside the owning domain
+  package (e.g. `aiperf.plugin.cli`), lazily imported at call time.
 
 ## Adding a New CLI Flag
 
@@ -63,7 +63,7 @@ class.** Disambiguate collisions with a section prefix
 (e.g. `image_batch_size` vs `audio_batch_size`).
 
 ```python
-# src/aiperf/config/flags/cli_config.py — add the field in its section block
+# On `CLIConfig` — add the field in its section block
 my_new_flag: Annotated[
     int | None,
     Field(
@@ -79,7 +79,7 @@ my_new_flag: Annotated[
 ] = None
 ```
 
-**Pick a `Groups.X` from `src/aiperf/config/cli_parameter.py`:**
+**Pick a `Groups.X` constant from the `Groups` container:**
 
 `ENDPOINT`, `INPUT`, `FIXED_SCHEDULE`, `GOODPUT`, `OUTPUT`, `HTTP_TRACE`,
 `TOKENIZER`, `LOAD_GENERATOR`, `WARMUP`, `USER_CENTRIC`,
@@ -88,25 +88,24 @@ my_new_flag: Annotated[
 `VIDEO_INPUT`, `SERVICE`, `SERVER_METRICS`, `GPU_TELEMETRY`, `UI`,
 `WORKERS`, `ZMQ_COMMUNICATION`, `ACCURACY`, `MULTI_RUN`.
 
-If none fit, prefer adding a new `Groups.X` constant in
-`src/aiperf/config/cli_parameter.py` over reusing an unrelated group.
+If none fit, prefer adding a new `Groups.X` constant over reusing an unrelated
+group.
 
 Then:
 
-1. Add the attr name to the appropriate `<SECTION>_FIELDS` frozenset in
-   `src/aiperf/config/flags/_section_fields.py` so the resolver/converter
-   can scope `cli.model_fields_set & <SECTION>_FIELDS` queries.
+1. Add the attr name to the appropriate `<SECTION>_FIELDS` frozenset so the
+   resolver/converter can scope `cli.model_fields_set & <SECTION>_FIELDS`
+   queries.
 2. If the flag maps to an existing `AIPerfConfig` key, add an entry to that section's
-   field map (e.g. `_ENDPOINT_FIELD_MAP` in `_converter_endpoint.py`).
-   Otherwise, read it directly in the relevant `_converter_*.py` builder.
+   field map (e.g. `_ENDPOINT_FIELD_MAP` for the endpoint section).
+   Otherwise, read it directly in the relevant section converter builder.
 3. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
    `make generate-env-vars-docs` if you also added a corresponding env var.
 4. Add a unit test under `tests/unit/config/` constructing
    `CLIConfig(my_new_flag=...)` and asserting the converter emits the
    right `AIPerfConfig` shape.
-5. The disjointedness invariant in
-   `tests/unit/config/v1/test_section_fields.py` will catch any
-   cross-section name collision automatically.
+5. The disjointedness invariant test over the `<SECTION>_FIELDS` frozensets
+   will catch any cross-section name collision automatically.
 
 **CLI flag DTO charter (enforced):**
 - No validators on CLIConfig fields. `BeforeValidator(parse_str_or_list)` for
@@ -157,7 +156,7 @@ Adaptive scale is a YAML-only timing strategy configured on the phase it control
 
 ## Service Pattern
 
-Services run in separate processes via `bootstrap.py`:
+Services run in separate processes via the service bootstrap:
 
 ```python
 class MyService(BaseComponentService):
@@ -289,11 +288,11 @@ if platform.system() == "Windows":
 ```
 
 Canonical examples:
-- `src/aiperf/common/bootstrap.py` — event-loop policy switch, timer-resolution bump, stdio FD redirect (Windows + macOS branches)
-- `src/aiperf/config/comm/ipc.py` — `build_socket_address` (ipc:// on POSIX vs tcp:// loopback on Windows)
-- `src/aiperf/common/base_service.py` — force-kill path (`os._exit` on Windows vs SIGKILL on POSIX)
+- `_configure_event_loop_policy_for_platform`, `_request_high_resolution_timer_on_windows`, and `_redirect_stdio_to_devnull` in the service bootstrap — event-loop policy switch, timer-resolution bump, stdio FD redirect (Windows + macOS branches)
+- `build_socket_address` — ipc:// on POSIX vs tcp:// loopback on Windows
+- `_force_exit_process` — force-kill path (`os._exit` on Windows vs SIGKILL on POSIX)
 
-For tests that exercise both branches from non-target hosts, patch the constant at its consumer site (not at the source) — see `tests/unit/common/test_bootstrap_windows.py` for the pattern.
+For tests that exercise both branches from non-target hosts, patch the constant at its consumer site (not at the source), as the Windows bootstrap tests do.
 
 ## Logging Pattern
 
@@ -406,7 +405,7 @@ import numpy as np
 mean = float(np.mean([1.0, 2.0, float("nan")]))  # NaN, poisons callers
 ```
 
-Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py`
+Mechanical CI invariants in the finite-value property tests
 reject all three patterns for new code; see
 [`global-invariants.md`](global-invariants.md) for the full contract and
 the baseline-ratchet mechanism.
@@ -471,9 +470,9 @@ records, so their values are injected at summarize time by the
 `EnergyEfficiencyAnalyzer` plugin rather than derived by the standard
 registry walk.
 
-Reference files:
-- [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py) — metric registration classes
-- [`src/aiperf/metrics/energy_efficiency_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/energy_efficiency_analyzer.py) — injection site
+Reference symbols:
+- The power-efficiency metric classes — metric registration
+- `EnergyEfficiencyAnalyzer` — injection site
 
 ### The three-part contract
 
@@ -557,9 +556,8 @@ analyzer-injected values are never overwritten.
 
 ### Test contract
 
-The `_derive_value` invariants are pinned by
-[`tests/unit/metrics/test_energy_efficiency_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_energy_efficiency_analyzer.py)
-and the property tests in `tests/unit/property/`. The 24 concrete classes
+The `_derive_value` invariants are pinned by the `EnergyEfficiencyAnalyzer`
+unit tests and the property tests in `tests/unit/property/`. The 24 concrete classes
 (12 NVIDIA × 12 AMD) are each exercised: every `_derive_value` call must
 raise `NoMetricValue` with a message naming the tag, the injection site, and
 the catching path. A future weakening of any message fails the test rather
@@ -569,13 +567,13 @@ than silently drifting.
 
 To add a third GPU vendor (e.g. Intel) follow these steps:
 
-**1. Define the platform constant** in `src/aiperf/gpu_telemetry/constants.py`:
+**1. Define the platform constant** alongside the other GPU telemetry constants:
 
 ```python
 INTEL_GPU_TELEMETRY_PLATFORM = "intel"
 ```
 
-**2. Add 12 metric classes** to `src/aiperf/metrics/types/power_efficiency_metrics.py`,
+**2. Add 12 metric classes** next to the existing power-efficiency metrics,
 one per role, all inheriting `_InjectedEnergyMetric`. Mirror the NVIDIA or
 AMD block verbatim, substituting `Intel`, `intel_`, `GPU_POWER_EFFICIENCY_INTEL`,
 and `display_order` values starting at the next free band (e.g. 900–965):
@@ -592,8 +590,7 @@ class IntelTotalGpuPowerMetric(_InjectedEnergyMetric):
 # ... repeat for the other 11 roles
 ```
 
-**3. Add the console group** to `MetricConsoleGroup` in
-`src/aiperf/common/enums/enums.py`:
+**3. Add the console group** to `MetricConsoleGroup`:
 
 ```python
 GPU_POWER_EFFICIENCY_INTEL = "GPU Power Efficiency (Intel)"
@@ -603,17 +600,16 @@ GPU_POWER_EFFICIENCY_INTEL = "GPU Power Efficiency (Intel)"
 section (search for `GPU_POWER_EFFICIENCY_NVIDIA` to find the registration
 point).
 
-**5. Add power/energy field constants** to `src/aiperf/gpu_telemetry/constants.py`
-and extend `_PLATFORM_POWER_FIELDS` / `_PLATFORM_ENERGY_FIELDS` in
-`src/aiperf/gpu_telemetry/accumulator.py` so `total_power_watts` and
+**5. Add power/energy field constants** alongside the other GPU telemetry
+constants and extend the `_PLATFORM_POWER_FIELDS` / `_PLATFORM_ENERGY_FIELDS`
+maps that `GPUTelemetryAccumulator` reads, so `total_power_watts` and
 `total_energy_joules` can query the new vendor's fields.
 
-**6. Wire up `_VENDOR_METRICS`** in
-`src/aiperf/metrics/energy_efficiency_analyzer.py` — import the 12 new
-classes and add an entry keyed by `INTEL_GPU_TELEMETRY_PLATFORM`.
+**6. Wire up the `_VENDOR_METRICS` map** that `EnergyEfficiencyAnalyzer` reads —
+import the 12 new classes and add an entry keyed by `INTEL_GPU_TELEMETRY_PLATFORM`.
 
-**7. Add tests** — extend the parametrize tables in
-`tests/unit/metrics/test_energy_efficiency_analyzer.py` with an Intel stub
+**7. Add tests** — extend the parametrize tables in the
+`EnergyEfficiencyAnalyzer` unit tests with an Intel stub
 GPU and verify all 12 metric tags are emitted with correct values.
 
 No changes are needed to `EnergyEfficiencyAnalyzer.analyze()` itself: the
@@ -654,7 +650,7 @@ def test_with_mock_plugin():
 Console exporters subclass `ConsoleMetricsExporter` and configure rendering via class attributes — no method overrides required for the common case. The base class handles filtering, grouping, table construction, and printing; subclasses just declare what to show and when to run.
 
 ```python
-# src/aiperf/exporters/internal_metrics_console_exporter.py — gated single-table
+# Gated single-table exporter
 class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
     """Console exporter for INTERNAL framework metrics, gated on dev mode."""
 
@@ -807,8 +803,8 @@ When `plot:` is set, `~/.aiperf/plot_config.yaml` is ignored and
 `artifacts.auto_plot` flips to `True` unless explicitly `false`. The auto-plot
 callback writes the resolved envelope to `<artifact_dir>/.aiperf-plot-config.yaml`
 as a reproducibility receipt, so `aiperf plot <run>` later picks it up
-automatically without needing the original AIPerf YAML. Pydantic models live in
-`src/aiperf/config/plot.py`.
+automatically without needing the original AIPerf YAML. `PlotEnvelopeConfig` is
+the Pydantic model behind the section.
 
 ## Validator Pattern
 
@@ -818,7 +814,7 @@ with a ``<loc>: <reason>`` prefix where ``<loc>`` identifies the offending
 conversation/turn so misconfigurations surface before any credit is issued:
 
 ```python
-# src/aiperf/common/validators/orchestrator_v1.py - gate convention
+# Gate convention, as used by the v1 orchestrator validator
 raise NotImplementedError(
     f"conversation '{conv.conversation_id}' turn {idx}: "
     f"prerequisite kind '{prereq.kind}' not supported by v1 orchestrator"
@@ -830,14 +826,14 @@ raise NotImplementedError(
 Reusable response-parsing behavior lives in mixins applied to endpoint classes:
 
 ```python
-# src/aiperf/endpoints/raw_endpoint.py - composing a mixin
+# Composing a mixin
 class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
     def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs: Any) -> None:
         super().__init__(model_endpoint, **kwargs)
         self._init_response_parser()
 ```
 
-The mixin in ``src/aiperf/endpoints/response_mixin.py`` compiles an optional
+``JMESPathResponseMixin`` compiles an optional
 ``endpoint.extra.response_field`` JMESPath query at construction time, with
 auto-detect fallback when the query fails or no JSON body is present.
 
@@ -1023,3 +1019,64 @@ def _queue_fanout_event(self, event_type: str, payload: dict[str, Any]) -> None:
   state, which is more useful for live dashboards.
 - The counter `_fanout_dropped_events` is reported at shutdown so operators can
   tune `AIPERF_OTEL_MAX_BUFFERED_RECORDS` if drops are frequent.
+
+## Agent Graph Conventions
+
+Three rules for code touching the agent graph plane (the `aiperf.graph` package,
+`AgentGraphReplayStrategy`, `GraphTracePlanner`, the graph warmup rewrite helpers
+such as `rewrite_for_warmup`, and the graph paths in `Worker`). Each is a
+prohibition as much as an API.
+
+### Parse graph IDs only via `aiperf.graph.ids`
+
+The agent graph plane carries two similar-looking identifiers:
+
+| Grammar | Example | Meaning |
+|---|---|---|
+| `{scope}:{turn}` | `sess_A:3` | Node id — one linear chain per recorded session |
+| `{template}::{nonce}` | `t-1::3f2a` | Trace instance id — one per recycle pass |
+
+```python
+from aiperf.graph.ids import chain_key, split_node_id, template_id
+
+base = template_id(credit.trace_id)   # build-time stores are keyed by TEMPLATE
+chain = chain_key(node_id)            # per-session chain, NOT the trace
+```
+
+Never hand-parse either with `split(":")` / `rpartition("::")`. Confusing the
+template with the instance previously deadlocked spawn dispatch, and splitting
+node ids on `_` instead of `:` merged unrelated sessions.
+
+### Signal pre-dispatch failures with `GraphErrorCode`
+
+`CreditReturn.error` is a plain `str` crossing a process boundary, so the graph
+failure taxonomy travels as a leading `{code}: {detail}` token.
+
+```python
+from aiperf.graph.errors import GraphErrorCode, format_graph_error
+
+credit_context.error = format_graph_error(
+    GraphErrorCode.POOL_MISSING, f"no pooled value for trace={trace_id} ..."
+)
+```
+
+Assign the result as a **bare `str`**. Do NOT wrap it in `ErrorDetails`: the
+worker's return path sends `str(context.error)`, and `ErrorDetails.__str__`
+embeds `code=`/`type=`/`cause=` noise that `parse_graph_error` deliberately
+refuses to match. Wrapping it silently breaks stickiness classification in
+`CreditDispatchAdapter.resolve`.
+
+### Exit every pre-dispatch graph failure via `Worker._fail_graph_credit`
+
+```python
+await self._fail_graph_credit(credit_context, x_request_id, error=...)
+return
+```
+
+It binds the synthetic error record to the `record_emitted` flag. The
+RecordsManager completion barrier counts success+error *records* against the
+credit-side `final_requests_completed`, so a failure path that returns without
+emitting — or emits without setting the flag — starves the barrier and hangs the
+run at "please wait for the results". The catch-all at the end of
+`_process_graph_credit` is the one site that checks `record_emitted` first, so a
+post-dispatch raiser never double-emits.

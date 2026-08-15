@@ -9,7 +9,7 @@ Trace synthesis config used by file datasets.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     ConfigDict,
@@ -99,14 +99,47 @@ class SynthesisConfig(BaseConfig):
         ),
     ]
 
-    allow_dataset_wrap: Annotated[
-        bool,
+    max_context_length: Annotated[
+        int | None,
         Field(
-            default=False,
-            description="Allow the finite weka/agentic trace pool to wrap (reuse "
-            "distinct roots across concurrency lanes) when concurrency exceeds "
-            "the number of eligible traces. Defaults to False: over-subscription "
-            "fails unless this is explicitly enabled or an active cache-bust "
-            "target already keeps repeated-trace traffic distinct.",
+            ge=1,
+            default=None,
+            description="Maximum per-trace context length (tokens) for graph-plane "
+            "dataset selection (`--max-context-length`). Traces whose input+output "
+            "context would exceed this cap are excluded from selection. None (the "
+            "default) applies no context-length filter. Raw explicit value carried "
+            "verbatim from the CLI; the derived selection default is computed "
+            "elsewhere. Ignored by non-graph datasets.",
+        ),
+    ]
+
+    allow_dataset_wrap: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="Whether trace-replay dataset selection may wrap (reuse the "
+            "finite trace pool) to satisfy the requested load (`--allow-dataset-wrap` / "
+            "`--no-allow-dataset-wrap`). None (the default) means unset -- the effective "
+            "value is derived downstream and surfaced on `run.resolved.allow_dataset_wrap`; "
+            "an explicit True/False here is the raw user intent carried verbatim so the "
+            "resolver can distinguish unset from explicit. Consumed by both the agent-graph "
+            "replay strategy and the agentic-replay trajectory source (via "
+            "`TimingConfig.from_run`); ignored by synthetic/public datasets. An active "
+            "cache-bust target also permits repeated agentic traces by keeping traffic "
+            "distinct.",
+        ),
+    ]
+
+    corpus: Annotated[
+        Literal["coding", "sonnet"] | None,
+        Field(
+            default=None,
+            description="Corpus backing recorded graph (`dynamo_trace`) real-content "
+            "synthesis (`--prompt-corpus`). `coding` (the default when unset) uses "
+            "the procedural CodingContentGenerator pool -- the same corpus the "
+            "recorded agentic workloads were captured against. `sonnet` uses the "
+            "Shakespeare PromptGenerator pool, which yields matching token counts "
+            "but different bytes (useful only to reproduce golden fixtures built "
+            "from that pool). Ignored by non-graph datasets.",
         ),
     ]

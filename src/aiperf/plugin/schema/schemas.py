@@ -344,11 +344,28 @@ class PlotMetadata(BaseModel):
     )
 
 
+class GraphAdapterMetadata(BaseModel):
+    """Metadata for graph_adapter plugins.
+
+    Referenced by: categories.yaml graph_adapter.metadata_class
+    """
+
+    detection_priority: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Detection-order priority for registered graph adapters. Higher "
+            "values run first when multiple adapters' can_load() return True "
+            "for the same file; configure concrete priorities in plugins.yaml."
+        ),
+    )
+
+
 class CustomDatasetLoaderMetadata(BaseModel):
     """Metadata schema for custom dataset loader plugins.
 
     Defines format-specific defaults for dataset loaders. When a loader specifies
-    ``block_size``, it overrides the user's ``--isl-block-size`` config default,
+    ``default_block_size``, it overrides the user's ``--isl-block-size`` config default,
     ensuring hash-based prompt generation uses the correct token block size for the
     trace format (e.g. 16 for Bailian, 512 for Mooncake).
 
@@ -502,8 +519,8 @@ class ServiceMetadata(BaseModel):
     """Metadata schema for service plugins.
 
     Defines lifecycle and runtime configuration for AIPerf distributed services.
-    Used by SystemController to manage service startup order and optimize
-    latency-sensitive services (timing, workers) by disabling garbage collection.
+    Read at service bootstrap to size replicable services and to disable
+    garbage collection for latency-sensitive services (timing, workers).
 
     Referenced by: categories.yaml service.metadata_class
     Used in: plugins.yaml service entries
@@ -513,7 +530,7 @@ class ServiceMetadata(BaseModel):
         description="Whether the service is required for benchmark execution."
     )
     auto_start: bool = Field(
-        description="Whether the service is automatically started by the system controller."
+        description="Declarative only; not currently read by the service manager."
     )
     disable_gc: bool = Field(
         default=False,
@@ -636,7 +653,7 @@ class AnalyzerMetadata(BaseModel):
 # Re-exports
 # =============================================================================
 # Orchestrator metadata classes live in `_orchestrator_schemas.py`; re-exported
-# here so plugins.yaml references like
+# here so categories.yaml references like
 # ``metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata``
 # keep resolving.
 from aiperf.plugin.schema._orchestrator_schemas import (  # noqa: E402

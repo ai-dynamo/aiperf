@@ -6,7 +6,10 @@ import pytest
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
-from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
+from tests.unit.metrics.conftest import (
+    create_record,
+    run_simple_metrics_pipeline,
+)
 
 
 class TestInterChunkLatencyMetric:

@@ -29,6 +29,11 @@ class TimingStrategyProtocol(Protocol):
     3. execute_phase(): Send first turns (main timing loop)
     4. handle_credit_return(): Handle credit return, dispatch next turn if needed
 
+    Optional hooks live on sibling protocols so strategies that do not need
+    them are unaffected: ``PhaseTeardownStrategyProtocol.teardown_phase`` (the
+    PhaseRunner-invoked post-phase cleanup), ``CreditResultAwareStrategyProtocol``,
+    and ``RateSettableProtocol``.
+
     Fresh strategy instances are created per-phase by PhaseRunner.
     All dependencies are injected via __init__ for clean, testable design.
     """
@@ -74,9 +79,10 @@ class TimingStrategyProtocol(Protocol):
         should be sent, and if so, dispatches it via the appropriate path
         (immediate, scheduled, or queued).
 
-        Note: CreditCallbackHandler checks can_send_any_turn() before calling.
-        Implementations only need to check conversation-specific conditions
-        (e.g., is_final_turn).
+        Note: CreditCallbackHandler gates this on can_send_any_turn() for root
+        credits; DAG child non-final returns are always delivered so pending
+        joins can drain. Implementations only need to check
+        conversation-specific conditions (e.g., is_final_turn).
 
         Args:
             credit: Completed credit with conversation/turn info.
@@ -94,6 +100,26 @@ class CreditResultAwareStrategyProtocol(Protocol):
 
     async def handle_credit_result(self, credit_return: CreditReturn) -> None:
         """Observe a returned credit including error/cancellation status."""
+        ...
+
+
+@runtime_checkable
+class PhaseTeardownStrategyProtocol(Protocol):
+    """Optional teardown hook for strategies holding phase-scoped resources.
+
+    ``PhaseRunner`` awaits ``teardown_phase()`` in a ``finally`` once the
+    phase's execute -> sending-complete -> returning-complete pipeline settles
+    (deferred to the background return-wait completion for non-final seamless
+    phases, whose returns are still in flight when ``run()`` exits). Strategies
+    that do not define the method are skipped by the runner -- the default is a
+    no-op -- so the base ``TimingStrategyProtocol`` surface is unchanged for
+    the linear strategies. ``AgentGraphReplayStrategy`` uses this to detach its
+    graph-return / first-token observers and close retained sticky trace
+    lifecycles so a subsequent phase never routes into a torn-down registry.
+    """
+
+    async def teardown_phase(self) -> None:
+        """Release phase-scoped resources after the phase completes."""
         ...
 
 
@@ -129,4 +155,20 @@ class RateSettableProtocol(Protocol):
         Args:
             rate: New request rate in requests per second (must be > 0).
         """
+        ...
+
+
+@runtime_checkable
+class LaneSettableProtocol(Protocol):
+    """Protocol for strategies whose CONCURRENT-LANE admission can be ramped.
+
+    The graph replay strategy runs ``--concurrency`` recycling lanes; a
+    session-slot ramp cannot throttle them (graph credits bypass session
+    slots), so the concurrency ramper drives this setter instead: lanes above
+    the live limit park before their first instance and are admitted as the
+    limit rises.
+    """
+
+    def set_lane_limit(self, limit: int) -> None:
+        """Update the number of admitted lanes (clamped to [1, concurrency])."""
         ...

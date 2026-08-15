@@ -795,3 +795,55 @@ def test_generated_schema_accepts_pre_render_env_vars_and_jinja_templates(
     load_config_from_string(yaml_content)
 
     _assert_schema_accepts(schema, config)
+
+
+class TestInternalFieldsAreNotPublished:
+    """Underscore-prefixed provenance flags must not appear in the public schema.
+
+    Flags like ``_streaming_explicitly_set`` record whether the author
+    explicitly chose a value. They are deliberately serialized (the sweep
+    orchestrator round-trips runs through model_dump/model_validate), so they
+    cannot use ``exclude=True`` -- but publishing them in the schema would make
+    an editor autocomplete internal state as authorable config and let a user
+    forge "the author chose this".
+    """
+
+    @staticmethod
+    def _internal_properties(node: Any, path: str = "") -> Iterator[str]:
+        if isinstance(node, list):
+            for i, item in enumerate(node):
+                yield from TestInternalFieldsAreNotPublished._internal_properties(
+                    item, f"{path}[{i}]"
+                )
+            return
+        if not isinstance(node, dict):
+            return
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            for key in properties:
+                if key.startswith("_"):
+                    yield f"{path}.properties.{key}"
+        for key, value in node.items():
+            yield from TestInternalFieldsAreNotPublished._internal_properties(
+                value, f"{path}.{key}"
+            )
+
+    def test_generated_schema_has_no_underscore_properties(self) -> None:
+        leaked = sorted(set(self._internal_properties(_generated_schema())))
+        assert not leaked, f"internal fields published in schema: {leaked}"
+
+    def test_committed_schema_has_no_underscore_properties(self) -> None:
+        schema = json.loads(SCHEMA_PATH.read_text())
+        leaked = sorted(set(self._internal_properties(schema)))
+        assert not leaked, f"internal fields published in committed schema: {leaked}"
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            param("_streaming_explicitly_set", id="endpoint-streaming"),
+            param("_target_explicitly_set", id="cache-bust-target"),
+            param("_entries_explicit", id="public-dataset-entries"),
+        ],
+    )  # fmt: skip
+    def test_known_provenance_flags_absent(self, flag: str) -> None:
+        assert flag not in json.dumps(_generated_schema())

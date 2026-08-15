@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Mechanical "global invariant" tests for the NaN/inf discipline.
 
-Three CI-enforceable contracts that codify the round-1 finite-float
+Three CI-enforceable contracts that codify the finite-float
 remediation work into rules a future PR can't accidentally regress:
 
 1. Every JSON exporter that calls ``orjson.dumps`` on metric-bearing
@@ -336,6 +336,15 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # SweepVariation.index: zero-based index, bounded by sweep size at
     # runtime; no useful field-level upper bound.
     "SweepVariation.index",
+    # Opaque Dynamo-assigned worker identifiers, not measurements: any integer
+    # the recorder emits is valid, so a ge/le bound would reject real traces.
+    # (The DP *ranks* on the same model do carry ge=0 -- those are ordinals.)
+    "WorkerInfo.prefill_worker_id",
+    "WorkerInfo.decode_worker_id",
+    # list[int] of u64 block hashes. Non-negativity is enforced by
+    # AgentReplayMetrics._reject_negative_hashes; a scalar Field bound does
+    # not apply to list elements.
+    "AgentReplayMetrics.input_sequence_hashes",
     # SearchIteration is a dataclass not a BaseModel; not picked up.
     # AdaptiveSearchSweep.max_iterations / n_initial_points: have ge bounds.
     # MultiRunConfig.num_runs: has ge/le.
@@ -353,6 +362,11 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # AdaptiveSearchSweep.outcome_constraints: list[OutcomeConstraint], not a
     # numeric field. Per-element OutcomeConstraint.bound is already FiniteFloat.
     "AdaptiveSearchSweep.outcome_constraints",
+    # GraphDatasetMetadata.prefix_cache_by_trace: dict[str, dict[str, list[int]]]
+    # of [theoretical_hit_blocks, total_blocks] block counts, not a numeric
+    # field. The bare-int substring check trips on the nested list[int]; a
+    # field-level ge/gt/le/lt bound cannot apply to a container.
+    "GraphDatasetMetadata.prefix_cache_by_trace",
     # ServerMetricsResults.warmup_endpoint_summaries: dict of summary models,
     # not a numeric leaf — same shape as the baselined endpoint_summaries
     # sibling; per-summary numeric fields carry their own bounds.

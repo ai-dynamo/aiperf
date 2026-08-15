@@ -11,7 +11,7 @@ The daemon flag on the current process is temporarily cleared because Python's
 multiprocessing refuses to spawn children from daemon processes, and AIPerf
 services run as daemons.
 
-This module is the opt-in counterpart to the in-process 3-phase pipeline used
+This module is the opt-in counterpart to the in-process two-phase pipeline used
 by ``BaseTraceDatasetLoader.convert_to_conversations``. Both paths reseed
 ``HashIdRandomGenerator`` identically per ``(seed, trace_id, hash_id)`` so the
 two paths produce byte-identical output for the exact-tile and
@@ -106,7 +106,10 @@ def _init_worker(args: _WorkerInitArgs) -> None:
             args.tokenizer_name,
             trust_remote_code=args.trust_remote_code,
             revision=args.revision,
-            resolve_alias=False,
+            # Must match _tokenizer_preload's resolve_alias=True: a preload hit
+            # and this fallback miss have to load the SAME tokenizer for an
+            # aliased name, or the two paths tokenize the corpus differently.
+            resolve_alias=True,
         )
 
     _worker_state = _WorkerState(

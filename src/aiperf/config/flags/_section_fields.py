@@ -63,6 +63,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "headers",
         "hf_dataset_subset",
         "hf_weka_dataset",
+        "graph_format",
         "ignore_trace_delays",
         "max_context_length",
         "public_dataset",

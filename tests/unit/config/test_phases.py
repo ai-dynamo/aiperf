@@ -18,6 +18,7 @@ from aiperf.config.phases import (
     PoissonPhase,
     UserCentricPhase,
     get_phase_rate,
+    resolve_graph_tstar_window,
 )
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType
@@ -277,3 +278,117 @@ class TestAdaptiveScalePhaseValidation:
                     "sla": {"request_latency": {"p95": {"le": 1000}}},
                 },
             )
+
+
+class TestResolveGraphTstarWindow:
+    """The agent-graph t* resolver: unset (None) means OFF, a value counts."""
+
+    def _phase(
+        self,
+        *,
+        trajectory_start_min_ratio: float | None = None,
+        trajectory_start_max_ratio: float | None = None,
+    ) -> ConcurrencyPhase:
+        # Only forward the ratios the caller actually passed: an unset ratio has
+        # different resolver semantics than one explicitly set to a value.
+        ratios = {
+            name: value
+            for name, value in (
+                ("trajectory_start_min_ratio", trajectory_start_min_ratio),
+                ("trajectory_start_max_ratio", trajectory_start_max_ratio),
+            )
+            if value is not None
+        }
+        return ConcurrencyPhase(
+            name="profiling", type=PhaseType.CONCURRENCY, concurrency=1, **ratios
+        )
+
+    def test_unset_is_none_and_resolves_to_closed_window(self) -> None:
+        phase = self._phase()
+        assert phase.trajectory_start_min_ratio is None
+        assert phase.trajectory_start_max_ratio is None
+        assert resolve_graph_tstar_window(phase) == (0.0, 0.0)
+
+    def test_none_phase_resolves_to_closed_window(self) -> None:
+        # A run with no profiling phase must not arm the window.
+        assert resolve_graph_tstar_window(None) == (0.0, 0.0)
+
+    @pytest.mark.parametrize(
+        ("min_ratio", "max_ratio", "expected"),
+        [
+            param(0.5, None, (0.5, 0.5), id="min_only_is_a_point_window"),
+            param(None, 0.7, (0.0, 0.7), id="max_only_starts_at_zero"),
+            param(0.2, 0.8, (0.2, 0.8), id="both_authored"),
+        ],
+    )  # fmt: skip
+    def test_half_set_pair_still_resolves_ordered(
+        self,
+        min_ratio: float | None,
+        max_ratio: float | None,
+        expected: tuple[float, float],
+    ) -> None:
+        """A half-set pair must not produce an inverted window.
+
+        validate_trajectory_start_range deliberately skips pairs where either
+        bound is None, so the resolver is the only thing standing between
+        ``--trajectory-start-min-ratio 0.5`` alone and a (0.5, 0.0) window that
+        crashes in AgentGraphConversationSource at dispatch time.
+        """
+        window = resolve_graph_tstar_window(
+            self._phase(
+                trajectory_start_min_ratio=min_ratio,
+                trajectory_start_max_ratio=max_ratio,
+            )
+        )
+        assert window == expected
+        assert window[0] <= window[1]
+
+    def test_explicit_value_resolves_to_itself(self) -> None:
+        phase = self._phase(trajectory_start_max_ratio=0.9)
+        assert resolve_graph_tstar_window(phase) == (0.0, 0.9)
+
+    def test_assignment_after_construction_counts(self) -> None:
+        # Assigning a ratio IS authoring the window: the value stops being None,
+        # which is the whole signal -- no provenance flag to keep in sync.
+        phase = self._phase()
+        phase.trajectory_start_max_ratio = 1.0
+        assert phase._trajectory_start_max_ratio_explicitly_set is False
+        assert resolve_graph_tstar_window(phase) == (0.0, 1.0)
+
+    @pytest.mark.parametrize(
+        "authored",
+        [
+            param(None, id="never_authored"),
+            param(0.9, id="authored"),
+        ],
+    )  # fmt: skip
+    def test_unset_survives_dump_validate_round_trip(
+        self, authored: float | None
+    ) -> None:
+        """The sweep orchestrator's round-trip must not invent a t* window.
+
+        ``model_fields_set`` is per-instance and does not survive
+        ``model_dump`` -> ``model_validate`` (every dumped key returns marked
+        "set"), and the sweep writes ``run_config.json`` per cell for the
+        subprocess to re-validate. ``None`` is a VALUE, so it round-trips: an
+        unauthored phase stays unauthored in the cell instead of resolving to
+        the AGENTIC_REPLAY full-trace default and silently engaging a chop.
+        """
+        phase = self._phase(trajectory_start_max_ratio=authored)
+        expected = (0.0, authored if authored is not None else 0.0)
+        assert resolve_graph_tstar_window(phase) == expected
+
+        # Mirror local_executor._prepare_run_artifacts exactly.
+        revalidated = ConcurrencyPhase.model_validate(
+            phase.model_dump(mode="json", exclude_none=True)
+        )
+        assert resolve_graph_tstar_window(revalidated) == expected
+
+    def test_explicit_zero_leaves_window_off(self) -> None:
+        # A deliberate 0.0 must survive as 0.0 rather than being confused with
+        # unset -- both close the window here, but only one is authored.
+        phase = self._phase(
+            trajectory_start_min_ratio=0.0, trajectory_start_max_ratio=0.0
+        )
+        assert phase.trajectory_start_max_ratio == 0.0
+        assert resolve_graph_tstar_window(phase) == (0.0, 0.0)

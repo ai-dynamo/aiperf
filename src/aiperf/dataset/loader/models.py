@@ -430,7 +430,7 @@ class BurstGPTTrace(AIPerfBaseModel):
 class RawPayload(AIPerfBaseModel):
     """A single raw API request payload for verbatim replay.
 
-    On-disk schema for ``--input-type raw_payload`` (loaded by
+    On-disk schema for ``--custom-dataset-type raw_payload`` (loaded by
     ``RawPayloadDatasetLoader``); the parsed payload becomes
     ``Turn.raw_payload``, which ``RawEndpoint`` (or any endpoint) ships
     verbatim. Distinct from ``RawRecordInfo``, which is the export-side

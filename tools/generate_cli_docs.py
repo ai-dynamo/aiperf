@@ -418,10 +418,14 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
                     ]
                 )
                 groups = data[name]
-                if len(groups) > 1 or list(groups.keys())[0] not in (
-                    "Parameters",
-                    "Options",
-                    "General",
+                if groups and (
+                    len(groups) > 1
+                    or list(groups.keys())[0]
+                    not in (
+                        "Parameters",
+                        "Options",
+                        "General",
+                    )
                 ):
                     links = [
                         f"[{g}](#{g.lower().replace(' ', '-').replace('(', '').replace(')', '')})"

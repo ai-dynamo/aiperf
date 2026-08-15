@@ -7,6 +7,7 @@ Shared fixtures for dataset manager testing.
 from pathlib import Path
 from unittest.mock import patch
 
+import orjson
 import pytest
 
 import aiperf.endpoints  # noqa: F401  # Import to register endpoints
@@ -16,6 +17,60 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import EndpointType
 from tests.unit.conftest import make_run_from_cli
+
+
+def make_dynamo_record(ts: int, sid: str, input_tokens: int, hashes: list[int]) -> dict:
+    """Build one ``dynamo.request.trace.v1`` request_end record."""
+    return {
+        "schema": "dynamo.request.trace.v1",
+        "event_type": "request_end",
+        "event_time_unix_ms": ts,
+        "event_source": "dynamo",
+        "agent_context": {"session_id": sid},
+        "request": {
+            "request_id": f"r{ts}",
+            "model": "m",
+            "input_tokens": input_tokens,
+            "output_tokens": 8,
+            "cached_tokens": 0,
+            "replay": {
+                "trace_block_size": 16,
+                "input_length": input_tokens,
+                "input_sequence_hashes": hashes,
+            },
+        },
+    }
+
+
+def write_dynamo_trace(path: Path, records: list[dict]) -> Path:
+    """Write ``records`` as a newline-delimited dynamo trace file and return the path."""
+    path.write_bytes(b"\n".join(orjson.dumps(r) for r in records))
+    return path
+
+
+def write_shared_dynamo_trace(path: Path) -> Path:
+    """Write the canonical 3-record dynamo fixture: two ``s1`` turns sharing a hash prefix plus a standalone ``s2`` session."""
+    return write_dynamo_trace(
+        path,
+        [
+            make_dynamo_record(1000, "s1", 32, [111, 222]),
+            make_dynamo_record(2000, "s1", 64, [111, 222, 333, 444]),
+            make_dynamo_record(3000, "s2", 48, [555, 666, 777]),
+        ],
+    )
+
+
+def assert_store_dirs_identical(dir_a: Path, dir_b: Path, why: str = "") -> None:
+    """Assert two unified-store directories hold the same file set with byte-identical contents."""
+    files_a = sorted(p.name for p in dir_a.iterdir())
+    files_b = sorted(p.name for p in dir_b.iterdir())
+    assert files_a == files_b and files_a, (
+        f"unified store file sets differ: {files_a} vs {files_b}"
+    )
+    for name in files_a:
+        assert (dir_a / name).read_bytes() == (dir_b / name).read_bytes(), (
+            f"unified store file {name!r} differs{f' -- {why}' if why else ''}"
+        )
 
 
 @pytest.fixture

@@ -22,6 +22,7 @@ from aiperf.config.resolution.resolvers import (
     ConfigResolverChain,
     DatasetResolver,
     GpuMetricsResolver,
+    GraphDispatchResolver,
     ScenarioResolver,
     TimingResolver,
     TokenizerResolver,
@@ -767,7 +768,7 @@ class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
         assert isinstance(chain, ConfigResolverChain)
-        assert len(chain._resolvers) == 7
+        assert len(chain._resolvers) == 8
 
     def test_resolver_order(self):
         chain = build_default_resolver_chain()
@@ -782,6 +783,7 @@ class TestBuildDefaultResolverChain:
             CommConfigResolver,
             DatasetResolver,
             ScenarioResolver,
+            GraphDispatchResolver,
             TimingResolver,
         ]
 

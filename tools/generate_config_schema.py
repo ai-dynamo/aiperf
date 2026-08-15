@@ -278,6 +278,12 @@ class ConfigSchemaGenerator(Generator):
                 f"Tightened rate-series schema contract in {rate_series_count} places"
             )
 
+        # Strip internal provenance fields LAST, so no earlier enhancement step
+        # can reintroduce one.
+        internal_count = self._strip_internal_fields(enhanced_schema)
+        if self.verbose and internal_count > 0:
+            print_step(f"Stripped {internal_count} internal provenance fields")
+
         # Serialize with proper formatting
         content = orjson.dumps(enhanced_schema).decode("utf-8") + "\n"
 
@@ -288,6 +294,54 @@ class ConfigSchemaGenerator(Generator):
             files=[GeneratedFile(SCHEMA_FILE, content)],
             summary=f"Generated config schema v{SCHEMA_VERSION}",
         )
+
+    def _strip_internal_fields(self, schema: dict) -> int:
+        """Remove underscore-prefixed provenance fields from the public schema.
+
+        Some config models carry internal provenance flags (e.g.
+        ``_streaming_explicitly_set``, ``_target_explicitly_set``,
+        ``_entries_explicit``) that record whether the author explicitly chose a
+        value. They are deliberately SERIALIZED -- the sweep orchestrator
+        round-trips every run through ``model_dump``/``model_validate``, and
+        dropping them would let an unset value look explicit -- so they cannot
+        use ``exclude=True``.
+
+        But serialized is not the same as public. Publishing them in the schema
+        advertises internal state as user-authorable config: an editor would
+        autocomplete ``_streaming_explicitly_set`` and a user could set it to
+        forge "the author chose this" for a value they never set. Strip every
+        property whose published name begins with an underscore, recursively,
+        and drop it from any ``required`` list.
+
+        Returns the number of properties removed.
+        """
+        removed = 0
+
+        def walk(node: object) -> None:
+            nonlocal removed
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+                return
+            if not isinstance(node, dict):
+                return
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                internal = [key for key in properties if key.startswith("_")]
+                for key in internal:
+                    del properties[key]
+                    removed += 1
+                if internal:
+                    required = node.get("required")
+                    if isinstance(required, list):
+                        node["required"] = [r for r in required if r not in internal]
+                        if not node["required"]:
+                            del node["required"]
+            for value in node.values():
+                walk(value)
+
+        walk(schema)
+        return removed
 
     def _enhance_schema(self, schema: dict) -> dict:
         """Enhance the Pydantic schema with additional metadata."""

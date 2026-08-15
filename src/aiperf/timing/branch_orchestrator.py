@@ -47,9 +47,9 @@ Credit return flow
     1. Atomic counting (progress.increment_returned)
     2. Track prefill release if TTFT never arrived
     3. Release concurrency slots (skipped for children: agent_depth > 0)
-    4. DAG child-completion hook (on_child_leaf_reached / on_child_errored
+    4. Signal all_credits_returned_event (deferred if DAG has pending work)
+    5. DAG child-completion hook (on_child_leaf_reached / on_child_errored
        for final-turn child credits only)
-    5. Signal all_credits_returned_event (deferred if DAG has pending work)
     6. intercept(credit): spawn branches declared on the completed turn and
        return True IFF the parent's NEXT turn is a gated turn with
        unsatisfied prereqs.
@@ -66,7 +66,7 @@ work that outlives the phase's root-sampling completion::
    ``can_send_any_turn`` flips False. Without this, child final returns
    would be silently dropped, leaving parents stuck in ``_active_joins``.
 
-2. **Completion-event deferral** (step 5): when a root's final return is
+2. **Completion-event deferral** (step 4): when a root's final return is
    about to trigger child dispatch or when the orchestrator still has
    ``has_pending_branch_work()`` (both folded into ``_dag_work_pending``),
    the all-credits-returned event is held until the DAG drains.
@@ -188,6 +188,7 @@ class PendingBranchJoin:
     outstanding: dict[str, PrereqState] = field(default_factory=dict)
     parent_branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     parent_has_forks_on_gated_turn: bool = False
+    parent_has_branches_on_gated_turn: bool = False
     is_blocked: bool = False
     created_at_ns: int = field(default_factory=time.monotonic_ns)
     # Cache-bust state captured from the credit that suspends the parent so
@@ -274,6 +275,17 @@ class BranchOrchestrator:
         # child x_correlation_id -> its tree's root_correlation_id, so the
         # terminal-completion / rollback paths can decrement the right tree.
         self._child_root: dict[str, str] = {}
+        # Pre-session SPAWN children are dispatched before any root instance
+        # exists, so their tree root is unknowable at dispatch time. Track them
+        # per parent conversation until the first root instance's turn-0 return
+        # folds them into that root's session tree (register_descendants), so
+        # the root's final turn cannot stamp is_tree_final=True while a
+        # pre-session child is still live. _pre_child_conv: pre-child corr ->
+        # parent conversation_id (popped at the child's terminal).
+        # _pre_live_by_conv: conversation_id -> live pre-child corrs not yet
+        # folded into a tree (popped at fold).
+        self._pre_child_conv: dict[str, str] = {}
+        self._pre_live_by_conv: dict[str, set[str]] = {}
         self._child_modes: dict[str, ConversationBranchMode] = {}
         # Two-level pending-join state: a "future" join is registered at
         # spawn time and promoted to "active" once the parent reaches the
@@ -481,7 +493,7 @@ class BranchOrchestrator:
         root's marker instead of minting its own, so the whole tree is one
         prefix-cache domain (a per-child marker would force the server to
         re-prefill any prefix the agents share). The root's marker was minted at
-        trajectory setup (``AgenticReplayTiming._mint_marker_for_session``) and
+        trajectory setup (``AgenticReplayStrategy._mint_marker_for_session``) and
         lives in the shared ledger keyed by ``root_correlation_id``. Returns None
         when cache-bust is disabled, the root has no marker, or no ledger is wired.
         """
@@ -565,6 +577,13 @@ class BranchOrchestrator:
                         continue
                     issued = await self._issuer.dispatch_first_turn(child_session)
                     if issued:
+                        # Remember the child until the first root instance's
+                        # turn-0 return folds it into that root's tree.
+                        child_corr = child_session.x_correlation_id
+                        self._pre_child_conv[child_corr] = conv.conversation_id
+                        self._pre_live_by_conv.setdefault(
+                            conv.conversation_id, set()
+                        ).add(child_corr)
                         self.stats.children_spawned += 1
                     else:
                         # ``dispatch_first_turn`` -> ``dispatch_child_turn``
@@ -739,11 +758,13 @@ class BranchOrchestrator:
             return future
 
         has_forks = False
+        has_branches = False
         no_request = False
         delay_ms = 0.0
         if 0 <= gated_idx < len(parent_meta.turns):
             gated_turn = parent_meta.turns[gated_idx]
             has_forks = bool(getattr(gated_turn, "has_forks", False))
+            has_branches = bool(gated_turn.branch_ids)
             # Parity with _ensure_future_join: a request-free spine's gated
             # turn must stay no_request and keep its per-round think-time even
             # when the join is reconstructed on the t*-warmup seeding path,
@@ -761,6 +782,7 @@ class BranchOrchestrator:
             gated_turn_index=gated_idx,
             parent_branch_mode=parent_state.branch_mode,
             parent_has_forks_on_gated_turn=has_forks,
+            parent_has_branches_on_gated_turn=has_branches,
             parent_cache_bust_marker=cache_bust_marker,
             parent_cache_bust_target=self._cache_bust_target,
             parent_no_request_on_gated_turn=no_request,
@@ -848,6 +870,28 @@ class BranchOrchestrator:
                 self.stats.graphs_completed_to_end += 1
                 self._cs.forget_ordinal(credit.x_correlation_id)
 
+            # Fold this conversation's live pre-session SPAWN children into the
+            # root instance's tree at its turn-0 return -- the earliest moment
+            # the root's correlation id meets the orchestrator (pre-dispatch
+            # fires before sampling, so no root id was knowable then). Must run
+            # BEFORE the root-terminal transition below so a single-turn root's
+            # tree does not retire while its pre-session children are live.
+            if credit.agent_depth == 0 and credit.turn_index == 0:
+                self._fold_pre_session_descendants(credit)
+            # Root's terminal turn: clear tree root-pending AFTER final-turn
+            # spawns have registered their descendants (register runs inside
+            # _spawn_children_and_register_gates above), so the tree does not
+            # transiently read as drained. Must also precede the breeze-through
+            # early return below, or a breezed root never retires its tree.
+            if (
+                self._session_tree_registry is not None
+                and credit.agent_depth == 0
+                and credit.is_final_turn
+            ):
+                self._session_tree_registry.on_root_terminal(
+                    credit.effective_root_correlation_id
+                )
+
             # Breeze-through: the parent's next turn is a gate whose children
             # already drained before the parent arrived. Rather than let the
             # strategy dispatch the gated turn immediately (dropping the
@@ -858,6 +902,43 @@ class BranchOrchestrator:
                 await self._release_blocked_join(breezed)
                 return True
             return self._maybe_suspend_parent(credit)
+
+    def _fold_pre_session_descendants(self, credit) -> None:
+        """Attach live pre-session SPAWN children to a root instance's tree.
+
+        Runs at the root's turn-0 return. Folds ONCE, into the first root
+        instance of the conversation (the live set is popped); children that
+        already terminated were removed from the set on their return and are
+        not counted. Multi-instance runs of the same template attach the
+        one-shot pre children to the first instance's tree only.
+        """
+        live = self._pre_live_by_conv.pop(credit.conversation_id, None)
+        if not live:
+            return
+        root_corr = credit.effective_root_correlation_id
+        for child_corr in live:
+            self._child_root[child_corr] = root_corr
+        if self._session_tree_registry is not None:
+            self._session_tree_registry.register_descendants(root_corr, len(live))
+
+    def _resolve_pre_session_descendant(self, child_corr: str) -> None:
+        """Terminal accounting for a pre-session SPAWN child.
+
+        Before its conversation's fold: drop it from the live set so the fold
+        does not count an already-finished child. After the fold: decrement its
+        tree's outstanding count. No-op for non-pre-session children.
+        """
+        conv_id = self._pre_child_conv.pop(child_corr, None)
+        if conv_id is None:
+            return
+        live = self._pre_live_by_conv.get(conv_id)
+        if live is not None:
+            live.discard(child_corr)
+            if not live:
+                self._pre_live_by_conv.pop(conv_id, None)
+        root_corr = self._child_root.pop(child_corr, None)
+        if self._session_tree_registry is not None and root_corr is not None:
+            self._session_tree_registry.on_descendant_done(root_corr)
 
     async def _spawn_children_and_register_gates(
         self,
@@ -1334,11 +1415,13 @@ class BranchOrchestrator:
         pending = gates_for_parent.get(gated_idx)
         if pending is None:
             has_forks = False
+            has_branches = False
             no_request = False
             delay_ms = 0.0
             if 0 <= gated_idx < len(parent_meta.turns):
                 gated_turn = parent_meta.turns[gated_idx]
                 has_forks = bool(getattr(gated_turn, "has_forks", False))
+                has_branches = bool(gated_turn.branch_ids)
                 no_request = bool(getattr(gated_turn, "no_request", False))
                 delay_ms = float(getattr(gated_turn, "delay_ms", 0.0) or 0.0)
             pending = PendingBranchJoin(
@@ -1352,6 +1435,7 @@ class BranchOrchestrator:
                     credit, "branch_mode", ConversationBranchMode.FORK
                 ),
                 parent_has_forks_on_gated_turn=has_forks,
+                parent_has_branches_on_gated_turn=has_branches,
                 # Capture parent's cache-bust state from the suspending
                 # credit so the join turn (k+1) inherits the same marker
                 # as turns 0..k. The credit always has these fields
@@ -1638,6 +1722,7 @@ class BranchOrchestrator:
         """Called when a child session reaches its final turn (or terminates early)."""
         if self._cleaning_up:
             return
+        self._resolve_pre_session_descendant(child_x_correlation_id)
         entries = self._child_to_join.get(child_x_correlation_id)
         if not entries:
             return
@@ -1661,6 +1746,7 @@ class BranchOrchestrator:
         """
         if self._cleaning_up:
             return
+        self._resolve_pre_session_descendant(child_x_correlation_id)
         entries = self._child_to_join.get(child_x_correlation_id)
         if not entries:
             return
@@ -1725,6 +1811,7 @@ class BranchOrchestrator:
         """
         if self._cleaning_up:
             return
+        self._resolve_pre_session_descendant(child_x_correlation_id)
         entries = self._child_to_join.get(child_x_correlation_id)
         if not entries:
             return
@@ -1873,6 +1960,8 @@ class BranchOrchestrator:
         self._future_joins.clear()
         self._child_to_join.clear()
         self._child_root.clear()
+        self._pre_child_conv.clear()
+        self._pre_live_by_conv.clear()
         self._child_modes.clear()
         self._descendant_counts.clear()
         self._parent_locks.clear()

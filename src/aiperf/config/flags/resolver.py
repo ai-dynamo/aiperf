@@ -111,6 +111,7 @@ def resolve_config(
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_synthesis_overrides(merged, cli_config)
     _apply_dataset_filter_overrides(merged, cli_config)
+    _apply_dataset_shaped_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
@@ -190,6 +191,9 @@ def build_cli_overrides(
     _apply_optional_section(
         out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
     )
+
+    if "random_seed" in cli.model_fields_set:
+        out["random_seed"] = cli.random_seed
 
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
@@ -399,6 +403,65 @@ def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> N
         raise ValueError("--dataset-filter requires a public dataset")
     filters = dataset.setdefault("filters", {})
     filters.update(_parse_dataset_filters(cli.dataset_filters))
+
+
+def _first_dataset_dict(merged: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve the single dataset dict from either YAML shape, or None."""
+    benchmark = merged.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return None
+    dataset = benchmark.get("dataset")
+    if isinstance(dataset, dict):
+        return dataset
+    datasets = benchmark.get("datasets")
+    if isinstance(datasets, list) and datasets and isinstance(datasets[0], dict):
+        return datasets[0]
+    return None
+
+
+# Dataset-shaped CLI flags that need a post-merge overlay on the YAML path.
+# ``build_cli_overrides`` never calls ``build_dataset``, so these flags would
+# otherwise be silently dropped under ``-f config.yaml`` even though the CLI
+# help promises CLI-over-YAML precedence. Each entry is
+# (cli_attr, dataset_key, dataset types that DECLARE the key).
+#
+# The type tuple is load-bearing: these keys exist only on the listed models
+# (``graph_format`` on FileDataset; ``trace_idle_gap_cap_seconds`` on
+# FileDataset and PublicDataset), and every dataset model is ``extra="forbid"``,
+# so writing one onto e.g. a synthetic dataset surfaces as a raw pydantic
+# ``extra_forbidden`` on ``benchmark.datasets.0.synthetic.<key>`` rather than
+# anything the user can act on. Mirrors the gate in
+# ``_converter_dataset._apply_trace_delay_flags``.
+_DATASET_TOP_LEVEL_OVERRIDES: tuple[tuple[str, str, tuple[DatasetType, ...]], ...] = (
+    ("graph_format", "graph_format", (DatasetType.FILE,)),
+    (
+        "trace_idle_gap_cap_seconds",
+        "trace_idle_gap_cap_seconds",
+        (DatasetType.FILE, DatasetType.PUBLIC),
+    ),
+)
+
+
+def _apply_dataset_shaped_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    """Overlay dataset-shaped CLI flags the YAML path would otherwise drop."""
+    set_fields = cli.model_fields_set
+    top = [
+        (key, getattr(cli, attr), types)
+        for attr, key, types in _DATASET_TOP_LEVEL_OVERRIDES
+        if attr in set_fields
+    ]
+    if not top:
+        return
+
+    dataset = _first_dataset_dict(merged)
+    if dataset is None:
+        return
+
+    dataset_type = dataset.get("type")
+    for key, value, allowed_types in top:
+        if dataset_type not in allowed_types:
+            continue
+        dataset[key] = value
 
 
 def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:

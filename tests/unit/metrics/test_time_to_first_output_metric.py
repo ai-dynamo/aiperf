@@ -15,7 +15,10 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.time_to_first_output_token_metric import (
     TimeToFirstOutputTokenMetric,
 )
-from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
+from tests.unit.metrics.conftest import (
+    create_record,
+    run_simple_metrics_pipeline,
+)
 
 
 def create_response_record(
@@ -250,6 +253,7 @@ def _create_record_with_responses(
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
         end_perf_ns=responses[-1].perf_ns,
+        streamed=True,
     )
     return ParsedResponseRecord(
         request=request,

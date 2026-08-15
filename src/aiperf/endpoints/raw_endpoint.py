@@ -44,6 +44,7 @@ class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
         raise NotImplementedError(
             f"RawEndpoint received request_info with {len(request_info.turns)} "
             f"turn(s) but the last turn (index {len(request_info.turns) - 1}) "
-            f"has no raw_payload set. Use --input-type raw_payload or inputs_json "
+            f"has no raw_payload set. Use --custom-dataset-type raw_payload or "
+            f"inputs_json "
             f"so the loader populates raw_payload on every turn."
         )

@@ -62,7 +62,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         self.grader: BaseGrader = grader_cls(run=run)
 
         self._grader_name = grader_name
-        self._verbose = acc_cfg.verbose
+        self._verbose = bool(acc_cfg.verbose)
         self._ground_truths: list[str] | None = None
         self._tasks: list[str] | None = None
 

@@ -158,7 +158,7 @@ That triple is unique per request even when the same branch session ids repeat a
 
 ### Per-turn shape
 
-Each turn is a flat object validated against a strict schema (`DagTurn` in `src/aiperf/dataset/loader/dag_jsonl_models.py`). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:
+Each turn is a flat object validated against a strict schema (the `DagTurn` model). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:
 
 ```jsonc
 {
@@ -268,7 +268,7 @@ For v1, the orchestrator honors these gate shapes:
 - **SPAWN, fan-in (multiple branches gating one turn)**: a single gated turn may carry SPAWN_JOIN prereqs referencing multiple branches (across one or more spawning turns); the orchestrator pre-seeds an `outstanding` set and only fires when every referenced branch drains. Multi-consumer is also supported — one branch_id may be gated by prereqs on more than one downstream turn.
 - **Pre-session SPAWN (`pre_session_spawns`)**: parent does not wait; the child runs fire-and-forget and may not be the target of a SPAWN_JOIN.
 
-Constructs **not yet honored** by the orchestrator — per-child gates (`child_conversation_ids` subsets), runtime-diamond barriers (`barrier_id`), timer-based prereqs (`timer_seconds`), and external-event prereqs (`event_name`) — are accepted by the datastructures but raise `NotImplementedError` from `validate_for_orchestrator_v1` at load time.
+Constructs **not honored** by the orchestrator — per-child gates (`child_conversation_ids` subsets), runtime-diamond barriers (`barrier_id`), timer-based prereqs (`timer_seconds`), and external-event prereqs (`event_name`) — are accepted by the datastructures but raise `NotImplementedError` from `validate_for_orchestrator_v1` at load time.
 
 ### Mixing modes
 

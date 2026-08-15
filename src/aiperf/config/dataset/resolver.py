@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from aiperf.common.aiperf_logger import AIPerfLogger
 
 if TYPE_CHECKING:
+    from aiperf.config.dataset.config import FileDataset
     from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
@@ -40,18 +41,29 @@ _BASETEN_ONLY_REPLAY_FIELDS = (
 
 
 def _warn_ignored_baseten_only_fields(
-    name: str, ds: object, dataset_type: object
+    name: str, ds: FileDataset, dataset_type: object
 ) -> None:
-    """Warn when baseten_trace-only replay knobs are set on another loader."""
+    """Warn when baseten_trace-only replay knobs deviate from their defaults.
+
+    Gates on value-vs-declared-default rather than ``model_fields_set``: the
+    sweep orchestrator round-trips each run through
+    ``model_dump(exclude_none=True)`` / ``model_validate``, which marks every
+    dumped key as "set" and would fire this warning for the four fields whose
+    defaults are non-None (``open_loop_replay``, ``open_loop_strict``,
+    ``omit_kv_hints``, ``force_min_tokens``) on every non-baseten dataset.
+    """
     from aiperf.plugin.enums import CustomDatasetType
 
     if dataset_type is None or dataset_type == CustomDatasetType.BASETEN_TRACE:
         return
-    fields_set = getattr(ds, "model_fields_set", set())
+    model_fields = type(ds).model_fields
+    # The field name is a loop variable, so ``getattr`` is real reflection here;
+    # every name in ``_BASETEN_ONLY_REPLAY_FIELDS`` is declared on FileDataset.
     ignored = [
         f
         for f in _BASETEN_ONLY_REPLAY_FIELDS
-        if f in fields_set and getattr(ds, f) is not None
+        if getattr(ds, f) is not None
+        and getattr(ds, f) != model_fields[f].get_default(call_default_factory=True)
     ]
     if ignored:
         _logger.warning(
@@ -111,6 +123,7 @@ class DatasetResolver:
         ``FileNotFoundError`` when a file dataset path does not exist.
         """
         from aiperf.config.dataset import FileDataset, PublicDataset
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
         from aiperf.plugin import plugins
 
         acc = _DatasetResolution()
@@ -123,9 +136,17 @@ class DatasetResolver:
                 continue
             if not isinstance(ds, FileDataset):
                 continue
-            self._resolve_one(name=ds.name, ds=ds, format_map=format_map, acc=acc)
+            self._resolve_one(
+                run=run, name=ds.name, ds=ds, format_map=format_map, acc=acc
+            )
 
         self._publish(run, acc)
+        # Eagerly resolve-and-memoize graph-ness so single-run child processes
+        # inherit it via the pickled run and never re-walk the registry. A
+        # no-op when a `_resolve_one` site already populated it; for
+        # synthetic/public/inline runs this stores None WITH the resolved
+        # marker ("not a graph run", not "never checked").
+        resolve_graph_workload(run)
 
     @staticmethod
     def _publish(run: BenchmarkRun, acc: _DatasetResolution) -> None:
@@ -151,33 +172,56 @@ class DatasetResolver:
     def _resolve_one(
         self,
         *,
+        run: BenchmarkRun,
         name: str,
-        ds: object,
+        ds: FileDataset,
         format_map: dict[str, object],
         acc: _DatasetResolution,
     ) -> None:
-        records = getattr(ds, "records", None)
-        if records is not None:
+        if ds.records is not None:
             self._resolve_inline(name=name, ds=ds, format_map=format_map, acc=acc)
             return
 
+        from aiperf.dataset.graph.workload_detect import (
+            is_graph_workload_path,
+            resolve_graph_workload,
+        )
+
+        is_default_dataset = ds is run.cfg.get_default_dataset()
+
         # 1. Resolve and validate path
-        resolved = ds.path.resolve()  # type: ignore[attr-defined]
+        resolved = ds.path.resolve()
         if not resolved.exists():
             raise FileNotFoundError(f"Dataset '{name}' file not found: {resolved}")
         acc.paths[name] = resolved
 
+        # An explicit custom format owns the file and bypasses graph detection.
+        # Otherwise a local graph workload is owned by the graph-store build /
+        # schedule planes, not the custom-dataset-loader path. Skip type
+        # detection + record counting, which text-mode read a .gz binary.
+        # An explicit graph_format forces the adapter; the accessor memoizes
+        # detection for the default dataset.
+        if is_default_dataset:
+            if resolve_graph_workload(run) is not None:
+                return
+        elif ds.graph_format is not None or (
+            # ``format`` is None unless the author named a custom loader; the
+            # VALUE is the provenance, matching ``is_graph_dataset``. Reading
+            # ``model_fields_set`` instead would disagree on an explicit
+            # ``format: null`` and would not survive the sweep orchestrator's
+            # ``model_dump`` -> subprocess ``model_validate`` round-trip.
+            ds.format is None and is_graph_workload_path(resolved)
+        ):
+            return
+
         # 2. Detect dataset type from explicit format or via can_load.
-        # Pydantic defaults ``format`` to SINGLE_TURN, so a falsy check isn't
-        # enough — when the user didn't *explicitly* set format, fall back to
-        # structural detection so loaders like sagemaker_data_capture (whose
-        # JSONL doesn't look like single-turn) are recognized here the same
-        # way the composer recognizes them at load time.
-        fmt = ds.format  # type: ignore[attr-defined]
-        fields_set = getattr(ds, "model_fields_set", set())
+        # ``format`` is None when unset, so an unset format falls back to
+        # structural detection -- which is what recognizes loaders like
+        # sagemaker_data_capture, whose JSONL does not look like single-turn,
+        # the same way the composer does at load time.
+        fmt = ds.format
         first_record = None
-        explicit_format = "format" in fields_set
-        dataset_type = format_map.get(str(fmt)) if explicit_format and fmt else None
+        dataset_type = format_map.get(str(fmt)) if fmt is not None else None
         if dataset_type is None:
             dataset_type, first_record = self._detect_type(str(resolved))
 
@@ -215,14 +259,15 @@ class DatasetResolver:
     ) -> None:
         """Resolve dataset metadata for an inline records source.
 
-        Inline mode relies on the ``format:`` field; Pydantic defaults to
-        SINGLE_TURN, so every config has a value that lands in the format_map.
-        No path is set.
+        Inline mode relies on the ``format:`` field. There is no path to sniff,
+        so an unset (None) format resolves to SINGLE_TURN here -- the default
+        the field itself used to carry, kept at the one consumer that needs it.
         """
+        from aiperf.common.enums import DatasetFormat
         from aiperf.plugin.enums import CustomDatasetType
 
         records = ds.records  # type: ignore[attr-defined]
-        fmt = ds.format  # type: ignore[attr-defined]
+        fmt = ds.format or DatasetFormat.SINGLE_TURN  # type: ignore[attr-defined]
         dataset_type = format_map.get(str(fmt))
         if dataset_type is not None:
             acc.types[name] = dataset_type

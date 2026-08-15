@@ -932,6 +932,13 @@ dataset_client_store:
       files with O(1) lookup performance. In Kubernetes mode, WorkerGroupManager
       downloads the dataset once per pod and workers use local mmap access.
 
+  graph_segment:
+    class: aiperf.dataset.graph_client_store:GraphSegmentDatasetClientStore
+    description: |
+      Graph unified segment-store client metadata carrier for agent graph runs.
+      Workers materialize per-node payloads from the unified store addressed
+      by (trace_id, node_ordinal); conversation lookups are a hard error.
+
 # =============================================================================
 # Timing Strategies
 # =============================================================================
@@ -965,11 +972,22 @@ timing_strategy:
       Users block on their previous turn (no interleaving within a user).
       Matches LMBenchmark behavior for KV cache benchmarking.
 
+  agent_graph:
+    class: aiperf.timing.strategies.agent_graph_replay:AgentGraphReplayStrategy
+    description: |
+      A mode that replays a recorded conversation-DAG (agent graph) by driving a
+      dataflow TraceExecutor per trace over the v1 credit pipeline. The strategy
+      OWNS trace completion (a trace is done when its executor TaskGroup drains)
+      and trace-admission concurrency; graph credits bypass the linear
+      session-slot lifecycle via CreditIssuer.issue_graph_credit. Selected
+      automatically for agent graph workloads.
+
   agentic_replay:
     class: aiperf.timing.strategies.agentic_replay:AgenticReplayStrategy
     description: |
       Trajectory-based multi-turn trace replay with randomized conversation start
-      (CLI defaults 25-75%; inferencex-agentx-mvp widens to 0-100%), single-turn
+      (defaults to the full 0-100% trace, which inferencex-agentx-mvp also pins),
+      single-turn
       warmup with warmup barrier, FIFO trace recycling, and configurable
       inter-turn delay cap. Designed for SemiAnalysis InferenceX AgentX-MVP
       scenario but usable bare for any agentic-style benchmark.
@@ -2511,6 +2529,21 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+
+# =============================================================================
+# Graph Adapters
+# =============================================================================
+# Graph adapters convert third-party trace/log files into the canonical
+# ParsedGraph used by the graph benchmark mode. Detection order is driven by
+# each entry's detection_priority metadata (higher wins).
+# =============================================================================
+graph_adapter:
+  dynamo_trace:
+    class: aiperf.dataset.graph.adapters.dynamo.trace:DynamoTraceAdapter
+    description: |
+      Dynamo agent-trace v1 segmented JSONL.gz directories (or single .gz/.jsonl).
+    metadata:
+      detection_priority: 100
 
 # =============================================================================
 # ZMQ Proxies

@@ -12,8 +12,8 @@ Cache key inputs:
     - custom_dataset_type (e.g. "mooncake_trace") if any
     - tokenizer identity tuple: (name, revision, trust_remote_code, apply_chat_template)
     - input/prompt config dump that affects tokenization or layout, including
-      num_conversations, num_dataset_entries, sampling_strategy, and the entire
-      ``input.prompt`` config (excluding the cache_bust subtree -- see below)
+      num_dataset_entries, sampling_strategy, and the entire dataset ``prompts``
+      config (excluding the cache_bust subtree -- see below)
     - aiperf release-tag-or-rev when AIPERF_VERSION is set; absent otherwise
 
 Cache-bust deliberately does NOT enter the key. The mmap holds template bytes
@@ -31,9 +31,10 @@ On-disk layout::
 ``inputs.json`` generation (or would just re-dump the verbatim source), and
 legacy entries that still set ``has_inputs_json`` are resolved on lookup only.
 
-Concurrency: writers populate to ``<cache_dir>/<key>.tmp.<pid>`` and atomically
+Concurrency: writers populate to ``<cache_dir>/.<key>.tmp.<pid>`` and atomically
 ``os.replace`` the directory into place. A reader that finds a partial entry
-(missing manifest.json) treats the entry as a MISS and overwrites it.
+(missing manifest.json) treats the entry as a MISS; the next ``populate`` for
+that key reclaims and overwrites it.
 
 Manifest version:
     Bumped whenever the on-disk layout, the side-data schema, or the decoded
@@ -575,8 +576,10 @@ def populate(
         manifest: Manifest to serialize into the entry.
 
     Returns:
-        The committed entry directory, or None when no entry was committed
-        (a concurrent populate already won, or an error rendered the entry partial).
+        The entry directory whenever one exists at the key afterwards --
+        committed by this call, already present, or committed by a concurrent
+        populate that won the rename. None when population failed and no entry
+        exists.
     """
     base = cache_dir()
     base.mkdir(parents=True, exist_ok=True)
@@ -705,6 +708,29 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     return source
 
 
+def _graph_format_from_run(run: BenchmarkRun) -> str | None:
+    """Return the memoized graph adapter format, or None when unresolved.
+
+    Cache-key construction is synchronous and must not trigger graph detection,
+    which can inspect the input path and adapter files. Config resolution and
+    DatasetManager graph setup resolve this state before cache consumers run;
+    unresolved runs simply bypass caching.
+    """
+    from aiperf.config.dataset import as_file_dataset
+
+    # ``graph_format`` is FileDataset-only; synthetic/public defaults narrow to
+    # None and fall through to the memoized detection below, exactly as the
+    # previous getattr-with-None-default did.
+    file_ds = as_file_dataset(run.cfg.get_default_dataset())
+    explicit_format = file_ds.graph_format if file_ds is not None else None
+    if explicit_format is not None:
+        return str(explicit_format)
+    if run.resolved.graph_workload_resolved is not True:
+        return None
+    ref = run.resolved.graph_workload
+    return ref.format if ref is not None else None
+
+
 def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
     """Stable dict of input/prompt settings that affect mmap layout.
 
@@ -715,6 +741,13 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
     cfg = run.cfg
     dataset = cfg.get_default_dataset()
     model_names = cfg.get_model_names()
+
+    # Graph-ness in the KEY, not just in the caller's gate. A graph run stores no
+    # mmap, so it can only ever HIT a non-graph run's entry -- restoring a
+    # conversation mmap and returning before the graph store is ever built. The
+    # DatasetManager gate skips graph runs outright; keying on the resolved
+    # adapter format makes the collision impossible rather than merely unreached.
+    graph_format = _graph_format_from_run(run)
 
     prompts = getattr(dataset, "prompts", None)
     prompt_dump: dict[str, object] = {}
@@ -851,6 +884,7 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # *_multiplier transforms, all of which rewrite the decoded trace bytes.
         "synthesis": synthesis_dump,
         "max_context_length": getattr(dataset, "max_context_length", None),
+        "graph_format": graph_format,
         "entries_explicit": getattr(dataset, "entries_explicit", False),
     }
 

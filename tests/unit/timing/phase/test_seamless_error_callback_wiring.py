@@ -33,6 +33,11 @@ def _orchestrator(*, with_profiler_hooks: bool) -> PhaseOrchestrator:
     orch._server_profiler_owners = set()
     orch._deferred_profiler_stops = set()
     orch._seamless_phase_error = None
+    # Non-graph run: __init__ binds this to None when parsed_graph is None, and
+    # _execute_phases forwards it to every PhaseRunner. Set explicitly rather
+    # than via the MagicMock loop below -- a mock would be truthy and would not
+    # model the conversation-shaped run this test describes.
+    orch._graph_channel = None
     orch._control_headers = {}
     orch._control_hooks = (
         PreparedEndpointControlHooks(

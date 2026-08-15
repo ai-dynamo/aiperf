@@ -570,23 +570,22 @@ def setup_mock_registry_sequences(
     valid_metric_types: list[type[BaseMetric]],
     error_metric_types: list[type[BaseMetric]],
 ) -> tuple[list[str], list[str]]:
-    """Setup mock registry for processors that need both valid and error metrics.
+    """Set up registry results for valid and error-only metrics.
 
     Args:
-        mock_registry: The mock registry to configure
-        valid_metric_types: list of valid metric class types
-        error_metric_types: list of error metric class types
+        mock_registry: The mock registry to configure.
+        valid_metric_types: Metrics selected for valid records.
+        error_metric_types: Metrics selected only for invalid records.
 
     Returns:
-        tuple of (valid_tags, error_tags)
+        Tuple of valid and error tags.
     """
     valid_tags = [metric_type.tag for metric_type in valid_metric_types]
     error_tags = [metric_type.tag for metric_type in error_metric_types]
 
-    # Create lookup map for all metric instances
     all_metric_instances = {
         metric_type.tag: metric_type()
-        for metric_type in valid_metric_types + error_metric_types
+        for metric_type in (valid_metric_types + error_metric_types)
     }
 
     mock_registry.tags_applicable_to.side_effect = [valid_tags, error_tags]

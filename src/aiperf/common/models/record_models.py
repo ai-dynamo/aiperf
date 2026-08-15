@@ -1026,6 +1026,17 @@ class RequestInfo(RecordContext):
         description="Whether this is the final turn in the conversation. "
         "Used by per-conversation connection strategy to release the connection lease.",
     )
+    is_parent_final: bool | None = Field(
+        default=None,
+        description="Parent conversation had already returned its final turn at "
+        "credit-issue time; None for roots or when not determinable. Sourced from "
+        "the originating Credit.",
+    )
+    is_tree_final: bool = Field(
+        default=False,
+        description="Provably the last request this session tree will send "
+        "(conservative False when indeterminate). Sourced from the originating Credit.",
+    )
     url_index: int | None = Field(
         default=None,
         ge=0,

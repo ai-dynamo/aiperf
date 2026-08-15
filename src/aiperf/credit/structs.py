@@ -77,6 +77,12 @@ class Credit(
     ``agent_depth``.
     """
     has_forks: bool = False
+    is_parent_final: bool | None = None
+    """Parent conversation had already returned its final turn at issue time.
+    None for roots / when not determinable. Issue-time stamp, never copied."""
+    is_tree_final: bool = False
+    """Provably the last request the whole session tree will send (conservative
+    False when indeterminate). Issue-time stamp from SessionTreeRegistry."""
     no_request: bool = False
     """When True, this credit is a virtual orchestrator firing -- the worker sends
     no HTTP request and returns it immediately."""
@@ -100,6 +106,22 @@ class Credit(
     to the credit rather than the dataset turn so profiling retains the
     recorded output limit.
     """
+
+    trace_id: str | None = None
+    """Agent-graph trace instance identifier this credit addresses
+    (``{template}::{nonce}``, e.g. ``t-1::3f2a...``);
+    None for non-graph (template/DAG) dispatch."""
+
+    node_ordinal: int | None = None
+    """Ordinal of the agent-graph node this credit addresses; the worker
+    materializes the node's request from the graph mmap store by this ordinal.
+    None for non-graph dispatch."""
+
+    first_token_event: bool = False
+    """When True the worker emits a ``FirstToken`` event on TTFT for this credit
+    even with prefill-concurrency limiting off (post-TTFT first-token anchoring).
+    The graph first-token observer keys off the event's ``trace_id``. Default
+    False keeps the wire footprint small via msgspec ``omit_defaults``."""
 
     @property
     def is_final_turn(self) -> bool:
@@ -187,6 +209,14 @@ class TurnToSend(Struct, frozen=True):
     session start regardless of this flag. A mid-trace session start can only
     legitimately occur during a phase's initial dispatch (execute_phase)."""
     has_forks: bool = False
+    has_branches: bool = False
+    """True iff the originating turn declares ANY branch (FORK or SPAWN) in its
+    metadata ``branch_ids``. Superset of ``has_forks``, which is FORK-only and
+    owned by the sticky router's deferred-eviction logic -- do not conflate the
+    two. Consumed by finality stamping: a turn that will spawn descendants on
+    its return can never be the tree's provably-last request, even when the
+    registry shows nothing outstanding yet (SPAWN children register only at
+    return-intercept, AFTER issue-time stamping)."""
     no_request: bool = False
     """When True, this credit is a virtual orchestrator firing -- the worker sends
     no HTTP request and returns it immediately."""
@@ -201,6 +231,22 @@ class TurnToSend(Struct, frozen=True):
 
     max_tokens_override: int | None = None
     """Per-request generation limit override; omitted for normal requests."""
+
+    trace_id: str | None = None
+    """Agent-graph trace instance identifier this credit addresses
+    (``{template}::{nonce}``, e.g. ``t-1::3f2a...``);
+    None for non-graph (template/DAG) dispatch."""
+
+    node_ordinal: int | None = None
+    """Ordinal of the agent-graph node this credit addresses; the worker
+    materializes the node's request from the graph mmap store by this ordinal.
+    None for non-graph dispatch."""
+
+    first_token_event: bool = False
+    """When True the worker emits a ``FirstToken`` event on TTFT for this credit
+    even with prefill-concurrency limiting off (post-TTFT first-token anchoring).
+    The graph first-token observer keys off the event's ``trace_id``. Default
+    False keeps the wire footprint small via msgspec ``omit_defaults``."""
 
     @property
     def is_final_turn(self) -> bool:
@@ -221,7 +267,10 @@ class TurnToSend(Struct, frozen=True):
             credit: The previous turn's credit.
             next_meta: Metadata for the NEW turn being built. When provided, the
                 ``has_forks`` flag is derived from it so the sticky
-                router can defer parent-entry eviction until DAG children drain.
+                router can defer parent-entry eviction until DAG children drain,
+                and ``has_branches`` (any-mode) is derived from its
+                ``branch_ids`` so finality stamping stays conservative on
+                spawning turns.
         """
         return cls(
             conversation_id=credit.conversation_id,
@@ -233,8 +282,12 @@ class TurnToSend(Struct, frozen=True):
             root_correlation_id=credit.root_correlation_id,
             counts_toward_phase_target=credit.counts_toward_phase_target,
             has_forks=next_meta.has_forks if next_meta is not None else False,
+            has_branches=bool(next_meta.branch_ids) if next_meta is not None else False,
             no_request=next_meta.no_request if next_meta is not None else False,
             branch_mode=credit.branch_mode,
             cache_bust_marker=credit.cache_bust_marker,
             cache_bust_target=credit.cache_bust_target,
+            trace_id=credit.trace_id,
+            node_ordinal=credit.node_ordinal,
+            first_token_event=credit.first_token_event,
         )

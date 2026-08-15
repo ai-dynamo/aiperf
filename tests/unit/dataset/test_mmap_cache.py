@@ -248,6 +248,43 @@ class TestComputeCacheKey:
         assert k1 is not None and k2 is not None
         assert k1 != k2, "random_seed must distinguish the cache key"
 
+    def test_compute_cache_key_graph_format_bypasses_graph_workload(
+        self, tmp_path: Path
+    ) -> None:
+        # A graph run NEVER populates the cache (no backing store), so the only
+        # entry it can hit is a prior non-graph run's -- restoring a conversation
+        # mmap and returning before the graph store is built. DatasetManager gates
+        # graph runs out of the lookup; keying graph-ness makes the collision
+        # impossible rather than merely unreached.
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8, '
+            b'"output_length": 4}\n',
+        )
+
+        def _key(graph_format: str | None) -> str | None:
+            config_kwargs = {
+                "model_names": ["test-model"],
+                "input_file": str(trace),
+                "graph_format": graph_format,
+            }
+            if graph_format is None:
+                # The explicit conventional loader is mutually exclusive with
+                # --graph-format; omit it for the graph case so this exercises
+                # the supported CLI shapes on either side of the comparison.
+                config_kwargs["custom_dataset_type"] = CustomDatasetType.MOONCAKE_TRACE
+            run = make_run_from_cli(CLIConfig(**config_kwargs))
+            payload = mmap_cache._settings_payload_from_run(run)
+            assert payload["graph_format"] == graph_format
+            return mmap_cache.compute_cache_key_from_run(run)
+
+        plain = _key(None)
+        graph = _key("dynamo_trace")
+        assert plain is not None
+        assert graph is None, "graph workloads must bypass conversation mmap caching"
+
     def test_settings_payload_key_set_is_frozen(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -308,6 +345,7 @@ class TestComputeCacheKey:
             "tracelab_min_spawn_ms",
             "synthesis",
             "max_context_length",
+            "graph_format",
             "entries_explicit",
         }
 

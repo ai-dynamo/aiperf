@@ -90,10 +90,17 @@ def _build_prompts(cli: CLIConfig) -> dict[str, Any]:
 def _build_prefix_prompts(cli: CLIConfig) -> dict[str, Any]:
     s = cli.model_fields_set
     out: dict[str, Any] = {}
-    if "prompt_prefix_pool_size" in s:
-        out["pool_size"] = cli.prompt_prefix_pool_size
-    if "prompt_prefix_length" in s:
-        out["length"] = cli.prompt_prefix_length
+    pool_size = cli.prompt_prefix_pool_size if "prompt_prefix_pool_size" in s else None
+    length = cli.prompt_prefix_length if "prompt_prefix_length" in s else None
+    # The CLI documents 0 as "disable prefix prompts", but PrefixPromptConfig
+    # is ge=1 (None means disabled downstream: see PromptGenerator, which reads
+    # ``pool_size or 0``). A zero on either field disables the whole pool, so
+    # omit both rather than forwarding an out-of-range value.
+    if pool_size != 0 and length != 0:
+        if pool_size is not None:
+            out["pool_size"] = pool_size
+        if length is not None:
+            out["length"] = length
     if (
         "prompt_prefix_shared_system_length" in s
         and cli.prompt_prefix_shared_system_length is not None
@@ -289,6 +296,8 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
             out[key] = value
     if _set(cli, "dataset_filters"):
         out["filters"] = _parse_dataset_filters(cli.dataset_filters)
+    if _set(cli, "graph_format") and cli.graph_format is not None:
+        out["graph_format"] = cli.graph_format
     # --hf-weka-dataset alone auto-selects --public-dataset weka_hf (docs +
     # PublicDataset._validate_weka_hf expect the pairing).
     if "hf_weka_dataset" in out and "dataset" not in out:
@@ -326,7 +335,13 @@ def _resolve_entries(cli: CLIConfig) -> int | None:
          conversations (the runner recycles them to fill request_count).
       3. ``cli.request_count`` (explicitly set) — fallback so a single
          ``--request-count N`` invocation produces ``N`` unique entries when
-         the user did not pin the conversation count separately.
+         the user did not pin the conversation count separately. Skipped for
+         GRAPH workloads only: a graph corpus size is fixed by the recorded
+         trace and ``--request-count`` merely recycles it, so capping ``entries``
+         there would truncate the corpus. Ordinary file datasets (``random_pool``
+         and friends) DO size their entry pool from ``--request-count`` --
+         gating on "any file dataset" silently replaced the user's count with
+         the loader's hardcoded 100.
 
     Returns None when none was explicitly set. The caller MUST omit the
     ``entries`` key from the output dict in that case so the dataset class's
@@ -346,7 +361,9 @@ def _resolve_entries(cli: CLIConfig) -> int | None:
         if isinstance(v, list):
             return max(v) if v else None
         return v
-    if "request_count" in s:
+    from aiperf.config.flags._converter_profiling import _cli_is_graph_workload
+
+    if "request_count" in s and not _cli_is_graph_workload(cli):
         v = cli.request_count
         if isinstance(v, list):
             return max(v) if v else None
@@ -471,7 +488,9 @@ def _apply_synthesis(d: dict[str, Any], cli: CLIConfig) -> None:
         ("synthesis_output_len_multiplier", "output_len_multiplier"),
         ("synthesis_max_isl", "max_isl"),
         ("synthesis_max_osl", "max_osl"),
+        ("max_context_length", "max_context_length"),
         ("allow_dataset_wrap", "allow_dataset_wrap"),
+        ("prompt_corpus", "corpus"),
     ):
         if cli_attr in set_fields:
             value = getattr(cli, cli_attr)
@@ -611,7 +630,7 @@ _BASETEN_ONLY_TRACE_BOOL_FLAGS: tuple[tuple[str, str], ...] = (
 
 
 def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
-    """Reject baseten_trace-only replay knobs on incompatible datasets.
+    """Reject trace replay knobs on incompatible datasets.
 
     These knobs are only consumed by the baseten_trace loader; on any other
     dataset they would silently no-op (or crash AIPerfConfig validation with
@@ -634,7 +653,12 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
     ]
     if not set_flags:
         return
-    msg = f"{', '.join(set_flags)} is only supported by the baseten_trace loader"
+    graph_dynamo = cli.graph_format == "dynamo_trace"
+    msg = (
+        f"{', '.join(set_flags)} requires a trace replay dataset"
+        if graph_dynamo
+        else f"{', '.join(set_flags)} is only supported by the baseten_trace loader"
+    )
     if _implies_public_dataset(cli) or not cli.input_file:
         raise ValueError(
             f"{msg}; provide --input-file and --custom-dataset-type baseten_trace."
@@ -642,6 +666,7 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
     if (
         cli.custom_dataset_type is not None
         and cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE
+        and not graph_dynamo
     ):
         raise ValueError(
             f"{msg}, but --custom-dataset-type is {cli.custom_dataset_type}."
@@ -886,10 +911,19 @@ def _apply_max_context_length(d: dict[str, Any], cli: CLIConfig) -> None:
     be weka, so it is allowed through -- the loader ignores the field if it does
     not implement the filter.
     """
+    from aiperf.config.flags._converter_profiling import _cli_is_graph_workload
+
     if (
         "max_context_length" not in cli.model_fields_set
         or cli.max_context_length is None
     ):
+        return
+    # Graph workloads own this flag through ``synthesis.max_context_length``
+    # (read by ``workload_detect._resolve_graph_max_context``), so the top-level
+    # weka field is neither needed nor valid there -- writing it too would
+    # double-own the value and hard-reject any graph run that also names an
+    # explicit non-weka ``--custom-dataset-type``.
+    if _cli_is_graph_workload(cli):
         return
     if _is_definitely_non_weka_dataset(d):
         raise ValueError(

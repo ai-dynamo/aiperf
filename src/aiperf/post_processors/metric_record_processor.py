@@ -51,7 +51,9 @@ class MetricRecordProcessor(BaseMetricsProcessor):
         ] = [
             (metric.tag, metric.parse_record)  # type: ignore
             for metric in self._setup_metrics(
-                MetricType.RECORD, MetricType.AGGREGATE, error_metrics_only=True
+                MetricType.RECORD,
+                MetricType.AGGREGATE,
+                error_metrics_only=True,
             )
         ]
 
