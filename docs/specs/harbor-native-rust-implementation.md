@@ -9,6 +9,12 @@ SPDX-License-Identifier: Apache-2.0
 
 This record defines the implementation program for the Harbor replacement platform. It implements the replacement bar in `harbor-replacement-platform.md` through a native-Rust evaluation domain and native execution paths. Harbor packages and registry references are import formats only. No Harbor Python runtime, library, wrapper, bridge, or dependency participates in execution.
 
+## Built P0 native composition
+
+The runtime currently provides native local-file and pinned-Git package acquisition through `NativeSourceAcquirer`, with 40-hex-commit and repository-relative-package-path validation. `HarborEvaluationCoordinator` performs source import before sandbox preflight/open, then prepares the declared verifier artifact transfer. Unsupported package semantics therefore return from import before environment opening.
+
+P0 acceptance tests cover a local source lifecycle with an external contract, deterministic pinned-Git source identity after repository `HEAD` changes, and a separately provisioned verifier receiving only declared artifacts at their exact paths. The test suite links only native Rust crates; no Harbor executable, runtime, library, wrapper, bridge, or dependency is present in the P0 path.
+
 ## Architecture boundary
 
 The runtime owns a new `eval` domain. Its types are distinct from cellular transport DTOs and from the narrow replay `GraphTraceProgram` execution representation.
@@ -61,7 +67,7 @@ Track 2 is the stable contract boundary for Tracks 3–6. P0 compatibility accep
 
 ## Verification requirements
 
-Every track supplies strict unit tests and deterministic fake-provider/sandbox tests. P0 product fixtures prove local and pinned-Git source acquisition; external and installed contracts; shared and separate verifier isolation; exact declared artifact paths; reward precedence and malformed reward handling; unsupported import refusal before provisioning; reproducible identity; and immutable regrade.
+Every track supplies strict unit tests and deterministic fake-provider/sandbox tests. P0 product fixtures prove native local and pinned-Git source acquisition, an external agent contract, separately provisioned verifier declared-artifact isolation, exact declared artifact paths, deterministic source identity, reward precedence, and immutable regrade. Unsupported import refusal before sandbox opening is covered by the coordinator contract suite.
 
 Semantic experiments prove a native graph variant report with paired quality, cost, latency, and critical-path deltas while task, model, seed, policy, image, and budget remain fixed.
 
