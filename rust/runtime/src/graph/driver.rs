@@ -490,14 +490,14 @@ struct RecordedReplayTraceProgramDriver {
 /// Ensures the opened lifecycle lease receives cancellation-safe cleanup.
 struct LifecycleLeaseGuard {
     lease: Box<dyn agent::AgentInvocationLease>,
-    is_closed: bool,
+    has_close_been_attempted: bool,
 }
 
 impl LifecycleLeaseGuard {
     fn new(lease: Box<dyn agent::AgentInvocationLease>) -> Self {
         Self {
             lease,
-            is_closed: false,
+            has_close_been_attempted: false,
         }
     }
 
@@ -506,16 +506,46 @@ impl LifecycleLeaseGuard {
     }
 
     async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
-        self.lease.close().await?;
-        self.is_closed = true;
-        Ok(())
+        self.has_close_been_attempted = true;
+        self.lease.close().await
     }
 }
 
 impl Drop for LifecycleLeaseGuard {
     fn drop(&mut self) {
-        if !self.is_closed {
+        if !self.has_close_been_attempted {
             self.lease.close_on_drop();
+        }
+    }
+}
+
+/// Holds ownership while asynchronous lifecycle provisioning can still be cancelled.
+struct LifecycleOpeningGuard {
+    opening: Box<dyn agent::AgentInvocationLeaseOpening>,
+    has_transferred_lease: bool,
+}
+
+impl LifecycleOpeningGuard {
+    fn new(opening: Box<dyn agent::AgentInvocationLeaseOpening>) -> Self {
+        Self {
+            opening,
+            has_transferred_lease: false,
+        }
+    }
+
+    async fn open(
+        &mut self,
+    ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
+        let lease = self.opening.open().await?;
+        self.has_transferred_lease = true;
+        Ok(lease)
+    }
+}
+
+impl Drop for LifecycleOpeningGuard {
+    fn drop(&mut self) {
+        if !self.has_transferred_lease {
+            self.opening.cancel_on_drop();
         }
     }
 }
@@ -585,18 +615,19 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             identity: invocation.clone(),
             environment: agent::AgentInvocationEnvironment::Isolated,
         };
-        let lifecycle_lease = lifecycle_lease_factory
-            .open(&lifecycle_request, None)
+        let lifecycle_opening = lifecycle_lease_factory
+            .begin_open(&lifecycle_request, None)
+            .map_err(|error| TraceDriverError::new(error.to_string()))?;
+        let mut lifecycle_opening = LifecycleOpeningGuard::new(lifecycle_opening);
+        let lifecycle_lease = lifecycle_opening
+            .open()
             .await
             .map_err(|error| TraceDriverError::new(error.to_string()))?;
         let mut lifecycle_lease = LifecycleLeaseGuard::new(lifecycle_lease);
         let tool_decoder = match self.agent_loop.tool_decoder.create(&self.trace.trace_id) {
             Ok(decoder) => decoder,
             Err(error) => {
-                lifecycle_lease
-                    .close()
-                    .await
-                    .map_err(|error| TraceDriverError::new(error.to_string()))?;
+                let _ = lifecycle_lease.close().await;
                 return Err(TraceDriverError::new(error.to_string()));
             }
         };
@@ -607,10 +638,7 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
         {
             Ok(formatter) => formatter,
             Err(error) => {
-                lifecycle_lease
-                    .close()
-                    .await
-                    .map_err(|error| TraceDriverError::new(error.to_string()))?;
+                let _ = lifecycle_lease.close().await;
                 return Err(TraceDriverError::new(error.to_string()));
             }
         };
@@ -814,20 +842,40 @@ mod tests {
 
     struct RecordingLifecycleLeaseFactory(Arc<LifecycleCounts>);
 
-    #[async_trait(?Send)]
     impl agent::AgentInvocationLeaseFactory for RecordingLifecycleLeaseFactory {
-        async fn open(
+        fn begin_open(
             &self,
             request: &agent::AgentInvocationRequest,
             _parent: Option<&dyn agent::AgentInvocationLease>,
-        ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseOpening>, agent::AgentLoopError> {
             self.0.opened.fetch_add(1, Ordering::SeqCst);
             self.0
                 .requests
                 .lock()
                 .expect("test lifecycle request log is available")
                 .push(request.clone());
-            Ok(Box::new(RecordingLifecycleLease(self.0.clone())))
+            Ok(Box::new(RecordingLifecycleOpening(Some(Box::new(
+                RecordingLifecycleLease(self.0.clone()),
+            )))))
+        }
+    }
+
+    struct RecordingLifecycleOpening(Option<Box<dyn agent::AgentInvocationLease>>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLeaseOpening for RecordingLifecycleOpening {
+        async fn open(
+            &mut self,
+        ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
+            self.0.take().ok_or_else(|| {
+                agent::AgentLoopError::new("test lifecycle opening was already consumed")
+            })
+        }
+
+        fn cancel_on_drop(&mut self) {
+            if let Some(mut lease) = self.0.take() {
+                lease.close_on_drop();
+            }
         }
     }
 
@@ -917,6 +965,65 @@ mod tests {
             _formatter: &dyn tools::AgentObservationFormatter,
         ) -> Result<agent::AgentTrajectory, agent::AgentLoopError> {
             std::future::pending().await
+        }
+    }
+
+    struct SuspendingLifecycleLeaseFactoryFactory(Arc<LifecycleCounts>);
+
+    impl agent::AgentInvocationLeaseFactoryFactory for SuspendingLifecycleLeaseFactoryFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+            _root_dispatcher: Rc<dyn tools::ToolDispatcher>,
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseFactory>, agent::AgentLoopError> {
+            self.0.created.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(SuspendingLifecycleLeaseFactory(self.0.clone())))
+        }
+    }
+
+    struct SuspendingLifecycleLeaseFactory(Arc<LifecycleCounts>);
+
+    impl agent::AgentInvocationLeaseFactory for SuspendingLifecycleLeaseFactory {
+        fn begin_open(
+            &self,
+            _request: &agent::AgentInvocationRequest,
+            _parent: Option<&dyn agent::AgentInvocationLease>,
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseOpening>, agent::AgentLoopError> {
+            self.0.opened.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(SuspendingLifecycleOpening(self.0.clone())))
+        }
+    }
+
+    struct SuspendingLifecycleOpening(Arc<LifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLeaseOpening for SuspendingLifecycleOpening {
+        async fn open(
+            &mut self,
+        ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
+            std::future::pending().await
+        }
+
+        fn cancel_on_drop(&mut self) {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct FailingCloseLease(Arc<LifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLease for FailingCloseLease {
+        fn dispatcher(&self) -> Rc<dyn tools::ToolDispatcher> {
+            Rc::new(tools::InMemoryToolDispatcher::default())
+        }
+
+        fn close_on_drop(&mut self) {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+        }
+
+        async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+            Err(agent::AgentLoopError::new("close failed"))
         }
     }
 
@@ -1222,5 +1329,58 @@ mod tests {
                 assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
             })
             .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recorded_replay_drop_fences_suspending_lifecycle_opening() {
+        let lifecycle = Arc::new(LifecycleCounts::default());
+        let factory = RecordedReplayTraceProgramDriverFactory::default().with_agent_loop_factories(
+            RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(SuspendingLifecycleLeaseFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ),
+        );
+        let trace = TraceIdentity {
+            run_id: "run-opening-cancel".into(),
+            trajectory_id: "trajectory-opening-cancel".into(),
+            trace_id: "trace-opening-cancel".into(),
+        };
+        let program = recorded_program(&trace.trace_id);
+        let mut driver = factory
+            .create(WorkerIdentity { worker_id: 0 }, &trace, &program.driver)
+            .expect("recorded replay driver is created");
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let task = tokio::task::spawn_local(async move {
+                    driver
+                        .run(&program, &TraceDriverContext { trace: &trace })
+                        .await
+                });
+                tokio::task::yield_now().await;
+                task.abort();
+                assert!(task.await.expect_err("task is cancelled").is_cancelled());
+                assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lifecycle_close_attempt_error_does_not_repeat_drop_fence() {
+        let counts = Arc::new(LifecycleCounts::default());
+        let mut guard = LifecycleLeaseGuard::new(Box::new(FailingCloseLease(counts.clone())));
+        let primary = TraceDriverError::new("decoder factory failed");
+        let _ = guard.close().await;
+        let returned = primary;
+        drop(guard);
+
+        assert_eq!(returned.to_string(), "decoder factory failed");
+        assert_eq!(counts.closed.load(Ordering::SeqCst), 1);
     }
 }

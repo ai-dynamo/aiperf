@@ -38,8 +38,8 @@ async fn fake_live_loop_reuses_original_wire_and_correlates_tool_results() {
     let lifecycle_factory = InMemoryAgentInvocationLeaseFactoryFactory
         .create("trace-loop", root_dispatcher)
         .expect("trace creates one lifecycle owner");
-    let mut lifecycle_lease = lifecycle_factory
-        .open(
+    let mut lifecycle_opening = lifecycle_factory
+        .begin_open(
             &AgentInvocationRequest {
                 identity: AgentInvocationIdentity {
                     run_id: "run-loop".into(),
@@ -51,6 +51,9 @@ async fn fake_live_loop_reuses_original_wire_and_correlates_tool_results() {
             },
             None,
         )
+        .expect("root lifecycle opening begins");
+    let mut lifecycle_lease = lifecycle_opening
+        .open()
         .await
         .expect("root lifecycle lease opens");
     let original = response_store
@@ -145,14 +148,17 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
         invocation_id: "root".into(),
         parent_invocation_id: None,
     };
-    let mut root = factory
-        .open(
+    let mut root_opening = factory
+        .begin_open(
             &AgentInvocationRequest {
                 identity: root_identity.clone(),
                 environment: AgentInvocationEnvironment::Isolated,
             },
             None,
         )
+        .expect("root lifecycle opening begins");
+    let mut root = root_opening
+        .open()
         .await
         .expect("root invocation receives a lease");
     assert!(Rc::ptr_eq(&root_dispatcher, &root.dispatcher()));
@@ -162,19 +168,22 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
         invocation_id: "child".into(),
         parent_invocation_id: Some("root".into()),
     };
-    let mut child = factory
-        .open(
+    let mut child_opening = factory
+        .begin_open(
             &AgentInvocationRequest {
                 identity: child_identity.clone(),
                 environment: AgentInvocationEnvironment::Shared,
             },
             Some(root.as_ref()),
         )
+        .expect("shared child lifecycle opening begins");
+    let mut child = child_opening
+        .open()
         .await
         .expect("shared child borrows its parent lease");
     assert!(Rc::ptr_eq(&root.dispatcher(), &child.dispatcher()));
-    let mut isolated = factory
-        .open(
+    let mut isolated_opening = factory
+        .begin_open(
             &AgentInvocationRequest {
                 identity: AgentInvocationIdentity {
                     run_id: "run-1".into(),
@@ -186,6 +195,9 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
             },
             None,
         )
+        .expect("isolated lifecycle opening begins");
+    let mut isolated = isolated_opening
+        .open()
         .await
         .expect("isolated invocation receives its own dispatcher");
     assert!(!Rc::ptr_eq(&root.dispatcher(), &isolated.dispatcher()));

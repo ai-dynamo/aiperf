@@ -56,6 +56,7 @@ use uuid::Uuid;
 use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{NativeTransportExecution, ValidatedEndpointProfileV2};
+use futures::future::{AbortHandle, Abortable};
 
 /// Composition seam for whole-trace graph execution placement.
 ///
@@ -771,7 +772,13 @@ struct GraphWorkerBackend {
     next_session: Cell<u64>,
     next_execution: Cell<u64>,
     cancelled: Cell<bool>,
-    active: RefCell<HashMap<u64, Rc<LocalGraphTraceExecutionBackend<OpenAiChatMessage>>>>,
+    active: RefCell<HashMap<u64, ActiveGraphTrace>>,
+}
+
+#[derive(Clone)]
+enum ActiveGraphTrace {
+    Driver(AbortHandle),
+    Graph(Rc<LocalGraphTraceExecutionBackend<OpenAiChatMessage>>),
 }
 
 #[async_trait(?Send)]
@@ -783,16 +790,28 @@ impl TracePlacement for GraphWorkerBackend {
         self.trace_driver
             .capabilities(&program.driver)
             .map_err(|error| TraceError::Other(error.to_string()))?;
+        let execution_id = self.next_execution.get();
+        self.next_execution.set(execution_id.saturating_add(1));
         let program = if program.is_static_graph_program() {
             program
         } else {
-            let _supplement = run_non_static_trace_driver(
-                self.trace_driver.as_ref(),
-                self.worker_id,
-                self.run_origin_ns,
-                &program,
+            let (abort, registration) = AbortHandle::new_pair();
+            self.active
+                .borrow_mut()
+                .insert(execution_id, ActiveGraphTrace::Driver(abort));
+            let driver_result = Abortable::new(
+                run_non_static_trace_driver(
+                    self.trace_driver.as_ref(),
+                    self.worker_id,
+                    self.run_origin_ns,
+                    &program,
+                ),
+                registration,
             )
-            .await?;
+            .await;
+            self.active.borrow_mut().remove(&execution_id);
+            let _supplement = driver_result
+                .map_err(|_| TraceError::Cancelled("graph trace driver was cancelled".into()))??;
             // The registered driver owns non-static turn selection. The existing
             // graph executor still owns ordinary lowered-node dispatch, so it
             // receives the driver's static data-plane projection until Task 7
@@ -873,9 +892,9 @@ impl TracePlacement for GraphWorkerBackend {
         };
         local = local.with_node_failure(node_failure);
         let local = Rc::new(local);
-        let execution_id = self.next_execution.get();
-        self.next_execution.set(execution_id.saturating_add(1));
-        self.active.borrow_mut().insert(execution_id, local.clone());
+        self.active
+            .borrow_mut()
+            .insert(execution_id, ActiveGraphTrace::Graph(local.clone()));
         let result = local.execute_trace(program).await;
         let finalized = sink
             .verify_finalized_records()
@@ -890,7 +909,13 @@ impl TracePlacement for GraphWorkerBackend {
         let active = self.active.borrow().values().cloned().collect::<Vec<_>>();
         let errors = active
             .iter()
-            .filter_map(|backend| backend.cancel_inflight().err())
+            .filter_map(|trace| match trace {
+                ActiveGraphTrace::Driver(abort) => {
+                    abort.abort();
+                    None
+                }
+                ActiveGraphTrace::Graph(backend) => backend.cancel_inflight().err(),
+            })
             .map(|error| error.to_string())
             .collect::<Vec<_>>();
         if errors.is_empty() {
@@ -1429,10 +1454,12 @@ mod tests {
         RawEndpointConfig, StatelessEndpointFactory,
     };
     use crate::graph::driver::{
+        RecordedReplayAgentLoopFactories, RecordedReplayTraceProgramDriverFactory,
         TraceDriverCapabilities, TraceDriverContext, TraceDriverError, TraceDriverSpec,
         TraceIdentity, TraceProgramDriver, TraceProgramDriverFactory, WorkerIdentity,
     };
     use crate::graph::supplement::TraceTerminalSupplement;
+    use crate::graph::{agent, tools};
     use crate::multiturn::AuthoredInputTokenCounter;
     use crate::transport::core::ConnectionReuseStrategy;
 
@@ -1557,6 +1584,99 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct PlacementLifecycleCounts {
+        opened: AtomicUsize,
+        closed: AtomicUsize,
+    }
+
+    struct PlacementLifecycleFactoryFactory(Arc<PlacementLifecycleCounts>);
+
+    impl agent::AgentInvocationLeaseFactoryFactory for PlacementLifecycleFactoryFactory {
+        fn create(
+            &self,
+            _trace_id: &str,
+            _root_dispatcher: Rc<dyn tools::ToolDispatcher>,
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseFactory>, agent::AgentLoopError> {
+            Ok(Box::new(PlacementLifecycleFactory(self.0.clone())))
+        }
+    }
+
+    struct PlacementLifecycleFactory(Arc<PlacementLifecycleCounts>);
+
+    impl agent::AgentInvocationLeaseFactory for PlacementLifecycleFactory {
+        fn begin_open(
+            &self,
+            _request: &agent::AgentInvocationRequest,
+            _parent: Option<&dyn agent::AgentInvocationLease>,
+        ) -> Result<Box<dyn agent::AgentInvocationLeaseOpening>, agent::AgentLoopError> {
+            self.0.opened.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(PlacementLifecycleOpening(self.0.clone())))
+        }
+    }
+
+    struct PlacementLifecycleOpening(Arc<PlacementLifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLeaseOpening for PlacementLifecycleOpening {
+        async fn open(
+            &mut self,
+        ) -> Result<Box<dyn agent::AgentInvocationLease>, agent::AgentLoopError> {
+            Ok(Box::new(PlacementLifecycleLease(self.0.clone())))
+        }
+
+        fn cancel_on_drop(&mut self) {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct PlacementLifecycleLease(Arc<PlacementLifecycleCounts>);
+
+    #[async_trait(?Send)]
+    impl agent::AgentInvocationLease for PlacementLifecycleLease {
+        fn dispatcher(&self) -> Rc<dyn tools::ToolDispatcher> {
+            Rc::new(tools::InMemoryToolDispatcher::default())
+        }
+
+        fn close_on_drop(&mut self) {
+            self.0.closed.fetch_add(1, Ordering::SeqCst);
+        }
+
+        async fn close(&mut self) -> Result<(), agent::AgentLoopError> {
+            self.close_on_drop();
+            Ok(())
+        }
+    }
+
+    struct BlockingPlacementCoordinatorFactory;
+
+    impl agent::AgentTurnCoordinatorFactory for BlockingPlacementCoordinatorFactory {
+        fn create(
+            &self,
+            _invocation: &agent::AgentInvocationIdentity,
+            _spec: &agent::AgentTurnCoordinatorSpec,
+        ) -> Result<Box<dyn agent::AgentTurnCoordinator>, agent::AgentLoopError> {
+            Ok(Box::new(BlockingPlacementCoordinator))
+        }
+    }
+
+    struct BlockingPlacementCoordinator;
+
+    #[async_trait(?Send)]
+    impl agent::AgentTurnCoordinator for BlockingPlacementCoordinator {
+        async fn run(
+            &mut self,
+            _response_store: &mut dyn agent::AgentResponseStore,
+            _trajectory: &mut dyn agent::AgentTrajectorySink,
+            _turn_leases: &dyn agent::InvocationLeaseFactory,
+            _invocation_lease: &dyn agent::AgentInvocationLease,
+            _decoder: &dyn tools::AgentToolCallDecoder,
+            _formatter: &dyn tools::AgentObservationFormatter,
+        ) -> Result<agent::AgentTrajectory, agent::AgentLoopError> {
+            std::future::pending().await
+        }
+    }
+
     fn empty_recorded_program(trace_id: &str) -> GraphTraceProgram {
         let mut program = GraphTraceProgram::static_graph(GraphTracePlan {
             graph: crate::graph::model::GraphRecord::default(),
@@ -1658,6 +1778,44 @@ mod tests {
             .expect("graph worker placement runs the stock recorded replay driver");
         assert_eq!(created.load(Ordering::SeqCst), 1);
         assert_eq!(ran.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_agent_cancellation_aborts_registered_recorded_driver_and_fences_lease() {
+        let lifecycle = Arc::new(PlacementLifecycleCounts::default());
+        let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
+            .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
+                Arc::new(BlockingPlacementCoordinatorFactory),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(PlacementLifecycleFactoryFactory(lifecycle.clone())),
+                Arc::new(tools::InMemoryToolDispatcherFactory),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ));
+        let backend = Rc::new(empty_graph_worker(Arc::new(trace_driver)));
+        let task_backend = backend.clone();
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let task = tokio::task::spawn_local(async move {
+                    task_backend
+                        .execute_trace(empty_recorded_program("trace-cancel-placement"))
+                        .await
+                });
+                tokio::task::yield_now().await;
+                backend
+                    .cancel_inflight()
+                    .expect("cancellation aborts registered driver work");
+                let error = task
+                    .await
+                    .expect("placement task completes after cancellation")
+                    .expect_err("blocked recorded driver is cancelled");
+                assert!(matches!(error, TraceError::Cancelled(_)));
+                assert_eq!(lifecycle.opened.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+            })
+            .await;
     }
 
     #[test]

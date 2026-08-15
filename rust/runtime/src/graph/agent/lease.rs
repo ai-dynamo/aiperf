@@ -125,15 +125,48 @@ pub trait AgentInvocationLease {
     async fn close(&mut self) -> Result<(), crate::graph::agent::AgentLoopError>;
 }
 
-/// Lifecycle-owned factory for root and delegated invocation leases.
+/// Cancellation-safe opening operation that owns provisioned resources until lease transfer.
 #[async_trait(?Send)]
-pub trait AgentInvocationLeaseFactory {
-    /// Open one fresh root or child lease without exposing provisioning to drivers.
+pub trait AgentInvocationLeaseOpening {
+    /// Finish provisioning and transfer the opened lease to the caller.
     async fn open(
+        &mut self,
+    ) -> Result<Box<dyn AgentInvocationLease>, crate::graph::agent::AgentLoopError>;
+    /// Synchronously fence provisioned resources if opening is cancelled or dropped.
+    fn cancel_on_drop(&mut self);
+}
+
+/// Lifecycle-owned factory for root and delegated invocation leases.
+pub trait AgentInvocationLeaseFactory {
+    /// Begin one fresh root or child lease with cancellation-safe resource ownership.
+    fn begin_open(
         &self,
         request: &AgentInvocationRequest,
         parent: Option<&dyn AgentInvocationLease>,
-    ) -> Result<Box<dyn AgentInvocationLease>, crate::graph::agent::AgentLoopError>;
+    ) -> Result<Box<dyn AgentInvocationLeaseOpening>, crate::graph::agent::AgentLoopError>;
+}
+
+struct InMemoryAgentInvocationLeaseOpening {
+    lease: Option<Box<dyn AgentInvocationLease>>,
+}
+
+#[async_trait(?Send)]
+impl AgentInvocationLeaseOpening for InMemoryAgentInvocationLeaseOpening {
+    async fn open(
+        &mut self,
+    ) -> Result<Box<dyn AgentInvocationLease>, crate::graph::agent::AgentLoopError> {
+        self.lease.take().ok_or_else(|| {
+            crate::graph::agent::AgentLoopError::new(
+                "invocation lease opening was already consumed",
+            )
+        })
+    }
+
+    fn cancel_on_drop(&mut self) {
+        if let Some(mut lease) = self.lease.take() {
+            lease.close_on_drop();
+        }
+    }
 }
 
 /// Frozen factory creating one lifecycle owner for every trace-owned agent loop.
@@ -214,13 +247,12 @@ impl Default for InMemoryAgentInvocationLeaseFactory {
     }
 }
 
-#[async_trait(?Send)]
 impl AgentInvocationLeaseFactory for InMemoryAgentInvocationLeaseFactory {
-    async fn open(
+    fn begin_open(
         &self,
         request: &AgentInvocationRequest,
         parent: Option<&dyn AgentInvocationLease>,
-    ) -> Result<Box<dyn AgentInvocationLease>, crate::graph::agent::AgentLoopError> {
+    ) -> Result<Box<dyn AgentInvocationLeaseOpening>, crate::graph::agent::AgentLoopError> {
         if request.environment == AgentInvocationEnvironment::Shared && parent.is_none() {
             return Err(crate::graph::agent::AgentLoopError::new(
                 "shared delegated invocation requires a parent lease",
@@ -241,9 +273,11 @@ impl AgentInvocationLeaseFactory for InMemoryAgentInvocationLeaseFactory {
                 Rc::new(InMemoryToolDispatcher::default())
             })
         };
-        Ok(Box::new(InMemoryAgentInvocationLease {
-            dispatcher,
-            is_closed: Cell::new(false),
+        Ok(Box::new(InMemoryAgentInvocationLeaseOpening {
+            lease: Some(Box::new(InMemoryAgentInvocationLease {
+                dispatcher,
+                is_closed: Cell::new(false),
+            })),
         }))
     }
 }
