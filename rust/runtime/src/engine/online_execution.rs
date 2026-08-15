@@ -1237,6 +1237,9 @@ fn lower_graph(
             ),
         )
         .context("loading direct authored Graph-IR input")?;
+    if workload.recorded_agent_default {
+        validate_canonical_recorded_agent_bundle(&prepared.bundle)?;
+    }
     validate_graph_endpoint_profile_references(&prepared.bundle, context)?;
     let dataset = NativeGraphDatasetPlan {
         input: Arc::new(prepared.bundle),
@@ -1263,6 +1266,47 @@ fn lower_graph(
         workload.failure_policy,
         Some(transport),
     )
+}
+
+fn validate_canonical_recorded_agent_bundle(
+    bundle: &crate::graph::input::GraphInputBundle,
+) -> Result<()> {
+    let fixture = crate::graph::recorded::agent_recording::CanonicalReplayFixture::load()
+        .map_err(|error| anyhow!("loading canonical recorded-agent fixture: {error}"))?;
+    let actual = bundle
+        .programs
+        .iter()
+        .map(|program| {
+            let replay = program.replay.as_ref().ok_or_else(|| {
+                anyhow!("recorded-agent-default requires recorded replay metadata")
+            })?;
+            Ok((replay.identity.clone(), replay.source_digest.clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let expected = fixture
+        .manifest
+        .tasks
+        .iter()
+        .map(|task| {
+            let key = format!("{}:{}", task.identity.adapter, task.identity.task_id);
+            Ok((
+                task.identity.clone(),
+                fixture
+                    .digest_index
+                    .recordings
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow!("canonical recorded-agent fixture is missing digest for {key}")
+                    })?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        actual == expected,
+        "recorded-agent-default requires the canonical manifest task order and recording digests"
+    );
+    Ok(())
 }
 
 /// Recover the authored accelerated cache-warmup duration
@@ -1783,10 +1827,73 @@ impl PreparedRunnerOperation for PreparedNativeOperation {
 mod tests {
     use std::sync::Mutex;
 
+    use crate::dataset::SegmentPool;
+    use crate::graph::driver::ReplayTraceMetadata;
+    use crate::graph::model::{GraphRecord, GraphTracePlan, GraphTraceProgram, TraceRecord};
     use async_trait::async_trait;
     use bytes::Bytes;
 
     use super::*;
+
+    fn canonical_recorded_agent_bundle() -> crate::graph::input::GraphInputBundle {
+        let fixture = crate::graph::recorded::agent_recording::CanonicalReplayFixture::load()
+            .expect("canonical fixture loads");
+        let programs = fixture
+            .manifest
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(ordinal, task)| {
+                let key = format!("{}:{}", task.identity.adapter, task.identity.task_id);
+                let source_digest = fixture
+                    .digest_index
+                    .recordings
+                    .get(&key)
+                    .expect("canonical digest exists")
+                    .clone();
+                let mut program = GraphTraceProgram::static_graph(GraphTracePlan {
+                    graph: GraphRecord::default(),
+                    trace: TraceRecord {
+                        id: format!("replay-{ordinal}"),
+                        graph_ref: None,
+                        initial_state: Default::default(),
+                    },
+                    arrival_offset_ns: None,
+                });
+                program.replay = Some(ReplayTraceMetadata {
+                    manifest_ordinal: ordinal,
+                    identity: task.identity.clone(),
+                    source_digest,
+                    normalization_target_digest: None,
+                    target_output_tokens: Vec::new(),
+                    expected_llm_node_count: 0,
+                    expected_tool_node_count: 0,
+                    request_profile_identity: "profile".to_string(),
+                    comparability_annotations: Default::default(),
+                });
+                program
+            })
+            .collect();
+        crate::graph::input::GraphInputBundle {
+            programs,
+            segments: Arc::new(SegmentPool::new().freeze()),
+            metadata: crate::graph::input::GraphInputMetadata {
+                format: "agent_recording".to_string(),
+                root_count: 8,
+                node_count: 0,
+                warning_facts: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn canonical_scenario_rejects_an_actual_loaded_bundle_with_reordered_tasks() {
+        let mut bundle = canonical_recorded_agent_bundle();
+        bundle.programs.swap(0, 1);
+        let error = validate_canonical_recorded_agent_bundle(&bundle)
+            .expect_err("scenario must reject the actual lowered task order");
+        assert!(error.to_string().contains("canonical manifest task order"));
+    }
 
     struct NeverEvaluatorFactory;
 

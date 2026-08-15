@@ -27,6 +27,7 @@ pub(crate) struct ReplayCheckpointIdentity {
     pub(crate) manifest_digest: String,
     pub(crate) recording_digests: BTreeMap<String, String>,
     pub(crate) request_profile_digests: BTreeMap<String, String>,
+    pub(crate) environment_digests: BTreeMap<String, String>,
     pub(crate) cache_namespace: String,
 }
 
@@ -59,6 +60,28 @@ impl ReplayRunIdentity {
         request_profile_digests: BTreeMap<String, String>,
         cache_namespace: impl Into<String>,
     ) -> Self {
+        Self::for_checkpoint_with_environment(
+            run_id,
+            replay_root_digest,
+            manifest_digest,
+            recording_digests,
+            request_profile_digests,
+            BTreeMap::new(),
+            cache_namespace,
+        )
+    }
+
+    /// Construct a checkpoint identity with resolved environment/tool digests.
+    #[must_use]
+    pub fn for_checkpoint_with_environment(
+        run_id: impl Into<String>,
+        replay_root_digest: impl Into<String>,
+        manifest_digest: impl Into<String>,
+        recording_digests: BTreeMap<String, String>,
+        request_profile_digests: BTreeMap<String, String>,
+        environment_digests: BTreeMap<String, String>,
+        cache_namespace: impl Into<String>,
+    ) -> Self {
         let run_id = run_id.into();
         Self {
             root: RngRoot::new(None),
@@ -69,6 +92,7 @@ impl ReplayRunIdentity {
                 manifest_digest: manifest_digest.into(),
                 recording_digests,
                 request_profile_digests,
+                environment_digests,
                 cache_namespace: cache_namespace.into(),
             }),
         }
@@ -113,6 +137,16 @@ impl ReplayRunIdentity {
         self.checkpoint.as_ref().map_or_else(
             || EMPTY.get_or_init(BTreeMap::new),
             |identity| &identity.request_profile_digests,
+        )
+    }
+
+    /// Return resolved environment/tool-image digests retained by a run identity.
+    #[must_use]
+    pub fn environment_digests(&self) -> &BTreeMap<String, String> {
+        static EMPTY: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+        self.checkpoint.as_ref().map_or_else(
+            || EMPTY.get_or_init(BTreeMap::new),
+            |identity| &identity.environment_digests,
         )
     }
 

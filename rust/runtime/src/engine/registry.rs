@@ -873,6 +873,9 @@ pub struct GraphWorkloadConfigV2 {
     /// as soon as its inputs are ready (sets `ExecutorFlags::ignore_edge_delays`).
     #[serde(default)]
     pub ignore_trace_delays: bool,
+    /// Whether the resolved run selected the canonical recorded-agent scenario.
+    #[serde(default)]
+    pub recorded_agent_default: bool,
 }
 
 impl Debug for GraphWorkloadConfigV2 {

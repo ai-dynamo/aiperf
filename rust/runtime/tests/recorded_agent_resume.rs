@@ -120,3 +120,71 @@ fn resume_skips_only_verified_successful_exact_tasks() {
     let checkpoint = ReplayCheckpoint::new(run, "manifest").with_completed(task(), successful);
     assert!(checkpoint.should_skip(&task(), 0, "recording", "profile", 4));
 }
+
+#[test]
+fn resume_recovers_the_persisted_namespace_before_validating_an_unseeded_run() {
+    let output = tempfile::tempdir().expect("temporary checkpoint directory");
+    let path = output.path().join("checkpoint.json");
+    let run = ReplayRunIdentity::for_checkpoint(
+        "opaque-run-id",
+        "root",
+        "manifest",
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "recording".into(),
+        )]),
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "profile".into(),
+        )]),
+        "persisted namespace",
+    );
+    ReplayCheckpoint::new(run, "manifest")
+        .with_completed(
+            task(),
+            CompletedReplayTask::successful(0, "recording", "profile", "environment", 4),
+        )
+        .write_atomic(&path)
+        .expect("checkpoint is durable before warmup");
+    let resumed = ReplayCheckpoint::restore_run_identity(
+        &path,
+        "opaque-run-id",
+        "root",
+        "manifest",
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "recording".into(),
+        )]),
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "profile".into(),
+        )]),
+        BTreeMap::new(),
+    )
+    .expect("resume uses the persisted raw namespace instead of minting another one");
+    let checkpoint = ReplayCheckpoint::read_for_resume(&path, &resumed)
+        .expect("unseeded second invocation validates");
+    assert_eq!(
+        checkpoint.run.cache_namespace_digest(),
+        resumed.cache_namespace_digest()
+    );
+    assert!(checkpoint.should_skip(&task(), 0, "recording", "profile", 4));
+
+    let changed_profile = ReplayCheckpoint::restore_run_identity(
+        &path,
+        "opaque-run-id",
+        "root",
+        "manifest",
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "recording".into(),
+        )]),
+        BTreeMap::from([(
+            "pinchbench:task_meeting_council_budget".into(),
+            "changed-profile".into(),
+        )]),
+        BTreeMap::new(),
+    )
+    .expect("only the namespace is recovered from protected checkpoint state");
+    assert!(ReplayCheckpoint::read_for_resume(&path, &changed_profile).is_err());
+}

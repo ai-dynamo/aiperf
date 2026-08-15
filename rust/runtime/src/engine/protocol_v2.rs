@@ -404,6 +404,8 @@ impl BenchmarkRunWireV2 {
         if workload_kind == WorkloadKind::Graph {
             workload_config["weka_semantics"] = serde_json::json!(cfg.weka_semantics);
             workload_config["ignore_trace_delays"] = serde_json::json!(cfg.ignore_trace_delays);
+            workload_config["recorded_agent_default"] =
+                serde_json::json!(cfg.scenario.as_deref() == Some("recorded-agent-default"));
             if matches!(
                 cfg.weka_semantics.as_deref(),
                 Some("legacy") | Some("agentx")

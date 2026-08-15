@@ -954,14 +954,28 @@ fn prepare_recorded_replay_checkpoint(
     }
     let mut recordings = BTreeMap::new();
     let mut profiles = BTreeMap::new();
-    for trace in &replay {
+    let mut environments = BTreeMap::new();
+    for program in &input.programs {
+        let Some(trace) = program.replay.as_ref() else {
+            continue;
+        };
         let key = format!("{}:{}", trace.identity.adapter, trace.identity.task_id);
         recordings.insert(key.clone(), trace.source_digest.clone());
         profiles.insert(
-            key,
+            key.clone(),
             blake3::hash(trace.request_profile_identity.as_bytes())
                 .to_hex()
                 .to_string(),
+        );
+        environments.insert(
+            key,
+            blake3::hash(
+                serde_json::to_string(&program.environment)
+                    .map_err(|error| anyhow!("serializing replay environment identity: {error}"))?
+                    .as_bytes(),
+            )
+            .to_hex()
+            .to_string(),
         );
     }
     let manifest_digest = blake3::hash(
@@ -983,24 +997,35 @@ fn prepare_recorded_replay_checkpoint(
     let root_digest = blake3::hash(input.metadata.format.as_bytes())
         .to_hex()
         .to_string();
+    if resume && path.exists() {
+        let run = ReplayCheckpoint::restore_run_identity(
+            path,
+            format!("recorded-agent-replay:{manifest_digest}"),
+            root_digest,
+            manifest_digest,
+            recordings,
+            profiles,
+            environments,
+        )
+        .map_err(|error| anyhow!("recovering recorded replay checkpoint namespace: {error}"))?;
+        return ReplayCheckpoint::read_for_resume(path, &run)
+            .map(Some)
+            .map_err(|error| anyhow!("loading recorded replay checkpoint: {error}"));
+    }
     let namespace_identity = ReplayRunIdentity::mint(rng_root, &manifest_digest);
     let namespace = CacheIsolationPolicy::first_message_prefix(namespace_identity)
         .namespace()
         .ok_or_else(|| anyhow!("recorded replay cache namespace was not created"))?
         .to_string();
-    let run = ReplayRunIdentity::for_checkpoint(
+    let run = ReplayRunIdentity::for_checkpoint_with_environment(
         format!("recorded-agent-replay:{manifest_digest}"),
         root_digest,
         manifest_digest.clone(),
         recordings,
         profiles,
+        environments,
         namespace,
     );
-    if resume && path.exists() {
-        return ReplayCheckpoint::read_for_resume(path, &run)
-            .map(Some)
-            .map_err(|error| anyhow!("loading recorded replay checkpoint: {error}"));
-    }
     let checkpoint = ReplayCheckpoint::new(run, manifest_digest);
     checkpoint
         .write_atomic(path)
@@ -1058,6 +1083,9 @@ fn finalize_recorded_replay_checkpoint(
                 artifact_offset_end: call_count,
             },
         );
+        checkpoint.write_atomic(checkpoint_path).map_err(|error| {
+            anyhow!("persisting recorded replay checkpoint after task cleanup: {error}")
+        })?;
     }
     let failures = checkpoint
         .completed
@@ -1066,7 +1094,9 @@ fn finalize_recorded_replay_checkpoint(
         .map(|(task, completed)| {
             format!(
                 "{}\t{}\t{:?}",
-                task.adapter, task.task_id, completed.classification
+                tsv_cell(&task.adapter),
+                tsv_cell(&task.task_id),
+                completed.classification
             )
         })
         .collect::<Vec<_>>();
@@ -1114,6 +1144,14 @@ fn write_replay_text(path: &std::path::Path, contents: &str) -> Result<()> {
     }
     std::fs::write(path, contents)
         .map_err(|error| anyhow!("writing replay artifact {}: {error}", path.display()))
+}
+
+fn tsv_cell(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 /// The post-capture metric summaries shared by both executors' finalize tails

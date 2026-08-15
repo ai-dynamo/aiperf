@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -155,8 +156,16 @@ impl ReplayCheckpoint {
             manifest_digest: identity.manifest_digest.clone(),
             recording_digests: identity.recording_digests.clone(),
             request_profile_digests: identity.request_profile_digests.clone(),
+            environment_digests: identity.environment_digests.clone(),
             cache_namespace: identity.cache_namespace.clone(),
-            completed: self.completed.clone(),
+            completed: self
+                .completed
+                .iter()
+                .map(|(identity, completed)| CheckpointTask {
+                    identity: identity.clone(),
+                    completed: completed.clone(),
+                })
+                .collect(),
         };
         let bytes = serde_json::to_vec(&disk).map_err(|error| {
             ReplayResumeError::new(format!("serializing replay checkpoint: {error}"))
@@ -168,12 +177,23 @@ impl ReplayCheckpoint {
             ReplayResumeError::new(format!("creating checkpoint directory: {error}"))
         })?;
         let temporary = path.with_extension("tmp");
-        fs::write(&temporary, bytes).map_err(|error| {
+        let mut file = fs::File::create(&temporary).map_err(|error| {
+            ReplayResumeError::new(format!("creating replay checkpoint: {error}"))
+        })?;
+        file.write_all(&bytes).map_err(|error| {
             ReplayResumeError::new(format!("writing replay checkpoint: {error}"))
+        })?;
+        file.sync_all().map_err(|error| {
+            ReplayResumeError::new(format!("syncing replay checkpoint: {error}"))
         })?;
         fs::rename(&temporary, path).map_err(|error| {
             ReplayResumeError::new(format!("replacing replay checkpoint: {error}"))
-        })
+        })?;
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                ReplayResumeError::new(format!("syncing replay checkpoint directory: {error}"))
+            })
     }
 
     /// Load a checkpoint and reject mismatched persistent identity.
@@ -188,19 +208,79 @@ impl ReplayCheckpoint {
             ReplayResumeError::new(format!("parsing replay checkpoint: {error}"))
         })?;
         let checkpoint = Self {
-            run: ReplayRunIdentity::for_checkpoint(
+            run: ReplayRunIdentity::for_checkpoint_with_environment(
                 disk.run_id,
                 disk.replay_root_digest,
                 disk.manifest_digest.clone(),
                 disk.recording_digests,
                 disk.request_profile_digests,
+                disk.environment_digests,
                 disk.cache_namespace,
             ),
             manifest_digest: disk.manifest_digest,
-            completed: disk.completed,
+            completed: disk
+                .completed
+                .into_iter()
+                .map(|task| (task.identity, task.completed))
+                .collect(),
         };
         checkpoint.validate_resume(run)?;
         Ok(checkpoint)
+    }
+
+    /// Recover the protected namespace from disk before validating a resumed run.
+    ///
+    /// A second unseeded invocation cannot reproduce the namespace by minting it
+    /// again, so the controller must build its comparison identity from this
+    /// protected checkpoint value.
+    pub fn restore_run_identity(
+        path: &Path,
+        run_id: impl Into<String>,
+        replay_root_digest: impl Into<String>,
+        manifest_digest: impl Into<String>,
+        recording_digests: BTreeMap<String, String>,
+        request_profile_digests: BTreeMap<String, String>,
+        environment_digests: BTreeMap<String, String>,
+    ) -> Result<ReplayRunIdentity, ReplayResumeError> {
+        let checkpoint = Self::read(path)?;
+        let identity = checkpoint.run.checkpoint_identity().ok_or_else(|| {
+            ReplayResumeError::IdentityMismatch("checkpoint has no persistent identity".into())
+        })?;
+        Ok(ReplayRunIdentity::for_checkpoint_with_environment(
+            run_id,
+            replay_root_digest,
+            manifest_digest,
+            recording_digests,
+            request_profile_digests,
+            environment_digests,
+            identity.cache_namespace.clone(),
+        ))
+    }
+
+    fn read(path: &Path) -> Result<Self, ReplayResumeError> {
+        let bytes = fs::read(path).map_err(|error| {
+            ReplayResumeError::new(format!("reading replay checkpoint: {error}"))
+        })?;
+        let disk: ReplayCheckpointDisk = serde_json::from_slice(&bytes).map_err(|error| {
+            ReplayResumeError::new(format!("parsing replay checkpoint: {error}"))
+        })?;
+        Ok(Self {
+            run: ReplayRunIdentity::for_checkpoint_with_environment(
+                disk.run_id,
+                disk.replay_root_digest,
+                disk.manifest_digest.clone(),
+                disk.recording_digests,
+                disk.request_profile_digests,
+                disk.environment_digests,
+                disk.cache_namespace,
+            ),
+            manifest_digest: disk.manifest_digest,
+            completed: disk
+                .completed
+                .into_iter()
+                .map(|task| (task.identity, task.completed))
+                .collect(),
+        })
     }
 
     /// Reject any resume attempt with a changed root, source, profile, or namespace.
@@ -219,6 +299,7 @@ impl ReplayCheckpoint {
             || saved.manifest_digest != current.manifest_digest
             || saved.recording_digests != current.recording_digests
             || saved.request_profile_digests != current.request_profile_digests
+            || saved.environment_digests != current.environment_digests
             || saved.cache_namespace != current.cache_namespace
             || self.manifest_digest != current.manifest_digest
         {
@@ -259,8 +340,17 @@ struct ReplayCheckpointDisk {
     manifest_digest: String,
     recording_digests: BTreeMap<String, String>,
     request_profile_digests: BTreeMap<String, String>,
+    #[serde(default)]
+    environment_digests: BTreeMap<String, String>,
     cache_namespace: String,
-    completed: BTreeMap<ReplayTaskIdentity, CompletedReplayTask>,
+    completed: Vec<CheckpointTask>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointTask {
+    identity: ReplayTaskIdentity,
+    completed: CompletedReplayTask,
 }
 
 /// Failure loading, writing, or validating persistent replay state.
