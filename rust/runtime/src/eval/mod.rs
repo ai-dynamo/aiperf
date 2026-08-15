@@ -5,6 +5,7 @@
 
 mod evidence;
 mod identity;
+mod import;
 mod import_report;
 mod score;
 mod source;
@@ -15,6 +16,7 @@ pub use identity::{
     AgentVariantRef, ArtifactDigest, EvalIdentityError, EvalTaskId, EvalTaskRef, ModelIdentity,
     PolicyIdentity, RuntimeIdentity,
 };
+pub use import::{HarborImportError, HarborImporter, HarborSource, ImportedTask, SourceAcquirer};
 pub use import_report::{ImportDisposition, ImportReport};
 pub use score::{ScoreError, ScoreVersion};
 pub use source::{EvalDatasetId, EvalDatasetManifest};

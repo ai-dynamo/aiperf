@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Native acquisition and normalization of Harbor-compatible task packages.
+
+mod acquire;
+mod harbor;
+mod normalize;
+
+pub use acquire::{HarborSource, SourceAcquirer};
+pub use harbor::{HarborImportError, HarborImporter, ImportedTask};
