@@ -505,7 +505,7 @@ impl DockerProcessSandbox {
         agent_command: &[String],
         secrets: &dyn SecretProvider,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
-        let mut prepared = self.prepare_compose_lease(runtime, package, plan, secrets)?;
+        let mut prepared = self.prepare_compose_lease(runtime, recipe, package, plan, secrets)?;
         let outcome = (|| {
             let step = plan
                 .steps()
@@ -517,7 +517,7 @@ impl DockerProcessSandbox {
                 recipe,
                 prepared.source_root,
                 prepared.verifier_prefix.clone(),
-                plan.environment(),
+                &prepared.environment,
                 &mut prepared.lease,
                 secrets,
             );
@@ -547,7 +547,7 @@ impl DockerProcessSandbox {
         agent_command: &[String],
         secrets: &dyn SecretProvider,
     ) -> Result<MultiStepExecutionResult, EvalExecutionError> {
-        let mut prepared = self.prepare_compose_lease(runtime, package, plan, secrets)?;
+        let mut prepared = self.prepare_compose_lease(runtime, recipe, package, plan, secrets)?;
         let outcome = (|| {
             let mut session = ComposeStepSession::new(
                 self.clock.clone(),
@@ -555,7 +555,7 @@ impl DockerProcessSandbox {
                 recipe,
                 prepared.source_root,
                 prepared.verifier_prefix.clone(),
-                plan.environment(),
+                &prepared.environment,
                 &mut prepared.lease,
                 secrets,
             );
@@ -572,6 +572,7 @@ impl DockerProcessSandbox {
     fn prepare_compose_lease<'a>(
         &self,
         runtime: &'a dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
         package: &HarborTaskPackage,
         plan: &BenchmarkExecutionPlan,
         secrets: &dyn SecretProvider,
@@ -585,9 +586,13 @@ impl DockerProcessSandbox {
                 .ok_or(EvalExecutionError::UnsupportedEnforcement(
                     "Docker Compose runtime",
                 ))?;
-        resolve_environment(plan.environment(), secrets)?;
+        let mut environment = plan.environment().clone();
+        environment.workdir = recipe
+            .resolve_workdir(environment.workdir())
+            .map(ToOwned::to_owned);
+        resolve_environment(&environment, secrets)?;
         for step in plan.steps() {
-            resolve_phase_environment(plan.environment(), step.agent(), secrets)?;
+            resolve_phase_environment(&environment, step.agent(), secrets)?;
             resolve_environment(step.verifier().environment(), secrets)?;
             resolve_phase_environment(
                 step.verifier().environment(),
@@ -616,6 +621,7 @@ impl DockerProcessSandbox {
         preflight_compose_configuration(
             runtime,
             plan,
+            &environment,
             &environment_root,
             lease.project().clone(),
             &source_root,
@@ -625,7 +631,7 @@ impl DockerProcessSandbox {
             &overlay,
         )?;
         let generated =
-            render_generated_main_compose(&image, &labels, plan.environment(), workspace.path())?;
+            render_generated_main_compose(&image, &labels, &environment, workspace.path())?;
         fs::write(
             source_root.join("aiperf.generated.compose.yaml"),
             generated.into_bytes(),
@@ -643,11 +649,11 @@ impl DockerProcessSandbox {
             .with_network_lease("default"),
         )?;
         lease.start()?;
-        if let Some(healthcheck) = plan.environment().healthcheck() {
+        if let Some(healthcheck) = environment.healthcheck() {
             run_lease_healthcheck(
                 self.clock.clone(),
                 &mut lease,
-                plan.environment(),
+                &environment,
                 healthcheck,
                 secrets,
             )?;
@@ -657,6 +663,7 @@ impl DockerProcessSandbox {
             _workspace: workspace,
             source_root,
             verifier_prefix: lease.project().as_str().to_owned(),
+            environment,
             lease,
         })
     }
@@ -687,6 +694,7 @@ struct PreparedComposeLease<'a> {
     _workspace: TempDir,
     source_root: std::path::PathBuf,
     verifier_prefix: String,
+    environment: super::EnvironmentPlan,
     lease: ComposeProjectLease<'a>,
 }
 

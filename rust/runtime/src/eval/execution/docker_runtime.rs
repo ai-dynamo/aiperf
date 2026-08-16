@@ -36,6 +36,7 @@ pub fn preflight_docker(
 pub(crate) fn preflight_compose_configuration(
     runtime: &dyn DockerRuntime,
     plan: &BenchmarkExecutionPlan,
+    environment: &EnvironmentPlan,
     environment_root: &Path,
     project: ComposeProjectId,
     project_directory: &Path,
@@ -56,7 +57,7 @@ pub(crate) fn preflight_compose_configuration(
     let rendered = super::compose_policy::render_generated_main_compose(
         image_tag,
         project_labels,
-        plan.environment(),
+        environment,
         workspace,
     )?;
     let request = DockerComposeConfigRequest::new(

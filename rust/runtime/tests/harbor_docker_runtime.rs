@@ -194,6 +194,8 @@ struct ComposeSessionRecordingRuntime {
     events: RefCell<Vec<String>>,
     creates: RefCell<Vec<RecordedCreate>>,
     artifact_transfer_sources: RefCell<Vec<String>>,
+    generated_main: RefCell<Option<serde_json::Value>>,
+    phase_calls: RefCell<Vec<(String, Option<String>, Option<String>, Vec<String>)>>,
     failure: Option<ComposeSessionFailure>,
     agent_calls: Cell<usize>,
 }
@@ -204,6 +206,8 @@ impl ComposeSessionRecordingRuntime {
             events: RefCell::new(Vec::new()),
             creates: RefCell::new(Vec::new()),
             artifact_transfer_sources: RefCell::new(Vec::new()),
+            generated_main: RefCell::new(None),
+            phase_calls: RefCell::new(Vec::new()),
             failure,
             agent_calls: Cell::new(0),
         }
@@ -216,6 +220,9 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
             .with_docker()
             .with_image_source()
             .with_public_network()
+            .with_users()
+            .with_workdir()
+            .with_healthchecks()
             .with_phase_timeouts()
             .with_separate_verifier()
             .with_compose_project()
@@ -323,6 +330,13 @@ impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
         let mut generated =
             serde_yaml::from_slice::<serde_yaml::Value>(request.generated_definition())
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let generated_json = serde_json::to_value(&generated)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        *self.generated_main.borrow_mut() = generated_json
+            .get("services")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|services| services.get("main"))
+            .cloned();
         let overlay = fs::read(request.overlay_definition())
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
         let overlay = serde_yaml::from_slice::<serde_yaml::Value>(&overlay)
@@ -372,6 +386,12 @@ impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
     }
 
     fn compose_exec(&self, request: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
+        self.phase_calls.borrow_mut().push((
+            request.phase().to_string(),
+            request.user().map(ToOwned::to_owned),
+            request.workdir().map(ToOwned::to_owned),
+            request.public_arguments().to_vec(),
+        ));
         match request.phase() {
             aiperf_runtime::eval::EvalExecutionPhase::Agent => {
                 let call = self.agent_calls.get() + 1;
@@ -581,6 +601,98 @@ fn compose_terminal_sidecar_evidence_tears_down_before_separate_verifier() {
         down < verifier,
         "sidecar evidence must be terminal before verifier creation"
     );
+}
+
+#[test]
+fn compose_recipe_workdir_override_controls_generated_main_health_and_agent_without_mutating_plan()
+{
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(
+        &temporary,
+        r#"[environment]
+workdir = "/task"
+user = "bench"
+
+[environment.healthcheck]
+command = ["ready"]
+
+[verifier]
+environment_mode = "separate"
+"#,
+    );
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(None);
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/override".to_owned()),
+    )
+    .unwrap();
+
+    DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect("Compose execution with runtime workdir override");
+
+    assert_eq!(
+        imported.package.execution_plan().environment().workdir(),
+        Some("/task"),
+        "runtime overrides must not mutate normalized package identity"
+    );
+    let generated = runtime
+        .generated_main
+        .borrow()
+        .clone()
+        .expect("generated main definition");
+    assert_eq!(
+        generated
+            .get("working_dir")
+            .and_then(serde_json::Value::as_str),
+        Some("/override")
+    );
+    assert_eq!(
+        generated
+            .get("volumes")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|mounts| mounts.first())
+            .and_then(serde_json::Value::as_object)
+            .and_then(|mount| mount.get("target"))
+            .and_then(serde_json::Value::as_str),
+        Some("/override")
+    );
+    let calls = runtime.phase_calls.borrow();
+    assert!(calls.iter().any(|(phase, user, workdir, command)| {
+        phase == "healthcheck"
+            && user.as_deref() == Some("bench")
+            && workdir.as_deref() == Some("/override")
+            && command.as_slice() == ["ready".to_owned()]
+    }));
+    assert!(calls.iter().any(|(phase, user, workdir, command)| {
+        phase == "agent"
+            && user.as_deref() == Some("root")
+            && workdir.as_deref() == Some("/override")
+            && command
+                .first()
+                .is_some_and(|argument| argument == "/bin/sh")
+    }));
+    assert!(calls.iter().any(|(phase, user, workdir, command)| {
+        phase == "agent"
+            && user.as_deref() == Some("bench")
+            && workdir.as_deref() == Some("/override")
+            && command.as_slice() == ["agent".to_owned()]
+    }));
 }
 
 #[test]
