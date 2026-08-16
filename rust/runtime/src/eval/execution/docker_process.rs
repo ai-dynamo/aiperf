@@ -23,16 +23,25 @@ use crate::{
 
 use super::{
     BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId, DockerBuildRequest,
-    DockerCopyRequest, DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime,
-    DockerStartRequest, EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe,
-    LocalExecutionResult, MultiStepExecutionResult, NetworkPolicy, SecretProvider,
-    collect_artifacts, preflight_docker, resolve_environment, resolve_phase_environment,
+    DockerComposeArchiveRequest, DockerComposeBuildRequest, DockerComposeConfigRequest,
+    DockerComposeCopyRequest, DockerComposeDownRequest, DockerComposeExecRequest,
+    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
+    DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
+    EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult,
+    MultiStepExecutionResult, NetworkPolicy, SecretProvider, collect_artifacts, preflight_docker,
+    resolve_environment, resolve_phase_environment,
     shared_workdir_conflicts_reserved_verifier_path, transfer_artifacts,
     verifier_artifact_target_collision,
 };
 
 use super::docker_runtime::preflight_compose_configuration;
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
+use super::{
+    artifacts::{Deadline, collect_service_artifacts, collect_service_evidence},
+    compose_policy::render_generated_main_compose,
+    compose_project::ComposeProjectLease,
+    task_environment::{ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease},
+};
 
 /// Executes a conventional task in a task-built Docker environment.
 pub struct DockerProcessSandbox {
@@ -153,9 +162,14 @@ impl DockerProcessSandbox {
         }
         preflight_docker(runtime, plan)?;
         if plan.compose().is_some() {
-            return compose_preflight_from_snapshot(runtime, package, plan, secrets).and(Err(
-                EvalExecutionError::UnsupportedEnforcement("Compose lifecycle"),
-            ));
+            return self.execute_compose_multi_step_with_runtime(
+                runtime,
+                recipe,
+                package,
+                plan,
+                agent_command,
+                secrets,
+            );
         }
         let environment = plan.environment();
         if !runtime.supports_phase_network_transitions()
@@ -256,9 +270,14 @@ impl DockerProcessSandbox {
         }
         preflight_docker(runtime, plan)?;
         if plan.compose().is_some() {
-            return compose_preflight_from_snapshot(runtime, package, plan, secrets).and(Err(
-                EvalExecutionError::UnsupportedEnforcement("Compose lifecycle"),
-            ));
+            return self.execute_compose_with_runtime(
+                runtime,
+                recipe,
+                package,
+                plan,
+                agent_command,
+                secrets,
+            );
         }
         let environment = plan.environment();
         let verifier = plan.verifier();
@@ -476,52 +495,159 @@ impl DockerProcessSandbox {
             (Ok(result), None) => Ok(result),
         }
     }
-}
 
-fn compose_preflight_from_snapshot(
-    runtime: &dyn DockerRuntime,
-    package: &HarborTaskPackage,
-    plan: &BenchmarkExecutionPlan,
-    secrets: &dyn SecretProvider,
-) -> Result<(), EvalExecutionError> {
-    resolve_environment(plan.environment(), secrets)?;
-    for step in plan.steps() {
-        resolve_phase_environment(plan.environment(), step.agent(), secrets)?;
-        resolve_environment(step.verifier().environment(), secrets)?;
-        resolve_phase_environment(
-            step.verifier().environment(),
-            step.verifier().phase(),
-            secrets,
-        )?;
+    fn execute_compose_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        agent_command: &[String],
+        secrets: &dyn SecretProvider,
+    ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        let mut prepared = self.prepare_compose_lease(runtime, package, plan, secrets)?;
+        let outcome = (|| {
+            let step = plan
+                .steps()
+                .first()
+                .ok_or(EvalExecutionError::InvalidRecipe("Compose benchmark step"))?;
+            let mut session = ComposeStepSession::new(
+                self.clock.clone(),
+                runtime,
+                recipe,
+                prepared.source_root,
+                plan.environment(),
+                &mut prepared.lease,
+                secrets,
+            );
+            session.run_agent(step, agent_command)?;
+            let artifacts = session.collect_artifacts(step)?;
+            let reward = session.run_verifier(step, &artifacts)?;
+            Ok(LocalExecutionResult {
+                artifacts,
+                reward,
+                verifier: package.source_digest(),
+            })
+        })();
+        let cleanup = prepared.lease.teardown();
+        match (outcome, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(result), Ok(())) => Ok(result),
+        }
     }
-    let materialized = package.materialize_source()?;
-    let (_, environment_root) = standard_task_roots(package, materialized.root())?;
-    let overlay = fs::read(
-        materialized.root().join(
-            plan.compose()
-                .ok_or(EvalExecutionError::InvalidRecipe("Compose project plan"))?
-                .definition_path(),
-        ),
-    )
-    .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-    let workspace = tempfile::tempdir()
+
+    fn execute_compose_multi_step_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        agent_command: &[String],
+        secrets: &dyn SecretProvider,
+    ) -> Result<MultiStepExecutionResult, EvalExecutionError> {
+        let mut prepared = self.prepare_compose_lease(runtime, package, plan, secrets)?;
+        let outcome = (|| {
+            let mut session = ComposeStepSession::new(
+                self.clock.clone(),
+                runtime,
+                recipe,
+                prepared.source_root,
+                plan.environment(),
+                &mut prepared.lease,
+                secrets,
+            );
+            execute_benchmark_steps(plan, agent_command, package.source_digest(), &mut session)
+        })();
+        let cleanup = prepared.lease.teardown();
+        match (outcome, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(result), Ok(())) => Ok(result),
+        }
+    }
+
+    fn prepare_compose_lease<'a>(
+        &self,
+        runtime: &'a dyn DockerRuntime,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        secrets: &dyn SecretProvider,
+    ) -> Result<PreparedComposeLease<'a>, EvalExecutionError> {
+        let compose = plan
+            .compose()
+            .ok_or(EvalExecutionError::InvalidRecipe("Compose project plan"))?;
+        let compose_runtime =
+            runtime
+                .compose_runtime()
+                .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                    "Docker Compose runtime",
+                ))?;
+        resolve_environment(plan.environment(), secrets)?;
+        for step in plan.steps() {
+            resolve_phase_environment(plan.environment(), step.agent(), secrets)?;
+            resolve_environment(step.verifier().environment(), secrets)?;
+            resolve_phase_environment(
+                step.verifier().environment(),
+                step.verifier().phase(),
+                secrets,
+            )?;
+        }
+        let materialized = package.materialize_source()?;
+        let (source_root, environment_root) = standard_task_roots(package, materialized.root())?;
+        let source_root = source_root.to_path_buf();
+        let workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o755))
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let (image, _) = docker_run_names(package);
+        let mut lease = ComposeProjectLease::reserve(
+            compose_runtime,
+            compose,
+            package.source_digest().as_str(),
+            source_root.to_string_lossy(),
+            image.clone(),
+        )?;
+        let labels = lease.project().ownership_labels();
+        let overlay = fs::read(source_root.join(compose.definition_path()))
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        preflight_compose_configuration(
+            runtime,
+            plan,
+            &environment_root,
+            lease.project().clone(),
+            &source_root,
+            &image,
+            &labels,
+            workspace.path(),
+            &overlay,
+        )?;
+        let generated =
+            render_generated_main_compose(&image, &labels, plan.environment(), workspace.path())?;
+        fs::write(
+            source_root.join("aiperf.generated.compose.yaml"),
+            generated.into_bytes(),
+        )
         .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-    let project = ComposeProjectId::new(format!("aiperf-{}", package.source_digest().as_str()));
-    let labels = std::collections::BTreeMap::from([
-        ("aiperf.project".to_owned(), project.as_str().to_owned()),
-        ("aiperf.run".to_owned(), "preflight".to_owned()),
-    ]);
-    preflight_compose_configuration(
-        runtime,
-        plan,
-        &environment_root,
-        project,
-        materialized.root(),
-        "aiperf-compose-preflight",
-        &labels,
-        workspace.path(),
-        &overlay,
-    )
+        runtime.build(
+            &DockerBuildRequest::new([
+                "build",
+                "--network",
+                "default",
+                "--tag",
+                &image,
+                environment_root.to_string_lossy().as_ref(),
+            ])
+            .with_network_lease("default"),
+        )?;
+        lease.start()?;
+        Ok(PreparedComposeLease {
+            _materialized: materialized,
+            _workspace: workspace,
+            source_root,
+            lease,
+        })
+    }
 }
 
 fn multi_step_uses_clock_drive(plan: &BenchmarkExecutionPlan) -> bool {
@@ -542,6 +668,288 @@ fn multi_step_uses_clock_drive(plan: &BenchmarkExecutionPlan) -> bool {
                 || healthcheck.timeout().is_some()
         });
     has_phase_timeout || has_timed_healthcheck
+}
+
+struct PreparedComposeLease<'a> {
+    _materialized: crate::eval::import::MaterializedSource,
+    _workspace: TempDir,
+    source_root: std::path::PathBuf,
+    lease: ComposeProjectLease<'a>,
+}
+
+struct ComposeStepSession<'a> {
+    clock: Rc<dyn Clock>,
+    runtime: &'a dyn DockerRuntime,
+    recipe: &'a HarborSandboxRecipe,
+    source_root: std::path::PathBuf,
+    environment: &'a super::EnvironmentPlan,
+    lease: &'a mut dyn TaskEnvironmentLease,
+    secrets: &'a dyn SecretProvider,
+    artifact_collection: Option<TempDir>,
+}
+
+impl<'a> ComposeStepSession<'a> {
+    fn new(
+        clock: Rc<dyn Clock>,
+        runtime: &'a dyn DockerRuntime,
+        recipe: &'a HarborSandboxRecipe,
+        source_root: std::path::PathBuf,
+        environment: &'a super::EnvironmentPlan,
+        lease: &'a mut dyn TaskEnvironmentLease,
+        secrets: &'a dyn SecretProvider,
+    ) -> Self {
+        Self {
+            clock,
+            runtime,
+            recipe,
+            source_root,
+            environment,
+            lease,
+            secrets,
+            artifact_collection: None,
+        }
+    }
+
+    fn run_separate_verifier(
+        &mut self,
+        step: &BenchmarkStepPlan,
+        artifacts: &[(String, ArtifactDigest)],
+    ) -> Result<RewardDocument, EvalExecutionError> {
+        let verifier = step.verifier();
+        let workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o755))
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        let collection =
+            self.artifact_collection
+                .as_ref()
+                .ok_or(EvalExecutionError::InvalidRecipe(
+                    "Compose artifact collection",
+                ))?;
+        transfer_artifacts(collection.path(), workspace.path(), artifacts)?;
+        let image = self.lease.main_image_id()?.to_owned();
+        let name = format!("aiperf-compose-verifier-{}", step.name());
+        let verifier_network = network_lease(verifier.environment().network())?;
+        let verifier_workdir = self
+            .recipe
+            .resolve_workdir(verifier.environment().workdir());
+        if let Some(workdir) = verifier_workdir {
+            validate_verifier_artifact_staging(workdir, step.artifacts())?;
+        }
+        let outcome = (|| {
+            create_planned_container(
+                self.runtime,
+                &name,
+                &image,
+                ContainerWorkspace::at_workdir(workspace.path(), None),
+                verifier.environment(),
+                verifier_network,
+                None,
+            )?;
+            self.runtime.start(&DockerStartRequest::new(&name))?;
+            let effective_workdir = match verifier_workdir {
+                Some(workdir) => workdir.to_owned(),
+                None => self.runtime.container_workdir(&name)?,
+            };
+            validate_verifier_artifact_staging(&effective_workdir, step.artifacts())?;
+            transfer_verifier_artifacts(
+                self.runtime,
+                &name,
+                workspace.path(),
+                Some(&effective_workdir),
+                verifier_network,
+            )?;
+            if let Some(healthcheck) = verifier.environment().healthcheck() {
+                run_healthcheck(
+                    self.clock.clone(),
+                    self.runtime,
+                    &name,
+                    verifier.environment(),
+                    verifier_workdir,
+                    healthcheck,
+                    verifier_network,
+                    self.secrets,
+                )?;
+            }
+            prepare_verifier_files(self.runtime, &name, verifier_network)?;
+            self.runtime.copy(&DockerCopyRequest::new([
+                "cp".to_owned(),
+                format!(
+                    "{}/.",
+                    self.source_root.join(step.verifier_test_root()).display()
+                ),
+                format!("{name}:/tests"),
+            ]))?;
+            prepare_workdir(
+                self.runtime,
+                &name,
+                verifier.environment(),
+                verifier.phase(),
+                verifier_workdir,
+                verifier_network,
+            )?;
+            execute_planned_phase(
+                self.runtime,
+                &name,
+                EvalExecutionPhase::Verifier,
+                &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
+                verifier.environment(),
+                verifier.phase(),
+                verifier_workdir,
+                self.secrets,
+            )?;
+            let reward_workspace = tempfile::tempdir()
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            read_reward_with_runtime(self.runtime, &name, &reward_workspace)
+        })();
+        let cleanup = self.runtime.remove(&DockerRemoveRequest::new([
+            "rm",
+            "--force",
+            "--volumes",
+            &name,
+        ]));
+        match (outcome, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(reward), Ok(())) => Ok(reward),
+        }
+    }
+
+    fn run_shared_verifier(
+        &mut self,
+        step: &BenchmarkStepPlan,
+    ) -> Result<RewardDocument, EvalExecutionError> {
+        let verifier = step.verifier();
+        let main = self.lease.main_service().clone();
+        self.lease.exec(ServiceExecRequest {
+            service: &main,
+            arguments: &[
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                "rm -rf /tests /logs/verifier && mkdir -p /logs/verifier && chmod 0777 /logs/verifier"
+                    .to_owned(),
+            ],
+            public_environment: Default::default(),
+            secret_environment: Default::default(),
+            phase: EvalExecutionPhase::Verifier,
+            user: Some("root"),
+            workdir: None,
+            network_lease: "default",
+            deadline: None,
+        })?;
+        self.lease.copy_into(
+            &main,
+            &format!(
+                "{}/.",
+                self.source_root.join(step.verifier_test_root()).display()
+            ),
+            "/tests",
+        )?;
+        let resolved =
+            resolve_phase_environment(verifier.environment(), verifier.phase(), self.secrets)?;
+        let verifier_workdir = self
+            .recipe
+            .resolve_workdir(verifier.environment().workdir());
+        self.lease.exec(ServiceExecRequest {
+            service: &main,
+            arguments: &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
+            public_environment: resolved.public().clone(),
+            secret_environment: resolved.secrets().clone(),
+            phase: EvalExecutionPhase::Verifier,
+            user: verifier.phase().user().or(verifier.environment().user()),
+            workdir: verifier_workdir,
+            network_lease: "default",
+            deadline: verifier.phase().timeout(),
+        })?;
+        read_reward_from_lease(self.lease, &main)
+    }
+}
+
+impl BenchmarkStepSession for ComposeStepSession<'_> {
+    fn run_agent(
+        &mut self,
+        step: &BenchmarkStepPlan,
+        command: &[String],
+    ) -> Result<(), EvalExecutionError> {
+        if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
+            return Err(EvalExecutionError::InvalidCommand);
+        }
+        let resolved = resolve_phase_environment(self.environment, step.agent(), self.secrets)?;
+        let mut public_environment = resolved.public().clone();
+        let mut secret_environment = resolved.secrets().clone();
+        public_environment.insert(
+            "AIPERF_EVAL_INSTRUCTION".to_owned(),
+            step.instruction().to_owned(),
+        );
+        secret_environment.remove("AIPERF_EVAL_INSTRUCTION");
+        let workdir = self.recipe.resolve_workdir(self.environment.workdir());
+        let main = self.lease.main_service().clone();
+        self.lease.exec(ServiceExecRequest {
+            service: &main,
+            arguments: command,
+            public_environment,
+            secret_environment,
+            phase: EvalExecutionPhase::Agent,
+            user: step.agent().user().or(self.environment.user()),
+            workdir,
+            network_lease: "default",
+            deadline: step.agent().timeout(),
+        })
+    }
+
+    fn collect_artifacts(
+        &mut self,
+        step: &BenchmarkStepPlan,
+    ) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
+        self.artifact_collection = None;
+        let collection = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        let deadline = Deadline::from_timeout(step.collection_timeout());
+        let has_terminal_evidence = !step.collect_hooks().is_empty()
+            || step
+                .artifacts()
+                .iter()
+                .any(|artifact| artifact.service() != "main");
+        let artifacts = if has_terminal_evidence {
+            collect_service_evidence(
+                self.lease,
+                step.collect_hooks(),
+                step.artifacts(),
+                collection.path(),
+                deadline,
+            )?
+        } else {
+            collect_service_artifacts(self.lease, step.artifacts(), collection.path(), deadline)?
+        };
+        self.artifact_collection = Some(collection);
+        Ok(artifacts)
+    }
+
+    fn run_verifier(
+        &mut self,
+        step: &BenchmarkStepPlan,
+        artifacts: &[(String, ArtifactDigest)],
+    ) -> Result<RewardDocument, EvalExecutionError> {
+        if step.verifier().mode() == VerifierMode::Shared {
+            let result = self.run_shared_verifier(step);
+            self.artifact_collection = None;
+            return result;
+        }
+        let has_non_main_evidence = step
+            .artifacts()
+            .iter()
+            .any(|artifact| artifact.service() != "main")
+            || step
+                .collect_hooks()
+                .iter()
+                .any(|hook| hook.service().as_str() != "main");
+        if has_non_main_evidence {
+            self.lease.teardown()?;
+        }
+        let result = self.run_separate_verifier(step, artifacts);
+        self.artifact_collection = None;
+        result
+    }
 }
 
 struct DockerStepSession<'a> {
@@ -946,6 +1354,15 @@ impl DockerRuntime for DockerCliRuntime {
             .with_healthchecks()
             .with_no_network()
             .with_public_network()
+            .with_compose_project()
+            .with_compose_config()
+            .with_service_exec()
+            .with_service_archive()
+            .with_service_stop()
+    }
+
+    fn compose_runtime(&self) -> Option<&dyn DockerComposeRuntime> {
+        Some(self)
     }
 
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
@@ -1096,6 +1513,302 @@ impl DockerRuntime for DockerCliRuntime {
             Err(error) => Err(error),
         }
     }
+}
+
+impl DockerComposeRuntime for DockerCliRuntime {
+    fn compose_config(
+        &self,
+        request: &DockerComposeConfigRequest,
+    ) -> Result<Vec<u8>, EvalExecutionError> {
+        let generated = request
+            .project_directory()
+            .join("aiperf.generated.compose.yaml");
+        fs::write(&generated, request.generated_definition())
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let arguments = compose_arguments(
+            request.project(),
+            request.project_directory(),
+            &generated,
+            request.overlay_definition(),
+        );
+        compose_command(arguments.into_iter().chain([
+            "config".to_owned(),
+            "--format".to_owned(),
+            "json".to_owned(),
+            "--no-interpolate".to_owned(),
+        ]))
+    }
+
+    fn compose_build(&self, request: &DockerComposeBuildRequest) -> Result<(), EvalExecutionError> {
+        let arguments = compose_project_arguments(request.project(), request.project_directory())
+            .into_iter()
+            .chain(["build".to_owned()]);
+        compose_command_bounded(
+            self.clock.clone(),
+            arguments,
+            request.project().as_str(),
+            request.deadline(),
+        )
+    }
+
+    fn compose_up(&self, request: &DockerComposeUpRequest) -> Result<(), EvalExecutionError> {
+        let arguments = compose_project_arguments(request.project(), request.project_directory())
+            .into_iter()
+            .chain(["up".to_owned(), "--detach".to_owned(), "--wait".to_owned()]);
+        compose_command_bounded(
+            self.clock.clone(),
+            arguments,
+            request.project().as_str(),
+            request.deadline(),
+        )
+    }
+
+    fn compose_exec(&self, request: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
+        let container = compose_service_container(request.project(), request.service())?;
+        self.exec(
+            &DockerExecRequest::new(
+                container,
+                request.public_arguments().iter().cloned(),
+                request.public_environment().clone(),
+                request.secret_environment().clone(),
+            )
+            .with_phase(
+                request.phase(),
+                request.user(),
+                request.workdir(),
+                "default",
+                request.deadline(),
+            ),
+        )
+    }
+
+    fn compose_copy_archive(
+        &self,
+        request: &DockerComposeArchiveRequest,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        let container = compose_service_container(request.project(), request.service())?;
+        self.copy_archive(&container, request.source())
+    }
+
+    fn compose_copy_archive_bounded(
+        &self,
+        request: &DockerComposeArchiveRequest,
+        deadline: Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        let container = compose_service_container(request.project(), request.service())?;
+        self.copy_archive_to_file_bounded(&container, request.source(), deadline)
+    }
+
+    fn compose_copy_into(
+        &self,
+        request: &DockerComposeCopyRequest,
+    ) -> Result<(), EvalExecutionError> {
+        let container = compose_service_container(request.project(), request.service())?;
+        self.copy(&DockerCopyRequest::new([
+            "cp".to_owned(),
+            request.source().to_owned(),
+            format!("{container}:{}", request.destination()),
+        ]))
+    }
+
+    fn compose_stop_service(
+        &self,
+        request: &DockerComposeStopRequest,
+    ) -> Result<(), EvalExecutionError> {
+        self.compose_stop_service_bounded(request)
+    }
+
+    fn compose_stop_service_bounded(
+        &self,
+        request: &DockerComposeStopRequest,
+    ) -> Result<(), EvalExecutionError> {
+        let container = compose_service_container(request.project(), request.service())?;
+        let arguments = ["stop".to_owned(), container];
+        docker_command_bounded(
+            self.clock.clone(),
+            arguments,
+            request.project().as_str(),
+            request.deadline(),
+        )
+    }
+
+    fn compose_down(&self, request: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
+        let mut arguments =
+            compose_project_arguments(request.project(), request.project_directory());
+        arguments.extend([
+            "down".to_owned(),
+            "--volumes".to_owned(),
+            "--remove-orphans".to_owned(),
+            "--timeout".to_owned(),
+            request.container_grace().as_secs().to_string(),
+        ]);
+        compose_command_bounded(
+            self.clock.clone(),
+            arguments.into_iter(),
+            request.project().as_str(),
+            request.deadline(),
+        )
+    }
+
+    fn compose_owned_resources(
+        &self,
+        project: &ComposeProjectId,
+    ) -> Result<super::OwnedComposeResources, EvalExecutionError> {
+        let filters = [format!(
+            "label=com.docker.compose.project={}",
+            project.as_str()
+        )];
+        let resources = |kind: &str, extra: &[&str]| -> Result<Vec<String>, EvalExecutionError> {
+            let mut arguments = vec![kind.to_owned(), "ls".to_owned(), "-q".to_owned()];
+            arguments.extend(extra.iter().map(|value| (*value).to_owned()));
+            for filter in &filters {
+                arguments.extend(["--filter".to_owned(), filter.clone()]);
+            }
+            let output = docker(
+                arguments.iter().map(String::as_str),
+                "list Compose resources",
+            )?;
+            Ok(String::from_utf8_lossy(&output)
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(str::to_owned)
+                .collect())
+        };
+        Ok(super::OwnedComposeResources::new(
+            resources("container", &["--all"])?,
+            resources("network", &[])?,
+            resources("volume", &[])?,
+        ))
+    }
+}
+
+fn compose_project_arguments(
+    project: &ComposeProjectId,
+    directory: &std::path::Path,
+) -> Vec<String> {
+    let generated = directory.join("aiperf.generated.compose.yaml");
+    let overlay = directory.join("environment/docker-compose.yaml");
+    compose_arguments(project, directory, &generated, &overlay)
+}
+
+fn compose_arguments(
+    project: &ComposeProjectId,
+    directory: &std::path::Path,
+    generated: &std::path::Path,
+    overlay: &std::path::Path,
+) -> Vec<String> {
+    vec![
+        "compose".to_owned(),
+        "--project-name".to_owned(),
+        project.as_str().to_owned(),
+        "--project-directory".to_owned(),
+        directory.to_string_lossy().into_owned(),
+        "--file".to_owned(),
+        generated.to_string_lossy().into_owned(),
+        "--file".to_owned(),
+        overlay.to_string_lossy().into_owned(),
+    ]
+}
+
+fn compose_command(
+    arguments: impl IntoIterator<Item = String>,
+) -> Result<Vec<u8>, EvalExecutionError> {
+    let output = Command::new("docker")
+        .env("COMPOSE_DISABLE_ENV_FILE", "1")
+        .args(arguments)
+        .output()
+        .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose command".to_owned()))?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(EvalExecutionError::ProcessFailure(format!(
+            "docker compose command: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+}
+
+fn compose_command_bounded(
+    clock: Rc<dyn Clock>,
+    arguments: impl IntoIterator<Item = String>,
+    target: &str,
+    deadline: Option<Duration>,
+) -> Result<(), EvalExecutionError> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    if let Some(deadline) = deadline {
+        return docker_command_bounded(clock, arguments, target, Some(deadline));
+    }
+    compose_command(arguments).map(|_| ())
+}
+
+fn docker_command_bounded(
+    clock: Rc<dyn Clock>,
+    arguments: impl IntoIterator<Item = String>,
+    target: &str,
+    deadline: Option<Duration>,
+) -> Result<(), EvalExecutionError> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    let Some(deadline) = deadline else {
+        return docker(arguments.iter().map(String::as_str), "run Docker command").map(|_| ());
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(EvalExecutionError::RuntimeContext(
+            "bounded Docker Compose operation",
+        ));
+    }
+    let child = Command::new("docker")
+        .args(&arguments)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose command".to_owned()))?;
+    let mut process = DockerExecChild { child };
+    let mut no_remove = |_target: &str| Ok(());
+    drive_docker_exec(
+        clock,
+        &mut process,
+        target,
+        EvalExecutionPhase::CollectionHook,
+        deadline,
+        &mut no_remove,
+    )
+}
+
+fn compose_service_container(
+    project: &ComposeProjectId,
+    service: &super::ComposeServiceName,
+) -> Result<String, EvalExecutionError> {
+    let output = docker(
+        [
+            "container",
+            "ls",
+            "--all",
+            "--quiet",
+            "--filter",
+            &format!("label=com.docker.compose.project={}", project.as_str()),
+            "--filter",
+            &format!("label=com.docker.compose.service={}", service.as_str()),
+        ],
+        "find Compose service container",
+    )?;
+    let output = String::from_utf8_lossy(&output);
+    let mut containers = output.lines().filter(|line| !line.trim().is_empty());
+    let container = containers
+        .next()
+        .ok_or_else(|| EvalExecutionError::ContainerTeardown {
+            container: project.as_str().to_owned(),
+            reason: format!("Compose service {:?} is absent", service.as_str()),
+        })?;
+    if containers.next().is_some() {
+        return Err(EvalExecutionError::ContainerTeardown {
+            container: project.as_str().to_owned(),
+            reason: format!(
+                "Compose service {:?} has ambiguous containers",
+                service.as_str()
+            ),
+        });
+    }
+    Ok(container.to_owned())
 }
 
 impl DockerCliRuntime {
@@ -1599,6 +2312,60 @@ fn read_reward_with_runtime(
     )?;
     RewardDocument::parse(json.as_deref(), text.as_deref())
         .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
+}
+
+fn read_reward_from_lease(
+    lease: &mut dyn TaskEnvironmentLease,
+    service: &super::ComposeServiceName,
+) -> Result<RewardDocument, EvalExecutionError> {
+    let json = read_optional_service_file(lease, service, "/logs/verifier/reward.json")?;
+    let text = read_optional_service_file(lease, service, "/logs/verifier/reward.txt")?;
+    RewardDocument::parse(json.as_deref(), text.as_deref())
+        .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
+}
+
+fn read_optional_service_file(
+    lease: &mut dyn TaskEnvironmentLease,
+    service: &super::ComposeServiceName,
+    source: &str,
+) -> Result<Option<Vec<u8>>, EvalExecutionError> {
+    let archive = match lease.archive(ServiceArchiveRequest {
+        service,
+        source,
+        deadline: Duration::from_secs(10),
+    }) {
+        Ok(archive) => archive,
+        Err(EvalExecutionError::ProcessFailure(_))
+        | Err(EvalExecutionError::ArtifactCollection(_)) => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let expected = std::path::Path::new(source)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(EvalExecutionError::InvalidRecipe("verifier reward path"))?;
+    let mut archive = tar::Archive::new(archive);
+    for entry in archive
+        .entries()
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?
+    {
+        let mut entry =
+            entry.map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        let path = entry
+            .path()
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        if path.file_name().and_then(|name| name.to_str()) == Some(expected)
+            && entry.header().entry_type().is_file()
+        {
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+            return Ok(Some(bytes));
+        }
+    }
+    Ok(None)
 }
 
 fn copy_optional_with_runtime(

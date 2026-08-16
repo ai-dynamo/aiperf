@@ -6,7 +6,6 @@
 use std::{
     collections::BTreeSet,
     io::Read,
-    rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
@@ -16,9 +15,9 @@ use super::task_environment::{
 };
 use super::{
     ComposeProjectId, ComposeProjectPlan, ComposeServiceName, DockerComposeArchiveRequest,
-    DockerComposeBuildRequest, DockerComposeDownRequest, DockerComposeExecRequest,
-    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerRemoveRequest,
-    EvalExecutionError, OwnedComposeResources,
+    DockerComposeBuildRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
+    DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
+    DockerComposeUpRequest, DockerRemoveRequest, EvalExecutionError, OwnedComposeResources,
 };
 
 static NEXT_COMPOSE_RUN_ID: AtomicU64 = AtomicU64::new(1);
@@ -34,8 +33,8 @@ pub(crate) enum ComposeLeaseState {
 }
 
 /// A registered task-owned Compose project lease.
-pub(crate) struct ComposeProjectLease {
-    runtime: Rc<dyn DockerComposeRuntime>,
+pub(crate) struct ComposeProjectLease<'a> {
+    runtime: &'a dyn DockerComposeRuntime,
     project: ComposeProjectId,
     project_directory: String,
     services: BTreeSet<ComposeServiceName>,
@@ -47,9 +46,9 @@ pub(crate) struct ComposeProjectLease {
     recorded: OwnedComposeResources,
 }
 
-impl ComposeProjectLease {
+impl<'a> ComposeProjectLease<'a> {
     pub(crate) fn reserve(
-        runtime: Rc<dyn DockerComposeRuntime>,
+        runtime: &'a dyn DockerComposeRuntime,
         plan: &ComposeProjectPlan,
         source_digest: &str,
         project_directory: impl Into<String>,
@@ -170,7 +169,7 @@ impl ComposeProjectLease {
     }
 }
 
-impl TaskEnvironmentLease for ComposeProjectLease {
+impl TaskEnvironmentLease for ComposeProjectLease<'_> {
     fn main_service(&self) -> &ComposeServiceName {
         &self.main
     }
@@ -219,6 +218,24 @@ impl TaskEnvironmentLease for ComposeProjectLease {
             ),
             request.deadline,
         )
+    }
+    fn copy_into(
+        &mut self,
+        service: &ComposeServiceName,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), EvalExecutionError> {
+        self.ensure_started()?;
+        if !self.services.contains(service) {
+            return Err(EvalExecutionError::InvalidRecipe("Compose service"));
+        }
+        self.runtime
+            .compose_copy_into(&DockerComposeCopyRequest::new(
+                self.project.clone(),
+                service.clone(),
+                source,
+                destination,
+            ))
     }
     fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError> {
         self.ensure_started()?;
@@ -274,7 +291,7 @@ impl TaskEnvironmentLease for ComposeProjectLease {
     }
 }
 
-impl Drop for ComposeProjectLease {
+impl Drop for ComposeProjectLease<'_> {
     fn drop(&mut self) {
         if self.state != ComposeLeaseState::Down {
             let _ = self.teardown();

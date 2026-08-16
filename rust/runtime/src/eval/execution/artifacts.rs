@@ -902,6 +902,16 @@ mod tests {
                 })?;
             Ok(Box::new(io::Cursor::new(bytes)))
         }
+        fn copy_into(
+            &mut self,
+            service: &ComposeServiceName,
+            source: &str,
+            destination: &str,
+        ) -> Result<(), EvalExecutionError> {
+            self.events
+                .push(format!("copy:{}:{source}:{destination}", service.as_str()));
+            Ok(())
+        }
         fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError> {
             self.stop_deadlines.push(deadline);
             self.events.push("stop:main".to_owned());

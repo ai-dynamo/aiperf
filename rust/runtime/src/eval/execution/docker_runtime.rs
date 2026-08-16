@@ -363,6 +363,55 @@ pub struct DockerComposeArchiveRequest {
     labels: BTreeMap<String, String>,
 }
 
+/// A controlled host-to-service transfer from an immutable task snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DockerComposeCopyRequest {
+    project: ComposeProjectId,
+    service: ComposeServiceName,
+    source: String,
+    destination: String,
+    labels: BTreeMap<String, String>,
+}
+
+impl DockerComposeCopyRequest {
+    /// Creates one exact service-local copy request.
+    pub fn new(
+        project: ComposeProjectId,
+        service: ComposeServiceName,
+        source: impl Into<String>,
+        destination: impl Into<String>,
+    ) -> Self {
+        let labels = project.ownership_labels();
+        Self {
+            project,
+            service,
+            source: source.into(),
+            destination: destination.into(),
+            labels,
+        }
+    }
+    /// Returns the project selection.
+    pub fn project(&self) -> &ComposeProjectId {
+        &self.project
+    }
+    /// Returns the target service.
+    pub fn service(&self) -> &ComposeServiceName {
+        &self.service
+    }
+    /// Returns the snapshot source path.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+    /// Returns the service-local destination path.
+    pub fn destination(&self) -> &str {
+        &self.destination
+    }
+    /// Returns exact ownership labels.
+    pub fn labels(&self) -> &BTreeMap<String, String> {
+        &self.labels
+    }
+}
+
 impl DockerComposeArchiveRequest {
     /// Creates an archive request for one service path.
     pub fn new(
@@ -879,6 +928,12 @@ pub trait DockerComposeRuntime: DockerRuntime {
         deadline: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError>;
 
+    /// Copies an explicitly selected immutable snapshot path into one service.
+    fn compose_copy_into(
+        &self,
+        request: &DockerComposeCopyRequest,
+    ) -> Result<(), EvalExecutionError>;
+
     /// Stops one service.
     fn compose_stop_service(
         &self,
@@ -1000,6 +1055,17 @@ mod compose_lease_tests {
             ));
             Ok(Box::new(std::io::Cursor::new(Vec::new())))
         }
+        fn compose_copy_into(
+            &self,
+            request: &DockerComposeCopyRequest,
+        ) -> Result<(), EvalExecutionError> {
+            self.events.borrow_mut().push(format!(
+                "copy:{}:{}",
+                request.service().as_str(),
+                request.destination()
+            ));
+            Ok(())
+        }
         fn compose_stop_service(
             &self,
             _: &DockerComposeStopRequest,
@@ -1073,7 +1139,7 @@ mod compose_lease_tests {
             startup_timeout: std::time::Duration::from_secs(1),
         };
         let mut lease = ComposeProjectLease::reserve(
-            Rc::clone(&runtime),
+            runtime.as_ref(),
             &plan,
             "abcdef0123456789",
             "/tmp",
@@ -1108,9 +1174,14 @@ mod compose_lease_tests {
             build_timeout: Duration::from_secs(1),
             startup_timeout: Duration::from_secs(1),
         };
-        let mut lease =
-            ComposeProjectLease::reserve(runtime, &plan, "abcdef0123456789", "/tmp", "main:image")
-                .unwrap();
+        let mut lease = ComposeProjectLease::reserve(
+            runtime.as_ref(),
+            &plan,
+            "abcdef0123456789",
+            "/tmp",
+            "main:image",
+        )
+        .unwrap();
         lease.start().unwrap();
         let main = ComposeServiceName::main();
         let archive = lease.archive(ServiceArchiveRequest {
@@ -1209,6 +1280,12 @@ mod compose_lease_tests {
         ) -> Result<Box<dyn Read>, EvalExecutionError> {
             Ok(Box::new(std::io::Cursor::new(Vec::new())))
         }
+        fn compose_copy_into(
+            &self,
+            _: &DockerComposeCopyRequest,
+        ) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
         fn compose_stop_service(
             &self,
             _: &DockerComposeStopRequest,
@@ -1269,7 +1346,7 @@ mod compose_lease_tests {
             removals: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
-            runtime.clone(),
+            runtime.as_ref(),
             &cleanup_plan(),
             "abcdef",
             "/tmp",
@@ -1303,7 +1380,7 @@ mod compose_lease_tests {
         });
         {
             let mut lease = ComposeProjectLease::reserve(
-                runtime.clone(),
+                runtime.as_ref(),
                 &cleanup_plan(),
                 "abcdef",
                 "/tmp",
@@ -1328,9 +1405,14 @@ mod compose_lease_tests {
             resources: RefCell::new(OwnedComposeResources::default()),
             removals: RefCell::new(Vec::new()),
         });
-        let mut lease =
-            ComposeProjectLease::reserve(runtime, &cleanup_plan(), "abcdef", "/tmp", "main")
-                .unwrap();
+        let mut lease = ComposeProjectLease::reserve(
+            runtime.as_ref(),
+            &cleanup_plan(),
+            "abcdef",
+            "/tmp",
+            "main",
+        )
+        .unwrap();
         lease.start().unwrap();
         assert!(lease.teardown().is_err());
         assert_eq!(
@@ -1359,7 +1441,7 @@ mod compose_lease_tests {
             removals: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
-            runtime.clone(),
+            runtime.as_ref(),
             &cleanup_plan(),
             "abcdef",
             "/tmp",

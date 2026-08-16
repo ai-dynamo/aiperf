@@ -6,8 +6,8 @@
 use std::{collections::BTreeMap, io::Read, time::Duration};
 
 use super::{
-    ComposeServiceName, DockerExecRequest, DockerRuntime, EnvName, EvalExecutionError,
-    EvalExecutionPhase, SecretValue,
+    ComposeServiceName, DockerCopyRequest, DockerExecRequest, DockerRuntime, EnvName,
+    EvalExecutionError, EvalExecutionPhase, SecretValue,
 };
 
 /// An opaque reference to one service owned by a task environment.
@@ -54,6 +54,12 @@ pub(crate) trait TaskEnvironmentLease {
         &mut self,
         request: ServiceArchiveRequest<'_>,
     ) -> Result<Box<dyn Read>, EvalExecutionError>;
+    fn copy_into(
+        &mut self,
+        service: &ComposeServiceName,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), EvalExecutionError>;
     fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError>;
     fn main_image_id(&self) -> Result<&str, EvalExecutionError>;
     fn teardown(&mut self) -> Result<(), EvalExecutionError>;
@@ -118,6 +124,21 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
         }
         self.runtime
             .copy_archive_bounded(&self.container, request.source, request.deadline)
+    }
+    fn copy_into(
+        &mut self,
+        service: &ComposeServiceName,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), EvalExecutionError> {
+        if service != &self.main {
+            return Err(EvalExecutionError::InvalidRecipe("Dockerfile service"));
+        }
+        self.runtime.copy(&DockerCopyRequest::new([
+            "cp".to_owned(),
+            source.to_owned(),
+            format!("{}:{destination}", self.container),
+        ]))
     }
     fn stop_main(&mut self, _: Duration) -> Result<(), EvalExecutionError> {
         Ok(())

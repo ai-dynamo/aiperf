@@ -18,12 +18,12 @@ use std::{
 use aiperf_runtime::clock::SimClock;
 use aiperf_runtime::eval::{
     ComposeProjectId, DockerBuildRequest, DockerComposeArchiveRequest, DockerComposeBuildRequest,
-    DockerComposeConfigRequest, DockerComposeDownRequest, DockerComposeExecRequest,
-    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
-    DockerCreateRequest, DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest,
-    DockerRuntime, DockerStartRequest, EnvName, EvalExecutionError, HarborImporter,
-    HarborSandboxRecipe, HarborSource, NativeSourceAcquirer, OwnedComposeResources,
-    ProviderCapabilities, SecretProvider, SecretValue, preflight_docker,
+    DockerComposeConfigRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
+    DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
+    DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
+    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvName,
+    EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource, NativeSourceAcquirer,
+    OwnedComposeResources, ProviderCapabilities, SecretProvider, SecretValue, preflight_docker,
 };
 use std::rc::Rc;
 
@@ -153,6 +153,11 @@ impl DockerComposeRuntime for ComposePreflightRuntime {
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
         Err(EvalExecutionError::ArtifactCollection(
             "unexpected bounded archive".to_owned(),
+        ))
+    }
+    fn compose_copy_into(&self, _: &DockerComposeCopyRequest) -> Result<(), EvalExecutionError> {
+        Err(EvalExecutionError::ArtifactCollection(
+            "unexpected Compose copy".to_owned(),
         ))
     }
     fn compose_stop_service(&self, _: &DockerComposeStopRequest) -> Result<(), EvalExecutionError> {

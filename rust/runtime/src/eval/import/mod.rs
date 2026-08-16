@@ -11,4 +11,5 @@ mod source_snapshot;
 pub use acquire::{HarborSource, NativeSourceAcquirer, SourceAcquirer};
 pub use harbor::{HarborImportError, HarborImporter, ImportedTask};
 pub use normalize::HarborTaskPackage;
+pub(crate) use normalize::MaterializedSource;
 pub use source_snapshot::AcquiredSource;
