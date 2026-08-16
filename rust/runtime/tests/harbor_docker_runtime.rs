@@ -781,6 +781,66 @@ environment_mode = "separate"
 }
 
 #[test]
+fn compose_workdir_preparation_passes_metacharacters_as_literal_operands() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(
+        &temporary,
+        r#"[environment]
+user = "bench"
+
+[verifier]
+environment_mode = "separate"
+"#,
+    );
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(None);
+    let workdir = "/workspace; touch /escape";
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some(workdir.to_owned()),
+    )
+    .unwrap();
+
+    DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect("Compose execution with a literal metacharacter workdir");
+
+    let calls = runtime.phase_calls.borrow();
+    let preparations = calls
+        .iter()
+        .filter(|(phase, user, _, _)| phase == "agent" && user.as_deref() == Some("root"))
+        .map(|(_, _, _, command)| command.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        preparations,
+        vec![vec![
+            "/bin/sh".to_owned(),
+            "-ec".to_owned(),
+            "mkdir -p -- \"$1\"\nchown -- \"$2\" \"$1\"\nexec su -s /bin/sh -c 'test -w \"$0\"' -- \"$2\" \"$1\""
+                .to_owned(),
+            "--".to_owned(),
+            workdir.to_owned(),
+            "bench".to_owned(),
+        ]],
+        "the workdir must remain an argv operand rather than root shell source"
+    );
+}
+
+#[test]
 fn compose_healthcheck_failure_still_prevents_agent_after_nonroot_workdir_preparation() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_root(

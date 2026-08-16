@@ -1442,11 +1442,7 @@ fn prepare_lease_workdir_for_user(
     }
     lease.exec(ServiceExecRequest {
         service,
-        arguments: &[
-            "/bin/sh".to_owned(),
-            "-c".to_owned(),
-            format!("mkdir -p {workdir} && chown {user} {workdir} && su -s /bin/sh {user} -c 'test -w {workdir}'"),
-        ],
+        arguments: &prepare_workdir_arguments(workdir, user),
         public_environment: Default::default(),
         secret_environment: Default::default(),
         phase: execution_phase,
@@ -1455,6 +1451,18 @@ fn prepare_lease_workdir_for_user(
         network_lease: "default",
         deadline: None,
     })
+}
+
+fn prepare_workdir_arguments(workdir: &str, user: &str) -> Vec<String> {
+    vec![
+        "/bin/sh".to_owned(),
+        "-ec".to_owned(),
+        "mkdir -p -- \"$1\"\nchown -- \"$2\" \"$1\"\nexec su -s /bin/sh -c 'test -w \"$0\"' -- \"$2\" \"$1\""
+            .to_owned(),
+        "--".to_owned(),
+        workdir.to_owned(),
+        user.to_owned(),
+    ]
 }
 
 fn sleep_with_clock(
@@ -2340,11 +2348,7 @@ fn prepare_workdir(
     runtime.exec(
         &DockerExecRequest::new(
             container,
-            [
-                "/bin/sh".to_owned(),
-                "-c".to_owned(),
-                format!("mkdir -p {workdir} && chown {user} {workdir} && su -s /bin/sh {user} -c 'test -w {workdir}'"),
-            ],
+            prepare_workdir_arguments(workdir, user),
             Default::default(),
             Default::default(),
         )
