@@ -140,8 +140,8 @@ impl DockerProcessSandbox {
             .take(32)
             .collect::<String>();
         let run_id = NEXT_DOCKER_RUN_ID.fetch_add(1, Ordering::Relaxed);
-        let image = format!("aiperf-eval:{safe_suffix}-{run_id}");
-        let container = format!("aiperf-eval-{safe_suffix}-{run_id}");
+        let image = docker_image_name(&safe_suffix, std::process::id(), run_id);
+        let container = docker_container_name(&safe_suffix, std::process::id(), run_id);
         let mut containers = vec![container.clone()];
 
         let outcome = (|| {
@@ -492,20 +492,47 @@ fn build_network_lease(network: &NetworkPolicy) -> Result<&'static str, EvalExec
 const PUBLIC_NETWORK_LEASE: &str = "aiperf-eval-public";
 
 fn ensure_public_network() -> Result<(), EvalExecutionError> {
+    ensure_network_exists(public_network_exists, || {
+        docker(
+            ["network", "create", PUBLIC_NETWORK_LEASE],
+            "create public network",
+        )
+        .map(|_| ())
+    })
+}
+
+fn ensure_network_exists<I, C>(mut inspect: I, create: C) -> Result<(), EvalExecutionError>
+where
+    I: FnMut() -> Result<bool, EvalExecutionError>,
+    C: FnOnce() -> Result<(), EvalExecutionError>,
+{
+    if inspect()? {
+        return Ok(());
+    }
+    let create_error = create();
+    if create_error.is_ok() || inspect()? {
+        Ok(())
+    } else {
+        create_error
+    }
+}
+
+fn public_network_exists() -> Result<bool, EvalExecutionError> {
     let inspect = Command::new("docker")
         .args(["network", "inspect", PUBLIC_NETWORK_LEASE])
         .output()
         .map_err(|_| {
             EvalExecutionError::ProcessSpawn("docker inspect public network".to_owned())
         })?;
-    if inspect.status.success() {
-        return Ok(());
-    }
-    docker(
-        ["network", "create", PUBLIC_NETWORK_LEASE],
-        "create public network",
-    )
-    .map(|_| ())
+    Ok(inspect.status.success())
+}
+
+fn docker_image_name(suffix: &str, process_id: u32, run_id: u64) -> String {
+    format!("aiperf-eval:{suffix}-{process_id}-{run_id}")
+}
+
+fn docker_container_name(suffix: &str, process_id: u32, run_id: u64) -> String {
+    format!("aiperf-eval-{suffix}-{process_id}-{run_id}")
 }
 
 fn redact_secret_values(
@@ -999,7 +1026,8 @@ mod tests {
 
     use super::{
         DockerExecProcess, DockerExecState, DockerProcessSandbox, EvalExecutionError,
-        EvalExecutionPhase, drive_docker_exec, redact_secret_values,
+        EvalExecutionPhase, docker_container_name, docker_image_name, drive_docker_exec,
+        ensure_network_exists, redact_secret_values,
     };
     use crate::clock::SimClock;
     use crate::eval::{
@@ -1195,6 +1223,41 @@ mod tests {
 
         assert!(diagnostic.contains("[REDACTED]"));
         assert!(!diagnostic.contains(secret));
+    }
+
+    #[test]
+    fn docker_run_names_include_process_and_run_identity() {
+        assert_eq!(
+            docker_image_name("digest", 41, 7),
+            "aiperf-eval:digest-41-7"
+        );
+        assert_eq!(
+            docker_container_name("digest", 42, 7),
+            "aiperf-eval-digest-42-7"
+        );
+        assert_ne!(
+            docker_container_name("digest", 41, 7),
+            docker_container_name("digest", 42, 7)
+        );
+    }
+
+    #[test]
+    fn network_create_race_succeeds_when_reinspect_finds_the_network() {
+        let inspections = Cell::new(0);
+        let result = ensure_network_exists(
+            || {
+                inspections.set(inspections.get() + 1);
+                Ok(inspections.get() == 2)
+            },
+            || {
+                Err(EvalExecutionError::ProcessFailure(
+                    "already exists".to_owned(),
+                ))
+            },
+        );
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(inspections.get(), 2);
     }
 
     struct FakeDockerExec {
