@@ -216,11 +216,7 @@ fn write_artifact_stream(
     expected_digest: Option<&ArtifactDigest>,
 ) -> Result<ArtifactDigest, EvalExecutionError> {
     let relative = relative_path(relative)?;
-    let path = safe_child(root, &relative)?;
-    let parent = path.parent().ok_or_else(|| {
-        EvalExecutionError::ArtifactCollection("artifact destination lacks a parent".to_owned())
-    })?;
-    fs::create_dir_all(parent).map_err(artifact_error)?;
+    let parent = ensure_parent_directories(root, &relative)?;
     let path = safe_child(root, &relative)?;
     let mut temporary = NamedTempFile::new_in(parent).map_err(artifact_error)?;
     let digest = {
@@ -245,6 +241,28 @@ fn write_artifact_stream(
     file.set_permissions(fs::Permissions::from_mode(0o644))
         .map_err(artifact_error)?;
     Ok(digest)
+}
+
+fn ensure_parent_directories(root: &Path, relative: &Path) -> Result<PathBuf, EvalExecutionError> {
+    let mut parent = root.to_path_buf();
+    let components = relative.components().collect::<Vec<_>>();
+    for component in &components[..components.len().saturating_sub(1)] {
+        parent.push(component);
+        match fs::create_dir(&parent) {
+            Ok(()) => fs::set_permissions(&parent, fs::Permissions::from_mode(0o755))
+                .map_err(artifact_error)?,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(artifact_error(error)),
+        }
+        let metadata = fs::symlink_metadata(&parent).map_err(artifact_error)?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "artifact parent is not a directory: {}",
+                parent.display()
+            )));
+        }
+    }
+    Ok(parent)
 }
 
 struct HashingWriter<'a> {

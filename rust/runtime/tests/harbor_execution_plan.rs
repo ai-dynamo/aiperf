@@ -9,6 +9,7 @@ use std::{
     fs,
     io::{self, Read},
     os::unix::fs::PermissionsExt,
+    sync::Mutex,
 };
 
 use aiperf_runtime::eval::{
@@ -18,6 +19,8 @@ use aiperf_runtime::eval::{
     NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SecretProvider, SecretValue,
     VerifierMode, collect_artifacts, resolve_phase_environment, transfer_artifacts,
 };
+
+static UMASK_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// A Docker boundary that supplies precise archive bytes for collection tests.
 struct ArchiveRuntime {
@@ -376,6 +379,37 @@ fn transfer_makes_a_verified_artifact_readable_by_the_verifier() {
             & 0o777,
         0o644
     );
+}
+
+#[test]
+fn transfer_makes_nested_collection_directories_traversable_under_a_restrictive_umask() {
+    let _umask_lock = UMASK_TEST_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let source = temporary.path().join("source");
+    fs::create_dir_all(source.join("published/nested")).unwrap();
+    fs::write(source.join("published/nested/result.txt"), b"result").unwrap();
+    let destination = temporary.path().join("destination");
+    let previous_umask = unsafe { libc::umask(0o077) };
+    let result = transfer_artifacts(
+        &source,
+        &destination,
+        &[(
+            "published/nested/result.txt".to_owned(),
+            aiperf_runtime::eval::ArtifactDigest::from_bytes(b"result"),
+        )],
+    );
+    unsafe { libc::umask(previous_umask) };
+    result.unwrap();
+
+    for directory in [
+        destination.join("published"),
+        destination.join("published/nested"),
+    ] {
+        assert_eq!(
+            fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
 }
 
 #[test]

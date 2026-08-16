@@ -270,7 +270,7 @@ fn native_eval_command_allows_a_non_root_separate_verifier_to_read_artifacts() {
     fs::create_dir_all(task_root.join("tests")).unwrap();
     fs::write(
         task_root.join("task.toml"),
-        "schema_version = \"1.0\"\nartifacts = [\"/work/result.txt\"]\n[task]\nname = \"example/docker-non-root-artifacts\"\n[environment]\nworkdir = \"/work\"\n[agent]\nuser = \"root\"\n[verifier]\nenvironment_mode = \"separate\"\nuser = \"nobody\"\n",
+        "schema_version = \"1.0\"\nartifacts = [{ source = \"/work/output\", destination = \"published\" }]\n[task]\nname = \"example/docker-non-root-artifacts\"\n[environment]\nworkdir = \"/work\"\n[agent]\nuser = \"root\"\n[verifier]\nenvironment_mode = \"separate\"\nuser = \"nobody\"\n",
     )
     .unwrap();
     fs::write(task_root.join("instruction.md"), "Write a result.\n").unwrap();
@@ -281,7 +281,7 @@ fn native_eval_command_allows_a_non_root_separate_verifier_to_read_artifacts() {
     .unwrap();
     fs::write(
         task_root.join("tests/test.sh"),
-        "set -eu\ntest \"$(cat /work/result.txt)\" = result\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+        "set -eu\ntest \"$(cat /work/published/nested/result.txt)\" = result\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
     )
     .unwrap();
 
@@ -292,7 +292,7 @@ fn native_eval_command_allows_a_non_root_separate_verifier_to_read_artifacts() {
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "--agent-command".to_owned(),
-        "printf result > result.txt".to_owned(),
+        "mkdir -p output/nested && printf result > output/nested/result.txt".to_owned(),
     ])
     .unwrap();
 
