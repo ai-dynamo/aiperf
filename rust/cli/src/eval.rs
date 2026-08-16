@@ -16,8 +16,17 @@ use serde::Serialize;
 #[command(name = "eval", disable_help_subcommand = true)]
 struct EvalFlags {
     /// Local task package JSON file.
-    #[arg(long)]
-    task: PathBuf,
+    #[arg(long, conflicts_with_all = ["git_repository", "git_revision", "git_path"])]
+    task: Option<PathBuf>,
+    /// Local or remote Git repository containing a package pinned by `--git-revision`.
+    #[arg(long, requires_all = ["git_revision", "git_path"])]
+    git_repository: Option<String>,
+    /// Exact 40-hex commit for a Git package source.
+    #[arg(long, requires_all = ["git_repository", "git_path"])]
+    git_revision: Option<String>,
+    /// Repository-relative path to a Git package JSON file.
+    #[arg(long, requires_all = ["git_repository", "git_revision"])]
+    git_path: Option<String>,
     /// Immutable image identity used by the sandbox recipe.
     #[arg(long)]
     image: String,
@@ -58,7 +67,12 @@ struct EvalOutput<'a> {
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let flags =
         EvalFlags::try_parse_from(std::iter::once("eval".to_owned()).chain(args.iter().cloned()))?;
-    let source = HarborSource::local(flags.task.to_string_lossy())?;
+    let source = source_from_flags(
+        flags.task,
+        flags.git_repository,
+        flags.git_revision,
+        flags.git_path,
+    )?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
     let recipe = HarborSandboxRecipe::new(flags.image, flags.workdir)?;
     let result = LocalProcessSandbox::new().execute(
@@ -75,4 +89,41 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         })?
     );
     Ok(0)
+}
+
+fn source_from_flags(
+    task: Option<PathBuf>,
+    git_repository: Option<String>,
+    git_revision: Option<String>,
+    git_path: Option<String>,
+) -> anyhow::Result<HarborSource> {
+    match (task, git_repository, git_revision, git_path) {
+        (Some(path), None, None, None) => Ok(HarborSource::local(path.to_string_lossy())?),
+        (None, Some(repository), Some(revision), Some(path)) => {
+            Ok(HarborSource::pinned_git(repository, revision, path)?)
+        }
+        _ => anyhow::bail!(
+            "provide either --task or --git-repository with --git-revision and --git-path"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_from_flags;
+
+    #[test]
+    fn source_flags_require_one_complete_source_form() {
+        assert!(source_from_flags(Some("task.json".into()), None, None, None).is_ok());
+        assert!(
+            source_from_flags(
+                None,
+                Some("tasks".to_owned()),
+                Some("a".repeat(40)),
+                Some("task.json".to_owned()),
+            )
+            .is_ok()
+        );
+        assert!(source_from_flags(None, Some("tasks".to_owned()), None, None).is_err());
+    }
 }
