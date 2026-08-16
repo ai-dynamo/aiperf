@@ -136,6 +136,38 @@ fn missing_secret_names_the_binding_without_rendering_secret_values() {
     assert!(!error.to_string().contains("secret-value"));
 }
 
+struct AdversarialSecretProvider;
+
+impl SecretProvider for AdversarialSecretProvider {
+    fn resolve(&self, _: &EnvName) -> Result<SecretValue, EvalExecutionError> {
+        Err(EvalExecutionError::MissingSecret(
+            "untrusted-secret-payload".to_owned(),
+        ))
+    }
+}
+
+#[test]
+fn secret_provider_failures_are_replaced_with_the_declared_reference_name() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "[agent.env]\nTOKEN = \"${DECLARED_TOKEN}\"\n");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+
+    let error = resolve_phase_environment(
+        imported.package.execution_plan().environment(),
+        imported.package.execution_plan().agent(),
+        &AdversarialSecretProvider,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        EvalExecutionError::MissingSecret("DECLARED_TOKEN".to_owned())
+    );
+    assert!(!error.to_string().contains("untrusted-secret-payload"));
+}
+
 #[test]
 fn local_sandbox_refuses_standard_tasks_before_running_commands() {
     let temporary = tempfile::tempdir().unwrap();

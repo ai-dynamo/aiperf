@@ -61,10 +61,7 @@ pub fn resolve_phase_environment(
             .ok_or(EvalExecutionError::InvalidRecipe("environment binding"))?;
         let value = secrets
             .resolve(&reference.to_owned())
-            .map_err(|error| match error {
-                EvalExecutionError::MissingSecret(_) => error,
-                _ => EvalExecutionError::MissingSecret(reference.to_owned()),
-            })?;
+            .map_err(|_| EvalExecutionError::MissingSecret(reference.to_owned()))?;
         resolved_secrets.insert(name, value);
     }
     Ok(DockerEnvironment {
