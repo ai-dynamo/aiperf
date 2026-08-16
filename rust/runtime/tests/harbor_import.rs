@@ -1305,6 +1305,75 @@ workdir = "{workdir}"
     }
 }
 
+#[test]
+fn shared_verifier_workdirs_reserve_only_their_directional_namespaces() {
+    for (name, workdir) in [
+        ("tests", "/tests"),
+        ("nested-reward", "/logs/verifier/nested"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                "schema_version = \"1.0\"\n[task]\nname = \"example/{name}\"\n[environment]\nworkdir = \"{workdir}\"\n"
+            ),
+        )
+        .unwrap();
+
+        let error = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .expect_err("a shared verifier workdir must not occupy evaluator-owned paths");
+        assert!(matches!(
+            error,
+            aiperf_runtime::eval::HarborImportError::InvalidPackage(reason)
+                if reason.contains("shared verifier workdir")
+        ));
+    }
+
+    for (name, workdir) in [
+        ("root", "/"),
+        ("logs-parent", "/logs"),
+        ("tests-neighbor", "/tests-output"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                "schema_version = \"1.0\"\n[task]\nname = \"example/{name}\"\n[environment]\nworkdir = \"{workdir}\"\n"
+            ),
+        )
+        .unwrap();
+
+        HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .expect("an ancestor or component-neighbor workdir remains valid");
+    }
+}
+
+#[test]
+fn separate_only_verifier_allows_reserved_environment_workdir_without_artifacts() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "separate-reserved-workdir");
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+[task]
+name = "example/separate-reserved-workdir"
+[environment]
+workdir = "/tests"
+[verifier]
+environment_mode = "separate"
+"#,
+    )
+    .unwrap();
+
+    HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .expect("a separate verifier does not reserve the agent workdir itself");
+}
+
 fn import_task_digest(task_root: &std::path::Path) -> ArtifactDigest {
     HarborImporter::new(&NativeSourceAcquirer)
         .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())

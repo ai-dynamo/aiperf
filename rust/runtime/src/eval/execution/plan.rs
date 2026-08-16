@@ -660,6 +660,12 @@ impl BenchmarkExecutionPlan {
         self.has_explicit_steps
     }
 
+    pub(crate) fn uses_shared_verifier(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| step.verifier().mode() == VerifierMode::Shared)
+    }
+
     /// Returns the authored reward aggregation rule for explicit multi-step tasks.
     pub const fn multi_step_reward_strategy(&self) -> Option<MultiStepRewardStrategy> {
         self.multi_step_reward_strategy
@@ -1004,6 +1010,15 @@ pub(crate) fn verifier_artifact_target_collision(
         }
     }
     Ok(None)
+}
+
+pub(crate) fn shared_workdir_conflicts_reserved_verifier_path(
+    workdir: &str,
+) -> Result<bool, String> {
+    let workdir = normalize_absolute_container_path(workdir)?;
+    Ok(RESERVED_VERIFIER_PATHS
+        .iter()
+        .any(|reserved| workdir.starts_with(Path::new(reserved))))
 }
 
 fn normalize_absolute_container_path(path: &str) -> Result<PathBuf, String> {

@@ -37,7 +37,8 @@ pub use plan::{
 };
 pub(crate) use plan::{
     CanonicalPackagePlan, append_identity_field, artifact_source_overlaps_reserved_verifier_path,
-    validate_env_name, validate_user, verifier_artifact_target_collision,
+    shared_workdir_conflicts_reserved_verifier_path, validate_env_name, validate_user,
+    verifier_artifact_target_collision,
 };
 pub use recipe::HarborSandboxRecipe;
 pub use workspace::{ImmutablePatch, WorkspaceOverlay};

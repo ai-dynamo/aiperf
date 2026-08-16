@@ -16,7 +16,8 @@ use crate::eval::{
     ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources,
     EnvBinding, EnvironmentPlan, EvalExecutionError, HealthcheckPlan, ImageSource,
     MultiStepRewardStrategy, NetworkPolicy, PhasePlan, VerifierMode, VerifierPlan,
-    artifact_source_overlaps_reserved_verifier_path, verifier_artifact_target_collision,
+    artifact_source_overlaps_reserved_verifier_path,
+    shared_workdir_conflicts_reserved_verifier_path, verifier_artifact_target_collision,
 };
 
 use super::{AcquiredSource, HarborImportError, source_snapshot::ExecutableSourceView};
@@ -550,6 +551,7 @@ pub(super) fn normalize_standard_directory(
         has_explicit_steps,
         multi_step_reward_strategy,
     };
+    validate_shared_verifier_workdir(&execution_plan)?;
     let view = ExecutableSourceView::selected_roots(
         std::iter::once("environment")
             .chain(steps.iter().map(BenchmarkStepPlan::verifier_test_root)),
@@ -569,6 +571,21 @@ pub(super) fn normalize_standard_directory(
         execution_plan,
     };
     Ok((draft, view))
+}
+
+fn validate_shared_verifier_workdir(
+    execution_plan: &BenchmarkExecutionPlan,
+) -> Result<(), HarborImportError> {
+    if execution_plan.uses_shared_verifier()
+        && let Some(workdir) = execution_plan.environment().workdir()
+        && shared_workdir_conflicts_reserved_verifier_path(workdir)
+            .map_err(HarborImportError::InvalidPackage)?
+    {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "shared verifier workdir occupies a reserved verifier path: {workdir:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn normalize_environment(

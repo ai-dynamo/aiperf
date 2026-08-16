@@ -187,6 +187,185 @@ fn cli_recipe_workdir_overrides_the_manifest_without_mutating_the_plan() {
 }
 
 #[test]
+fn shared_cli_workdir_is_rejected_before_implicit_step_build() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/tests".to_owned()),
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("a CLI workdir cannot occupy shared verifier paths");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidWorkspace(reason)
+            if reason.contains("shared verifier workdir")
+    ));
+    assert_eq!(runtime.build_calls.get(), 0);
+    assert!(runtime.creates.borrow().is_empty());
+}
+
+#[test]
+fn shared_cli_workdir_is_rejected_before_mixed_plan_build() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, false);
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+[task]
+name = "example/mixed-workdir"
+[[steps]]
+name = "one"
+[[steps]]
+name = "two"
+[steps.verifier]
+environment_mode = "separate"
+"#,
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/logs/verifier/nested".to_owned()),
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let error = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("one shared step reserves the persistent agent workdir");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidWorkspace(reason)
+            if reason.contains("shared verifier workdir")
+    ));
+    assert_eq!(runtime.build_calls.get(), 0);
+    assert!(runtime.creates.borrow().is_empty());
+}
+
+#[test]
+fn shared_image_workdir_is_rejected_after_implicit_step_start() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::with_image_workdir("/logs/verifier");
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("the image workdir cannot occupy shared verifier paths");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidWorkspace(reason)
+            if reason.contains("shared verifier workdir")
+    ));
+    assert_eq!(runtime.build_calls.get(), 1);
+    assert_eq!(runtime.creates.borrow().len(), 1);
+    assert_eq!(runtime.starts.get(), 1);
+    assert_eq!(runtime.removals.get(), 1);
+    let events = runtime.events.into_inner();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.starts_with("inspect-workdir:"))
+    );
+    assert!(events.iter().all(|event| {
+        !event.starts_with("agent:")
+            && !event.starts_with("reset-tests:")
+            && !event.starts_with("copy-tests:")
+            && !event.starts_with("verifier:")
+    }));
+}
+
+#[test]
+fn shared_image_workdir_is_rejected_after_explicit_multi_step_start() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::with_image_workdir("/tests/nested");
+
+    let error = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("the image workdir cannot occupy shared verifier paths");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidWorkspace(reason)
+            if reason.contains("shared verifier workdir")
+    ));
+    assert_eq!(runtime.build_calls.get(), 1);
+    assert_eq!(runtime.creates.borrow().len(), 1);
+    assert_eq!(runtime.starts.get(), 1);
+    assert_eq!(runtime.removals.get(), 1);
+    let events = runtime.events.into_inner();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.starts_with("inspect-workdir:"))
+    );
+    assert!(events.iter().all(|event| {
+        !event.starts_with("agent:")
+            && !event.starts_with("reset-tests:")
+            && !event.starts_with("copy-tests:")
+            && !event.starts_with("verifier:")
+    }));
+}
+
+#[test]
 fn each_execution_uses_distinct_image_and_container_names() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_root(&temporary, "");

@@ -26,7 +26,8 @@ use super::{
     DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
     EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult,
     MultiStepExecutionResult, NetworkPolicy, SecretProvider, collect_artifacts, preflight_docker,
-    resolve_environment, resolve_phase_environment, transfer_artifacts,
+    resolve_environment, resolve_phase_environment,
+    shared_workdir_conflicts_reserved_verifier_path, transfer_artifacts,
     verifier_artifact_target_collision,
 };
 
@@ -161,6 +162,8 @@ impl DockerProcessSandbox {
                 "phase network transition",
             ));
         }
+        let environment_workdir = recipe.resolve_workdir(environment.workdir());
+        validate_shared_verifier_workdir(runtime, plan, None, environment_workdir)?;
         let materialized_source = package.materialize_source()?;
         let (source_root, environment_root) =
             standard_task_roots(package, materialized_source.root())?;
@@ -172,7 +175,6 @@ impl DockerProcessSandbox {
         let outcome = (|| {
             let baseline_network = network_lease(environment.network())?;
             let build_network = build_network_lease(environment.network())?;
-            let environment_workdir = recipe.resolve_workdir(environment.workdir());
             runtime.build(
                 &DockerBuildRequest::new([
                     "build",
@@ -194,6 +196,7 @@ impl DockerProcessSandbox {
                 None,
             )?;
             runtime.start(&DockerStartRequest::new(&container))?;
+            validate_shared_verifier_workdir(runtime, plan, Some(&container), environment_workdir)?;
             if let Some(healthcheck) = environment.healthcheck() {
                 run_healthcheck(
                     self.clock.clone(),
@@ -256,6 +259,8 @@ impl DockerProcessSandbox {
                 "phase network transition",
             ));
         }
+        let environment_workdir = recipe.resolve_workdir(environment.workdir());
+        validate_shared_verifier_workdir(runtime, plan, None, environment_workdir)?;
         let materialized_source = package.materialize_source()?;
         let (source_root, environment_root) =
             standard_task_roots(package, materialized_source.root())?;
@@ -277,7 +282,6 @@ impl DockerProcessSandbox {
         let outcome = (|| {
             let baseline_network = network_lease(environment.network())?;
             let build_network = build_network_lease(environment.network())?;
-            let environment_workdir = recipe.resolve_workdir(environment.workdir());
             runtime.build(
                 &DockerBuildRequest::new([
                     "build",
@@ -299,6 +303,7 @@ impl DockerProcessSandbox {
                 Some(package.instruction()),
             )?;
             runtime.start(&DockerStartRequest::new(&container))?;
+            validate_shared_verifier_workdir(runtime, plan, Some(&container), environment_workdir)?;
 
             if let Some(healthcheck) = environment.healthcheck() {
                 run_healthcheck(
@@ -663,6 +668,36 @@ fn validate_verifier_artifact_staging(
     if let Some(target) = collision {
         return Err(EvalExecutionError::InvalidWorkspace(format!(
             "artifact destination overlaps a reserved verifier path: {target:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_shared_verifier_workdir(
+    runtime: &dyn DockerRuntime,
+    plan: &BenchmarkExecutionPlan,
+    container: Option<&str>,
+    explicit_workdir: Option<&str>,
+) -> Result<(), EvalExecutionError> {
+    if !plan.uses_shared_verifier() {
+        return Ok(());
+    }
+    if let Some(workdir) = explicit_workdir {
+        return validate_shared_verifier_workdir_path(workdir);
+    }
+    let Some(container) = container else {
+        return Ok(());
+    };
+    let workdir = runtime.container_workdir(container)?;
+    validate_shared_verifier_workdir_path(&workdir)
+}
+
+fn validate_shared_verifier_workdir_path(workdir: &str) -> Result<(), EvalExecutionError> {
+    if shared_workdir_conflicts_reserved_verifier_path(workdir)
+        .map_err(EvalExecutionError::InvalidWorkspace)?
+    {
+        return Err(EvalExecutionError::InvalidWorkspace(format!(
+            "shared verifier workdir occupies a reserved verifier path: {workdir:?}"
         )));
     }
     Ok(())
