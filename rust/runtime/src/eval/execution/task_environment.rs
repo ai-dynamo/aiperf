@@ -154,10 +154,7 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
     fn teardown(&mut self) -> Result<(), EvalExecutionError> {
         Ok(())
     }
-    fn teardown_after_terminal_failure(
-        &mut self,
-        _: Duration,
-    ) -> Result<(), EvalExecutionError> {
+    fn teardown_after_terminal_failure(&mut self, _: Duration) -> Result<(), EvalExecutionError> {
         self.teardown()
     }
 }
