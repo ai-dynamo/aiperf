@@ -139,17 +139,17 @@ pub struct ImageSource {
 /// The provenance of an immutable environment image input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageSourceKind {
-    /// A standard task directory's `environment/Dockerfile`.
+    /// A standard task directory's complete `environment/` build context.
     TaskDockerfile,
     /// A legacy JSON package's immutable environment artifact.
     LegacyArtifact,
 }
 
 impl ImageSource {
-    pub(crate) fn task_dockerfile(dockerfile_digest: ArtifactDigest) -> Self {
+    pub(crate) fn task_dockerfile(build_context_digest: ArtifactDigest) -> Self {
         Self {
             kind: ImageSourceKind::TaskDockerfile,
-            digest: dockerfile_digest,
+            digest: build_context_digest,
         }
     }
 
@@ -170,7 +170,10 @@ impl ImageSource {
         &self.digest
     }
 
-    /// Returns the digest of the standard task's `environment/Dockerfile`.
+    /// Returns the standard task's complete `environment/` build-context identity.
+    ///
+    /// The method name is retained for API compatibility; the digest binds every
+    /// selected build-context entry, including empty directories and file modes.
     pub fn dockerfile_digest(&self) -> Option<&ArtifactDigest> {
         (self.kind == ImageSourceKind::TaskDockerfile).then_some(&self.digest)
     }

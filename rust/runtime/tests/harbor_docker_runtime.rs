@@ -8,6 +8,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Read},
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
     process::Command,
     sync::{Mutex, MutexGuard},
 };
@@ -1598,6 +1600,8 @@ struct StepRecordingRuntime {
     fail_reset_call: Option<usize>,
     fail_first_removal: bool,
     image_workdir: Option<String>,
+    observe_source_snapshot: bool,
+    observed_source_roots: RefCell<Vec<PathBuf>>,
 }
 
 impl StepRecordingRuntime {
@@ -1623,6 +1627,14 @@ impl StepRecordingRuntime {
             ..Self::default()
         }
     }
+
+    fn observing_source_snapshot(failure: Option<StepFailure>) -> Self {
+        Self {
+            failure,
+            observe_source_snapshot: true,
+            ..Self::default()
+        }
+    }
 }
 
 impl DockerRuntime for StepRecordingRuntime {
@@ -1636,9 +1648,34 @@ impl DockerRuntime for StepRecordingRuntime {
             .with_public_network()
     }
 
-    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+    fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
         self.build_calls.set(self.build_calls.get() + 1);
         self.events.borrow_mut().push("build".to_owned());
+        if self.observe_source_snapshot {
+            let context = Path::new(request.public_arguments().last().ok_or_else(|| {
+                EvalExecutionError::Materialization("Docker build context is absent".to_owned())
+            })?);
+            assert_eq!(
+                fs::read(context.join("Dockerfile")).unwrap(),
+                b"FROM scratch\n"
+            );
+            assert_eq!(
+                fs::read(context.join("context.txt")).unwrap(),
+                b"original context\n"
+            );
+            assert!(context.join("empty").is_dir());
+            assert_eq!(
+                fs::metadata(context.join("helper.sh"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o755
+            );
+            self.observed_source_roots
+                .borrow_mut()
+                .push(context.parent().unwrap().to_path_buf());
+        }
         Ok(())
     }
 
@@ -1732,6 +1769,32 @@ impl DockerRuntime for StepRecordingRuntime {
         let source = &arguments[1];
         let destination = &arguments[2];
         if destination.ends_with(":/tests") {
+            if self.observe_source_snapshot {
+                let tree = Path::new(source.trim_end_matches("/."));
+                let expected = if source.contains("steps/two/tests") {
+                    b"original step helper\n".as_slice()
+                } else {
+                    b"original root helper\n".as_slice()
+                };
+                assert_eq!(fs::read(tree.join("helper.sh")).unwrap(), expected);
+                assert!(tree.join("empty").is_dir());
+                assert_eq!(
+                    fs::metadata(tree.join("helper.sh"))
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o755
+                );
+                let source_root = if source.contains("steps/two/tests") {
+                    tree.parent().unwrap().parent().unwrap().parent().unwrap()
+                } else {
+                    tree.parent().unwrap()
+                };
+                self.observed_source_roots
+                    .borrow_mut()
+                    .push(source_root.to_path_buf());
+            }
             self.events
                 .borrow_mut()
                 .push(format!("copy-tests:{source}"));
@@ -1808,6 +1871,64 @@ impl DockerRuntime for StepRecordingRuntime {
         } else {
             Ok(())
         }
+    }
+}
+
+#[test]
+fn docker_execution_uses_one_imported_source_materialization_and_releases_it() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, true);
+    fs::create_dir(task_root.join("environment/empty")).unwrap();
+    fs::write(
+        task_root.join("environment/context.txt"),
+        "original context\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("environment/helper.sh"), "#!/bin/sh\n").unwrap();
+    fs::create_dir(task_root.join("tests/empty")).unwrap();
+    fs::write(task_root.join("tests/helper.sh"), "original root helper\n").unwrap();
+    fs::create_dir(task_root.join("steps/two/tests/empty")).unwrap();
+    fs::write(
+        task_root.join("steps/two/tests/helper.sh"),
+        "original step helper\n",
+    )
+    .unwrap();
+    for helper in [
+        "environment/helper.sh",
+        "tests/helper.sh",
+        "steps/two/tests/helper.sh",
+    ] {
+        fs::set_permissions(task_root.join(helper), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    fs::remove_dir_all(&task_root).unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    for failure in [None, Some(StepFailure::Agent(1))] {
+        let runtime = StepRecordingRuntime::observing_source_snapshot(failure);
+        let result = DockerProcessSandbox::new().execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        );
+        if failure.is_some() {
+            assert!(matches!(result, Err(EvalExecutionError::ProcessFailure(_))));
+        } else {
+            assert_eq!(result.unwrap().steps.len(), 2);
+        }
+        let observed = runtime.observed_source_roots.into_inner();
+        assert!(!observed.is_empty());
+        assert!(observed.iter().all(|root| root == &observed[0]));
+        assert!(!observed[0].exists());
     }
 }
 

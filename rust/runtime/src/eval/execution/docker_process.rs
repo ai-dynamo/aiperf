@@ -144,7 +144,11 @@ impl DockerProcessSandbox {
                 "multi-step execution plan",
             ));
         }
-        let (source_root, environment_root) = standard_task_roots(package)?;
+        if !package.is_standard_directory() {
+            return Err(EvalExecutionError::Materialization(
+                "Docker execution requires a standard task directory".to_owned(),
+            ));
+        }
         preflight_docker(runtime, plan)?;
         let environment = plan.environment();
         if !runtime.supports_phase_network_transitions()
@@ -157,6 +161,9 @@ impl DockerProcessSandbox {
                 "phase network transition",
             ));
         }
+        let materialized_source = package.materialize_source()?;
+        let (source_root, environment_root) =
+            standard_task_roots(package, materialized_source.root())?;
 
         let workspace = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
@@ -238,18 +245,6 @@ impl DockerProcessSandbox {
                 "Docker execution requires a standard task directory".to_owned(),
             ));
         }
-        let source_root = package.source_root().ok_or_else(|| {
-            EvalExecutionError::Materialization(
-                "standard task directory was not retained after import".to_owned(),
-            )
-        })?;
-        let environment_root = source_root.join("environment");
-        if !environment_root.join("Dockerfile").is_file() {
-            return Err(EvalExecutionError::Materialization(
-                "standard task is missing environment/Dockerfile".to_owned(),
-            ));
-        }
-
         preflight_docker(runtime, plan)?;
         let environment = plan.environment();
         let verifier = plan.verifier();
@@ -261,6 +256,9 @@ impl DockerProcessSandbox {
                 "phase network transition",
             ));
         }
+        let materialized_source = package.materialize_source()?;
+        let (source_root, environment_root) =
+            standard_task_roots(package, materialized_source.root())?;
 
         let workspace = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
@@ -670,19 +668,15 @@ fn validate_verifier_artifact_staging(
     Ok(())
 }
 
-fn standard_task_roots(
+fn standard_task_roots<'a>(
     package: &HarborTaskPackage,
-) -> Result<(&std::path::Path, std::path::PathBuf), EvalExecutionError> {
+    source_root: &'a std::path::Path,
+) -> Result<(&'a std::path::Path, std::path::PathBuf), EvalExecutionError> {
     if !package.is_standard_directory() {
         return Err(EvalExecutionError::Materialization(
             "Docker execution requires a standard task directory".to_owned(),
         ));
     }
-    let source_root = package.source_root().ok_or_else(|| {
-        EvalExecutionError::Materialization(
-            "standard task directory was not retained after import".to_owned(),
-        )
-    })?;
     let environment_root = source_root.join("environment");
     if !environment_root.join("Dockerfile").is_file() {
         return Err(EvalExecutionError::Materialization(

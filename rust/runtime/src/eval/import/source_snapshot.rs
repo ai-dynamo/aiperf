@@ -96,6 +96,14 @@ impl AcquiredSource {
         }
     }
 
+    pub(super) fn primary_path(&self) -> &str {
+        self.primary_path.as_str()
+    }
+
+    pub(super) const fn is_tree(&self) -> bool {
+        matches!(&self.artifact, SourceArtifact::Tree(_))
+    }
+
     pub(super) fn read(&self, relative_path: &str) -> Result<&[u8], HarborImportError> {
         match &self.artifact {
             SourceArtifact::File(_) if relative_path == self.primary_path.as_str() => {
@@ -210,14 +218,17 @@ pub(super) struct SourceEntry {
 }
 
 impl SourceEntry {
+    #[cfg(test)]
     pub(super) fn path(&self) -> &SourcePath {
         &self.path
     }
 
+    #[cfg(test)]
     pub(super) const fn kind(&self) -> SourceEntryKind {
         self.kind
     }
 
+    #[cfg(test)]
     pub(super) const fn mode(&self) -> u32 {
         self.mode
     }
@@ -303,6 +314,7 @@ impl SourceTreeSnapshot {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn entries(&self) -> &[SourceEntry] {
         &self.entries
     }

@@ -5,22 +5,21 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
     time::Duration,
 };
 
 use serde::Deserialize;
+use tempfile::TempDir;
 
 use crate::eval::{
-    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, CanonicalPackagePlan,
-    ContainerResources, EnvBinding, EnvironmentPlan, EvalTaskRef, HealthcheckPlan, ImageSource,
+    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources,
+    EnvBinding, EnvironmentPlan, EvalExecutionError, HealthcheckPlan, ImageSource,
     MultiStepRewardStrategy, NetworkPolicy, PhasePlan, VerifierMode, VerifierPlan,
-    append_identity_field, artifact_source_overlaps_reserved_verifier_path,
-    verifier_artifact_target_collision,
+    artifact_source_overlaps_reserved_verifier_path, verifier_artifact_target_collision,
 };
 
-use super::HarborImportError;
+use super::{AcquiredSource, HarborImportError, source_snapshot::ExecutableSourceView};
 
 /// Executable material retained from one strict Harbor task package.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,9 +32,8 @@ pub struct HarborTaskPackage {
     verifier_command: Vec<String>,
     verifier_mode: VerifierMode,
     declared_artifacts: Vec<String>,
-    source_digest: ArtifactDigest,
-    source_bytes: Vec<u8>,
-    source_root: Option<std::path::PathBuf>,
+    identity_digest: ArtifactDigest,
+    source: AcquiredSource,
     is_standard_directory: bool,
     container_resources: Option<(u64, u64)>,
     timeouts: Option<(Duration, Duration)>,
@@ -85,17 +83,17 @@ impl HarborTaskPackage {
 
     /// Returns the digest of the complete authored package bytes.
     pub fn source_digest(&self) -> ArtifactDigest {
-        self.source_digest.clone()
+        self.source.source_digest()
     }
 
     /// Returns the immutable, exactly acquired package bytes.
     pub fn source_bytes(&self) -> &[u8] {
-        &self.source_bytes
+        self.source.primary_bytes()
     }
 
-    /// Returns the local source tree retained for fixture materialization, when available.
-    pub(crate) fn source_root(&self) -> Option<&std::path::Path> {
-        self.source_root.as_deref()
+    /// Returns the canonical normalized package identity used by the task reference.
+    pub fn identity_digest(&self) -> ArtifactDigest {
+        self.identity_digest.clone()
     }
 
     /// Reports whether this package originated from a standard task directory.
@@ -118,14 +116,86 @@ impl HarborTaskPackage {
         &self.execution_plan
     }
 
-    /// Associates an acquired local source tree with this immutable package material.
-    pub(crate) fn set_source_root(&mut self, source_root: std::path::PathBuf) {
-        self.source_root = Some(source_root);
+    pub(crate) fn materialize_source(&self) -> Result<MaterializedSource, EvalExecutionError> {
+        let lease = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        self.materialize_source_into(lease.path())?;
+        Ok(MaterializedSource { lease })
     }
 
-    /// Replaces the source identity after acquiring a directory-backed package.
-    pub(crate) fn set_source_digest(&mut self, source_digest: ArtifactDigest) {
-        self.source_digest = source_digest;
+    pub(crate) fn materialize_source_into(
+        &self,
+        destination: &Path,
+    ) -> Result<(), EvalExecutionError> {
+        self.source
+            .materialize_into(destination)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))
+    }
+}
+
+pub(crate) struct MaterializedSource {
+    lease: TempDir,
+}
+
+impl MaterializedSource {
+    pub(crate) fn root(&self) -> &Path {
+        self.lease.path()
+    }
+}
+
+pub(super) struct NormalizedPackageDraft {
+    id: String,
+    instruction: String,
+    environment: String,
+    verifier: String,
+    agent_command: Vec<String>,
+    verifier_command: Vec<String>,
+    verifier_mode: VerifierMode,
+    declared_artifacts: Vec<String>,
+    is_standard_directory: bool,
+    container_resources: Option<(u64, u64)>,
+    timeouts: Option<(Duration, Duration)>,
+    execution_plan: BenchmarkExecutionPlan,
+}
+
+impl NormalizedPackageDraft {
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(super) fn agent_command(&self) -> &[String] {
+        &self.agent_command
+    }
+
+    pub(super) fn verifier_command(&self) -> &[String] {
+        &self.verifier_command
+    }
+
+    pub(super) fn execution_plan(&self) -> &BenchmarkExecutionPlan {
+        &self.execution_plan
+    }
+
+    pub(super) fn into_package(
+        self,
+        source: AcquiredSource,
+        identity_digest: ArtifactDigest,
+    ) -> HarborTaskPackage {
+        HarborTaskPackage {
+            id: self.id,
+            instruction: self.instruction,
+            environment: self.environment,
+            verifier: self.verifier,
+            agent_command: self.agent_command,
+            verifier_command: self.verifier_command,
+            verifier_mode: self.verifier_mode,
+            declared_artifacts: self.declared_artifacts,
+            identity_digest,
+            source,
+            is_standard_directory: self.is_standard_directory,
+            container_resources: self.container_resources,
+            timeouts: self.timeouts,
+            execution_plan: self.execution_plan,
+        }
     }
 }
 
@@ -142,8 +212,9 @@ struct PackageTaskDto {
 }
 
 pub(super) fn normalize(
-    bytes: &[u8],
-) -> Result<(HarborTaskPackage, EvalTaskRef), HarborImportError> {
+    source: &AcquiredSource,
+) -> Result<(NormalizedPackageDraft, ExecutableSourceView), HarborImportError> {
+    let bytes = source.primary_bytes();
     let task = serde_json::from_slice::<PackageTaskDto>(bytes)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
     if task.instruction.trim().is_empty() {
@@ -156,19 +227,7 @@ pub(super) fn normalize(
     let declared_artifacts = normalize_declared_artifacts(task.declared_artifacts)?;
     let environment = ArtifactDigest::parse(task.environment.clone())
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
-    let verifier = ArtifactDigest::parse(task.verifier.clone())
-        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
-    let digest = ArtifactDigest::from_bytes(
-        format!(
-            "id={}\u{1f}instruction={}\u{1f}environment={}\u{1f}verifier={}",
-            task.id,
-            task.instruction,
-            environment.as_str(),
-            verifier.as_str(),
-        )
-        .as_bytes(),
-    );
-    let reference = EvalTaskRef::new(task.id.clone(), digest)
+    ArtifactDigest::parse(task.verifier.clone())
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
     let environment_plan = EnvironmentPlan {
         image_source: ImageSource::legacy_artifact(environment.clone()),
@@ -216,7 +275,7 @@ pub(super) fn normalize(
         has_explicit_steps: false,
         multi_step_reward_strategy: None,
     };
-    let package = HarborTaskPackage {
+    let draft = NormalizedPackageDraft {
         id: task.id,
         instruction: task.instruction,
         environment: task.environment,
@@ -225,15 +284,17 @@ pub(super) fn normalize(
         verifier_command: task.verifier_command,
         verifier_mode: VerifierMode::Separate,
         declared_artifacts,
-        source_digest: ArtifactDigest::from_bytes(bytes),
-        source_bytes: bytes.to_vec(),
-        source_root: None,
         is_standard_directory: false,
         container_resources: None,
         timeouts: None,
         execution_plan,
     };
-    Ok((package, reference))
+    let view = if source.is_tree() {
+        ExecutableSourceView::WholeTree
+    } else {
+        ExecutableSourceView::PrimaryFile
+    };
+    Ok((draft, view))
 }
 
 #[derive(Debug, Deserialize)]
@@ -337,9 +398,9 @@ struct StandardHealthcheckSection {
 
 /// Normalizes a standard task directory without executing its contents.
 pub(super) fn normalize_standard_directory(
-    source_root: &Path,
-    manifest_bytes: &[u8],
-) -> Result<(HarborTaskPackage, EvalTaskRef), HarborImportError> {
+    source: &AcquiredSource,
+) -> Result<(NormalizedPackageDraft, ExecutableSourceView), HarborImportError> {
+    let manifest_bytes = source.primary_bytes();
     let manifest_value = std::str::from_utf8(manifest_bytes)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?
         .parse::<toml::Value>()
@@ -358,9 +419,9 @@ pub(super) fn normalize_standard_directory(
             "task.name must not be empty".to_owned(),
         ));
     }
-    let environment_digest = ArtifactDigest::from_bytes(
-        read_required_source_file(source_root, "environment/Dockerfile")?.as_bytes(),
-    );
+    read_required_source_file(source, "environment/Dockerfile")?;
+    let environment_digest =
+        source.executable_source_digest(&ExecutableSourceView::selected_roots(["environment"])?)?;
     let image_source = ImageSource::task_dockerfile(environment_digest.clone());
     let environment = normalize_environment(
         manifest.environment.unwrap_or_default(),
@@ -374,107 +435,91 @@ pub(super) fn normalize_standard_directory(
         image_source,
     )?;
     let root_artifacts = normalize_standard_artifacts(manifest.artifacts)?;
-    let (
-        steps,
-        has_explicit_steps,
-        multi_step_reward_strategy,
-        verifier_bytes,
-        verifier_tree_material,
-    ) = if manifest.steps.is_empty() {
-        if manifest.multi_step_reward_strategy.is_some() {
-            return Err(HarborImportError::InvalidPackage(
-                "multi_step_reward_strategy requires explicit steps".to_owned(),
-            ));
-        }
-        let instruction = read_required_source_file(source_root, "instruction.md")?;
-        if instruction.trim().is_empty() {
-            return Err(HarborImportError::InvalidPackage(
-                "instruction.md must not be empty".to_owned(),
-            ));
-        }
-        let verifier_bytes = read_required_source_bytes(source_root, "tests/test.sh")?;
-        validate_phase_timeout_pair(&root_agent, root_verifier.phase())?;
-        validate_step_artifacts(&root_artifacts, &root_verifier)?;
-        (
-            vec![BenchmarkStepPlan::new(
-                "default".to_owned(),
-                instruction,
-                "tests".to_owned(),
-                root_agent,
-                root_verifier,
-                root_artifacts,
-            )],
-            false,
-            None,
-            vec![verifier_bytes],
-            vec![verifier_tree_identity_material(source_root, "tests")?],
-        )
-    } else {
-        let strategy = normalize_multi_step_reward_strategy(manifest.multi_step_reward_strategy)?;
-        let mut names = BTreeSet::new();
-        let mut steps = Vec::with_capacity(manifest.steps.len());
-        let mut verifier_bytes = Vec::with_capacity(manifest.steps.len());
-        let mut verifier_tree_material = Vec::with_capacity(manifest.steps.len());
-        for step in manifest.steps {
-            validate_step_name(&step.name)?;
-            if !names.insert(step.name.clone()) {
-                return Err(HarborImportError::InvalidPackage(format!(
-                    "step name is duplicated: {:?}",
-                    step.name
-                )));
+    let (steps, has_explicit_steps, multi_step_reward_strategy, verifier_bytes) =
+        if manifest.steps.is_empty() {
+            if manifest.multi_step_reward_strategy.is_some() {
+                return Err(HarborImportError::InvalidPackage(
+                    "multi_step_reward_strategy requires explicit steps".to_owned(),
+                ));
             }
-            let instruction_path = format!("steps/{}/instruction.md", step.name);
-            let instruction = read_required_source_file(source_root, &instruction_path)?;
+            let instruction = read_required_source_file(source, "instruction.md")?;
             if instruction.trim().is_empty() {
-                return Err(HarborImportError::InvalidPackage(format!(
-                    "{instruction_path} must not be empty"
-                )));
+                return Err(HarborImportError::InvalidPackage(
+                    "instruction.md must not be empty".to_owned(),
+                ));
             }
-            let step_agent = overlay_agent_phase(&root_agent, step.agent.unwrap_or_default())?;
-            let step_verifier = overlay_verifier_plan(
-                &root_verifier,
-                step.verifier.unwrap_or_default(),
-                &environment,
-                &environment_digest,
-            )?;
-            validate_phase_timeout_pair(&step_agent, step_verifier.phase())?;
-            let mut artifacts = root_artifacts.clone();
-            artifacts.extend(normalize_standard_artifacts(step.artifacts)?);
-            validate_step_artifacts(&artifacts, &step_verifier)?;
-            let step_test = format!("steps/{}/tests/test.sh", step.name);
-            let (verifier_test_root, bytes) = if source_root.join(&step_test).is_file() {
-                (
-                    format!("steps/{}/tests", step.name),
-                    read_required_source_bytes(source_root, &step_test)?,
-                )
-            } else {
-                (
+            let verifier_bytes = read_required_source_bytes(source, "tests/test.sh")?;
+            validate_phase_timeout_pair(&root_agent, root_verifier.phase())?;
+            validate_step_artifacts(&root_artifacts, &root_verifier)?;
+            (
+                vec![BenchmarkStepPlan::new(
+                    "default".to_owned(),
+                    instruction,
                     "tests".to_owned(),
-                    read_required_source_bytes(source_root, "tests/test.sh")?,
-                )
-            };
-            verifier_bytes.push(bytes);
-            verifier_tree_material.push(verifier_tree_identity_material(
-                source_root,
-                &verifier_test_root,
-            )?);
-            steps.push(BenchmarkStepPlan::new(
-                step.name,
-                instruction,
-                verifier_test_root,
-                step_agent,
-                step_verifier,
-                artifacts,
-            ));
-        }
-        (
-            steps,
-            true,
-            Some(strategy),
-            verifier_bytes,
-            verifier_tree_material,
-        )
-    };
+                    root_agent,
+                    root_verifier,
+                    root_artifacts,
+                )],
+                false,
+                None,
+                vec![verifier_bytes],
+            )
+        } else {
+            let strategy =
+                normalize_multi_step_reward_strategy(manifest.multi_step_reward_strategy)?;
+            let mut names = BTreeSet::new();
+            let mut steps = Vec::with_capacity(manifest.steps.len());
+            let mut verifier_bytes = Vec::with_capacity(manifest.steps.len());
+            for step in manifest.steps {
+                validate_step_name(&step.name)?;
+                if !names.insert(step.name.clone()) {
+                    return Err(HarborImportError::InvalidPackage(format!(
+                        "step name is duplicated: {:?}",
+                        step.name
+                    )));
+                }
+                let instruction_path = format!("steps/{}/instruction.md", step.name);
+                let instruction = read_required_source_file(source, &instruction_path)?;
+                if instruction.trim().is_empty() {
+                    return Err(HarborImportError::InvalidPackage(format!(
+                        "{instruction_path} must not be empty"
+                    )));
+                }
+                let step_agent = overlay_agent_phase(&root_agent, step.agent.unwrap_or_default())?;
+                let step_verifier = overlay_verifier_plan(
+                    &root_verifier,
+                    step.verifier.unwrap_or_default(),
+                    &environment,
+                    &environment_digest,
+                )?;
+                validate_phase_timeout_pair(&step_agent, step_verifier.phase())?;
+                let mut artifacts = root_artifacts.clone();
+                artifacts.extend(normalize_standard_artifacts(step.artifacts)?);
+                validate_step_artifacts(&artifacts, &step_verifier)?;
+                let step_test = format!("steps/{}/tests/test.sh", step.name);
+                let (verifier_test_root, bytes) = if source.contains_file(&step_test) {
+                    (
+                        format!("steps/{}/tests", step.name),
+                        read_required_source_bytes(source, &step_test)?,
+                    )
+                } else {
+                    (
+                        "tests".to_owned(),
+                        read_required_source_bytes(source, "tests/test.sh")?,
+                    )
+                };
+                verifier_bytes.push(bytes);
+                steps.push(BenchmarkStepPlan::new(
+                    step.name,
+                    instruction,
+                    verifier_test_root,
+                    step_agent,
+                    step_verifier,
+                    artifacts,
+                ));
+            }
+            (steps, true, Some(strategy), verifier_bytes)
+        };
     let first_step = steps.first().ok_or_else(|| {
         HarborImportError::InvalidPackage("task must contain a logical step".to_owned())
     })?;
@@ -505,35 +550,25 @@ pub(super) fn normalize_standard_directory(
         has_explicit_steps,
         multi_step_reward_strategy,
     };
-    let agent_command = vec!["aiperf-task-agent".to_owned()];
-    let verifier_command = vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()];
-    let reference_digest = standard_task_reference_digest(
-        &manifest.task.name,
-        &agent_command,
-        &verifier_command,
-        &execution_plan,
-        &verifier_tree_material,
-    );
-    let task = EvalTaskRef::new(manifest.task.name.clone(), reference_digest)
-        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
-    let package = HarborTaskPackage {
+    let view = ExecutableSourceView::selected_roots(
+        std::iter::once("environment")
+            .chain(steps.iter().map(BenchmarkStepPlan::verifier_test_root)),
+    )?;
+    let draft = NormalizedPackageDraft {
         id: manifest.task.name,
         instruction,
         environment: environment_digest.as_str().to_owned(),
         verifier: verifier_digest.as_str().to_owned(),
-        agent_command,
-        verifier_command,
+        agent_command: vec!["aiperf-task-agent".to_owned()],
+        verifier_command: vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()],
         verifier_mode,
         declared_artifacts,
-        source_digest: ArtifactDigest::from_bytes(manifest_bytes),
-        source_bytes: manifest_bytes.to_vec(),
-        source_root: None,
         is_standard_directory: true,
         container_resources,
         timeouts,
         execution_plan,
     };
-    Ok((package, task))
+    Ok((draft, view))
 }
 
 fn normalize_environment(
@@ -810,33 +845,6 @@ fn validate_step_artifacts(
     Ok(())
 }
 
-fn standard_task_reference_digest(
-    id: &str,
-    agent_command: &[String],
-    verifier_command: &[String],
-    execution_plan: &BenchmarkExecutionPlan,
-    verifier_tree_material: &[Vec<u8>],
-) -> ArtifactDigest {
-    let mut material = Vec::new();
-    append_identity_field(&mut material, "standard-task-identity.format", b"1");
-    let plan_digest =
-        CanonicalPackagePlan::new(id, agent_command, verifier_command, execution_plan).digest();
-    append_identity_field(
-        &mut material,
-        "standard-task-identity.canonical-plan",
-        plan_digest.as_str().as_bytes(),
-    );
-    append_identity_field(
-        &mut material,
-        "standard-task-identity.verifier-tree-count",
-        &(verifier_tree_material.len() as u64).to_le_bytes(),
-    );
-    for tree in verifier_tree_material {
-        append_identity_field(&mut material, "standard-task-identity.verifier-tree", tree);
-    }
-    ArtifactDigest::from_bytes(&material)
-}
-
 fn normalize_verifier_phase(
     verifier: StandardVerifierSection,
     inherited_network: &NetworkPolicy,
@@ -1040,97 +1048,18 @@ fn normalize_step_timeout(field: &str, seconds: f64) -> Result<Duration, HarborI
 }
 
 fn read_required_source_file(
-    source_root: &Path,
+    source: &AcquiredSource,
     relative_path: &str,
 ) -> Result<String, HarborImportError> {
-    let path = source_root.join(relative_path);
-    String::from_utf8(read_required_source_bytes(source_root, relative_path)?)
-        .map_err(|error| HarborImportError::InvalidPackage(format!("{}: {error}", path.display())))
+    String::from_utf8(read_required_source_bytes(source, relative_path)?)
+        .map_err(|error| HarborImportError::InvalidPackage(format!("{relative_path}: {error}")))
 }
 
 fn read_required_source_bytes(
-    source_root: &Path,
+    source: &AcquiredSource,
     relative_path: &str,
 ) -> Result<Vec<u8>, HarborImportError> {
-    let path = source_root.join(relative_path);
-    fs::read(&path)
-        .map_err(|error| HarborImportError::InvalidPackage(format!("{}: {error}", path.display())))
-}
-
-fn verifier_tree_identity_material(
-    source_root: &Path,
-    relative_root: &str,
-) -> Result<Vec<u8>, HarborImportError> {
-    let tree_root = source_root.join(relative_root);
-    let mut files = Vec::new();
-    collect_verifier_tree_files(&tree_root, &mut files)?;
-    let mut files = files
-        .into_iter()
-        .map(|file| {
-            let relative = file.strip_prefix(&tree_root).map_err(|error| {
-                HarborImportError::InvalidPackage(format!("{}: {error}", file.display()))
-            })?;
-            let relative = relative.to_str().ok_or_else(|| {
-                HarborImportError::InvalidPackage(format!(
-                    "verifier test path must be valid UTF-8: {}",
-                    relative.display()
-                ))
-            })?;
-            Ok((relative.to_owned(), file))
-        })
-        .collect::<Result<Vec<_>, HarborImportError>>()?;
-    files.sort_by(|(left, _), (right, _)| left.cmp(right));
-    let mut material = Vec::new();
-    append_identity_field(&mut material, "verifier-tree.format", b"1");
-    append_identity_field(
-        &mut material,
-        "verifier-tree.file-count",
-        &(files.len() as u64).to_le_bytes(),
-    );
-    for (relative, file) in files {
-        let bytes = fs::read(&file).map_err(|error| {
-            HarborImportError::InvalidPackage(format!("{}: {error}", file.display()))
-        })?;
-        append_identity_field(
-            &mut material,
-            "verifier-tree.file.path",
-            relative.as_bytes(),
-        );
-        append_identity_field(&mut material, "verifier-tree.file.bytes", &bytes);
-    }
-    Ok(material)
-}
-
-fn collect_verifier_tree_files(
-    directory: &Path,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), HarborImportError> {
-    let mut entries = fs::read_dir(directory)
-        .map_err(|error| {
-            HarborImportError::InvalidPackage(format!("{}: {error}", directory.display()))
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            HarborImportError::InvalidPackage(format!("{}: {error}", directory.display()))
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let kind = entry.file_type().map_err(|error| {
-            HarborImportError::InvalidPackage(format!("{}: {error}", path.display()))
-        })?;
-        if kind.is_dir() {
-            collect_verifier_tree_files(&path, files)?;
-        } else if kind.is_file() {
-            files.push(path);
-        } else {
-            return Err(HarborImportError::InvalidPackage(format!(
-                "verifier test entry must be a regular file or directory: {}",
-                path.display()
-            )));
-        }
-    }
-    Ok(())
+    Ok(source.read(relative_path)?.to_vec())
 }
 
 fn validate_command(field: &'static str, command: &[String]) -> Result<(), HarborImportError> {

@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::time::Duration;
 
@@ -1085,6 +1086,110 @@ name = "example/{name}"
             Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
         ));
     }
+}
+
+#[test]
+fn standard_package_identity_binds_context_selected_tree_entries_and_modes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = identity_task_root(&temporary);
+    let baseline = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_eq!(baseline.package.identity_digest(), baseline.task.digest);
+    assert_eq!(baseline.report.normalized_digest, baseline.task.digest);
+    assert_eq!(
+        baseline.package.source_digest(),
+        baseline.report.source_digest
+    );
+
+    fs::write(task_root.join("environment/context.txt"), b"context\n").unwrap();
+    let with_context = import_task_digest(&task_root);
+    assert_ne!(baseline.task.digest, with_context);
+
+    fs::create_dir(task_root.join("environment/empty")).unwrap();
+    let with_environment_empty_directory = import_task_digest(&task_root);
+    assert_ne!(with_context, with_environment_empty_directory);
+
+    fs::set_permissions(
+        task_root.join("environment/context.txt"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let with_executable_context = import_task_digest(&task_root);
+    assert_ne!(with_environment_empty_directory, with_executable_context);
+
+    fs::create_dir(task_root.join("tests/empty")).unwrap();
+    let with_selected_empty_directory = import_task_digest(&task_root);
+    assert_ne!(with_executable_context, with_selected_empty_directory);
+
+    fs::set_permissions(
+        task_root.join("tests/fixtures/root.txt"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    assert_ne!(
+        with_selected_empty_directory,
+        import_task_digest(&task_root)
+    );
+}
+
+#[test]
+fn standard_source_provenance_includes_unselected_entries_without_changing_package_identity() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = identity_task_root(&temporary);
+    let baseline = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+
+    fs::write(task_root.join("notes.txt"), b"not executable\n").unwrap();
+    let with_unselected_file = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_ne!(
+        baseline.report.source_digest,
+        with_unselected_file.report.source_digest
+    );
+    assert_eq!(baseline.task.digest, with_unselected_file.task.digest);
+
+    let manifest = fs::read_to_string(task_root.join("task.toml")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        format!("# equivalent formatting\n{manifest}"),
+    )
+    .unwrap();
+    let reformatted = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_ne!(
+        with_unselected_file.report.source_digest,
+        reformatted.report.source_digest
+    );
+    assert_eq!(baseline.task.digest, reformatted.task.digest);
+}
+
+#[test]
+fn directory_json_package_identity_binds_the_whole_tree_and_canonical_modes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("json-tree");
+    fs::create_dir_all(task_root.join("fixtures")).unwrap();
+    fs::write(task_root.join("task.json"), supported_package()).unwrap();
+    fs::write(task_root.join("fixtures/input.txt"), b"fixture\n").unwrap();
+    let baseline = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_eq!(baseline.package.identity_digest(), baseline.task.digest);
+    assert_eq!(baseline.report.normalized_digest, baseline.task.digest);
+
+    fs::create_dir(task_root.join("fixtures/empty")).unwrap();
+    let with_empty = import_task_digest(&task_root);
+    assert_ne!(baseline.task.digest, with_empty);
+
+    fs::set_permissions(
+        task_root.join("fixtures/input.txt"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    assert_ne!(with_empty, import_task_digest(&task_root));
 }
 
 #[test]

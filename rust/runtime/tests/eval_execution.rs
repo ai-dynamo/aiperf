@@ -229,16 +229,23 @@ fn separate_local_verifier_cannot_read_an_undeclared_agent_file() {
 }
 
 #[test]
-fn local_process_sandbox_materializes_regular_package_fixture_files() {
+fn local_process_sandbox_materializes_the_imported_directory_package_after_origin_removal() {
     let temporary = tempfile::tempdir().unwrap();
     let package_root = temporary.path().join("package");
-    fs::create_dir_all(package_root.join("fixtures")).unwrap();
-    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","test -f fixtures/input.txt"],"verifier_command":["sh","-c","printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":[]}"#;
+    fs::create_dir_all(package_root.join("fixtures/empty")).unwrap();
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","test \"$(cat fixtures/input.txt)\" = original && test -d fixtures/empty && test -x fixtures/helper.sh"],"verifier_command":["sh","-c","printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":[]}"#;
     fs::write(package_root.join("task.json"), package).unwrap();
-    fs::write(package_root.join("fixtures/input.txt"), "fixture").unwrap();
+    fs::write(package_root.join("fixtures/input.txt"), "original").unwrap();
+    fs::write(package_root.join("fixtures/helper.sh"), "#!/bin/sh\n").unwrap();
+    let mut helper_permissions = fs::metadata(package_root.join("fixtures/helper.sh"))
+        .unwrap()
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut helper_permissions, 0o755);
+    fs::set_permissions(package_root.join("fixtures/helper.sh"), helper_permissions).unwrap();
     let imported = HarborImporter::new(&NativeSourceAcquirer)
         .import(&HarborSource::local(package_root.to_string_lossy()).unwrap())
         .unwrap();
+    fs::remove_dir_all(&package_root).unwrap();
     let recipe = HarborSandboxRecipe::new(
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "/work",

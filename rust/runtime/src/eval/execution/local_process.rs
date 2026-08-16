@@ -48,11 +48,7 @@ impl LocalProcessSandbox {
     ) -> Result<MaterializedSandbox, EvalExecutionError> {
         let lease = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        if let Some(source_root) = package.source_root() {
-            copy_source_tree(source_root, lease.path())?;
-        }
-        fs::write(lease.path().join("task.json"), package.source_bytes())
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        package.materialize_source_into(lease.path())?;
         fs::create_dir_all(lease.path().join("results"))
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
         Ok(MaterializedSandbox { lease })
@@ -280,38 +276,4 @@ fn parse_reward(sandbox: &MaterializedSandbox) -> Result<RewardDocument, EvalExe
     let reward_txt = fs::read(sandbox.root().join("reward.txt")).ok();
     RewardDocument::parse(reward_json.as_deref(), reward_txt.as_deref())
         .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
-}
-
-fn copy_source_tree(source: &Path, destination: &Path) -> Result<(), EvalExecutionError> {
-    for entry in fs::read_dir(source)
-        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?
-    {
-        let entry =
-            entry.map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        if file_type.is_symlink() {
-            return Err(EvalExecutionError::Materialization(format!(
-                "package source contains symlink: {}",
-                source_path.display()
-            )));
-        }
-        if file_type.is_dir() {
-            fs::create_dir(&destination_path)
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            copy_source_tree(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        } else {
-            return Err(EvalExecutionError::Materialization(format!(
-                "package source contains non-regular file: {}",
-                source_path.display()
-            )));
-        }
-    }
-    Ok(())
 }
