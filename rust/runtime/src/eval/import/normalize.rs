@@ -6,7 +6,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 
@@ -16,6 +16,8 @@ use crate::eval::{
     ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources,
     EnvBinding, EnvironmentPlan, EvalTaskRef, HealthcheckPlan, ImageSource,
     MultiStepRewardStrategy, NetworkPolicy, PhasePlan, VerifierMode, VerifierPlan,
+    append_identity_field, artifact_source_overlaps_reserved_verifier_path,
+    verifier_artifact_target_collision,
 };
 
 use super::HarborImportError;
@@ -372,90 +374,107 @@ pub(super) fn normalize_standard_directory(
         image_source,
     )?;
     let root_artifacts = normalize_standard_artifacts(manifest.artifacts)?;
-    let (steps, has_explicit_steps, multi_step_reward_strategy, verifier_bytes) =
-        if manifest.steps.is_empty() {
-            if manifest.multi_step_reward_strategy.is_some() {
-                return Err(HarborImportError::InvalidPackage(
-                    "multi_step_reward_strategy requires explicit steps".to_owned(),
-                ));
+    let (
+        steps,
+        has_explicit_steps,
+        multi_step_reward_strategy,
+        verifier_bytes,
+        verifier_tree_material,
+    ) = if manifest.steps.is_empty() {
+        if manifest.multi_step_reward_strategy.is_some() {
+            return Err(HarborImportError::InvalidPackage(
+                "multi_step_reward_strategy requires explicit steps".to_owned(),
+            ));
+        }
+        let instruction = read_required_source_file(source_root, "instruction.md")?;
+        if instruction.trim().is_empty() {
+            return Err(HarborImportError::InvalidPackage(
+                "instruction.md must not be empty".to_owned(),
+            ));
+        }
+        let verifier_bytes = read_required_source_bytes(source_root, "tests/test.sh")?;
+        validate_phase_timeout_pair(&root_agent, root_verifier.phase())?;
+        validate_step_artifacts(&root_artifacts, &root_verifier)?;
+        (
+            vec![BenchmarkStepPlan::new(
+                "default".to_owned(),
+                instruction,
+                "tests".to_owned(),
+                root_agent,
+                root_verifier,
+                root_artifacts,
+            )],
+            false,
+            None,
+            vec![verifier_bytes],
+            vec![verifier_tree_identity_material(source_root, "tests")?],
+        )
+    } else {
+        let strategy = normalize_multi_step_reward_strategy(manifest.multi_step_reward_strategy)?;
+        let mut names = BTreeSet::new();
+        let mut steps = Vec::with_capacity(manifest.steps.len());
+        let mut verifier_bytes = Vec::with_capacity(manifest.steps.len());
+        let mut verifier_tree_material = Vec::with_capacity(manifest.steps.len());
+        for step in manifest.steps {
+            validate_step_name(&step.name)?;
+            if !names.insert(step.name.clone()) {
+                return Err(HarborImportError::InvalidPackage(format!(
+                    "step name is duplicated: {:?}",
+                    step.name
+                )));
             }
-            let instruction = read_required_source_file(source_root, "instruction.md")?;
+            let instruction_path = format!("steps/{}/instruction.md", step.name);
+            let instruction = read_required_source_file(source_root, &instruction_path)?;
             if instruction.trim().is_empty() {
-                return Err(HarborImportError::InvalidPackage(
-                    "instruction.md must not be empty".to_owned(),
-                ));
+                return Err(HarborImportError::InvalidPackage(format!(
+                    "{instruction_path} must not be empty"
+                )));
             }
-            let verifier_bytes = read_required_source_bytes(source_root, "tests/test.sh")?;
-            validate_phase_timeout_pair(&root_agent, root_verifier.phase())?;
-            (
-                vec![BenchmarkStepPlan::new(
-                    "default".to_owned(),
-                    instruction,
+            let step_agent = overlay_agent_phase(&root_agent, step.agent.unwrap_or_default())?;
+            let step_verifier = overlay_verifier_plan(
+                &root_verifier,
+                step.verifier.unwrap_or_default(),
+                &environment,
+                &environment_digest,
+            )?;
+            validate_phase_timeout_pair(&step_agent, step_verifier.phase())?;
+            let mut artifacts = root_artifacts.clone();
+            artifacts.extend(normalize_standard_artifacts(step.artifacts)?);
+            validate_step_artifacts(&artifacts, &step_verifier)?;
+            let step_test = format!("steps/{}/tests/test.sh", step.name);
+            let (verifier_test_root, bytes) = if source_root.join(&step_test).is_file() {
+                (
+                    format!("steps/{}/tests", step.name),
+                    read_required_source_bytes(source_root, &step_test)?,
+                )
+            } else {
+                (
                     "tests".to_owned(),
-                    root_agent,
-                    root_verifier,
-                    root_artifacts,
-                )],
-                false,
-                None,
-                vec![verifier_bytes],
-            )
-        } else {
-            let strategy =
-                normalize_multi_step_reward_strategy(manifest.multi_step_reward_strategy)?;
-            let mut names = BTreeSet::new();
-            let mut steps = Vec::with_capacity(manifest.steps.len());
-            let mut verifier_bytes = Vec::with_capacity(manifest.steps.len());
-            for step in manifest.steps {
-                validate_step_name(&step.name)?;
-                if !names.insert(step.name.clone()) {
-                    return Err(HarborImportError::InvalidPackage(format!(
-                        "step name is duplicated: {:?}",
-                        step.name
-                    )));
-                }
-                let instruction_path = format!("steps/{}/instruction.md", step.name);
-                let instruction = read_required_source_file(source_root, &instruction_path)?;
-                if instruction.trim().is_empty() {
-                    return Err(HarborImportError::InvalidPackage(format!(
-                        "{instruction_path} must not be empty"
-                    )));
-                }
-                let step_agent = overlay_agent_phase(&root_agent, step.agent.unwrap_or_default())?;
-                let step_verifier = overlay_verifier_plan(
-                    &root_verifier,
-                    step.verifier.unwrap_or_default(),
-                    &environment,
-                    &environment_digest,
-                )?;
-                validate_phase_timeout_pair(&step_agent, step_verifier.phase())?;
-                let mut artifacts = root_artifacts.clone();
-                artifacts.extend(normalize_standard_artifacts(step.artifacts)?);
-                validate_effective_artifact_targets(&artifacts)?;
-                let step_test = format!("steps/{}/tests/test.sh", step.name);
-                let (verifier_test_root, bytes) = if source_root.join(&step_test).is_file() {
-                    (
-                        format!("steps/{}/tests", step.name),
-                        read_required_source_bytes(source_root, &step_test)?,
-                    )
-                } else {
-                    (
-                        "tests".to_owned(),
-                        read_required_source_bytes(source_root, "tests/test.sh")?,
-                    )
-                };
-                verifier_bytes.push(bytes);
-                steps.push(BenchmarkStepPlan::new(
-                    step.name,
-                    instruction,
-                    verifier_test_root,
-                    step_agent,
-                    step_verifier,
-                    artifacts,
-                ));
-            }
-            (steps, true, Some(strategy), verifier_bytes)
-        };
+                    read_required_source_bytes(source_root, "tests/test.sh")?,
+                )
+            };
+            verifier_bytes.push(bytes);
+            verifier_tree_material.push(verifier_tree_identity_material(
+                source_root,
+                &verifier_test_root,
+            )?);
+            steps.push(BenchmarkStepPlan::new(
+                step.name,
+                instruction,
+                verifier_test_root,
+                step_agent,
+                step_verifier,
+                artifacts,
+            ));
+        }
+        (
+            steps,
+            true,
+            Some(strategy),
+            verifier_bytes,
+            verifier_tree_material,
+        )
+    };
     let first_step = steps.first().ok_or_else(|| {
         HarborImportError::InvalidPackage("task must contain a logical step".to_owned())
     })?;
@@ -488,9 +507,8 @@ pub(super) fn normalize_standard_directory(
     };
     let reference_digest = standard_task_reference_digest(
         &manifest.task.name,
-        environment_digest.as_str(),
-        &steps,
-        &verifier_bytes,
+        &execution_plan,
+        &verifier_tree_material,
     );
     let task = EvalTaskRef::new(manifest.task.name.clone(), reference_digest)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
@@ -745,16 +763,7 @@ fn validate_effective_artifact_targets(
 ) -> Result<(), HarborImportError> {
     let mut targets = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
-        let target = artifact
-            .destination()
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                Path::new(artifact.source())
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .to_owned()
-            });
+        let target = artifact.output_target();
         if targets.iter().any(|existing: &String| {
             existing == &target
                 || existing.strip_prefix(&format!("{target}/")).is_some()
@@ -769,27 +778,50 @@ fn validate_effective_artifact_targets(
     Ok(())
 }
 
+fn validate_step_artifacts(
+    artifacts: &[ArtifactSpec],
+    verifier: &VerifierPlan,
+) -> Result<(), HarborImportError> {
+    validate_effective_artifact_targets(artifacts)?;
+    if let Some(artifact) = artifacts
+        .iter()
+        .find(|artifact| artifact_source_overlaps_reserved_verifier_path(artifact))
+    {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "artifact source overlaps a reserved verifier path: {:?}",
+            artifact.source()
+        )));
+    }
+    if verifier.mode() == VerifierMode::Separate
+        && let Some(workdir) = verifier.environment().workdir()
+    {
+        let collision = verifier_artifact_target_collision(workdir, artifacts)
+            .map_err(HarborImportError::InvalidPackage)?;
+        if let Some(target) = collision {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "artifact destination overlaps a reserved verifier path: {target:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn standard_task_reference_digest(
     id: &str,
-    environment_digest: &str,
-    steps: &[BenchmarkStepPlan],
-    verifier_bytes: &[Vec<u8>],
+    execution_plan: &BenchmarkExecutionPlan,
+    verifier_tree_material: &[Vec<u8>],
 ) -> ArtifactDigest {
     let mut material = Vec::new();
-    material.extend_from_slice(b"id=");
-    material.extend_from_slice(id.as_bytes());
-    material.extend_from_slice(b"\x1fenvironment=");
-    material.extend_from_slice(environment_digest.as_bytes());
-    for (step, verifier) in steps.iter().zip(verifier_bytes) {
-        material.extend_from_slice(b"\x1fstep=");
-        material.extend_from_slice(step.name().as_bytes());
-        material.extend_from_slice(b"\x1finstruction=");
-        material.extend_from_slice(&(step.instruction().len() as u64).to_le_bytes());
-        material.extend_from_slice(step.instruction().as_bytes());
-        material.extend_from_slice(b"\x1ftests=");
-        material.extend_from_slice(step.verifier_test_root().as_bytes());
-        material.extend_from_slice(&(verifier.len() as u64).to_le_bytes());
-        material.extend_from_slice(verifier);
+    append_identity_field(&mut material, "standard-task-identity.format", b"1");
+    append_identity_field(&mut material, "standard-task-identity.id", id.as_bytes());
+    execution_plan.append_identity_material(&mut material);
+    append_identity_field(
+        &mut material,
+        "standard-task-identity.verifier-tree-count",
+        &(verifier_tree_material.len() as u64).to_le_bytes(),
+    );
+    for tree in verifier_tree_material {
+        append_identity_field(&mut material, "standard-task-identity.verifier-tree", tree);
     }
     ArtifactDigest::from_bytes(&material)
 }
@@ -992,6 +1024,82 @@ fn read_required_source_bytes(
     let path = source_root.join(relative_path);
     fs::read(&path)
         .map_err(|error| HarborImportError::InvalidPackage(format!("{}: {error}", path.display())))
+}
+
+fn verifier_tree_identity_material(
+    source_root: &Path,
+    relative_root: &str,
+) -> Result<Vec<u8>, HarborImportError> {
+    let tree_root = source_root.join(relative_root);
+    let mut files = Vec::new();
+    collect_verifier_tree_files(&tree_root, &mut files)?;
+    let mut files = files
+        .into_iter()
+        .map(|file| {
+            let relative = file.strip_prefix(&tree_root).map_err(|error| {
+                HarborImportError::InvalidPackage(format!("{}: {error}", file.display()))
+            })?;
+            let relative = relative.to_str().ok_or_else(|| {
+                HarborImportError::InvalidPackage(format!(
+                    "verifier test path must be valid UTF-8: {}",
+                    relative.display()
+                ))
+            })?;
+            Ok((relative.to_owned(), file))
+        })
+        .collect::<Result<Vec<_>, HarborImportError>>()?;
+    files.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let mut material = Vec::new();
+    append_identity_field(&mut material, "verifier-tree.format", b"1");
+    append_identity_field(
+        &mut material,
+        "verifier-tree.file-count",
+        &(files.len() as u64).to_le_bytes(),
+    );
+    for (relative, file) in files {
+        let bytes = fs::read(&file).map_err(|error| {
+            HarborImportError::InvalidPackage(format!("{}: {error}", file.display()))
+        })?;
+        append_identity_field(
+            &mut material,
+            "verifier-tree.file.path",
+            relative.as_bytes(),
+        );
+        append_identity_field(&mut material, "verifier-tree.file.bytes", &bytes);
+    }
+    Ok(material)
+}
+
+fn collect_verifier_tree_files(
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), HarborImportError> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|error| {
+            HarborImportError::InvalidPackage(format!("{}: {error}", directory.display()))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            HarborImportError::InvalidPackage(format!("{}: {error}", directory.display()))
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|error| {
+            HarborImportError::InvalidPackage(format!("{}: {error}", path.display()))
+        })?;
+        if kind.is_dir() {
+            collect_verifier_tree_files(&path, files)?;
+        } else if kind.is_file() {
+            files.push(path);
+        } else {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "verifier test entry must be a regular file or directory: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_command(field: &'static str, command: &[String]) -> Result<(), HarborImportError> {

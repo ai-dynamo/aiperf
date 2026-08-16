@@ -759,6 +759,441 @@ environment_mode = "separate"
 }
 
 #[test]
+fn standard_task_identity_tracks_normalized_execution_policy_and_artifacts() {
+    let cases = [
+        ("environment resources", "cpus = 2", "cpus = 3"),
+        ("environment memory", "memory_mb = 1024", "memory_mb = 2048"),
+        (
+            "environment workdir",
+            "workdir = \"/workspace\"",
+            "workdir = \"/other-workspace\"",
+        ),
+        (
+            "environment literal",
+            "BASE = \"baseline\"",
+            "BASE = \"changed\"",
+        ),
+        (
+            "environment user",
+            "user = \"1000:1001\"",
+            "user = \"1000:1002\"",
+        ),
+        (
+            "environment secret reference",
+            "TOKEN = \"${HOST_ONE}\"",
+            "TOKEN = \"${HOST_TWO}\"",
+        ),
+        (
+            "environment allowlist",
+            "allowed_hosts = [\"EXAMPLE.com\", \"10.0.0.1\"]",
+            "allowed_hosts = [\"other.example.com\", \"10.0.0.1\"]",
+        ),
+        (
+            "healthcheck command",
+            "command = [\"sh\", \"-c\", \"true\"]",
+            "command = [\"sh\", \"-c\", \"test -f /ready\"]",
+        ),
+        (
+            "healthcheck start period",
+            "start_period_sec = 1",
+            "start_period_sec = 2",
+        ),
+        (
+            "healthcheck start interval",
+            "start_interval_sec = 0.5",
+            "start_interval_sec = 0.75",
+        ),
+        (
+            "healthcheck interval",
+            "interval_sec = 2",
+            "interval_sec = 3",
+        ),
+        (
+            "healthcheck timeout",
+            "timeout_sec = 3\nretries = 4",
+            "timeout_sec = 4\nretries = 4",
+        ),
+        ("healthcheck retries", "retries = 4", "retries = 5"),
+        (
+            "agent user",
+            "user = \"agent\"\nnetwork = \"no-network\"",
+            "user = \"other-agent\"\nnetwork = \"no-network\"",
+        ),
+        (
+            "agent phase environment",
+            "AGENT = \"root\"",
+            "AGENT = \"changed\"",
+        ),
+        (
+            "agent network",
+            "user = \"agent\"\nnetwork = \"no-network\"",
+            "user = \"agent\"\nnetwork = \"public\"",
+        ),
+        (
+            "agent timeout",
+            "[agent]\ntimeout_sec = 5",
+            "[agent]\ntimeout_sec = 6",
+        ),
+        (
+            "verifier phase environment",
+            "VERIFY_ROOT = \"present\"",
+            "VERIFY_ROOT = \"changed\"",
+        ),
+        (
+            "step agent user",
+            "user = \"step-agent\"",
+            "user = \"other-step-agent\"",
+        ),
+        (
+            "step agent environment",
+            "STEP_TOKEN = \"${STEP_ONE}\"",
+            "STEP_TOKEN = \"${STEP_TWO}\"",
+        ),
+        (
+            "step agent network",
+            "allowed_hosts = [\"STEP.example.com\"]",
+            "allowed_hosts = [\"other-step.example.com\"]",
+        ),
+        (
+            "step agent timeout",
+            "[steps.agent]\nuser = \"step-agent\"\ntimeout_sec = 7",
+            "[steps.agent]\nuser = \"step-agent\"\ntimeout_sec = 9",
+        ),
+        (
+            "step verifier mode",
+            "environment_mode = \"separate\"",
+            "environment_mode = \"shared\"",
+        ),
+        (
+            "step verifier user",
+            "user = \"step-verifier\"",
+            "user = \"other-step-verifier\"",
+        ),
+        (
+            "step verifier environment",
+            "VERIFY_STEP = \"${VERIFY_ONE}\"",
+            "VERIFY_STEP = \"${VERIFY_TWO}\"",
+        ),
+        (
+            "step verifier network",
+            "[steps.verifier]\nenvironment_mode = \"separate\"\nuser = \"step-verifier\"\ntimeout_sec = 8\nnetwork = \"no-network\"",
+            "[steps.verifier]\nenvironment_mode = \"separate\"\nuser = \"step-verifier\"\ntimeout_sec = 8\nnetwork = \"public\"",
+        ),
+        (
+            "step verifier timeout",
+            "user = \"step-verifier\"\ntimeout_sec = 8",
+            "user = \"step-verifier\"\ntimeout_sec = 10",
+        ),
+        (
+            "artifact source",
+            "source = \"/work/root\"",
+            "source = \"/work/other-root\"",
+        ),
+        (
+            "artifact kind",
+            "artifacts = [{ source = \"/work/root\", destination = \"root-output\", exclude = [\"*.tmp\"] }]",
+            "artifacts = [\"/work/root\"]",
+        ),
+        (
+            "artifact destination",
+            "destination = \"root-output\"",
+            "destination = \"other-root-output\"",
+        ),
+        (
+            "artifact exclusion",
+            "exclude = [\"*.tmp\"]",
+            "exclude = [\"*.cache\"]",
+        ),
+        (
+            "reward strategy",
+            "multi_step_reward_strategy = \"mean\"",
+            "multi_step_reward_strategy = \"final\"",
+        ),
+    ];
+    let mut collisions = Vec::new();
+    for (name, before, after) in cases {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = identity_task_root(&temporary);
+        let baseline = import_task_digest(&task_root);
+        let manifest = fs::read_to_string(task_root.join("task.toml")).unwrap();
+        assert!(manifest.contains(before), "fixture is missing {before:?}");
+        fs::write(
+            task_root.join("task.toml"),
+            manifest.replacen(before, after, 1),
+        )
+        .unwrap();
+        let changed = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .unwrap_or_else(|error| panic!("{name} mutation must remain valid: {error}"));
+        if changed.task.digest == baseline {
+            collisions.push(name);
+        }
+    }
+    assert!(
+        collisions.is_empty(),
+        "task identity did not change for {collisions:?}"
+    );
+}
+
+#[test]
+fn standard_task_identity_tracks_every_selected_verifier_tree_file() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = identity_task_root(&temporary);
+    let baseline = import_task_digest(&task_root);
+
+    fs::write(task_root.join("tests/fixtures/root.txt"), "changed root\n").unwrap();
+    let changed_root_helper = import_task_digest(&task_root);
+    assert_ne!(baseline, changed_root_helper);
+
+    fs::write(
+        task_root.join("steps/two/tests/fixtures/step.txt"),
+        "changed step\n",
+    )
+    .unwrap();
+    let changed_step_helper = import_task_digest(&task_root);
+    assert_ne!(changed_root_helper, changed_step_helper);
+}
+
+#[test]
+fn standard_task_identity_uses_normalized_policy_not_toml_spelling() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = identity_task_root(&temporary);
+    let baseline = import_task_digest(&task_root);
+    let manifest = fs::read_to_string(task_root.join("task.toml")).unwrap();
+    let equivalent = manifest
+        .replace(
+            "allowed_hosts = [\"EXAMPLE.com\", \"10.0.0.1\"]",
+            "allowed_hosts = [\"10.0.0.1\", \"example.COM\"]",
+        )
+        .replace(
+            "BASE = \"baseline\"\nTOKEN = \"${HOST_ONE}\"",
+            "TOKEN = \"${HOST_ONE}\"\nBASE = \"baseline\"",
+        );
+    fs::write(task_root.join("task.toml"), equivalent).unwrap();
+
+    assert_eq!(baseline, import_task_digest(&task_root));
+}
+
+#[test]
+fn standard_task_identity_distinguishes_implicit_and_explicit_layouts() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "layout-identity");
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/layout-identity\"\n",
+    )
+    .unwrap();
+    let implicit = import_task_digest(&task_root);
+    fs::create_dir_all(task_root.join("steps/default")).unwrap();
+    fs::write(task_root.join("steps/default/instruction.md"), "Do work.\n").unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+[task]
+name = "example/layout-identity"
+[[steps]]
+name = "default"
+"#,
+    )
+    .unwrap();
+
+    assert_ne!(implicit, import_task_digest(&task_root));
+}
+
+#[test]
+fn standard_task_import_rejects_artifacts_overlapping_verifier_owned_paths() {
+    for (name, source) in [
+        ("tests-file", "/tests/result.txt"),
+        ("tests-directory", "/tests"),
+        ("tests-normalized-alias", "//tests//result.txt"),
+        ("reward-file", "/logs/verifier/reward.json"),
+        ("reward-directory", "/logs/verifier"),
+        ("reward-parent", "/logs"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                "schema_version = \"1.0\"\nartifacts = [\"{source}\"]\n[task]\nname = \"example/{name}\"\n"
+            ),
+        )
+        .unwrap();
+
+        let error = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .expect_err("reserved verifier artifact path must fail import");
+        assert!(matches!(
+            error,
+            aiperf_runtime::eval::HarborImportError::InvalidPackage(reason)
+                if reason.contains("reserved verifier path")
+        ));
+    }
+
+    for source in [
+        "/tests-output/result.txt",
+        "/logs/verifier-output/reward.json",
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, "allowed-neighbor");
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                "schema_version = \"1.0\"\nartifacts = [\"{source}\"]\n[task]\nname = \"example/allowed-neighbor\"\n"
+            ),
+        )
+        .unwrap();
+
+        HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .expect("component-neighbor paths are not verifier-owned");
+    }
+}
+
+#[test]
+fn standard_task_import_rejects_known_verifier_staging_collisions() {
+    for (name, workdir, destination) in [
+        ("tests-workdir", "/tests", "result.txt"),
+        ("tests-alias", "//tests//", "result.txt"),
+        ("reward-workdir", "/logs/verifier", "result.txt"),
+        ("reward-target", "/", "logs/verifier/reward.json"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                r#"schema_version = "1.0"
+artifacts = [{{ source = "/work/output", destination = "{destination}" }}]
+[task]
+name = "example/{name}"
+[verifier]
+environment_mode = "separate"
+[verifier.environment]
+workdir = "{workdir}"
+"#,
+            ),
+        )
+        .unwrap();
+
+        let error = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .expect_err("known reserved verifier staging target must fail import");
+        assert!(matches!(
+            error,
+            aiperf_runtime::eval::HarborImportError::InvalidPackage(reason)
+                if reason.contains("reserved verifier path")
+        ));
+    }
+}
+
+fn import_task_digest(task_root: &std::path::Path) -> ArtifactDigest {
+    HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap()
+        .task
+        .digest
+}
+
+fn identity_task_root(temporary: &tempfile::TempDir) -> std::path::PathBuf {
+    let task_root = temporary.path().join("identity-task");
+    for directory in [
+        "environment",
+        "tests/fixtures",
+        "steps/one",
+        "steps/two/tests/fixtures",
+    ] {
+        fs::create_dir_all(task_root.join(directory)).unwrap();
+    }
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+artifacts = [{ source = "/work/root", destination = "root-output", exclude = ["*.tmp"] }]
+
+[task]
+name = "example/identity"
+
+[environment]
+cpus = 2
+memory_mb = 1024
+workdir = "/workspace"
+user = "1000:1001"
+network = "allowlist"
+allowed_hosts = ["EXAMPLE.com", "10.0.0.1"]
+
+[environment.env]
+BASE = "baseline"
+TOKEN = "${HOST_ONE}"
+
+[environment.healthcheck]
+command = ["sh", "-c", "true"]
+start_period_sec = 1
+start_interval_sec = 0.5
+interval_sec = 2
+timeout_sec = 3
+retries = 4
+
+[agent]
+timeout_sec = 5
+user = "agent"
+network = "no-network"
+
+[agent.env]
+AGENT = "root"
+
+[verifier]
+timeout_sec = 3
+user = "verifier"
+network = "public"
+
+[verifier.env]
+VERIFY_ROOT = "present"
+
+[[steps]]
+name = "one"
+artifacts = ["/work/one.txt"]
+
+[steps.agent]
+user = "step-agent"
+timeout_sec = 7
+network = "allowlist"
+allowed_hosts = ["STEP.example.com"]
+
+[steps.agent.env]
+STEP_TOKEN = "${STEP_ONE}"
+
+[[steps]]
+name = "two"
+artifacts = [{ source = "/work/two", destination = "step-output", exclude = ["*.bak"] }]
+
+[steps.verifier]
+environment_mode = "separate"
+user = "step-verifier"
+timeout_sec = 8
+network = "no-network"
+
+[steps.verifier.env]
+VERIFY_STEP = "${VERIFY_ONE}"
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Legacy instruction.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(task_root.join("tests/fixtures/root.txt"), "root\n").unwrap();
+    fs::write(task_root.join("steps/one/instruction.md"), "Step one.\n").unwrap();
+    fs::write(task_root.join("steps/two/instruction.md"), "Step two.\n").unwrap();
+    fs::write(task_root.join("steps/two/tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(
+        task_root.join("steps/two/tests/fixtures/step.txt"),
+        "step\n",
+    )
+    .unwrap();
+    task_root
+}
+
+#[test]
 fn rejects_invalid_explicit_step_contracts_before_provisioning() {
     let cases = [
         ("unsafe-name", "[[steps]]\nname = \"../unsafe\"\n", &[][..]),

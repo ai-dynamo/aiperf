@@ -27,6 +27,7 @@ use super::{
     EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult,
     MultiStepExecutionResult, NetworkPolicy, SecretProvider, collect_artifacts, preflight_docker,
     resolve_environment, resolve_phase_environment, transfer_artifacts,
+    verifier_artifact_target_collision,
 };
 
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
@@ -563,6 +564,9 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             let verifier_workdir = self
                 .recipe
                 .resolve_workdir(verifier.environment().workdir());
+            if let Some(workdir) = verifier_workdir {
+                validate_verifier_artifact_staging(workdir, step.artifacts())?;
+            }
             create_planned_container(
                 self.runtime,
                 &name,
@@ -574,11 +578,16 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             )?;
             self.containers.push(name.clone());
             self.runtime.start(&DockerStartRequest::new(&name))?;
+            let effective_verifier_workdir = match verifier_workdir {
+                Some(workdir) => workdir.to_owned(),
+                None => self.runtime.container_workdir(&name)?,
+            };
+            validate_verifier_artifact_staging(&effective_verifier_workdir, step.artifacts())?;
             transfer_verifier_artifacts(
                 self.runtime,
                 &name,
                 workspace.path(),
-                verifier_workdir,
+                Some(&effective_verifier_workdir),
                 verifier_network,
             )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
@@ -645,6 +654,20 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             (Ok(reward), Ok(())) => Ok(reward),
         }
     }
+}
+
+fn validate_verifier_artifact_staging(
+    workdir: &str,
+    artifacts: &[super::ArtifactSpec],
+) -> Result<(), EvalExecutionError> {
+    let collision = verifier_artifact_target_collision(workdir, artifacts)
+        .map_err(EvalExecutionError::InvalidWorkspace)?;
+    if let Some(target) = collision {
+        return Err(EvalExecutionError::InvalidWorkspace(format!(
+            "artifact destination overlaps a reserved verifier path: {target:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn standard_task_roots(

@@ -19,7 +19,10 @@ mod training;
 mod trial;
 mod verifier;
 
-pub(crate) use execution::{validate_env_name, validate_user};
+pub(crate) use execution::{
+    append_identity_field, artifact_source_overlaps_reserved_verifier_path, validate_env_name,
+    validate_user, verifier_artifact_target_collision,
+};
 
 pub use artifact_manifest::{
     ArtifactManifestError, DeclaredArtifactManifest, MaterializedArtifactManifest,

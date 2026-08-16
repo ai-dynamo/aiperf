@@ -6,6 +6,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 
@@ -474,6 +475,16 @@ impl ArtifactSpec {
             ArtifactSpecKind::Collected { exclude, .. } => exclude,
         }
     }
+
+    pub(crate) fn output_target(&self) -> String {
+        self.destination().map(str::to_owned).unwrap_or_else(|| {
+            Path::new(self.source())
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_owned()
+        })
+    }
 }
 
 /// Declarative guarantees supplied by an execution provider.
@@ -651,6 +662,36 @@ impl BenchmarkExecutionPlan {
         self.multi_step_reward_strategy
     }
 
+    pub(crate) fn append_identity_material(&self, material: &mut Vec<u8>) {
+        let mut encoder = IdentityEncoder { material };
+        encoder.field("execution-plan.format", b"1");
+        append_environment_identity(&mut encoder, &self.environment);
+        append_phase_identity(&mut encoder, &self.agent);
+        append_verifier_identity(&mut encoder, &self.verifier);
+        append_artifacts_identity(&mut encoder, &self.artifacts);
+        encoder.bool("execution-plan.has-explicit-steps", self.has_explicit_steps);
+        encoder.field(
+            "execution-plan.reward-strategy",
+            match self.multi_step_reward_strategy {
+                None => b"none",
+                Some(MultiStepRewardStrategy::Mean) => b"mean",
+                Some(MultiStepRewardStrategy::Final) => b"final",
+            },
+        );
+        encoder.usize("execution-plan.step-count", self.steps.len());
+        for step in &self.steps {
+            encoder.field("step.name", step.name.as_bytes());
+            encoder.field("step.instruction", step.instruction.as_bytes());
+            encoder.field(
+                "step.verifier-test-root",
+                step.verifier_test_root.as_bytes(),
+            );
+            append_phase_identity(&mut encoder, &step.agent);
+            append_verifier_identity(&mut encoder, &step.verifier);
+            append_artifacts_identity(&mut encoder, &step.artifacts);
+        }
+    }
+
     /// Refuses execution when a provider cannot enforce every authored guarantee.
     pub fn validate_for(
         &self,
@@ -707,6 +748,230 @@ impl BenchmarkExecutionPlan {
         }
         Ok(())
     }
+}
+
+struct IdentityEncoder<'a> {
+    material: &'a mut Vec<u8>,
+}
+
+impl IdentityEncoder<'_> {
+    fn field(&mut self, tag: &str, value: &[u8]) {
+        append_identity_field(self.material, tag, value);
+    }
+
+    fn bool(&mut self, tag: &str, value: bool) {
+        self.field(tag, &[u8::from(value)]);
+    }
+
+    fn u32(&mut self, tag: &str, value: u32) {
+        self.field(tag, &value.to_le_bytes());
+    }
+
+    fn u64(&mut self, tag: &str, value: u64) {
+        self.field(tag, &value.to_le_bytes());
+    }
+
+    fn usize(&mut self, tag: &str, value: usize) {
+        self.u64(tag, value as u64);
+    }
+
+    fn optional_str(&mut self, tag: &str, value: Option<&str>) {
+        self.bool(tag, value.is_some());
+        if let Some(value) = value {
+            self.field(tag, value.as_bytes());
+        }
+    }
+
+    fn optional_duration(&mut self, tag: &str, value: Option<Duration>) {
+        self.bool(tag, value.is_some());
+        if let Some(value) = value {
+            self.u64(tag, value.as_secs());
+            self.u32(tag, value.subsec_nanos());
+        }
+    }
+
+    fn optional_u32(&mut self, tag: &str, value: Option<u32>) {
+        self.bool(tag, value.is_some());
+        if let Some(value) = value {
+            self.u32(tag, value);
+        }
+    }
+}
+
+pub(crate) fn append_identity_field(material: &mut Vec<u8>, tag: &str, value: &[u8]) {
+    material.extend_from_slice(&(tag.len() as u64).to_le_bytes());
+    material.extend_from_slice(tag.as_bytes());
+    material.extend_from_slice(&(value.len() as u64).to_le_bytes());
+    material.extend_from_slice(value);
+}
+
+fn append_environment_identity(encoder: &mut IdentityEncoder<'_>, environment: &EnvironmentPlan) {
+    encoder.field(
+        "environment.image-kind",
+        match environment.image_source.kind {
+            ImageSourceKind::TaskDockerfile => b"task-dockerfile",
+            ImageSourceKind::LegacyArtifact => b"legacy-artifact",
+        },
+    );
+    encoder.field(
+        "environment.image-digest",
+        environment.image_source.digest.as_str().as_bytes(),
+    );
+    encoder.bool("environment.resources", environment.resources.is_some());
+    if let Some(resources) = environment.resources {
+        encoder.u64("environment.resources.cpus", resources.cpus);
+        encoder.u64("environment.resources.memory-mb", resources.memory_mb);
+    }
+    encoder.optional_str("environment.workdir", environment.workdir.as_deref());
+    encoder.optional_str("environment.user", environment.user.as_deref());
+    append_env_identity(encoder, &environment.env);
+    append_network_identity(encoder, &environment.network);
+    encoder.bool("environment.healthcheck", environment.healthcheck.is_some());
+    if let Some(healthcheck) = &environment.healthcheck {
+        encoder.usize("healthcheck.command-count", healthcheck.command.len());
+        for part in &healthcheck.command {
+            encoder.field("healthcheck.command", part.as_bytes());
+        }
+        encoder.optional_duration("healthcheck.start-period", healthcheck.start_period);
+        encoder.optional_duration("healthcheck.start-interval", healthcheck.start_interval);
+        encoder.optional_duration("healthcheck.interval", healthcheck.interval);
+        encoder.optional_duration("healthcheck.timeout", healthcheck.timeout);
+        encoder.optional_u32("healthcheck.retries", healthcheck.retries);
+    }
+}
+
+fn append_phase_identity(encoder: &mut IdentityEncoder<'_>, phase: &PhasePlan) {
+    encoder.optional_str("phase.user", phase.user.as_deref());
+    append_env_identity(encoder, &phase.env);
+    append_network_identity(encoder, &phase.network);
+    encoder.optional_duration("phase.timeout", phase.timeout);
+}
+
+fn append_verifier_identity(encoder: &mut IdentityEncoder<'_>, verifier: &VerifierPlan) {
+    encoder.field(
+        "verifier.mode",
+        match verifier.mode {
+            VerifierMode::Shared => b"shared",
+            VerifierMode::Separate => b"separate",
+        },
+    );
+    append_environment_identity(encoder, &verifier.environment);
+    append_phase_identity(encoder, &verifier.phase);
+}
+
+fn append_env_identity(encoder: &mut IdentityEncoder<'_>, bindings: &BTreeMap<String, EnvBinding>) {
+    encoder.usize("environment-binding.count", bindings.len());
+    for (name, binding) in bindings {
+        encoder.field("environment-binding.name", name.as_bytes());
+        match &binding.0 {
+            EnvBindingValue::Literal(value) => {
+                encoder.field("environment-binding.kind", b"literal");
+                encoder.field("environment-binding.value", value.as_bytes());
+            }
+            EnvBindingValue::SecretReference(name) => {
+                encoder.field("environment-binding.kind", b"secret-reference");
+                encoder.field("environment-binding.value", name.as_bytes());
+            }
+        }
+    }
+}
+
+fn append_network_identity(encoder: &mut IdentityEncoder<'_>, network: &NetworkPolicy) {
+    match &network.0 {
+        NetworkPolicyKind::Public => {
+            encoder.field("network.kind", b"public");
+            encoder.usize("network.allowed-host-count", 0);
+        }
+        NetworkPolicyKind::NoNetwork => {
+            encoder.field("network.kind", b"no-network");
+            encoder.usize("network.allowed-host-count", 0);
+        }
+        NetworkPolicyKind::Allowlist(hosts) => {
+            encoder.field("network.kind", b"allowlist");
+            encoder.usize("network.allowed-host-count", hosts.len());
+            for host in hosts {
+                encoder.field("network.allowed-host", host.as_bytes());
+            }
+        }
+    }
+}
+
+fn append_artifacts_identity(encoder: &mut IdentityEncoder<'_>, artifacts: &[ArtifactSpec]) {
+    encoder.usize("artifact.count", artifacts.len());
+    for artifact in artifacts {
+        match &artifact.0 {
+            ArtifactSpecKind::ExactFile { source } => {
+                encoder.field("artifact.kind", b"exact-file");
+                encoder.field("artifact.source", source.as_bytes());
+                encoder.bool("artifact.destination", false);
+                encoder.usize("artifact.exclude-count", 0);
+            }
+            ArtifactSpecKind::Collected {
+                source,
+                destination,
+                exclude,
+            } => {
+                encoder.field("artifact.kind", b"collected");
+                encoder.field("artifact.source", source.as_bytes());
+                encoder.optional_str("artifact.destination", destination.as_deref());
+                encoder.usize("artifact.exclude-count", exclude.len());
+                for pattern in exclude {
+                    encoder.field("artifact.exclude", pattern.as_bytes());
+                }
+            }
+        }
+    }
+}
+
+const RESERVED_VERIFIER_PATHS: [&str; 2] = ["/tests", "/logs/verifier"];
+
+pub(crate) fn artifact_source_overlaps_reserved_verifier_path(artifact: &ArtifactSpec) -> bool {
+    path_overlaps_reserved_verifier_path(Path::new(artifact.source()))
+}
+
+pub(crate) fn verifier_artifact_target_collision(
+    workdir: &str,
+    artifacts: &[ArtifactSpec],
+) -> Result<Option<String>, String> {
+    let workdir = normalize_absolute_container_path(workdir)?;
+    for artifact in artifacts {
+        let target = workdir.join(artifact.output_target());
+        if path_overlaps_reserved_verifier_path(&target) {
+            return Ok(Some(target.to_string_lossy().into_owned()));
+        }
+    }
+    Ok(None)
+}
+
+fn normalize_absolute_container_path(path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err(format!(
+            "container workdir must be absolute: {}",
+            path.display()
+        ));
+    }
+    let mut normalized = PathBuf::from("/");
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(component) => normalized.push(component),
+            Component::CurDir | Component::ParentDir | Component::Prefix(_) => {
+                return Err(format!(
+                    "container workdir must be an isolated path: {}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(normalized)
+}
+
+fn path_overlaps_reserved_verifier_path(path: &Path) -> bool {
+    RESERVED_VERIFIER_PATHS.iter().any(|reserved| {
+        let reserved = Path::new(reserved);
+        path.starts_with(reserved) || reserved.starts_with(path)
+    })
 }
 
 fn require(

@@ -1214,6 +1214,93 @@ fn separate_verifier_stages_artifacts_without_overriding_image_workdir() {
 }
 
 #[test]
+fn separate_verifier_rejects_reserved_image_workdir_before_artifact_transfer() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, true);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::with_image_workdir("/tests");
+
+    let error = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("the image workdir would stage an artifact below /tests");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidWorkspace(reason)
+            if reason.contains("reserved verifier path")
+    ));
+    assert_eq!(runtime.creates.borrow().len(), 2);
+    assert_eq!(runtime.starts.get(), 2);
+    let events = runtime.events.into_inner();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.starts_with("inspect-workdir:"))
+    );
+    assert!(events.iter().all(|event| {
+        !event.starts_with("copy-artifacts:")
+            && !event.starts_with("reset-tests:")
+            && !event.starts_with("copy-tests:")
+            && !event.starts_with("verifier:")
+    }));
+}
+
+#[test]
+fn separate_verifier_rejects_reserved_cli_workdir_before_verifier_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, true);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/logs/verifier".to_owned()),
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let error = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("the CLI workdir would stage an artifact below evaluator reward paths");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidWorkspace(reason)
+            if reason.contains("reserved verifier path")
+    ));
+    assert_eq!(runtime.creates.borrow().len(), 1);
+    assert_eq!(runtime.starts.get(), 1);
+    assert!(runtime.events.into_inner().iter().all(|event| {
+        !event.starts_with("inspect-workdir:")
+            && !event.starts_with("copy-artifacts:")
+            && !event.starts_with("reset-tests:")
+            && !event.starts_with("copy-tests:")
+            && !event.starts_with("verifier:")
+    }));
+}
+
+#[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn separate_verifier_transfer_preserves_colliding_image_workdir_contents() {
     let _docker_lock = docker_runtime_test_lock();
@@ -1510,9 +1597,17 @@ struct StepRecordingRuntime {
     failure: Option<StepFailure>,
     fail_reset_call: Option<usize>,
     fail_first_removal: bool,
+    image_workdir: Option<String>,
 }
 
 impl StepRecordingRuntime {
+    fn with_image_workdir(workdir: &str) -> Self {
+        Self {
+            image_workdir: Some(workdir.to_owned()),
+            ..Self::default()
+        }
+    }
+
     fn failing(failure: StepFailure, fail_first_removal: bool) -> Self {
         Self {
             failure: Some(failure),
@@ -1670,7 +1765,10 @@ impl DockerRuntime for StepRecordingRuntime {
         self.events
             .borrow_mut()
             .push(format!("inspect-workdir:{container}"));
-        Ok("/image-workdir".to_owned())
+        Ok(self
+            .image_workdir
+            .clone()
+            .unwrap_or_else(|| "/image-workdir".to_owned()))
     }
 
     fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
