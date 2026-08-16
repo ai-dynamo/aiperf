@@ -3,12 +3,14 @@
 //! Native execution of one Harbor-compatible evaluation package.
 
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     process::{Command, Stdio},
 };
 
 use aiperf_runtime::eval::{
-    DockerProcessSandbox, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
+    ArtifactDigest, DockerProcessSandbox, EvalExecutionError, HarborImporter, HarborSandboxRecipe,
+    HarborSource, LocalExecutionResult, LocalProcessSandbox, MultiStepExecutionResult,
     NativeSourceAcquirer, VerifierMode,
 };
 use clap::{Parser, ValueEnum};
@@ -79,8 +81,67 @@ impl From<VerifierModeFlag> for VerifierMode {
 #[derive(Serialize)]
 struct EvalOutput<'a> {
     task: &'a str,
-    artifacts: &'a [(String, aiperf_runtime::eval::ArtifactDigest)],
-    reward: &'a std::collections::BTreeMap<String, f64>,
+    artifacts: &'a [(String, ArtifactDigest)],
+    reward: &'a BTreeMap<String, f64>,
+}
+
+/// Completed evaluation output selected by the resolved task layout.
+pub enum EvalExecutionResult {
+    /// The unchanged output from an implicit single-step task.
+    Single(LocalExecutionResult),
+    /// The additive output from an explicit multi-step task.
+    MultiStep(MultiStepExecutionResult),
+}
+
+#[derive(Serialize)]
+struct MultiStepEvalOutput {
+    task: String,
+    artifacts: Vec<(String, ArtifactDigest)>,
+    reward: BTreeMap<String, f64>,
+    steps: Vec<MultiStepEvalStepOutput>,
+}
+
+#[derive(Serialize)]
+struct MultiStepEvalStepOutput {
+    name: String,
+    artifacts: Vec<(String, ArtifactDigest)>,
+    reward: BTreeMap<String, f64>,
+}
+
+/// Serializes a completed native evaluation result into its public JSON shape.
+pub fn serialize_eval_result(
+    task: &str,
+    result: EvalExecutionResult,
+) -> anyhow::Result<serde_json::Value> {
+    match result {
+        EvalExecutionResult::Single(result) => Ok(serde_json::to_value(EvalOutput {
+            task,
+            artifacts: &result.artifacts,
+            reward: &result.reward.metrics,
+        })?),
+        EvalExecutionResult::MultiStep(result) => {
+            let MultiStepExecutionResult { steps, reward, .. } = result;
+            let artifacts = steps
+                .last()
+                .map(|step| step.artifacts.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("multi-step execution returned no verified steps")
+                })?;
+            Ok(serde_json::to_value(MultiStepEvalOutput {
+                task: task.to_owned(),
+                artifacts,
+                reward: reward.metrics,
+                steps: steps
+                    .into_iter()
+                    .map(|step| MultiStepEvalStepOutput {
+                        name: step.name,
+                        artifacts: step.artifacts,
+                        reward: step.reward.metrics,
+                    })
+                    .collect(),
+            })?)
+        }
+    }
 }
 
 /// Runs the native Harbor package lifecycle and emits one JSON summary.
@@ -117,41 +178,66 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .as_deref()
         .map(agent_command_argv)
         .unwrap_or_else(|| imported.package.agent_command().to_vec());
-    let verifier_mode = flags
-        .verifier_mode
-        .map(VerifierMode::from)
-        .unwrap_or_else(|| imported.package.verifier_mode());
-    if use_docker
-        && imported.package.is_standard_directory()
-        && verifier_mode != imported.package.execution_plan().verifier().mode()
-    {
-        anyhow::bail!(
-            "--verifier-mode conflicts with the standard task's normalized verifier environment"
+    let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
+    let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());
+    if use_docker && imported.package.is_standard_directory() {
+        let plan = imported.package.execution_plan();
+        let has_verifier_mode_conflict = requested_verifier_mode.is_some_and(|requested| {
+            if plan.is_multi_step() {
+                plan.steps()
+                    .iter()
+                    .any(|step| requested != step.verifier().mode())
+            } else {
+                requested != plan.verifier().mode()
+            }
+        });
+        if has_verifier_mode_conflict {
+            anyhow::bail!(
+                "--verifier-mode conflicts with the standard task's normalized verifier environment"
+            );
+        }
+    }
+    if imported.package.execution_plan().is_multi_step() {
+        if !use_docker {
+            return Err(EvalExecutionError::UnsupportedMultiStep.into());
+        }
+        let result = DockerProcessSandbox::new().execute_multi_step(
+            &recipe,
+            &imported.package,
+            &agent_command,
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string(&serialize_eval_result(
+                imported.task.id.as_str(),
+                EvalExecutionResult::MultiStep(result),
+            )?)?
+        );
+    } else {
+        let result = if use_docker {
+            DockerProcessSandbox::new().execute(
+                &recipe,
+                &imported.package,
+                &agent_command,
+                verifier_mode,
+            )?
+        } else {
+            LocalProcessSandbox::new().execute_with_agent_command(
+                &recipe,
+                &imported.package,
+                &agent_command,
+                verifier_mode,
+            )?
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&EvalOutput {
+                task: imported.task.id.as_str(),
+                artifacts: &result.artifacts,
+                reward: &result.reward.metrics,
+            })?
         );
     }
-    let result = if use_docker {
-        DockerProcessSandbox::new().execute(
-            &recipe,
-            &imported.package,
-            &agent_command,
-            verifier_mode,
-        )?
-    } else {
-        LocalProcessSandbox::new().execute_with_agent_command(
-            &recipe,
-            &imported.package,
-            &agent_command,
-            verifier_mode,
-        )?
-    };
-    println!(
-        "{}",
-        serde_json::to_string(&EvalOutput {
-            task: imported.task.id.as_str(),
-            artifacts: &result.artifacts,
-            reward: &result.reward.metrics,
-        })?
-    );
     Ok(0)
 }
 

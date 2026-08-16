@@ -1,12 +1,201 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fs;
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::{collections::BTreeMap, fs};
+
+use aiperf_runtime::eval::{
+    ArtifactDigest, LocalExecutionResult, MultiStepExecutionResult, RewardDocument,
+    StepExecutionResult,
+};
+use serde_json::json;
 
 static DOCKER_TIMEOUT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn reward<const N: usize>(metrics: [(&str, f64); N]) -> RewardDocument {
+    RewardDocument::new(
+        metrics
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect::<BTreeMap<_, _>>(),
+    )
+    .expect("test reward is finite and nonempty")
+}
+
+#[test]
+fn native_eval_single_step_serialization_retains_its_exact_json_contract() {
+    let result = LocalExecutionResult {
+        artifacts: vec![(
+            "result.txt".to_owned(),
+            ArtifactDigest::from_bytes(b"result"),
+        )],
+        reward: reward([("score", 1.0)]),
+        verifier: ArtifactDigest::from_bytes(b"verifier"),
+    };
+
+    let output = aiperf_cli::eval::serialize_eval_result(
+        "example/single",
+        aiperf_cli::eval::EvalExecutionResult::Single(result),
+    )
+    .expect("single-step evaluation result serializes");
+
+    assert_eq!(
+        output,
+        json!({
+            "task": "example/single",
+            "artifacts": [["result.txt", ArtifactDigest::from_bytes(b"result").as_str()]],
+            "reward": {"score": 1.0},
+        })
+    );
+}
+
+#[test]
+fn native_eval_multi_step_serialization_reports_ordered_sanitized_step_results() {
+    let first_artifact = ArtifactDigest::from_bytes(b"first");
+    let final_artifact = ArtifactDigest::from_bytes(b"final");
+    let result = MultiStepExecutionResult {
+        steps: vec![
+            StepExecutionResult {
+                name: "prepare".to_owned(),
+                artifacts: vec![("prepare.txt".to_owned(), first_artifact.clone())],
+                reward: reward([("quality", 0.5)]),
+            },
+            StepExecutionResult {
+                name: "finish".to_owned(),
+                artifacts: vec![("result.txt".to_owned(), final_artifact.clone())],
+                reward: reward([("quality", 1.0), ("speed", 0.75)]),
+            },
+        ],
+        reward: reward([("quality", 0.75), ("speed", 0.375)]),
+        verifier: ArtifactDigest::from_bytes(b"verifier"),
+    };
+
+    let output = aiperf_cli::eval::serialize_eval_result(
+        "example/multi",
+        aiperf_cli::eval::EvalExecutionResult::MultiStep(result),
+    )
+    .expect("multi-step evaluation result serializes");
+
+    assert_eq!(
+        output,
+        json!({
+            "task": "example/multi",
+            "artifacts": [["result.txt", final_artifact.as_str()]],
+            "reward": {"quality": 0.75, "speed": 0.375},
+            "steps": [
+                {
+                    "name": "prepare",
+                    "artifacts": [["prepare.txt", first_artifact.as_str()]],
+                    "reward": {"quality": 0.5},
+                },
+                {
+                    "name": "finish",
+                    "artifacts": [["result.txt", final_artifact.as_str()]],
+                    "reward": {"quality": 1.0, "speed": 0.75},
+                },
+            ],
+        })
+    );
+    let serialized = output.to_string();
+    assert!(!serialized.contains("instruction"));
+    assert!(!serialized.contains("secret"));
+}
+
+#[test]
+fn native_eval_refuses_standard_multi_step_tasks_locally_before_starting_the_agent() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("multi-step-local");
+    let started = temporary.path().join("agent-started");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("steps/prepare/tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/multi-step-local\"\n[[steps]]\nname = \"prepare\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Root instruction.\n").unwrap();
+    fs::write(
+        task_root.join("steps/prepare/instruction.md"),
+        "Prepare the result.\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--agent-command".to_owned(),
+        format!("touch {}", started.display()),
+        "--sandbox".to_owned(),
+        "local".to_owned(),
+    ])
+    .expect_err("local execution cannot enforce a standard multi-step task");
+
+    assert!(matches!(
+        error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>(),
+        Some(aiperf_runtime::eval::EvalExecutionError::UnsupportedMultiStep)
+    ));
+    assert!(!started.exists());
+}
+
+#[test]
+fn native_eval_rejects_an_explicit_mode_that_conflicts_with_a_later_multi_step_verifier() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("mixed-verifier-modes");
+    let started = temporary.path().join("agent-started");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("steps/prepare")).unwrap();
+    fs::create_dir_all(task_root.join("steps/finish")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/mixed-verifier-modes\"\n[verifier]\nenvironment_mode = \"separate\"\n[[steps]]\nname = \"prepare\"\n[[steps]]\nname = \"finish\"\n[steps.verifier]\nenvironment_mode = \"shared\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Root instruction.\n").unwrap();
+    fs::write(
+        task_root.join("steps/prepare/instruction.md"),
+        "Prepare the result.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/finish/instruction.md"),
+        "Finish the result.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "not a Dockerfile\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--agent-command".to_owned(),
+        format!("touch {}", started.display()),
+        "--verifier-mode".to_owned(),
+        "separate".to_owned(),
+    ])
+    .expect_err("an explicit mode must match every multi-step verifier");
+
+    assert!(
+        error
+            .to_string()
+            .contains("--verifier-mode conflicts with the standard task"),
+        "unexpected verifier-mode error: {error:#}"
+    );
+    assert!(!started.exists());
+}
 
 #[test]
 fn native_eval_command_runs_a_local_harbor_package() {
@@ -116,9 +305,10 @@ fn native_eval_command_runs_a_pinned_standard_task_directory_in_docker() {
 }
 
 #[test]
-fn native_eval_command_runs_a_standard_task_directory() {
+fn native_eval_refuses_standard_task_directories_locally() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("repair-1");
+    let started = temporary.path().join("agent-started");
     fs::create_dir_all(task_root.join("environment")).unwrap();
     fs::create_dir_all(task_root.join("tests")).unwrap();
     fs::write(
@@ -134,20 +324,24 @@ fn native_eval_command_runs_a_standard_task_directory() {
     )
     .unwrap();
 
-    let exit = aiperf_cli::dispatch::run(&[
+    let error = aiperf_cli::dispatch::run(&[
         "eval".to_owned(),
         "--task".to_owned(),
         task_root.to_string_lossy().into_owned(),
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "--agent-command".to_owned(),
-        "printf result > result.txt".to_owned(),
+        format!("touch {}", started.display()),
         "--sandbox".to_owned(),
         "local".to_owned(),
     ])
-    .unwrap();
+    .expect_err("local execution cannot enforce standard task guarantees");
 
-    assert_eq!(exit, 0);
+    assert!(matches!(
+        error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>(),
+        Some(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("docker"))
+    ));
+    assert!(!started.exists());
 }
 
 #[test]
