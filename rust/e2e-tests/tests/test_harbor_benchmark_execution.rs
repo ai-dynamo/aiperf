@@ -906,7 +906,7 @@ name = "example/compose-sidecar"
 workdir = "/work"
 user = "bench"
 [environment.healthcheck]
-command = ["/bin/sh", "-c", "test -d /work"]
+command = ["/bin/sh", "-c", "test -d /work && touch /tmp/health-ready"]
 retries = 1
 [verifier]
 environment_mode = "separate"
@@ -934,7 +934,7 @@ timeout_sec = 10
     .unwrap();
     fs::write(
         task_root.join("tests/test.sh"),
-        "test \"$(cat /work/evidence.txt)\" = hooked\ntest ! -e /work/agent-only.txt\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+        "test -r /work/evidence.txt\ntest \"$(cat /work/evidence.txt)\" = hooked\ntest ! -e /work/agent-only.txt\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
     )
     .unwrap();
 
@@ -946,7 +946,7 @@ timeout_sec = 10
             "--image",
             IMAGE_DIGEST,
             "--agent-command",
-            "id",
+            "/bin/sh -c 'test -f /tmp/health-ready && printf agent > /work/agent-only.txt'",
         ])
         .output()
         .expect("start native aiperf Compose eval");

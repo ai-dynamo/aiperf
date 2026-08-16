@@ -1163,6 +1163,59 @@ mod compose_lease_tests {
     }
 
     #[test]
+    fn compose_leases_with_the_same_step_input_keep_project_cleanup_disjoint() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime: Rc<dyn DockerComposeRuntime> = Rc::new(Runtime {
+            events: Rc::clone(&events),
+        });
+        let plan = ComposeProjectPlan {
+            definition_path: "environment/docker-compose.yaml".to_owned(),
+            services: BTreeSet::from([ComposeServiceName::main()]),
+            build_timeout: Duration::from_secs(1),
+            startup_timeout: Duration::from_secs(1),
+        };
+        let mut first = ComposeProjectLease::reserve(
+            runtime.as_ref(),
+            &plan,
+            "abcdef0123456789",
+            "/tmp",
+            "main:image",
+        )
+        .unwrap();
+        let mut second = ComposeProjectLease::reserve(
+            runtime.as_ref(),
+            &plan,
+            "abcdef0123456789",
+            "/tmp",
+            "main:image",
+        )
+        .unwrap();
+        assert_ne!(first.project(), second.project());
+        first.start().unwrap();
+        second.start().unwrap();
+        let first_project = first.project().as_str().to_owned();
+        let second_project = second.project().as_str().to_owned();
+        first.teardown().unwrap();
+        second.teardown().unwrap();
+        assert_eq!(
+            events
+                .borrow()
+                .iter()
+                .filter(|event| event.as_str() == format!("down:{first_project}"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .borrow()
+                .iter()
+                .filter(|event| event.as_str() == format!("down:{second_project}"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn compose_lease_uses_explicit_bounded_service_operations() {
         let events = Rc::new(RefCell::new(Vec::new()));
         let runtime: Rc<dyn DockerComposeRuntime> = Rc::new(Runtime {
