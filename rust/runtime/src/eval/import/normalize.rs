@@ -5,6 +5,7 @@
 
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Component, Path},
 };
 
@@ -84,6 +85,11 @@ impl HarborTaskPackage {
     pub(crate) fn set_source_root(&mut self, source_root: std::path::PathBuf) {
         self.source_root = Some(source_root);
     }
+
+    /// Replaces the source identity after acquiring a directory-backed package.
+    pub(crate) fn set_source_digest(&mut self, source_digest: ArtifactDigest) {
+        self.source_digest = source_digest;
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +146,87 @@ pub(super) fn normalize(
         source_root: None,
     };
     Ok((package, reference))
+}
+
+#[derive(Debug, Deserialize)]
+struct StandardTaskManifest {
+    schema_version: String,
+    task: StandardTaskSection,
+}
+
+#[derive(Debug, Deserialize)]
+struct StandardTaskSection {
+    name: String,
+}
+
+/// Normalizes a standard task directory without executing its contents.
+pub(super) fn normalize_standard_directory(
+    source_root: &Path,
+    manifest_bytes: &[u8],
+) -> Result<(HarborTaskPackage, EvalTaskRef), HarborImportError> {
+    let manifest = std::str::from_utf8(manifest_bytes)
+        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?
+        .parse::<toml::Value>()
+        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?
+        .try_into::<StandardTaskManifest>()
+        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
+    if manifest.schema_version != "1.0" {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "unsupported task schema version {:?}",
+            manifest.schema_version
+        )));
+    }
+    if manifest.task.name.trim().is_empty() {
+        return Err(HarborImportError::InvalidPackage(
+            "task.name must not be empty".to_owned(),
+        ));
+    }
+    let instruction = read_required_source_file(source_root, "instruction.md")?;
+    if instruction.trim().is_empty() {
+        return Err(HarborImportError::InvalidPackage(
+            "instruction.md must not be empty".to_owned(),
+        ));
+    }
+    let environment = ArtifactDigest::from_bytes(
+        read_required_source_file(source_root, "environment/Dockerfile")?.as_bytes(),
+    );
+    let verifier = ArtifactDigest::from_bytes(
+        read_required_source_file(source_root, "tests/test.sh")?.as_bytes(),
+    );
+    let reference_digest = ArtifactDigest::from_bytes(
+        format!(
+            "id={}\u{1f}instruction={}\u{1f}environment={}\u{1f}verifier={}",
+            manifest.task.name,
+            instruction,
+            environment.as_str(),
+            verifier.as_str(),
+        )
+        .as_bytes(),
+    );
+    let task = EvalTaskRef::new(manifest.task.name.clone(), reference_digest)
+        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
+    let package = HarborTaskPackage {
+        id: manifest.task.name,
+        instruction,
+        environment: environment.as_str().to_owned(),
+        verifier: verifier.as_str().to_owned(),
+        agent_command: vec!["aiperf-task-agent".to_owned()],
+        verifier_command: vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()],
+        declared_artifacts: Vec::new(),
+        source_digest: ArtifactDigest::from_bytes(manifest_bytes),
+        source_bytes: manifest_bytes.to_vec(),
+        source_root: None,
+    };
+    Ok((package, task))
+}
+
+fn read_required_source_file(
+    source_root: &Path,
+    relative_path: &str,
+) -> Result<String, HarborImportError> {
+    let path = source_root.join(relative_path);
+    fs::read_to_string(&path)
+        .map_err(|error| HarborImportError::InvalidPackage(format!("{}: {error}", path.display())))
 }
 
 fn validate_command(field: &'static str, command: &[String]) -> Result<(), HarborImportError> {

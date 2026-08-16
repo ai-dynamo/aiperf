@@ -191,6 +191,61 @@ fn native_acquirer_reads_local_and_pinned_git_package_bytes() {
     );
 }
 
+#[test]
+fn imports_standard_directory_manifest_with_instruction_and_verifier() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("standard-task");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+
+[task]
+name = "example/repair-1"
+
+[agent]
+timeout_sec = 60.0
+
+[verifier]
+timeout_sec = 30.0
+
+[environment]
+cpus = 1
+memory_mb = 512
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Fix the failing test.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "#!/bin/sh\nprintf 1 > reward.txt\n",
+    )
+    .unwrap();
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+
+    assert_eq!(imported.task.id.as_str(), "example/repair-1");
+    assert_eq!(imported.package.instruction(), "Fix the failing test.\n");
+    assert_eq!(
+        imported.package.verifier_command(),
+        ["/bin/sh", "tests/test.sh"]
+    );
+
+    fs::write(
+        task_root.join("instruction.md"),
+        "Fix a different failing test.\n",
+    )
+    .unwrap();
+    let changed = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_ne!(imported.report.source_digest, changed.report.source_digest);
+}
+
 fn run_git<const N: usize>(repository: &std::path::Path, arguments: [&str; N]) {
     let status = Command::new("git")
         .arg("-C")

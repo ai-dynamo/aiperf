@@ -79,6 +79,7 @@ smallvec = { version = "1", features = ["serde"] }
 tiktoken-rs = "0.9"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+toml = "0.8"
 tonic = { version = "0.14.6", default-features = false, features = ["channel", "tls-ring", "tls-webpki-roots"] }
 prost = "0.14.4"
 tracing = "0.1"

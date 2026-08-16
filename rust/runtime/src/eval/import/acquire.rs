@@ -94,7 +94,12 @@ impl SourceAcquirer for NativeSourceAcquirer {
             HarborSource::Local(location) => {
                 let path = Path::new(location);
                 let package = if path.is_dir() {
-                    path.join("task.json")
+                    let json = path.join("task.json");
+                    if json.is_file() {
+                        json
+                    } else {
+                        path.join("task.toml")
+                    }
                 } else {
                     path.to_path_buf()
                 };

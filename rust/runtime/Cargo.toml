@@ -108,6 +108,7 @@ smallvec.workspace = true
 tiktoken-rs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+toml.workspace = true
 velo = { git = "https://github.com/ajcasagrande/velo.git", branch = "feat/connect-by-endpoint", default-features = false, optional = true }
 tonic = { workspace = true, optional = true }
 tracing.workspace = true
