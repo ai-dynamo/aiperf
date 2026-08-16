@@ -57,9 +57,20 @@ A resolved trial pins task digest, agent/graph variant, model parameters, seed, 
 
 ## Execution, policy, and verification
 
-An `AgentContract` is `External`, `Installed`, or `NativeGraph`. Capability preflight resolves the selected sandbox/provider/image/recipe before environment spend and fails closed if persistent workspaces, read-only base/overlay isolation, staging, network controls, secret policy, descendant termination, or resource guarantees cannot be met.
+`AgentContract` has `External`, `Installed`, and `NativeGraph` variants. The
+built CLI executor runs external and installed commands only; a lifecycle
+request selecting `NativeGraph` is rejected before provisioning because no
+native graph-agent executor is currently wired to this sandbox. Capability
+preflight for supported contracts resolves the selected
+sandbox/provider/image/recipe before environment spend and fails closed if
+persistent workspaces, read-only base/overlay isolation, staging, network
+controls, secret policy, descendant termination, or resource guarantees cannot
+be met.
 
-Native graph branches run in copy-on-write overlays or clones. They return immutable patches/artifacts. Only an explicit selector or merge operation can advance the canonical workspace.
+Native graph branches are a future execution path. The present semantic
+lowering surface can exactly lower the supported LLM/tool vocabulary or return
+a typed fidelity refusal; it neither provisions a graph agent nor advances an
+evaluation workspace.
 
 Verifiers run either in the task sandbox when declared shared, or in a fresh sandbox/restored snapshot when separately provisioned. Separate verifiers receive declared artifact copies at declared paths and permitted evidence only; they never receive ambient agent credentials, mutable agent workspace state, or the agent control channel.
 
@@ -83,7 +94,9 @@ Track 2 is the stable contract boundary for Tracks 3–6. P0 compatibility accep
 
 Every track supplies strict unit tests and deterministic fake-provider/sandbox tests. P0 product fixtures prove native local and pinned-Git source acquisition, an external agent contract, separately provisioned verifier declared-artifact isolation, exact declared artifact paths, deterministic source identity, reward precedence, immutable regrade, timeout-pair normalization, and Docker timeout cleanup for agent and separate-verifier containers. Unsupported import refusal before sandbox opening is covered by the coordinator contract suite.
 
-Semantic experiments prove a native graph variant report with paired quality, cost, latency, and critical-path deltas while task, model, seed, policy, image, and budget remain fixed.
+Semantic contracts currently prove exact-or-refused lowering and fixed-baseline
+comparison guards. A runnable native graph variant report remains future work;
+it is not part of the P0 `aiperf eval` acceptance claim.
 
 The built multi-step verification covers immutable planning, persistent Docker workspace state, per-step test and verifier isolation, immutable artifact snapshots, exact source-context identity and materialization after origin removal, canonical modes and empty directories, directional shared-workdir refusal, phase-policy inheritance/overrides, mean/final rewards, additive CLI output, terminal failure, eager cleanup, and strict Compose preflight, service-evidence ordering, and labelled cleanup. Future P1/P2 verification covers broader provider capability behavior, task health and quarantine, registry/share semantics, and trajectory export without requiring online registry availability for local/private suites.
 

@@ -18,10 +18,12 @@ library, wrapper, or permanent bridge participates in execution.
 
 ## Replacement bar
 
-AIPerf replaces Harbor for a supported compatibility tier when a user can run
-an unchanged Harbor task/dataset from a local path or pinned reference; choose
-an external, installed, or native graph agent; receive reproducible scores and
-artifacts; regrade the attempt; and never require Harbor's runtime.
+AIPerf replaces Harbor for the built compatibility tier when a user can run an
+unchanged supported Harbor task from a local path or pinned Git reference;
+choose an external or installed agent; receive reproducible scores and
+artifacts; regrade the attempt; and never require Harbor's runtime. Native
+graph-agent execution and online registry acquisition are future extensions,
+not claims of the built `aiperf eval` path.
 
 ```text
 Harbor-compatible package
@@ -82,9 +84,13 @@ empty directories:
 - task and verifier users/timeouts, Linux/Windows target, resources, network
   policy/allowlists, environment variables, MCP declarations, health checks,
   secrets policy, and artifact collection rules;
-- local directories, pinned Git revisions, and Harbor-style registry refs;
+- local directories and pinned Git revisions. Harbor-style registry references
+  are recognized source syntax but currently refuse with a typed unavailable
+  result; they are not acquired through Harbor or Python fallback;
 - `reward.json` then `reward.txt`, including multi-metric numeric rewards;
-- external environment-driving agents and installed/headless agents.
+- external environment-driving agents and installed/headless agents. The
+  `NativeGraph` contract and semantic lowering types are not yet a product
+  agent executor for `aiperf eval`.
 
 P0 supports shared and separately provisioned verifier modes. A separate
 verifier receives declared artifacts at declared paths, never ambient agent
@@ -145,16 +151,23 @@ local or private suite.
 
 `TaskSpec` owns instruction, environment, verifier, resource budget, network
 and secret policy, artifacts, source provenance, and capability requirements.
-`AgentContract` is one of:
+The model has an `AgentContract` vocabulary of:
 
 - `External`: AIPerf drives a constrained environment interface;
 - `Installed`: a headless agent executes inside the task environment; or
-- `NativeGraph`: AIPerf owns planner/tool/delegation topology.
+- `NativeGraph`: a planned AIPerf-owned planner/tool/delegation topology.
 
-Provider capabilities are negotiated and fail closed before environment spend.
-Native graph branches use explicit overlay/clone workspaces and return immutable
-candidate patches/artifacts; a selector/merge operation is the only way to
-advance the canonical workspace.
+The built CLI execution path accepts external commands and package-installed
+commands. It rejects a lifecycle request selecting `NativeGraph` because no
+native graph-agent executor is wired to the evaluation sandbox yet. The
+existing semantic lowering and paired comparison contracts are fidelity and
+analysis primitives; they do not make a native graph a runnable P0 agent.
+
+Provider capabilities for the built external and installed paths are negotiated
+and fail closed before environment spend. A future native graph executor must
+use explicit overlay/clone workspaces and return immutable candidate
+patches/artifacts; only a selector/merge operation may advance the canonical
+workspace.
 
 The verifier uses a fresh sandbox or restored snapshot. Functional tests,
 properties, metamorphic checks, negative controls, and security policy checks
@@ -212,10 +225,13 @@ or system performance.
    identity; full-source provenance remains independently reproducible.
 8. A pinned verifier can regrade preserved attempt evidence without overwriting
    the original score.
-9. A native graph variant report presents paired quality, cost, latency, and
-   critical-path deltas against a fixed baseline.
-10. Import followed by caller mutation or removal executes the retained build
-    context and verifier trees, including empty directories and executable modes.
+9. Import followed by caller mutation or removal executes the retained build
+   context and verifier trees, including empty directories and executable modes.
+
+Native graph-agent execution, online registry acquisition, and a native graph
+variant product report are future acceptance requirements. They are excluded
+from the built P0 compatibility gate rather than being represented by a
+fallback or a partial claim.
 
 ## Source anchors
 

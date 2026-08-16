@@ -10,8 +10,18 @@ seed, policy, runtime, paired budgets, attempt id, initial metric/rationale,
 and regrade metric/rationale. Supplying invented defaults would make the
 record look reproducible when it is not.
 
-The local backend now rejects a separate verifier before provisioning. Docker
-remains the only product backend for a separately provisioned verifier.
+The local backend rejects a separate verifier before provisioning. Docker is
+the only product backend for a separately provisioned verifier. The P0
+security proof is therefore the daemon-backed
+`pinned_docker_lifecycle_withholds_agent_credential_and_workspace_and_never_invokes_harbor`
+E2E: it runs a fresh verifier that receives the declared artifact and asserts
+both the agent credential and an undeclared workspace file are absent. The
+local refusal test is intentionally only a fail-closed negative control.
+
+Lifecycle execution is limited to external and installed agents. `NativeGraph`
+is a typed future contract and is rejected by this CLI path; registry package
+references likewise remain typed-unavailable to native acquisition. Neither is
+silently routed through a Harbor or Python implementation.
 
 ## Proposed contract
 

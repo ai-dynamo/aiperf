@@ -294,6 +294,16 @@ git commit -m "feat(eval): compare semantic Harbor graph variants"
 - Consumes Tasks 1–5 public native contracts.
 - Proves P0 acceptance for local/pinned source, agent/verifier modes, isolation, exact artifacts, reward handling, deterministic identity, regrade, and paired reports.
 
+**Implemented-scope guard:** Product P0 accepts local directories and pinned
+Git sources. Registry reference syntax is deliberately typed-unavailable in the
+native acquirer, and `NativeGraph` is not an executable `aiperf eval` agent
+contract. The local temporary-root backend's separate-verifier refusal is a
+negative security guard only. The required positive isolation evidence is the
+daemon-backed Docker lifecycle test
+`pinned_docker_lifecycle_withholds_agent_credential_and_workspace_and_never_invokes_harbor`,
+which runs a fresh verifier and proves that it sees only the declared artifact
+transfer.
+
 - [ ] **Step 1: Add failing native P0 product cases**
 
 ```rust
@@ -315,7 +325,12 @@ Expected: FAIL until all native P0 pieces compose.
 
 - [ ] **Step 3: Wire product composition and fixtures**
 
-Run each fixture through native importer, trial resolution, fake external/installed agent, verifier, evidence writer, score/regrade, and paired comparison. Assert that no process attempts to invoke Harbor.
+Run each fixture through native importer, trial resolution, external or
+installed command execution, verifier, evidence writer, score/regrade, and
+paired comparison. Assert that no process attempts to invoke Harbor. Treat the
+local separate-verifier refusal as a fail-closed precondition test; satisfy
+positive isolation through the Docker lifecycle case, not through a local
+temporary-root simulation.
 
 - [ ] **Step 4: Run P0 verification and documentation checks**
 
