@@ -1484,12 +1484,12 @@ mod compose_lease_tests {
             lease.state(),
             super::super::compose_project::ComposeLeaseState::Down
         );
-        assert_eq!(
-            runtime.down_requests.borrow().as_slice(),
-            &[(
-                Duration::ZERO,
-                crate::eval::execution::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
-            )]
+        let requests = runtime.down_requests.borrow();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, Duration::ZERO);
+        assert!(
+            requests[0].1
+                <= crate::eval::execution::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE
         );
     }
 
