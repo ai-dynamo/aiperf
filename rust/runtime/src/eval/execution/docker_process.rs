@@ -423,7 +423,12 @@ impl DockerProcessSandbox {
             .rev()
             .fold(None, |first_error, container| {
                 let removal = runtime
-                    .remove(&DockerRemoveRequest::new(["rm", "--force", &container]))
+                    .remove(&DockerRemoveRequest::new([
+                        "rm",
+                        "--force",
+                        "--volumes",
+                        &container,
+                    ]))
                     .err();
                 first_error.or(removal)
             });
@@ -689,7 +694,12 @@ fn finish_with_cleanup<T>(
         .rev()
         .fold(None, |first_error, container| {
             let removal = runtime
-                .remove(&DockerRemoveRequest::new(["rm", "--force", &container]))
+                .remove(&DockerRemoveRequest::new([
+                    "rm",
+                    "--force",
+                    "--volumes",
+                    &container,
+                ]))
                 .err();
             first_error.or(removal)
         });
@@ -1517,11 +1527,11 @@ where
 
 fn remove_timed_out_container(container: &str) -> Result<(), EvalExecutionError> {
     let removal = Command::new("docker")
-        .args(["rm", "--force", container])
+        .args(["rm", "--force", "--volumes", container])
         .output()
         .map_err(|_| EvalExecutionError::ContainerTeardown {
             container: container.to_owned(),
-            reason: "could not start docker rm --force".to_owned(),
+            reason: "could not start docker rm --force --volumes".to_owned(),
         })?;
     if !removal.status.success() && !reports_absent_container(&removal.stderr) {
         return Err(EvalExecutionError::ContainerTeardown {

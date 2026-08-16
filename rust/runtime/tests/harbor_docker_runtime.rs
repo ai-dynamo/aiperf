@@ -5,9 +5,11 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Read},
+    process::Command,
+    sync::{Mutex, MutexGuard},
 };
 
 use aiperf_runtime::clock::SimClock;
@@ -18,6 +20,8 @@ use aiperf_runtime::eval::{
     ProviderCapabilities, SecretProvider, SecretValue, preflight_docker,
 };
 use std::rc::Rc;
+
+static DOCKER_RUNTIME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Default)]
 struct RecordingRuntime {
@@ -323,7 +327,11 @@ impl DockerRuntime for UnhealthyRuntime {
         panic!("unhealthy environment must not copy verifier files")
     }
 
-    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+    fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        assert_eq!(
+            &request.public_arguments()[..3],
+            ["rm", "--force", "--volumes"]
+        );
         self.events.borrow_mut().push("remove".to_owned());
         Ok(())
     }
@@ -1208,6 +1216,7 @@ fn separate_verifier_stages_artifacts_without_overriding_image_workdir() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn separate_verifier_transfer_preserves_colliding_image_workdir_contents() {
+    let _docker_lock = docker_runtime_test_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = multi_step_task_root(&temporary, true);
     fs::write(
@@ -1270,6 +1279,37 @@ environment_mode = "separate"
 }
 
 #[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn separate_verifier_anonymous_volumes_are_removed_after_success() {
+    let _docker_lock = docker_runtime_test_lock();
+    let before = docker_resource_names();
+    let temporary = tempfile::tempdir().unwrap();
+    let result = run_multi_step_volume_task(&temporary, false).unwrap();
+
+    assert_eq!(result.steps.len(), 2);
+    assert_eq!(docker_resource_names(), before);
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn separate_verifier_anonymous_volumes_are_removed_after_timeout() {
+    let _docker_lock = docker_runtime_test_lock();
+    let before = docker_resource_names();
+    let temporary = tempfile::tempdir().unwrap();
+    let error = run_multi_step_volume_task(&temporary, true)
+        .expect_err("the first separate verifier must time out");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+            ..
+        }
+    ));
+    assert_eq!(docker_resource_names(), before);
+}
+
+#[test]
 fn multi_step_failures_stop_successors_and_cleanup_every_acquired_lease() {
     for (failure, expected_counts, expected_error, fail_first_removal) in [
         (
@@ -1326,6 +1366,12 @@ fn multi_step_failures_stop_successors_and_cleanup_every_acquired_lease() {
         assert_eq!(runtime.verifier_execs.get(), expected_counts.2);
         assert_eq!(runtime.creates.borrow().len(), expected_counts.3);
         assert_eq!(runtime.removals.get(), expected_counts.3);
+        assert!(runtime.removal_arguments.borrow().iter().all(|arguments| {
+            arguments.len() == 4
+                && arguments[0] == "rm"
+                && arguments[1] == "--force"
+                && arguments[2] == "--volumes"
+        }));
     }
 }
 
@@ -1460,6 +1506,7 @@ struct StepRecordingRuntime {
     inspected_workdirs: RefCell<Vec<String>>,
     artifact_transfers: RefCell<Vec<(String, String)>>,
     verifier_workdirs: RefCell<Vec<Option<String>>>,
+    removal_arguments: RefCell<Vec<Vec<String>>>,
     failure: Option<StepFailure>,
     fail_reset_call: Option<usize>,
     fail_first_removal: bool,
@@ -1649,6 +1696,9 @@ impl DockerRuntime for StepRecordingRuntime {
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
         let call = self.removals.get() + 1;
         self.removals.set(call);
+        self.removal_arguments
+            .borrow_mut()
+            .push(request.public_arguments().to_vec());
         self.events.borrow_mut().push(format!(
             "remove:{}",
             request.public_arguments().last().unwrap()
@@ -1690,6 +1740,121 @@ fn test_tar_archive(path: &str, contents: &[u8]) -> Vec<u8> {
     archive.extend_from_slice(contents);
     archive.resize(archive.len().next_multiple_of(512) + 1024, 0);
     archive
+}
+
+fn docker_runtime_test_lock() -> MutexGuard<'static, ()> {
+    DOCKER_RUNTIME_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn docker_resource_names() -> (BTreeSet<String>, BTreeSet<String>) {
+    let containers = Command::new("docker")
+        .args(["container", "ls", "--all", "--format", "{{.Names}}"])
+        .output()
+        .expect("inspect Docker containers");
+    assert!(
+        containers.status.success(),
+        "docker container listing failed: {}",
+        String::from_utf8_lossy(&containers.stderr)
+    );
+    let volumes = Command::new("docker")
+        .args(["volume", "ls", "--quiet"])
+        .output()
+        .expect("inspect Docker volumes");
+    assert!(
+        volumes.status.success(),
+        "docker volume listing failed: {}",
+        String::from_utf8_lossy(&volumes.stderr)
+    );
+    (
+        String::from_utf8(containers.stdout)
+            .unwrap()
+            .lines()
+            .filter(|name| name.starts_with("aiperf-eval-"))
+            .map(str::to_owned)
+            .collect(),
+        String::from_utf8(volumes.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+fn multi_step_volume_task_root(
+    temporary: &tempfile::TempDir,
+    has_verifier_timeout: bool,
+) -> std::path::PathBuf {
+    let task_root = multi_step_task_root(temporary, true);
+    let agent_timeout = has_verifier_timeout
+        .then_some("[steps.agent]\ntimeout_sec = 5\n")
+        .unwrap_or("");
+    let verifier_timeout = has_verifier_timeout
+        .then_some("timeout_sec = 1\n")
+        .unwrap_or("");
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+artifacts = ["/aiperf-eval-artifacts/result.txt"]
+
+[task]
+name = "example/multi-step-volume-workdir"
+
+[[steps]]
+name = "one"
+{agent_timeout}
+[steps.verifier]
+environment_mode = "separate"
+{verifier_timeout}
+[[steps]]
+name = "two"
+{agent_timeout}
+[steps.verifier]
+environment_mode = "separate"
+{verifier_timeout}"#,
+        ),
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN mkdir -p /logs/verifier /aiperf-eval-artifacts && printf image-sentinel > /aiperf-eval-artifacts/image.txt\nWORKDIR /aiperf-eval-artifacts\nVOLUME /aiperf-eval-artifacts\n",
+    )
+    .unwrap();
+    let verifier = if has_verifier_timeout {
+        "sleep 2\n"
+    } else {
+        "test \"$(cat image.txt)\" = image-sentinel\ntest \"$(cat result.txt)\" = agent-artifact\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n"
+    };
+    fs::write(task_root.join("tests/test.sh"), verifier).unwrap();
+    fs::write(task_root.join("steps/two/tests/test.sh"), verifier).unwrap();
+    task_root
+}
+
+fn run_multi_step_volume_task(
+    temporary: &tempfile::TempDir,
+    has_verifier_timeout: bool,
+) -> Result<aiperf_runtime::eval::MultiStepExecutionResult, EvalExecutionError> {
+    let task_root = multi_step_volume_task_root(temporary, has_verifier_timeout);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    DockerProcessSandbox::new().execute_multi_step(
+        &recipe,
+        &imported.package,
+        &[
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            "printf agent-artifact > result.txt".to_owned(),
+        ],
+    )
 }
 
 fn multi_step_task_root(
