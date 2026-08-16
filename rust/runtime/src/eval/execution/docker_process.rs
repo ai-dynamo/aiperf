@@ -295,12 +295,12 @@ impl DockerProcessSandbox {
         let cleanup = containers
             .into_iter()
             .rev()
-            .filter_map(|container| {
-                runtime
+            .fold(None, |first_error, container| {
+                let removal = runtime
                     .remove(&DockerRemoveRequest::new(["rm", "--force", &container]))
-                    .err()
-            })
-            .next();
+                    .err();
+                first_error.or(removal)
+            });
         match (outcome, cleanup) {
             (Err(error), _) => Err(error),
             (Ok(_), Some(error)) => Err(error),

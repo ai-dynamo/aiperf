@@ -577,19 +577,20 @@ fn separate_verifier_start_failure_removes_registered_verifier_lease() {
     .unwrap();
     let runtime = SeparateStartFailureRuntime::default();
 
-    assert!(matches!(
-        DockerProcessSandbox::new()
-            .execute_with_runtime(
-                &runtime,
-                &recipe,
-                &imported.package,
-                imported.package.execution_plan(),
-                &["agent".to_owned()],
-                &FixedSecret,
-            )
-            .expect_err("failed verifier start must be terminal"),
-        EvalExecutionError::ProcessFailure(_)
-    ));
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("failed verifier start must be terminal");
+    assert_eq!(
+        error,
+        EvalExecutionError::ProcessFailure("verifier start failed".to_owned())
+    );
     assert_eq!(
         runtime.events.into_inner(),
         vec![
@@ -602,6 +603,7 @@ fn separate_verifier_start_failure_removes_registered_verifier_lease() {
 struct SeparateStartFailureRuntime {
     events: RefCell<Vec<String>>,
     starts: Cell<u8>,
+    removals: Cell<u8>,
 }
 
 impl DockerRuntime for SeparateStartFailureRuntime {
@@ -642,7 +644,14 @@ impl DockerRuntime for SeparateStartFailureRuntime {
     }
     fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
         self.events.borrow_mut().push("remove".to_owned());
-        Ok(())
+        self.removals.set(self.removals.get() + 1);
+        if self.removals.get() == 1 {
+            Err(EvalExecutionError::ProcessFailure(
+                "verifier removal failed".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 
