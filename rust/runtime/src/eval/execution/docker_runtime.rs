@@ -619,6 +619,7 @@ fn resolve_bindings(
 pub struct DockerBuildRequest {
     public_arguments: Vec<String>,
     network_lease: Option<String>,
+    deadline: Option<Duration>,
 }
 
 impl DockerBuildRequest {
@@ -627,6 +628,7 @@ impl DockerBuildRequest {
         Self {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
             network_lease: None,
+            deadline: None,
         }
     }
 
@@ -644,6 +646,17 @@ impl DockerBuildRequest {
     /// Returns the provider-managed network lease, when the build requires one.
     pub fn network_lease(&self) -> Option<&str> {
         self.network_lease.as_deref()
+    }
+
+    /// Bounds the host Docker build operation.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns the host build deadline when the plan configures one.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 }
 

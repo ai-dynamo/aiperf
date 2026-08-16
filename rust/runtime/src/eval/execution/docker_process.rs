@@ -83,11 +83,6 @@ impl DockerProcessSandbox {
         if package.execution_plan().is_multi_step() {
             return Err(EvalExecutionError::UnsupportedMultiStep);
         }
-        if package.timeouts().is_some() && tokio::runtime::Handle::try_current().is_ok() {
-            return Err(EvalExecutionError::RuntimeContext(
-                "synchronous Docker execution",
-            ));
-        }
         if !package.is_standard_directory() {
             return Err(EvalExecutionError::Materialization(
                 "Docker execution requires a standard task directory".to_owned(),
@@ -117,13 +112,6 @@ impl DockerProcessSandbox {
         if !package.execution_plan().is_multi_step() {
             return Err(EvalExecutionError::InvalidRecipe(
                 "multi-step execution plan",
-            ));
-        }
-        if multi_step_uses_clock_drive(package.execution_plan())
-            && tokio::runtime::Handle::try_current().is_ok()
-        {
-            return Err(EvalExecutionError::RuntimeContext(
-                "synchronous Docker execution",
             ));
         }
         let runtime = DockerCliRuntime {
@@ -646,7 +634,8 @@ impl DockerProcessSandbox {
                 &image,
                 environment_root.to_string_lossy().as_ref(),
             ])
-            .with_network_lease("default"),
+            .with_network_lease("default")
+            .with_deadline(compose.build_timeout()),
         ) {
             let cleanup = lease.teardown_after_terminal_failure(
                 super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
@@ -689,26 +678,6 @@ impl DockerProcessSandbox {
             lease,
         })
     }
-}
-
-fn multi_step_uses_clock_drive(plan: &BenchmarkExecutionPlan) -> bool {
-    let has_phase_timeout = plan.steps().iter().any(|step| {
-        step.agent().timeout().is_some() || step.verifier().phase().timeout().is_some()
-    });
-    let has_timed_healthcheck = std::iter::once(plan.environment())
-        .chain(
-            plan.steps()
-                .iter()
-                .map(|step| step.verifier().environment()),
-        )
-        .filter_map(super::EnvironmentPlan::healthcheck)
-        .any(|healthcheck| {
-            healthcheck.start_period().is_some()
-                || healthcheck.start_interval().is_some()
-                || healthcheck.interval().is_some()
-                || healthcheck.timeout().is_some()
-        });
-    has_phase_timeout || has_timed_healthcheck
 }
 
 struct PreparedComposeLease<'a> {
@@ -1484,6 +1453,13 @@ fn sleep_with_clock(
     duration: Duration,
     container: &str,
 ) -> Result<(), EvalExecutionError> {
+    if !clock.is_virtual() {
+        // Evaluation is a synchronous provider boundary. A real-clock delay
+        // therefore polls the clock directly instead of nesting Tokio's
+        // `block_on` when the caller happens to be a Tokio task.
+        std::thread::sleep(duration);
+        return Ok(());
+    }
     let completed = Rc::new(Cell::new(false));
     let completion = completed.clone();
     let delay_ns = duration.as_nanos().min(i64::MAX as u128) as i64;
@@ -1541,11 +1517,12 @@ impl DockerRuntime for DockerCliRuntime {
     }
 
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
-        docker(
-            request.public_arguments().iter().map(String::as_str),
-            "build task environment",
+        docker_command_bounded(
+            self.clock.clone(),
+            request.public_arguments().iter().cloned(),
+            "task environment build",
+            request.deadline(),
         )
-        .map(|_| ())
     }
 
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
@@ -1657,11 +1634,6 @@ impl DockerRuntime for DockerCliRuntime {
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
         let removal = if let Some(timeout) = request.deadline() {
-            if tokio::runtime::Handle::try_current().is_ok() {
-                return Err(EvalExecutionError::RuntimeContext(
-                    "bounded Docker lease cleanup",
-                ));
-            }
             docker_remove_bounded(
                 self.clock.clone(),
                 request
@@ -2029,11 +2001,6 @@ fn docker_command_bounded(
     let Some(deadline) = deadline else {
         return docker(arguments.iter().map(String::as_str), "run Docker command").map(|_| ());
     };
-    if tokio::runtime::Handle::try_current().is_ok() {
-        return Err(EvalExecutionError::RuntimeContext(
-            "bounded Docker Compose operation",
-        ));
-    }
     let child = Command::new("docker")
         .args(&arguments)
         .stdout(Stdio::null())
@@ -2840,6 +2807,18 @@ where
     P: DockerExecProcess,
     F: for<'a> FnMut(&'a str, Duration) -> Result<(), EvalExecutionError>,
 {
+    // Real provider processes are polled synchronously. This keeps the
+    // synchronous evaluator usable from a Tokio task without re-entering a
+    // Tokio runtime. The virtual path below retains SimClock's event pump and
+    // deterministic registration order.
+    if !clock.is_virtual() {
+        return drive_real_docker_exec(clock, process, container, phase, timeout, remove);
+    }
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(EvalExecutionError::RuntimeContext(
+            "virtual-clock Docker operation from an entered Tokio runtime",
+        ));
+    }
     let result = Rc::new(RefCell::new(None));
     let result_slot = result.clone();
     let outcome = clock.clone().drive(Box::pin(async {
@@ -2862,6 +2841,58 @@ where
             reason: "execution clock ended before Docker exec produced a terminal result"
                 .to_owned(),
         })?
+}
+
+fn drive_real_docker_exec<P, F>(
+    clock: Rc<dyn Clock>,
+    process: &mut P,
+    container: &str,
+    phase: EvalExecutionPhase,
+    timeout: Duration,
+    remove: &mut F,
+) -> Result<(), EvalExecutionError>
+where
+    P: DockerExecProcess,
+    F: for<'a> FnMut(&'a str, Duration) -> Result<(), EvalExecutionError>,
+{
+    let deadline = clock
+        .now_ns()
+        .saturating_add(timeout.as_nanos().min(i64::MAX as u128) as i64);
+    loop {
+        if clock.now_ns() >= deadline {
+            return terminate_timed_out_real_exec(
+                clock, process, container, phase, timeout, false, remove,
+            );
+        }
+        let state = process.try_wait().map_err(|reason| {
+            EvalExecutionError::ProcessFailure(format!("docker exec process check: {reason}"))
+        })?;
+        if clock.now_ns() >= deadline {
+            return terminate_timed_out_real_exec(
+                clock,
+                process,
+                container,
+                phase,
+                timeout,
+                state.is_terminal(),
+                remove,
+            );
+        }
+        match state {
+            DockerExecState::Succeeded => return Ok(()),
+            DockerExecState::Failed(status) => {
+                return Err(EvalExecutionError::ProcessFailure(format!(
+                    "docker exec exited with {status}"
+                )));
+            }
+            DockerExecState::Running => {
+                let remaining_ns = deadline.saturating_sub(clock.now_ns());
+                std::thread::sleep(Duration::from_nanos(
+                    remaining_ns.min(DOCKER_EXEC_POLL_NS) as u64
+                ));
+            }
+        }
+    }
 }
 
 async fn wait_for_docker_exec<P, F>(
@@ -2964,6 +2995,64 @@ where
 
 const TERMINAL_DOCKER_CLEANUP_NS: i64 = 10_000_000_000;
 
+fn terminate_timed_out_real_exec<P, F>(
+    clock: Rc<dyn Clock>,
+    process: &mut P,
+    container: &str,
+    phase: EvalExecutionPhase,
+    timeout: Duration,
+    has_observed_terminal_client: bool,
+    remove: &mut F,
+) -> Result<(), EvalExecutionError>
+where
+    P: DockerExecProcess,
+    F: for<'a> FnMut(&'a str, Duration) -> Result<(), EvalExecutionError>,
+{
+    let cleanup_deadline = clock.now_ns().saturating_add(TERMINAL_DOCKER_CLEANUP_NS);
+    let kill = (!has_observed_terminal_client).then(|| process.kill());
+    let reap = wait_for_real_docker_client_exit(clock.clone(), process, cleanup_deadline);
+    let removal_deadline = remaining_provider_deadline(&clock, cleanup_deadline, container)
+        .unwrap_or(Duration::from_nanos(1));
+    remove(container, removal_deadline)?;
+    let uncertainties = [
+        kill.and_then(Result::err)
+            .map(|reason| format!("could not kill docker exec client: {reason}")),
+        reap.err()
+            .map(|reason| format!("could not reap docker exec client: {reason}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if !uncertainties.is_empty() {
+        return Err(EvalExecutionError::TerminalUncertainty {
+            phase,
+            container: container.to_owned(),
+            reason: uncertainties.join("; "),
+        });
+    }
+    Err(EvalExecutionError::Timeout { phase, timeout })
+}
+
+fn wait_for_real_docker_client_exit<P: DockerExecProcess>(
+    clock: Rc<dyn Clock>,
+    process: &mut P,
+    deadline_ns: i64,
+) -> Result<(), String> {
+    loop {
+        match process.try_wait()? {
+            DockerExecState::Succeeded | DockerExecState::Failed(_) => return Ok(()),
+            DockerExecState::Running => {}
+        }
+        let remaining_ns = deadline_ns.saturating_sub(clock.now_ns());
+        if remaining_ns <= 0 {
+            return Err("timed out reaping docker exec client".to_owned());
+        }
+        std::thread::sleep(Duration::from_nanos(
+            remaining_ns.min(DOCKER_EXEC_POLL_NS) as u64
+        ));
+    }
+}
+
 async fn wait_for_docker_client_exit<P: DockerExecProcess>(
     clock: Rc<dyn Clock>,
     process: &mut P,
@@ -3023,36 +3112,54 @@ fn reports_absent_container(stderr: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, collections::VecDeque, fs, rc::Rc, time::Duration};
+    use std::{cell::Cell, collections::VecDeque, rc::Rc, time::Duration};
 
     use super::{
-        DockerCliRuntime, DockerExecProcess, DockerExecState, DockerProcessSandbox, DockerRuntime,
-        EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
-        compose_ownership_filters, compose_stop_arguments, docker_container_name,
-        docker_image_name, drive_docker_exec, ensure_network_exists, redact_secret_values,
-        reports_absent_container,
+        DockerExecProcess, DockerExecState, EvalExecutionError, EvalExecutionPhase,
+        classify_bounded_remove_result, compose_ownership_filters, compose_stop_arguments,
+        docker_container_name, docker_image_name, drive_docker_exec, ensure_network_exists,
+        redact_secret_values, reports_absent_container,
     };
     use crate::clock::SimClock;
-    use crate::eval::{
-        ComposeProjectId, DockerRemoveRequest, HarborImporter, HarborSandboxRecipe, HarborSource,
-        NativeSourceAcquirer, VerifierMode,
-    };
+    use crate::eval::ComposeProjectId;
 
     #[tokio::test]
-    async fn bounded_remove_refuses_nested_clock_drive_before_spawning_docker() {
-        let runtime = DockerCliRuntime {
-            clock: Rc::new(SimClock::new()),
-        };
-        let result = runtime.remove(
-            &DockerRemoveRequest::new(["rm", "--force", "missing"])
-                .with_deadline(Duration::from_secs(1)),
+    async fn virtual_bounded_exec_refuses_an_entered_tokio_runtime() {
+        let clock = Rc::new(SimClock::new());
+        let mut process = FakeDockerExec::new(clock.clone(), [DockerExecState::Running]);
+        let mut remove = |_: &str, _: Duration| Ok(());
+        let result = drive_docker_exec(
+            clock,
+            &mut process,
+            "agent-container",
+            EvalExecutionPhase::Agent,
+            Duration::from_secs(1),
+            &mut remove,
         );
         assert_eq!(
             result,
             Err(EvalExecutionError::RuntimeContext(
-                "bounded Docker lease cleanup"
+                "virtual-clock Docker operation from an entered Tokio runtime"
             ))
         );
+    }
+
+    #[tokio::test]
+    async fn real_bounded_exec_completes_inside_an_entered_tokio_runtime() {
+        let clock = crate::clock::RealClock::new();
+        let mut process = CompletedDockerExec;
+        let mut remove = |_: &str, _: Duration| Ok(());
+
+        let result = drive_docker_exec(
+            clock,
+            &mut process,
+            "agent-container",
+            EvalExecutionPhase::Agent,
+            Duration::from_secs(1),
+            &mut remove,
+        );
+
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
@@ -3238,51 +3345,6 @@ mod tests {
         assert!(process.was_killed.get());
     }
 
-    #[tokio::test]
-    async fn execute_within_tokio_runtime_returns_explicit_context_error() {
-        let temporary = tempfile::tempdir().unwrap();
-        fs::create_dir_all(temporary.path().join("environment")).unwrap();
-        fs::create_dir_all(temporary.path().join("tests")).unwrap();
-        fs::write(
-            temporary.path().join("task.toml"),
-            "schema_version = \"1.0\"\n[task]\nname = \"example/runtime-context\"\n[agent]\ntimeout_sec = 1\n[verifier]\ntimeout_sec = 1\n",
-        )
-        .unwrap();
-        fs::write(
-            temporary.path().join("instruction.md"),
-            "Complete the task.\n",
-        )
-        .unwrap();
-        fs::write(
-            temporary.path().join("environment/Dockerfile"),
-            "FROM scratch\n",
-        )
-        .unwrap();
-        fs::write(temporary.path().join("tests/test.sh"), "exit 0\n").unwrap();
-        let imported = HarborImporter::new(&NativeSourceAcquirer)
-            .import(&HarborSource::local(temporary.path().to_string_lossy()).unwrap())
-            .unwrap();
-        let recipe = HarborSandboxRecipe::new(
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "/work",
-        )
-        .unwrap();
-
-        let error = DockerProcessSandbox::new()
-            .execute(
-                &recipe,
-                &imported.package,
-                &["true".to_owned()],
-                VerifierMode::Shared,
-            )
-            .expect_err("synchronous Docker execution must not nest a Tokio runtime");
-
-        assert!(matches!(
-            error,
-            EvalExecutionError::RuntimeContext("synchronous Docker execution")
-        ));
-    }
-
     #[test]
     fn docker_exec_diagnostic_redacts_resolved_secret_values() {
         let secret = "actual-secret-value";
@@ -3347,6 +3409,18 @@ mod tests {
         kill_fails: bool,
         terminal_observed: bool,
         was_killed: Cell<bool>,
+    }
+
+    struct CompletedDockerExec;
+
+    impl DockerExecProcess for CompletedDockerExec {
+        fn try_wait(&mut self) -> Result<DockerExecState, String> {
+            Ok(DockerExecState::Succeeded)
+        }
+
+        fn kill(&mut self) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     impl FakeDockerExec {
