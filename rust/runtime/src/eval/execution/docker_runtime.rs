@@ -402,6 +402,7 @@ pub struct DockerComposeStopRequest {
     project: ComposeProjectId,
     service: ComposeServiceName,
     labels: BTreeMap<String, String>,
+    deadline: Option<Duration>,
 }
 
 impl DockerComposeStopRequest {
@@ -412,6 +413,7 @@ impl DockerComposeStopRequest {
             project,
             service,
             labels,
+            deadline: None,
         }
     }
     /// Returns the task-owned project identifier.
@@ -425,6 +427,17 @@ impl DockerComposeStopRequest {
     /// Returns the exact AIPerf ownership labels for this operation.
     pub fn labels(&self) -> &BTreeMap<String, String> {
         &self.labels
+    }
+
+    /// Applies a bounded stop deadline.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns the stop deadline, if one was configured.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 }
 
@@ -873,6 +886,14 @@ pub trait DockerComposeRuntime: DockerRuntime {
         &self,
         request: &DockerComposeStopRequest,
     ) -> Result<(), EvalExecutionError>;
+
+    /// Stops one service while enforcing a collection deadline.
+    fn compose_stop_service_bounded(
+        &self,
+        request: &DockerComposeStopRequest,
+    ) -> Result<(), EvalExecutionError> {
+        self.compose_stop_service(request)
+    }
 
     /// Tears down the project and owned resources.
     fn compose_down(&self, request: &DockerComposeDownRequest) -> Result<(), EvalExecutionError>;

@@ -135,7 +135,22 @@ pub(crate) fn collect_service_evidence(
                 .any(|artifact| artifact.service_name() != &main);
         if has_non_main {
             deadline.remaining()?;
-            lease.stop_main()?;
+            let remaining = deadline.remaining()?;
+            match lease.stop_main(remaining) {
+                Ok(()) => {}
+                Err(EvalExecutionError::Timeout { timeout, .. }) => {
+                    return Err(EvalExecutionError::Timeout {
+                        phase: EvalExecutionPhase::CollectionHook,
+                        timeout,
+                    });
+                }
+                Err(error) => {
+                    return Err(EvalExecutionError::CollectionHook {
+                        service: main.as_str().to_owned(),
+                        reason: error.to_string(),
+                    });
+                }
+            }
         }
         for hook in hooks.iter().filter(|hook| hook.service() != &main) {
             run_collection_hook(lease, hook, deadline)?;
@@ -692,6 +707,52 @@ mod tests {
     }
 
     #[test]
+    fn stopping_main_uses_the_remaining_collection_deadline() {
+        let mut lease = RecordingLease::with_archives([]);
+        let hooks = [hook("api", ["api-hook"])];
+        let destination = tempdir().unwrap();
+
+        collect_service_evidence(
+            &mut lease,
+            &hooks,
+            &[],
+            destination.path(),
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap();
+
+        assert_eq!(lease.stop_deadlines.len(), 1);
+        assert!(lease.stop_deadlines[0] <= Duration::from_secs(5));
+        assert!(!lease.stop_deadlines[0].is_zero());
+    }
+
+    #[test]
+    fn stop_timeout_prevents_sidecar_evidence_and_tears_down() {
+        let mut lease = RecordingLease::with_archives([]);
+        lease.timeout_stop = true;
+        let hooks = [hook("api", ["api-hook"])];
+        let destination = tempdir().unwrap();
+
+        let error = collect_service_evidence(
+            &mut lease,
+            &hooks,
+            &[],
+            destination.path(),
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::CollectionHook,
+                ..
+            }
+        ));
+        assert_eq!(lease.events, ["stop:main", "teardown"]);
+    }
+
+    #[test]
     fn archive_timeout_prevents_later_service_work_and_tears_down() {
         let mut lease = RecordingLease::with_archives([
             ("main", tar_archive("main.txt", b"main")),
@@ -763,6 +824,8 @@ mod tests {
         fail_hook_service: Option<String>,
         timeout_hook_service: Option<String>,
         timeout_archive_service: Option<String>,
+        stop_deadlines: Vec<Duration>,
+        timeout_stop: bool,
         bytes: BTreeMap<String, Vec<u8>>,
     }
 
@@ -776,6 +839,8 @@ mod tests {
                 fail_hook_service: None,
                 timeout_hook_service: None,
                 timeout_archive_service: None,
+                stop_deadlines: Vec::new(),
+                timeout_stop: false,
                 bytes: entries
                     .into_iter()
                     .map(|(service, archive)| (service.to_owned(), archive))
@@ -837,8 +902,15 @@ mod tests {
                 })?;
             Ok(Box::new(io::Cursor::new(bytes)))
         }
-        fn stop_main(&mut self) -> Result<(), EvalExecutionError> {
+        fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError> {
+            self.stop_deadlines.push(deadline);
             self.events.push("stop:main".to_owned());
+            if self.timeout_stop {
+                return Err(EvalExecutionError::Timeout {
+                    phase: EvalExecutionPhase::Agent,
+                    timeout: deadline,
+                });
+            }
             Ok(())
         }
         fn main_image_id(&self) -> Result<&str, EvalExecutionError> {

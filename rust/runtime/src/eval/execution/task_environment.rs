@@ -54,7 +54,7 @@ pub(crate) trait TaskEnvironmentLease {
         &mut self,
         request: ServiceArchiveRequest<'_>,
     ) -> Result<Box<dyn Read>, EvalExecutionError>;
-    fn stop_main(&mut self) -> Result<(), EvalExecutionError>;
+    fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError>;
     fn main_image_id(&self) -> Result<&str, EvalExecutionError>;
     fn teardown(&mut self) -> Result<(), EvalExecutionError>;
 }
@@ -119,7 +119,7 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
         self.runtime
             .copy_archive_bounded(&self.container, request.source, request.deadline)
     }
-    fn stop_main(&mut self) -> Result<(), EvalExecutionError> {
+    fn stop_main(&mut self, _: Duration) -> Result<(), EvalExecutionError> {
         Ok(())
     }
     fn main_image_id(&self) -> Result<&str, EvalExecutionError> {

@@ -8,6 +8,7 @@ use std::{
     io::Read,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
 use super::task_environment::{
@@ -219,13 +220,12 @@ impl TaskEnvironmentLease for ComposeProjectLease {
             request.deadline,
         )
     }
-    fn stop_main(&mut self) -> Result<(), EvalExecutionError> {
+    fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError> {
         self.ensure_started()?;
-        self.runtime
-            .compose_stop_service(&DockerComposeStopRequest::new(
-                self.project.clone(),
-                self.main.clone(),
-            ))?;
+        self.runtime.compose_stop_service_bounded(
+            &DockerComposeStopRequest::new(self.project.clone(), self.main.clone())
+                .with_deadline(deadline),
+        )?;
         self.state = ComposeLeaseState::MainStopped;
         Ok(())
     }
