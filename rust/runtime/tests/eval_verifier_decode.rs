@@ -11,16 +11,18 @@ fn digest(seed: char) -> ArtifactDigest {
 
 #[test]
 fn verifier_json_rejects_empty_evidence_and_blank_regrade_metric() {
-    assert!(serde_json::from_str::<VerifierResult>(
-        r#"{
+    assert!(
+        serde_json::from_str::<VerifierResult>(
+            r#"{
             "attempt":"attempt-1",
             "verifier":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "evidence":[],
             "reward":{"metrics":{"reward":1.0}},
             "rationale":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }"#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
     assert!(serde_json::from_str::<RegradeRequest>(
         r#"{
             "previous":{
@@ -46,9 +48,11 @@ fn verifier_json_rejects_empty_evidence_and_blank_regrade_metric() {
 
 #[test]
 fn artifact_aliases_are_rejected_before_verifier_materialization() {
-    assert!(DeclaredArtifactTransfer::new(vec![
-        ("/results/patch.diff", digest('a')),
-        ("/results//patch.diff", digest('b')),
-    ])
-    .is_err());
+    assert!(
+        DeclaredArtifactTransfer::new(vec![
+            ("/results/patch.diff", digest('a')),
+            ("/results//patch.diff", digest('b')),
+        ])
+        .is_err()
+    );
 }

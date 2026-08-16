@@ -28,7 +28,7 @@ unboundedly expensive or unsafe graph a production-quality agent.
 
 The primary source design is the planned recorded-agent replay port. This
 record supplies the product-level experiment and evidence model around its
-`GraphTraceProgram`, heterogeneous nodes, tool sandbox, and controller-owned
+`GraphTraceProgram`, semantic graph lowering, tool sandbox, and controller-owned
 artifact seams.
 
 ## Built
@@ -43,8 +43,10 @@ AIPerf already supplies the substrate this design composes over:
 - AgentX's byte-exact legacy replay path, which remains a parity reference
   until Graph-IR supersedes it; and
 - a planned recorded-agent replay design that introduces `GraphTraceProgram`,
-  `GraphNode::{Llm, Tool}`, trace environment recipes, tool dispatch, replay
-  metrics policy, and durable trace supplements.
+  a rich semantic graph with an initial `ExecutableGraphNode::{Llm, Tool}`
+  executable
+  lowering, trace environment recipes, tool dispatch, replay metrics policy,
+  and durable trace supplements.
 
 The built Graph-IR is an LLM trajectory executor. It does not yet execute a
 live SWE-agent tool loop, grade a task, or own a benchmark registry. This is a
@@ -140,24 +142,43 @@ extends the existing trace plan with optional trace-local warmup, a profiling
 graph, environment recipe, driver, and replay metadata. Environment setup and
 teardown are outside profiling time, with separately reported durations.
 
-Nodes become a tagged union:
+The semantic graph is a tagged union; its initial executable lowering is
+narrower:
 
 ```rust
-enum GraphNode {
+enum SemanticNode {
     Llm(LlmNode),
-    Tool(ToolNode),
+    ToolCall(ToolCallNode),
+    ToolResult(ToolResultNode),
+    Replay(ReplayNode),
     Spawn(SpawnNode),
-    Join(JoinNode),
-    Gate(GateNode),
-    Checkpoint(CheckpointNode),
-    Evaluate(EvaluateNode),
+    Await(AwaitNode),
+    Barrier(BarrierNode),
+    Subgraph(SubgraphNode),
+    Loop(BoundedLoopNode),
+    Marker(MarkerNode),
 }
+
+enum ExecutableGraphNode { Llm(LlmNode), Tool(ToolNode) }
 ```
 
-`LlmNode` continues to use the shared endpoint/transport/observer path.
-`ToolNode` writes a structured observation to normal graph channels but consumes
-no inference request credit. `EvaluateNode` invokes a declared verifier and is
-not allowed to mutate the agent's canonical worktree.
+`SemanticNode` preserves source truth; `ExecutableGraphNode` is the deliberately
+narrow lowered runtime representation. A pure Rust lowerer selects measured
+LLM dispatch, sandboxed tool execution, deterministic replay, an invocation
+lease, controller barrier coordination, bounded composition, or a declared
+unsupported result. `LlmNode` continues to use the shared
+endpoint/transport/observer path. `ToolNode` writes a structured observation to
+normal graph channels but consumes no inference request credit. Verifier work
+is lifecycle/evaluator behavior, not a graph node allowed to mutate the
+canonical worktree.
+
+Task 2's `ToolNode` is model plumbing for recorded-command topology, not proof
+of provider-neutral live-tool execution or Harbor parity. Before it becomes a
+stable live-tool schema, it must carry a stable tool-call id, structured
+request/result and artifact references, channel requirements, and typed
+completion/error/cancellation state. Unsupported graph transforms and missing
+named graph references must produce typed refusal/report outcomes, never an
+unchanged graph or a fallback to a different graph.
 
 The scheduler never decides whether a live agent has another turn. A
 `TraceProgramDriver` owns recorded replay versus live progression;
@@ -221,8 +242,8 @@ The schema supports native and imported trajectories. Import adapters may ingest
 SWE-agent, OpenHands/ATIF, or other JSONL records, but imported evidence retains
 its source schema/version and does not pretend to be natively observed.
 
-Checkpoint after every graph-node terminal state and tool boundary. Resume uses
-stable sample ids and preserves completed samples and immutable artifacts. It
+The initial checkpoint is terminal and controller-owned, after trace cleanup.
+Resume uses stable sample ids and preserves completed samples and immutable artifacts. It
 records retry count, retry reason, and retry budget separately so retry-induced
 distribution shifts cannot appear as a free quality improvement.
 
@@ -302,17 +323,26 @@ Implement in this dependency order:
 
 1. Add immutable `TaskSpec`, `DatasetManifest`, `TrialSpec`, and resolved
    artifact/provenance DTOs without changing current graph inputs.
-2. Add `GraphTraceProgram` and the provider-neutral event/artifact schema.
-3. Add `GraphNode::{Llm, Tool}` and the tool-dispatch/sandbox capability seams.
-4. Add controller-owned checkpoints, attempt/retry records, and safe resume.
-5. Implement the recorded-response driver first; add the live-agent coordinator
+2. Prove a thin Harbor P0 vertical slice under
+   [harbor-replacement-platform.md](harbor-replacement-platform.md): unchanged
+   local and pinned-Git task import, external or installed agent, shared and
+   separate verifier modes, exact artifact paths, `reward.json`/`reward.txt`,
+   typed unsupported-import reporting, and regrade—without Harbor runtime.
+3. Add `GraphTraceProgram`, provider-neutral event/artifact schema, evidence
+   grades, immutable raw/normalized identities, and strict/permissive reports.
+4. Add fallible semantic graph lowering beginning with
+   `ExecutableGraphNode::{Llm, Tool}`, a capability registry, and closure
+   validation; prove SATF and Conflux golden conformance slices before
+   broadening semantic vocabulary.
+5. Add controller-owned checkpoints, attempt/retry records, and safe resume.
+6. Implement the recorded-response driver first; add the live-agent coordinator
    only after tool and environment lifecycle are proven.
-6. Add separate verifier execution and the three-layer score model.
-7. Add task-health validation and quarantine before publishing benchmark
+7. Add separate verifier execution and the three-layer score model.
+8. Add task-health validation and quarantine before publishing benchmark
    results or accepting generated tasks.
-8. Add paired graph-variant experiments and comparison reports.
-9. Add task-factory, functional-verifier, and production-trace-to-regression
-   workflows once the evidence model is stable.
+9. Add paired graph-variant experiments and comparison reports.
+10. Add task-factory, functional-verifier, and production-trace-to-regression
+    workflows once the evidence model is stable.
 
 ## Source anchors
 
@@ -327,3 +357,7 @@ Implement in this dependency order:
   trace placement.
 - `rust/runtime/src/agentx/` and `rust/runtime/src/agentic_replay.rs` — legacy
   parity and recorded agent-shaped traffic path.
+- `docs/specs/semantic-agent-graph.md` — rich semantic graph and fidelity
+  contract.
+- `docs/specs/harbor-replacement-platform.md` — native replacement bar and
+  compatibility tiers.

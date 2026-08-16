@@ -591,9 +591,9 @@ Inputs, endpoints, and graph:
   cellular preflight, and pinned-reference parity coverage.
 - [`docs/specs/agentic-eval-platform.md`](docs/specs/agentic-eval-platform.md) —
   planned agentic SWE evaluation substrate: immutable task/dataset/trial identities,
-  sandbox and verifier contracts, provider-neutral trajectory evidence, task-health
-  governance, paired graph-variant experiments, and distinct replay-fidelity,
-  system-performance, and task-quality results.
+  sandbox and verifier contracts, semantic-graph lowering, task-health governance,
+  paired graph-variant experiments, and distinct replay-fidelity, system-performance,
+  and task-quality results.
 - [`docs/specs/dag-v3-graph-ir-extraction.md`](docs/specs/dag-v3-graph-ir-extraction.md) —
   decision record for extracting durable graph semantics and behavioral tests from
   the historical DAG-v3 branch while rejecting its universal Python node executor.

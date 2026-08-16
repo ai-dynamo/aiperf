@@ -62,20 +62,27 @@ fn evaluation_evidence_and_scores_are_append_only_identity_records() {
     assert_eq!(manifest.tasks, vec![task]);
     assert_eq!(event.identity_digest(), event.identity_digest());
     assert!(score.identity_digest().as_str().starts_with("blake3:"));
-    assert!(ScoreVersion::initial(
-        AttemptId::new("attempt-1").unwrap(),
-        digest('c'),
-        vec![],
-        "reward",
-        f64::NAN,
-        digest('d'),
-    )
-    .is_err());
+    assert!(
+        ScoreVersion::initial(
+            AttemptId::new("attempt-1").unwrap(),
+            digest('c'),
+            vec![],
+            "reward",
+            f64::NAN,
+            digest('d'),
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn serde_rejects_noncanonical_identity_values() {
-    assert!(serde_json::from_str::<ArtifactDigest>(r#""blake3:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg""#).is_err());
+    assert!(
+        serde_json::from_str::<ArtifactDigest>(
+            r#""blake3:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg""#
+        )
+        .is_err()
+    );
     assert!(serde_json::from_str::<AttemptId>(r#""   ""#).is_err());
     assert!(serde_json::from_str::<EvalTaskRef>(
         r#"{"id":"","digest":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,

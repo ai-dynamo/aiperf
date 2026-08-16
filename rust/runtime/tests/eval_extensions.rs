@@ -12,9 +12,14 @@ fn digest(seed: char) -> ArtifactDigest {
 
 #[test]
 fn provider_without_required_capability_is_refused_before_trial_start() {
-    let provider = ProviderProfile::new("local", vec![ProviderCapability::NetworkIsolation]).unwrap();
+    let provider =
+        ProviderProfile::new("local", vec![ProviderCapability::NetworkIsolation]).unwrap();
 
-    assert!(provider.require(&[ProviderCapability::OverlayWorkspace]).is_err());
+    assert!(
+        provider
+            .require(&[ProviderCapability::OverlayWorkspace])
+            .is_err()
+    );
 }
 
 #[test]
@@ -27,11 +32,9 @@ fn local_manifest_remains_valid_when_registry_is_offline() {
 
 #[test]
 fn trajectory_export_references_immutable_attempt_evidence() {
-    let manifest = TrajectoryExportManifest::new(
-        AttemptId::new("attempt-1").unwrap(),
-        vec![digest('b')],
-    )
-    .unwrap();
+    let manifest =
+        TrajectoryExportManifest::new(AttemptId::new("attempt-1").unwrap(), vec![digest('b')])
+            .unwrap();
 
     assert_eq!(manifest.attempt.as_str(), "attempt-1");
     assert_eq!(manifest.evidence, vec![digest('b')]);

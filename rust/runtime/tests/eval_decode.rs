@@ -7,8 +7,9 @@ use aiperf_runtime::eval::{RewardDocument, ScoreVersion};
 fn reward_and_score_json_reject_constructor_invalid_values() {
     assert!(serde_json::from_str::<RewardDocument>(r#"{"metrics":{}}"#).is_err());
     assert!(serde_json::from_str::<RewardDocument>(r#"{"metrics":{"":1.0}}"#).is_err());
-    assert!(serde_json::from_str::<ScoreVersion>(
-        r#"{
+    assert!(
+        serde_json::from_str::<ScoreVersion>(
+            r#"{
             "attempt":"attempt-1",
             "version":0,
             "evaluator":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -18,6 +19,7 @@ fn reward_and_score_json_reject_constructor_invalid_values() {
             "rationale":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "predecessor":null
         }"#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 }
