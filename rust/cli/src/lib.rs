@@ -17,6 +17,7 @@ pub mod control_hooks;
 pub mod delegate;
 pub mod diagnostics;
 pub mod dispatch;
+pub mod eval;
 pub mod exec_bin;
 pub mod execute;
 pub mod execute_mode;

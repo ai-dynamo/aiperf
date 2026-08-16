@@ -3,7 +3,7 @@
 //! Top-level command routing.
 
 use crate::{
-    analyze_trace, cellular_role, chat, compare, config, delegate, metrics_list, profile,
+    analyze_trace, cellular_role, chat, compare, config, delegate, eval, metrics_list, profile,
     results_sidecar, serve, slurm, speed_bench, synthesize, validate,
 };
 
@@ -12,6 +12,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
     match argv.first().map(String::as_str) {
         Some("profile") => profile::run(&argv[1..]),
         Some("config") => config::run(&argv[1..]),
+        Some("eval") => eval::run(&argv[1..]),
         Some("serve") => serve::run(&argv[1..]),
         Some("controller") => cellular_role::run_controller(&argv[1..]),
         Some("cell") => cellular_role::run_cell(&argv[1..]),
