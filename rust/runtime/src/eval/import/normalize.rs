@@ -200,10 +200,16 @@ pub(super) fn normalize_standard_directory(
     source_root: &Path,
     manifest_bytes: &[u8],
 ) -> Result<(HarborTaskPackage, EvalTaskRef), HarborImportError> {
-    let manifest = std::str::from_utf8(manifest_bytes)
+    let manifest_value = std::str::from_utf8(manifest_bytes)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?
         .parse::<toml::Value>()
-        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?
+        .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
+    if manifest_value.get("steps").is_some() {
+        return Err(HarborImportError::InvalidPackage(
+            "multi-step task manifests are not supported yet".to_owned(),
+        ));
+    }
+    let manifest = manifest_value
         .try_into::<StandardTaskManifest>()
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
     if manifest.schema_version != "1.0" {
