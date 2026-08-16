@@ -17,24 +17,52 @@ use super::HarborImportError;
 /// Executable material retained from one strict Harbor task package.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HarborTaskPackage {
-    /// Authored task identifier.
-    pub id: String,
-    /// Authored instruction presented to the agent.
-    pub instruction: String,
-    /// Immutable environment artifact identity.
-    pub environment: String,
-    /// Immutable verifier artifact identity.
-    pub verifier: String,
-    /// Exact argv used to invoke the agent.
-    pub agent_command: Vec<String>,
-    /// Exact argv used to invoke the verifier.
-    pub verifier_command: Vec<String>,
-    /// Normalized absolute artifact paths retained in authored order.
-    pub declared_artifacts: Vec<String>,
+    id: String,
+    instruction: String,
+    environment: String,
+    verifier: String,
+    agent_command: Vec<String>,
+    verifier_command: Vec<String>,
+    declared_artifacts: Vec<String>,
     source_digest: ArtifactDigest,
 }
 
 impl HarborTaskPackage {
+    /// Returns the authored task identifier.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the authored instruction presented to the agent.
+    pub fn instruction(&self) -> &str {
+        &self.instruction
+    }
+
+    /// Returns the immutable environment artifact identity.
+    pub fn environment(&self) -> &str {
+        &self.environment
+    }
+
+    /// Returns the immutable verifier artifact identity.
+    pub fn verifier(&self) -> &str {
+        &self.verifier
+    }
+
+    /// Returns the exact argv used to invoke the agent.
+    pub fn agent_command(&self) -> &[String] {
+        &self.agent_command
+    }
+
+    /// Returns the exact argv used to invoke the verifier.
+    pub fn verifier_command(&self) -> &[String] {
+        &self.verifier_command
+    }
+
+    /// Returns normalized absolute artifact paths in authored order.
+    pub fn declared_artifacts(&self) -> &[String] {
+        &self.declared_artifacts
+    }
+
     /// Returns the digest of the complete authored package bytes.
     pub fn source_digest(&self) -> ArtifactDigest {
         self.source_digest.clone()

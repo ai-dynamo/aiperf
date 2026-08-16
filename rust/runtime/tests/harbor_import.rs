@@ -49,27 +49,27 @@ fn retains_executable_task_material() {
         ImportDisposition::LosslessNormalized
     );
     assert_eq!(imported.task.id.as_str(), "repair-1");
-    assert_eq!(imported.package.id, "repair-1");
-    assert_eq!(imported.package.instruction, "Fix the failing test");
+    assert_eq!(imported.package.id(), "repair-1");
+    assert_eq!(imported.package.instruction(), "Fix the failing test");
     assert_eq!(
-        imported.package.environment,
+        imported.package.environment(),
         "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     );
     assert_eq!(
-        imported.package.verifier,
+        imported.package.verifier(),
         "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     );
     assert_eq!(
-        imported.package.agent_command,
-        vec!["sh", "-c", "printf patch > out/patch.diff"]
+        imported.package.agent_command(),
+        ["sh", "-c", "printf patch > out/patch.diff"]
     );
     assert_eq!(
-        imported.package.verifier_command,
-        vec!["sh", "-c", "printf '{\"reward\":1.0}' > reward.json"]
+        imported.package.verifier_command(),
+        ["sh", "-c", "printf '{\"reward\":1.0}' > reward.json"]
     );
     assert_eq!(
-        imported.package.declared_artifacts,
-        vec!["/results/patch.diff"]
+        imported.package.declared_artifacts(),
+        ["/results/patch.diff"]
     );
     assert_eq!(
         imported.package.source_digest(),
@@ -108,7 +108,10 @@ fn rejects_malformed_executable_task_material() {
             .packages
             .insert(source.location().to_owned(), bytes);
 
-        assert!(HarborImporter::new(&acquirer).import(&source).is_err());
+        assert!(matches!(
+            HarborImporter::new(&acquirer).import(&source),
+            Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+        ));
     }
 }
 
