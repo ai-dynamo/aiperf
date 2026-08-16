@@ -179,6 +179,7 @@ macro_rules! compose_project_request {
             project_directory: PathBuf,
             labels: BTreeMap<String, String>,
             deadline: Option<Duration>,
+            container_grace: Duration,
         }
 
         impl $name {
@@ -190,6 +191,7 @@ macro_rules! compose_project_request {
                     project_directory: project_directory.into(),
                     labels,
                     deadline: None,
+                    container_grace: Duration::from_secs(10),
                 }
             }
 
@@ -241,7 +243,12 @@ impl DockerComposeUpRequest {
 impl DockerComposeDownRequest {
     /// Gives containers a bounded graceful-stop interval before forced cleanup.
     pub const fn container_grace(&self) -> Duration {
-        Duration::from_secs(10)
+        self.container_grace
+    }
+    /// Forces task-owned containers down after a terminal benchmark failure.
+    pub fn with_terminal_failure(mut self) -> Self {
+        self.container_grace = Duration::ZERO;
+        self
     }
     /// Requests removal of task-owned anonymous volumes.
     pub const fn removes_volumes(&self) -> bool {
@@ -982,6 +989,19 @@ mod compose_lease_tests {
 
     struct Runtime {
         events: Rc<RefCell<Vec<String>>>,
+    }
+
+    #[test]
+    fn terminal_failure_teardown_forces_compose_containers_without_grace() {
+        let request = DockerComposeDownRequest::new(
+            ComposeProjectId::new("aiperf-fixture"),
+            "/tmp/aiperf-fixture",
+        )
+        .with_terminal_failure()
+        .with_deadline(Duration::from_secs(60));
+
+        assert_eq!(request.container_grace(), Duration::ZERO);
+        assert_eq!(request.deadline(), Some(Duration::from_secs(60)));
     }
 
     impl DockerRuntime for Runtime {

@@ -63,6 +63,11 @@ pub(crate) trait TaskEnvironmentLease {
     fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError>;
     fn main_image_id(&self) -> Result<&str, EvalExecutionError>;
     fn teardown(&mut self) -> Result<(), EvalExecutionError>;
+    /// Tears down after a terminal benchmark failure within the provider deadline.
+    fn teardown_after_terminal_failure(
+        &mut self,
+        deadline: Duration,
+    ) -> Result<(), EvalExecutionError>;
 }
 
 /// Adapts the established one-container Dockerfile environment to the lease seam.
@@ -148,5 +153,11 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
     }
     fn teardown(&mut self) -> Result<(), EvalExecutionError> {
         Ok(())
+    }
+    fn teardown_after_terminal_failure(
+        &mut self,
+        _: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        self.teardown()
     }
 }

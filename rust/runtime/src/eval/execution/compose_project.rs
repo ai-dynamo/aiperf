@@ -159,6 +159,55 @@ impl<'a> ComposeProjectLease<'a> {
         }
         first_error.map_or(Ok(()), Err)
     }
+
+    fn teardown_with_terminal_failure(
+        &mut self,
+        deadline: Duration,
+        is_terminal_failure: bool,
+    ) -> Result<(), EvalExecutionError> {
+        if self.state == ComposeLeaseState::Down {
+            return Ok(());
+        }
+        let request = DockerComposeDownRequest::new(self.project.clone(), &self.project_directory)
+            .with_deadline(deadline);
+        let request = if is_terminal_failure {
+            request.with_terminal_failure()
+        } else {
+            request
+        };
+        let down = self.runtime.compose_down(&request);
+        let remaining_after_down = self.runtime.compose_owned_resources(&self.project);
+        if let Ok(resources) = &remaining_after_down {
+            self.recorded = resources.clone();
+        }
+        let needs_force = matches!(&remaining_after_down, Ok(resources) if resources != &OwnedComposeResources::default());
+        let forced = if needs_force {
+            self.force_recorded_resources()
+        } else {
+            Ok(())
+        };
+        let remaining = if needs_force {
+            self.runtime.compose_owned_resources(&self.project)
+        } else {
+            remaining_after_down
+        };
+        let result = match (down, forced, remaining) {
+            (Err(error), _, _) => Err(error),
+            (Ok(_), Err(error), _) => Err(error),
+            (Ok(_), Ok(_), Ok(resources)) if resources == OwnedComposeResources::default() => {
+                Ok(())
+            }
+            (Ok(_), Ok(_), Ok(_)) => Err(EvalExecutionError::ContainerTeardown {
+                container: self.project.as_str().to_owned(),
+                reason: "Compose resources remain after teardown".to_owned(),
+            }),
+            (Ok(_), Ok(_), Err(error)) => Err(error),
+        };
+        if result.is_ok() {
+            self.state = ComposeLeaseState::Down;
+        }
+        result
+    }
 }
 
 impl TaskEnvironmentLease for ComposeProjectLease<'_> {
@@ -242,44 +291,14 @@ impl TaskEnvironmentLease for ComposeProjectLease<'_> {
         Ok(&self.main_image)
     }
     fn teardown(&mut self) -> Result<(), EvalExecutionError> {
-        if self.state == ComposeLeaseState::Down {
-            return Ok(());
-        }
-        let down = self.runtime.compose_down(
-            &DockerComposeDownRequest::new(self.project.clone(), &self.project_directory)
-                .with_deadline(std::time::Duration::from_secs(60)),
-        );
-        let remaining_after_down = self.runtime.compose_owned_resources(&self.project);
-        if let Ok(resources) = &remaining_after_down {
-            self.recorded = resources.clone();
-        }
-        let needs_force = matches!(&remaining_after_down, Ok(resources) if resources != &OwnedComposeResources::default());
-        let forced = if needs_force {
-            self.force_recorded_resources()
-        } else {
-            Ok(())
-        };
-        let remaining = if needs_force {
-            self.runtime.compose_owned_resources(&self.project)
-        } else {
-            remaining_after_down
-        };
-        let result = match (down, forced, remaining) {
-            (Err(error), _, _) => Err(error),
-            (Ok(_), Err(error), _) => Err(error),
-            (Ok(_), Ok(_), Ok(resources)) if resources == OwnedComposeResources::default() => {
-                Ok(())
-            }
-            (Ok(_), Ok(_), Ok(_)) => Err(EvalExecutionError::ContainerTeardown {
-                container: self.project.as_str().to_owned(),
-                reason: "Compose resources remain after teardown".to_owned(),
-            }),
-            (Ok(_), Ok(_), Err(error)) => Err(error),
-        };
-        if result.is_ok() {
-            self.state = ComposeLeaseState::Down;
-        }
-        result
+        self.teardown_with_terminal_failure(Duration::from_secs(60), false)
+    }
+
+    fn teardown_after_terminal_failure(
+        &mut self,
+        deadline: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        self.teardown_with_terminal_failure(deadline, true)
     }
 }
 

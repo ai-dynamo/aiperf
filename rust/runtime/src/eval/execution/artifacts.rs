@@ -176,7 +176,7 @@ pub(crate) fn collect_service_evidence(
         Ok(collected)
     })();
     if outcome.is_err() {
-        let _ = lease.teardown();
+        let _ = lease.teardown_after_terminal_failure(Duration::from_secs(60));
     }
     outcome
 }
@@ -695,7 +695,10 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, EvalExecutionError::CollectionHook { .. }));
-        assert_eq!(lease.events, ["hook:main", "teardown"]);
+        assert_eq!(
+            lease.events,
+            ["hook:main", "terminal-teardown:60000000000"]
+        );
     }
 
     #[test]
@@ -781,7 +784,10 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(lease.events, ["stop:main", "teardown"]);
+        assert_eq!(
+            lease.events,
+            ["stop:main", "terminal-teardown:60000000000"]
+        );
     }
 
     #[test]
@@ -822,7 +828,11 @@ mod tests {
         ));
         assert_eq!(
             lease.events,
-            ["hook:main", "archive:main:/workspace/main.txt", "teardown",]
+            [
+                "hook:main",
+                "archive:main:/workspace/main.txt",
+                "terminal-teardown:60000000000",
+            ]
         );
     }
 
@@ -965,6 +975,14 @@ mod tests {
         }
         fn teardown(&mut self) -> Result<(), EvalExecutionError> {
             self.events.push("teardown".to_owned());
+            Ok(())
+        }
+        fn teardown_after_terminal_failure(
+            &mut self,
+            deadline: Duration,
+        ) -> Result<(), EvalExecutionError> {
+            self.events
+                .push(format!("terminal-teardown:{}", deadline.as_nanos()));
             Ok(())
         }
     }

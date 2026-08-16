@@ -529,7 +529,13 @@ impl DockerProcessSandbox {
                 verifier: package.source_digest(),
             })
         })();
-        let cleanup = prepared.lease.teardown();
+        let cleanup = if outcome.is_err() {
+            prepared
+                .lease
+                .teardown_after_terminal_failure(Duration::from_secs(60))
+        } else {
+            prepared.lease.teardown()
+        };
         match (outcome, cleanup) {
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error),
@@ -560,7 +566,13 @@ impl DockerProcessSandbox {
             );
             execute_benchmark_steps(plan, agent_command, package.source_digest(), &mut session)
         })();
-        let cleanup = prepared.lease.teardown();
+        let cleanup = if outcome.is_err() {
+            prepared
+                .lease
+                .teardown_after_terminal_failure(Duration::from_secs(60))
+        } else {
+            prepared.lease.teardown()
+        };
         match (outcome, cleanup) {
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error),
@@ -1764,7 +1776,7 @@ impl DockerComposeRuntime for DockerCliRuntime {
         request: &DockerComposeStopRequest,
     ) -> Result<(), EvalExecutionError> {
         let container = compose_service_container(request.project(), request.service())?;
-        let arguments = ["stop".to_owned(), container];
+        let arguments = compose_stop_arguments(&container, request.deadline());
         docker_command_bounded(
             self.clock.clone(),
             arguments,
@@ -1877,6 +1889,19 @@ fn compose_command_bounded(
         return docker_command_bounded(clock, arguments, target, Some(deadline));
     }
     compose_command(arguments).map(|_| ())
+}
+
+fn compose_stop_arguments(container: &str, deadline: Option<Duration>) -> Vec<String> {
+    // `docker stop` otherwise waits for the daemon's ten-second default grace,
+    // which can consume a collection window before its sidecar hooks start.
+    let mut arguments = vec!["stop".to_owned()];
+    if deadline.is_some() {
+        // A CLI timeout only kills the client; the daemon keeps a graceful stop
+        // running after that client is gone. Force the terminal state now.
+        arguments.extend(["--time".to_owned(), "0".to_owned()]);
+    }
+    arguments.push(container.to_owned());
+    arguments
 }
 
 fn docker_command_bounded(
@@ -2832,8 +2857,9 @@ mod tests {
     use super::{
         DockerCliRuntime, DockerExecProcess, DockerExecState, DockerProcessSandbox, DockerRuntime,
         EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
-        compose_ownership_filters, docker_container_name, docker_image_name, drive_docker_exec,
-        ensure_network_exists, redact_secret_values, reports_absent_container,
+        compose_ownership_filters, compose_stop_arguments, docker_container_name,
+        docker_image_name, drive_docker_exec, ensure_network_exists, redact_secret_values,
+        reports_absent_container,
     };
     use crate::clock::SimClock;
     use crate::eval::{
@@ -2871,6 +2897,28 @@ mod tests {
         assert!(filters.iter().any(|filter| {
             filter.starts_with("label=aiperf.run=") && filter != "label=aiperf.run=aiperf-fixture"
         }));
+    }
+
+    #[test]
+    fn bounded_compose_stop_forces_the_container_before_the_collection_deadline() {
+        assert_eq!(
+            compose_stop_arguments("main-container", Some(Duration::from_millis(200))),
+            vec![
+                "stop".to_owned(),
+                "--time".to_owned(),
+                "0".to_owned(),
+                "main-container".to_owned(),
+            ]
+        );
+        assert_eq!(
+            compose_stop_arguments("main-container", Some(Duration::from_millis(1900))),
+            vec![
+                "stop".to_owned(),
+                "--time".to_owned(),
+                "0".to_owned(),
+                "main-container".to_owned(),
+            ]
+        );
     }
 
     #[test]
