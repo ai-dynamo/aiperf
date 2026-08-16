@@ -30,14 +30,8 @@ impl SourceAcquirer for MemoryAcquirer {
 }
 
 #[test]
-fn local_import_preserves_source_digest_and_normalizes_task() {
-    let bytes = br#"{
-        "id":"repair-1",
-        "instruction":"Fix the failing test",
-        "environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    }"#
-    .to_vec();
+fn retains_executable_task_material() {
+    let bytes = supported_package();
     let source = HarborSource::local("fixtures/repair-1").unwrap();
     let mut acquirer = MemoryAcquirer::default();
     acquirer
@@ -55,6 +49,90 @@ fn local_import_preserves_source_digest_and_normalizes_task() {
         ImportDisposition::LosslessNormalized
     );
     assert_eq!(imported.task.id.as_str(), "repair-1");
+    assert_eq!(imported.package.id, "repair-1");
+    assert_eq!(imported.package.instruction, "Fix the failing test");
+    assert_eq!(
+        imported.package.environment,
+        "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(
+        imported.package.verifier,
+        "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(
+        imported.package.agent_command,
+        vec!["sh", "-c", "printf patch > out/patch.diff"]
+    );
+    assert_eq!(
+        imported.package.verifier_command,
+        vec!["sh", "-c", "printf '{\"reward\":1.0}' > reward.json"]
+    );
+    assert_eq!(
+        imported.package.declared_artifacts,
+        vec!["/results/patch.diff"]
+    );
+    assert_eq!(
+        imported.package.source_digest(),
+        imported.report.source_digest
+    );
+}
+
+#[test]
+fn rejects_malformed_executable_task_material() {
+    let malformed_packages = [
+        package_with_mutation(|package| package["agent_command"] = serde_json::json!([])),
+        package_with_mutation(|package| {
+            package["verifier_command"] = serde_json::json!(["sh", " "])
+        }),
+        package_with_mutation(|package| {
+            package["declared_artifacts"] = serde_json::json!(["results/patch.diff"])
+        }),
+        package_with_mutation(|package| {
+            package["declared_artifacts"] = serde_json::json!(["/"])
+        }),
+        package_with_mutation(|package| {
+            package["declared_artifacts"] = serde_json::json!(["/results/../secret"])
+        }),
+        package_with_mutation(|package| {
+            package["declared_artifacts"] =
+                serde_json::json!(["/results/patch.diff", "//results/patch.diff"])
+        }),
+        package_with_mutation(|package| {
+            package["unknown_package_field"] = serde_json::json!(true)
+        }),
+        package_with_mutation(|package| {
+            package.as_object_mut().unwrap().remove("agent_command");
+        }),
+    ];
+
+    for bytes in malformed_packages {
+        let source = HarborSource::local("fixtures/malformed").unwrap();
+        let mut acquirer = MemoryAcquirer::default();
+        acquirer
+            .packages
+            .insert(source.location().to_owned(), bytes);
+
+        assert!(HarborImporter::new(&acquirer).import(&source).is_err());
+    }
+}
+
+fn supported_package() -> Vec<u8> {
+    br#"{
+        "id":"repair-1",
+        "instruction":"Fix the failing test",
+        "environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "agent_command":["sh","-c","printf patch > out/patch.diff"],
+        "verifier_command":["sh","-c","printf '{\"reward\":1.0}' > reward.json"],
+        "declared_artifacts":["/results/patch.diff"]
+    }"#
+    .to_vec()
+}
+
+fn package_with_mutation(mutate: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    let mut package = serde_json::from_slice(&supported_package()).unwrap();
+    mutate(&mut package);
+    serde_json::to_vec(&package).unwrap()
 }
 
 #[test]

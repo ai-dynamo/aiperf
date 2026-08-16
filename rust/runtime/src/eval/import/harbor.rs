@@ -7,7 +7,7 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::eval::{ArtifactDigest, EvalTaskRef, ImportDisposition, ImportReport};
 
-use super::{HarborSource, SourceAcquirer, normalize};
+use super::{HarborSource, HarborTaskPackage, SourceAcquirer, normalize};
 
 /// Native normalized representation of one imported task package.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,6 +16,8 @@ pub struct ImportedTask {
     pub task: EvalTaskRef,
     /// Immutable import provenance report.
     pub report: ImportReport,
+    /// Strict executable package material retained for native execution.
+    pub package: HarborTaskPackage,
 }
 
 /// Typed failure of a Harbor-compatible import before environment provisioning.
@@ -76,13 +78,17 @@ impl<'a> HarborImporter<'a> {
                 disposition: ImportDisposition::Unsupported,
             }));
         }
-        let (_, task) = normalize::normalize(&bytes)?;
+        let (package, task) = normalize::normalize(&bytes)?;
         let report = ImportReport {
             source_digest,
             normalized_digest: task.digest.clone(),
             disposition: ImportDisposition::LosslessNormalized,
         };
-        Ok(ImportedTask { task, report })
+        Ok(ImportedTask {
+            task,
+            report,
+            package,
+        })
     }
 }
 
