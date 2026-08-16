@@ -125,10 +125,18 @@ fn native_coordinator_executes_installed_and_external_agents_with_score_lineage_
 
     assert_eq!(installed.imported.task.id.as_str(), "harbor-p0-installed");
     assert_eq!(installed.trial.task, installed.imported.task);
+    assert_eq!(
+        installed.imported.package.declared_artifacts(),
+        ["/results/patch.diff"]
+    );
     assert_eq!(installed.verifier_result.evidence.len(), 1);
     assert_eq!(
         installed.verifier_result.evidence[0],
         installed.initial_score.evidence[0]
+    );
+    assert_eq!(
+        installed.verifier_result.evidence[0],
+        ArtifactDigest::from_bytes(b"installed-patch")
     );
     assert_eq!(installed.initial_score.value, 1.0);
     assert_eq!(installed.regraded_score.value, 0.75);
