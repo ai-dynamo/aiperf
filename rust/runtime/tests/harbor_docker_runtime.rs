@@ -197,6 +197,7 @@ struct ComposeSessionRecordingRuntime {
     artifact_transfer_sources: RefCell<Vec<String>>,
     generated_main: RefCell<Option<serde_json::Value>>,
     phase_calls: RefCell<Vec<(String, Option<String>, Option<String>, Vec<String>)>>,
+    docker_phase_calls: RefCell<Vec<(String, Option<String>, Option<String>, Vec<String>)>>,
     failure: Option<ComposeSessionFailure>,
     agent_calls: Cell<usize>,
 }
@@ -209,6 +210,7 @@ impl ComposeSessionRecordingRuntime {
             artifact_transfer_sources: RefCell::new(Vec::new()),
             generated_main: RefCell::new(None),
             phase_calls: RefCell::new(Vec::new()),
+            docker_phase_calls: RefCell::new(Vec::new()),
             failure,
             agent_calls: Cell::new(0),
         }
@@ -270,6 +272,20 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
     }
 
     fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        self.docker_phase_calls.borrow_mut().push((
+            request.phase().to_string(),
+            request.user().map(ToOwned::to_owned),
+            request.workdir().map(ToOwned::to_owned),
+            request.public_arguments().to_vec(),
+        ));
+        if request.phase() == aiperf_runtime::eval::EvalExecutionPhase::Healthcheck
+            && self.failure == Some(ComposeSessionFailure::Healthcheck)
+            && request.public_arguments() == ["ready".to_owned()]
+        {
+            return Err(EvalExecutionError::ProcessFailure(
+                "healthcheck failed".to_owned(),
+            ));
+        }
         if request.phase() == aiperf_runtime::eval::EvalExecutionPhase::Verifier
             && self.failure == Some(ComposeSessionFailure::VerifierTimeout)
         {
@@ -735,6 +751,33 @@ environment_mode = "separate"
         preparation < healthcheck && healthcheck < agent,
         "a non-root healthcheck must execute in its prepared workdir before the agent"
     );
+    let docker_calls = runtime.docker_phase_calls.borrow();
+    let verifier_preparation = docker_calls
+        .iter()
+        .enumerate()
+        .find_map(|(index, (phase, user, workdir, command))| {
+            (phase == "agent"
+                && user.is_none()
+                && workdir.as_deref() == Some("/override")
+                && command
+                    .first()
+                    .is_some_and(|argument| argument == "/bin/sh"))
+            .then_some(index)
+        })
+        .expect("separate verifier root workdir preparation");
+    let verifier_healthcheck = docker_calls
+        .iter()
+        .position(|(phase, user, workdir, command)| {
+            phase == "healthcheck"
+                && user.as_deref() == Some("bench")
+                && workdir.as_deref() == Some("/override")
+                && command.as_slice() == ["ready".to_owned()]
+        })
+        .expect("separate verifier inherited healthcheck");
+    assert!(
+        verifier_preparation < verifier_healthcheck,
+        "a separate Compose verifier must prepare its non-root workdir before its inherited healthcheck"
+    );
 }
 
 #[test]
@@ -791,6 +834,77 @@ retries = 1
     assert!(!calls.iter().any(|(phase, _, _, command)| {
         phase == "agent" && command.as_slice() == ["agent".to_owned()]
     }));
+}
+
+#[test]
+fn compose_separate_verifier_healthcheck_failure_prevents_verifier_command_and_cleans_up() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(
+        &temporary,
+        r#"[environment]
+workdir = "/task"
+user = "bench"
+
+[verifier]
+environment_mode = "separate"
+
+[verifier.environment]
+workdir = "/task"
+user = "bench"
+
+[verifier.environment.healthcheck]
+command = ["ready"]
+retries = 1
+"#,
+    );
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert!(
+        imported
+            .package
+            .execution_plan()
+            .verifier()
+            .environment()
+            .healthcheck()
+            .is_some(),
+        "test task must give the separate verifier its own healthcheck"
+    );
+    let runtime = ComposeSessionRecordingRuntime::new(Some(ComposeSessionFailure::Healthcheck));
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("unhealthy separate Compose verifier must stop before its command");
+
+    assert!(matches!(error, EvalExecutionError::Unhealthy(_)));
+    let docker_calls = runtime.docker_phase_calls.borrow();
+    assert!(docker_calls.iter().any(|(phase, user, workdir, command)| {
+        phase == "agent"
+            && user.is_none()
+            && workdir.as_deref() == Some("/work")
+            && command
+                .first()
+                .is_some_and(|argument| argument == "/bin/sh")
+    }));
+    assert!(!docker_calls.iter().any(|(phase, _, _, command)| {
+        phase == "verifier"
+            && command.as_slice() == ["/bin/sh".to_owned(), "/tests/test.sh".to_owned()]
+    }));
+    let events = runtime.events.borrow();
+    assert!(events.iter().any(|event| event.contains("verifier-")));
+    assert!(events.iter().any(|event| event == "compose-down"));
 }
 
 #[test]

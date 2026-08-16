@@ -791,6 +791,14 @@ impl<'a> ComposeStepSession<'a> {
                 Some(&effective_workdir),
                 verifier_network,
             )?;
+            prepare_workdir(
+                self.runtime,
+                &name,
+                verifier.environment(),
+                verifier.phase(),
+                verifier_workdir,
+                verifier_network,
+            )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
                 run_healthcheck(
                     self.clock.clone(),
@@ -812,14 +820,6 @@ impl<'a> ComposeStepSession<'a> {
                 ),
                 format!("{name}:/tests"),
             ]))?;
-            prepare_workdir(
-                self.runtime,
-                &name,
-                verifier.environment(),
-                verifier.phase(),
-                verifier_workdir,
-                verifier_network,
-            )?;
             execute_planned_phase(
                 self.runtime,
                 &name,
