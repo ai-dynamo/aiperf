@@ -87,12 +87,28 @@ P0 supports shared and separately provisioned verifier modes. A separate
 verifier receives declared artifacts at declared paths, never ambient agent
 credentials or workspace state.
 
+### Built ordered benchmark subset
+
+Schema-`1.0` standard tasks may author an ordered `[[steps]]` layout. Native
+Docker execution builds once, preserves one agent workspace across steps,
+snapshots declared artifacts before every verifier, and gives each verifier a
+fresh selected test tree. Shared verifiers use the persistent agent container;
+separate verifiers receive only the immutable artifact snapshot in an isolated
+container. Root phase policy is inherited unless a supported step field
+overrides it. `mean` and `final` reward strategies produce an aggregate reward,
+and the CLI adds ordered per-step reward/artifact data without changing the
+implicit single-step JSON contract. A terminal step failure prevents successor
+work and cleanup attempts every acquired container.
+
+This is a benchmark-execution subset, not general service orchestration. Docker
+Compose definitions and task sidecars remain unsupported.
+
 ### P1: fuller task and provider parity
 
-Sequential multi-step tasks with shared state, setup hooks, per-step
-verification, trial aggregation, composite manifests, provider capability
-negotiation, trajectory-aware verifiers, accelerator declarations, and
-policy-controlled judge credentials enter after P0 evidence is stable.
+The built ordered subset expands through setup hooks, richer trial aggregation,
+composite manifests, provider capability negotiation, service orchestration,
+trajectory-aware verifiers, accelerator declarations, and policy-controlled
+judge credentials after P0 evidence is stable.
 
 ### P2: distribution ecosystem
 
