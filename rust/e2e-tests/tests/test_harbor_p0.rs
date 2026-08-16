@@ -7,8 +7,9 @@ use std::fs;
 use aiperf_runtime::eval::{
     AgentCapability, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvalExecutionError,
     EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborSandboxRecipe,
-    HarborSource, NativeSourceAcquirer, RegradeRequest, RewardDocument, ScoreVersion,
-    VerifierExecutionError, VerifierMode, VerifierResult, VerifierSandboxFactory, regrade,
+    HarborImporter, HarborSource, LocalProcessSandbox, NativeSourceAcquirer, RegradeRequest,
+    RewardDocument, ScoreVersion, VerifierExecutionError, VerifierMode, VerifierResult,
+    VerifierSandboxFactory, regrade,
 };
 
 fn digest(seed: char) -> ArtifactDigest {
@@ -115,4 +116,54 @@ fn local_harbor_task_runs_through_native_p0_lifecycle_without_harbor_runtime() {
     assert_eq!(regraded.value, 1.0);
     assert_eq!(regraded.predecessor, Some(original.identity_digest()));
     assert_eq!(regraded.evidence, vec![digest('c')]);
+}
+
+#[test]
+fn local_harbor_package_executes_agent_and_separate_verifier_without_harbor_runtime() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package = br#"{"id":"repair-1","instruction":"Fix the test","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","printf patch > \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["sh","-c","test -f results/patch.diff && printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":["/results/patch.diff"]}"#;
+    let package_path = temporary.path().join("task.json");
+    fs::write(&package_path, package).unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(package_path.to_string_lossy()).unwrap())
+        .unwrap();
+
+    let execution = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Separate)
+        .unwrap();
+    let original = ScoreVersion::initial(
+        AttemptId::new("p0-real-attempt").unwrap(),
+        ArtifactDigest::parse(imported.package.verifier()).unwrap(),
+        execution
+            .artifacts
+            .iter()
+            .map(|(_, digest)| digest.clone())
+            .collect(),
+        "reward",
+        execution.reward.metrics["reward"],
+        digest('2'),
+    )
+    .unwrap();
+    let result = VerifierResult::new(
+        original.attempt.clone(),
+        ArtifactDigest::parse(imported.package.verifier()).unwrap(),
+        execution
+            .artifacts
+            .iter()
+            .map(|(_, digest)| digest.clone())
+            .collect(),
+        execution.reward,
+        digest('3'),
+    )
+    .unwrap();
+
+    let regraded = regrade(RegradeRequest::new(original, result, "reward").unwrap()).unwrap();
+
+    assert_eq!(execution.artifacts[0].0, "/results/patch.diff");
+    assert_eq!(regraded.value, 1.0);
 }

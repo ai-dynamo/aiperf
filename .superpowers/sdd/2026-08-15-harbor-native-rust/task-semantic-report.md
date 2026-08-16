@@ -38,4 +38,4 @@ semantic files.
 
 ## Commit
 
-Pending creation after this report is staged.
+`cfcb423816 feat(eval): execute Harbor semantic comparisons`
