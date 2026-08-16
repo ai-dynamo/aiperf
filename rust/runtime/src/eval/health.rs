@@ -3,6 +3,8 @@
 
 //! Task health and quarantine verdict contracts.
 
+use std::collections::BTreeSet;
+
 use crate::eval::ArtifactDigest;
 
 /// Independent validity verdict for an evaluation task.
@@ -31,22 +33,46 @@ impl TaskHealthRecord {
         verdict: TaskVerdict,
         evidence: Vec<ArtifactDigest>,
     ) -> Result<Self, TaskHealthError> {
-        if evidence.is_empty() {
-            return Err(TaskHealthError::EmptyEvidence);
-        }
+        validate_evidence(&evidence)?;
         Ok(Self { verdict, evidence })
     }
+
+    /// Returns whether aggregate evaluation results must exclude this task.
+    pub const fn is_quarantined(&self) -> bool {
+        matches!(self.verdict, TaskVerdict::Broken)
+    }
+
+    /// Revalidates the supporting evidence after record deserialization or transfer.
+    pub fn validate(&self) -> Result<(), TaskHealthError> {
+        validate_evidence(&self.evidence)
+    }
+}
+
+fn validate_evidence(evidence: &[ArtifactDigest]) -> Result<(), TaskHealthError> {
+    if evidence.is_empty() {
+        return Err(TaskHealthError::EmptyEvidence);
+    }
+    if evidence.iter().collect::<BTreeSet<_>>().len() != evidence.len() {
+        return Err(TaskHealthError::DuplicateEvidence);
+    }
+    Ok(())
 }
 
 /// Invalid task-health record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskHealthError {
+    /// Quarantine decisions require supporting evidence.
     EmptyEvidence,
+    /// Each evidence identity may support a decision only once.
+    DuplicateEvidence,
 }
 
 impl std::fmt::Display for TaskHealthError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("task health requires immutable evidence")
+        match self {
+            Self::EmptyEvidence => formatter.write_str("task health requires immutable evidence"),
+            Self::DuplicateEvidence => formatter.write_str("task health evidence must be unique"),
+        }
     }
 }
 impl std::error::Error for TaskHealthError {}
