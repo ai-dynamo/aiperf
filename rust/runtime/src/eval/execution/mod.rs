@@ -10,7 +10,10 @@ mod local_process;
 mod recipe;
 mod workspace;
 
-pub use agent::{AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract};
+pub use agent::{
+    AgentCapability, EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory,
+    HarborAgentContract,
+};
 pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
 pub use docker_process::DockerProcessSandbox;
 pub use local_process::{

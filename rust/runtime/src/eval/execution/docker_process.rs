@@ -3,13 +3,18 @@
 
 //! Docker-backed execution for conventional native task directories.
 
-use std::{fs, process::Command};
+use std::{
+    fs,
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 
 use tempfile::TempDir;
 
 use crate::eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode};
 
-use super::{EvalExecutionError, HarborSandboxRecipe, LocalExecutionResult};
+use super::{EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult};
 
 /// Executes a conventional task in a task-built Docker environment.
 #[derive(Debug, Default)]
@@ -78,7 +83,14 @@ impl DockerProcessSandbox {
             true,
         )?;
         docker(["start", &lease.container], "start task container")?;
-        docker_exec(&lease.container, agent_command, "run agent")?;
+        docker_exec(
+            &lease.container,
+            agent_command,
+            "run agent",
+            package
+                .timeouts()
+                .map(|(agent_timeout, _)| (EvalExecutionPhase::Agent, agent_timeout)),
+        )?;
         let artifacts = collect_workspace_artifacts(&workspace, recipe, package)?;
         let verifier_workspace = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
@@ -129,6 +141,9 @@ impl DockerProcessSandbox {
             verifier,
             &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
             "run verifier",
+            package
+                .timeouts()
+                .map(|(_, verifier_timeout)| (EvalExecutionPhase::Verifier, verifier_timeout)),
         )?;
         let reward = read_reward(
             verifier,
@@ -240,13 +255,97 @@ fn docker_exec(
     container: &str,
     command: &[String],
     action: &str,
+    timeout: Option<(EvalExecutionPhase, Duration)>,
 ) -> Result<(), EvalExecutionError> {
     if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
         return Err(EvalExecutionError::InvalidCommand);
     }
     let mut arguments = vec!["exec", container];
     arguments.extend(command.iter().map(String::as_str));
-    docker(arguments, action).map(|_| ())
+    let Some((phase, timeout)) = timeout else {
+        return docker(arguments, action).map(|_| ());
+    };
+    docker_exec_bounded(container, &arguments, action, phase, timeout)
+}
+
+fn docker_exec_bounded(
+    container: &str,
+    arguments: &[&str],
+    action: &str,
+    phase: EvalExecutionPhase,
+    timeout: Duration,
+) -> Result<(), EvalExecutionError> {
+    let mut child = Command::new("docker")
+        .args(arguments)
+        // docker exec output is not part of the evaluation contract. Redirecting both streams
+        // prevents an unconsumed pipe from blocking the child past its phase deadline.
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| EvalExecutionError::ProcessSpawn(format!("docker {action}")))?;
+    let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
+        EvalExecutionError::ProcessFailure(format!("docker {action}: invalid timeout"))
+    })?;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|_| EvalExecutionError::ProcessFailure(format!("docker {action}")))?
+        {
+            return status.success().then_some(()).ok_or_else(|| {
+                EvalExecutionError::ProcessFailure(format!("docker {action}: exited with {status}"))
+            });
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let reap = child.wait();
+            remove_timed_out_container(container)?;
+            reap.map_err(|_| EvalExecutionError::ProcessFailure(format!("docker {action}")))?;
+            return Err(EvalExecutionError::Timeout { phase, timeout });
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn remove_timed_out_container(container: &str) -> Result<(), EvalExecutionError> {
+    let removal = Command::new("docker")
+        .args(["rm", "--force", container])
+        .output()
+        .map_err(|_| EvalExecutionError::ContainerTeardown {
+            container: container.to_owned(),
+            reason: "could not start docker rm --force".to_owned(),
+        })?;
+    if !removal.status.success() && !reports_absent_container(&removal.stderr) {
+        return Err(EvalExecutionError::ContainerTeardown {
+            container: container.to_owned(),
+            reason: String::from_utf8_lossy(&removal.stderr).trim().to_owned(),
+        });
+    }
+    let inspection = Command::new("docker")
+        .args(["container", "inspect", container])
+        .output()
+        .map_err(|_| EvalExecutionError::ContainerTeardown {
+            container: container.to_owned(),
+            reason: "could not start docker container inspect".to_owned(),
+        })?;
+    if !inspection.status.success() && reports_absent_container(&inspection.stderr) {
+        return Ok(());
+    }
+    let reason = if inspection.status.success() {
+        "docker container inspect found the container after forced removal".to_owned()
+    } else {
+        String::from_utf8_lossy(&inspection.stderr)
+            .trim()
+            .to_owned()
+    };
+    Err(EvalExecutionError::ContainerTeardown {
+        container: container.to_owned(),
+        reason,
+    })
+}
+
+fn reports_absent_container(stderr: &[u8]) -> bool {
+    let diagnostic = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    diagnostic.contains("no such container") || diagnostic.contains("no such object")
 }
 
 fn read_reward(container: &str, workspace: &TempDir) -> Result<RewardDocument, EvalExecutionError> {

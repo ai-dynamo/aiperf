@@ -3,6 +3,10 @@
 
 use std::fs;
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::Duration;
+
+static DOCKER_TIMEOUT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn native_eval_command_runs_a_local_harbor_package() {
@@ -183,6 +187,121 @@ fn native_eval_command_runs_a_standard_task_directory_in_docker() {
     .unwrap();
 
     assert_eq!(exit, 0);
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
+fn docker_timeout_removes_agent_container_after_descendant_command() {
+    let _docker_test_lock = DOCKER_TIMEOUT_TEST_LOCK.lock().unwrap();
+    let task_root = docker_timeout_task(
+        "agent",
+        "mkdir -p /logs/verifier\nprintf 1 > /logs/verifier/reward.txt\n",
+        "shared",
+        0.2,
+        2.0,
+    );
+
+    let error = aiperf_cli::dispatch::run(&docker_eval_arguments(
+        task_root.path(),
+        "sleep 300 & sleep 2",
+    ))
+    .expect_err("an agent command exceeding its configured timeout must fail");
+
+    assert!(matches!(
+        error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>(),
+        Some(aiperf_runtime::eval::EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Agent,
+            timeout,
+        }) if *timeout == Duration::from_millis(200)
+    ));
+    assert_task_containers_absent();
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
+fn docker_timeout_removes_separate_verifier_container_after_descendant_command() {
+    let _docker_test_lock = DOCKER_TIMEOUT_TEST_LOCK.lock().unwrap();
+    let task_root = docker_timeout_task(
+        "verifier",
+        "sleep 300 & sleep 2\nmkdir -p /logs/verifier\nprintf 1 > /logs/verifier/reward.txt\n",
+        "separate",
+        2.0,
+        0.2,
+    );
+
+    let error = aiperf_cli::dispatch::run(&docker_eval_arguments(task_root.path(), "true"))
+        .expect_err("a verifier command exceeding its configured timeout must fail");
+
+    assert!(matches!(
+        error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>(),
+        Some(aiperf_runtime::eval::EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+            timeout,
+        }) if *timeout == Duration::from_millis(200)
+    ));
+    assert_task_containers_absent();
+}
+
+fn docker_timeout_task(
+    name: &str,
+    verifier_script: &str,
+    verifier_mode: &str,
+    agent_timeout: f64,
+    verifier_timeout: f64,
+) -> tempfile::TempDir {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path();
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            "schema_version = \"1.0\"\n[task]\nname = \"example/docker-timeout-{name}\"\n[agent]\ntimeout_sec = {agent_timeout}\n[verifier]\ntimeout_sec = {verifier_timeout}\nenvironment_mode = \"{verifier_mode}\"\n"
+        ),
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Complete the task.\n").unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM openclaw-sandbox:bookworm-slim\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("tests/test.sh"), verifier_script).unwrap();
+    temporary
+}
+
+fn docker_eval_arguments(task_root: &std::path::Path, agent_command: &str) -> Vec<String> {
+    vec![
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--agent-command".to_owned(),
+        agent_command.to_owned(),
+    ]
+}
+
+fn assert_task_containers_absent() {
+    let prefix = format!("aiperf-eval-{}-", std::process::id());
+    let output = Command::new("docker")
+        .args(["container", "ls", "--all", "--format", "{{.Names}}"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "unable to inspect Docker containers: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let names = String::from_utf8_lossy(&output.stdout);
+    let remaining = names
+        .lines()
+        .filter(|name| name.starts_with(&prefix))
+        .collect::<Vec<_>>();
+    assert!(
+        remaining.is_empty(),
+        "task containers remained after the evaluation API returned: {remaining:?}"
+    );
 }
 
 fn run_git<const N: usize>(repository: &std::path::Path, arguments: [&str; N]) {

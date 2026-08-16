@@ -3,7 +3,10 @@
 
 //! Agent capability contracts and fail-closed sandbox preflight.
 
-use std::fmt::{self, Display, Formatter};
+use std::{
+    fmt::{self, Display, Formatter},
+    time::Duration,
+};
 
 use super::HarborSandboxRecipe;
 
@@ -25,6 +28,24 @@ pub enum HarborAgentContract {
     Installed { required: Vec<AgentCapability> },
     /// A native graph agent executed by the runtime.
     NativeGraph { required: Vec<AgentCapability> },
+}
+
+/// An evaluation phase that owns a sandbox command timeout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EvalExecutionPhase {
+    /// The externally supplied agent command.
+    Agent,
+    /// The task-supplied verifier command.
+    Verifier,
+}
+
+impl Display for EvalExecutionPhase {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Agent => formatter.write_str("agent"),
+            Self::Verifier => formatter.write_str("verifier"),
+        }
+    }
 }
 
 impl HarborAgentContract {
@@ -83,6 +104,20 @@ pub enum EvalExecutionError {
     ProcessSpawn(String),
     /// A local sandbox process returned a non-success status.
     ProcessFailure(String),
+    /// A phase exceeded its configured execution limit after its container was removed.
+    Timeout {
+        /// The command phase that exceeded its limit.
+        phase: EvalExecutionPhase,
+        /// The configured execution limit.
+        timeout: Duration,
+    },
+    /// Explicit removal of a timed-out container could not be verified.
+    ContainerTeardown {
+        /// The container that may still be running.
+        container: String,
+        /// The failed Docker operation.
+        reason: String,
+    },
 }
 
 impl Display for EvalExecutionError {
@@ -102,6 +137,15 @@ impl Display for EvalExecutionError {
             }
             Self::ProcessFailure(command) => {
                 write!(formatter, "sandbox command failed: {command:?}")
+            }
+            Self::Timeout { phase, timeout } => {
+                write!(formatter, "{phase} phase timed out after {timeout:?}")
+            }
+            Self::ContainerTeardown { container, reason } => {
+                write!(
+                    formatter,
+                    "failed to remove timed-out container {container:?}: {reason}"
+                )
             }
         }
     }
