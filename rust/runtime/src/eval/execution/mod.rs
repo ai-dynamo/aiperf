@@ -22,9 +22,13 @@ pub use agent::{
 pub use artifacts::{collect_artifacts, transfer_artifacts};
 pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
 pub use docker_process::DockerProcessSandbox;
+#[allow(unused_imports)]
 pub use docker_runtime::{
-    DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerEnvironment,
-    DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest, preflight_docker,
+    ComposeProjectId, DockerBuildRequest, DockerComposeArchiveRequest, DockerComposeBuildRequest,
+    DockerComposeConfigRequest, DockerComposeDownRequest, DockerComposeExecRequest,
+    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
+    DockerCreateRequest, DockerEnvironment, DockerExecRequest, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, OwnedComposeResources, preflight_compose_configuration, preflight_docker,
     resolve_environment, resolve_phase_environment,
 };
 pub use local_process::{

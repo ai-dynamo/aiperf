@@ -649,6 +649,11 @@ pub struct ProviderCapabilities {
     no_network: bool,
     public_network: bool,
     allowlist_egress: bool,
+    compose_project: bool,
+    compose_config: bool,
+    service_exec: bool,
+    service_archive: bool,
+    service_stop: bool,
 }
 
 impl ProviderCapabilities {
@@ -667,6 +672,11 @@ impl ProviderCapabilities {
             no_network: false,
             public_network: false,
             allowlist_egress: false,
+            compose_project: false,
+            compose_config: false,
+            service_exec: false,
+            service_archive: false,
+            service_stop: false,
         }
     }
 
@@ -742,6 +752,36 @@ impl ProviderCapabilities {
         self
     }
 
+    /// Declares task-owned Docker Compose project support.
+    pub const fn with_compose_project(mut self) -> Self {
+        self.compose_project = true;
+        self
+    }
+
+    /// Declares read-only Docker Compose configuration support.
+    pub const fn with_compose_config(mut self) -> Self {
+        self.compose_config = true;
+        self
+    }
+
+    /// Declares service-targeted command execution support.
+    pub const fn with_service_exec(mut self) -> Self {
+        self.service_exec = true;
+        self
+    }
+
+    /// Declares service-targeted archive collection support.
+    pub const fn with_service_archive(mut self) -> Self {
+        self.service_archive = true;
+        self
+    }
+
+    /// Declares service-targeted stop support.
+    pub const fn with_service_stop(mut self) -> Self {
+        self.service_stop = true;
+        self
+    }
+
     fn supports(self, capability: &str) -> bool {
         match capability {
             "docker" => self.docker,
@@ -756,6 +796,11 @@ impl ProviderCapabilities {
             "no_network" => self.no_network,
             "public_network" => self.public_network,
             "allowlist_egress" => self.allowlist_egress,
+            "compose_project" => self.compose_project,
+            "compose_config" => self.compose_config,
+            "service_exec" => self.service_exec,
+            "service_archive" => self.service_archive,
+            "service_stop" => self.service_stop,
             _ => false,
         }
     }
@@ -869,6 +914,14 @@ impl BenchmarkExecutionPlan {
     ) -> Result<(), EvalExecutionError> {
         require(capabilities, "docker")?;
         require(capabilities, "image_source")?;
+        if self.compose.is_some() {
+            require(capabilities, "compose_project")?;
+            require(capabilities, "compose_config")?;
+            require(capabilities, "service_exec")?;
+            require(capabilities, "service_archive")?;
+            require(capabilities, "service_stop")?;
+            require(capabilities, "public_network")?;
+        }
         for environment in std::iter::once(&self.environment)
             .chain(self.steps.iter().map(|step| step.verifier.environment()))
         {

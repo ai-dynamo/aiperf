@@ -96,6 +96,57 @@ command = ["dbctl", "dump"]
     assert_eq!(step.collect_hooks()[1].command(), ["dbctl", "dump"]);
 }
 
+#[test]
+fn compose_plan_requires_the_complete_provider_contract_before_execution() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let plan = imported.package.execution_plan();
+
+    let baseline = ProviderCapabilities::none()
+        .with_docker()
+        .with_image_source()
+        .with_public_network();
+    assert!(matches!(
+        plan.validate_for(baseline),
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "compose_project"
+        ))
+    ));
+    assert!(matches!(
+        plan.validate_for(baseline.with_compose_project()),
+        Err(EvalExecutionError::UnsupportedEnforcement("compose_config"))
+    ));
+    assert!(matches!(
+        plan.validate_for(
+            baseline
+                .with_compose_project()
+                .with_compose_config()
+                .with_service_exec()
+                .with_service_archive()
+        ),
+        Err(EvalExecutionError::UnsupportedEnforcement("service_stop"))
+    ));
+    assert!(
+        plan.validate_for(
+            baseline
+                .with_compose_project()
+                .with_compose_config()
+                .with_service_exec()
+                .with_service_archive()
+                .with_service_stop(),
+        )
+        .is_ok()
+    );
+}
+
 /// A Docker boundary that supplies precise archive bytes for collection tests.
 struct ArchiveRuntime {
     archives: RefCell<BTreeMap<String, VecDeque<Vec<u8>>>>,

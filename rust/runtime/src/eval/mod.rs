@@ -30,17 +30,21 @@ pub use artifact_manifest::{
 };
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
-    AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectPlan,
-    ComposeServiceName, ContainerResources, DockerBuildRequest, DockerCopyRequest,
-    DockerCreateRequest, DockerEnvironment, DockerExecRequest, DockerProcessSandbox,
-    DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding, EnvName, EnvironmentPlan,
-    EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract,
-    HarborEvaluationCoordinator, HarborEvaluationError, HarborSandboxRecipe, HealthcheckPlan,
-    ImageSource, ImageSourceKind, ImmutablePatch, LocalExecutionResult, LocalProcessSandbox,
-    MaterializedSandbox, MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy,
+    AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId,
+    ComposeProjectPlan, ComposeServiceName, ContainerResources, DockerBuildRequest,
+    DockerComposeArchiveRequest, DockerComposeBuildRequest, DockerComposeConfigRequest,
+    DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
+    DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
+    DockerEnvironment, DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, EnvBinding, EnvName, EnvironmentPlan, EvalExecutionError,
+    EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator,
+    HarborEvaluationError, HarborSandboxRecipe, HealthcheckPlan, ImageSource, ImageSourceKind,
+    ImmutablePatch, LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox,
+    MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy, OwnedComposeResources,
     PhasePlan, ProcessOutput, ProviderCapabilities, SandboxRole, SecretProvider, SecretValue,
     StepExecutionResult, VerifierCollectHook, VerifierPlan, WorkspaceOverlay, collect_artifacts,
-    preflight_docker, resolve_phase_environment, transfer_artifacts,
+    preflight_compose_configuration, preflight_docker, resolve_phase_environment,
+    transfer_artifacts,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

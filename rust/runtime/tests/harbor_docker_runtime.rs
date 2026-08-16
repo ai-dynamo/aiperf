@@ -16,10 +16,14 @@ use std::{
 
 use aiperf_runtime::clock::SimClock;
 use aiperf_runtime::eval::{
-    DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
-    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvName,
-    EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource, NativeSourceAcquirer,
-    ProviderCapabilities, SecretProvider, SecretValue, preflight_docker,
+    ComposeProjectId, DockerBuildRequest, DockerComposeArchiveRequest, DockerComposeBuildRequest,
+    DockerComposeConfigRequest, DockerComposeDownRequest, DockerComposeExecRequest,
+    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
+    DockerCreateRequest, DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest,
+    DockerRuntime, DockerStartRequest, EnvName, EvalExecutionError, HarborImporter,
+    HarborSandboxRecipe, HarborSource, NativeSourceAcquirer, OwnedComposeResources,
+    ProviderCapabilities, SecretProvider, SecretValue, preflight_compose_configuration,
+    preflight_docker,
 };
 use std::rc::Rc;
 
@@ -67,6 +71,131 @@ impl DockerRuntime for RecordingRuntime {
         self.events.borrow_mut().push("remove".to_owned());
         Ok(())
     }
+}
+
+#[derive(Default)]
+struct ComposePreflightRuntime {
+    config_calls: Cell<usize>,
+    build_calls: Cell<usize>,
+    up_calls: Cell<usize>,
+}
+
+impl DockerRuntime for ComposePreflightRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_public_network()
+            .with_compose_project()
+            .with_compose_config()
+            .with_service_exec()
+            .with_service_archive()
+            .with_service_stop()
+    }
+
+    fn compose_runtime(&self) -> Option<&dyn DockerComposeRuntime> {
+        Some(self)
+    }
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        self.build_calls.set(self.build_calls.get() + 1);
+        Ok(())
+    }
+    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+    fn exec(&self, _: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+    fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+}
+
+impl DockerComposeRuntime for ComposePreflightRuntime {
+    fn compose_config(
+        &self,
+        request: &DockerComposeConfigRequest,
+    ) -> Result<Vec<u8>, EvalExecutionError> {
+        assert!(request.interpolation_disabled());
+        assert!(request.env_file_disabled());
+        self.config_calls.set(self.config_calls.get() + 1);
+        Ok(b"{}".to_vec())
+    }
+    fn compose_build(&self, _: &DockerComposeBuildRequest) -> Result<(), EvalExecutionError> {
+        self.build_calls.set(self.build_calls.get() + 1);
+        Ok(())
+    }
+    fn compose_up(&self, _: &DockerComposeUpRequest) -> Result<(), EvalExecutionError> {
+        self.up_calls.set(self.up_calls.get() + 1);
+        Ok(())
+    }
+    fn compose_exec(&self, _: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+    fn compose_copy_archive(
+        &self,
+        _: &DockerComposeArchiveRequest,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        Err(EvalExecutionError::ArtifactCollection(
+            "unexpected archive".to_owned(),
+        ))
+    }
+    fn compose_stop_service(&self, _: &DockerComposeStopRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+    fn compose_down(&self, _: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+    fn compose_owned_resources(
+        &self,
+        _: &ComposeProjectId,
+    ) -> Result<OwnedComposeResources, EvalExecutionError> {
+        Ok(OwnedComposeResources::default())
+    }
+}
+
+#[test]
+fn compose_preflight_runs_only_read_only_configuration_before_lifecycle() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposePreflightRuntime::default();
+    let request = DockerComposeConfigRequest::new(
+        ComposeProjectId::new("aiperf-test"),
+        task_root.join("environment"),
+        b"services: {}\n".to_vec(),
+        task_root.join("environment/docker-compose.yaml"),
+    );
+
+    assert!(
+        preflight_compose_configuration(
+            &runtime,
+            imported.package.execution_plan(),
+            &task_root.join("environment"),
+            &request,
+            "aiperf-main:test",
+            &BTreeMap::new(),
+            task_root.as_path(),
+            b"services:\n  api:\n    image: api:fixture\n",
+        )
+        .is_err()
+    );
+    assert_eq!(runtime.config_calls.get(), 0);
+    assert_eq!(runtime.build_calls.get(), 0);
+    assert_eq!(runtime.up_calls.get(), 0);
 }
 
 #[test]

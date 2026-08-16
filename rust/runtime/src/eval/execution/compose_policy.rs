@@ -131,6 +131,26 @@ pub(crate) fn validate_canonical_compose_json(
     )
 }
 
+/// Validates provider-produced JSON against the private generated-main model.
+///
+/// The model is retained by this module so a provider result cannot be accepted
+/// merely by presenting a plausible canonical `main` service.
+pub(crate) fn validate_provider_compose_config(
+    json: &[u8],
+    plan: &ComposeProjectPlan,
+    environment_root: &Path,
+    rendered: &RenderedGeneratedMainCompose,
+    authored: &ValidatedComposeProject,
+) -> Result<ValidatedComposeProject, EvalExecutionError> {
+    validate_canonical_compose_json(
+        json,
+        plan,
+        environment_root,
+        rendered.expected_main(),
+        authored.main_dependency_contract(),
+    )
+}
+
 /// Renders the private base file whose `main` service is controlled only by AIPerf.
 pub(crate) fn render_generated_main_compose(
     image_tag: &str,
@@ -1716,6 +1736,7 @@ mod tests {
 
     use super::{
         render_generated_main_compose, validate_authored_compose, validate_canonical_compose_json,
+        validate_provider_compose_config,
     };
     use crate::eval::{
         ArtifactDigest, ComposeProjectPlan, ComposeServiceName, ContainerResources, EnvBinding,
@@ -1852,12 +1873,12 @@ volumes:
             serde_json::to_string(&context).unwrap(),
         );
 
-        let validated = validate_canonical_compose_json(
+        let validated = validate_provider_compose_config(
             canonical.as_bytes(),
             &plan,
             &environment_root,
-            generated.expected_main(),
-            authored.main_dependency_contract(),
+            &generated,
+            &authored,
         )
         .unwrap();
         assert_eq!(validated.services, plan.services().clone());

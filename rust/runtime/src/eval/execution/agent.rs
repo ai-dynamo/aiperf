@@ -73,6 +73,8 @@ pub enum EvalExecutionPhase {
     Healthcheck,
     /// The externally supplied agent command.
     Agent,
+    /// A final service-evidence collection command.
+    CollectionHook,
     /// The task-supplied verifier command.
     Verifier,
 }
@@ -82,6 +84,7 @@ impl Display for EvalExecutionPhase {
         match self {
             Self::Healthcheck => formatter.write_str("healthcheck"),
             Self::Agent => formatter.write_str("agent"),
+            Self::CollectionHook => formatter.write_str("collection hook"),
             Self::Verifier => formatter.write_str("verifier"),
         }
     }
@@ -145,6 +148,13 @@ pub enum EvalExecutionError {
     Unhealthy(String),
     /// Declared task artifacts could not be collected safely.
     ArtifactCollection(String),
+    /// A declared service collection hook failed.
+    CollectionHook {
+        /// The service whose collection command failed.
+        service: String,
+        /// The redacted provider failure reason.
+        reason: String,
+    },
     /// An immutable workspace or artifact identity was invalid.
     InvalidWorkspace(String),
     /// The requested local process command was not a nonempty argv.
@@ -202,6 +212,12 @@ impl Display for EvalExecutionError {
             Self::Unhealthy(reason) => write!(formatter, "task environment is unhealthy: {reason}"),
             Self::ArtifactCollection(reason) => {
                 write!(formatter, "artifact collection failed: {reason}")
+            }
+            Self::CollectionHook { service, reason } => {
+                write!(
+                    formatter,
+                    "collection hook failed for service {service:?}: {reason}"
+                )
             }
             Self::InvalidWorkspace(reason) => write!(formatter, "invalid workspace {reason}"),
             Self::InvalidCommand => formatter.write_str("sandbox command must be a nonempty argv"),
