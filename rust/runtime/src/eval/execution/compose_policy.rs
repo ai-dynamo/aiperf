@@ -28,6 +28,21 @@ const DEFAULT_WORKDIR: &str = "/work";
 pub(crate) struct ValidatedComposeProject {
     pub(crate) services: BTreeSet<ComposeServiceName>,
     pub(crate) main_dependencies: Vec<ComposeServiceName>,
+    main_dependency_contract: MainDependencyContract,
+}
+
+impl ValidatedComposeProject {
+    /// Returns the static main dependency contract for canonical validation.
+    pub(crate) fn main_dependency_contract(&self) -> &MainDependencyContract {
+        &self.main_dependency_contract
+    }
+}
+
+/// Compose-normalized dependency authority captured from the authored overlay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MainDependencyContract {
+    canonical: Option<BTreeMap<String, DependencyCondition>>,
+    names: Vec<ComposeServiceName>,
 }
 
 /// Private base bytes paired with the exact generated-main authority they encode.
@@ -101,12 +116,19 @@ pub(crate) fn validate_canonical_compose_json(
     plan: &ComposeProjectPlan,
     environment_root: &Path,
     expected_main: &ExpectedGeneratedMain,
+    expected_main_dependencies: &MainDependencyContract,
 ) -> Result<ValidatedComposeProject, EvalExecutionError> {
     reject_dotenv_files(environment_root)?;
     let document = serde_json::from_slice::<CanonicalCompose>(json)
         .map_err(|error| decode_error("compose", &error.to_string()))?;
     reject_interpolation_in(&document)?;
-    validate_canonical_document(document, plan, environment_root, expected_main)
+    validate_canonical_document(
+        document,
+        plan,
+        environment_root,
+        expected_main,
+        expected_main_dependencies,
+    )
 }
 
 /// Renders the private base file whose `main` service is controlled only by AIPerf.
@@ -408,7 +430,7 @@ impl<'a> Iterator for DependsOnNames<'a> {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct DependencyCondition {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -616,14 +638,22 @@ fn validate_authored_document(
     let declared_volumes = document.volumes.keys().cloned().collect::<BTreeSet<_>>();
     let mut services = BTreeSet::from([ComposeServiceName::main()]);
     let mut main_dependencies = Vec::new();
+    let mut main_dependency_contract = MainDependencyContract {
+        canonical: None,
+        names: Vec::new(),
+    };
     for (name, service) in document.services {
         let service_name = ComposeServiceName::parse(&name)
             .map_err(|reason| policy_error(format!("services.{name}"), reason))?;
         let path = format!("services.{name}");
         if name == "main" {
             validate_authored_main(&service, &path)?;
-            main_dependencies =
-                validate_dependencies(service.depends_on.as_ref(), &path, plan.services())?;
+            main_dependency_contract = validate_authored_main_dependencies(
+                service.depends_on.as_ref(),
+                &path,
+                plan.services(),
+            )?;
+            main_dependencies = main_dependency_contract.names.clone();
         } else {
             validate_sidecar_service(
                 &service,
@@ -639,6 +669,7 @@ fn validate_authored_document(
     Ok(ValidatedComposeProject {
         services,
         main_dependencies,
+        main_dependency_contract,
     })
 }
 
@@ -647,6 +678,7 @@ fn validate_canonical_document(
     plan: &ComposeProjectPlan,
     environment_root: &Path,
     expected_main: &ExpectedGeneratedMain,
+    expected_main_dependencies: &MainDependencyContract,
 ) -> Result<ValidatedComposeProject, EvalExecutionError> {
     if document.services.is_empty() {
         return Err(policy_error("services", "must be a nonempty mapping"));
@@ -672,8 +704,12 @@ fn validate_canonical_document(
         let path = format!("services.{name}");
         validate_default_networks(service.networks.as_ref(), &path)?;
         if name == "main" {
-            main_dependencies =
-                validate_canonical_main(&service, &path, plan.services(), expected_main)?;
+            main_dependencies = validate_canonical_main(
+                &service,
+                &path,
+                expected_main,
+                expected_main_dependencies,
+            )?;
         } else {
             validate_canonical_sidecar(
                 &service,
@@ -689,6 +725,7 @@ fn validate_canonical_document(
     Ok(ValidatedComposeProject {
         services,
         main_dependencies,
+        main_dependency_contract: expected_main_dependencies.clone(),
     })
 }
 
@@ -789,8 +826,8 @@ fn validate_canonical_sidecar(
 fn validate_canonical_main(
     service: &CanonicalService,
     path: &str,
-    services: &BTreeSet<ComposeServiceName>,
     expected: &ExpectedGeneratedMain,
+    expected_dependencies: &MainDependencyContract,
 ) -> Result<Vec<ComposeServiceName>, EvalExecutionError> {
     if service.image.as_ref() != Some(&expected.image) {
         return Err(policy_error(
@@ -895,7 +932,8 @@ fn validate_canonical_main(
             "generated main networks differ from runtime authority",
         ));
     }
-    validate_dependencies(service.depends_on.as_ref(), path, services)
+    validate_canonical_main_dependencies(service.depends_on.as_ref(), expected_dependencies, path)?;
+    Ok(expected_dependencies.names.clone())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1051,6 +1089,72 @@ fn validate_dependencies(
         }
     }
     Ok(normalized)
+}
+
+fn validate_authored_main_dependencies(
+    dependencies: Option<&DependsOn>,
+    path: &str,
+    services: &BTreeSet<ComposeServiceName>,
+) -> Result<MainDependencyContract, EvalExecutionError> {
+    let names = validate_dependencies(dependencies, path, services)?;
+    let canonical = match dependencies {
+        None => None,
+        Some(DependsOn::List(dependencies)) => Some(
+            dependencies
+                .iter()
+                .map(|name| (name.clone(), default_dependency_condition()))
+                .collect(),
+        ),
+        Some(DependsOn::Map(dependencies)) => {
+            let mut canonical = BTreeMap::new();
+            for (name, condition) in dependencies {
+                if condition.condition.is_some()
+                    || condition.restart.is_some()
+                    || condition.required.is_some()
+                {
+                    return Err(policy_error(
+                        format!("{path}.depends_on.{name}"),
+                        "authored main dependencies may name services only",
+                    ));
+                }
+                canonical.insert(name.clone(), default_dependency_condition());
+            }
+            Some(canonical)
+        }
+    };
+    Ok(MainDependencyContract { canonical, names })
+}
+
+fn validate_canonical_main_dependencies(
+    dependencies: Option<&DependsOn>,
+    expected: &MainDependencyContract,
+    path: &str,
+) -> Result<(), EvalExecutionError> {
+    let actual = match dependencies {
+        None => None,
+        Some(DependsOn::Map(dependencies)) => Some(dependencies),
+        Some(DependsOn::List(_)) => {
+            return Err(policy_error(
+                format!("{path}.depends_on"),
+                "canonical main dependencies are not normalized",
+            ));
+        }
+    };
+    if actual != expected.canonical.as_ref() {
+        return Err(policy_error(
+            format!("{path}.depends_on"),
+            "canonical main dependencies differ from the authored overlay",
+        ));
+    }
+    Ok(())
+}
+
+fn default_dependency_condition() -> DependencyCondition {
+    DependencyCondition {
+        condition: Some("service_started".to_owned()),
+        restart: None,
+        required: Some(true),
+    }
 }
 
 fn validate_build(
@@ -1699,6 +1803,24 @@ volumes:
             &workspace,
         )
         .unwrap();
+        let authored = validate_authored_compose(
+            br#"
+services:
+  main:
+    depends_on: [api]
+  api:
+    image: example/api:fixture
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.worker
+volumes:
+  data: {}
+"#,
+            &plan,
+            &environment_root,
+        )
+        .unwrap();
         let canonical = format!(
             r#"{{
   "services": {{
@@ -1735,6 +1857,7 @@ volumes:
             &plan,
             &environment_root,
             generated.expected_main(),
+            authored.main_dependency_contract(),
         )
         .unwrap();
         assert_eq!(validated.services, plan.services().clone());
@@ -1746,6 +1869,7 @@ volumes:
             &plan,
             &environment_root,
             generated.expected_main(),
+            authored.main_dependency_contract(),
         )
         .unwrap_err();
         assert!(error.to_string().contains("services"), "{error}");
@@ -1768,6 +1892,12 @@ volumes:
             &labels,
             &environment_plan(),
             &workspace,
+        )
+        .unwrap();
+        let authored = validate_authored_compose(
+            b"services:\n  main: {}\n  api:\n    image: example/api:fixture\n",
+            &plan,
+            &environment_root,
         )
         .unwrap();
         let canonical = serde_json::json!({
@@ -1880,11 +2010,106 @@ volumes:
                 &plan,
                 &environment_root,
                 generated.expected_main(),
+                authored.main_dependency_contract(),
             )
             .expect_err("generated main authority drift must be rejected");
             assert!(
                 error.to_string().contains(path),
                 "expected {path:?} in {error} for {pointer}"
+            );
+        }
+    }
+
+    #[test]
+    fn compose_policy_rejects_added_removed_or_modified_main_dependencies() {
+        let temporary = tempfile::tempdir().unwrap();
+        let environment_root = temporary.path().join("environment");
+        let workspace = temporary.path().join("agent-workspace");
+        fs::create_dir(&environment_root).unwrap();
+        fs::create_dir(&workspace).unwrap();
+        let plan = compose_plan(&["api", "main", "worker"]);
+        let generated = render_generated_main_compose(
+            "aiperf-main:abc",
+            &BTreeMap::from([("aiperf.project".to_owned(), "fixture".to_owned())]),
+            &environment_plan(),
+            &workspace,
+        )
+        .unwrap();
+        let authored = validate_authored_compose(
+            b"services:\n  main:\n    depends_on: [api]\n  api:\n    image: example/api:fixture\n  worker:\n    image: example/worker:fixture\n",
+            &plan,
+            &environment_root,
+        )
+        .unwrap();
+        let canonical = serde_json::json!({
+            "services": {
+                "main": {
+                    "image": "aiperf-main:abc",
+                    "command": ["sleep", "infinity"],
+                    "depends_on": {
+                        "api": {"condition": "service_started", "required": true}
+                    },
+                    "working_dir": "/workspace",
+                    "user": "1000:1000",
+                    "environment": {"PUBLIC": "fixture"},
+                    "labels": {"aiperf.project": "fixture"},
+                    "cpus": 2,
+                    "mem_limit": "512m",
+                    "networks": {"default": null},
+                    "volumes": [{
+                        "type": "bind",
+                        "source": workspace,
+                        "target": "/workspace"
+                    }],
+                    "restart": "no"
+                },
+                "api": {
+                    "image": "example/api:fixture",
+                    "networks": {"default": null}
+                },
+                "worker": {
+                    "image": "example/worker:fixture",
+                    "networks": {"default": null}
+                }
+            },
+            "networks": {"default": {"name": "fixture_default"}}
+        });
+        let drifts = [
+            Some(serde_json::json!({
+                "api": {"condition": "service_started", "required": true},
+                "worker": {"condition": "service_started", "required": true}
+            })),
+            None,
+            Some(serde_json::json!({
+                "api": {"condition": "service_healthy", "required": true}
+            })),
+            Some(serde_json::json!({
+                "api": {"condition": "service_started", "required": true, "restart": true}
+            })),
+            Some(serde_json::json!({
+                "api": {"condition": "service_started", "required": false}
+            })),
+        ];
+
+        for dependencies in drifts {
+            let mut drifted = canonical.clone();
+            let main = drifted["services"]["main"].as_object_mut().unwrap();
+            if let Some(dependencies) = dependencies {
+                main.insert("depends_on".to_owned(), dependencies);
+            } else {
+                main.remove("depends_on");
+            }
+            let error = validate_canonical_compose_json(
+                &serde_json::to_vec(&drifted).unwrap(),
+                &plan,
+                &environment_root,
+                generated.expected_main(),
+                authored.main_dependency_contract(),
+            )
+            .expect_err("canonical main dependencies must match the authored overlay");
+            assert!(
+                error.to_string().contains("services.main.depends_on"),
+                "{error}"
             );
         }
     }
@@ -2008,6 +2233,10 @@ volumes:
         assert_invalid_authored(
             "services.api.labels.aiperf.run",
             "services:\n  api:\n    image: api:fixture\n    labels:\n      aiperf.run: attacker\n",
+        );
+        assert_invalid_authored(
+            "services.main.depends_on.api",
+            "services:\n  main:\n    depends_on:\n      api:\n        condition: service_healthy\n  api:\n    image: api:fixture\n",
         );
     }
 
