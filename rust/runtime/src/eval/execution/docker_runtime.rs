@@ -968,6 +968,7 @@ pub trait DockerComposeRuntime: DockerRuntime {
     fn compose_owned_resources(
         &self,
         project: &ComposeProjectId,
+        deadline: Duration,
     ) -> Result<OwnedComposeResources, EvalExecutionError>;
 }
 
@@ -1137,6 +1138,7 @@ mod compose_lease_tests {
         fn compose_owned_resources(
             &self,
             _: &ComposeProjectId,
+            _: Duration,
         ) -> Result<OwnedComposeResources, EvalExecutionError> {
             if self
                 .events
@@ -1305,6 +1307,8 @@ mod compose_lease_tests {
         remove_failures: Cell<usize>,
         resources: RefCell<OwnedComposeResources>,
         removals: RefCell<Vec<String>>,
+        removal_deadlines: RefCell<Vec<Duration>>,
+        discovery_deadlines: RefCell<Vec<Duration>>,
         down_requests: RefCell<Vec<(Duration, Duration)>>,
     }
 
@@ -1328,6 +1332,9 @@ mod compose_lease_tests {
             Ok(())
         }
         fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+            self.removal_deadlines
+                .borrow_mut()
+                .push(request.deadline().unwrap_or_default());
             self.removals.borrow_mut().push(
                 request
                     .public_arguments()
@@ -1335,7 +1342,11 @@ mod compose_lease_tests {
                     .cloned()
                     .unwrap_or_default(),
             );
-            assert_eq!(request.deadline(), Some(std::time::Duration::from_secs(10)));
+            assert!(
+                request
+                    .deadline()
+                    .is_some_and(|deadline| !deadline.is_zero())
+            );
             if self.remove_failures.get() > 0 {
                 self.remove_failures.set(self.remove_failures.get() - 1);
                 Err(EvalExecutionError::ProcessFailure("remove".to_owned()))
@@ -1422,7 +1433,10 @@ mod compose_lease_tests {
         fn compose_owned_resources(
             &self,
             _: &ComposeProjectId,
+            deadline: Duration,
         ) -> Result<OwnedComposeResources, EvalExecutionError> {
+            self.discovery_deadlines.borrow_mut().push(deadline);
+            std::thread::sleep(Duration::from_millis(1));
             Ok(self.resources.borrow().clone())
         }
     }
@@ -1449,6 +1463,8 @@ mod compose_lease_tests {
                 Vec::new(),
             )),
             removals: RefCell::new(Vec::new()),
+            removal_deadlines: RefCell::new(Vec::new()),
+            discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
@@ -1483,6 +1499,8 @@ mod compose_lease_tests {
                 Vec::new(),
             )),
             removals: RefCell::new(Vec::new()),
+            removal_deadlines: RefCell::new(Vec::new()),
+            discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
         {
@@ -1511,6 +1529,8 @@ mod compose_lease_tests {
             remove_failures: Cell::new(0),
             resources: RefCell::new(OwnedComposeResources::default()),
             removals: RefCell::new(Vec::new()),
+            removal_deadlines: RefCell::new(Vec::new()),
+            discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
@@ -1543,6 +1563,8 @@ mod compose_lease_tests {
             remove_failures: Cell::new(0),
             resources: RefCell::new(OwnedComposeResources::default()),
             removals: RefCell::new(Vec::new()),
+            removal_deadlines: RefCell::new(Vec::new()),
+            discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
         {
@@ -1583,6 +1605,8 @@ mod compose_lease_tests {
                 vec!["volume".to_owned()],
             )),
             removals: RefCell::new(Vec::new()),
+            removal_deadlines: RefCell::new(Vec::new()),
+            discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
@@ -1603,5 +1627,47 @@ mod compose_lease_tests {
             lease.state(),
             super::super::compose_project::ComposeLeaseState::Started
         );
+    }
+
+    #[test]
+    fn compose_lease_terminal_cleanup_consumes_one_deadline_across_removals() {
+        let runtime = Rc::new(CleanupRuntime {
+            fail_up: false,
+            down_failures: Cell::new(0),
+            down_clears_resources: false,
+            remove_failures: Cell::new(0),
+            resources: RefCell::new(OwnedComposeResources::new(
+                vec!["one".to_owned(), "two".to_owned()],
+                Vec::new(),
+                Vec::new(),
+            )),
+            removals: RefCell::new(Vec::new()),
+            removal_deadlines: RefCell::new(Vec::new()),
+            discovery_deadlines: RefCell::new(Vec::new()),
+            down_requests: RefCell::new(Vec::new()),
+        });
+        let mut lease = ComposeProjectLease::reserve(
+            runtime.as_ref(),
+            &cleanup_plan(),
+            "abcdef",
+            "/tmp",
+            "main",
+        )
+        .unwrap();
+        lease.start().unwrap();
+        assert!(
+            lease
+                .teardown_after_terminal_failure(Duration::from_secs(3))
+                .is_err()
+        );
+        let deadlines = runtime.removal_deadlines.borrow();
+        assert_eq!(deadlines.len(), 2);
+        assert!(deadlines[0] <= Duration::from_secs(3));
+        assert!(deadlines[1] < deadlines[0]);
+        let discoveries = runtime.discovery_deadlines.borrow();
+        assert!(discoveries.len() >= 3);
+        let first_terminal_discovery = discoveries.len() - 2;
+        assert!(discoveries[first_terminal_discovery] <= Duration::from_secs(3));
+        assert!(discoveries[first_terminal_discovery + 1] < discoveries[first_terminal_discovery]);
     }
 }

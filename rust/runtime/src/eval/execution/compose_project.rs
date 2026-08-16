@@ -3,7 +3,11 @@
 
 //! State-bounded lifecycle management for a task-owned Compose project.
 
-use std::{collections::BTreeSet, io::Read, time::Duration};
+use std::{
+    collections::BTreeSet,
+    io::Read,
+    time::{Duration, Instant},
+};
 
 use super::task_environment::{
     ServiceArchiveRequest, ServiceExecRequest, ServiceHandle, TaskEnvironmentLease,
@@ -21,6 +25,24 @@ use super::{
 /// still reclaim exact task-owned resources, but must never turn a sub-second
 /// phase timeout into the former minute-long teardown wait.
 pub(crate) const TERMINAL_COMPOSE_CLEANUP_DEADLINE: Duration = Duration::from_secs(10);
+
+/// One host deadline shared by terminal cleanup provider operations.
+struct CleanupDeadline(Instant);
+
+impl CleanupDeadline {
+    fn new(timeout: Duration) -> Self {
+        Self(Instant::now() + timeout)
+    }
+    fn remaining(&self) -> Result<Duration, EvalExecutionError> {
+        self.0
+            .checked_duration_since(Instant::now())
+            .filter(|value| !value.is_zero())
+            .ok_or_else(|| EvalExecutionError::ContainerTeardown {
+                container: "Compose project".to_owned(),
+                reason: "terminal cleanup deadline elapsed".to_owned(),
+            })
+    }
+}
 
 /// The monotonic lifecycle state of a Compose task environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,7 +126,10 @@ impl<'a> ComposeProjectLease<'a> {
             self.record_after_failure();
             return self.finish_start_failure(error);
         }
-        match self.runtime.compose_owned_resources(&self.project) {
+        match self
+            .runtime
+            .compose_owned_resources(&self.project, self.startup_timeout)
+        {
             Ok(resources) => {
                 self.recorded = resources;
                 self.state = ComposeLeaseState::Started;
@@ -131,7 +156,10 @@ impl<'a> ComposeProjectLease<'a> {
     }
 
     fn record_after_failure(&mut self) {
-        if let Ok(resources) = self.runtime.compose_owned_resources(&self.project) {
+        if let Ok(resources) = self
+            .runtime
+            .compose_owned_resources(&self.project, self.startup_timeout)
+        {
             self.recorded = resources;
         }
     }
@@ -143,25 +171,29 @@ impl<'a> ComposeProjectLease<'a> {
         }
     }
 
-    fn force_recorded_resources(&self, deadline: Duration) -> Result<(), EvalExecutionError> {
+    fn force_recorded_resources(
+        &self,
+        deadline: &CleanupDeadline,
+    ) -> Result<(), EvalExecutionError> {
         let mut first_error = None;
         for container in self.recorded.containers() {
             let removal = self.runtime.remove(
                 &DockerRemoveRequest::new(["rm", "--force", "--volumes", container])
-                    .with_deadline(deadline),
+                    .with_deadline(deadline.remaining()?),
             );
             first_error = first_error.or(removal.err());
         }
         for network in self.recorded.networks() {
             let removal = self.runtime.remove(
-                &DockerRemoveRequest::new(["network", "rm", network]).with_deadline(deadline),
+                &DockerRemoveRequest::new(["network", "rm", network])
+                    .with_deadline(deadline.remaining()?),
             );
             first_error = first_error.or(removal.err());
         }
         for volume in self.recorded.volumes() {
             let removal = self.runtime.remove(
                 &DockerRemoveRequest::new(["volume", "rm", "--force", volume])
-                    .with_deadline(deadline),
+                    .with_deadline(deadline.remaining()?),
             );
             first_error = first_error.or(removal.err());
         }
@@ -176,26 +208,30 @@ impl<'a> ComposeProjectLease<'a> {
         if self.state == ComposeLeaseState::Down {
             return Ok(());
         }
+        let cleanup_deadline = CleanupDeadline::new(deadline);
         let request = DockerComposeDownRequest::new(self.project.clone(), &self.project_directory)
-            .with_deadline(deadline);
+            .with_deadline(cleanup_deadline.remaining()?);
         let request = if is_terminal_failure {
             request.with_terminal_failure()
         } else {
             request
         };
         let down = self.runtime.compose_down(&request);
-        let remaining_after_down = self.runtime.compose_owned_resources(&self.project);
+        let remaining_after_down = self
+            .runtime
+            .compose_owned_resources(&self.project, cleanup_deadline.remaining()?);
         if let Ok(resources) = &remaining_after_down {
             self.recorded = resources.clone();
         }
         let needs_force = matches!(&remaining_after_down, Ok(resources) if resources != &OwnedComposeResources::default());
         let forced = if needs_force {
-            self.force_recorded_resources(deadline)
+            self.force_recorded_resources(&cleanup_deadline)
         } else {
             Ok(())
         };
         let remaining = if needs_force {
-            self.runtime.compose_owned_resources(&self.project)
+            self.runtime
+                .compose_owned_resources(&self.project, cleanup_deadline.remaining()?)
         } else {
             remaining_after_down
         };

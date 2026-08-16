@@ -1814,6 +1814,7 @@ impl DockerComposeRuntime for DockerCliRuntime {
     fn compose_owned_resources(
         &self,
         project: &ComposeProjectId,
+        deadline: Duration,
     ) -> Result<super::OwnedComposeResources, EvalExecutionError> {
         let filters = compose_ownership_filters(project);
         let resources = |kind: &str, extra: &[&str]| -> Result<Vec<String>, EvalExecutionError> {
@@ -1822,9 +1823,11 @@ impl DockerComposeRuntime for DockerCliRuntime {
             for filter in &filters {
                 arguments.extend(["--filter".to_owned(), filter.clone()]);
             }
-            let output = docker(
-                arguments.iter().map(String::as_str),
-                "list Compose resources",
+            let output = docker_output_bounded(
+                self.clock.clone(),
+                arguments,
+                project.as_str(),
+                Some(deadline),
             )?;
             Ok(String::from_utf8_lossy(&output)
                 .lines()
@@ -1950,6 +1953,46 @@ fn docker_command_bounded(
         )),
         error => error,
     })
+}
+
+fn docker_output_bounded(
+    clock: Rc<dyn Clock>,
+    arguments: impl IntoIterator<Item = String>,
+    target: &str,
+    deadline: Option<Duration>,
+) -> Result<Vec<u8>, EvalExecutionError> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    let Some(deadline) = deadline else {
+        return docker(
+            arguments.iter().map(String::as_str),
+            "list Compose resources",
+        );
+    };
+    let child = Command::new("docker")
+        .args(&arguments)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose command".to_owned()))?;
+    let mut process = DockerExecChild { child };
+    let mut no_remove = |_target: &str| Ok(());
+    drive_docker_exec(
+        clock,
+        &mut process,
+        target,
+        EvalExecutionPhase::CollectionHook,
+        deadline,
+        &mut no_remove,
+    )?;
+    let mut output = Vec::new();
+    process
+        .child
+        .stdout
+        .take()
+        .ok_or_else(|| EvalExecutionError::ProcessSpawn("docker resource output".to_owned()))?
+        .read_to_end(&mut output)
+        .map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))?;
+    Ok(output)
 }
 
 fn compose_service_container(
