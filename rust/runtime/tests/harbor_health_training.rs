@@ -21,8 +21,8 @@ fn broken_health_record_quarantines_a_task_without_quarantining_a_valid_task() {
 
 #[test]
 fn health_record_rejects_duplicate_evidence_as_nonindependent_support() {
-    let error = TaskHealthRecord::new(TaskVerdict::Broken, vec![digest('a'), digest('a')])
-        .unwrap_err();
+    let error =
+        TaskHealthRecord::new(TaskVerdict::Broken, vec![digest('a'), digest('a')]).unwrap_err();
 
     assert_eq!(error.to_string(), "task health evidence must be unique");
 }
@@ -31,13 +31,7 @@ fn health_record_rejects_duplicate_evidence_as_nonindependent_support() {
 fn trajectory_export_revalidates_its_ordered_attempt_evidence() {
     let attempt = AttemptId::new("attempt-1").unwrap();
     let events = vec![
-        EvidenceEvent::new(
-            attempt.clone(),
-            3,
-            EvidenceKind::Agent,
-            digest('a'),
-            None,
-        ),
+        EvidenceEvent::new(attempt.clone(), 3, EvidenceKind::Agent, digest('a'), None),
         EvidenceEvent::new(
             attempt.clone(),
             5,
@@ -50,5 +44,9 @@ fn trajectory_export_revalidates_its_ordered_attempt_evidence() {
     let manifest = TrajectoryExportManifest::from_events(attempt, &events).unwrap();
 
     assert!(manifest.validate_against(&events).is_ok());
-    assert!(manifest.validate_against(&[events[1].clone(), events[0].clone()]).is_err());
+    assert!(
+        manifest
+            .validate_against(&[events[1].clone(), events[0].clone()])
+            .is_err()
+    );
 }

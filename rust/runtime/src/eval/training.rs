@@ -93,8 +93,12 @@ pub enum TrainingError {
 impl std::fmt::Display for TrainingError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::EmptyEvidence => formatter.write_str("trajectory export requires immutable evidence"),
-            Self::DuplicateEvidence => formatter.write_str("trajectory export evidence must be unique"),
+            Self::EmptyEvidence => {
+                formatter.write_str("trajectory export requires immutable evidence")
+            }
+            Self::DuplicateEvidence => {
+                formatter.write_str("trajectory export evidence must be unique")
+            }
             Self::AttemptMismatch => {
                 formatter.write_str("trajectory export evidence belongs to another attempt")
             }
