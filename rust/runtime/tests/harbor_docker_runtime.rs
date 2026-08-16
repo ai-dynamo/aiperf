@@ -201,7 +201,9 @@ struct ComposeSessionRecordingRuntime {
     docker_phase_calls: RefCell<Vec<(String, Option<String>, Option<String>, Vec<String>)>>,
     failure: Option<ComposeSessionFailure>,
     agent_calls: Cell<usize>,
+    removal_deadlines: RefCell<Vec<Option<Duration>>>,
     advance_verifier_create_to: Option<(Rc<SimClock>, i64)>,
+    advance_verifier_workdir_to: Option<(Rc<SimClock>, i64)>,
 }
 
 impl ComposeSessionRecordingRuntime {
@@ -215,12 +217,19 @@ impl ComposeSessionRecordingRuntime {
             docker_phase_calls: RefCell::new(Vec::new()),
             failure,
             agent_calls: Cell::new(0),
+            removal_deadlines: RefCell::new(Vec::new()),
             advance_verifier_create_to: None,
+            advance_verifier_workdir_to: None,
         }
     }
 
     fn advance_after_verifier_create(mut self, clock: Rc<SimClock>, time_ns: i64) -> Self {
         self.advance_verifier_create_to = Some((clock, time_ns));
+        self
+    }
+
+    fn advance_after_verifier_workdir(mut self, clock: Rc<SimClock>, time_ns: i64) -> Self {
+        self.advance_verifier_workdir_to = Some((clock, time_ns));
         self
     }
 }
@@ -336,11 +345,17 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
         Ok(())
     }
 
-    fn container_workdir(&self, _: &str) -> Result<String, EvalExecutionError> {
+    fn container_workdir(&self, container: &str) -> Result<String, EvalExecutionError> {
+        if container.contains("-verifier-")
+            && let Some((clock, time_ns)) = &self.advance_verifier_workdir_to
+        {
+            clock.advance_to(*time_ns);
+        }
         Ok("/work".to_owned())
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        self.removal_deadlines.borrow_mut().push(request.deadline());
         self.events.borrow_mut().push(format!(
             "remove:{}",
             request.public_arguments().last().unwrap_or(&String::new())
@@ -1100,6 +1115,80 @@ fn compose_verifier_deadline_exhausted_during_isolation_skips_later_setup_and_re
             .all(|event| !event.starts_with("start:") || !event.contains("verifier"))
     );
     assert!(events.iter().all(|event| event != "docker-copy"));
+}
+
+#[test]
+fn compose_verifier_deadline_exhausted_by_workdir_inspection_skips_transfer_and_test() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_main_evidence_timeout_task_root(&temporary);
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            "{}\n[verifier.environment.healthcheck]\ncommand = [\"ready\"]\nstart_period_sec = 1\nretries = 1\n",
+            fs::read_to_string(task_root.join("task.toml")).unwrap()
+        ),
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = ComposeSessionRecordingRuntime::new(None)
+        .advance_after_verifier_workdir(clock.clone(), Duration::from_secs(1).as_nanos() as i64);
+
+    let error = DockerProcessSandbox::with_clock(clock)
+        .execute_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+            .unwrap(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("workdir inspection must consume the verifier envelope");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+            ..
+        }
+    ));
+    let events = runtime.events.borrow();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.starts_with("start:") && event.contains("verifier"))
+    );
+    assert!(
+        events.iter().all(|event| event != "docker-copy"),
+        "unexpected transfer after inspection deadline: {events:?}"
+    );
+    assert!(
+        runtime
+            .docker_phase_calls
+            .borrow()
+            .iter()
+            .all(|(phase, _, _, _)| phase != "verifier")
+    );
+    assert!(
+        runtime
+            .docker_phase_calls
+            .borrow()
+            .iter()
+            .all(|(phase, _, _, _)| phase != "healthcheck")
+    );
+    assert!(
+        runtime
+            .removal_deadlines
+            .borrow()
+            .iter()
+            .all(Option::is_some)
+    );
 }
 
 #[test]

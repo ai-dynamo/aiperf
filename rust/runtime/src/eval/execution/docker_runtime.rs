@@ -952,6 +952,15 @@ pub trait DockerRuntime {
         ))
     }
 
+    /// Inspects the configured workdir within an enclosing phase deadline.
+    fn container_workdir_bounded(
+        &self,
+        container: &str,
+        _: Duration,
+    ) -> Result<String, EvalExecutionError> {
+        self.container_workdir(container)
+    }
+
     /// Opens one declared container path as a streaming Docker archive.
     fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
         Err(EvalExecutionError::ArtifactCollection(

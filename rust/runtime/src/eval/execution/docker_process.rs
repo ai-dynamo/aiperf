@@ -778,7 +778,10 @@ impl<'a> ComposeStepSession<'a> {
             self.runtime.start(&start)?;
             let effective_workdir = match verifier_workdir {
                 Some(workdir) => workdir.to_owned(),
-                None => self.runtime.container_workdir(&name)?,
+                None => match remaining(&deadline)? {
+                    Some(deadline) => self.runtime.container_workdir_bounded(&name, deadline)?,
+                    None => self.runtime.container_workdir(&name)?,
+                },
             };
             validate_verifier_artifact_staging(&effective_workdir, step.artifacts())?;
             transfer_verifier_artifacts(
@@ -799,7 +802,7 @@ impl<'a> ComposeStepSession<'a> {
                 remaining(&deadline)?,
             )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
-                run_healthcheck(
+                run_healthcheck_with_deadline(
                     self.clock.clone(),
                     self.runtime,
                     &name,
@@ -808,6 +811,7 @@ impl<'a> ComposeStepSession<'a> {
                     healthcheck,
                     verifier_network,
                     self.secrets,
+                    deadline.as_ref(),
                 )?;
             }
             prepare_verifier_files_with_deadline(
@@ -849,12 +853,10 @@ impl<'a> ComposeStepSession<'a> {
                 remaining(&deadline)?,
             )
         })();
-        let cleanup = self.runtime.remove(&DockerRemoveRequest::new([
-            "rm",
-            "--force",
-            "--volumes",
-            &name,
-        ]));
+        let cleanup = self.runtime.remove(
+            &DockerRemoveRequest::new(["rm", "--force", "--volumes", &name])
+                .with_deadline(verifier_cleanup_deadline(&deadline)),
+        );
         match (outcome, cleanup) {
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error),
@@ -923,7 +925,7 @@ impl<'a> ComposeStepSession<'a> {
             network_lease: "default",
             deadline: remaining(&deadline)?,
         })?;
-        read_reward_from_lease(self.lease, &main)
+        read_reward_from_lease(self.lease, &main, remaining(&deadline)?)
     }
 }
 
@@ -1151,7 +1153,10 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             self.runtime.start(&start)?;
             let effective_verifier_workdir = match verifier_workdir {
                 Some(workdir) => workdir.to_owned(),
-                None => self.runtime.container_workdir(&name)?,
+                None => match remaining(&deadline)? {
+                    Some(deadline) => self.runtime.container_workdir_bounded(&name, deadline)?,
+                    None => self.runtime.container_workdir(&name)?,
+                },
             };
             validate_verifier_artifact_staging(&effective_verifier_workdir, step.artifacts())?;
             transfer_verifier_artifacts(
@@ -1163,7 +1168,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 remaining(&deadline)?,
             )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
-                run_healthcheck(
+                run_healthcheck_with_deadline(
                     self.clock.clone(),
                     self.runtime,
                     &name,
@@ -1172,6 +1177,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                     healthcheck,
                     verifier_network,
                     self.secrets,
+                    deadline.as_ref(),
                 )?;
             }
             name
@@ -1232,7 +1238,12 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             )
         })();
         let cleanup = if verifier.mode() == VerifierMode::Shared {
-            clear_verifier_files(self.runtime, &verifier_name, verifier_network)
+            clear_verifier_files(
+                self.runtime,
+                &verifier_name,
+                verifier_network,
+                verifier_cleanup_deadline(&deadline),
+            )
         } else {
             Ok(())
         };
@@ -1360,8 +1371,32 @@ fn run_healthcheck(
     network_lease: &str,
     secrets: &dyn SecretProvider,
 ) -> Result<(), EvalExecutionError> {
+    run_healthcheck_with_deadline(
+        clock,
+        runtime,
+        container,
+        environment,
+        workdir,
+        healthcheck,
+        network_lease,
+        secrets,
+        None,
+    )
+}
+
+fn run_healthcheck_with_deadline(
+    clock: Rc<dyn Clock>,
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    environment: &super::EnvironmentPlan,
+    workdir: Option<&str>,
+    healthcheck: &super::HealthcheckPlan,
+    network_lease: &str,
+    secrets: &dyn SecretProvider,
+    deadline: Option<&Deadline>,
+) -> Result<(), EvalExecutionError> {
     if let Some(start_period) = healthcheck.start_period() {
-        sleep_with_clock(clock.clone(), start_period, container)?;
+        sleep_healthcheck_with_deadline(clock.clone(), start_period, container, deadline)?;
     }
     let retries = healthcheck.retries().unwrap_or(1);
     let health_environment = resolve_environment(environment, secrets)?;
@@ -1378,7 +1413,15 @@ fn run_healthcheck(
             environment.user(),
             workdir,
             network_lease,
-            healthcheck.timeout(),
+            match (
+                healthcheck.timeout(),
+                deadline.map(Deadline::remaining).transpose()?,
+            ) {
+                (Some(health), Some(remaining)) => Some(health.min(remaining)),
+                (Some(health), None) => Some(health),
+                (None, Some(remaining)) => Some(remaining),
+                (None, None) => None,
+            },
         );
         match runtime.exec(&request) {
             Ok(()) => return Ok(()),
@@ -1391,7 +1434,7 @@ fn run_healthcheck(
                 healthcheck.interval().or(healthcheck.start_interval())
             };
             if let Some(interval) = interval {
-                sleep_with_clock(clock.clone(), interval, container)?;
+                sleep_healthcheck_with_deadline(clock.clone(), interval, container, deadline)?;
             }
         }
     }
@@ -1400,6 +1443,23 @@ fn run_healthcheck(
         |error| error.to_string(),
     );
     Err(EvalExecutionError::Unhealthy(reason))
+}
+
+fn sleep_healthcheck_with_deadline(
+    clock: Rc<dyn Clock>,
+    duration: Duration,
+    container: &str,
+    deadline: Option<&Deadline>,
+) -> Result<(), EvalExecutionError> {
+    let duration = match deadline.map(Deadline::remaining).transpose()? {
+        Some(remaining) => duration.min(remaining),
+        None => duration,
+    };
+    sleep_with_clock(clock, duration, container)?;
+    if let Some(deadline) = deadline {
+        deadline.remaining()?;
+    }
+    Ok(())
 }
 
 fn run_lease_healthcheck(
@@ -1671,6 +1731,33 @@ impl DockerRuntime for DockerCliRuntime {
                 container,
             ],
             "inspect task container workdir",
+        )?;
+        let workdir = std::str::from_utf8(&output)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?
+            .trim();
+        Ok(if workdir.is_empty() {
+            "/".to_owned()
+        } else {
+            workdir.to_owned()
+        })
+    }
+
+    fn container_workdir_bounded(
+        &self,
+        container: &str,
+        deadline: Duration,
+    ) -> Result<String, EvalExecutionError> {
+        let output = docker_output_bounded(
+            self.clock.clone(),
+            [
+                "container".to_owned(),
+                "inspect".to_owned(),
+                "--format".to_owned(),
+                "{{.Config.WorkingDir}}".to_owned(),
+                container.to_owned(),
+            ],
+            container,
+            Some(deadline),
         )?;
         let workdir = std::str::from_utf8(&output)
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?
@@ -2609,6 +2696,7 @@ fn clear_verifier_files(
     runtime: &dyn DockerRuntime,
     container: &str,
     network_lease: &str,
+    deadline: Duration,
 ) -> Result<(), EvalExecutionError> {
     runtime.exec(
         &DockerExecRequest::new(
@@ -2626,9 +2714,16 @@ fn clear_verifier_files(
             Some("root"),
             None,
             network_lease,
-            None,
+            Some(deadline),
         ),
     )
+}
+
+fn verifier_cleanup_deadline(deadline: &Option<Deadline>) -> Duration {
+    deadline
+        .as_ref()
+        .and_then(|deadline| deadline.remaining().ok())
+        .unwrap_or(super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE)
 }
 
 fn transfer_verifier_artifacts(
@@ -2760,9 +2855,10 @@ fn read_reward_with_runtime(
 fn read_reward_from_lease(
     lease: &mut dyn TaskEnvironmentLease,
     service: &super::ComposeServiceName,
+    deadline: Option<Duration>,
 ) -> Result<RewardDocument, EvalExecutionError> {
-    let json = read_optional_service_file(lease, service, "/logs/verifier/reward.json")?;
-    let text = read_optional_service_file(lease, service, "/logs/verifier/reward.txt")?;
+    let json = read_optional_service_file(lease, service, "/logs/verifier/reward.json", deadline)?;
+    let text = read_optional_service_file(lease, service, "/logs/verifier/reward.txt", deadline)?;
     RewardDocument::parse(json.as_deref(), text.as_deref())
         .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
 }
@@ -2771,11 +2867,12 @@ fn read_optional_service_file(
     lease: &mut dyn TaskEnvironmentLease,
     service: &super::ComposeServiceName,
     source: &str,
+    deadline: Option<Duration>,
 ) -> Result<Option<Vec<u8>>, EvalExecutionError> {
     let archive = match lease.archive(ServiceArchiveRequest {
         service,
         source,
-        deadline: Duration::from_secs(10),
+        deadline: deadline.unwrap_or(Duration::from_secs(10)),
     }) {
         Ok(archive) => archive,
         Err(EvalExecutionError::ProcessFailure(_))
