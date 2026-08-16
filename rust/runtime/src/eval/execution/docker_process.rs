@@ -232,7 +232,7 @@ impl DockerProcessSandbox {
             };
             execute_benchmark_steps(plan, agent_command, package.source_digest(), &mut session)
         })();
-        finish_with_cleanup(runtime, containers, outcome)
+        finish_with_cleanup(self.clock.clone(), runtime, containers, outcome)
     }
 
     /// Executes a normalized standard task through an injectable Docker provider.
@@ -363,6 +363,16 @@ impl DockerProcessSandbox {
                 plan.artifacts(),
                 artifact_collection.path(),
             )?;
+            let verifier_deadline = verifier.phase().timeout().map(|timeout| {
+                Deadline::from_phase_timeout(
+                    self.clock.clone(),
+                    EvalExecutionPhase::Verifier,
+                    timeout,
+                )
+            });
+            let remaining = |deadline: &Option<Deadline>| {
+                deadline.as_ref().map(Deadline::remaining).transpose()
+            };
 
             let verifier_container = if verifier.mode() == VerifierMode::Separate {
                 let verifier_workspace = tempfile::tempdir()
@@ -390,14 +400,21 @@ impl DockerProcessSandbox {
                     verifier.environment(),
                     verifier_network,
                     None,
-                    None,
+                    remaining(&verifier_deadline)?,
                 )?;
                 containers.push(name.clone());
-                runtime.start(&DockerStartRequest::new(&name))?;
+                let start = match remaining(&verifier_deadline)? {
+                    Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
+                    None => DockerStartRequest::new(&name),
+                };
+                runtime.start(&start)?;
                 if !plan.artifacts().is_empty() {
                     let effective_verifier_workdir = match verifier_workdir {
                         Some(workdir) => workdir.to_owned(),
-                        None => runtime.container_workdir(&name)?,
+                        None => match remaining(&verifier_deadline)? {
+                            Some(deadline) => runtime.container_workdir_bounded(&name, deadline)?,
+                            None => runtime.container_workdir(&name)?,
+                        },
                     };
                     validate_verifier_artifact_staging(
                         &effective_verifier_workdir,
@@ -409,11 +426,11 @@ impl DockerProcessSandbox {
                         verifier_workspace.path(),
                         Some(&effective_verifier_workdir),
                         verifier_network,
-                        None,
+                        verifier_deadline.as_ref(),
                     )?;
                 }
                 if let Some(healthcheck) = verifier.environment().healthcheck() {
-                    run_healthcheck(
+                    run_healthcheck_with_deadline(
                         self.clock.clone(),
                         runtime,
                         &name,
@@ -422,6 +439,7 @@ impl DockerProcessSandbox {
                         healthcheck,
                         verifier_network,
                         secrets,
+                        verifier_deadline.as_ref(),
                     )?;
                 }
                 Some((name, verifier_workspace))
@@ -432,22 +450,33 @@ impl DockerProcessSandbox {
                 .as_ref()
                 .map_or(container.as_str(), |(name, _)| name.as_str());
             let verifier_network = network_lease(verifier.phase().network())?;
-            prepare_verifier_files(runtime, verifier_name, verifier_network)?;
-            runtime.copy(&DockerCopyRequest::new([
+            prepare_verifier_files_with_deadline(
+                runtime,
+                verifier_name,
+                verifier_network,
+                remaining(&verifier_deadline)?,
+            )?;
+            let copy = DockerCopyRequest::new([
                 "cp".to_owned(),
                 format!("{}/.", source_root.join("tests").display()),
                 format!("{verifier_name}:/tests"),
-            ]))?;
+            ]);
+            let copy = match remaining(&verifier_deadline)? {
+                Some(deadline) => copy.with_deadline(deadline),
+                None => copy,
+            };
+            runtime.copy(&copy)?;
             let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
-            prepare_workdir(
+            prepare_workdir_with_deadline(
                 runtime,
                 verifier_name,
                 verifier.environment(),
                 verifier.phase(),
                 verifier_workdir,
                 verifier_network,
+                remaining(&verifier_deadline)?,
             )?;
-            execute_planned_phase(
+            execute_planned_phase_with_deadline(
                 runtime,
                 verifier_name,
                 EvalExecutionPhase::Verifier,
@@ -456,30 +485,23 @@ impl DockerProcessSandbox {
                 verifier.phase(),
                 verifier_workdir,
                 secrets,
+                remaining(&verifier_deadline)?,
             )?;
             let reward_workspace = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            let reward = read_reward_with_runtime(runtime, verifier_name, &reward_workspace, None)?;
+            let reward = read_reward_with_runtime(
+                runtime,
+                verifier_name,
+                &reward_workspace,
+                verifier_deadline.as_ref(),
+            )?;
             Ok(LocalExecutionResult {
                 artifacts,
                 reward,
                 verifier: package.source_digest(),
             })
         })();
-        let cleanup = containers
-            .into_iter()
-            .rev()
-            .fold(None, |first_error, container| {
-                let removal = runtime
-                    .remove(&DockerRemoveRequest::new([
-                        "rm",
-                        "--force",
-                        "--volumes",
-                        &container,
-                    ]))
-                    .err();
-                first_error.or(removal)
-            });
+        let cleanup = remove_containers_with_deadline(self.clock.clone(), runtime, containers);
         match (outcome, cleanup) {
             (Err(error), _) => Err(error),
             (Ok(_), Some(error)) => Err(error),
@@ -790,7 +812,7 @@ impl<'a> ComposeStepSession<'a> {
                 workspace.path(),
                 Some(&effective_workdir),
                 verifier_network,
-                remaining(&deadline)?,
+                deadline.as_ref(),
             )?;
             prepare_workdir_with_deadline(
                 self.runtime,
@@ -846,12 +868,7 @@ impl<'a> ComposeStepSession<'a> {
             )?;
             let reward_workspace = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            read_reward_with_runtime(
-                self.runtime,
-                &name,
-                &reward_workspace,
-                remaining(&deadline)?,
-            )
+            read_reward_with_runtime(self.runtime, &name, &reward_workspace, deadline.as_ref())
         })();
         let cleanup = self.runtime.remove(
             &DockerRemoveRequest::new(["rm", "--force", "--volumes", &name])
@@ -925,7 +942,7 @@ impl<'a> ComposeStepSession<'a> {
             network_lease: "default",
             deadline: remaining(&deadline)?,
         })?;
-        read_reward_from_lease(self.lease, &main, remaining(&deadline)?)
+        read_reward_from_lease(self.lease, &main, deadline.as_ref())
     }
 }
 
@@ -1165,7 +1182,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 workspace.path(),
                 Some(&effective_verifier_workdir),
                 verifier_network,
-                remaining(&deadline)?,
+                deadline.as_ref(),
             )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
                 run_healthcheck_with_deadline(
@@ -1234,7 +1251,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 self.runtime,
                 &verifier_name,
                 &reward_workspace,
-                remaining(&deadline)?,
+                deadline.as_ref(),
             )
         })();
         let cleanup = if verifier.mode() == VerifierMode::Shared {
@@ -1334,29 +1351,42 @@ fn docker_run_names(package: &HarborTaskPackage) -> (String, String) {
 }
 
 fn finish_with_cleanup<T>(
+    clock: Rc<dyn Clock>,
     runtime: &dyn DockerRuntime,
     containers: Vec<String>,
     outcome: Result<T, EvalExecutionError>,
 ) -> Result<T, EvalExecutionError> {
-    let cleanup = containers
-        .into_iter()
-        .rev()
-        .fold(None, |first_error, container| {
-            let removal = runtime
-                .remove(&DockerRemoveRequest::new([
-                    "rm",
-                    "--force",
-                    "--volumes",
-                    &container,
-                ]))
-                .err();
-            first_error.or(removal)
-        });
+    let cleanup = remove_containers_with_deadline(clock, runtime, containers);
     match (outcome, cleanup) {
         (Err(error), _) => Err(error),
         (Ok(_), Some(error)) => Err(error),
         (Ok(result), None) => Ok(result),
     }
+}
+
+fn remove_containers_with_deadline(
+    clock: Rc<dyn Clock>,
+    runtime: &dyn DockerRuntime,
+    containers: Vec<String>,
+) -> Option<EvalExecutionError> {
+    let deadline = Deadline::from_phase_timeout(
+        clock,
+        EvalExecutionPhase::Verifier,
+        super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
+    );
+    let cleanup = containers
+        .into_iter()
+        .rev()
+        .fold(None, |first_error, container| {
+            let removal = deadline.remaining().and_then(|remaining| {
+                runtime.remove(
+                    &DockerRemoveRequest::new(["rm", "--force", "--volumes", &container])
+                        .with_deadline(remaining),
+                )
+            });
+            first_error.or(removal.err())
+        });
+    cleanup
 }
 
 static NEXT_DOCKER_RUN_ID: AtomicU64 = AtomicU64::new(1);
@@ -1646,14 +1676,31 @@ impl DockerRuntime for DockerCliRuntime {
     }
 
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        let deadline_ns = request
+            .deadline()
+            .map(|deadline| provider_deadline_ns(&self.clock, deadline));
         if request.network_lease() == Some(PUBLIC_NETWORK_LEASE) {
-            ensure_public_network()?;
+            if let Some(deadline_ns) = deadline_ns {
+                ensure_public_network_bounded(
+                    self.clock.clone(),
+                    remaining_provider_deadline(&self.clock, deadline_ns, PUBLIC_NETWORK_LEASE)?,
+                )?;
+            } else {
+                ensure_public_network()?;
+            }
         }
         docker_command_bounded(
             self.clock.clone(),
             request.public_arguments().iter().cloned(),
             "task container creation",
-            request.deadline(),
+            match deadline_ns {
+                Some(deadline_ns) => Some(remaining_provider_deadline(
+                    &self.clock,
+                    deadline_ns,
+                    PUBLIC_NETWORK_LEASE,
+                )?),
+                None => None,
+            },
         )
     }
 
@@ -2496,6 +2543,55 @@ fn ensure_public_network() -> Result<(), EvalExecutionError> {
     })
 }
 
+fn ensure_public_network_bounded(
+    clock: Rc<dyn Clock>,
+    deadline: Duration,
+) -> Result<(), EvalExecutionError> {
+    let deadline_ns = provider_deadline_ns(&clock, deadline);
+    let inspect = || -> Result<bool, EvalExecutionError> {
+        match docker_output_bounded(
+            clock.clone(),
+            [
+                "network".to_owned(),
+                "inspect".to_owned(),
+                PUBLIC_NETWORK_LEASE.to_owned(),
+            ],
+            PUBLIC_NETWORK_LEASE,
+            Some(remaining_provider_deadline(
+                &clock,
+                deadline_ns,
+                PUBLIC_NETWORK_LEASE,
+            )?),
+        ) {
+            Ok(_) => Ok(true),
+            Err(EvalExecutionError::ProcessFailure(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
+    };
+    if inspect()? {
+        return Ok(());
+    }
+    let create = docker_command_bounded(
+        clock.clone(),
+        [
+            "network".to_owned(),
+            "create".to_owned(),
+            PUBLIC_NETWORK_LEASE.to_owned(),
+        ],
+        PUBLIC_NETWORK_LEASE,
+        Some(remaining_provider_deadline(
+            &clock,
+            deadline_ns,
+            PUBLIC_NETWORK_LEASE,
+        )?),
+    );
+    if create.is_ok() || inspect()? {
+        Ok(())
+    } else {
+        create
+    }
+}
+
 fn ensure_network_exists<I, C>(mut inspect: I, create: C) -> Result<(), EvalExecutionError>
 where
     I: FnMut() -> Result<bool, EvalExecutionError>,
@@ -2732,11 +2828,14 @@ fn transfer_verifier_artifacts(
     source: &std::path::Path,
     workdir: Option<&str>,
     network_lease: &str,
-    deadline: Option<Duration>,
+    deadline: Option<&Deadline>,
 ) -> Result<(), EvalExecutionError> {
     let target = match workdir {
         Some(workdir) => workdir.to_owned(),
-        None => runtime.container_workdir(container)?,
+        None => match deadline.map(Deadline::remaining).transpose()? {
+            Some(remaining) => runtime.container_workdir_bounded(container, remaining)?,
+            None => runtime.container_workdir(container)?,
+        },
     };
     if !target.starts_with('/') {
         return Err(EvalExecutionError::InvalidWorkspace(format!(
@@ -2755,7 +2854,7 @@ fn transfer_verifier_artifacts(
             Some("root"),
             None,
             network_lease,
-            deadline,
+            deadline.map(Deadline::remaining).transpose()?,
         ),
     )?;
     let request = DockerCopyRequest::new([
@@ -2763,7 +2862,7 @@ fn transfer_verifier_artifacts(
         format!("{}/.", source.display()),
         format!("{container}:{target}"),
     ]);
-    let request = match deadline {
+    let request = match deadline.map(Deadline::remaining).transpose()? {
         Some(deadline) => request.with_deadline(deadline),
         None => request,
     };
@@ -2830,7 +2929,7 @@ fn read_reward_with_runtime(
     runtime: &dyn DockerRuntime,
     container: &str,
     workspace: &TempDir,
-    deadline: Option<Duration>,
+    deadline: Option<&Deadline>,
 ) -> Result<RewardDocument, EvalExecutionError> {
     let json = copy_optional_with_runtime(
         runtime,
@@ -2838,7 +2937,7 @@ fn read_reward_with_runtime(
         "/logs/verifier/reward.json",
         workspace,
         "reward.json",
-        deadline,
+        deadline.map(Deadline::remaining).transpose()?,
     )?;
     let text = copy_optional_with_runtime(
         runtime,
@@ -2846,7 +2945,7 @@ fn read_reward_with_runtime(
         "/logs/verifier/reward.txt",
         workspace,
         "reward.txt",
-        deadline,
+        deadline.map(Deadline::remaining).transpose()?,
     )?;
     RewardDocument::parse(json.as_deref(), text.as_deref())
         .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
@@ -2855,10 +2954,20 @@ fn read_reward_with_runtime(
 fn read_reward_from_lease(
     lease: &mut dyn TaskEnvironmentLease,
     service: &super::ComposeServiceName,
-    deadline: Option<Duration>,
+    deadline: Option<&Deadline>,
 ) -> Result<RewardDocument, EvalExecutionError> {
-    let json = read_optional_service_file(lease, service, "/logs/verifier/reward.json", deadline)?;
-    let text = read_optional_service_file(lease, service, "/logs/verifier/reward.txt", deadline)?;
+    let json = read_optional_service_file(
+        lease,
+        service,
+        "/logs/verifier/reward.json",
+        deadline.map(Deadline::remaining).transpose()?,
+    )?;
+    let text = read_optional_service_file(
+        lease,
+        service,
+        "/logs/verifier/reward.txt",
+        deadline.map(Deadline::remaining).transpose()?,
+    )?;
     RewardDocument::parse(json.as_deref(), text.as_deref())
         .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
 }

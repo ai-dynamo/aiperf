@@ -2580,6 +2580,66 @@ fn single_step_separate_verifier_stages_artifacts_at_implicit_image_workdir() {
 }
 
 #[test]
+fn single_step_separate_verifier_uses_one_absolute_deadline_for_setup_and_reward() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_with_artifacts(
+        &temporary,
+        "[\"/work/result.txt\"]",
+        "[agent]\ntimeout_sec = 20\n\n[verifier]\nenvironment_mode = \"separate\"\ntimeout_sec = 20\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/work".to_owned()),
+    )
+    .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = StepRecordingRuntime::recording_deadlines(clock.clone());
+
+    DockerProcessSandbox::with_clock(clock)
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    let events = runtime.deadline_events.into_inner();
+    let verifier_operations = &events[..9];
+    assert_eq!(
+        verifier_operations
+            .iter()
+            .map(|(event, _)| event.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "create",
+            "start",
+            "exec:verifier",
+            "copy",
+            "exec:verifier",
+            "copy",
+            "exec:verifier",
+            "copy",
+            "copy",
+        ]
+    );
+    assert!(
+        verifier_operations
+            .windows(2)
+            .all(|operations| operations[0].1 > operations[1].1),
+        "verifier deadlines must consume one absolute phase budget: {events:?}"
+    );
+    assert!(events[9..].iter().all(|(event, deadline)| {
+        event == "remove" && !deadline.is_zero() && *deadline <= Duration::from_secs(10)
+    }));
+}
+
+#[test]
 fn single_step_separate_verifier_copies_artifacts_to_explicit_workdir_without_mounting_it() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_with_artifacts(
@@ -2992,6 +3052,8 @@ struct StepRecordingRuntime {
     image_workdir: Option<String>,
     observe_source_snapshot: bool,
     observed_source_roots: RefCell<Vec<PathBuf>>,
+    deadline_events: RefCell<Vec<(String, Duration)>>,
+    deadline_clock: Option<Rc<SimClock>>,
 }
 
 impl StepRecordingRuntime {
@@ -3025,6 +3087,25 @@ impl StepRecordingRuntime {
             ..Self::default()
         }
     }
+
+    fn recording_deadlines(clock: Rc<SimClock>) -> Self {
+        Self {
+            deadline_clock: Some(clock),
+            ..Self::default()
+        }
+    }
+
+    fn record_deadline(&self, event: &str, deadline: Option<Duration>) {
+        let Some(deadline) = deadline else {
+            return;
+        };
+        self.deadline_events
+            .borrow_mut()
+            .push((event.to_owned(), deadline));
+        if let Some(clock) = &self.deadline_clock {
+            clock.advance_to(clock.now_ns() + 1_000_000_000);
+        }
+    }
 }
 
 impl DockerRuntime for StepRecordingRuntime {
@@ -3036,6 +3117,7 @@ impl DockerRuntime for StepRecordingRuntime {
             .with_separate_verifier()
             .with_no_network()
             .with_public_network()
+            .with_phase_timeouts()
     }
 
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
@@ -3070,6 +3152,7 @@ impl DockerRuntime for StepRecordingRuntime {
     }
 
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        self.record_deadline("create", request.deadline());
         let arguments = request.public_arguments();
         let container = argument_after(arguments, "--name").to_owned();
         let workspace = argument_after(arguments, "--volume")
@@ -3085,6 +3168,7 @@ impl DockerRuntime for StepRecordingRuntime {
     }
 
     fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        self.record_deadline("start", request.deadline());
         self.starts.set(self.starts.get() + 1);
         self.events
             .borrow_mut()
@@ -3093,6 +3177,9 @@ impl DockerRuntime for StepRecordingRuntime {
     }
 
     fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        if request.phase() == aiperf_runtime::eval::EvalExecutionPhase::Verifier {
+            self.record_deadline("exec:verifier", request.deadline());
+        }
         if request
             .public_arguments()
             .iter()
@@ -3155,6 +3242,7 @@ impl DockerRuntime for StepRecordingRuntime {
     }
 
     fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        self.record_deadline("copy", request.deadline());
         let arguments = request.public_arguments();
         let source = &arguments[1];
         let destination = &arguments[2];
@@ -3245,6 +3333,7 @@ impl DockerRuntime for StepRecordingRuntime {
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        self.record_deadline("remove", request.deadline());
         let call = self.removals.get() + 1;
         self.removals.set(call);
         self.removal_arguments
