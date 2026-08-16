@@ -87,9 +87,7 @@ fn rejects_malformed_executable_task_material() {
         package_with_mutation(|package| {
             package["declared_artifacts"] = serde_json::json!(["results/patch.diff"])
         }),
-        package_with_mutation(|package| {
-            package["declared_artifacts"] = serde_json::json!(["/"])
-        }),
+        package_with_mutation(|package| package["declared_artifacts"] = serde_json::json!(["/"])),
         package_with_mutation(|package| {
             package["declared_artifacts"] = serde_json::json!(["/results/../secret"])
         }),
@@ -97,9 +95,7 @@ fn rejects_malformed_executable_task_material() {
             package["declared_artifacts"] =
                 serde_json::json!(["/results/patch.diff", "//results/patch.diff"])
         }),
-        package_with_mutation(|package| {
-            package["unknown_package_field"] = serde_json::json!(true)
-        }),
+        package_with_mutation(|package| package["unknown_package_field"] = serde_json::json!(true)),
         package_with_mutation(|package| {
             package.as_object_mut().unwrap().remove("agent_command");
         }),

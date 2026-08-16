@@ -104,9 +104,7 @@ fn validate_command(field: &'static str, command: &[String]) -> Result<(), Harbo
     Ok(())
 }
 
-fn normalize_declared_artifacts(
-    artifacts: Vec<String>,
-) -> Result<Vec<String>, HarborImportError> {
+fn normalize_declared_artifacts(artifacts: Vec<String>) -> Result<Vec<String>, HarborImportError> {
     let mut normalized = Vec::with_capacity(artifacts.len());
     let mut paths = BTreeSet::new();
     for path in artifacts {
