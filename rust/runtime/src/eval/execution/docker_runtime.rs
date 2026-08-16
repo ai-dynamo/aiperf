@@ -1171,6 +1171,37 @@ mod compose_lease_tests {
     }
 
     #[test]
+    fn compose_lease_drop_retries_failed_start_cleanup_before_releasing_ownership() {
+        let runtime = Rc::new(CleanupRuntime {
+            fail_up: true,
+            down_failures: Cell::new(1),
+            down_clears_resources: true,
+            remove_failures: Cell::new(0),
+            resources: RefCell::new(OwnedComposeResources::new(
+                vec!["partial".to_owned()],
+                Vec::new(),
+                Vec::new(),
+            )),
+            removals: RefCell::new(Vec::new()),
+        });
+        {
+            let mut lease = ComposeProjectLease::reserve(
+                runtime.clone(),
+                &cleanup_plan(),
+                "abcdef",
+                "/tmp",
+                "main",
+            )
+            .unwrap();
+            assert!(lease.start().is_err());
+        }
+        assert_eq!(
+            *runtime.resources.borrow(),
+            OwnedComposeResources::default()
+        );
+    }
+
+    #[test]
     fn compose_lease_failed_down_is_retryable_and_does_not_mark_down() {
         let runtime = Rc::new(CleanupRuntime {
             fail_up: false,

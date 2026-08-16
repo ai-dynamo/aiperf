@@ -270,3 +270,11 @@ impl TaskEnvironmentLease for ComposeProjectLease {
         result
     }
 }
+
+impl Drop for ComposeProjectLease {
+    fn drop(&mut self) {
+        if self.state != ComposeLeaseState::Down {
+            let _ = self.teardown();
+        }
+    }
+}

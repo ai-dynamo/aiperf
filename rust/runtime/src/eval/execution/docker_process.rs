@@ -1072,10 +1072,24 @@ impl DockerRuntime for DockerCliRuntime {
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
-        match docker(
-            request.public_arguments().iter().map(String::as_str),
-            "remove Docker lease",
-        ) {
+        let removal = if let Some(timeout) = request.deadline() {
+            docker_remove_bounded(
+                self.clock.clone(),
+                request
+                    .public_arguments()
+                    .iter()
+                    .map(String::as_str)
+                    .collect(),
+                timeout,
+            )
+        } else {
+            docker(
+                request.public_arguments().iter().map(String::as_str),
+                "remove Docker lease",
+            )
+            .map(|_| ())
+        };
+        match removal {
             Ok(_) => Ok(()),
             Err(EvalExecutionError::ProcessFailure(error))
                 if reports_absent_container(error.as_bytes()) =>
@@ -1084,6 +1098,41 @@ impl DockerRuntime for DockerCliRuntime {
             }
             Err(error) => Err(error),
         }
+    }
+}
+
+fn docker_remove_bounded(
+    clock: Rc<dyn Clock>,
+    arguments: Vec<&str>,
+    timeout: Duration,
+) -> Result<(), EvalExecutionError> {
+    let target = arguments.last().copied().unwrap_or("Docker lease");
+    let child = Command::new("docker")
+        .args(&arguments)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| EvalExecutionError::ContainerTeardown {
+            container: target.to_owned(),
+            reason: "could not start bounded Docker removal".to_owned(),
+        })?;
+    let mut process = DockerExecChild { child };
+    let mut no_remove = |_target: &str| Ok(());
+    match drive_docker_exec(
+        clock,
+        &mut process,
+        target,
+        EvalExecutionPhase::CollectionHook,
+        timeout,
+        &mut no_remove,
+    ) {
+        Err(
+            EvalExecutionError::Timeout { .. } | EvalExecutionError::TerminalUncertainty { .. },
+        ) => Err(EvalExecutionError::ContainerTeardown {
+            container: target.to_owned(),
+            reason: "bounded Docker removal did not terminate cleanly".to_owned(),
+        }),
+        other => other,
     }
 }
 
