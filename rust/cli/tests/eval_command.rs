@@ -151,6 +151,39 @@ fn native_eval_command_runs_a_standard_task_directory() {
 }
 
 #[test]
+fn native_eval_rejects_standard_task_verifier_mode_override() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("mode-conflict");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/mode-conflict\"\n[verifier]\nenvironment_mode = \"separate\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Write a result.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--verifier-mode".to_owned(),
+        "shared".to_owned(),
+        "--agent-command".to_owned(),
+        "true".to_owned(),
+    ])
+    .expect_err("standard task mode must not be silently overridden");
+
+    assert!(
+        error
+            .to_string()
+            .contains("--verifier-mode conflicts with the standard task")
+    );
+}
+
+#[test]
 #[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
 fn native_eval_command_runs_a_standard_task_directory_in_docker() {
     let temporary = tempfile::tempdir().unwrap();
@@ -207,13 +240,17 @@ fn docker_timeout_removes_agent_container_after_descendant_command() {
     ))
     .expect_err("an agent command exceeding its configured timeout must fail");
 
-    assert!(matches!(
-        error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>(),
-        Some(aiperf_runtime::eval::EvalExecutionError::Timeout {
-            phase: aiperf_runtime::eval::EvalExecutionPhase::Agent,
-            timeout,
-        }) if *timeout == Duration::from_millis(200)
-    ));
+    let execution_error = error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>();
+    assert!(
+        matches!(
+            execution_error,
+            Some(aiperf_runtime::eval::EvalExecutionError::Timeout {
+                phase: aiperf_runtime::eval::EvalExecutionPhase::Agent,
+                timeout,
+            }) if *timeout == Duration::from_millis(200)
+        ),
+        "unexpected agent timeout result: {execution_error:?}"
+    );
     assert_task_containers_absent();
 }
 

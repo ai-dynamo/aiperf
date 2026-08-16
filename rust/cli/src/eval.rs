@@ -117,6 +117,14 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .verifier_mode
         .map(VerifierMode::from)
         .unwrap_or_else(|| imported.package.verifier_mode());
+    if use_docker
+        && imported.package.is_standard_directory()
+        && verifier_mode != imported.package.execution_plan().verifier().mode()
+    {
+        anyhow::bail!(
+            "--verifier-mode conflicts with the standard task's normalized verifier environment"
+        );
+    }
     let result = if use_docker {
         DockerProcessSandbox::new().execute(
             &recipe,

@@ -129,7 +129,7 @@ PHASE = "verifier"
             "start",
             "healthcheck:bench:/task:none:BASE=baseline",
             "prepare:root:/task:none",
-            "agent:agent:/task:bridge:BASE=baseline,PHASE=agent",
+            "agent:agent:/task:aiperf-eval-public:BASE=baseline,PHASE=agent",
             "copy-tests",
             "prepare:root:/task:none",
             "verifier:verifier:/task:none:BASE=baseline,PHASE=verifier",
@@ -138,6 +138,41 @@ PHASE = "verifier"
             "remove",
         ]
     );
+}
+
+#[test]
+fn each_execution_uses_distinct_image_and_container_names() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = LifecycleRuntime::default();
+
+    for _ in 0..2 {
+        DockerProcessSandbox::new()
+            .execute_with_runtime(
+                &runtime,
+                &recipe,
+                &imported.package,
+                imported.package.execution_plan(),
+                &["true".to_owned()],
+                &FixedSecret,
+            )
+            .unwrap();
+    }
+
+    let names = runtime.names.into_inner();
+    assert_eq!(names.len(), 4);
+    assert_ne!(names[0], names[2]);
+    assert_ne!(names[1], names[3]);
+    assert!(names[0].starts_with("aiperf-eval:"));
+    assert!(names[1].starts_with("aiperf-eval-"));
 }
 
 #[test]
@@ -399,6 +434,179 @@ fn separate_verifier_failure_removes_both_container_leases() {
     );
 }
 
+#[test]
+fn separate_verifier_start_failure_removes_registered_verifier_lease() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "[verifier]\nenvironment_mode = \"separate\"\n");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = SeparateStartFailureRuntime::default();
+
+    assert!(matches!(
+        DockerProcessSandbox::new()
+            .execute_with_runtime(
+                &runtime,
+                &recipe,
+                &imported.package,
+                imported.package.execution_plan(),
+                &["agent".to_owned()],
+                &FixedSecret,
+            )
+            .expect_err("failed verifier start must be terminal"),
+        EvalExecutionError::ProcessFailure(_)
+    ));
+    assert_eq!(
+        runtime.events.into_inner(),
+        vec![
+            "build", "create", "start", "agent", "create", "start", "remove", "remove"
+        ]
+    );
+}
+
+#[derive(Default)]
+struct SeparateStartFailureRuntime {
+    events: RefCell<Vec<String>>,
+    starts: Cell<u8>,
+}
+
+impl DockerRuntime for SeparateStartFailureRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_separate_verifier()
+            .with_no_network()
+            .with_public_network()
+    }
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("build".to_owned());
+        Ok(())
+    }
+    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("create".to_owned());
+        Ok(())
+    }
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("start".to_owned());
+        self.starts.set(self.starts.get() + 1);
+        if self.starts.get() == 2 {
+            Err(EvalExecutionError::ProcessFailure(
+                "verifier start failed".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        assert_eq!(request.phase().to_string(), "agent");
+        self.events.borrow_mut().push("agent".to_owned());
+        Ok(())
+    }
+    fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        panic!("verifier start failure must precede file copy")
+    }
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("remove".to_owned());
+        Ok(())
+    }
+}
+
+#[test]
+fn separate_verifier_health_failure_prevents_verifier_files_and_cleans_leases() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(
+        &temporary,
+        "[verifier]\nenvironment_mode = \"separate\"\n[verifier.environment.healthcheck]\ncommand = [\"false\"]\ntimeout_sec = 1\nretries = 1\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = SeparateHealthFailureRuntime::default();
+
+    assert!(matches!(
+        DockerProcessSandbox::new()
+            .execute_with_runtime(
+                &runtime,
+                &recipe,
+                &imported.package,
+                imported.package.execution_plan(),
+                &["agent".to_owned()],
+                &FixedSecret
+            )
+            .expect_err("unhealthy separate verifier must stop before verifier files"),
+        EvalExecutionError::Unhealthy(_)
+    ));
+    assert_eq!(
+        runtime.events.into_inner(),
+        vec![
+            "build",
+            "create",
+            "start",
+            "agent",
+            "create",
+            "start",
+            "healthcheck",
+            "remove",
+            "remove"
+        ]
+    );
+}
+
+#[derive(Default)]
+struct SeparateHealthFailureRuntime {
+    events: RefCell<Vec<String>>,
+}
+impl DockerRuntime for SeparateHealthFailureRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_separate_verifier()
+            .with_healthchecks()
+            .with_no_network()
+            .with_public_network()
+    }
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("build".to_owned());
+        Ok(())
+    }
+    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("create".to_owned());
+        Ok(())
+    }
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("start".to_owned());
+        Ok(())
+    }
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        let phase = request.phase().to_string();
+        self.events.borrow_mut().push(phase.clone());
+        if phase == "healthcheck" {
+            Err(EvalExecutionError::ProcessFailure("not ready".to_owned()))
+        } else {
+            Ok(())
+        }
+    }
+    fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        panic!("unhealthy verifier must not receive verifier files")
+    }
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("remove".to_owned());
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct VerifierFailureRuntime {
     events: RefCell<Vec<String>>,
@@ -461,6 +669,7 @@ impl DockerRuntime for VerifierFailureRuntime {
 #[derive(Default)]
 struct LifecycleRuntime {
     events: RefCell<Vec<String>>,
+    names: RefCell<Vec<String>>,
 }
 
 impl DockerRuntime for LifecycleRuntime {
@@ -482,10 +691,21 @@ impl DockerRuntime for LifecycleRuntime {
     }
 
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        assert!(request.public_arguments().windows(2).any(|arguments| {
+            arguments[0] == "--network" && Some(arguments[1].as_str()) == request.network_lease()
+        }));
         self.events.borrow_mut().push(format!(
             "build:{}",
             request.network_lease().expect("build network")
         ));
+        self.names.borrow_mut().push(
+            request
+                .public_arguments()
+                .windows(2)
+                .find(|arguments| arguments[0] == "--tag")
+                .expect("image tag")[1]
+                .clone(),
+        );
         Ok(())
     }
 
@@ -494,6 +714,14 @@ impl DockerRuntime for LifecycleRuntime {
             "create:{}",
             request.network_lease().expect("container network")
         ));
+        self.names.borrow_mut().push(
+            request
+                .public_arguments()
+                .windows(2)
+                .find(|arguments| arguments[0] == "--name")
+                .expect("container name")[1]
+                .clone(),
+        );
         Ok(())
     }
 

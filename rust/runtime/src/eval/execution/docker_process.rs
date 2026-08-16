@@ -8,6 +8,7 @@ use std::{
     fs,
     process::{Child, Command, Stdio},
     rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -138,20 +139,24 @@ impl DockerProcessSandbox {
             .filter(|character| character.is_ascii_alphanumeric())
             .take(32)
             .collect::<String>();
-        let image = format!("aiperf-eval:{safe_suffix}");
-        let container = format!("aiperf-eval-{safe_suffix}");
+        let run_id = NEXT_DOCKER_RUN_ID.fetch_add(1, Ordering::Relaxed);
+        let image = format!("aiperf-eval:{safe_suffix}-{run_id}");
+        let container = format!("aiperf-eval-{safe_suffix}-{run_id}");
         let mut containers = vec![container.clone()];
 
         let outcome = (|| {
             let baseline_network = network_lease(environment.network())?;
+            let build_network = build_network_lease(environment.network())?;
             runtime.build(
                 &DockerBuildRequest::new([
                     "build",
+                    "--network",
+                    build_network,
                     "--tag",
                     &image,
                     environment_root.to_string_lossy().as_ref(),
                 ])
-                .with_network_lease(baseline_network),
+                .with_network_lease(build_network),
             )?;
             create_planned_container(
                 runtime,
@@ -211,8 +216,19 @@ impl DockerProcessSandbox {
                     verifier_network,
                     None,
                 )?;
-                runtime.start(&DockerStartRequest::new(&name))?;
                 containers.push(name.clone());
+                runtime.start(&DockerStartRequest::new(&name))?;
+                if let Some(healthcheck) = verifier.environment().healthcheck() {
+                    run_healthcheck(
+                        self.clock.clone(),
+                        runtime,
+                        &name,
+                        verifier.environment(),
+                        healthcheck,
+                        verifier_network,
+                        secrets,
+                    )?;
+                }
                 Some((name, verifier_workspace))
             } else {
                 None
@@ -262,6 +278,8 @@ impl DockerProcessSandbox {
         }
     }
 }
+
+static NEXT_DOCKER_RUN_ID: AtomicU64 = AtomicU64::new(1);
 
 fn run_healthcheck(
     clock: Rc<dyn Clock>,
@@ -375,6 +393,9 @@ impl DockerRuntime for DockerCliRuntime {
     }
 
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        if request.network_lease() == Some(PUBLIC_NETWORK_LEASE) {
+            ensure_public_network()?;
+        }
         docker(
             request.public_arguments().iter().map(String::as_str),
             "create task container",
@@ -413,11 +434,23 @@ impl DockerRuntime for DockerCliRuntime {
                 timeout,
             );
         }
-        docker(
-            arguments.iter().map(String::as_str),
-            "run planned Docker phase",
-        )
-        .map(|_| ())
+        let output = Command::new("docker")
+            .args(&arguments)
+            .output()
+            .map_err(|_| {
+                EvalExecutionError::ProcessSpawn("docker run planned Docker phase".to_owned())
+            })?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(EvalExecutionError::ProcessFailure(format!(
+                "docker run planned Docker phase: {}",
+                redact_secret_values(
+                    &String::from_utf8_lossy(&output.stderr),
+                    request.secret_environment(),
+                )
+            )))
+        }
     }
 
     fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
@@ -442,11 +475,48 @@ fn network_lease(network: &NetworkPolicy) -> Result<&'static str, EvalExecutionE
         return Ok("none");
     }
     if network.is_public() {
-        return Ok("bridge");
+        return Ok(PUBLIC_NETWORK_LEASE);
     }
     Err(EvalExecutionError::UnsupportedEnforcement(
         "allowlist_egress",
     ))
+}
+
+fn build_network_lease(network: &NetworkPolicy) -> Result<&'static str, EvalExecutionError> {
+    if network.is_public() {
+        return Ok("default");
+    }
+    network_lease(network)
+}
+
+const PUBLIC_NETWORK_LEASE: &str = "aiperf-eval-public";
+
+fn ensure_public_network() -> Result<(), EvalExecutionError> {
+    let inspect = Command::new("docker")
+        .args(["network", "inspect", PUBLIC_NETWORK_LEASE])
+        .output()
+        .map_err(|_| {
+            EvalExecutionError::ProcessSpawn("docker inspect public network".to_owned())
+        })?;
+    if inspect.status.success() {
+        return Ok(());
+    }
+    docker(
+        ["network", "create", PUBLIC_NETWORK_LEASE],
+        "create public network",
+    )
+    .map(|_| ())
+}
+
+fn redact_secret_values(
+    diagnostic: &str,
+    secrets: &std::collections::BTreeMap<super::EnvName, super::SecretValue>,
+) -> String {
+    let mut redacted = diagnostic.to_owned();
+    for secret in secrets.values() {
+        redacted = redacted.replace(secret.exposed(), "[REDACTED]");
+    }
+    redacted
 }
 
 fn create_planned_container(
@@ -929,7 +999,7 @@ mod tests {
 
     use super::{
         DockerExecProcess, DockerExecState, DockerProcessSandbox, EvalExecutionError,
-        EvalExecutionPhase, drive_docker_exec,
+        EvalExecutionPhase, drive_docker_exec, redact_secret_values,
     };
     use crate::clock::SimClock;
     use crate::eval::{
@@ -1110,6 +1180,21 @@ mod tests {
             error,
             EvalExecutionError::RuntimeContext("synchronous Docker execution")
         ));
+    }
+
+    #[test]
+    fn docker_exec_diagnostic_redacts_resolved_secret_values() {
+        let secret = "actual-secret-value";
+        let diagnostic = redact_secret_values(
+            &format!("agent command wrote {secret} to standard error"),
+            &std::collections::BTreeMap::from([(
+                "TOKEN".to_owned(),
+                super::super::SecretValue::new(secret),
+            )]),
+        );
+
+        assert!(diagnostic.contains("[REDACTED]"));
+        assert!(!diagnostic.contains(secret));
     }
 
     struct FakeDockerExec {
