@@ -5,10 +5,12 @@
 
 mod agent;
 mod coordinator;
+mod local_process;
 mod recipe;
 mod workspace;
 
 pub use agent::{AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract};
 pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
+pub use local_process::{LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole};
 pub use recipe::HarborSandboxRecipe;
 pub use workspace::{ImmutablePatch, WorkspaceOverlay};

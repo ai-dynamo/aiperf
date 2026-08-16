@@ -25,6 +25,7 @@ pub struct HarborTaskPackage {
     verifier_command: Vec<String>,
     declared_artifacts: Vec<String>,
     source_digest: ArtifactDigest,
+    source_bytes: Vec<u8>,
 }
 
 impl HarborTaskPackage {
@@ -66,6 +67,11 @@ impl HarborTaskPackage {
     /// Returns the digest of the complete authored package bytes.
     pub fn source_digest(&self) -> ArtifactDigest {
         self.source_digest.clone()
+    }
+
+    /// Returns the immutable, exactly acquired package bytes.
+    pub fn source_bytes(&self) -> &[u8] {
+        &self.source_bytes
     }
 }
 
@@ -119,6 +125,7 @@ pub(super) fn normalize(
         verifier_command: task.verifier_command,
         declared_artifacts,
         source_digest: ArtifactDigest::from_bytes(bytes),
+        source_bytes: bytes.to_vec(),
     };
     Ok((package, reference))
 }

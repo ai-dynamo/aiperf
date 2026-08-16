@@ -75,6 +75,14 @@ pub enum EvalExecutionError {
     MissingCapability(AgentCapability),
     /// An immutable workspace or artifact identity was invalid.
     InvalidWorkspace(String),
+    /// The requested local process command was not a nonempty argv.
+    InvalidCommand,
+    /// Materializing an immutable package into a local sandbox failed.
+    Materialization(String),
+    /// Starting a local sandbox process failed.
+    ProcessSpawn(String),
+    /// A local sandbox process returned a non-success status.
+    ProcessFailure(String),
 }
 
 impl Display for EvalExecutionError {
@@ -85,6 +93,10 @@ impl Display for EvalExecutionError {
                 write!(formatter, "missing sandbox capability {capability:?}")
             }
             Self::InvalidWorkspace(reason) => write!(formatter, "invalid workspace {reason}"),
+            Self::InvalidCommand => formatter.write_str("sandbox command must be a nonempty argv"),
+            Self::Materialization(reason) => write!(formatter, "sandbox materialization failed: {reason}"),
+            Self::ProcessSpawn(command) => write!(formatter, "failed to start sandbox command {command:?}"),
+            Self::ProcessFailure(command) => write!(formatter, "sandbox command failed: {command:?}"),
         }
     }
 }

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::cell::{Cell, RefCell};
+use std::fs;
 
 use aiperf_runtime::eval::{
     AgentCapability, ArtifactDigest, DeclaredArtifactTransfer, EvalExecutionError,
     EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborImportError,
-    HarborSandboxRecipe, HarborSource, SourceAcquirer, VerifierExecutionError, VerifierMode,
-    VerifierSandboxFactory, WorkspaceOverlay,
+    HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox, SandboxRole,
+    SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory,
+    WorkspaceOverlay,
 };
 
 struct RecordingFactory {
@@ -92,7 +94,7 @@ fn branches_return_immutable_patch_without_mutating_canonical_workspace() {
 #[test]
 fn native_coordinator_imports_preflights_opens_and_prepares_declared_verifier() {
     let acquirer = StaticAcquirer {
-        bytes: br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#.to_vec(),
+        bytes: br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","true"],"verifier_command":["sh","-c","true"],"declared_artifacts":["/results/patch.diff"]}"#.to_vec(),
     };
     let sandbox = RecordingFactory {
         opened: Cell::new(false),
@@ -130,4 +132,41 @@ fn native_coordinator_imports_preflights_opens_and_prepares_declared_verifier() 
         *verifier.artifacts.borrow(),
         vec![transfer.artifacts().to_vec()]
     );
+}
+
+#[test]
+fn local_process_sandbox_materializes_package_clears_environment_and_isolates_verifier() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","true"],"verifier_command":["sh","-c","true"],"declared_artifacts":["/results/patch.diff"]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let sandbox = LocalProcessSandbox::new();
+    let agent = sandbox
+        .materialize(&recipe, &imported.package, SandboxRole::Agent)
+        .unwrap();
+    let verifier = sandbox
+        .materialize(&recipe, &imported.package, SandboxRole::SeparateVerifier)
+        .unwrap();
+
+    unsafe { std::env::set_var("AIPERF_EVAL_AMBIENT_SECRET", "do-not-leak") };
+    let output = agent
+        .run(
+            &["sh".to_owned(), "-c".to_owned(), "test -z \"$AIPERF_EVAL_AMBIENT_SECRET\" && test \"$AIPERF_EVAL_MARKER\" = set".to_owned()],
+            &[("AIPERF_EVAL_MARKER".to_owned(), "set".to_owned())],
+        )
+        .unwrap();
+    unsafe { std::env::remove_var("AIPERF_EVAL_AMBIENT_SECRET") };
+
+    fs::write(agent.root().join("agent-only.txt"), "agent").unwrap();
+    assert!(output.status.success());
+    assert_eq!(fs::read(agent.root().join("task.json")).unwrap(), package);
+    assert_ne!(agent.root(), verifier.root());
+    assert!(!verifier.root().join("agent-only.txt").exists());
 }

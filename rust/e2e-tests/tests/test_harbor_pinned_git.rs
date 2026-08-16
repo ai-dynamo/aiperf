@@ -38,7 +38,7 @@ fn pinned_git_source_reproduces_imported_task_and_source_identity() {
         ["config", "user.email", "eval@example.invalid"],
     );
     run_git(&repository, ["config", "user.name", "Native Eval"]);
-    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#;
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","true"],"verifier_command":["sh","-c","true"],"declared_artifacts":["/results/patch.diff"]}"#;
     fs::write(repository.join("task.json"), package).unwrap();
     run_git(&repository, ["add", "task.json"]);
     run_git(&repository, ["commit", "-m", "pinned task"]);

@@ -50,7 +50,7 @@ impl VerifierSandboxFactory for Verifier {
 #[test]
 fn local_harbor_task_runs_through_native_p0_lifecycle_without_harbor_runtime() {
     let temporary = tempfile::tempdir().unwrap();
-    let package = br#"{"id":"repair-1","instruction":"Fix the test","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#;
+    let package = br#"{"id":"repair-1","instruction":"Fix the test","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","true"],"verifier_command":["sh","-c","true"],"declared_artifacts":["/results/patch.diff"]}"#;
     let package_path = temporary.path().join("task.json");
     fs::write(&package_path, package).unwrap();
     let acquirer = NativeSourceAcquirer;
