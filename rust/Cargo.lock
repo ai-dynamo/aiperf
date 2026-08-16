@@ -123,6 +123,7 @@ dependencies = [
  "arrow",
  "axum",
  "base64 0.22.1",
+ "blake3",
  "glob",
  "nix 0.29.0",
  "opentelemetry-proto",
