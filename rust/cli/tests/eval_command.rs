@@ -128,7 +128,8 @@ fn native_eval_command_runs_a_standard_task_directory_in_docker() {
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "--agent-command".to_owned(),
-        "test ! -e /tests/test.sh && printf secret > agent-secret && printf result > result.txt".to_owned(),
+        "test ! -e /tests/test.sh && printf secret > agent-secret && printf result > result.txt"
+            .to_owned(),
     ])
     .unwrap();
 
