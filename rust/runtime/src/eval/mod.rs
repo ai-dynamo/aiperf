@@ -33,9 +33,10 @@ pub use execution::{
     EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator,
     HarborEvaluationError, HarborSandboxRecipe, HealthcheckPlan, ImageSource, ImageSourceKind,
     ImmutablePatch, LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox,
-    MultiStepRewardStrategy, NetworkPolicy, PhasePlan, ProcessOutput, ProviderCapabilities,
-    SandboxRole, SecretProvider, SecretValue, VerifierPlan, WorkspaceOverlay, collect_artifacts,
-    preflight_docker, resolve_phase_environment, transfer_artifacts,
+    MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy, PhasePlan, ProcessOutput,
+    ProviderCapabilities, SandboxRole, SecretProvider, SecretValue, StepExecutionResult,
+    VerifierPlan, WorkspaceOverlay, collect_artifacts, preflight_docker, resolve_phase_environment,
+    transfer_artifacts,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

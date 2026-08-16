@@ -9,6 +9,7 @@ mod coordinator;
 mod docker_process;
 mod docker_runtime;
 mod local_process;
+mod multi_step;
 mod plan;
 mod recipe;
 mod workspace;
@@ -28,6 +29,7 @@ pub use docker_runtime::{
 pub use local_process::{
     LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,
 };
+pub use multi_step::{MultiStepExecutionResult, StepExecutionResult};
 pub use plan::{
     ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources, EnvBinding,
     EnvironmentPlan, HealthcheckPlan, ImageSource, ImageSourceKind, MultiStepRewardStrategy,
