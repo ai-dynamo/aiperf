@@ -96,6 +96,14 @@ impl ComposeProjectId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Returns the exact labels used to select resources owned by this run.
+    pub fn ownership_labels(&self) -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("aiperf.project".to_owned(), self.0.clone()),
+            ("aiperf.run".to_owned(), self.0.clone()),
+        ])
+    }
 }
 
 /// A read-only request for a fully resolved Compose configuration.
@@ -161,14 +169,19 @@ macro_rules! compose_project_request {
         pub struct $name {
             project: ComposeProjectId,
             project_directory: PathBuf,
+            labels: BTreeMap<String, String>,
+            deadline: Option<Duration>,
         }
 
         impl $name {
             /// Creates a request scoped to one task-owned Compose project.
             pub fn new(project: ComposeProjectId, project_directory: impl Into<PathBuf>) -> Self {
+                let labels = project.ownership_labels();
                 Self {
                     project,
                     project_directory: project_directory.into(),
+                    labels,
+                    deadline: None,
                 }
             }
 
@@ -181,6 +194,22 @@ macro_rules! compose_project_request {
             pub fn project_directory(&self) -> &Path {
                 &self.project_directory
             }
+
+            /// Returns the exact AIPerf ownership labels for this operation.
+            pub fn labels(&self) -> &BTreeMap<String, String> {
+                &self.labels
+            }
+
+            /// Bounds the host-side provider operation.
+            pub fn with_deadline(mut self, deadline: Duration) -> Self {
+                self.deadline = Some(deadline);
+                self
+            }
+
+            /// Returns the host-side provider operation deadline, if configured.
+            pub const fn deadline(&self) -> Option<Duration> {
+                self.deadline
+            }
         }
     };
 }
@@ -189,6 +218,32 @@ compose_project_request!(
     DockerComposeBuildRequest,
     "A Compose project build request."
 );
+
+impl DockerComposeUpRequest {
+    /// Compose startup is detached so a task lease owns the project lifecycle.
+    pub const fn detached(&self) -> bool {
+        true
+    }
+    /// Startup waits for service readiness before exposing the lease.
+    pub const fn wait_for_readiness(&self) -> bool {
+        true
+    }
+}
+
+impl DockerComposeDownRequest {
+    /// Gives containers a bounded graceful-stop interval before forced cleanup.
+    pub const fn container_grace(&self) -> Duration {
+        Duration::from_secs(10)
+    }
+    /// Requests removal of task-owned anonymous volumes.
+    pub const fn removes_volumes(&self) -> bool {
+        true
+    }
+    /// Requests removal only of orphans in this exact project.
+    pub const fn removes_orphans(&self) -> bool {
+        true
+    }
+}
 compose_project_request!(
     DockerComposeUpRequest,
     "A detached Compose project startup request."
@@ -210,6 +265,7 @@ pub struct DockerComposeExecRequest {
     user: Option<String>,
     workdir: Option<String>,
     deadline: Option<Duration>,
+    labels: BTreeMap<String, String>,
 }
 
 impl DockerComposeExecRequest {
@@ -221,6 +277,7 @@ impl DockerComposeExecRequest {
         public_environment: BTreeMap<EnvName, String>,
         secret_environment: BTreeMap<EnvName, SecretValue>,
     ) -> Self {
+        let labels = project.ownership_labels();
         Self {
             project,
             service,
@@ -231,6 +288,7 @@ impl DockerComposeExecRequest {
             user: None,
             workdir: None,
             deadline: None,
+            labels,
         }
     }
 
@@ -270,6 +328,10 @@ impl DockerComposeExecRequest {
     pub const fn deadline(&self) -> Option<Duration> {
         self.deadline
     }
+    /// Returns the exact AIPerf ownership labels for this operation.
+    pub fn labels(&self) -> &BTreeMap<String, String> {
+        &self.labels
+    }
 
     /// Adds phase execution policy to this service command.
     pub fn with_phase(
@@ -298,6 +360,7 @@ pub struct DockerComposeArchiveRequest {
     project: ComposeProjectId,
     service: ComposeServiceName,
     source: String,
+    labels: BTreeMap<String, String>,
 }
 
 impl DockerComposeArchiveRequest {
@@ -307,10 +370,12 @@ impl DockerComposeArchiveRequest {
         service: ComposeServiceName,
         source: impl Into<String>,
     ) -> Self {
+        let labels = project.ownership_labels();
         Self {
             project,
             service,
             source: source.into(),
+            labels,
         }
     }
     /// Returns the task-owned project identifier.
@@ -325,6 +390,10 @@ impl DockerComposeArchiveRequest {
     pub fn source(&self) -> &str {
         &self.source
     }
+    /// Returns the exact AIPerf ownership labels for this operation.
+    pub fn labels(&self) -> &BTreeMap<String, String> {
+        &self.labels
+    }
 }
 
 /// A request to stop one service in a task-owned Compose project.
@@ -332,12 +401,18 @@ impl DockerComposeArchiveRequest {
 pub struct DockerComposeStopRequest {
     project: ComposeProjectId,
     service: ComposeServiceName,
+    labels: BTreeMap<String, String>,
 }
 
 impl DockerComposeStopRequest {
     /// Creates a service stop request.
     pub fn new(project: ComposeProjectId, service: ComposeServiceName) -> Self {
-        Self { project, service }
+        let labels = project.ownership_labels();
+        Self {
+            project,
+            service,
+            labels,
+        }
     }
     /// Returns the task-owned project identifier.
     pub fn project(&self) -> &ComposeProjectId {
@@ -346,6 +421,10 @@ impl DockerComposeStopRequest {
     /// Returns the target service.
     pub fn service(&self) -> &ComposeServiceName {
         &self.service
+    }
+    /// Returns the exact AIPerf ownership labels for this operation.
+    pub fn labels(&self) -> &BTreeMap<String, String> {
+        &self.labels
     }
 }
 
@@ -771,4 +850,167 @@ pub trait DockerComposeRuntime: DockerRuntime {
         &self,
         project: &ComposeProjectId,
     ) -> Result<OwnedComposeResources, EvalExecutionError>;
+}
+
+#[cfg(test)]
+mod compose_lease_tests {
+    use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+
+    use super::*;
+    use crate::eval::execution::{
+        compose_project::ComposeProjectLease, plan::ComposeProjectPlan,
+        task_environment::TaskEnvironmentLease,
+    };
+
+    struct Runtime {
+        events: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl DockerRuntime for Runtime {
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::none()
+        }
+        fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn exec(&self, _: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+    }
+
+    impl DockerComposeRuntime for Runtime {
+        fn compose_config(
+            &self,
+            _: &DockerComposeConfigRequest,
+        ) -> Result<Vec<u8>, EvalExecutionError> {
+            Ok(Vec::new())
+        }
+        fn compose_build(
+            &self,
+            request: &DockerComposeBuildRequest,
+        ) -> Result<(), EvalExecutionError> {
+            assert_eq!(
+                request.labels().get("aiperf.project"),
+                Some(&request.project().as_str().to_owned())
+            );
+            assert_eq!(request.deadline(), Some(std::time::Duration::from_secs(1)));
+            self.events
+                .borrow_mut()
+                .push(format!("build:{}", request.project().as_str()));
+            Ok(())
+        }
+        fn compose_up(&self, request: &DockerComposeUpRequest) -> Result<(), EvalExecutionError> {
+            assert!(request.detached());
+            assert!(request.wait_for_readiness());
+            assert_eq!(
+                request.labels().get("aiperf.run"),
+                Some(&request.project().as_str().to_owned())
+            );
+            self.events
+                .borrow_mut()
+                .push(format!("up:{}", request.project().as_str()));
+            Ok(())
+        }
+        fn compose_exec(&self, _: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn compose_copy_archive(
+            &self,
+            _: &DockerComposeArchiveRequest,
+        ) -> Result<Box<dyn Read>, EvalExecutionError> {
+            unreachable!()
+        }
+        fn compose_stop_service(
+            &self,
+            _: &DockerComposeStopRequest,
+        ) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn compose_down(
+            &self,
+            request: &DockerComposeDownRequest,
+        ) -> Result<(), EvalExecutionError> {
+            assert_eq!(
+                request.container_grace(),
+                std::time::Duration::from_secs(10)
+            );
+            assert!(request.removes_volumes());
+            assert!(request.removes_orphans());
+            assert_eq!(request.deadline(), Some(std::time::Duration::from_secs(60)));
+            self.events
+                .borrow_mut()
+                .push(format!("down:{}", request.project().as_str()));
+            Ok(())
+        }
+        fn compose_owned_resources(
+            &self,
+            _: &ComposeProjectId,
+        ) -> Result<OwnedComposeResources, EvalExecutionError> {
+            if self
+                .events
+                .borrow()
+                .iter()
+                .any(|event| event.starts_with("down:"))
+            {
+                Ok(OwnedComposeResources::default())
+            } else {
+                Ok(OwnedComposeResources::new(
+                    vec!["main-id".to_owned(), "api-id".to_owned()],
+                    Vec::new(),
+                    Vec::new(),
+                ))
+            }
+        }
+    }
+
+    #[test]
+    fn compose_lease_builds_and_starts_exact_reserved_project_once() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime: Rc<dyn DockerComposeRuntime> = Rc::new(Runtime {
+            events: Rc::clone(&events),
+        });
+        let plan = ComposeProjectPlan {
+            definition_path: "environment/docker-compose.yaml".to_owned(),
+            services: BTreeSet::from([
+                ComposeServiceName::main(),
+                ComposeServiceName::parse("api").unwrap(),
+            ]),
+            build_timeout: std::time::Duration::from_secs(1),
+            startup_timeout: std::time::Duration::from_secs(1),
+        };
+        let mut lease = ComposeProjectLease::reserve(
+            Rc::clone(&runtime),
+            &plan,
+            "abcdef0123456789",
+            "/tmp",
+            "main:image",
+        )
+        .unwrap();
+        assert!(lease.project().as_str().starts_with("aiperf-abcdef012345"));
+        lease.start().unwrap();
+        assert_eq!(
+            lease.state(),
+            super::super::compose_project::ComposeLeaseState::Started
+        );
+        assert_eq!(
+            &*events.borrow(),
+            &[
+                format!("build:{}", lease.project().as_str()),
+                format!("up:{}", lease.project().as_str())
+            ]
+        );
+        lease.teardown().unwrap();
+    }
 }

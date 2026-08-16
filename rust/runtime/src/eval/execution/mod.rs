@@ -6,6 +6,7 @@
 mod agent;
 mod artifacts;
 mod compose_policy;
+mod compose_project;
 mod coordinator;
 mod docker_process;
 mod docker_runtime;
@@ -13,6 +14,7 @@ mod local_process;
 mod multi_step;
 mod plan;
 mod recipe;
+mod task_environment;
 mod workspace;
 
 pub use agent::{
