@@ -516,6 +516,7 @@ impl DockerProcessSandbox {
                 runtime,
                 recipe,
                 prepared.source_root,
+                prepared.verifier_prefix.clone(),
                 plan.environment(),
                 &mut prepared.lease,
                 secrets,
@@ -553,6 +554,7 @@ impl DockerProcessSandbox {
                 runtime,
                 recipe,
                 prepared.source_root,
+                prepared.verifier_prefix.clone(),
                 plan.environment(),
                 &mut prepared.lease,
                 secrets,
@@ -641,10 +643,20 @@ impl DockerProcessSandbox {
             .with_network_lease("default"),
         )?;
         lease.start()?;
+        if let Some(healthcheck) = plan.environment().healthcheck() {
+            run_lease_healthcheck(
+                self.clock.clone(),
+                &mut lease,
+                plan.environment(),
+                healthcheck,
+                secrets,
+            )?;
+        }
         Ok(PreparedComposeLease {
             _materialized: materialized,
             _workspace: workspace,
             source_root,
+            verifier_prefix: lease.project().as_str().to_owned(),
             lease,
         })
     }
@@ -674,6 +686,7 @@ struct PreparedComposeLease<'a> {
     _materialized: crate::eval::import::MaterializedSource,
     _workspace: TempDir,
     source_root: std::path::PathBuf,
+    verifier_prefix: String,
     lease: ComposeProjectLease<'a>,
 }
 
@@ -682,6 +695,7 @@ struct ComposeStepSession<'a> {
     runtime: &'a dyn DockerRuntime,
     recipe: &'a HarborSandboxRecipe,
     source_root: std::path::PathBuf,
+    verifier_prefix: String,
     environment: &'a super::EnvironmentPlan,
     lease: &'a mut dyn TaskEnvironmentLease,
     secrets: &'a dyn SecretProvider,
@@ -694,6 +708,7 @@ impl<'a> ComposeStepSession<'a> {
         runtime: &'a dyn DockerRuntime,
         recipe: &'a HarborSandboxRecipe,
         source_root: std::path::PathBuf,
+        verifier_prefix: String,
         environment: &'a super::EnvironmentPlan,
         lease: &'a mut dyn TaskEnvironmentLease,
         secrets: &'a dyn SecretProvider,
@@ -703,6 +718,7 @@ impl<'a> ComposeStepSession<'a> {
             runtime,
             recipe,
             source_root,
+            verifier_prefix,
             environment,
             lease,
             secrets,
@@ -728,7 +744,7 @@ impl<'a> ComposeStepSession<'a> {
                 ))?;
         transfer_artifacts(collection.path(), workspace.path(), artifacts)?;
         let image = self.lease.main_image_id()?.to_owned();
-        let name = format!("aiperf-compose-verifier-{}", step.name());
+        let name = format!("{}-verifier-{}", self.verifier_prefix, step.name());
         let verifier_network = network_lease(verifier.environment().network())?;
         let verifier_workdir = self
             .recipe
@@ -850,6 +866,14 @@ impl<'a> ComposeStepSession<'a> {
         let verifier_workdir = self
             .recipe
             .resolve_workdir(verifier.environment().workdir());
+        prepare_lease_workdir(
+            self.lease,
+            &main,
+            verifier.environment(),
+            verifier.phase(),
+            EvalExecutionPhase::Verifier,
+            verifier_workdir,
+        )?;
         self.lease.exec(ServiceExecRequest {
             service: &main,
             arguments: &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
@@ -884,6 +908,14 @@ impl BenchmarkStepSession for ComposeStepSession<'_> {
         secret_environment.remove("AIPERF_EVAL_INSTRUCTION");
         let workdir = self.recipe.resolve_workdir(self.environment.workdir());
         let main = self.lease.main_service().clone();
+        prepare_lease_workdir(
+            self.lease,
+            &main,
+            self.environment,
+            step.agent(),
+            EvalExecutionPhase::Agent,
+            workdir,
+        )?;
         self.lease.exec(ServiceExecRequest {
             service: &main,
             arguments: command,
@@ -1302,6 +1334,86 @@ fn run_healthcheck(
         |error| error.to_string(),
     );
     Err(EvalExecutionError::Unhealthy(reason))
+}
+
+fn run_lease_healthcheck(
+    clock: Rc<dyn Clock>,
+    lease: &mut dyn TaskEnvironmentLease,
+    environment: &super::EnvironmentPlan,
+    healthcheck: &super::HealthcheckPlan,
+    secrets: &dyn SecretProvider,
+) -> Result<(), EvalExecutionError> {
+    let main = lease.main_service().clone();
+    if let Some(start_period) = healthcheck.start_period() {
+        sleep_with_clock(clock.clone(), start_period, main.as_str())?;
+    }
+    let retries = healthcheck.retries().unwrap_or(1);
+    let health_environment = resolve_environment(environment, secrets)?;
+    let mut last_error = None;
+    for attempt in 0..retries {
+        match lease.exec(ServiceExecRequest {
+            service: &main,
+            arguments: healthcheck.command(),
+            public_environment: health_environment.public().clone(),
+            secret_environment: health_environment.secrets().clone(),
+            phase: EvalExecutionPhase::Healthcheck,
+            user: environment.user(),
+            workdir: environment.workdir(),
+            network_lease: "default",
+            deadline: healthcheck.timeout(),
+        }) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+        if attempt + 1 < retries {
+            let interval = if attempt == 0 {
+                healthcheck.start_interval().or(healthcheck.interval())
+            } else {
+                healthcheck.interval().or(healthcheck.start_interval())
+            };
+            if let Some(interval) = interval {
+                sleep_with_clock(clock.clone(), interval, main.as_str())?;
+            }
+        }
+    }
+    Err(EvalExecutionError::Unhealthy(last_error.map_or_else(
+        || "healthcheck exhausted without an execution result".to_owned(),
+        |error| error.to_string(),
+    )))
+}
+
+fn prepare_lease_workdir(
+    lease: &mut dyn TaskEnvironmentLease,
+    service: &super::ComposeServiceName,
+    environment: &super::EnvironmentPlan,
+    phase: &super::PhasePlan,
+    execution_phase: EvalExecutionPhase,
+    workdir: Option<&str>,
+) -> Result<(), EvalExecutionError> {
+    let Some(workdir) = workdir else {
+        return Ok(());
+    };
+    let Some(user) = phase.user().or(environment.user()) else {
+        return Ok(());
+    };
+    if user == "root" {
+        return Ok(());
+    }
+    lease.exec(ServiceExecRequest {
+        service,
+        arguments: &[
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            format!("mkdir -p {workdir} && chown {user} {workdir} && su -s /bin/sh {user} -c 'test -w {workdir}'"),
+        ],
+        public_environment: Default::default(),
+        secret_environment: Default::default(),
+        phase: execution_phase,
+        user: Some("root"),
+        workdir: Some(workdir),
+        network_lease: "default",
+        deadline: None,
+    })
 }
 
 fn sleep_with_clock(
@@ -1772,6 +1884,13 @@ fn docker_command_bounded(
         deadline,
         &mut no_remove,
     )
+    .map_err(|error| match error {
+        EvalExecutionError::ProcessFailure(reason) => EvalExecutionError::ProcessFailure(format!(
+            "bounded docker {}: {reason}",
+            arguments.join(" ")
+        )),
+        error => error,
+    })
 }
 
 fn compose_service_container(
@@ -1871,7 +1990,12 @@ impl DockerCliRuntime {
             EvalExecutionPhase::CollectionHook,
             deadline,
             &mut no_remove,
-        )?;
+        )
+        .map_err(|error| {
+            EvalExecutionError::ArtifactCollection(format!(
+                "bounded archive {container}:{source}: {error}"
+            ))
+        })?;
         archive
             .as_file_mut()
             .seek(SeekFrom::Start(0))
@@ -2429,7 +2553,14 @@ fn docker_exec_bounded(
         .map_err(|_| EvalExecutionError::ProcessSpawn(format!("docker {action}")))?;
     let mut process = DockerExecChild { child };
     let mut remove = remove_timed_out_container;
-    drive_docker_exec(clock, &mut process, container, phase, timeout, &mut remove)
+    drive_docker_exec(clock, &mut process, container, phase, timeout, &mut remove).map_err(
+        |error| match error {
+            EvalExecutionError::ProcessFailure(reason) => {
+                EvalExecutionError::ProcessFailure(format!("{action} ({phase}): {reason}"))
+            }
+            error => error,
+        },
+    )
 }
 
 const DOCKER_EXEC_POLL_NS: i64 = 10_000_000;

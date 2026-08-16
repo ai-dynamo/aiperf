@@ -887,6 +887,76 @@ fn run_eval(task_root: &std::path::Path, agent_command: &str) -> Output {
         .expect("start native aiperf eval")
 }
 
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn compose_sidecar_evaluation_keeps_verifier_isolated_and_cleans_up() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let before = compose_resource_ids();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("compose-sidecar");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+artifacts = [{ source = "/data", destination = "evidence", service = "api" }]
+[task]
+name = "example/compose-sidecar"
+[environment]
+workdir = "/work"
+user = "bench"
+[environment.healthcheck]
+command = ["/bin/sh", "-c", "test -d /work"]
+retries = 1
+[verifier]
+environment_mode = "separate"
+[[verifier.collect]]
+service = "api"
+command = ["/bin/sh", "-c", "mkdir -p /data && printf hooked > /data/evidence.txt"]
+timeout_sec = 10
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("instruction.md"),
+        "Write an agent-only file.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN adduser -D -u 1000 bench && mkdir -p /work /logs/verifier && chmod 0777 /logs/verifier\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: alpine:3.20\n    command: [\"sleep\", \"infinity\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test \"$(cat /work/evidence.txt)\" = hooked\ntest ! -e /work/agent-only.txt\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+
+    let output = Command::new(exec_binary())
+        .args([
+            "eval",
+            "--task",
+            task_root.to_string_lossy().as_ref(),
+            "--image",
+            IMAGE_DIGEST,
+            "--agent-command",
+            "id",
+        ])
+        .output()
+        .expect("start native aiperf Compose eval");
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_summary(&summary, "example/compose-sidecar");
+    assert_eq!(summary["artifacts"][0][0], "evidence/evidence.txt");
+    assert_eq!(compose_resource_ids(), before);
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -940,6 +1010,33 @@ fn task_container_names() -> BTreeSet<String> {
         .filter(|name| name.starts_with("aiperf-eval-"))
         .map(str::to_owned)
         .collect()
+}
+
+fn compose_resource_ids() -> BTreeSet<String> {
+    [
+        ("container", vec!["container", "ls", "--all", "--quiet"]),
+        ("network", vec!["network", "ls", "--quiet"]),
+        ("volume", vec!["volume", "ls", "--quiet"]),
+    ]
+    .into_iter()
+    .flat_map(|(kind, arguments)| {
+        let output = Command::new("docker")
+            .args(arguments)
+            .args(["--filter", "label=com.docker.compose.project"])
+            .output()
+            .expect("inspect Compose resources");
+        assert!(
+            output.status.success(),
+            "docker {kind} listing failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(move |id| format!("{kind}:{id}"))
+            .collect::<Vec<_>>()
+    })
+    .collect()
 }
 
 struct RequestRecorder {
