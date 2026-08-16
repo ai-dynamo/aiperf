@@ -118,6 +118,15 @@ pub enum EvalExecutionError {
         /// The failed Docker operation.
         reason: String,
     },
+    /// The Docker exec client could not be conclusively terminated after its container ended.
+    TerminalUncertainty {
+        /// The timed-out command phase.
+        phase: EvalExecutionPhase,
+        /// The removed container that owned the phase.
+        container: String,
+        /// The unresolved host-client operation.
+        reason: String,
+    },
 }
 
 impl Display for EvalExecutionError {
@@ -145,6 +154,16 @@ impl Display for EvalExecutionError {
                 write!(
                     formatter,
                     "failed to remove timed-out container {container:?}: {reason}"
+                )
+            }
+            Self::TerminalUncertainty {
+                phase,
+                container,
+                reason,
+            } => {
+                write!(
+                    formatter,
+                    "{phase} phase terminal state is uncertain after removing container {container:?}: {reason}"
                 )
             }
         }
