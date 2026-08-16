@@ -4,6 +4,7 @@
 //! Owned canonical source-tree snapshots for native evaluation packages.
 
 use std::{
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::{self, Write},
     os::unix::fs::PermissionsExt,
@@ -16,7 +17,33 @@ use crate::eval::ArtifactDigest;
 use super::HarborImportError;
 
 const SOURCE_TREE_DOMAIN: &[u8] = b"aiperf-eval-source-tree-v1";
-const SOURCE_PROJECTION_DOMAIN: &[u8] = b"aiperf-eval-source-projection-v1";
+const EXECUTABLE_SOURCE_DOMAIN: &[u8] = b"aiperf-eval-executable-source-v1";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ExecutableSourceView {
+    PrimaryFile,
+    WholeTree,
+    SelectedRoots(BTreeSet<SourcePath>),
+}
+
+impl ExecutableSourceView {
+    pub(super) fn selected_roots<I, S>(roots: I) -> Result<Self, HarborImportError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let roots = roots
+            .into_iter()
+            .map(|root| SourcePath::parse(root.as_ref()))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if roots.is_empty() {
+            return Err(HarborImportError::InvalidPackage(
+                "executable source view must select at least one root".to_owned(),
+            ));
+        }
+        Ok(Self::SelectedRoots(roots))
+    }
+}
 
 /// One owned source artifact acquired before package normalization.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,6 +93,65 @@ impl AcquiredSource {
         match &self.artifact {
             SourceArtifact::File(bytes) => ArtifactDigest::from_bytes(bytes),
             SourceArtifact::Tree(tree) => tree.digest(),
+        }
+    }
+
+    pub(super) fn read(&self, relative_path: &str) -> Result<&[u8], HarborImportError> {
+        match &self.artifact {
+            SourceArtifact::File(_) if relative_path == self.primary_path.as_str() => {
+                Ok(&self.primary_bytes)
+            }
+            SourceArtifact::File(_) => Err(HarborImportError::InvalidPackage(format!(
+                "source file is missing: {relative_path:?}"
+            ))),
+            SourceArtifact::Tree(tree) => tree.read(relative_path),
+        }
+    }
+
+    pub(super) fn contains_file(&self, relative_path: &str) -> bool {
+        self.read(relative_path).is_ok()
+    }
+
+    pub(super) fn executable_source_digest(
+        &self,
+        view: &ExecutableSourceView,
+    ) -> Result<ArtifactDigest, HarborImportError> {
+        match (view, &self.artifact) {
+            (ExecutableSourceView::PrimaryFile, SourceArtifact::File(_)) => Ok(digest_file_entry(
+                EXECUTABLE_SOURCE_DOMAIN,
+                &self.primary_path,
+                &self.primary_bytes,
+            )),
+            (ExecutableSourceView::PrimaryFile, SourceArtifact::Tree(tree)) => {
+                tree.project_digest(std::iter::once(self.primary_path.as_str()))
+            }
+            (ExecutableSourceView::WholeTree, SourceArtifact::Tree(tree)) => {
+                Ok(digest_entries(EXECUTABLE_SOURCE_DOMAIN, &tree.entries))
+            }
+            (ExecutableSourceView::SelectedRoots(roots), SourceArtifact::Tree(tree)) => {
+                tree.project_source_digest(roots)
+            }
+            (ExecutableSourceView::WholeTree | ExecutableSourceView::SelectedRoots(_), _) => {
+                Err(HarborImportError::InvalidPackage(
+                    "single-file source cannot expose a tree view".to_owned(),
+                ))
+            }
+        }
+    }
+
+    pub(super) fn materialize_into(&self, destination: &Path) -> io::Result<()> {
+        match &self.artifact {
+            SourceArtifact::Tree(tree) => tree.materialize_into(destination),
+            SourceArtifact::File(_) => {
+                ensure_empty_directory(destination)?;
+                let target = destination.join(self.primary_path.as_str());
+                let mut file = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&target)?;
+                file.write_all(&self.primary_bytes)?;
+                fs::set_permissions(target, fs::Permissions::from_mode(0o644))
+            }
         }
     }
 }
@@ -254,12 +340,17 @@ impl SourceTreeSnapshot {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let mut roots = roots
+        let roots = roots
             .into_iter()
             .map(|root| SourcePath::parse(root.as_ref()))
-            .collect::<Result<Vec<_>, _>>()?;
-        roots.sort();
-        roots.dedup();
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        self.project_source_digest(&roots)
+    }
+
+    fn project_source_digest(
+        &self,
+        roots: &BTreeSet<SourcePath>,
+    ) -> Result<ArtifactDigest, HarborImportError> {
         if roots.is_empty()
             || roots
                 .iter()
@@ -279,17 +370,11 @@ impl SourceTreeSnapshot {
             })
             .cloned()
             .collect::<Vec<_>>();
-        Ok(digest_entries(SOURCE_PROJECTION_DOMAIN, &selected))
+        Ok(digest_entries(EXECUTABLE_SOURCE_DOMAIN, &selected))
     }
 
     pub(super) fn materialize_into(&self, destination: &Path) -> io::Result<()> {
-        let metadata = fs::symlink_metadata(destination)?;
-        if !metadata.file_type().is_dir() || fs::read_dir(destination)?.next().is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "source materialization destination must be an empty directory",
-            ));
-        }
+        ensure_empty_directory(destination)?;
         for entry in self
             .entries
             .iter()
@@ -319,6 +404,17 @@ impl SourceTreeSnapshot {
     }
 }
 
+fn ensure_empty_directory(destination: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(destination)?;
+    if !metadata.file_type().is_dir() || fs::read_dir(destination)?.next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source materialization destination must be an empty directory",
+        ));
+    }
+    Ok(())
+}
+
 fn ensure_real_parent(root: &Path, target: &Path) -> io::Result<()> {
     let parent = target.parent().ok_or_else(|| {
         io::Error::new(
@@ -346,6 +442,16 @@ fn digest_entries(domain: &[u8], entries: &[SourceEntry]) -> ArtifactDigest {
         append_bytes(&mut material, &entry.bytes);
     }
     ArtifactDigest::from_bytes(&material)
+}
+
+fn digest_file_entry(domain: &[u8], path: &SourcePath, bytes: &[u8]) -> ArtifactDigest {
+    let entry = SourceEntry {
+        path: path.clone(),
+        kind: SourceEntryKind::File,
+        mode: 0o644,
+        bytes: Arc::from(bytes),
+    };
+    digest_entries(domain, &[entry])
 }
 
 fn append_bytes(material: &mut Vec<u8>, value: &[u8]) {

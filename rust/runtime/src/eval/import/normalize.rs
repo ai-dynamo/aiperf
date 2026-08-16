@@ -13,8 +13,8 @@ use std::{
 use serde::Deserialize;
 
 use crate::eval::{
-    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources,
-    EnvBinding, EnvironmentPlan, EvalTaskRef, HealthcheckPlan, ImageSource,
+    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, CanonicalPackagePlan,
+    ContainerResources, EnvBinding, EnvironmentPlan, EvalTaskRef, HealthcheckPlan, ImageSource,
     MultiStepRewardStrategy, NetworkPolicy, PhasePlan, VerifierMode, VerifierPlan,
     append_identity_field, artifact_source_overlaps_reserved_verifier_path,
     verifier_artifact_target_collision,
@@ -505,8 +505,12 @@ pub(super) fn normalize_standard_directory(
         has_explicit_steps,
         multi_step_reward_strategy,
     };
+    let agent_command = vec!["aiperf-task-agent".to_owned()];
+    let verifier_command = vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()];
     let reference_digest = standard_task_reference_digest(
         &manifest.task.name,
+        &agent_command,
+        &verifier_command,
         &execution_plan,
         &verifier_tree_material,
     );
@@ -517,8 +521,8 @@ pub(super) fn normalize_standard_directory(
         instruction,
         environment: environment_digest.as_str().to_owned(),
         verifier: verifier_digest.as_str().to_owned(),
-        agent_command: vec!["aiperf-task-agent".to_owned()],
-        verifier_command: vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()],
+        agent_command,
+        verifier_command,
         verifier_mode,
         declared_artifacts,
         source_digest: ArtifactDigest::from_bytes(manifest_bytes),
@@ -808,13 +812,20 @@ fn validate_step_artifacts(
 
 fn standard_task_reference_digest(
     id: &str,
+    agent_command: &[String],
+    verifier_command: &[String],
     execution_plan: &BenchmarkExecutionPlan,
     verifier_tree_material: &[Vec<u8>],
 ) -> ArtifactDigest {
     let mut material = Vec::new();
     append_identity_field(&mut material, "standard-task-identity.format", b"1");
-    append_identity_field(&mut material, "standard-task-identity.id", id.as_bytes());
-    execution_plan.append_identity_material(&mut material);
+    let plan_digest =
+        CanonicalPackagePlan::new(id, agent_command, verifier_command, execution_plan).digest();
+    append_identity_field(
+        &mut material,
+        "standard-task-identity.canonical-plan",
+        plan_digest.as_str().as_bytes(),
+    );
     append_identity_field(
         &mut material,
         "standard-task-identity.verifier-tree-count",
@@ -976,10 +987,30 @@ fn normalize_standard_artifacts(
                     .destination
                     .map(|destination| normalize_artifact_destination(&destination))
                     .transpose()?,
-                artifact.exclude,
+                normalize_artifact_exclusions(artifact.exclude)?,
             )),
         })
         .collect()
+}
+
+fn normalize_artifact_exclusions(
+    mut patterns: Vec<String>,
+) -> Result<Vec<String>, HarborImportError> {
+    for pattern in &patterns {
+        if pattern.is_empty()
+            || pattern.starts_with('/')
+            || pattern
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
+        {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "artifact exclusion must be a nonempty relative glob with normal path components: {pattern:?}"
+            )));
+        }
+    }
+    patterns.sort();
+    patterns.dedup();
+    Ok(patterns)
 }
 
 fn normalize_timeout(field: &str, seconds: f64) -> Result<Duration, HarborImportError> {

@@ -468,7 +468,7 @@ impl ArtifactSpec {
         }
     }
 
-    /// Returns structured-declaration exclusion patterns in authored order.
+    /// Returns structured-declaration exclusion patterns in sorted unique order.
     pub fn exclude(&self) -> &[String] {
         match &self.0 {
             ArtifactSpecKind::ExactFile { .. } => &[],
@@ -750,6 +750,54 @@ impl BenchmarkExecutionPlan {
     }
 }
 
+pub(crate) struct CanonicalPackagePlan<'a> {
+    task_id: &'a str,
+    agent_command: &'a [String],
+    verifier_command: &'a [String],
+    execution_plan: &'a BenchmarkExecutionPlan,
+}
+
+impl<'a> CanonicalPackagePlan<'a> {
+    pub(crate) fn new(
+        task_id: &'a str,
+        agent_command: &'a [String],
+        verifier_command: &'a [String],
+        execution_plan: &'a BenchmarkExecutionPlan,
+    ) -> Self {
+        Self {
+            task_id,
+            agent_command,
+            verifier_command,
+            execution_plan,
+        }
+    }
+
+    pub(crate) fn digest(&self) -> ArtifactDigest {
+        let mut material = Vec::new();
+        {
+            let mut encoder = IdentityEncoder {
+                material: &mut material,
+            };
+            encoder.field("canonical-package-plan.format", b"2");
+            encoder.field("canonical-package-plan.task-id", self.task_id.as_bytes());
+            append_command_identity(
+                &mut encoder,
+                "canonical-package-plan.agent-command-count",
+                "canonical-package-plan.agent-command-argument",
+                self.agent_command,
+            );
+            append_command_identity(
+                &mut encoder,
+                "canonical-package-plan.verifier-command-count",
+                "canonical-package-plan.verifier-command-argument",
+                self.verifier_command,
+            );
+        }
+        self.execution_plan.append_identity_material(&mut material);
+        ArtifactDigest::from_bytes(&material)
+    }
+}
+
 struct IdentityEncoder<'a> {
     material: &'a mut Vec<u8>,
 }
@@ -920,6 +968,18 @@ fn append_artifacts_identity(encoder: &mut IdentityEncoder<'_>, artifacts: &[Art
                 }
             }
         }
+    }
+}
+
+fn append_command_identity(
+    encoder: &mut IdentityEncoder<'_>,
+    count_tag: &str,
+    argument_tag: &str,
+    command: &[String],
+) {
+    encoder.usize(count_tag, command.len());
+    for argument in command {
+        encoder.field(argument_tag, argument.as_bytes());
     }
 }
 

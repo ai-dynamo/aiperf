@@ -36,8 +36,8 @@ pub use plan::{
     NetworkPolicy, PhasePlan, ProviderCapabilities, VerifierPlan,
 };
 pub(crate) use plan::{
-    append_identity_field, artifact_source_overlaps_reserved_verifier_path, validate_env_name,
-    validate_user, verifier_artifact_target_collision,
+    CanonicalPackagePlan, append_identity_field, artifact_source_overlaps_reserved_verifier_path,
+    validate_env_name, validate_user, verifier_artifact_target_collision,
 };
 pub use recipe::HarborSandboxRecipe;
 pub use workspace::{ImmutablePatch, WorkspaceOverlay};

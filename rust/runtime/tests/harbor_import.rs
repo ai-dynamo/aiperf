@@ -1009,6 +1009,85 @@ fn standard_task_identity_uses_normalized_policy_not_toml_spelling() {
 }
 
 #[test]
+fn artifact_exclusions_use_one_sorted_unique_normal_form_for_execution_and_identity() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "canonical-exclusions");
+    let manifest = |exclude: &str| {
+        format!(
+            r#"schema_version = "1.0"
+artifacts = [{{ source = "/work/results", destination = "results", exclude = {exclude} }}]
+[task]
+name = "example/canonical-exclusions"
+"#,
+        )
+    };
+    fs::write(
+        task_root.join("task.toml"),
+        manifest("[\"tmp/**\", \"*.cache\"]"),
+    )
+    .unwrap();
+    let baseline = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_eq!(
+        baseline.package.execution_plan().artifacts()[0].exclude(),
+        ["*.cache", "tmp/**"]
+    );
+
+    fs::write(
+        task_root.join("task.toml"),
+        manifest("[\"*.cache\", \"tmp/**\", \"*.cache\"]"),
+    )
+    .unwrap();
+    let equivalent = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_eq!(
+        equivalent.package.execution_plan().artifacts()[0].exclude(),
+        ["*.cache", "tmp/**"]
+    );
+    assert_eq!(baseline.task.digest, equivalent.task.digest);
+
+    fs::write(
+        task_root.join("task.toml"),
+        manifest("[\"*.cache\", \"kept/**\"]"),
+    )
+    .unwrap();
+    assert_ne!(baseline.task.digest, import_task_digest(&task_root));
+}
+
+#[test]
+fn artifact_exclusions_reject_non_relative_or_non_normal_patterns() {
+    for (name, pattern) in [
+        ("empty", ""),
+        ("absolute", "/tmp/**"),
+        ("empty-component", "tmp//**"),
+        ("current-component", "tmp/./**"),
+        ("parent-component", "tmp/../**"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                r#"schema_version = "1.0"
+artifacts = [{{ source = "/work/results", exclude = ["{pattern}"] }}]
+[task]
+name = "example/{name}"
+"#,
+            ),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            HarborImporter::new(&NativeSourceAcquirer)
+                .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
+            Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+        ));
+    }
+}
+
+#[test]
 fn standard_task_identity_distinguishes_implicit_and_explicit_layouts() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_root(&temporary, "layout-identity");
