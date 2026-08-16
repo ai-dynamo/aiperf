@@ -12,6 +12,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{Mutex, MutexGuard},
+    time::Duration,
 };
 
 use aiperf_runtime::clock::SimClock;
@@ -145,8 +146,25 @@ impl DockerComposeRuntime for ComposePreflightRuntime {
             "unexpected archive".to_owned(),
         ))
     }
+    fn compose_copy_archive_bounded(
+        &self,
+        _: &DockerComposeArchiveRequest,
+        _: Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        Err(EvalExecutionError::ArtifactCollection(
+            "unexpected bounded archive".to_owned(),
+        ))
+    }
     fn compose_stop_service(&self, _: &DockerComposeStopRequest) -> Result<(), EvalExecutionError> {
         Ok(())
+    }
+    fn compose_stop_service_bounded(
+        &self,
+        _: &DockerComposeStopRequest,
+    ) -> Result<(), EvalExecutionError> {
+        Err(EvalExecutionError::ArtifactCollection(
+            "unexpected bounded stop".to_owned(),
+        ))
     }
     fn compose_down(&self, _: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
         Ok(())

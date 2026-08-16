@@ -876,10 +876,8 @@ pub trait DockerComposeRuntime: DockerRuntime {
     fn compose_copy_archive_bounded(
         &self,
         request: &DockerComposeArchiveRequest,
-        _: Duration,
-    ) -> Result<Box<dyn Read>, EvalExecutionError> {
-        self.compose_copy_archive(request)
-    }
+        deadline: Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError>;
 
     /// Stops one service.
     fn compose_stop_service(
@@ -891,9 +889,7 @@ pub trait DockerComposeRuntime: DockerRuntime {
     fn compose_stop_service_bounded(
         &self,
         request: &DockerComposeStopRequest,
-    ) -> Result<(), EvalExecutionError> {
-        self.compose_stop_service(request)
-    }
+    ) -> Result<(), EvalExecutionError>;
 
     /// Tears down the project and owned resources.
     fn compose_down(&self, request: &DockerComposeDownRequest) -> Result<(), EvalExecutionError>;
@@ -911,12 +907,14 @@ mod compose_lease_tests {
         cell::{Cell, RefCell},
         collections::BTreeSet,
         rc::Rc,
+        time::Duration,
     };
 
     use super::*;
     use crate::eval::execution::{
-        compose_project::ComposeProjectLease, plan::ComposeProjectPlan,
-        task_environment::TaskEnvironmentLease,
+        compose_project::ComposeProjectLease,
+        plan::ComposeProjectPlan,
+        task_environment::{ServiceArchiveRequest, TaskEnvironmentLease},
     };
 
     struct Runtime {
@@ -989,10 +987,37 @@ mod compose_lease_tests {
         ) -> Result<Box<dyn Read>, EvalExecutionError> {
             unreachable!()
         }
+        fn compose_copy_archive_bounded(
+            &self,
+            request: &DockerComposeArchiveRequest,
+            deadline: Duration,
+        ) -> Result<Box<dyn Read>, EvalExecutionError> {
+            assert!(!deadline.is_zero());
+            self.events.borrow_mut().push(format!(
+                "archive:{}:{}",
+                request.service().as_str(),
+                deadline.as_nanos()
+            ));
+            Ok(Box::new(std::io::Cursor::new(Vec::new())))
+        }
         fn compose_stop_service(
             &self,
             _: &DockerComposeStopRequest,
         ) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn compose_stop_service_bounded(
+            &self,
+            request: &DockerComposeStopRequest,
+        ) -> Result<(), EvalExecutionError> {
+            assert!(
+                request
+                    .deadline()
+                    .is_some_and(|deadline| !deadline.is_zero())
+            );
+            self.events
+                .borrow_mut()
+                .push(format!("stop:{}", request.service().as_str()));
             Ok(())
         }
         fn compose_down(
@@ -1071,6 +1096,40 @@ mod compose_lease_tests {
         lease.teardown().unwrap();
     }
 
+    #[test]
+    fn compose_lease_uses_explicit_bounded_service_operations() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime: Rc<dyn DockerComposeRuntime> = Rc::new(Runtime {
+            events: Rc::clone(&events),
+        });
+        let plan = ComposeProjectPlan {
+            definition_path: "environment/docker-compose.yaml".to_owned(),
+            services: BTreeSet::from([ComposeServiceName::main()]),
+            build_timeout: Duration::from_secs(1),
+            startup_timeout: Duration::from_secs(1),
+        };
+        let mut lease =
+            ComposeProjectLease::reserve(runtime, &plan, "abcdef0123456789", "/tmp", "main:image")
+                .unwrap();
+        lease.start().unwrap();
+        let main = ComposeServiceName::main();
+        let archive = lease.archive(ServiceArchiveRequest {
+            service: &main,
+            source: "/evidence/result.json",
+            deadline: Duration::from_secs(2),
+        });
+        assert!(archive.is_ok());
+        lease.stop_main(Duration::from_secs(3)).unwrap();
+
+        assert!(
+            events
+                .borrow()
+                .iter()
+                .any(|event| event.starts_with("archive:main:"))
+        );
+        assert!(events.borrow().iter().any(|event| event == "stop:main"));
+    }
+
     struct CleanupRuntime {
         fail_up: bool,
         down_failures: Cell<usize>,
@@ -1143,10 +1202,28 @@ mod compose_lease_tests {
         ) -> Result<Box<dyn Read>, EvalExecutionError> {
             unreachable!()
         }
+        fn compose_copy_archive_bounded(
+            &self,
+            _: &DockerComposeArchiveRequest,
+            _: Duration,
+        ) -> Result<Box<dyn Read>, EvalExecutionError> {
+            Ok(Box::new(std::io::Cursor::new(Vec::new())))
+        }
         fn compose_stop_service(
             &self,
             _: &DockerComposeStopRequest,
         ) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn compose_stop_service_bounded(
+            &self,
+            request: &DockerComposeStopRequest,
+        ) -> Result<(), EvalExecutionError> {
+            assert!(
+                request
+                    .deadline()
+                    .is_some_and(|deadline| !deadline.is_zero())
+            );
             Ok(())
         }
         fn compose_down(&self, _: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
