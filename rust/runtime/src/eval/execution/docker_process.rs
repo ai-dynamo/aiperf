@@ -108,9 +108,8 @@ impl DockerProcessSandbox {
                 "multi-step execution plan",
             ));
         }
-        if package.execution_plan().steps().iter().any(|step| {
-            step.agent().timeout().is_some() || step.verifier().phase().timeout().is_some()
-        }) && tokio::runtime::Handle::try_current().is_ok()
+        if multi_step_uses_clock_drive(package.execution_plan())
+            && tokio::runtime::Handle::try_current().is_ok()
         {
             return Err(EvalExecutionError::RuntimeContext(
                 "synchronous Docker execution",
@@ -181,9 +180,8 @@ impl DockerProcessSandbox {
                 runtime,
                 &container,
                 &image,
-                workspace.path(),
+                ContainerWorkspace::at_workdir(workspace.path(), environment_workdir),
                 environment,
-                environment_workdir,
                 baseline_network,
                 None,
             )?;
@@ -296,9 +294,8 @@ impl DockerProcessSandbox {
                 runtime,
                 &container,
                 &image,
-                workspace.path(),
+                ContainerWorkspace::at_workdir(workspace.path(), environment_workdir),
                 environment,
-                environment_workdir,
                 baseline_network,
                 Some(package.instruction()),
             )?;
@@ -361,9 +358,8 @@ impl DockerProcessSandbox {
                     runtime,
                     &name,
                     &image,
-                    verifier_workspace.path(),
+                    ContainerWorkspace::at_workdir(verifier_workspace.path(), verifier_workdir),
                     verifier.environment(),
-                    verifier_workdir,
                     verifier_network,
                     None,
                 )?;
@@ -437,6 +433,26 @@ impl DockerProcessSandbox {
             (Ok(result), None) => Ok(result),
         }
     }
+}
+
+fn multi_step_uses_clock_drive(plan: &BenchmarkExecutionPlan) -> bool {
+    let has_phase_timeout = plan.steps().iter().any(|step| {
+        step.agent().timeout().is_some() || step.verifier().phase().timeout().is_some()
+    });
+    let has_timed_healthcheck = std::iter::once(plan.environment())
+        .chain(
+            plan.steps()
+                .iter()
+                .map(|step| step.verifier().environment()),
+        )
+        .filter_map(super::EnvironmentPlan::healthcheck)
+        .any(|healthcheck| {
+            healthcheck.start_period().is_some()
+                || healthcheck.start_interval().is_some()
+                || healthcheck.interval().is_some()
+                || healthcheck.timeout().is_some()
+        });
+    has_phase_timeout || has_timed_healthcheck
 }
 
 struct DockerStepSession<'a> {
@@ -546,9 +562,8 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 self.runtime,
                 &name,
                 self.image,
-                workspace.path(),
+                ContainerWorkspace::read_only(workspace.path(), VERIFIER_ARTIFACT_STAGE),
                 verifier.environment(),
-                verifier_workdir,
                 verifier_network,
                 None,
             )?;
@@ -571,41 +586,60 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             self.agent_container.to_owned()
         };
         let verifier_network = network_lease(verifier.phase().network())?;
-        reset_verifier_files(self.runtime, &verifier_name, verifier_network)?;
-        self.runtime.copy(&DockerCopyRequest::new([
-            "cp".to_owned(),
-            format!(
-                "{}/.",
-                self.source_root.join(step.verifier_test_root()).display()
-            ),
-            format!("{verifier_name}:/tests"),
-        ]))?;
-        let verifier_workdir = self
-            .recipe
-            .resolve_workdir(verifier.environment().workdir());
-        prepare_workdir(
-            self.runtime,
-            &verifier_name,
-            verifier.environment(),
-            verifier.phase(),
-            verifier_workdir,
-            verifier_network,
-        )?;
-        execute_planned_phase(
-            self.runtime,
-            &verifier_name,
-            EvalExecutionPhase::Verifier,
-            &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
-            verifier.environment(),
-            verifier.phase(),
-            verifier_workdir,
-            self.secrets,
-        )?;
-        let reward_workspace = tempfile::tempdir()
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        let reward = read_reward_with_runtime(self.runtime, &verifier_name, &reward_workspace)?;
+        let outcome = (|| {
+            reset_verifier_files(self.runtime, &verifier_name, verifier_network)?;
+            self.runtime.copy(&DockerCopyRequest::new([
+                "cp".to_owned(),
+                format!(
+                    "{}/.",
+                    self.source_root.join(step.verifier_test_root()).display()
+                ),
+                format!("{verifier_name}:/tests"),
+            ]))?;
+            let verifier_workdir = self
+                .recipe
+                .resolve_workdir(verifier.environment().workdir());
+            prepare_workdir(
+                self.runtime,
+                &verifier_name,
+                verifier.environment(),
+                verifier.phase(),
+                verifier_workdir,
+                verifier_network,
+            )?;
+            if verifier.mode() == VerifierMode::Separate {
+                stage_verifier_artifacts(
+                    self.runtime,
+                    &verifier_name,
+                    verifier_workdir,
+                    verifier_network,
+                )?;
+            }
+            execute_planned_phase(
+                self.runtime,
+                &verifier_name,
+                EvalExecutionPhase::Verifier,
+                &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
+                verifier.environment(),
+                verifier.phase(),
+                verifier_workdir,
+                self.secrets,
+            )?;
+            let reward_workspace = tempfile::tempdir()
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            read_reward_with_runtime(self.runtime, &verifier_name, &reward_workspace)
+        })();
+        let cleanup = if verifier.mode() == VerifierMode::Shared {
+            reset_verifier_files(self.runtime, &verifier_name, verifier_network)
+        } else {
+            Ok(())
+        };
         self.artifact_collection = None;
-        Ok(reward)
+        match (outcome, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(reward), Ok(())) => Ok(reward),
+        }
     }
 }
 
@@ -1007,13 +1041,38 @@ fn redact_secret_values(
     redacted
 }
 
+const VERIFIER_ARTIFACT_STAGE: &str = "/aiperf-eval-artifacts";
+
+struct ContainerWorkspace<'a> {
+    path: &'a std::path::Path,
+    target: Option<&'a str>,
+    is_read_only: bool,
+}
+
+impl<'a> ContainerWorkspace<'a> {
+    fn at_workdir(path: &'a std::path::Path, workdir: Option<&'a str>) -> Self {
+        Self {
+            path,
+            target: workdir,
+            is_read_only: false,
+        }
+    }
+
+    fn read_only(path: &'a std::path::Path, target: &'a str) -> Self {
+        Self {
+            path,
+            target: Some(target),
+            is_read_only: true,
+        }
+    }
+}
+
 fn create_planned_container(
     runtime: &dyn DockerRuntime,
     container: &str,
     image: &str,
-    workspace: &std::path::Path,
+    workspace: ContainerWorkspace<'_>,
     environment: &super::EnvironmentPlan,
-    workdir: Option<&str>,
     network_lease: &str,
     instruction: Option<&str>,
 ) -> Result<(), EvalExecutionError> {
@@ -1024,10 +1083,11 @@ fn create_planned_container(
         "--network".to_owned(),
         network_lease.to_owned(),
     ];
-    if let Some(workdir) = workdir {
+    if let Some(target) = workspace.target {
+        let mode = if workspace.is_read_only { ":ro" } else { "" };
         arguments.extend([
             "--volume".to_owned(),
-            format!("{}:{workdir}", workspace.display()),
+            format!("{}:{target}{mode}", workspace.path.display()),
         ]);
     }
     if let Some(resources) = environment.resources() {
@@ -1106,6 +1166,33 @@ fn reset_verifier_files(
             EvalExecutionPhase::Verifier,
             Some("root"),
             None,
+            network_lease,
+            None,
+        ),
+    )
+}
+
+fn stage_verifier_artifacts(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    workdir: Option<&str>,
+    network_lease: &str,
+) -> Result<(), EvalExecutionError> {
+    runtime.exec(
+        &DockerExecRequest::new(
+            container,
+            [
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                format!("cp -R {VERIFIER_ARTIFACT_STAGE}/. ."),
+            ],
+            Default::default(),
+            Default::default(),
+        )
+        .with_phase(
+            EvalExecutionPhase::Verifier,
+            Some("root"),
+            workdir,
             network_lease,
             None,
         ),

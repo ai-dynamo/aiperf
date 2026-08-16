@@ -1058,17 +1058,58 @@ fn shared_verifier_resets_tests_before_each_selected_tree_copy() {
         .enumerate()
         .filter_map(|(index, event)| event.starts_with("copy-tests:").then_some(index))
         .collect::<Vec<_>>();
-    assert_eq!(reset_indices.len(), 2);
+    assert_eq!(reset_indices.len(), 4);
     assert_eq!(copy_indices.len(), 2);
     assert!(reset_indices[0] < copy_indices[0]);
     assert!(reset_indices[1] > copy_indices[0]);
-    assert!(reset_indices[1] < copy_indices[1]);
+    assert!(reset_indices[2] < copy_indices[1]);
+    assert!(reset_indices[3] > copy_indices[1]);
+    let second_agent = events.iter().position(|event| event == "agent:2").unwrap();
+    assert!(reset_indices[1] < second_agent);
     assert!(events[copy_indices[0]].contains("/tests/."));
     assert!(events[copy_indices[1]].contains("/steps/two/tests/."));
     assert_eq!(
         runtime.reset_users.into_inner(),
-        vec![Some("root".to_owned()), Some("root".to_owned())]
+        vec![
+            Some("root".to_owned()),
+            Some("root".to_owned()),
+            Some("root".to_owned()),
+            Some("root".to_owned()),
+        ]
     );
+}
+
+#[test]
+fn shared_verifier_failure_clears_hidden_state_and_beats_cleanup_error() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::failing_shared_verifier_cleanup();
+
+    let error = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("the verifier failure must stop before the second agent");
+
+    assert_eq!(
+        error,
+        EvalExecutionError::ProcessFailure("verifier 1 failed".to_owned())
+    );
+    assert_eq!(runtime.agent_execs.get(), 1);
+    assert_eq!(runtime.reset_calls.get(), 2);
 }
 
 #[test]
@@ -1121,6 +1162,48 @@ fn separate_verifiers_use_fresh_staging_and_artifact_snapshots() {
     assert_ne!(workspaces[1], workspaces[2]);
     assert!(creates[1].container.contains("verifier-one"));
     assert!(creates[2].container.contains("verifier-two"));
+}
+
+#[test]
+fn separate_verifier_stages_artifacts_without_overriding_image_workdir() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, true);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let result = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    assert_eq!(result.steps.len(), 2);
+    let creates = runtime.creates.into_inner();
+    assert_eq!(creates.len(), 3);
+    assert_eq!(creates[0].workspace, None);
+    assert_ne!(creates[1].workspace, creates[2].workspace);
+    assert_eq!(
+        creates[1].workspace_target.as_deref(),
+        Some("/aiperf-eval-artifacts:ro")
+    );
+    assert_eq!(
+        creates[2].workspace_target.as_deref(),
+        Some("/aiperf-eval-artifacts:ro")
+    );
+    assert_eq!(runtime.stage_workdirs.into_inner(), vec![None, None]);
+    assert_eq!(runtime.verifier_workdirs.into_inner(), vec![None, None]);
 }
 
 #[test]
@@ -1226,6 +1309,65 @@ timeout_sec = 2
     );
 }
 
+#[tokio::test]
+async fn timed_step_healthcheck_refuses_nested_synchronous_docker_execution() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, false);
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+[task]
+name = "example/multi-step-healthcheck"
+[[steps]]
+name = "one"
+[[steps]]
+name = "two"
+[steps.verifier]
+environment_mode = "separate"
+[steps.verifier.environment.healthcheck]
+command = ["true"]
+start_period_sec = 1
+retries = 1
+"#,
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert!(
+        imported
+            .package
+            .execution_plan()
+            .environment()
+            .healthcheck()
+            .is_none()
+    );
+    assert!(
+        imported.package.execution_plan().steps()[1]
+            .verifier()
+            .environment()
+            .healthcheck()
+            .is_some()
+    );
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        DockerProcessSandbox::new().execute_multi_step(
+            &recipe,
+            &imported.package,
+            &["agent".to_owned()],
+        ),
+        Err(EvalExecutionError::RuntimeContext(
+            "synchronous Docker execution"
+        ))
+    );
+}
+
 #[derive(Clone, Copy)]
 enum StepFailure {
     Agent(usize),
@@ -1236,6 +1378,7 @@ enum StepFailure {
 struct RecordedCreate {
     container: String,
     workspace: Option<String>,
+    workspace_target: Option<String>,
     arguments: Vec<String>,
 }
 
@@ -1246,12 +1389,16 @@ struct StepRecordingRuntime {
     agent_execs: Cell<usize>,
     collection_calls: Cell<usize>,
     verifier_execs: Cell<usize>,
+    reset_calls: Cell<usize>,
     removals: Cell<usize>,
     events: RefCell<Vec<String>>,
     creates: RefCell<Vec<RecordedCreate>>,
     agent_environments: RefCell<Vec<BTreeMap<String, String>>>,
     reset_users: RefCell<Vec<Option<String>>>,
+    stage_workdirs: RefCell<Vec<Option<String>>>,
+    verifier_workdirs: RefCell<Vec<Option<String>>>,
     failure: Option<StepFailure>,
+    fail_reset_call: Option<usize>,
     fail_first_removal: bool,
 }
 
@@ -1260,6 +1407,14 @@ impl StepRecordingRuntime {
         Self {
             failure: Some(failure),
             fail_first_removal,
+            ..Self::default()
+        }
+    }
+
+    fn failing_shared_verifier_cleanup() -> Self {
+        Self {
+            failure: Some(StepFailure::Verifier(1)),
+            fail_reset_call: Some(2),
             ..Self::default()
         }
     }
@@ -1285,13 +1440,16 @@ impl DockerRuntime for StepRecordingRuntime {
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
         let arguments = request.public_arguments();
         let container = argument_after(arguments, "--name").to_owned();
-        let workspace = argument_after(arguments, "--volume")
+        let volume = argument_after(arguments, "--volume")
             .split_once(':')
-            .map(|(host, _)| host.to_owned());
+            .map(|(host, target)| (host.to_owned(), target.to_owned()));
+        let workspace = volume.as_ref().map(|(host, _)| host.clone());
+        let workspace_target = volume.map(|(_, target)| target);
         self.events.borrow_mut().push(format!("create:{container}"));
         self.creates.borrow_mut().push(RecordedCreate {
             container,
             workspace,
+            workspace_target,
             arguments: arguments.to_vec(),
         });
         Ok(())
@@ -1311,12 +1469,32 @@ impl DockerRuntime for StepRecordingRuntime {
             .iter()
             .any(|argument| argument.contains("rm -rf /tests"))
         {
+            let call = self.reset_calls.get() + 1;
+            self.reset_calls.set(call);
             self.reset_users
                 .borrow_mut()
                 .push(request.user().map(str::to_owned));
             self.events
                 .borrow_mut()
                 .push(format!("reset-tests:{}", request.container()));
+            if self.fail_reset_call == Some(call) {
+                return Err(EvalExecutionError::ProcessFailure(format!(
+                    "reset {call} failed"
+                )));
+            }
+            return Ok(());
+        }
+        if request
+            .public_arguments()
+            .iter()
+            .any(|argument| argument.contains("cp -R /aiperf-eval-artifacts/. ."))
+        {
+            self.stage_workdirs
+                .borrow_mut()
+                .push(request.workdir().map(str::to_owned));
+            self.events
+                .borrow_mut()
+                .push(format!("stage-artifacts:{}", request.container()));
             return Ok(());
         }
         match request.phase().to_string().as_str() {
@@ -1337,6 +1515,9 @@ impl DockerRuntime for StepRecordingRuntime {
             "verifier" => {
                 let call = self.verifier_execs.get() + 1;
                 self.verifier_execs.set(call);
+                self.verifier_workdirs
+                    .borrow_mut()
+                    .push(request.workdir().map(str::to_owned));
                 self.events.borrow_mut().push(format!("verifier:{call}"));
                 if matches!(self.failure, Some(StepFailure::Verifier(failed)) if failed == call) {
                     return Err(EvalExecutionError::ProcessFailure(format!(
