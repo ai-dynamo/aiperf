@@ -76,6 +76,7 @@ dynamo-parity = ["dynamo-full", "aiperf-runtime/dynamo-parity"]
 full = ["dynosim", "parquet", "cellular", "grpc"]
 
 [dependencies]
+tempfile = "3"
 aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "string"] }

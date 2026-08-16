@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native execution of one Harbor-compatible evaluation package.
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 use aiperf_runtime::eval::{
     DockerProcessSandbox, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
@@ -90,6 +93,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         flags.git_revision,
         flags.git_path,
     )?;
+    let (_pinned_tree, source) = materialize_pinned_directory(&source)?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
     let recipe = HarborSandboxRecipe::new(flags.image, flags.workdir)?;
     let agent_command = flags
@@ -132,6 +136,53 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     Ok(0)
 }
 
+fn materialize_pinned_directory(
+    source: &HarborSource,
+) -> anyhow::Result<(Option<tempfile::TempDir>, HarborSource)> {
+    let HarborSource::PinnedGit {
+        repository,
+        revision,
+        package_path,
+    } = source
+    else {
+        return Ok((None, source.clone()));
+    };
+    if !package_path.ends_with("task.toml") {
+        return Ok((None, source.clone()));
+    }
+    let root = tempfile::tempdir()?;
+    let mut archive = Command::new("git");
+    archive
+        .args(["-C", repository, "archive", "--format=tar", revision])
+        .stdout(Stdio::piped());
+    let mut archive = archive.spawn()?;
+    let archive_stdout = archive
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("pinned task archive has no standard output"))?;
+    let output = Command::new("tar")
+        .args(["-x", "-C", root.path().to_string_lossy().as_ref()])
+        .stdin(archive_stdout)
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "unable to materialize pinned task tree: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    if !archive.wait()?.success() {
+        anyhow::bail!("unable to archive pinned task tree");
+    }
+    let directory = PathBuf::from(package_path).parent().map_or_else(
+        || root.path().to_path_buf(),
+        |parent| root.path().join(parent),
+    );
+    Ok((
+        Some(root),
+        HarborSource::local(directory.to_string_lossy())?,
+    ))
+}
+
 fn agent_command_argv(command: &str) -> Vec<String> {
     vec!["/bin/sh".to_owned(), "-c".to_owned(), command.to_owned()]
 }
@@ -155,7 +206,10 @@ fn source_from_flags(
 
 #[cfg(test)]
 mod tests {
-    use super::{agent_command_argv, source_from_flags};
+    use std::{fs, process::Command};
+
+    use super::{agent_command_argv, materialize_pinned_directory, source_from_flags};
+    use aiperf_runtime::eval::HarborSource;
 
     #[test]
     fn source_flags_require_one_complete_source_form() {
@@ -178,5 +232,80 @@ mod tests {
             agent_command_argv("printf result > result.txt"),
             ["/bin/sh", "-c", "printf result > result.txt"]
         );
+    }
+
+    #[test]
+    fn materializes_a_pinned_standard_task_tree() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("tasks");
+        fs::create_dir(&repository).unwrap();
+        for arguments in [
+            ["init"].as_slice(),
+            ["config", "user.email", "eval@example.invalid"].as_slice(),
+            ["config", "user.name", "Eval"].as_slice(),
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repository)
+                    .args(arguments)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        fs::create_dir_all(repository.join("task/environment")).unwrap();
+        fs::create_dir_all(repository.join("task/tests")).unwrap();
+        fs::write(
+            repository.join("task/task.toml"),
+            "schema_version = \"1.0\"\n[task]\nname = \"example/pinned\"\n",
+        )
+        .unwrap();
+        fs::write(repository.join("task/instruction.md"), "Do work.\n").unwrap();
+        fs::write(
+            repository.join("task/environment/Dockerfile"),
+            "FROM scratch\n",
+        )
+        .unwrap();
+        fs::write(repository.join("task/tests/test.sh"), "exit 0\n").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["add", "."])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-c")
+                .arg("commit.gpgsign=false")
+                .arg("-C")
+                .arg(&repository)
+                .args(["commit", "-m", "task"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let revision = String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        let (tree, source) = materialize_pinned_directory(
+            &HarborSource::pinned_git(repository.to_string_lossy(), revision, "task/task.toml")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(tree.unwrap().path().join("task/task.toml").is_file());
+        assert!(matches!(source, HarborSource::Local(_)));
     }
 }
