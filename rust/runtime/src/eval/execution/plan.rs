@@ -109,6 +109,16 @@ impl NetworkPolicy {
         }
     }
 
+    /// Reports whether this policy isolates the environment from all networks.
+    pub const fn is_no_network(&self) -> bool {
+        matches!(self.0, NetworkPolicyKind::NoNetwork)
+    }
+
+    /// Reports whether this policy uses the provider's public network lease.
+    pub const fn is_public(&self) -> bool {
+        matches!(self.0, NetworkPolicyKind::Public)
+    }
+
     fn required_capability(&self) -> &'static str {
         match self.0 {
             NetworkPolicyKind::Public => "public_network",

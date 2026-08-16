@@ -4,7 +4,7 @@
 //! Docker-backed execution for conventional native task directories.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     fs,
     process::{Child, Command, Stdio},
     rc::Rc,
@@ -18,7 +18,12 @@ use crate::{
     eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode},
 };
 
-use super::{EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult};
+use super::{
+    BenchmarkExecutionPlan, DockerBuildRequest, DockerCopyRequest, DockerCreateRequest,
+    DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EvalExecutionError,
+    EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult, NetworkPolicy, SecretProvider,
+    preflight_docker, resolve_environment, resolve_phase_environment,
+};
 
 /// Executes a conventional task in a task-built Docker environment.
 pub struct DockerProcessSandbox {
@@ -68,198 +73,540 @@ impl DockerProcessSandbox {
                 "Docker execution requires a standard task directory".to_owned(),
             ));
         }
+        let _ = verifier_mode;
+        let runtime = DockerCliRuntime {
+            clock: self.clock.clone(),
+        };
+        self.execute_with_runtime(
+            &runtime,
+            recipe,
+            package,
+            package.execution_plan(),
+            agent_command,
+            &HostSecretProvider,
+        )
+    }
+
+    /// Executes a normalized standard task through an injectable Docker provider.
+    ///
+    /// This boundary keeps provider preflight and every plan-derived phase policy
+    /// observable without exposing shell command construction to the importer.
+    pub fn execute_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        agent_command: &[String],
+        secrets: &dyn SecretProvider,
+    ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if !package.is_standard_directory() {
+            return Err(EvalExecutionError::Materialization(
+                "Docker execution requires a standard task directory".to_owned(),
+            ));
+        }
         let source_root = package.source_root().ok_or_else(|| {
             EvalExecutionError::Materialization(
                 "standard task directory was not retained after import".to_owned(),
             )
         })?;
-        let environment = source_root.join("environment");
-        if !environment.join("Dockerfile").is_file() {
+        let environment_root = source_root.join("environment");
+        if !environment_root.join("Dockerfile").is_file() {
             return Err(EvalExecutionError::Materialization(
                 "standard task is missing environment/Dockerfile".to_owned(),
             ));
         }
+
+        preflight_docker(runtime, plan)?;
+        let environment = plan.environment();
+        let verifier = plan.verifier();
+        if !runtime.supports_phase_network_transitions()
+            && (plan.agent().network() != environment.network()
+                || verifier.phase().network() != verifier.environment().network())
+        {
+            return Err(EvalExecutionError::UnsupportedEnforcement(
+                "phase network transition",
+            ));
+        }
+
         let workspace = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        let name_suffix = format!(
-            "{}-{}",
-            std::process::id(),
-            package.source_digest().as_str()
-        );
-        let safe_suffix = name_suffix
+        let safe_suffix = package
+            .source_digest()
+            .as_str()
             .chars()
             .filter(|character| character.is_ascii_alphanumeric())
             .take(32)
             .collect::<String>();
         let image = format!("aiperf-eval:{safe_suffix}");
         let container = format!("aiperf-eval-{safe_suffix}");
-        let lease = DockerLease { container, image };
-        docker(
-            [
-                "build",
-                "--tag",
-                &lease.image,
-                environment.to_string_lossy().as_ref(),
-            ],
-            "build task environment",
-        )?;
-        create_container(
-            &lease.container,
-            &lease.image,
-            workspace.path(),
-            recipe,
-            package,
-            true,
-        )?;
-        docker(["start", &lease.container], "start task container")?;
-        docker_exec(
-            self.clock.clone(),
-            &lease.container,
-            agent_command,
-            "run agent",
-            package
-                .timeouts()
-                .map(|(agent_timeout, _)| (EvalExecutionPhase::Agent, agent_timeout)),
-        )?;
-        let artifacts = collect_workspace_artifacts(&workspace, recipe, package)?;
-        let verifier_workspace = tempfile::tempdir()
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        let verifier_container = if verifier_mode == VerifierMode::Separate {
-            copy_workspace_artifacts(&workspace, &verifier_workspace, recipe, package)?;
-            let container = format!("{}-verifier", lease.container);
-            let verifier_lease = ContainerLease { container };
-            create_container(
-                &verifier_lease.container,
-                &lease.image,
-                verifier_workspace.path(),
+        let mut containers = vec![container.clone()];
+
+        let outcome = (|| {
+            let baseline_network = network_lease(environment.network())?;
+            runtime.build(
+                &DockerBuildRequest::new([
+                    "build",
+                    "--tag",
+                    &image,
+                    environment_root.to_string_lossy().as_ref(),
+                ])
+                .with_network_lease(baseline_network),
+            )?;
+            create_planned_container(
+                runtime,
+                &container,
+                &image,
+                workspace.path(),
                 recipe,
-                package,
-                false,
+                environment,
+                baseline_network,
+                Some(package.instruction()),
             )?;
-            docker(
-                ["start", &verifier_lease.container],
-                "start separate verifier container",
+            runtime.start(&DockerStartRequest::new(&container))?;
+
+            if let Some(healthcheck) = environment.healthcheck() {
+                run_healthcheck(
+                    self.clock.clone(),
+                    runtime,
+                    &container,
+                    environment,
+                    healthcheck,
+                    baseline_network,
+                    secrets,
+                )?;
+            }
+
+            prepare_workdir(
+                runtime,
+                &container,
+                environment,
+                plan.agent(),
+                baseline_network,
             )?;
-            Some(verifier_lease)
-        } else {
-            None
-        };
-        let verifier = verifier_container
-            .as_ref()
-            .map_or(lease.container.as_str(), |lease| lease.container.as_str());
-        docker(
-            [
-                "cp",
-                &format!("{}/.", source_root.join("tests").display()),
-                &format!("{verifier}:/tests"),
-            ],
-            "install verifier files",
-        )?;
-        docker(
-            [
-                "exec",
-                "--user",
-                "root",
-                verifier,
-                "/bin/sh",
-                "-c",
-                "mkdir -p /logs/verifier && chmod 0777 /logs /logs/verifier",
-            ],
-            "prepare verifier logs",
-        )?;
-        docker_exec(
-            self.clock.clone(),
-            verifier,
-            &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
-            "run verifier",
-            package
-                .timeouts()
-                .map(|(_, verifier_timeout)| (EvalExecutionPhase::Verifier, verifier_timeout)),
-        )?;
-        let reward = read_reward(
-            verifier,
-            if verifier_mode == VerifierMode::Separate {
-                &verifier_workspace
+            execute_planned_phase(
+                runtime,
+                &container,
+                EvalExecutionPhase::Agent,
+                agent_command,
+                environment,
+                plan.agent(),
+                secrets,
+            )?;
+            let artifacts = collect_workspace_artifacts(&workspace, recipe, package)?;
+
+            let verifier_container = if verifier.mode() == VerifierMode::Separate {
+                let verifier_workspace = tempfile::tempdir()
+                    .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                copy_workspace_artifacts(&workspace, &verifier_workspace, recipe, package)?;
+                let name = format!("{container}-verifier");
+                let verifier_network = network_lease(verifier.environment().network())?;
+                create_planned_container(
+                    runtime,
+                    &name,
+                    &image,
+                    verifier_workspace.path(),
+                    recipe,
+                    verifier.environment(),
+                    verifier_network,
+                    None,
+                )?;
+                runtime.start(&DockerStartRequest::new(&name))?;
+                containers.push(name.clone());
+                Some((name, verifier_workspace))
             } else {
-                &workspace
-            },
-        )?;
-        Ok(LocalExecutionResult {
-            artifacts,
-            reward,
-            verifier: package.source_digest(),
-        })
+                None
+            };
+            let verifier_name = verifier_container
+                .as_ref()
+                .map_or(container.as_str(), |(name, _)| name.as_str());
+            let verifier_workspace = verifier_container
+                .as_ref()
+                .map_or(&workspace, |(_, workspace)| workspace);
+            runtime.copy(&DockerCopyRequest::new([
+                "cp".to_owned(),
+                format!("{}/.", source_root.join("tests").display()),
+                format!("{verifier_name}:/tests"),
+            ]))?;
+            let verifier_network = network_lease(verifier.phase().network())?;
+            prepare_workdir(
+                runtime,
+                verifier_name,
+                verifier.environment(),
+                verifier.phase(),
+                verifier_network,
+            )?;
+            execute_planned_phase(
+                runtime,
+                verifier_name,
+                EvalExecutionPhase::Verifier,
+                &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
+                verifier.environment(),
+                verifier.phase(),
+                secrets,
+            )?;
+            let reward = read_reward_with_runtime(runtime, verifier_name, verifier_workspace)?;
+            Ok(LocalExecutionResult {
+                artifacts,
+                reward,
+                verifier: package.source_digest(),
+            })
+        })();
+        let cleanup = containers.into_iter().rev().try_for_each(|container| {
+            runtime.remove(&DockerRemoveRequest::new(["rm", "--force", &container]))
+        });
+        match (outcome, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(result), Ok(())) => Ok(result),
+        }
     }
 }
 
-fn create_container(
+fn run_healthcheck(
+    clock: Rc<dyn Clock>,
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    environment: &super::EnvironmentPlan,
+    healthcheck: &super::HealthcheckPlan,
+    network_lease: &str,
+    secrets: &dyn SecretProvider,
+) -> Result<(), EvalExecutionError> {
+    if let Some(start_period) = healthcheck.start_period() {
+        sleep_with_clock(clock.clone(), start_period, container)?;
+    }
+    let retries = healthcheck.retries().unwrap_or(1);
+    let health_environment = resolve_environment(environment, secrets)?;
+    let mut last_error = None;
+    for attempt in 0..retries {
+        let request = DockerExecRequest::new(
+            container,
+            healthcheck.command().iter().cloned(),
+            health_environment.public().clone(),
+            health_environment.secrets().clone(),
+        )
+        .with_phase(
+            EvalExecutionPhase::Healthcheck,
+            environment.user(),
+            environment.workdir(),
+            network_lease,
+            healthcheck.timeout(),
+        );
+        match runtime.exec(&request) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+        if attempt + 1 < retries {
+            let interval = if attempt == 0 {
+                healthcheck.start_interval().or(healthcheck.interval())
+            } else {
+                healthcheck.interval().or(healthcheck.start_interval())
+            };
+            if let Some(interval) = interval {
+                sleep_with_clock(clock.clone(), interval, container)?;
+            }
+        }
+    }
+    let reason = last_error.map_or_else(
+        || "healthcheck exhausted without an execution result".to_owned(),
+        |error| error.to_string(),
+    );
+    Err(EvalExecutionError::Unhealthy(reason))
+}
+
+fn sleep_with_clock(
+    clock: Rc<dyn Clock>,
+    duration: Duration,
+    container: &str,
+) -> Result<(), EvalExecutionError> {
+    let completed = Rc::new(Cell::new(false));
+    let completion = completed.clone();
+    let delay_ns = duration.as_nanos().min(i64::MAX as u128) as i64;
+    let outcome = clock.clone().drive(Box::pin(async move {
+        clock.sleep(delay_ns).await;
+        completion.set(true);
+    }));
+    if outcome.deadlocked || !completed.get() {
+        return Err(EvalExecutionError::TerminalUncertainty {
+            phase: EvalExecutionPhase::Healthcheck,
+            container: container.to_owned(),
+            reason: "execution clock reached quiescence during healthcheck scheduling".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+struct HostSecretProvider;
+
+impl SecretProvider for HostSecretProvider {
+    fn resolve(&self, name: &super::EnvName) -> Result<super::SecretValue, EvalExecutionError> {
+        std::env::var(name)
+            .map(super::SecretValue::new)
+            .map_err(|_| EvalExecutionError::MissingSecret(name.clone()))
+    }
+}
+
+struct DockerCliRuntime {
+    clock: Rc<dyn Clock>,
+}
+
+impl DockerRuntime for DockerCliRuntime {
+    fn capabilities(&self) -> super::ProviderCapabilities {
+        super::ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_resource_limits()
+            .with_users()
+            .with_phase_env()
+            .with_workdir()
+            .with_phase_timeouts()
+            .with_separate_verifier()
+            .with_healthchecks()
+            .with_no_network()
+            .with_public_network()
+    }
+
+    fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        docker(
+            request.public_arguments().iter().map(String::as_str),
+            "build task environment",
+        )
+        .map(|_| ())
+    }
+
+    fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        docker(
+            request.public_arguments().iter().map(String::as_str),
+            "create task container",
+        )
+        .map(|_| ())
+    }
+
+    fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        docker(["start", request.container()], "start task container").map(|_| ())
+    }
+
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        let mut arguments = vec!["exec".to_owned()];
+        for (name, value) in request.public_environment() {
+            arguments.extend(["--env".to_owned(), format!("{name}={value}")]);
+        }
+        for (name, value) in request.secret_environment() {
+            arguments.extend(["--env".to_owned(), format!("{name}={}", value.exposed())]);
+        }
+        if let Some(user) = request.user() {
+            arguments.extend(["--user".to_owned(), user.to_owned()]);
+        }
+        if let Some(workdir) = request.workdir() {
+            arguments.extend(["--workdir".to_owned(), workdir.to_owned()]);
+        }
+        arguments.push(request.container().to_owned());
+        arguments.extend(request.public_arguments().iter().cloned());
+        if let Some(timeout) = request.deadline() {
+            let references = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+            return docker_exec_bounded(
+                self.clock.clone(),
+                request.container(),
+                &references,
+                "run planned Docker phase",
+                request.phase(),
+                timeout,
+            );
+        }
+        docker(
+            arguments.iter().map(String::as_str),
+            "run planned Docker phase",
+        )
+        .map(|_| ())
+    }
+
+    fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        docker(
+            request.public_arguments().iter().map(String::as_str),
+            "copy Docker files",
+        )
+        .map(|_| ())
+    }
+
+    fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        docker(
+            request.public_arguments().iter().map(String::as_str),
+            "remove Docker lease",
+        )
+        .map(|_| ())
+    }
+}
+
+fn network_lease(network: &NetworkPolicy) -> Result<&'static str, EvalExecutionError> {
+    if network.is_no_network() {
+        return Ok("none");
+    }
+    if network.is_public() {
+        return Ok("bridge");
+    }
+    Err(EvalExecutionError::UnsupportedEnforcement(
+        "allowlist_egress",
+    ))
+}
+
+fn create_planned_container(
+    runtime: &dyn DockerRuntime,
     container: &str,
     image: &str,
     workspace: &std::path::Path,
     recipe: &HarborSandboxRecipe,
-    package: &HarborTaskPackage,
-    has_agent_instruction: bool,
+    environment: &super::EnvironmentPlan,
+    network_lease: &str,
+    instruction: Option<&str>,
 ) -> Result<(), EvalExecutionError> {
     let mut arguments = vec![
         "create".to_owned(),
         "--name".to_owned(),
         container.to_owned(),
         "--network".to_owned(),
-        "none".to_owned(),
-        "--workdir".to_owned(),
-        recipe.workdir.clone(),
-        "--volume".to_owned(),
-        format!("{}:{}", workspace.display(), recipe.workdir),
+        network_lease.to_owned(),
     ];
-    if let Some((cpus, memory_mb)) = package.container_resources() {
+    if let Some(workdir) = environment.workdir() {
         arguments.extend([
-            "--cpus".to_owned(),
-            cpus.to_string(),
-            "--memory".to_owned(),
-            format!("{memory_mb}m"),
+            "--volume".to_owned(),
+            format!("{}:{workdir}", workspace.display()),
+        ]);
+    } else {
+        arguments.extend([
+            "--volume".to_owned(),
+            format!("{}:{}", workspace.display(), recipe.workdir),
         ]);
     }
-    if has_agent_instruction {
+    if let Some(resources) = environment.resources() {
+        arguments.extend([
+            "--cpus".to_owned(),
+            resources.cpus().to_string(),
+            "--memory".to_owned(),
+            format!("{}m", resources.memory_mb()),
+        ]);
+    }
+    if let Some(instruction) = instruction {
         arguments.extend([
             "--env".to_owned(),
-            format!("AIPERF_EVAL_INSTRUCTION={}", package.instruction()),
+            format!("AIPERF_EVAL_INSTRUCTION={instruction}"),
         ]);
     }
     arguments.extend([image.to_owned(), "sleep".to_owned(), "infinity".to_owned()]);
-    docker(
-        arguments.iter().map(String::as_str),
-        "create task container",
-    )
-    .map(|_| ())
+    runtime.create(&DockerCreateRequest::new(arguments).with_network_lease(network_lease))
 }
 
-#[derive(Debug)]
-struct ContainerLease {
-    container: String,
-}
-
-impl Drop for ContainerLease {
-    fn drop(&mut self) {
-        let _ = Command::new("docker")
-            .args(["rm", "--force", &self.container])
-            .output();
+fn prepare_workdir(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    environment: &super::EnvironmentPlan,
+    phase: &super::PhasePlan,
+    network_lease: &str,
+) -> Result<(), EvalExecutionError> {
+    let Some(workdir) = environment.workdir() else {
+        return Ok(());
+    };
+    let Some(user) = phase.user().or(environment.user()) else {
+        return Ok(());
+    };
+    if user == "root" {
+        return Ok(());
     }
+    runtime.exec(
+        &DockerExecRequest::new(
+            container,
+            [
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                format!("mkdir -p {workdir} && chown {user} {workdir} && su -s /bin/sh {user} -c 'test -w {workdir}'"),
+            ],
+            Default::default(),
+            Default::default(),
+        )
+        .with_phase(
+            EvalExecutionPhase::Agent,
+            None,
+            Some(workdir),
+            network_lease,
+            None,
+        ),
+    )
 }
 
-#[derive(Debug)]
-struct DockerLease {
-    container: String,
-    image: String,
+fn execute_planned_phase(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    execution_phase: EvalExecutionPhase,
+    command: &[String],
+    environment: &super::EnvironmentPlan,
+    phase: &super::PhasePlan,
+    secrets: &dyn SecretProvider,
+) -> Result<(), EvalExecutionError> {
+    if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
+        return Err(EvalExecutionError::InvalidCommand);
+    }
+    let resolved = resolve_phase_environment(environment, phase, secrets)?;
+    let network_lease = network_lease(phase.network())?;
+    runtime.exec(
+        &DockerExecRequest::new(
+            container,
+            command.iter().cloned(),
+            resolved.public().clone(),
+            resolved.secrets().clone(),
+        )
+        .with_phase(
+            execution_phase,
+            phase.user().or(environment.user()),
+            environment.workdir(),
+            network_lease,
+            phase.timeout(),
+        ),
+    )
 }
 
-impl Drop for DockerLease {
-    fn drop(&mut self) {
-        let _ = Command::new("docker")
-            .args(["rm", "--force", &self.container])
-            .output();
-        let _ = Command::new("docker")
-            .args(["image", "rm", &self.image])
-            .output();
+fn read_reward_with_runtime(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    workspace: &TempDir,
+) -> Result<RewardDocument, EvalExecutionError> {
+    let json = copy_optional_with_runtime(
+        runtime,
+        container,
+        "/logs/verifier/reward.json",
+        workspace,
+        "reward.json",
+    )?;
+    let text = copy_optional_with_runtime(
+        runtime,
+        container,
+        "/logs/verifier/reward.txt",
+        workspace,
+        "reward.txt",
+    )?;
+    RewardDocument::parse(json.as_deref(), text.as_deref())
+        .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
+}
+
+fn copy_optional_with_runtime(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    source: &str,
+    workspace: &TempDir,
+    destination: &str,
+) -> Result<Option<Vec<u8>>, EvalExecutionError> {
+    let destination_path = workspace.path().join(destination);
+    match runtime.copy(&DockerCopyRequest::new([
+        "cp".to_owned(),
+        format!("{container}:{source}"),
+        destination_path.to_string_lossy().into_owned(),
+    ])) {
+        Ok(()) => {}
+        Err(EvalExecutionError::ProcessFailure(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    }
+    match fs::read(destination_path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(EvalExecutionError::Materialization(error.to_string())),
     }
 }
 
@@ -280,24 +627,6 @@ fn docker<'a>(
             String::from_utf8_lossy(&output.stderr).trim()
         )))
     }
-}
-
-fn docker_exec(
-    clock: Rc<dyn Clock>,
-    container: &str,
-    command: &[String],
-    action: &str,
-    timeout: Option<(EvalExecutionPhase, Duration)>,
-) -> Result<(), EvalExecutionError> {
-    if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
-        return Err(EvalExecutionError::InvalidCommand);
-    }
-    let mut arguments = vec!["exec", container];
-    arguments.extend(command.iter().map(String::as_str));
-    let Some((phase, timeout)) = timeout else {
-        return docker(arguments, action).map(|_| ());
-    };
-    docker_exec_bounded(clock, container, &arguments, action, phase, timeout)
 }
 
 fn docker_exec_bounded(
@@ -540,47 +869,6 @@ fn remove_timed_out_container(container: &str) -> Result<(), EvalExecutionError>
 fn reports_absent_container(stderr: &[u8]) -> bool {
     let diagnostic = String::from_utf8_lossy(stderr).to_ascii_lowercase();
     diagnostic.contains("no such container") || diagnostic.contains("no such object")
-}
-
-fn read_reward(container: &str, workspace: &TempDir) -> Result<RewardDocument, EvalExecutionError> {
-    let json = copy_optional(
-        container,
-        "/logs/verifier/reward.json",
-        workspace,
-        "reward.json",
-    )?;
-    let text = copy_optional(
-        container,
-        "/logs/verifier/reward.txt",
-        workspace,
-        "reward.txt",
-    )?;
-    RewardDocument::parse(json.as_deref(), text.as_deref())
-        .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
-}
-
-fn copy_optional(
-    container: &str,
-    source: &str,
-    workspace: &TempDir,
-    destination: &str,
-) -> Result<Option<Vec<u8>>, EvalExecutionError> {
-    let destination_path = workspace.path().join(destination);
-    let output = Command::new("docker")
-        .args([
-            "cp",
-            &format!("{container}:{source}"),
-            destination_path.to_string_lossy().as_ref(),
-        ])
-        .output()
-        .map_err(|_| EvalExecutionError::ProcessSpawn("docker copy verifier reward".to_owned()))?;
-    if output.status.success() {
-        fs::read(destination_path)
-            .map(Some)
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))
-    } else {
-        Ok(None)
-    }
 }
 
 fn collect_workspace_artifacts(

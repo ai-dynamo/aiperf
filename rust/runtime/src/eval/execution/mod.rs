@@ -21,7 +21,7 @@ pub use docker_process::DockerProcessSandbox;
 pub use docker_runtime::{
     DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerEnvironment,
     DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest, preflight_docker,
-    resolve_phase_environment,
+    resolve_environment, resolve_phase_environment,
 };
 pub use local_process::{
     LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,

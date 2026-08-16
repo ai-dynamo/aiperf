@@ -3,11 +3,11 @@
 
 //! Redacted, injectable Docker command contracts for benchmark execution.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use super::{
-    BenchmarkExecutionPlan, EnvName, EnvironmentPlan, EvalExecutionError, PhasePlan,
-    ProviderCapabilities, SecretProvider, SecretValue,
+    BenchmarkExecutionPlan, EnvName, EnvironmentPlan, EvalExecutionError, EvalExecutionPhase,
+    PhasePlan, ProviderCapabilities, SecretProvider, SecretValue,
 };
 
 /// Preflights Docker enforcement before the executor can build an image.
@@ -49,6 +49,21 @@ pub fn resolve_phase_environment(
 ) -> Result<DockerEnvironment, EvalExecutionError> {
     let mut bindings = environment.env().clone();
     bindings.extend(phase.env().clone());
+    resolve_bindings(bindings, secrets)
+}
+
+/// Resolves the environment baseline without activating any phase bindings.
+pub fn resolve_environment(
+    environment: &EnvironmentPlan,
+    secrets: &dyn SecretProvider,
+) -> Result<DockerEnvironment, EvalExecutionError> {
+    resolve_bindings(environment.env().clone(), secrets)
+}
+
+fn resolve_bindings(
+    bindings: BTreeMap<EnvName, super::EnvBinding>,
+    secrets: &dyn SecretProvider,
+) -> Result<DockerEnvironment, EvalExecutionError> {
     let mut public = BTreeMap::new();
     let mut resolved_secrets = BTreeMap::new();
     for (name, binding) in bindings {
@@ -74,6 +89,7 @@ pub fn resolve_phase_environment(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockerBuildRequest {
     public_arguments: Vec<String>,
+    network_lease: Option<String>,
 }
 
 impl DockerBuildRequest {
@@ -81,12 +97,24 @@ impl DockerBuildRequest {
     pub fn new(arguments: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
+            network_lease: None,
         }
     }
 
     /// Returns Docker arguments that may appear in diagnostics.
     pub fn public_arguments(&self) -> &[String] {
         &self.public_arguments
+    }
+
+    /// Associates the build with its provider-managed network lease.
+    pub fn with_network_lease(mut self, network_lease: impl Into<String>) -> Self {
+        self.network_lease = Some(network_lease.into());
+        self
+    }
+
+    /// Returns the provider-managed network lease, when the build requires one.
+    pub fn network_lease(&self) -> Option<&str> {
+        self.network_lease.as_deref()
     }
 }
 
@@ -94,6 +122,7 @@ impl DockerBuildRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockerCreateRequest {
     public_arguments: Vec<String>,
+    network_lease: Option<String>,
 }
 
 impl DockerCreateRequest {
@@ -101,12 +130,24 @@ impl DockerCreateRequest {
     pub fn new(arguments: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
+            network_lease: None,
         }
     }
 
     /// Returns Docker arguments that may appear in diagnostics.
     pub fn public_arguments(&self) -> &[String] {
         &self.public_arguments
+    }
+
+    /// Associates the container with its provider-managed network lease.
+    pub fn with_network_lease(mut self, network_lease: impl Into<String>) -> Self {
+        self.network_lease = Some(network_lease.into());
+        self
+    }
+
+    /// Returns the provider-managed network lease, when the container requires one.
+    pub fn network_lease(&self) -> Option<&str> {
+        self.network_lease.as_deref()
     }
 }
 
@@ -137,6 +178,11 @@ pub struct DockerExecRequest {
     public_arguments: Vec<String>,
     public_environment: BTreeMap<EnvName, String>,
     secret_environment: BTreeMap<EnvName, SecretValue>,
+    phase: EvalExecutionPhase,
+    user: Option<String>,
+    workdir: Option<String>,
+    network_lease: String,
+    deadline: Option<Duration>,
 }
 
 impl DockerExecRequest {
@@ -152,6 +198,11 @@ impl DockerExecRequest {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
             public_environment,
             secret_environment,
+            phase: EvalExecutionPhase::Agent,
+            user: None,
+            workdir: None,
+            network_lease: String::new(),
+            deadline: None,
         }
     }
 
@@ -173,6 +224,48 @@ impl DockerExecRequest {
     /// Returns secret environment variable names without their values.
     pub fn secret_names(&self) -> Vec<&str> {
         self.secret_environment.keys().map(String::as_str).collect()
+    }
+
+    /// Adds the resolved phase policy to this execution request.
+    pub fn with_phase(
+        mut self,
+        phase: EvalExecutionPhase,
+        user: Option<&str>,
+        workdir: Option<&str>,
+        network_lease: impl Into<String>,
+        deadline: Option<Duration>,
+    ) -> Self {
+        self.phase = phase;
+        self.user = user.map(ToOwned::to_owned);
+        self.workdir = workdir.map(ToOwned::to_owned);
+        self.network_lease = network_lease.into();
+        self.deadline = deadline;
+        self
+    }
+
+    /// Returns the command phase this request belongs to.
+    pub const fn phase(&self) -> EvalExecutionPhase {
+        self.phase
+    }
+
+    /// Returns the authored effective user, if one was supplied.
+    pub fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+
+    /// Returns the resolved working directory, if one was supplied.
+    pub fn workdir(&self) -> Option<&str> {
+        self.workdir.as_deref()
+    }
+
+    /// Returns the provider-managed network lease for this phase.
+    pub fn network_lease(&self) -> &str {
+        &self.network_lease
+    }
+
+    /// Returns the optional phase command deadline.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 
     pub(crate) fn secret_environment(&self) -> &BTreeMap<EnvName, SecretValue> {
@@ -224,6 +317,12 @@ impl DockerRemoveRequest {
 pub trait DockerRuntime {
     /// Returns provider guarantees available to this Docker implementation.
     fn capabilities(&self) -> ProviderCapabilities;
+
+    /// Reports whether the provider can transition one running environment between
+    /// distinct phase network leases without widening connectivity.
+    fn supports_phase_network_transitions(&self) -> bool {
+        false
+    }
 
     /// Builds the requested immutable task environment.
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError>;

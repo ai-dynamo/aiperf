@@ -232,13 +232,19 @@ fn docker_timeout_removes_separate_verifier_container_after_descendant_command()
     let error = aiperf_cli::dispatch::run(&docker_eval_arguments(task_root.path(), "true"))
         .expect_err("a verifier command exceeding its configured timeout must fail");
 
-    assert!(matches!(
-        error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>(),
-        Some(aiperf_runtime::eval::EvalExecutionError::Timeout {
-            phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
-            timeout,
-        }) if *timeout == Duration::from_millis(200)
-    ));
+    let execution_error = error
+        .downcast_ref::<aiperf_runtime::eval::EvalExecutionError>()
+        .expect("Docker evaluation errors must preserve their typed execution cause");
+    assert!(
+        matches!(
+            execution_error,
+            aiperf_runtime::eval::EvalExecutionError::Timeout {
+                phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+                timeout,
+            } if *timeout == Duration::from_millis(200)
+        ),
+        "unexpected verifier timeout result: {execution_error:?}"
+    );
     assert_task_containers_absent();
 }
 
