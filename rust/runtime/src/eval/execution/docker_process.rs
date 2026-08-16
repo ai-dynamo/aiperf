@@ -2708,8 +2708,10 @@ fn docker_exec_bounded(
         .spawn()
         .map_err(|_| EvalExecutionError::ProcessSpawn(format!("docker {action}")))?;
     let mut process = DockerExecChild { child };
-    let mut remove =
-        |container, deadline| remove_timed_out_container(clock.clone(), container, deadline);
+    let cleanup_clock = clock.clone();
+    let mut remove = move |container: &str, deadline| {
+        remove_timed_out_container(cleanup_clock.clone(), container, deadline)
+    };
     drive_docker_exec(clock, &mut process, container, phase, timeout, &mut remove).map_err(
         |error| match error {
             EvalExecutionError::ProcessFailure(reason) => {
