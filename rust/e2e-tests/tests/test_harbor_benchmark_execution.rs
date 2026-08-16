@@ -957,6 +957,91 @@ timeout_sec = 10
     assert_eq!(compose_resource_ids(), before);
 }
 
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn compose_sidecar_readiness_dns_and_final_evidence_preserve_verifier_isolation() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let before = compose_resource_ids();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("compose-boundaries");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+artifacts = [{ source = "/data/evidence", destination = "sidecar-evidence", service = "api" }]
+[task]
+name = "example/compose-boundaries"
+[environment]
+workdir = "/work"
+user = "bench"
+[environment.healthcheck]
+command = ["/bin/sh", "-c", "test -w /work && touch /work/health-ready"]
+retries = 20
+start_interval_sec = 0.1
+interval_sec = 0.1
+timeout_sec = 2
+[agent.env]
+AGENT_SECRET = "${COMPOSE_AGENT_SECRET}"
+[verifier]
+environment_mode = "separate"
+[[verifier.collect]]
+service = "api"
+command = ["/bin/sh", "-c", "mkdir -p /data/evidence && printf collected > /data/evidence/result.txt"]
+timeout_sec = 10
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("instruction.md"),
+        "Prove the Compose service is ready before running the agent.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN adduser -D -u 1000 bench && mkdir -p /work /logs/verifier && chmod 0777 /logs/verifier\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  main:\n    depends_on: [api]\n  api:\n    image: alpine:3.20\n    command: [\"sleep\", \"infinity\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test \"$(cat /work/sidecar-evidence/result.txt)\" = collected\ntest ! -e /work/agent-only.txt\ntest ! -e /data/evidence/result.txt\ntest -z \"${AGENT_SECRET+x}\"\n! nslookup api >/dev/null\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+
+    let output = Command::new(exec_binary())
+        .env("COMPOSE_AGENT_SECRET", "agent-secret-value")
+        .args([
+            "eval",
+            "--task",
+            task_root.to_string_lossy().as_ref(),
+            "--image",
+            IMAGE_DIGEST,
+            "--agent-command",
+            "/bin/sh -c 'test \"$AGENT_SECRET\" = agent-secret-value && test -f /work/health-ready && nslookup api >/dev/null && printf private > /work/agent-only.txt'",
+        ])
+        .output()
+        .expect("start native aiperf Compose eval");
+
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_summary(&summary, "example/compose-boundaries");
+    assert_eq!(
+        summary["artifacts"],
+        serde_json::json!([[
+            "sidecar-evidence/result.txt",
+            artifact_digest(b"collected"),
+        ]])
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("agent-secret-value"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("agent-secret-value"));
+    assert_eq!(compose_resource_ids(), before);
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
