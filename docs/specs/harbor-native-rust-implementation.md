@@ -27,7 +27,7 @@ The executor reserves `/tests` and `/logs/verifier` for shared-verifier state. I
 
 `multi_step_reward_strategy = "mean"` averages the union of finite reward metrics across successful steps, treating a missing metric as zero; `"final"` returns the final step reward unchanged. CLI JSON adds ordered `steps` with each step's name, artifacts, and reward. Its top-level reward is the selected aggregate and its top-level artifacts are the final step's artifacts. Implicit single-step and legacy JSON output retain the existing three-key contract without `steps`.
 
-This subset is benchmark execution only. It does not execute Docker Compose definitions or task sidecars; richer service orchestration remains future work.
+This subset is benchmark execution only. A strict Docker Compose sidecar environment is available to standard tasks: the required Dockerfile remains the runtime-owned `main` image source, while the exact `environment/docker-compose.yaml` overlay can define only validated sidecars and `main.depends_on`. Public-network Compose projects preflight through read-only canonical configuration before provider mutation, use a task-owned lease, and preserve the Dockerfile authority over `main`. Service evidence and argv collection hooks are separate-verifier-only and final-step-only; main stops before non-main evidence collection, and only the frozen declared artifacts cross the verifier boundary. See [benchmark-compose-environments.md](benchmark-compose-environments.md) for the enforced subset.
 
 ## Architecture boundary
 
@@ -85,7 +85,7 @@ Every track supplies strict unit tests and deterministic fake-provider/sandbox t
 
 Semantic experiments prove a native graph variant report with paired quality, cost, latency, and critical-path deltas while task, model, seed, policy, image, and budget remain fixed.
 
-The built multi-step verification covers immutable planning, persistent Docker workspace state, per-step test and verifier isolation, immutable artifact snapshots, exact source-context identity and materialization after origin removal, canonical modes and empty directories, directional shared-workdir refusal, phase-policy inheritance/overrides, mean/final rewards, additive CLI output, terminal failure, and eager cleanup. Future P1/P2 verification covers broader provider capability behavior, task health and quarantine, registry/share semantics, and trajectory export without requiring online registry availability for local/private suites.
+The built multi-step verification covers immutable planning, persistent Docker workspace state, per-step test and verifier isolation, immutable artifact snapshots, exact source-context identity and materialization after origin removal, canonical modes and empty directories, directional shared-workdir refusal, phase-policy inheritance/overrides, mean/final rewards, additive CLI output, terminal failure, eager cleanup, and strict Compose preflight, service-evidence ordering, and labelled cleanup. Future P1/P2 verification covers broader provider capability behavior, task health and quarantine, registry/share semantics, and trajectory export without requiring online registry availability for local/private suites.
 
 ## Non-negotiable constraints
 

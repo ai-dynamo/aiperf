@@ -610,6 +610,10 @@ Inputs, endpoints, and graph:
   native-Rust Harbor delivery architecture: canonical source capture,
   normalized-plan plus executable-source identity, snapshot-only local/Docker
   execution, directional verifier workdir safety, and step evidence.
+- [`docs/specs/benchmark-compose-environments.md`](docs/specs/benchmark-compose-environments.md) —
+  built strict Compose benchmark environments: generated-main authority,
+  public-only validated sidecars, final-step service evidence, frozen separate
+  verifier transfer, and labelled cleanup.
 - [`docs/specs/graph-ir-system-idle-gap.md`](docs/specs/graph-ir-system-idle-gap.md) — Graph-IR system idle-gap cap at the centralized node firing gate.
 - [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
   the model-independent-branching contract: pinned/recorded/weighted conditional

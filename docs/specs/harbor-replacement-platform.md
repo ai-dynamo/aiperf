@@ -118,8 +118,15 @@ CLI overrides, and implicit image workdirs all enforce the same directional
 rule; ancestors such as `/` and `/logs` remain valid, and separate-only plans
 retain separate artifact-staging checks.
 
-This is a benchmark-execution subset, not general service orchestration. Docker
-Compose definitions and task sidecars remain unsupported.
+This is a benchmark-execution subset, not general service orchestration.
+Standard tasks may add the exact `environment/docker-compose.yaml` sidecar
+overlay to their required Dockerfile. AIPerf generates and owns `main`,
+strictly validates the sidecar-only overlay and its canonical Compose result,
+and runs the project only on its public network. Sidecar evidence is separate
+verifier-only and final-step-only; the frozen declared artifact transfer is the
+only path from a Compose project into its verifier. General Compose
+passthrough, host-facing resources, restricted Compose networking, and
+arbitrary service orchestration remain unsupported.
 
 ### P1: fuller task and provider parity
 
