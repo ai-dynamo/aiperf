@@ -16,6 +16,13 @@ non-root image user could not create the executor-owned verifier reward
 directory. The executor now creates that namespace as root only after agent
 artifact capture and removes it after each shared multi-step verifier.
 
+Final review found and corrected two additional boundary defects. Implicit
+single-step separate verifiers now receive declared artifacts at the effective
+image workdir without mounting the staging tree over the verifier filesystem.
+Source acquisition now traverses directories by descriptor and opens every
+entry relative to its already-open parent with no-follow semantics, so a
+symlink substitution race cannot escape the acquired source root.
+
 ## Delivered contracts
 
 ### Owned canonical source
@@ -25,7 +32,11 @@ artifact capture and removes it after each shared multi-step verifier.
   when any executable bit was present and `0644` otherwise.
 - File bytes, empty directories, entry kind, path, and canonical mode
   participate in tree identity.
-- Links, special files, non-UTF-8 names, and escaping paths fail closed.
+- Links, special files, non-UTF-8 names, escaping paths, and entry replacement
+  races fail closed.
+- Directory enumeration and child opens are descriptor-relative. Opened
+  file/directory type and inode are validated against enumeration, and file
+  and directory metadata are revalidated across acquisition.
 - Reading, executable projection, and private materialization operate only on
   retained snapshot data after acquisition.
 - Local directories are captured once. Standalone and pinned-Git file sources
@@ -65,6 +76,10 @@ artifact capture and removes it after each shared multi-step verifier.
   `InvalidWorkspace`; CLI conflicts fail before build, while image conflicts
   fail immediately after start/workdir inspection and before healthcheck,
   agent execution, reset, or copy.
+- A single-step separate verifier with declared artifacts follows the same
+  staging contract: an explicit workdir is validated before provisioning, an
+  implicit workdir is inspected from the verifier image, and verified
+  artifacts are copied there without mounting or resetting that destination.
 
 ## Approved baseline correction
 
@@ -209,6 +224,75 @@ in 14.14 seconds.
 
 Commit: `015932128e` (`fix(eval): prepare nonroot verifier rewards`).
 
+### Slice 6: single-step separate-verifier transfer parity
+
+Three focused lifecycle tests were added before the implementation. The RED
+run selected all three and failed all three:
+
+- an implicit verifier image workdir was never inspected or populated;
+- an explicit verifier workdir was incorrectly passed as a host mount instead
+  of receiving a verified copy;
+- explicit `/tests` was accepted and execution completed instead of failing
+  before verifier provisioning.
+
+```bash
+cd rust
+RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine \
+  --test harbor_docker_runtime single_step_separate_verifier_ -- --nocapture
+```
+
+RED: 0 passed, 3 failed. GREEN: 3 passed, 0 failed.
+
+GREEN removes the single-step staging mount, validates explicit destinations,
+inspects the image workdir when implicit, and calls the same verified transfer
+boundary used by multi-step execution. A preservation run caught one
+intermediate regression for packages with no declared artifacts; the final
+implementation intentionally performs workdir validation/inspection/transfer
+only when an artifact transfer is required.
+
+Focused result: 3 passed. Full fake-Docker lifecycle result: 29 passed and 3
+expected ignored.
+
+Commit: `d959678e19` (`fix(eval): stage single-step verifier artifacts safely`).
+
+### Slice 7: descriptor-relative source acquisition
+
+The deterministic adversarial test installs a test-only pre-open boundary,
+replaces an enumerated regular file with a symlink to bytes outside the source
+root, and requires import-time `InvalidPackage`. RED was a compile failure
+because the secure capture boundary did not exist. Under the prior path-based
+`fs::read` behavior, the substitution could follow the outside-root link
+rather than fail closed.
+
+```bash
+cd rust
+# RED: the capture boundary intentionally does not exist yet.
+RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --lib \
+  snapshot_rejects_file_swapped_to_an_outside_symlink_before_open \
+  -- --exact --nocapture
+# GREEN: fully qualified exact filter.
+RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --lib \
+  eval::import::source_snapshot::tests::snapshot_rejects_file_swapped_to_an_outside_symlink_before_open \
+  -- --exact --nocapture
+```
+
+RED: compilation failed because `capture_with_before_open` was absent. GREEN:
+1 passed, 0 failed, and 1,908 filtered.
+
+GREEN opens the root with `O_DIRECTORY | O_NOFOLLOW`, enumerates each already
+open directory descriptor, and opens children with `openat` and
+`O_NOFOLLOW | O_NONBLOCK`. It rejects known link/special entry types before
+open, validates enumerated type/inode against `fstat`, reads files only from
+the validated descriptor, recursively traverses only validated directory
+descriptors, and compares metadata fingerprints across each read/traversal.
+
+The correctly qualified exact GREEN command selected 1 test and passed. The
+complete source snapshot module passed 5 tests, and `harbor_import` passed all
+27 tests. An earlier exact-filter spelling selected zero tests; it was not
+counted as evidence and was immediately replaced by the qualified command.
+
+Commit: `505831ccc2` (`fix(eval): capture source trees without link races`).
+
 ## Final verification
 
 ### Focused runtime and CLI
@@ -226,7 +310,7 @@ Results:
 - `harbor_import`: 27 passed;
 - `eval_execution`: 8 passed;
 - `harbor_execution_plan`: 18 passed;
-- `harbor_docker_runtime`: 26 passed and 3 expected ignored;
+- `harbor_docker_runtime`: 29 passed and 3 expected ignored;
 - CLI: 8 passed and 7 expected ignored.
 
 ### Complete real-Docker runtime and CLI fixtures
@@ -244,16 +328,22 @@ Elevated Docker results:
 - runtime: all 3 ignored fixtures passed;
 - CLI: all 7 ignored fixtures passed.
 
+The snapshot-bound product proof was also rerun after the descriptor-relative
+change: 1 passed, 0 failed, and 24 filtered.
+
 ### Broad runtime safety
 
 ```bash
 cd rust
-RUSTC_WRAPPER= cargo test -p aiperf-runtime --lib
+RUSTC_WRAPPER= cargo test -q -p aiperf-runtime --features engine --lib \
+  -- --test-threads=1
 ```
 
-The sandboxed attempt reached 1,453 passes but 35 network/listener tests failed
-with `Operation not permitted`. The required elevated retry passed: 1,488
-passed, 0 failed, and 7 ignored in 20.07 seconds.
+The engine-enabled serial suite passed: 1,902 passed, 0 failed, and 7 ignored
+in 85.48 seconds. A preceding default-parallel run had 1,900 passes and two
+worker-characterization timing/data-shape failures; both exact tests passed
+immediately in isolation, and the complete serial rerun was clean. Those tests
+do not execute eval or source acquisition code.
 
 ### Static and documentation guards
 
@@ -261,6 +351,7 @@ passed, 0 failed, and 7 ignored in 20.07 seconds.
 cd rust
 cargo fmt --all -- --check
 RUSTC_WRAPPER= cargo clippy -p aiperf-runtime --features engine \
+  --lib \
   --test harbor_import --test harbor_docker_runtime \
   --test harbor_execution_plan --test eval_execution --no-deps
 RUSTC_WRAPPER= cargo clippy -p aiperf-cli --test eval_command \
@@ -284,6 +375,9 @@ implementation.
 - `b7eb0987b5` — `fix(eval): reserve shared verifier workdirs directionally`
 - `02fef1dba8` — `test(eval): prove snapshot-bound Docker execution`
 - `015932128e` — `fix(eval): prepare nonroot verifier rewards`
+- `21191957bd` — `docs(eval): record snapshot identity implementation`
+- `d959678e19` — `fix(eval): stage single-step verifier artifacts safely`
+- `505831ccc2` — `fix(eval): capture source trees without link races`
 
 The linked worktree has no `.venv`, so commits skipped only the license and
 agent-sync hooks that require that environment. All touched source files retain
@@ -293,6 +387,10 @@ passed.
 ## Concerns and remaining scope
 
 - No known correctness concern remains for the corrective design.
+- The full engine library suite's two worker-characterization tests showed
+  parallel-run sensitivity; both exact reproductions and the serial full suite
+  passed. This is an existing non-eval test stability concern, not evidence of
+  a source snapshot or verifier lifecycle regression.
 - Existing Clippy/dead-code warnings remain outside this change.
 - Persistent CAS, registry fetch, Docker Compose, task sidecars, artifact wire
   format changes, reward aggregation changes, and CLI redesign remain out of
