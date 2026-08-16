@@ -11,7 +11,10 @@ use std::{
 
 use tempfile::TempDir;
 
-use crate::eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode};
+use crate::eval::{
+    ArtifactDigest, AttemptId, HarborTaskPackage, RegradeError, RewardDocument, ScoreVersion,
+    VerifierMode,
+};
 
 use super::{EvalExecutionError, HarborSandboxRecipe};
 
@@ -78,7 +81,13 @@ impl LocalProcessSandbox {
                 parse_reward(&verifier)?
             }
         };
-        Ok(LocalExecutionResult { artifacts, reward })
+        let verifier = ArtifactDigest::parse(package.verifier())
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        Ok(LocalExecutionResult {
+            artifacts,
+            reward,
+            verifier,
+        })
     }
 }
 
@@ -158,6 +167,38 @@ pub struct LocalExecutionResult {
     pub artifacts: Vec<(String, ArtifactDigest)>,
     /// Finite verifier reward metrics.
     pub reward: RewardDocument,
+    /// Immutable verifier implementation identity that produced the reward.
+    pub verifier: ArtifactDigest,
+}
+
+impl LocalExecutionResult {
+    /// Produces the initial immutable score revision from this verifier result.
+    pub fn initial_score(
+        &self,
+        attempt: AttemptId,
+        metric: impl Into<String>,
+        rationale: ArtifactDigest,
+    ) -> Result<ScoreVersion, RegradeError> {
+        let metric = metric.into();
+        let value = self
+            .reward
+            .metrics
+            .get(&metric)
+            .copied()
+            .ok_or_else(|| RegradeError::MetricNotFound(metric.clone()))?;
+        ScoreVersion::initial(
+            attempt,
+            self.verifier.clone(),
+            self.artifacts
+                .iter()
+                .map(|(_, digest)| digest.clone())
+                .collect(),
+            metric,
+            value,
+            rationale,
+        )
+        .map_err(RegradeError::InvalidScore)
+    }
 }
 
 fn collect_declared_artifacts(

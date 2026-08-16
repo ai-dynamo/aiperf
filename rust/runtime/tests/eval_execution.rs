@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::fs;
 
 use aiperf_runtime::eval::{
-    AgentCapability, ArtifactDigest, DeclaredArtifactTransfer, EvalExecutionError,
+    AgentCapability, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvalExecutionError,
     EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborImportError,
     HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox, SandboxRole,
     SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory, WorkspaceOverlay,
@@ -195,4 +195,13 @@ fn local_process_sandbox_runs_agent_transfers_declared_artifacts_and_parses_veri
 
     assert_eq!(result.artifacts.len(), 1);
     assert_eq!(result.reward.metrics["reward"], 1.0);
+    let score = result
+        .initial_score(
+            AttemptId::new("native-attempt").unwrap(),
+            "reward",
+            ArtifactDigest::from_bytes(b"native verifier rationale"),
+        )
+        .unwrap();
+    assert_eq!(score.version, 0);
+    assert_eq!(score.value, 1.0);
 }
