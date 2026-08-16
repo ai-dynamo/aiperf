@@ -92,14 +92,14 @@ impl ComposeProjectLease {
             .with_deadline(self.build_timeout);
         if let Err(error) = self.runtime.compose_build(&build) {
             self.record_after_failure();
-            return Err(error);
+            return self.finish_start_failure(error);
         }
         self.state = ComposeLeaseState::Built;
         let up = DockerComposeUpRequest::new(self.project.clone(), &self.project_directory)
             .with_deadline(self.startup_timeout);
         if let Err(error) = self.runtime.compose_up(&up) {
             self.record_after_failure();
-            return Err(error);
+            return self.finish_start_failure(error);
         }
         match self.runtime.compose_owned_resources(&self.project) {
             Ok(resources) => {
@@ -109,8 +109,21 @@ impl ComposeProjectLease {
             }
             Err(error) => {
                 self.record_after_failure();
-                Err(error)
+                self.finish_start_failure(error)
             }
+        }
+    }
+
+    fn finish_start_failure(
+        &mut self,
+        phase_error: EvalExecutionError,
+    ) -> Result<(), EvalExecutionError> {
+        match self.teardown() {
+            Ok(()) => Err(phase_error),
+            Err(cleanup_error) => Err(EvalExecutionError::ContainerTeardown {
+                container: self.project.as_str().to_owned(),
+                reason: format!("{phase_error}; cleanup: {cleanup_error}"),
+            }),
         }
     }
 
@@ -128,24 +141,29 @@ impl ComposeProjectLease {
     }
 
     fn force_recorded_resources(&self) -> Result<(), EvalExecutionError> {
+        let mut first_error = None;
         for container in self.recorded.containers() {
-            self.runtime.remove(&DockerRemoveRequest::new([
-                "rm",
-                "--force",
-                "--volumes",
-                container,
-            ]))?;
+            let removal = self.runtime.remove(
+                &DockerRemoveRequest::new(["rm", "--force", "--volumes", container])
+                    .with_deadline(std::time::Duration::from_secs(10)),
+            );
+            first_error = first_error.or(removal.err());
         }
         for network in self.recorded.networks() {
-            self.runtime
-                .remove(&DockerRemoveRequest::new(["network", "rm", network]))?;
+            let removal = self.runtime.remove(
+                &DockerRemoveRequest::new(["network", "rm", network])
+                    .with_deadline(std::time::Duration::from_secs(10)),
+            );
+            first_error = first_error.or(removal.err());
         }
         for volume in self.recorded.volumes() {
-            self.runtime.remove(&DockerRemoveRequest::new([
-                "volume", "rm", "--force", volume,
-            ]))?;
+            let removal = self.runtime.remove(
+                &DockerRemoveRequest::new(["volume", "rm", "--force", volume])
+                    .with_deadline(std::time::Duration::from_secs(10)),
+            );
+            first_error = first_error.or(removal.err());
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 }
 
@@ -234,8 +252,7 @@ impl TaskEnvironmentLease for ComposeProjectLease {
         } else {
             remaining_after_down
         };
-        self.state = ComposeLeaseState::Down;
-        match (down, forced, remaining) {
+        let result = match (down, forced, remaining) {
             (Err(error), _, _) => Err(error),
             (Ok(_), Err(error), _) => Err(error),
             (Ok(_), Ok(_), Ok(resources)) if resources == OwnedComposeResources::default() => {
@@ -246,6 +263,10 @@ impl TaskEnvironmentLease for ComposeProjectLease {
                 reason: "Compose resources remain after teardown".to_owned(),
             }),
             (Ok(_), Ok(_), Err(error)) => Err(error),
+        };
+        if result.is_ok() {
+            self.state = ComposeLeaseState::Down;
         }
+        result
     }
 }

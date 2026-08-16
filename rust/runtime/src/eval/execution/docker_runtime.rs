@@ -738,6 +738,7 @@ impl DockerCopyRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockerRemoveRequest {
     public_arguments: Vec<String>,
+    deadline: Option<Duration>,
 }
 
 impl DockerRemoveRequest {
@@ -745,12 +746,24 @@ impl DockerRemoveRequest {
     pub fn new(arguments: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
+            deadline: None,
         }
     }
 
     /// Returns Docker arguments that may appear in diagnostics.
     pub fn public_arguments(&self) -> &[String] {
         &self.public_arguments
+    }
+
+    /// Bounds this exact-resource removal operation.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns the removal deadline, if one was configured.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 }
 
@@ -854,7 +867,11 @@ pub trait DockerComposeRuntime: DockerRuntime {
 
 #[cfg(test)]
 mod compose_lease_tests {
-    use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        collections::BTreeSet,
+        rc::Rc,
+    };
 
     use super::*;
     use crate::eval::execution::{
@@ -1012,5 +1029,204 @@ mod compose_lease_tests {
             ]
         );
         lease.teardown().unwrap();
+    }
+
+    struct CleanupRuntime {
+        fail_up: bool,
+        down_failures: Cell<usize>,
+        down_clears_resources: bool,
+        remove_failures: Cell<usize>,
+        resources: RefCell<OwnedComposeResources>,
+        removals: RefCell<Vec<String>>,
+    }
+
+    impl DockerRuntime for CleanupRuntime {
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::none()
+        }
+        fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn exec(&self, _: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+            self.removals.borrow_mut().push(
+                request
+                    .public_arguments()
+                    .last()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            assert_eq!(request.deadline(), Some(std::time::Duration::from_secs(10)));
+            if self.remove_failures.get() > 0 {
+                self.remove_failures.set(self.remove_failures.get() - 1);
+                Err(EvalExecutionError::ProcessFailure("remove".to_owned()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl DockerComposeRuntime for CleanupRuntime {
+        fn compose_config(
+            &self,
+            _: &DockerComposeConfigRequest,
+        ) -> Result<Vec<u8>, EvalExecutionError> {
+            Ok(Vec::new())
+        }
+        fn compose_build(&self, _: &DockerComposeBuildRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn compose_up(&self, _: &DockerComposeUpRequest) -> Result<(), EvalExecutionError> {
+            if self.fail_up {
+                Err(EvalExecutionError::ProcessFailure("up".to_owned()))
+            } else {
+                Ok(())
+            }
+        }
+        fn compose_exec(&self, _: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn compose_copy_archive(
+            &self,
+            _: &DockerComposeArchiveRequest,
+        ) -> Result<Box<dyn Read>, EvalExecutionError> {
+            unreachable!()
+        }
+        fn compose_stop_service(
+            &self,
+            _: &DockerComposeStopRequest,
+        ) -> Result<(), EvalExecutionError> {
+            Ok(())
+        }
+        fn compose_down(&self, _: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
+            if self.down_failures.get() > 0 {
+                self.down_failures.set(self.down_failures.get() - 1);
+                Err(EvalExecutionError::ProcessFailure("down".to_owned()))
+            } else {
+                if self.down_clears_resources {
+                    *self.resources.borrow_mut() = OwnedComposeResources::default();
+                }
+                Ok(())
+            }
+        }
+        fn compose_owned_resources(
+            &self,
+            _: &ComposeProjectId,
+        ) -> Result<OwnedComposeResources, EvalExecutionError> {
+            Ok(self.resources.borrow().clone())
+        }
+    }
+
+    fn cleanup_plan() -> ComposeProjectPlan {
+        ComposeProjectPlan {
+            definition_path: "environment/docker-compose.yaml".to_owned(),
+            services: BTreeSet::from([ComposeServiceName::main()]),
+            build_timeout: std::time::Duration::from_secs(1),
+            startup_timeout: std::time::Duration::from_secs(1),
+        }
+    }
+
+    #[test]
+    fn compose_lease_start_failure_cleans_owned_resources_without_caller_teardown() {
+        let runtime = Rc::new(CleanupRuntime {
+            fail_up: true,
+            down_failures: Cell::new(0),
+            down_clears_resources: true,
+            remove_failures: Cell::new(0),
+            resources: RefCell::new(OwnedComposeResources::new(
+                vec!["partial".to_owned()],
+                Vec::new(),
+                Vec::new(),
+            )),
+            removals: RefCell::new(Vec::new()),
+        });
+        let mut lease = ComposeProjectLease::reserve(
+            runtime.clone(),
+            &cleanup_plan(),
+            "abcdef",
+            "/tmp",
+            "main",
+        )
+        .unwrap();
+        assert!(lease.start().is_err());
+        assert_eq!(
+            *runtime.resources.borrow(),
+            OwnedComposeResources::default()
+        );
+        assert_eq!(
+            lease.state(),
+            super::super::compose_project::ComposeLeaseState::Down
+        );
+    }
+
+    #[test]
+    fn compose_lease_failed_down_is_retryable_and_does_not_mark_down() {
+        let runtime = Rc::new(CleanupRuntime {
+            fail_up: false,
+            down_failures: Cell::new(1),
+            down_clears_resources: true,
+            remove_failures: Cell::new(0),
+            resources: RefCell::new(OwnedComposeResources::default()),
+            removals: RefCell::new(Vec::new()),
+        });
+        let mut lease =
+            ComposeProjectLease::reserve(runtime, &cleanup_plan(), "abcdef", "/tmp", "main")
+                .unwrap();
+        lease.start().unwrap();
+        assert!(lease.teardown().is_err());
+        assert_eq!(
+            lease.state(),
+            super::super::compose_project::ComposeLeaseState::Started
+        );
+        lease.teardown().unwrap();
+        assert_eq!(
+            lease.state(),
+            super::super::compose_project::ComposeLeaseState::Down
+        );
+    }
+
+    #[test]
+    fn compose_lease_attempts_every_exact_resource_when_one_forced_remove_fails() {
+        let runtime = Rc::new(CleanupRuntime {
+            fail_up: false,
+            down_failures: Cell::new(0),
+            down_clears_resources: false,
+            remove_failures: Cell::new(1),
+            resources: RefCell::new(OwnedComposeResources::new(
+                vec!["one".to_owned(), "two".to_owned()],
+                vec!["network".to_owned()],
+                vec!["volume".to_owned()],
+            )),
+            removals: RefCell::new(Vec::new()),
+        });
+        let mut lease = ComposeProjectLease::reserve(
+            runtime.clone(),
+            &cleanup_plan(),
+            "abcdef",
+            "/tmp",
+            "main",
+        )
+        .unwrap();
+        lease.start().unwrap();
+        assert!(lease.teardown().is_err());
+        assert_eq!(
+            &*runtime.removals.borrow(),
+            &["one", "two", "network", "volume"]
+        );
+        assert_eq!(
+            lease.state(),
+            super::super::compose_project::ComposeLeaseState::Started
+        );
     }
 }

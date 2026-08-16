@@ -34,6 +34,7 @@ pub(crate) struct ServiceExecRequest<'a> {
     pub(crate) phase: EvalExecutionPhase,
     pub(crate) user: Option<&'a str>,
     pub(crate) workdir: Option<&'a str>,
+    pub(crate) network_lease: &'a str,
     pub(crate) deadline: Option<std::time::Duration>,
 }
 
@@ -97,7 +98,7 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
                 request.phase,
                 request.user,
                 request.workdir,
-                "",
+                request.network_lease,
                 request.deadline,
             ),
         )
