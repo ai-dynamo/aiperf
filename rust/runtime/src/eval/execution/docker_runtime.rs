@@ -339,6 +339,13 @@ pub trait DockerRuntime {
     /// Transfers files through the Docker provider boundary.
     fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError>;
 
+    /// Obtains one declared container path as a Docker archive.
+    fn copy_archive(&self, _: &str, _: &str) -> Result<Vec<u8>, EvalExecutionError> {
+        Err(EvalExecutionError::ArtifactCollection(
+            "Docker provider cannot collect artifact archives".to_owned(),
+        ))
+    }
+
     /// Removes a container, image, or related lease.
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError>;
 }

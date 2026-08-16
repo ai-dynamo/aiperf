@@ -4,6 +4,7 @@
 //! Native sandbox recipes, agent contracts, and immutable workspace overlays.
 
 mod agent;
+mod artifacts;
 mod coordinator;
 mod docker_process;
 mod docker_runtime;
@@ -16,6 +17,7 @@ pub use agent::{
     AgentCapability, EnvName, EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory,
     HarborAgentContract, SecretProvider, SecretValue,
 };
+pub use artifacts::{collect_artifacts, transfer_artifacts};
 pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
 pub use docker_process::DockerProcessSandbox;
 pub use docker_runtime::{

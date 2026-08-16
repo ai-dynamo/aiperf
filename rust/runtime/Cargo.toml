@@ -133,6 +133,7 @@ rmp-serde = "1"
 rustls = "0.23"
 socket2 = "0.5"
 tempfile = "3"
+tar = "0.4"
 # Streaming zstd for cross-host cellular per-record artifact shipping (velo path).
 # Already linked transitively by `parquet` (its `zstd` feature); declared directly
 # so the streaming compress/decompress artifact-shipping module can `use zstd`

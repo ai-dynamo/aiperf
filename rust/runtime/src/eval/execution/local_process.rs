@@ -228,8 +228,17 @@ fn collect_declared_artifacts(
         .declared_artifacts()
         .iter()
         .map(|path| {
-            let bytes = fs::read(sandbox.artifact_path(path)?)
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            let artifact_path = sandbox.artifact_path(path)?;
+            let metadata = fs::symlink_metadata(&artifact_path)
+                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+            if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+                return Err(EvalExecutionError::ArtifactCollection(format!(
+                    "declared artifact is not a regular file: {}",
+                    path
+                )));
+            }
+            let bytes = fs::read(artifact_path)
+                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
             Ok((path.clone(), ArtifactDigest::from_bytes(&bytes)))
         })
         .collect()
@@ -243,8 +252,16 @@ fn copy_declared_artifacts(
     for path in package.declared_artifacts() {
         let source_path = source.artifact_path(path)?;
         let destination_path = destination.artifact_path(path)?;
+        let metadata = fs::symlink_metadata(&source_path)
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "declared artifact is not a regular file: {}",
+                path
+            )));
+        }
         let bytes = fs::read(source_path)
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
         if let Some(parent) = destination_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;

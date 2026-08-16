@@ -3,13 +3,222 @@
 
 //! Pure contracts for normalized Harbor benchmark execution plans.
 
-use std::{cell::RefCell, collections::BTreeMap, fs};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, VecDeque},
+    fs,
+};
 
 use aiperf_runtime::eval::{
-    EnvBinding, EnvName, EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource,
-    LocalProcessSandbox, NativeSourceAcquirer, NetworkPolicy, SecretProvider, SecretValue,
-    VerifierMode, resolve_phase_environment,
+    DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
+    DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding, EnvName,
+    EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
+    NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SecretProvider, SecretValue,
+    VerifierMode, collect_artifacts, resolve_phase_environment,
 };
+
+/// A Docker boundary that supplies precise archive bytes for collection tests.
+struct ArchiveRuntime {
+    archives: RefCell<BTreeMap<String, VecDeque<Vec<u8>>>>,
+}
+
+impl ArchiveRuntime {
+    fn new(archives: impl IntoIterator<Item = (impl Into<String>, Vec<u8>)>) -> Self {
+        Self {
+            archives: RefCell::new(
+                archives
+                    .into_iter()
+                    .map(|(source, archive)| (source.into(), VecDeque::from([archive])))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl DockerRuntime for ArchiveRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+    }
+
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not build containers")
+    }
+
+    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not create containers")
+    }
+
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not start containers")
+    }
+
+    fn exec(&self, _: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not execute commands")
+    }
+
+    fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not copy arbitrary paths")
+    }
+
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Vec<u8>, EvalExecutionError> {
+        self.archives
+            .borrow_mut()
+            .get_mut(source)
+            .and_then(VecDeque::pop_front)
+            .ok_or_else(|| EvalExecutionError::ArtifactCollection(format!("missing {source}")))
+    }
+
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not remove containers")
+    }
+}
+
+#[test]
+fn declared_files_and_directories_are_collected_at_deterministic_destinations() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = artifact_task_root(
+        &temporary,
+        "[\"/work/result.txt\", { source = \"/work/output\", destination = \"reports\", exclude = [\"*.tmp\"] }]",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ArchiveRuntime::new([
+        (
+            "/work/result.txt",
+            tar_archive(&[("result.txt", b"answer")]),
+        ),
+        (
+            "/work/output",
+            tar_archive(&[
+                ("output/keep.txt", b"keep"),
+                ("output/nested/also.txt", b"nested"),
+                ("output/drop.tmp", b"drop"),
+            ]),
+        ),
+    ]);
+    let destination = temporary.path().join("collected");
+
+    let collected = collect_artifacts(
+        &runtime,
+        "agent-container",
+        imported.package.execution_plan().artifacts(),
+        &destination,
+    )
+    .unwrap();
+
+    assert_eq!(
+        collected,
+        vec![
+            (
+                "reports/keep.txt".to_owned(),
+                aiperf_runtime::eval::ArtifactDigest::from_bytes(b"keep"),
+            ),
+            (
+                "reports/nested/also.txt".to_owned(),
+                aiperf_runtime::eval::ArtifactDigest::from_bytes(b"nested"),
+            ),
+            (
+                "result.txt".to_owned(),
+                aiperf_runtime::eval::ArtifactDigest::from_bytes(b"answer"),
+            ),
+        ]
+    );
+    assert_eq!(
+        fs::read(destination.join("reports/keep.txt")).unwrap(),
+        b"keep"
+    );
+    assert!(!destination.join("reports/drop.tmp").exists());
+}
+
+#[test]
+fn malicious_archive_path_never_escapes_the_declared_artifact_root() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = artifact_task_root(&temporary, "[\"/work/result.txt\"]");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ArchiveRuntime::new([(
+        "/work/result.txt",
+        tar_archive(&[("../agent-secret", b"must not escape")]),
+    )]);
+    let destination = temporary.path().join("collected");
+
+    let error = collect_artifacts(
+        &runtime,
+        "agent-container",
+        imported.package.execution_plan().artifacts(),
+        &destination,
+    )
+    .expect_err("archive traversal must be rejected");
+
+    assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
+    assert!(!temporary.path().join("agent-secret").exists());
+}
+
+#[test]
+fn local_legacy_execution_rejects_a_declared_artifact_symlink() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package_path = temporary.path().join("task.json");
+    fs::write(
+        &package_path,
+        br#"{"id":"artifact-link","instruction":"test","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","ln -s /etc/hosts \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["true"],"declared_artifacts":["/results/patch.diff"]}"#,
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(package_path.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    let error = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Separate)
+        .expect_err("artifact symlinks must not be copied into a verifier sandbox");
+
+    assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
+}
+
+/// Constructs a POSIX tar archive with regular files only.
+fn tar_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut archive = Vec::new();
+    for (path, contents) in entries {
+        let mut header = [0_u8; 512];
+        header[..path.len()].copy_from_slice(path.as_bytes());
+        header[100..108].copy_from_slice(b"0000644\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        let size = format!("{:011o}\0", contents.len());
+        header[124..136].copy_from_slice(size.as_bytes());
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        let checksum = header.iter().map(|byte| u32::from(*byte)).sum::<u32>();
+        let checksum = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(checksum.as_bytes());
+        archive.extend_from_slice(&header);
+        archive.extend_from_slice(contents);
+        archive.resize(archive.len().next_multiple_of(512), 0);
+    }
+    archive.resize(archive.len() + 1024, 0);
+    archive
+}
+
+fn artifact_task_root(temporary: &tempfile::TempDir, artifacts: &str) -> std::path::PathBuf {
+    let task_root = standard_task_root(temporary, "");
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            "schema_version = \"1.0\"\nartifacts = {artifacts}\n\n[task]\nname = \"example/artifacts\"\n"
+        ),
+    )
+    .unwrap();
+    task_root
+}
 
 #[test]
 fn normalizes_equivalent_allowlist_spelling_deterministically() {

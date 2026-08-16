@@ -16,14 +16,15 @@ use tempfile::TempDir;
 
 use crate::{
     clock::{Clock, RealClock},
-    eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode},
+    eval::{HarborTaskPackage, RewardDocument, VerifierMode},
 };
 
 use super::{
     BenchmarkExecutionPlan, DockerBuildRequest, DockerCopyRequest, DockerCreateRequest,
     DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EvalExecutionError,
     EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult, NetworkPolicy, SecretProvider,
-    preflight_docker, resolve_environment, resolve_phase_environment,
+    collect_artifacts, preflight_docker, resolve_environment, resolve_phase_environment,
+    transfer_artifacts,
 };
 
 /// Executes a conventional task in a task-built Docker environment.
@@ -198,12 +199,23 @@ impl DockerProcessSandbox {
                 plan.agent(),
                 secrets,
             )?;
-            let artifacts = collect_workspace_artifacts(&workspace, recipe, package)?;
+            let artifact_collection = tempfile::tempdir()
+                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+            let artifacts = collect_artifacts(
+                runtime,
+                &container,
+                plan.artifacts(),
+                artifact_collection.path(),
+            )?;
 
             let verifier_container = if verifier.mode() == VerifierMode::Separate {
                 let verifier_workspace = tempfile::tempdir()
                     .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-                copy_workspace_artifacts(&workspace, &verifier_workspace, recipe, package)?;
+                transfer_artifacts(
+                    artifact_collection.path(),
+                    verifier_workspace.path(),
+                    &artifacts,
+                )?;
                 let name = format!("{container}-verifier");
                 let verifier_network = network_lease(verifier.environment().network())?;
                 create_planned_container(
@@ -459,6 +471,19 @@ impl DockerRuntime for DockerCliRuntime {
             "copy Docker files",
         )
         .map(|_| ())
+    }
+
+    fn copy_archive(&self, container: &str, source: &str) -> Result<Vec<u8>, EvalExecutionError> {
+        docker(
+            ["cp", &format!("{container}:{source}"), "-"],
+            "collect artifact archive",
+        )
+        .map_err(|error| match error {
+            EvalExecutionError::ProcessFailure(reason) => {
+                EvalExecutionError::ArtifactCollection(reason)
+            }
+            error => error,
+        })
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
@@ -966,58 +991,6 @@ fn remove_timed_out_container(container: &str) -> Result<(), EvalExecutionError>
 fn reports_absent_container(stderr: &[u8]) -> bool {
     let diagnostic = String::from_utf8_lossy(stderr).to_ascii_lowercase();
     diagnostic.contains("no such container") || diagnostic.contains("no such object")
-}
-
-fn collect_workspace_artifacts(
-    workspace: &TempDir,
-    recipe: &HarborSandboxRecipe,
-    package: &HarborTaskPackage,
-) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
-    package
-        .declared_artifacts()
-        .iter()
-        .map(|path| {
-            let relative = path
-                .strip_prefix(&recipe.workdir)
-                .and_then(|path| path.strip_prefix('/'))
-                .ok_or_else(|| {
-                    EvalExecutionError::Materialization(format!(
-                        "Docker artifact must be under {}: {path}",
-                        recipe.workdir
-                    ))
-                })?;
-            let bytes = fs::read(workspace.path().join(relative))
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            Ok((path.clone(), ArtifactDigest::from_bytes(&bytes)))
-        })
-        .collect()
-}
-
-fn copy_workspace_artifacts(
-    source: &TempDir,
-    destination: &TempDir,
-    recipe: &HarborSandboxRecipe,
-    package: &HarborTaskPackage,
-) -> Result<(), EvalExecutionError> {
-    for path in package.declared_artifacts() {
-        let relative = path
-            .strip_prefix(&recipe.workdir)
-            .and_then(|path| path.strip_prefix('/'))
-            .ok_or_else(|| {
-                EvalExecutionError::Materialization(format!(
-                    "Docker artifact must be under {}: {path}",
-                    recipe.workdir
-                ))
-            })?;
-        let destination_path = destination.path().join(relative);
-        if let Some(parent) = destination_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        }
-        fs::copy(source.path().join(relative), destination_path)
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

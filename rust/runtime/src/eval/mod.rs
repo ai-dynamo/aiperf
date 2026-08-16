@@ -34,7 +34,7 @@ pub use execution::{
     HealthcheckPlan, ImageSource, ImageSourceKind, ImmutablePatch, LocalExecutionResult,
     LocalProcessSandbox, MaterializedSandbox, NetworkPolicy, PhasePlan, ProcessOutput,
     ProviderCapabilities, SandboxRole, SecretProvider, SecretValue, VerifierPlan, WorkspaceOverlay,
-    preflight_docker, resolve_phase_environment,
+    collect_artifacts, preflight_docker, resolve_phase_environment, transfer_artifacts,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

@@ -224,6 +224,45 @@ fn native_eval_command_runs_a_standard_task_directory_in_docker() {
 
 #[test]
 #[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
+fn native_eval_command_transfers_only_declared_directory_artifacts_to_a_separate_verifier() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("docker-directory-artifacts");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\nartifacts = [{ source = \"/work/output\", destination = \"published\", exclude = [\"*.tmp\"] }]\n[task]\nname = \"example/docker-directory-artifacts\"\n[environment]\nworkdir = \"/work\"\n[agent.env]\nAGENT_ONLY_SECRET = \"agent-secret\"\n[verifier]\nenvironment_mode = \"separate\"\nuser = \"root\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Write a result.\n").unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM openclaw-sandbox:bookworm-slim\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test -f /work/published/result.txt\ntest ! -e /work/published/drop.tmp\ntest ! -e /work/agent-only\ntest ! -e /work/tests/agent-only\ntest -z \"${AGENT_ONLY_SECRET+x}\"\nmkdir -p /logs/verifier\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+
+    let exit = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--agent-command".to_owned(),
+        "mkdir -p output tests && printf result > output/result.txt && printf temporary > output/drop.tmp && printf agent > agent-only && printf agent > tests/agent-only"
+            .to_owned(),
+    ])
+    .unwrap();
+
+    assert_eq!(exit, 0);
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
 fn docker_timeout_removes_agent_container_after_descendant_command() {
     let _docker_test_lock = DOCKER_TIMEOUT_TEST_LOCK.lock().unwrap();
     let task_root = docker_timeout_task(
