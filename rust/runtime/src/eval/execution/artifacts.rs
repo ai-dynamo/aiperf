@@ -9,13 +9,14 @@ use std::{
     io::{self, Read, Write},
     os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
-    time::{Duration, Instant},
+    rc::Rc,
+    time::Duration,
 };
 
 use tar::{Archive, EntryType};
 use tempfile::NamedTempFile;
 
-use crate::eval::ArtifactDigest;
+use crate::{clock::Clock, eval::ArtifactDigest};
 
 use super::{
     ArtifactSpec, DockerRuntime, EvalExecutionError, EvalExecutionPhase, VerifierCollectHook,
@@ -23,23 +24,26 @@ use super::{
 };
 
 /// A monotonic deadline shared by collection hooks and archive snapshots.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub(crate) struct Deadline {
-    started: Instant,
+    clock: Rc<dyn Clock>,
+    started_ns: i64,
     timeout: Duration,
 }
 
 impl Deadline {
-    pub(crate) fn from_timeout(timeout: Duration) -> Self {
+    pub(crate) fn from_timeout(clock: Rc<dyn Clock>, timeout: Duration) -> Self {
         Self {
-            started: Instant::now(),
+            started_ns: clock.now_ns(),
+            clock,
             timeout,
         }
     }
 
-    fn remaining(self) -> Result<Duration, EvalExecutionError> {
+    fn remaining(&self) -> Result<Duration, EvalExecutionError> {
+        let elapsed_ns = self.clock.now_ns().saturating_sub(self.started_ns).max(0) as u64;
         self.timeout
-            .checked_sub(self.started.elapsed())
+            .checked_sub(Duration::from_nanos(elapsed_ns))
             .filter(|remaining| !remaining.is_zero())
             .ok_or(EvalExecutionError::Timeout {
                 phase: EvalExecutionPhase::CollectionHook,
@@ -89,7 +93,7 @@ pub(crate) fn collect_service_artifacts(
             lease,
             artifact,
             destination,
-            deadline,
+            deadline.clone(),
             &mut destinations,
             &mut collected,
         )?;
@@ -114,7 +118,7 @@ pub(crate) fn collect_service_evidence(
         let mut destinations = BTreeSet::new();
         let main = lease.main_service().clone();
         for hook in hooks.iter().filter(|hook| hook.service() == &main) {
-            run_collection_hook(lease, hook, deadline)?;
+            run_collection_hook(lease, hook, deadline.clone())?;
         }
         for artifact in artifacts
             .iter()
@@ -124,7 +128,7 @@ pub(crate) fn collect_service_evidence(
                 lease,
                 artifact,
                 destination,
-                deadline,
+                deadline.clone(),
                 &mut destinations,
                 &mut collected,
             )?;
@@ -153,7 +157,7 @@ pub(crate) fn collect_service_evidence(
             }
         }
         for hook in hooks.iter().filter(|hook| hook.service() != &main) {
-            run_collection_hook(lease, hook, deadline)?;
+            run_collection_hook(lease, hook, deadline.clone())?;
         }
         for artifact in artifacts
             .iter()
@@ -163,7 +167,7 @@ pub(crate) fn collect_service_evidence(
                 lease,
                 artifact,
                 destination,
-                deadline,
+                deadline.clone(),
                 &mut destinations,
                 &mut collected,
             )?;
@@ -515,12 +519,16 @@ mod tests {
     use std::{
         collections::BTreeMap,
         io::{self, Read},
+        rc::Rc,
         time::Duration,
     };
 
     use tempfile::tempdir;
 
-    use crate::eval::ComposeServiceName;
+    use crate::{
+        clock::{RealClock, SimClock},
+        eval::ComposeServiceName,
+    };
 
     use super::*;
     use crate::eval::execution::task_environment::{
@@ -549,7 +557,7 @@ mod tests {
             &mut lease,
             &artifacts,
             destination.path(),
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap();
 
@@ -573,7 +581,7 @@ mod tests {
         run_collection_hook(
             &mut lease,
             &hook,
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap();
 
@@ -598,8 +606,12 @@ mod tests {
             user: None,
         };
 
-        let error = run_collection_hook(&mut lease, &hook, Deadline::from_timeout(Duration::ZERO))
-            .unwrap_err();
+        let error = run_collection_hook(
+            &mut lease,
+            &hook,
+            Deadline::from_timeout(RealClock::new(), Duration::ZERO),
+        )
+        .unwrap_err();
 
         assert!(matches!(
             error,
@@ -612,6 +624,26 @@ mod tests {
     }
 
     #[test]
+    fn collection_timeout_uses_the_injected_virtual_clock() {
+        let clock = Rc::new(SimClock::new());
+        let mut lease = RecordingLease::with_archives([]);
+        lease.advance_after_hook_to = Some((clock.clone(), 5));
+        let hook = hook("main", ["collector"]);
+        let deadline = Deadline::from_timeout(clock.clone(), Duration::from_nanos(5));
+
+        let error = run_collection_hook(&mut lease, &hook, deadline).unwrap_err();
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::CollectionHook,
+                timeout,
+            } if timeout == Duration::from_nanos(5)
+        ));
+        assert_eq!(lease.executions.len(), 1);
+    }
+
+    #[test]
     fn provider_hook_timeout_is_classified_as_collection_work() {
         let mut lease = RecordingLease::with_archives([]);
         lease.timeout_hook_service = Some("main".to_owned());
@@ -620,7 +652,7 @@ mod tests {
         let error = run_collection_hook(
             &mut lease,
             &hook,
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap_err();
 
@@ -658,7 +690,7 @@ mod tests {
             &hooks,
             &artifacts,
             destination.path(),
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap_err();
 
@@ -690,7 +722,7 @@ mod tests {
             &hooks,
             &artifacts,
             destination.path(),
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap();
 
@@ -717,7 +749,7 @@ mod tests {
             &hooks,
             &[],
             destination.path(),
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap();
 
@@ -738,7 +770,7 @@ mod tests {
             &hooks,
             &[],
             destination.path(),
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap_err();
 
@@ -777,7 +809,7 @@ mod tests {
             &hooks,
             &artifacts,
             destination.path(),
-            Deadline::from_timeout(Duration::from_secs(5)),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
         )
         .unwrap_err();
 
@@ -824,6 +856,7 @@ mod tests {
         fail_hook_service: Option<String>,
         timeout_hook_service: Option<String>,
         timeout_archive_service: Option<String>,
+        advance_after_hook_to: Option<(Rc<SimClock>, i64)>,
         stop_deadlines: Vec<Duration>,
         timeout_stop: bool,
         bytes: BTreeMap<String, Vec<u8>>,
@@ -839,6 +872,7 @@ mod tests {
                 fail_hook_service: None,
                 timeout_hook_service: None,
                 timeout_archive_service: None,
+                advance_after_hook_to: None,
                 stop_deadlines: Vec::new(),
                 timeout_stop: false,
                 bytes: entries
@@ -865,6 +899,9 @@ mod tests {
                 request.user.map(str::to_owned),
                 request.secret_environment.len(),
             ));
+            if let Some((clock, time_ns)) = &self.advance_after_hook_to {
+                clock.advance_to(*time_ns);
+            }
             if self.timeout_hook_service.as_deref() == Some(request.service.as_str()) {
                 return Err(EvalExecutionError::Timeout {
                     phase: EvalExecutionPhase::Agent,

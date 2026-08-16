@@ -952,7 +952,7 @@ impl BenchmarkStepSession for ComposeStepSession<'_> {
         self.artifact_collection = None;
         let collection = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-        let deadline = Deadline::from_timeout(step.collection_timeout());
+        let deadline = Deadline::from_timeout(self.clock.clone(), step.collection_timeout());
         let has_terminal_evidence = !step.collect_hooks().is_empty()
             || step
                 .artifacts()
