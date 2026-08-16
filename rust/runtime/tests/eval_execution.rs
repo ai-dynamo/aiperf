@@ -205,3 +205,24 @@ fn local_process_sandbox_runs_agent_transfers_declared_artifacts_and_parses_veri
     assert_eq!(score.version, 0);
     assert_eq!(score.value, 1.0);
 }
+
+#[test]
+fn separate_local_verifier_cannot_read_an_undeclared_agent_file() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","printf secret > \"$AIPERF_EVAL_ROOT/agent-secret\"; printf patch > \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["sh","-c","test ! -e agent-secret && test -f results/patch.diff && printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":["/results/patch.diff"]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    let result = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Separate)
+        .unwrap();
+
+    assert_eq!(result.reward.metrics["reward"], 1.0);
+}
