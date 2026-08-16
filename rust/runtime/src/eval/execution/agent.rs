@@ -94,9 +94,15 @@ impl Display for EvalExecutionError {
             }
             Self::InvalidWorkspace(reason) => write!(formatter, "invalid workspace {reason}"),
             Self::InvalidCommand => formatter.write_str("sandbox command must be a nonempty argv"),
-            Self::Materialization(reason) => write!(formatter, "sandbox materialization failed: {reason}"),
-            Self::ProcessSpawn(command) => write!(formatter, "failed to start sandbox command {command:?}"),
-            Self::ProcessFailure(command) => write!(formatter, "sandbox command failed: {command:?}"),
+            Self::Materialization(reason) => {
+                write!(formatter, "sandbox materialization failed: {reason}")
+            }
+            Self::ProcessSpawn(command) => {
+                write!(formatter, "failed to start sandbox command {command:?}")
+            }
+            Self::ProcessFailure(command) => {
+                write!(formatter, "sandbox command failed: {command:?}")
+            }
         }
     }
 }

@@ -22,7 +22,8 @@ pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
     AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract,
     HarborEvaluationCoordinator, HarborEvaluationError, HarborSandboxRecipe, ImmutablePatch,
-    LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole, WorkspaceOverlay,
+    LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,
+    WorkspaceOverlay,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{
