@@ -13,9 +13,9 @@ use std::{
 use serde::Deserialize;
 
 use crate::eval::{
-    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources, EnvBinding,
-    EnvironmentPlan, EvalTaskRef, HealthcheckPlan, ImageSource, NetworkPolicy, PhasePlan,
-    VerifierMode, VerifierPlan,
+    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources,
+    EnvBinding, EnvironmentPlan, EvalTaskRef, HealthcheckPlan, ImageSource,
+    MultiStepRewardStrategy, NetworkPolicy, PhasePlan, VerifierMode, VerifierPlan,
 };
 
 use super::HarborImportError;
@@ -177,29 +177,42 @@ pub(super) fn normalize(
         network: NetworkPolicy::public(),
         healthcheck: None,
     };
-    let execution_plan = BenchmarkExecutionPlan {
-        environment: environment_plan.clone(),
-        agent: PhasePlan {
+    let agent = PhasePlan {
+        user: None,
+        env: BTreeMap::new(),
+        network: NetworkPolicy::public(),
+        timeout: None,
+    };
+    let verifier = VerifierPlan {
+        phase: PhasePlan {
             user: None,
             env: BTreeMap::new(),
             network: NetworkPolicy::public(),
             timeout: None,
         },
-        verifier: VerifierPlan {
-            phase: PhasePlan {
-                user: None,
-                env: BTreeMap::new(),
-                network: NetworkPolicy::public(),
-                timeout: None,
-            },
-            mode: VerifierMode::Separate,
-            environment: environment_plan,
-        },
-        artifacts: declared_artifacts
-            .iter()
-            .cloned()
-            .map(ArtifactSpec::exact_file)
-            .collect(),
+        mode: VerifierMode::Separate,
+        environment: environment_plan.clone(),
+    };
+    let artifacts = declared_artifacts
+        .iter()
+        .cloned()
+        .map(ArtifactSpec::exact_file)
+        .collect::<Vec<_>>();
+    let execution_plan = BenchmarkExecutionPlan {
+        environment: environment_plan.clone(),
+        agent: agent.clone(),
+        verifier: verifier.clone(),
+        artifacts: artifacts.clone(),
+        steps: vec![BenchmarkStepPlan::new(
+            "default".to_owned(),
+            task.instruction.clone(),
+            "tests".to_owned(),
+            agent,
+            verifier,
+            artifacts,
+        )],
+        has_explicit_steps: false,
+        multi_step_reward_strategy: None,
     };
     let package = HarborTaskPackage {
         id: task.id,
@@ -231,6 +244,9 @@ struct StandardTaskManifest {
     #[serde(default)]
     artifacts: Vec<StandardArtifactDto>,
     environment: Option<StandardEnvironmentSection>,
+    #[serde(default)]
+    steps: Vec<StandardStepSection>,
+    multi_step_reward_strategy: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,7 +255,7 @@ struct StandardTaskSection {
     name: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StandardAgentSection {
     timeout_sec: Option<f64>,
@@ -251,7 +267,7 @@ struct StandardAgentSection {
     env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StandardVerifierSection {
     environment_mode: Option<String>,
@@ -280,20 +296,30 @@ struct StandardEnvironmentSection {
     healthcheck: Option<StandardHealthcheckSection>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 enum StandardArtifactDto {
     ExactFile(String),
     Collected(StandardArtifactTable),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StandardArtifactTable {
     source: String,
     destination: Option<String>,
     #[serde(default)]
     exclude: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StandardStepSection {
+    name: String,
+    #[serde(default)]
+    artifacts: Vec<StandardArtifactDto>,
+    agent: Option<StandardAgentSection>,
+    verifier: Option<StandardVerifierSection>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -316,11 +342,6 @@ pub(super) fn normalize_standard_directory(
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?
         .parse::<toml::Value>()
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
-    if manifest_value.get("steps").is_some() {
-        return Err(HarborImportError::InvalidPackage(
-            "multi-step task manifests are not supported yet".to_owned(),
-        ));
-    }
     let manifest = manifest_value
         .try_into::<StandardTaskManifest>()
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
@@ -335,66 +356,120 @@ pub(super) fn normalize_standard_directory(
             "task.name must not be empty".to_owned(),
         ));
     }
-    let instruction = read_required_source_file(source_root, "instruction.md")?;
-    if instruction.trim().is_empty() {
-        return Err(HarborImportError::InvalidPackage(
-            "instruction.md must not be empty".to_owned(),
-        ));
-    }
     let environment_digest = ArtifactDigest::from_bytes(
         read_required_source_file(source_root, "environment/Dockerfile")?.as_bytes(),
-    );
-    let verifier_digest = ArtifactDigest::from_bytes(
-        read_required_source_file(source_root, "tests/test.sh")?.as_bytes(),
     );
     let image_source = ImageSource::task_dockerfile(environment_digest.clone());
     let environment = normalize_environment(
         manifest.environment.unwrap_or_default(),
         image_source.clone(),
     )?;
-    let agent = normalize_agent_phase(manifest.agent.unwrap_or_default(), &environment.network)?;
-    let verifier = manifest.verifier.unwrap_or_default();
-    let verifier_mode = match verifier.environment_mode.as_deref() {
-        None | Some("shared") => VerifierMode::Shared,
-        Some("separate") => VerifierMode::Separate,
-        Some(value) => {
-            return Err(HarborImportError::InvalidPackage(format!(
-                "unsupported verifier environment_mode {value:?}"
-            )));
-        }
-    };
-    let verifier_environment = match verifier.environment.clone() {
-        Some(verifier_environment) if verifier_mode == VerifierMode::Separate => {
-            normalize_environment(verifier_environment, image_source)?
-        }
-        Some(_) => {
-            return Err(HarborImportError::InvalidPackage(
-                "verifier.environment is only valid when verifier.environment_mode = \"separate\""
-                    .to_owned(),
-            ));
-        }
-        None => environment.clone(),
-    };
-    let verifier_phase = normalize_verifier_phase(verifier, &verifier_environment.network)?;
-    let timeouts = match (agent.timeout, verifier_phase.timeout) {
-        (None, None) => None,
-        (Some(agent), Some(verifier)) => Some((agent, verifier)),
-        (None, Some(_)) => {
-            return Err(HarborImportError::InvalidPackage(
-                "agent.timeout_sec must be configured with verifier.timeout_sec".to_owned(),
-            ));
-        }
-        (Some(_), None) => {
-            return Err(HarborImportError::InvalidPackage(
-                "verifier.timeout_sec must be configured with agent.timeout_sec".to_owned(),
-            ));
-        }
-    };
-    let artifacts = normalize_standard_artifacts(manifest.artifacts)?;
+    let root_agent =
+        normalize_agent_phase(manifest.agent.unwrap_or_default(), &environment.network)?;
+    let root_verifier = normalize_verifier_plan(
+        manifest.verifier.unwrap_or_default(),
+        &environment,
+        image_source,
+    )?;
+    let root_artifacts = normalize_standard_artifacts(manifest.artifacts)?;
+    let (steps, has_explicit_steps, multi_step_reward_strategy, verifier_bytes) =
+        if manifest.steps.is_empty() {
+            if manifest.multi_step_reward_strategy.is_some() {
+                return Err(HarborImportError::InvalidPackage(
+                    "multi_step_reward_strategy requires explicit steps".to_owned(),
+                ));
+            }
+            let instruction = read_required_source_file(source_root, "instruction.md")?;
+            if instruction.trim().is_empty() {
+                return Err(HarborImportError::InvalidPackage(
+                    "instruction.md must not be empty".to_owned(),
+                ));
+            }
+            let verifier_bytes = read_required_source_bytes(source_root, "tests/test.sh")?;
+            validate_phase_timeout_pair(&root_agent, root_verifier.phase())?;
+            (
+                vec![BenchmarkStepPlan::new(
+                    "default".to_owned(),
+                    instruction,
+                    "tests".to_owned(),
+                    root_agent,
+                    root_verifier,
+                    root_artifacts,
+                )],
+                false,
+                None,
+                vec![verifier_bytes],
+            )
+        } else {
+            let strategy =
+                normalize_multi_step_reward_strategy(manifest.multi_step_reward_strategy)?;
+            let mut names = BTreeSet::new();
+            let mut steps = Vec::with_capacity(manifest.steps.len());
+            let mut verifier_bytes = Vec::with_capacity(manifest.steps.len());
+            for step in manifest.steps {
+                validate_step_name(&step.name)?;
+                if !names.insert(step.name.clone()) {
+                    return Err(HarborImportError::InvalidPackage(format!(
+                        "step name is duplicated: {:?}",
+                        step.name
+                    )));
+                }
+                let instruction_path = format!("steps/{}/instruction.md", step.name);
+                let instruction = read_required_source_file(source_root, &instruction_path)?;
+                if instruction.trim().is_empty() {
+                    return Err(HarborImportError::InvalidPackage(format!(
+                        "{instruction_path} must not be empty"
+                    )));
+                }
+                let step_agent = overlay_agent_phase(&root_agent, step.agent.unwrap_or_default())?;
+                let step_verifier = overlay_verifier_plan(
+                    &root_verifier,
+                    step.verifier.unwrap_or_default(),
+                    &environment,
+                    &environment_digest,
+                )?;
+                validate_phase_timeout_pair(&step_agent, step_verifier.phase())?;
+                let mut artifacts = root_artifacts.clone();
+                artifacts.extend(normalize_standard_artifacts(step.artifacts)?);
+                validate_effective_artifact_targets(&artifacts)?;
+                let step_test = format!("steps/{}/tests/test.sh", step.name);
+                let (verifier_test_root, bytes) = if source_root.join(&step_test).is_file() {
+                    (
+                        format!("steps/{}/tests", step.name),
+                        read_required_source_bytes(source_root, &step_test)?,
+                    )
+                } else {
+                    (
+                        "tests".to_owned(),
+                        read_required_source_bytes(source_root, "tests/test.sh")?,
+                    )
+                };
+                verifier_bytes.push(bytes);
+                steps.push(BenchmarkStepPlan::new(
+                    step.name,
+                    instruction,
+                    verifier_test_root,
+                    step_agent,
+                    step_verifier,
+                    artifacts,
+                ));
+            }
+            (steps, true, Some(strategy), verifier_bytes)
+        };
+    let first_step = steps.first().ok_or_else(|| {
+        HarborImportError::InvalidPackage("task must contain a logical step".to_owned())
+    })?;
+    let instruction = first_step.instruction().to_owned();
+    let verifier_digest = ArtifactDigest::from_bytes(&verifier_bytes[0]);
+    let verifier_mode = first_step.verifier().mode();
+    let agent = first_step.agent().clone();
+    let verifier = first_step.verifier().clone();
+    let artifacts = first_step.artifacts().to_vec();
     let declared_artifacts = artifacts
         .iter()
         .map(|artifact| artifact.source().to_owned())
         .collect();
+    let timeouts = timeout_pair(&agent, verifier.phase())?;
     let container_resources = environment
         .resources
         .map(|resources| (resources.cpus, resources.memory_mb));
@@ -402,21 +477,20 @@ pub(super) fn normalize_standard_directory(
         environment,
         agent,
         verifier: VerifierPlan {
-            phase: verifier_phase,
+            phase: verifier.phase().clone(),
             mode: verifier_mode,
-            environment: verifier_environment,
+            environment: verifier.environment().clone(),
         },
         artifacts,
+        steps: steps.clone(),
+        has_explicit_steps,
+        multi_step_reward_strategy,
     };
-    let reference_digest = ArtifactDigest::from_bytes(
-        format!(
-            "id={}\u{1f}instruction={}\u{1f}environment={}\u{1f}verifier={}",
-            manifest.task.name,
-            instruction,
-            environment_digest.as_str(),
-            verifier_digest.as_str(),
-        )
-        .as_bytes(),
+    let reference_digest = standard_task_reference_digest(
+        &manifest.task.name,
+        environment_digest.as_str(),
+        &steps,
+        &verifier_bytes,
     );
     let task = EvalTaskRef::new(manifest.task.name.clone(), reference_digest)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
@@ -504,6 +578,220 @@ fn normalize_agent_phase(
             .map(|seconds| normalize_timeout("agent.timeout_sec", seconds))
             .transpose()?,
     })
+}
+
+fn normalize_verifier_plan(
+    verifier: StandardVerifierSection,
+    environment: &EnvironmentPlan,
+    image_source: ImageSource,
+) -> Result<VerifierPlan, HarborImportError> {
+    let mode = normalize_verifier_mode(verifier.environment_mode.as_deref())?;
+    let verifier_environment = match verifier.environment.clone() {
+        Some(verifier_environment) if mode == VerifierMode::Separate => {
+            normalize_environment(verifier_environment, image_source)?
+        }
+        Some(_) => {
+            return Err(HarborImportError::InvalidPackage(
+                "verifier.environment is only valid when verifier.environment_mode = \"separate\""
+                    .to_owned(),
+            ));
+        }
+        None => environment.clone(),
+    };
+    Ok(VerifierPlan {
+        phase: normalize_verifier_phase(verifier, verifier_environment.network())?,
+        mode,
+        environment: verifier_environment,
+    })
+}
+
+fn overlay_agent_phase(
+    root: &PhasePlan,
+    override_: StandardAgentSection,
+) -> Result<PhasePlan, HarborImportError> {
+    let mut env = root.env().clone();
+    env.extend(normalize_environment_bindings(override_.env)?);
+    Ok(PhasePlan {
+        user: override_
+            .user
+            .map(|user| normalize_user(&user))
+            .transpose()?
+            .or_else(|| root.user().map(str::to_owned)),
+        env,
+        network: normalize_network(
+            override_.network.as_deref(),
+            &override_.allowed_hosts,
+            root.network(),
+        )?,
+        timeout: override_
+            .timeout_sec
+            .map(|seconds| normalize_step_timeout("steps.agent.timeout_sec", seconds))
+            .transpose()?
+            .or(root.timeout()),
+    })
+}
+
+fn overlay_verifier_plan(
+    root: &VerifierPlan,
+    override_: StandardVerifierSection,
+    environment: &EnvironmentPlan,
+    environment_digest: &ArtifactDigest,
+) -> Result<VerifierPlan, HarborImportError> {
+    let mode = match override_.environment_mode.as_deref() {
+        Some(value) => normalize_verifier_mode(Some(value))?,
+        None => root.mode(),
+    };
+    let verifier_environment = match override_.environment {
+        Some(verifier_environment) if mode == VerifierMode::Separate => normalize_environment(
+            verifier_environment,
+            ImageSource::task_dockerfile(environment_digest.clone()),
+        )?,
+        Some(_) => {
+            return Err(HarborImportError::InvalidPackage(
+                "steps.verifier.environment requires environment_mode = \"separate\"".to_owned(),
+            ));
+        }
+        None if mode == VerifierMode::Separate && root.mode() == VerifierMode::Separate => {
+            root.environment().clone()
+        }
+        None => environment.clone(),
+    };
+    let mut env = root.phase().env().clone();
+    env.extend(normalize_environment_bindings(override_.env)?);
+    Ok(VerifierPlan {
+        phase: PhasePlan {
+            user: override_
+                .user
+                .map(|user| normalize_user(&user))
+                .transpose()?
+                .or_else(|| root.phase().user().map(str::to_owned)),
+            env,
+            network: normalize_network(
+                override_.network.as_deref(),
+                &override_.allowed_hosts,
+                root.phase().network(),
+            )?,
+            timeout: override_
+                .timeout_sec
+                .map(|seconds| normalize_step_timeout("steps.verifier.timeout_sec", seconds))
+                .transpose()?
+                .or(root.phase().timeout()),
+        },
+        mode,
+        environment: verifier_environment,
+    })
+}
+
+fn normalize_verifier_mode(value: Option<&str>) -> Result<VerifierMode, HarborImportError> {
+    match value {
+        None | Some("shared") => Ok(VerifierMode::Shared),
+        Some("separate") => Ok(VerifierMode::Separate),
+        Some(value) => Err(HarborImportError::InvalidPackage(format!(
+            "unsupported verifier environment_mode {value:?}"
+        ))),
+    }
+}
+
+fn timeout_pair(
+    agent: &PhasePlan,
+    verifier: &PhasePlan,
+) -> Result<Option<(Duration, Duration)>, HarborImportError> {
+    match (agent.timeout(), verifier.timeout()) {
+        (None, None) => Ok(None),
+        (Some(agent), Some(verifier)) => Ok(Some((agent, verifier))),
+        (None, Some(_)) => Err(HarborImportError::InvalidPackage(
+            "agent.timeout_sec must be configured with verifier.timeout_sec".to_owned(),
+        )),
+        (Some(_), None) => Err(HarborImportError::InvalidPackage(
+            "verifier.timeout_sec must be configured with agent.timeout_sec".to_owned(),
+        )),
+    }
+}
+
+fn validate_phase_timeout_pair(
+    agent: &PhasePlan,
+    verifier: &PhasePlan,
+) -> Result<(), HarborImportError> {
+    timeout_pair(agent, verifier).map(|_| ())
+}
+
+fn normalize_multi_step_reward_strategy(
+    value: Option<String>,
+) -> Result<MultiStepRewardStrategy, HarborImportError> {
+    match value.as_deref() {
+        None | Some("mean") => Ok(MultiStepRewardStrategy::Mean),
+        Some("final") => Ok(MultiStepRewardStrategy::Final),
+        Some(value) => Err(HarborImportError::InvalidPackage(format!(
+            "unsupported multi_step_reward_strategy {value:?}"
+        ))),
+    }
+}
+
+fn validate_step_name(name: &str) -> Result<(), HarborImportError> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "step name must be a safe path component: {name:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_effective_artifact_targets(
+    artifacts: &[ArtifactSpec],
+) -> Result<(), HarborImportError> {
+    let mut targets = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        let target = artifact
+            .destination()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                Path::new(artifact.source())
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned()
+            });
+        if targets.iter().any(|existing: &String| {
+            existing == &target
+                || existing.strip_prefix(&format!("{target}/")).is_some()
+                || target.strip_prefix(&format!("{existing}/")).is_some()
+        }) {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "artifact output target is duplicated or overlaps: {target:?}"
+            )));
+        }
+        targets.push(target);
+    }
+    Ok(())
+}
+
+fn standard_task_reference_digest(
+    id: &str,
+    environment_digest: &str,
+    steps: &[BenchmarkStepPlan],
+    verifier_bytes: &[Vec<u8>],
+) -> ArtifactDigest {
+    let mut material = Vec::new();
+    material.extend_from_slice(b"id=");
+    material.extend_from_slice(id.as_bytes());
+    material.extend_from_slice(b"\x1fenvironment=");
+    material.extend_from_slice(environment_digest.as_bytes());
+    for (step, verifier) in steps.iter().zip(verifier_bytes) {
+        material.extend_from_slice(b"\x1fstep=");
+        material.extend_from_slice(step.name().as_bytes());
+        material.extend_from_slice(b"\x1finstruction=");
+        material.extend_from_slice(&(step.instruction().len() as u64).to_le_bytes());
+        material.extend_from_slice(step.instruction().as_bytes());
+        material.extend_from_slice(b"\x1ftests=");
+        material.extend_from_slice(step.verifier_test_root().as_bytes());
+        material.extend_from_slice(&(verifier.len() as u64).to_le_bytes());
+        material.extend_from_slice(verifier);
+    }
+    ArtifactDigest::from_bytes(&material)
 }
 
 fn normalize_verifier_phase(
@@ -679,12 +967,30 @@ fn normalize_timeout(field: &str, seconds: f64) -> Result<Duration, HarborImport
     Ok(duration)
 }
 
+fn normalize_step_timeout(field: &str, seconds: f64) -> Result<Duration, HarborImportError> {
+    if seconds.fract() != 0.0 {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "{field} must be a whole number of seconds"
+        )));
+    }
+    normalize_timeout(field, seconds)
+}
+
 fn read_required_source_file(
     source_root: &Path,
     relative_path: &str,
 ) -> Result<String, HarborImportError> {
     let path = source_root.join(relative_path);
-    fs::read_to_string(&path)
+    String::from_utf8(read_required_source_bytes(source_root, relative_path)?)
+        .map_err(|error| HarborImportError::InvalidPackage(format!("{}: {error}", path.display())))
+}
+
+fn read_required_source_bytes(
+    source_root: &Path,
+    relative_path: &str,
+) -> Result<Vec<u8>, HarborImportError> {
+    let path = source_root.join(relative_path);
+    fs::read(&path)
         .map_err(|error| HarborImportError::InvalidPackage(format!("{}: {error}", path.display())))
 }
 

@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use aiperf_runtime::eval::{
     ArtifactDigest, EnvBinding, HarborImporter, HarborSource, ImageSourceKind, ImportDisposition,
-    NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SourceAcquirer, VerifierMode,
+    MultiStepRewardStrategy, NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities,
+    SourceAcquirer, VerifierMode,
 };
 
 #[derive(Default)]
@@ -636,20 +637,207 @@ fn standard_task_root(temporary: &tempfile::TempDir, name: &str) -> std::path::P
 }
 
 #[test]
-fn rejects_standard_multi_step_manifest_before_execution() {
+fn imports_standard_multi_step_manifest_in_authored_order() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("multi-step");
     fs::create_dir_all(task_root.join("environment")).unwrap();
     fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("steps/prepare")).unwrap();
+    fs::create_dir_all(task_root.join("steps/verify/tests")).unwrap();
     fs::write(
         task_root.join("task.toml"),
-        "schema_version = \"1.0\"\n[task]\nname = \"example/multi\"\n[[steps]]\nname = \"one\"\n",
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "final"
+artifacts = ["/work/root.txt"]
+
+[task]
+name = "example/multi"
+
+[agent]
+timeout_sec = 5
+user = "root-agent"
+
+[agent.env]
+ROOT = "present"
+
+[verifier]
+timeout_sec = 3
+
+[[steps]]
+name = "prepare"
+artifacts = ["/work/prepare.txt"]
+
+[steps.agent]
+user = "prepare-agent"
+
+[steps.agent.env]
+ROOT = "overridden"
+
+[[steps]]
+name = "verify"
+artifacts = ["/work/verify.txt"]
+
+[steps.verifier]
+environment_mode = "separate"
+"#,
     )
     .unwrap();
-    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("instruction.md"), "Legacy instruction.\n").unwrap();
     fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
     fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(
+        task_root.join("steps/prepare/instruction.md"),
+        "Prepare the workspace.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/verify/instruction.md"),
+        "Verify the workspace.\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("steps/verify/tests/test.sh"), "exit 2\n").unwrap();
 
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .expect("valid explicit steps must normalize");
+    let plan = imported.package.execution_plan();
+
+    assert!(plan.is_multi_step());
+    assert_eq!(
+        plan.multi_step_reward_strategy(),
+        Some(MultiStepRewardStrategy::Final)
+    );
+    assert_eq!(
+        plan.steps()
+            .iter()
+            .map(|step| step.name())
+            .collect::<Vec<_>>(),
+        ["prepare", "verify"]
+    );
+    assert_eq!(plan.steps()[0].instruction(), "Prepare the workspace.\n");
+    assert_eq!(plan.steps()[1].instruction(), "Verify the workspace.\n");
+    assert_eq!(plan.steps()[0].agent().user(), Some("prepare-agent"));
+    assert_eq!(
+        plan.steps()[0]
+            .agent()
+            .env()
+            .get("ROOT")
+            .and_then(EnvBinding::literal),
+        Some("overridden")
+    );
+    assert_eq!(
+        plan.steps()[0].agent().timeout(),
+        Some(Duration::from_secs(5))
+    );
+    assert_eq!(
+        plan.steps()[0]
+            .artifacts()
+            .iter()
+            .map(|artifact| artifact.source())
+            .collect::<Vec<_>>(),
+        ["/work/root.txt", "/work/prepare.txt"]
+    );
+    assert_eq!(plan.steps()[0].verifier_test_root(), "tests");
+    assert_eq!(plan.steps()[1].verifier_test_root(), "steps/verify/tests");
+    assert_eq!(plan.steps()[1].verifier().mode(), VerifierMode::Separate);
+
+    fs::write(
+        task_root.join("steps/verify/instruction.md"),
+        "A different verifier instruction.\n",
+    )
+    .unwrap();
+    let changed_instruction = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_ne!(imported.task.digest, changed_instruction.task.digest);
+
+    fs::write(task_root.join("steps/verify/tests/test.sh"), "exit 3\n").unwrap();
+    let changed_test = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_ne!(changed_instruction.task.digest, changed_test.task.digest);
+}
+
+#[test]
+fn rejects_invalid_explicit_step_contracts_before_provisioning() {
+    let cases = [
+        ("unsafe-name", "[[steps]]\nname = \"../unsafe\"\n", &[][..]),
+        (
+            "duplicate-name",
+            "[[steps]]\nname = \"one\"\n\n[[steps]]\nname = \"one\"\n",
+            &["one"],
+        ),
+        ("blank-instruction", "[[steps]]\nname = \"one\"\n", &["one"]),
+        ("missing-test", "[[steps]]\nname = \"one\"\n", &["one"]),
+        (
+            "fractional-timeout",
+            "[agent]\ntimeout_sec = 1\n\n[verifier]\ntimeout_sec = 1\n\n[[steps]]\nname = \"one\"\n\n[steps.agent]\ntimeout_sec = 0.5\n",
+            &["one"],
+        ),
+        (
+            "zero-timeout",
+            "[agent]\ntimeout_sec = 1\n\n[verifier]\ntimeout_sec = 1\n\n[[steps]]\nname = \"one\"\n\n[steps.agent]\ntimeout_sec = 0\n",
+            &["one"],
+        ),
+        (
+            "shared-verifier-environment",
+            "[[steps]]\nname = \"one\"\n\n[steps.verifier]\nenvironment_mode = \"shared\"\n\n[steps.verifier.environment]\nworkdir = \"/verify\"\n",
+            &["one"],
+        ),
+        (
+            "duplicate-output",
+            "artifacts = [\"/work/root.txt\"]\n\n[[steps]]\nname = \"one\"\nartifacts = [\"/other/root.txt\"]\n",
+            &["one"],
+        ),
+        (
+            "invalid-strategy",
+            "multi_step_reward_strategy = \"maximum\"\n\n[[steps]]\nname = \"one\"\n",
+            &["one"],
+        ),
+    ];
+
+    for (name, manifest, instructions) in cases {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = temporary.path().join(name);
+        fs::create_dir_all(task_root.join("environment")).unwrap();
+        fs::create_dir_all(task_root.join("tests")).unwrap();
+        fs::write(
+            task_root.join("task.toml"),
+            format!("schema_version = \"1.0\"\n[task]\nname = \"example/{name}\"\n\n{manifest}"),
+        )
+        .unwrap();
+        fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+        fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+        for instruction in instructions {
+            fs::create_dir_all(task_root.join(format!("steps/{instruction}"))).unwrap();
+            fs::write(
+                task_root.join(format!("steps/{instruction}/instruction.md")),
+                if name == "blank-instruction" {
+                    " \n"
+                } else {
+                    "Step work.\n"
+                },
+            )
+            .unwrap();
+        }
+        if name == "missing-test" {
+            fs::remove_file(task_root.join("tests/test.sh")).unwrap();
+        }
+
+        assert!(matches!(
+            HarborImporter::new(&NativeSourceAcquirer)
+                .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
+            Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+        ));
+    }
+
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "strategy-without-steps");
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\nmulti_step_reward_strategy = \"final\"\n[task]\nname = \"example/strategy-without-steps\"\n",
+    )
+    .unwrap();
     assert!(matches!(
         HarborImporter::new(&NativeSourceAcquirer)
             .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),

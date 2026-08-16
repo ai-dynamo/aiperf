@@ -26,15 +26,16 @@ pub use artifact_manifest::{
 };
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
-    AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources, DockerBuildRequest,
-    DockerCopyRequest, DockerCreateRequest, DockerEnvironment, DockerExecRequest,
-    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding,
-    EnvName, EnvironmentPlan, EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory,
-    HarborAgentContract, HarborEvaluationCoordinator, HarborEvaluationError, HarborSandboxRecipe,
-    HealthcheckPlan, ImageSource, ImageSourceKind, ImmutablePatch, LocalExecutionResult,
-    LocalProcessSandbox, MaterializedSandbox, NetworkPolicy, PhasePlan, ProcessOutput,
-    ProviderCapabilities, SandboxRole, SecretProvider, SecretValue, VerifierPlan, WorkspaceOverlay,
-    collect_artifacts, preflight_docker, resolve_phase_environment, transfer_artifacts,
+    AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources,
+    DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerEnvironment,
+    DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, EnvBinding, EnvName, EnvironmentPlan, EvalExecutionError,
+    EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator,
+    HarborEvaluationError, HarborSandboxRecipe, HealthcheckPlan, ImageSource, ImageSourceKind,
+    ImmutablePatch, LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox,
+    MultiStepRewardStrategy, NetworkPolicy, PhasePlan, ProcessOutput, ProviderCapabilities,
+    SandboxRole, SecretProvider, SecretValue, VerifierPlan, WorkspaceOverlay, collect_artifacts,
+    preflight_docker, resolve_phase_environment, transfer_artifacts,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

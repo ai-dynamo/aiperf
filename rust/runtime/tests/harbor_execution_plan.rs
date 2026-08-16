@@ -14,10 +14,10 @@ use std::{
 
 use aiperf_runtime::eval::{
     DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
-    DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding, EnvName,
-    EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
-    NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SecretProvider, SecretValue,
-    VerifierMode, collect_artifacts, resolve_phase_environment, transfer_artifacts,
+    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding,
+    EnvName, EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource,
+    LocalProcessSandbox, NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SecretProvider,
+    SecretValue, VerifierMode, collect_artifacts, resolve_phase_environment, transfer_artifacts,
 };
 
 static UMASK_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -709,6 +709,69 @@ fn local_sandbox_refuses_standard_tasks_before_running_commands() {
     );
 }
 
+#[test]
+fn legacy_tasks_synthesize_one_logical_step() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package_path = temporary.path().join("legacy-task.json");
+    fs::write(
+        &package_path,
+        br#"{"id":"legacy","instruction":"Fix it","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["true"],"declared_artifacts":[]}"#,
+    )
+    .unwrap();
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(package_path.to_string_lossy()).unwrap())
+        .unwrap();
+    let plan = imported.package.execution_plan();
+
+    assert!(!plan.is_multi_step());
+    assert!(plan.multi_step_reward_strategy().is_none());
+    assert_eq!(plan.steps().len(), 1);
+    assert_eq!(plan.steps()[0].name(), "default");
+    assert_eq!(plan.steps()[0].instruction(), "Fix it");
+}
+
+#[test]
+fn existing_sandbox_entry_points_refuse_every_explicit_step_layout() {
+    for steps in [
+        [("one", "Only step.\n")].as_slice(),
+        [("one", "First step.\n"), ("two", "Second step.\n")].as_slice(),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = explicit_step_task_root(&temporary, steps);
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .unwrap();
+        assert!(imported.package.execution_plan().is_multi_step());
+        assert!(
+            imported
+                .package
+                .execution_plan()
+                .multi_step_reward_strategy()
+                .is_some()
+        );
+        let recipe = HarborSandboxRecipe::new(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "/work",
+        )
+        .unwrap();
+
+        assert_eq!(
+            LocalProcessSandbox::new().execute(&recipe, &imported.package, VerifierMode::Shared),
+            Err(EvalExecutionError::UnsupportedMultiStep)
+        );
+        assert_eq!(
+            DockerProcessSandbox::new().execute(
+                &recipe,
+                &imported.package,
+                &["true".to_owned()],
+                VerifierMode::Shared,
+            ),
+            Err(EvalExecutionError::UnsupportedMultiStep)
+        );
+    }
+}
+
 fn standard_task_root(temporary: &tempfile::TempDir, manifest_suffix: &str) -> std::path::PathBuf {
     let task_root = temporary.path().join("task");
     fs::create_dir_all(task_root.join("environment")).unwrap();
@@ -721,5 +784,26 @@ fn standard_task_root(temporary: &tempfile::TempDir, manifest_suffix: &str) -> s
     fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
     fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
     fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    task_root
+}
+
+fn explicit_step_task_root(
+    temporary: &tempfile::TempDir,
+    steps: &[(&str, &str)],
+) -> std::path::PathBuf {
+    let manifest = steps
+        .iter()
+        .map(|(name, _)| format!("[[steps]]\nname = \"{name}\"\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let task_root = standard_task_root(temporary, &manifest);
+    for (name, instruction) in steps {
+        fs::create_dir_all(task_root.join(format!("steps/{name}"))).unwrap();
+        fs::write(
+            task_root.join(format!("steps/{name}/instruction.md")),
+            instruction,
+        )
+        .unwrap();
+    }
     task_root
 }

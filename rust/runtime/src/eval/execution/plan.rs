@@ -325,6 +325,76 @@ pub struct VerifierPlan {
     pub(crate) environment: EnvironmentPlan,
 }
 
+/// The reward aggregation rule for a benchmark with explicit steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultiStepRewardStrategy {
+    /// Average every completed step reward.
+    Mean,
+    /// Use the final completed step reward.
+    Final,
+}
+
+/// One fully resolved immutable benchmark step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BenchmarkStepPlan {
+    name: String,
+    instruction: String,
+    verifier_test_root: String,
+    agent: PhasePlan,
+    verifier: VerifierPlan,
+    artifacts: Vec<ArtifactSpec>,
+}
+
+impl BenchmarkStepPlan {
+    pub(crate) fn new(
+        name: String,
+        instruction: String,
+        verifier_test_root: String,
+        agent: PhasePlan,
+        verifier: VerifierPlan,
+        artifacts: Vec<ArtifactSpec>,
+    ) -> Self {
+        Self {
+            name,
+            instruction,
+            verifier_test_root,
+            agent,
+            verifier,
+            artifacts,
+        }
+    }
+
+    /// Returns the authored step name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the step-specific agent instruction.
+    pub fn instruction(&self) -> &str {
+        &self.instruction
+    }
+
+    /// Returns the selected verifier test directory relative to the task root.
+    pub fn verifier_test_root(&self) -> &str {
+        &self.verifier_test_root
+    }
+
+    /// Returns fully resolved agent phase settings for this step.
+    pub fn agent(&self) -> &PhasePlan {
+        &self.agent
+    }
+
+    /// Returns fully resolved verifier settings for this step.
+    pub fn verifier(&self) -> &VerifierPlan {
+        &self.verifier
+    }
+
+    /// Returns effective artifact declarations in collection order.
+    pub fn artifacts(&self) -> &[ArtifactSpec] {
+        &self.artifacts
+    }
+}
+
 impl VerifierPlan {
     /// Returns phase-only verifier settings.
     pub fn phase(&self) -> &PhasePlan {
@@ -540,6 +610,9 @@ pub struct BenchmarkExecutionPlan {
     pub(crate) agent: PhasePlan,
     pub(crate) verifier: VerifierPlan,
     pub(crate) artifacts: Vec<ArtifactSpec>,
+    pub(crate) steps: Vec<BenchmarkStepPlan>,
+    pub(crate) has_explicit_steps: bool,
+    pub(crate) multi_step_reward_strategy: Option<MultiStepRewardStrategy>,
 }
 
 impl BenchmarkExecutionPlan {
@@ -563,6 +636,21 @@ impl BenchmarkExecutionPlan {
         &self.artifacts
     }
 
+    /// Returns resolved benchmark steps in authored order.
+    pub fn steps(&self) -> &[BenchmarkStepPlan] {
+        &self.steps
+    }
+
+    /// Reports whether the package authored an explicit step layout.
+    pub fn is_multi_step(&self) -> bool {
+        self.has_explicit_steps
+    }
+
+    /// Returns the authored reward aggregation rule for explicit multi-step tasks.
+    pub const fn multi_step_reward_strategy(&self) -> Option<MultiStepRewardStrategy> {
+        self.multi_step_reward_strategy
+    }
+
     /// Refuses execution when a provider cannot enforce every authored guarantee.
     pub fn validate_for(
         &self,
@@ -570,7 +658,9 @@ impl BenchmarkExecutionPlan {
     ) -> Result<(), EvalExecutionError> {
         require(capabilities, "docker")?;
         require(capabilities, "image_source")?;
-        for environment in [&self.environment, &self.verifier.environment] {
+        for environment in std::iter::once(&self.environment)
+            .chain(self.steps.iter().map(|step| step.verifier.environment()))
+        {
             if environment.resources.is_some() {
                 require(capabilities, "resource_limits")?;
             }
@@ -587,7 +677,11 @@ impl BenchmarkExecutionPlan {
                 require(capabilities, "healthchecks")?;
             }
         }
-        for phase in [&self.agent, &self.verifier.phase] {
+        for phase in self
+            .steps
+            .iter()
+            .flat_map(|step| [step.agent(), step.verifier().phase()].into_iter())
+        {
             if phase.user.is_some() {
                 require(capabilities, "users")?;
             }
@@ -598,13 +692,19 @@ impl BenchmarkExecutionPlan {
                 require(capabilities, "phase_timeouts")?;
             }
         }
-        if self.verifier.mode == VerifierMode::Separate {
+        if self
+            .steps
+            .iter()
+            .any(|step| step.verifier().mode() == VerifierMode::Separate)
+        {
             require(capabilities, "separate_verifier")?;
         }
         require_network(capabilities, &self.environment.network)?;
-        require_network(capabilities, &self.agent.network)?;
-        require_network(capabilities, &self.verifier.environment.network)?;
-        require_network(capabilities, &self.verifier.phase.network)?;
+        for step in &self.steps {
+            require_network(capabilities, step.agent().network())?;
+            require_network(capabilities, step.verifier().environment().network())?;
+            require_network(capabilities, step.verifier().phase().network())?;
+        }
         Ok(())
     }
 }

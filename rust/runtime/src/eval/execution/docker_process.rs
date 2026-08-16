@@ -67,6 +67,9 @@ impl DockerProcessSandbox {
         agent_command: &[String],
         verifier_mode: VerifierMode,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if package.execution_plan().is_multi_step() {
+            return Err(EvalExecutionError::UnsupportedMultiStep);
+        }
         if package.timeouts().is_some() && tokio::runtime::Handle::try_current().is_ok() {
             return Err(EvalExecutionError::RuntimeContext(
                 "synchronous Docker execution",
@@ -104,6 +107,9 @@ impl DockerProcessSandbox {
         agent_command: &[String],
         secrets: &dyn SecretProvider,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if package.execution_plan().is_multi_step() || plan.is_multi_step() {
+            return Err(EvalExecutionError::UnsupportedMultiStep);
+        }
         if !package.is_standard_directory() {
             return Err(EvalExecutionError::Materialization(
                 "Docker execution requires a standard task directory".to_owned(),

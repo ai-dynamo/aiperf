@@ -137,6 +137,8 @@ pub enum EvalExecutionError {
     MissingCapability(AgentCapability),
     /// The selected provider cannot enforce an authored benchmark requirement.
     UnsupportedEnforcement(&'static str),
+    /// The selected executor has not yet implemented explicit benchmark steps.
+    UnsupportedMultiStep,
     /// A declared host-secret reference could not be resolved for the active phase.
     MissingSecret(String),
     /// The task environment did not become ready before its agent phase.
@@ -194,6 +196,8 @@ impl Display for EvalExecutionError {
                     "provider cannot enforce benchmark requirement {requirement}"
                 )
             }
+            Self::UnsupportedMultiStep => formatter
+                .write_str("multi-step benchmark execution is not supported by this executor"),
             Self::MissingSecret(name) => write!(formatter, "missing required secret {name}"),
             Self::Unhealthy(reason) => write!(formatter, "task environment is unhealthy: {reason}"),
             Self::ArtifactCollection(reason) => {

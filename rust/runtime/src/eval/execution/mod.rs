@@ -29,9 +29,9 @@ pub use local_process::{
     LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,
 };
 pub use plan::{
-    ArtifactSpec, BenchmarkExecutionPlan, ContainerResources, EnvBinding, EnvironmentPlan,
-    HealthcheckPlan, ImageSource, ImageSourceKind, NetworkPolicy, PhasePlan, ProviderCapabilities,
-    VerifierPlan,
+    ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources, EnvBinding,
+    EnvironmentPlan, HealthcheckPlan, ImageSource, ImageSourceKind, MultiStepRewardStrategy,
+    NetworkPolicy, PhasePlan, ProviderCapabilities, VerifierPlan,
 };
 pub(crate) use plan::{validate_env_name, validate_user};
 pub use recipe::HarborSandboxRecipe;

@@ -76,6 +76,9 @@ impl LocalProcessSandbox {
         agent_command: &[String],
         verifier_mode: VerifierMode,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if package.execution_plan().is_multi_step() {
+            return Err(EvalExecutionError::UnsupportedMultiStep);
+        }
         if package.is_standard_directory() {
             package
                 .execution_plan()
