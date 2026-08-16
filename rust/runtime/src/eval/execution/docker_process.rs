@@ -292,13 +292,19 @@ impl DockerProcessSandbox {
                 verifier: package.source_digest(),
             })
         })();
-        let cleanup = containers.into_iter().rev().try_for_each(|container| {
-            runtime.remove(&DockerRemoveRequest::new(["rm", "--force", &container]))
-        });
+        let cleanup = containers
+            .into_iter()
+            .rev()
+            .filter_map(|container| {
+                runtime
+                    .remove(&DockerRemoveRequest::new(["rm", "--force", &container]))
+                    .err()
+            })
+            .next();
         match (outcome, cleanup) {
             (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
-            (Ok(result), Ok(())) => Ok(result),
+            (Ok(_), Some(error)) => Err(error),
+            (Ok(result), None) => Ok(result),
         }
     }
 }
@@ -512,11 +518,18 @@ impl DockerRuntime for DockerCliRuntime {
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
-        docker(
+        match docker(
             request.public_arguments().iter().map(String::as_str),
             "remove Docker lease",
-        )
-        .map(|_| ())
+        ) {
+            Ok(_) => Ok(()),
+            Err(EvalExecutionError::ProcessFailure(error))
+                if reports_absent_container(error.as_bytes()) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -1062,7 +1075,7 @@ mod tests {
     use super::{
         DockerExecProcess, DockerExecState, DockerProcessSandbox, EvalExecutionError,
         EvalExecutionPhase, docker_container_name, docker_image_name, drive_docker_exec,
-        ensure_network_exists, redact_secret_values,
+        ensure_network_exists, redact_secret_values, reports_absent_container,
     };
     use crate::clock::SimClock;
     use crate::eval::{
@@ -1293,6 +1306,13 @@ mod tests {
 
         assert_eq!(result, Ok(()));
         assert_eq!(inspections.get(), 2);
+    }
+
+    #[test]
+    fn absent_container_diagnostic_is_idempotent_cleanup() {
+        assert!(reports_absent_container(
+            b"Error response from daemon: No such container"
+        ));
     }
 
     struct FakeDockerExec {
