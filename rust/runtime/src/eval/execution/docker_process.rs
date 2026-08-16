@@ -337,15 +337,23 @@ impl DockerProcessSandbox {
                 )?;
             }
 
-            prepare_workdir(
+            let agent_deadline = plan.agent().timeout().map(|timeout| {
+                Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Agent, timeout)
+            });
+            let remaining = |deadline: &Option<Deadline>| {
+                deadline.as_ref().map(Deadline::remaining).transpose()
+            };
+            prepare_workdir_with_deadline(
                 runtime,
                 &container,
                 environment,
                 plan.agent(),
+                EvalExecutionPhase::Agent,
                 environment_workdir,
                 baseline_network,
+                remaining(&agent_deadline)?,
             )?;
-            execute_planned_phase(
+            execute_planned_phase_with_deadline(
                 runtime,
                 &container,
                 EvalExecutionPhase::Agent,
@@ -354,6 +362,7 @@ impl DockerProcessSandbox {
                 plan.agent(),
                 environment_workdir,
                 secrets,
+                remaining(&agent_deadline)?,
             )?;
             let artifact_collection = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
@@ -429,6 +438,16 @@ impl DockerProcessSandbox {
                         verifier_deadline.as_ref(),
                     )?;
                 }
+                prepare_workdir_with_deadline(
+                    runtime,
+                    &name,
+                    verifier.environment(),
+                    verifier.phase(),
+                    EvalExecutionPhase::Verifier,
+                    verifier_workdir,
+                    verifier_network,
+                    remaining(&verifier_deadline)?,
+                )?;
                 if let Some(healthcheck) = verifier.environment().healthcheck() {
                     run_healthcheck_with_deadline(
                         self.clock.clone(),
@@ -467,15 +486,18 @@ impl DockerProcessSandbox {
             };
             runtime.copy(&copy)?;
             let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
-            prepare_workdir_with_deadline(
-                runtime,
-                verifier_name,
-                verifier.environment(),
-                verifier.phase(),
-                verifier_workdir,
-                verifier_network,
-                remaining(&verifier_deadline)?,
-            )?;
+            if verifier.mode() == VerifierMode::Shared {
+                prepare_workdir_with_deadline(
+                    runtime,
+                    verifier_name,
+                    verifier.environment(),
+                    verifier.phase(),
+                    EvalExecutionPhase::Verifier,
+                    verifier_workdir,
+                    verifier_network,
+                    remaining(&verifier_deadline)?,
+                )?;
+            }
             execute_planned_phase_with_deadline(
                 runtime,
                 verifier_name,
@@ -755,11 +777,9 @@ impl<'a> ComposeStepSession<'a> {
         &mut self,
         step: &BenchmarkStepPlan,
         artifacts: &[(String, ArtifactDigest)],
+        deadline: Option<Deadline>,
     ) -> Result<RewardDocument, EvalExecutionError> {
         let verifier = step.verifier();
-        let deadline = verifier.phase().timeout().map(|timeout| {
-            Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Verifier, timeout)
-        });
         let remaining =
             |deadline: &Option<Deadline>| deadline.as_ref().map(Deadline::remaining).transpose();
         let workspace = tempfile::tempdir()
@@ -819,6 +839,7 @@ impl<'a> ComposeStepSession<'a> {
                 &name,
                 verifier.environment(),
                 verifier.phase(),
+                EvalExecutionPhase::Verifier,
                 verifier_workdir,
                 verifier_network,
                 remaining(&deadline)?,
@@ -875,7 +896,11 @@ impl<'a> ComposeStepSession<'a> {
                 .with_deadline(verifier_cleanup_deadline(&deadline)),
         );
         match (outcome, cleanup) {
-            (Err(error), _) => Err(error),
+            (Err(error), Err(cleanup_error)) => Err(EvalExecutionError::ContainerTeardown {
+                container: name,
+                reason: format!("{error}; cleanup: {cleanup_error}"),
+            }),
+            (Err(error), Ok(())) => Err(error),
             (Ok(_), Err(error)) => Err(error),
             (Ok(reward), Ok(())) => Ok(reward),
         }
@@ -965,13 +990,18 @@ impl BenchmarkStepSession for ComposeStepSession<'_> {
         secret_environment.remove("AIPERF_EVAL_INSTRUCTION");
         let workdir = self.recipe.resolve_workdir(self.environment.workdir());
         let main = self.lease.main_service().clone();
-        prepare_lease_workdir(
+        let deadline = step.agent().timeout().map(|timeout| {
+            Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Agent, timeout)
+        });
+        let remaining =
+            |deadline: &Option<Deadline>| deadline.as_ref().map(Deadline::remaining).transpose();
+        prepare_lease_workdir_for_user(
             self.lease,
             &main,
-            self.environment,
-            step.agent(),
+            step.agent().user().or(self.environment.user()),
             EvalExecutionPhase::Agent,
             workdir,
+            remaining(&deadline)?,
         )?;
         self.lease.exec(ServiceExecRequest {
             service: &main,
@@ -982,7 +1012,7 @@ impl BenchmarkStepSession for ComposeStepSession<'_> {
             user: step.agent().user().or(self.environment.user()),
             workdir,
             network_lease: "default",
-            deadline: step.agent().timeout(),
+            deadline: remaining(&deadline)?,
         })
     }
 
@@ -1024,6 +1054,9 @@ impl BenchmarkStepSession for ComposeStepSession<'_> {
             self.artifact_collection = None;
             return result;
         }
+        let deadline = step.verifier().phase().timeout().map(|timeout| {
+            Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Verifier, timeout)
+        });
         let has_non_main_evidence = step
             .artifacts()
             .iter()
@@ -1033,9 +1066,15 @@ impl BenchmarkStepSession for ComposeStepSession<'_> {
                 .iter()
                 .any(|hook| hook.service().as_str() != "main");
         if has_non_main_evidence {
-            self.lease.teardown()?;
+            let cleanup_timeout = deadline
+                .as_ref()
+                .map(Deadline::remaining)
+                .transpose()?
+                .unwrap_or(super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE);
+            self.lease
+                .teardown_after_terminal_failure(cleanup_timeout)?;
         }
-        let result = self.run_separate_verifier(step, artifacts);
+        let result = self.run_separate_verifier(step, artifacts, deadline);
         self.artifact_collection = None;
         result
     }
@@ -1062,13 +1101,20 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
     ) -> Result<(), EvalExecutionError> {
         let baseline_network = network_lease(self.environment.network())?;
         let workdir = self.recipe.resolve_workdir(self.environment.workdir());
-        prepare_workdir(
+        let deadline = step.agent().timeout().map(|timeout| {
+            Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Agent, timeout)
+        });
+        let remaining =
+            |deadline: &Option<Deadline>| deadline.as_ref().map(Deadline::remaining).transpose();
+        prepare_workdir_with_deadline(
             self.runtime,
             self.agent_container,
             self.environment,
             step.agent(),
+            EvalExecutionPhase::Agent,
             workdir,
             baseline_network,
+            remaining(&deadline)?,
         )?;
         if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
             return Err(EvalExecutionError::InvalidCommand);
@@ -1094,7 +1140,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 step.agent().user().or(self.environment.user()),
                 workdir,
                 step_network,
-                step.agent().timeout(),
+                remaining(&deadline)?,
             ),
         )
     }
@@ -1184,6 +1230,16 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 verifier_network,
                 deadline.as_ref(),
             )?;
+            prepare_workdir_with_deadline(
+                self.runtime,
+                &name,
+                verifier.environment(),
+                verifier.phase(),
+                EvalExecutionPhase::Verifier,
+                verifier_workdir,
+                verifier_network,
+                remaining(&deadline)?,
+            )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
                 run_healthcheck_with_deadline(
                     self.clock.clone(),
@@ -1225,15 +1281,18 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             let verifier_workdir = self
                 .recipe
                 .resolve_workdir(verifier.environment().workdir());
-            prepare_workdir_with_deadline(
-                self.runtime,
-                &verifier_name,
-                verifier.environment(),
-                verifier.phase(),
-                verifier_workdir,
-                verifier_network,
-                remaining(&deadline)?,
-            )?;
+            if verifier.mode() == VerifierMode::Shared {
+                prepare_workdir_with_deadline(
+                    self.runtime,
+                    &verifier_name,
+                    verifier.environment(),
+                    verifier.phase(),
+                    EvalExecutionPhase::Verifier,
+                    verifier_workdir,
+                    verifier_network,
+                    remaining(&deadline)?,
+                )?;
+            }
             execute_planned_phase_with_deadline(
                 self.runtime,
                 &verifier_name,
@@ -1536,24 +1595,6 @@ fn run_lease_healthcheck(
         || "healthcheck exhausted without an execution result".to_owned(),
         |error| error.to_string(),
     )))
-}
-
-fn prepare_lease_workdir(
-    lease: &mut dyn TaskEnvironmentLease,
-    service: &super::ComposeServiceName,
-    environment: &super::EnvironmentPlan,
-    phase: &super::PhasePlan,
-    execution_phase: EvalExecutionPhase,
-    workdir: Option<&str>,
-) -> Result<(), EvalExecutionError> {
-    prepare_lease_workdir_for_user(
-        lease,
-        service,
-        phase.user().or(environment.user()),
-        execution_phase,
-        workdir,
-        phase.timeout(),
-    )
 }
 
 fn prepare_lease_workdir_for_user(
@@ -2698,30 +2739,12 @@ fn create_planned_container(
     runtime.create(&request)
 }
 
-fn prepare_workdir(
-    runtime: &dyn DockerRuntime,
-    container: &str,
-    environment: &super::EnvironmentPlan,
-    phase: &super::PhasePlan,
-    workdir: Option<&str>,
-    network_lease: &str,
-) -> Result<(), EvalExecutionError> {
-    prepare_workdir_with_deadline(
-        runtime,
-        container,
-        environment,
-        phase,
-        workdir,
-        network_lease,
-        None,
-    )
-}
-
 fn prepare_workdir_with_deadline(
     runtime: &dyn DockerRuntime,
     container: &str,
     environment: &super::EnvironmentPlan,
     phase: &super::PhasePlan,
+    execution_phase: EvalExecutionPhase,
     workdir: Option<&str>,
     network_lease: &str,
     deadline: Option<Duration>,
@@ -2743,8 +2766,8 @@ fn prepare_workdir_with_deadline(
             Default::default(),
         )
         .with_phase(
-            EvalExecutionPhase::Agent,
-            None,
+            execution_phase,
+            Some("root"),
             Some(workdir),
             network_lease,
             deadline.or(phase.timeout()),
@@ -2867,29 +2890,6 @@ fn transfer_verifier_artifacts(
         None => request,
     };
     runtime.copy(&request)
-}
-
-fn execute_planned_phase(
-    runtime: &dyn DockerRuntime,
-    container: &str,
-    execution_phase: EvalExecutionPhase,
-    command: &[String],
-    environment: &super::EnvironmentPlan,
-    phase: &super::PhasePlan,
-    workdir: Option<&str>,
-    secrets: &dyn SecretProvider,
-) -> Result<(), EvalExecutionError> {
-    execute_planned_phase_with_deadline(
-        runtime,
-        container,
-        execution_phase,
-        command,
-        environment,
-        phase,
-        workdir,
-        secrets,
-        None,
-    )
 }
 
 fn execute_planned_phase_with_deadline(

@@ -202,6 +202,7 @@ struct ComposeSessionRecordingRuntime {
     failure: Option<ComposeSessionFailure>,
     agent_calls: Cell<usize>,
     removal_deadlines: RefCell<Vec<Option<Duration>>>,
+    compose_down_deadlines: RefCell<Vec<Option<Duration>>>,
     advance_verifier_create_to: Option<(Rc<SimClock>, i64)>,
     advance_verifier_workdir_to: Option<(Rc<SimClock>, i64)>,
 }
@@ -218,6 +219,7 @@ impl ComposeSessionRecordingRuntime {
             failure,
             agent_calls: Cell::new(0),
             removal_deadlines: RefCell::new(Vec::new()),
+            compose_down_deadlines: RefCell::new(Vec::new()),
             advance_verifier_create_to: None,
             advance_verifier_workdir_to: None,
         }
@@ -360,6 +362,16 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
             "remove:{}",
             request.public_arguments().last().unwrap_or(&String::new())
         ));
+        if self.failure == Some(ComposeSessionFailure::VerifierTimeout)
+            && request
+                .public_arguments()
+                .last()
+                .is_some_and(|container| container.contains("-verifier-"))
+        {
+            return Err(EvalExecutionError::ProcessFailure(
+                "verifier removal failed".to_owned(),
+            ));
+        }
         Ok(())
     }
 }
@@ -526,7 +538,10 @@ impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
         Ok(())
     }
 
-    fn compose_down(&self, _: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
+    fn compose_down(&self, request: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
+        self.compose_down_deadlines
+            .borrow_mut()
+            .push(request.deadline());
         self.events.borrow_mut().push("compose-down".to_owned());
         Ok(())
     }
@@ -658,6 +673,36 @@ fn compose_terminal_sidecar_evidence_tears_down_before_separate_verifier() {
 }
 
 #[test]
+fn compose_terminal_sidecar_teardown_uses_the_separate_verifier_deadline() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_terminal_evidence_task_root(&temporary, false, true);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(None);
+
+    DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect("terminal Compose evidence execution");
+
+    let deadlines = runtime.compose_down_deadlines.borrow();
+    assert!(
+        deadlines
+            .first()
+            .and_then(|deadline| *deadline)
+            .is_some_and(|deadline| deadline <= Duration::from_secs(1)),
+        "sidecar teardown must consume the verifier deadline: {deadlines:?}"
+    );
+}
+
+#[test]
 fn compose_recipe_workdir_override_prepares_nonroot_main_workdir_before_health_and_agent_without_mutating_plan()
  {
     let temporary = tempfile::tempdir().unwrap();
@@ -785,8 +830,8 @@ environment_mode = "separate"
         .iter()
         .enumerate()
         .find_map(|(index, (phase, user, workdir, command))| {
-            (phase == "agent"
-                && user.is_none()
+            (phase == "verifier"
+                && user.as_deref() == Some("root")
                 && workdir.as_deref() == Some("/override")
                 && command
                     .first()
@@ -980,8 +1025,8 @@ retries = 1
     assert!(matches!(error, EvalExecutionError::Unhealthy(_)));
     let docker_calls = runtime.docker_phase_calls.borrow();
     assert!(docker_calls.iter().any(|(phase, user, workdir, command)| {
-        phase == "agent"
-            && user.is_none()
+        phase == "verifier"
+            && user.as_deref() == Some("root")
             && workdir.as_deref() == Some("/work")
             && command
                 .first()
@@ -1053,14 +1098,8 @@ fn compose_verifier_timeout_removes_verifier_before_project_teardown() {
         .expect_err("verifier timeout");
 
     assert!(
-        matches!(
-            error,
-            EvalExecutionError::Timeout {
-                phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
-                ..
-            }
-        ),
-        "unexpected verifier error: {error:?}"
+        matches!(error, EvalExecutionError::ContainerTeardown { .. }),
+        "verifier cleanup failure must not be silently discarded: {error:?}"
     );
     let events = runtime.events.borrow();
     let remove = events
@@ -2004,7 +2043,7 @@ fn separate_verifier_health_failure_prevents_verifier_files_and_cleans_leases() 
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_root(
         &temporary,
-        "[verifier]\nenvironment_mode = \"separate\"\n[verifier.environment.healthcheck]\ncommand = [\"false\"]\ntimeout_sec = 1\nretries = 1\n",
+        "[verifier]\nenvironment_mode = \"separate\"\n[verifier.environment]\nworkdir = \"/verify-work\"\nuser = \"bench\"\n[verifier.environment.healthcheck]\ncommand = [\"false\"]\ntimeout_sec = 1\nretries = 1\n",
     );
     let imported = HarborImporter::new(&NativeSourceAcquirer)
         .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
@@ -2038,6 +2077,7 @@ fn separate_verifier_health_failure_prevents_verifier_files_and_cleans_leases() 
             "agent",
             "create",
             "start",
+            "prepare:verifier",
             "healthcheck",
             "remove",
             "remove"
@@ -2056,6 +2096,8 @@ impl DockerRuntime for SeparateHealthFailureRuntime {
             .with_image_source()
             .with_separate_verifier()
             .with_healthchecks()
+            .with_users()
+            .with_workdir()
             .with_no_network()
             .with_public_network()
     }
@@ -2072,6 +2114,21 @@ impl DockerRuntime for SeparateHealthFailureRuntime {
         Ok(())
     }
     fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        if request
+            .public_arguments()
+            .iter()
+            .any(|argument| argument.contains("mkdir -p"))
+            && request
+                .public_arguments()
+                .first()
+                .is_some_and(|argument| argument == "/bin/sh")
+        {
+            assert_eq!(request.phase().to_string(), "verifier");
+            assert_eq!(request.user(), Some("root"), "{request:?}");
+            assert_eq!(request.workdir(), Some("/verify-work"));
+            self.events.borrow_mut().push("prepare:verifier".to_owned());
+            return Ok(());
+        }
         let phase = request.phase().to_string();
         self.events.borrow_mut().push(phase.clone());
         if phase == "healthcheck" {
@@ -3029,6 +3086,64 @@ struct RecordedCreate {
     arguments: Vec<String>,
 }
 
+#[test]
+fn single_step_agent_workdir_preparation_exhausts_its_deadline_before_agent_execution() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(
+        &temporary,
+        r#"
+[environment]
+user = "bench"
+
+[agent]
+timeout_sec = 1
+
+[verifier]
+timeout_sec = 1
+"#,
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = StepRecordingRuntime::default().advance_after_agent_workdir_prepare(
+        clock.clone(),
+        Duration::from_secs(1).as_nanos() as i64,
+    );
+
+    let error = DockerProcessSandbox::with_clock(clock)
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent-must-not-run".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("exhausted workdir preparation must stop the agent phase");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Agent,
+            ..
+        }
+    ));
+    assert_eq!(runtime.agent_execs.get(), 0);
+    assert!(
+        runtime
+            .events
+            .borrow()
+            .iter()
+            .any(|event| event.starts_with("prepare-agent-workdir:"))
+    );
+}
+
 #[derive(Default)]
 struct StepRecordingRuntime {
     build_calls: Cell<usize>,
@@ -3054,6 +3169,7 @@ struct StepRecordingRuntime {
     observed_source_roots: RefCell<Vec<PathBuf>>,
     deadline_events: RefCell<Vec<(String, Duration)>>,
     deadline_clock: Option<Rc<SimClock>>,
+    advance_agent_workdir_prepare_to: Option<(Rc<SimClock>, i64)>,
 }
 
 impl StepRecordingRuntime {
@@ -3095,6 +3211,11 @@ impl StepRecordingRuntime {
         }
     }
 
+    fn advance_after_agent_workdir_prepare(mut self, clock: Rc<SimClock>, time_ns: i64) -> Self {
+        self.advance_agent_workdir_prepare_to = Some((clock, time_ns));
+        self
+    }
+
     fn record_deadline(&self, event: &str, deadline: Option<Duration>) {
         let Some(deadline) = deadline else {
             return;
@@ -3117,6 +3238,8 @@ impl DockerRuntime for StepRecordingRuntime {
             .with_separate_verifier()
             .with_no_network()
             .with_public_network()
+            .with_users()
+            .with_workdir()
             .with_phase_timeouts()
     }
 
@@ -3198,6 +3321,17 @@ impl DockerRuntime for StepRecordingRuntime {
                     "reset {call} failed"
                 )));
             }
+            return Ok(());
+        }
+        if request.phase() == aiperf_runtime::eval::EvalExecutionPhase::Agent
+            && request.public_arguments().first().map(String::as_str) == Some("/bin/sh")
+        {
+            if let Some((clock, time_ns)) = &self.advance_agent_workdir_prepare_to {
+                clock.advance_to(*time_ns);
+            }
+            self.events
+                .borrow_mut()
+                .push(format!("prepare-agent-workdir:{}", request.container()));
             return Ok(());
         }
         if request.public_arguments().first().map(String::as_str) == Some("mkdir") {
