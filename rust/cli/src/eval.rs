@@ -595,7 +595,12 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert!(tree.unwrap().path().join("task/task.toml").is_file());
+        assert!(
+            tree.unwrap()
+                .path()
+                .join("repository/task/task.toml")
+                .is_file()
+        );
         assert!(matches!(source, HarborSource::Local(_)));
     }
 }
