@@ -7,6 +7,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     fs,
+    io::Read,
 };
 
 use aiperf_runtime::clock::SimClock;
@@ -332,6 +333,95 @@ fn agent_terminal_errors_prevent_verifier_and_remove_the_container() {
             runtime.events.into_inner(),
             vec!["preflight", "build", "create", "start", "agent", "remove"]
         );
+    }
+}
+
+#[test]
+fn artifact_collection_failure_prevents_separate_verifier_setup() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_with_artifacts(
+        &temporary,
+        "[\"/work/missing-result.txt\"]",
+        "[verifier]\nenvironment_mode = \"separate\"\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = ArtifactFailureRuntime::default();
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("artifact collection must terminate before verifier setup");
+
+    assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
+    assert_eq!(
+        runtime.events.into_inner(),
+        vec!["build", "create", "start", "agent", "collect", "remove"]
+    );
+}
+
+#[derive(Default)]
+struct ArtifactFailureRuntime {
+    events: RefCell<Vec<String>>,
+}
+
+impl DockerRuntime for ArtifactFailureRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_separate_verifier()
+            .with_no_network()
+            .with_public_network()
+    }
+
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("build".to_owned());
+        Ok(())
+    }
+
+    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("create".to_owned());
+        Ok(())
+    }
+
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("start".to_owned());
+        Ok(())
+    }
+
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        assert_eq!(request.phase().to_string(), "agent");
+        self.events.borrow_mut().push("agent".to_owned());
+        Ok(())
+    }
+
+    fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        panic!("artifact failure must prevent verifier files and reward copies")
+    }
+
+    fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        self.events.borrow_mut().push("collect".to_owned());
+        Err(EvalExecutionError::ArtifactCollection(
+            "declared source is absent".to_owned(),
+        ))
+    }
+
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("remove".to_owned());
+        Ok(())
     }
 }
 
@@ -844,5 +934,21 @@ fn standard_task_root(temporary: &tempfile::TempDir, manifest_suffix: &str) -> s
     fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
     fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
     fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    task_root
+}
+
+fn standard_task_with_artifacts(
+    temporary: &tempfile::TempDir,
+    artifacts: &str,
+    manifest_suffix: &str,
+) -> std::path::PathBuf {
+    let task_root = standard_task_root(temporary, "");
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            "schema_version = \"1.0\"\nartifacts = {artifacts}\n\n[task]\nname = \"example/artifacts\"\n{manifest_suffix}"
+        ),
+    )
+    .unwrap();
     task_root
 }

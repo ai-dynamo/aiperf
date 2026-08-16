@@ -7,6 +7,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
     fs,
+    io::{self, Read},
 };
 
 use aiperf_runtime::eval::{
@@ -14,12 +15,91 @@ use aiperf_runtime::eval::{
     DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding, EnvName,
     EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
     NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SecretProvider, SecretValue,
-    VerifierMode, collect_artifacts, resolve_phase_environment,
+    VerifierMode, collect_artifacts, resolve_phase_environment, transfer_artifacts,
 };
 
 /// A Docker boundary that supplies precise archive bytes for collection tests.
 struct ArchiveRuntime {
     archives: RefCell<BTreeMap<String, VecDeque<Vec<u8>>>>,
+}
+
+/// A bounded reader that models a Docker archive pipe without holding file data.
+struct ChunkedReader {
+    remaining: usize,
+    max_read: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl Read for ChunkedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.remaining.min(buffer.len()).min(4096);
+        buffer[..count].fill(b'x');
+        self.remaining -= count;
+        self.max_read.set(self.max_read.get().max(count));
+        Ok(count)
+    }
+}
+
+/// A Docker boundary that exposes one archive as a chunked reader.
+struct ChunkedArchiveRuntime {
+    source: String,
+    archive: RefCell<Option<Box<dyn Read>>>,
+    max_read: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl ChunkedArchiveRuntime {
+    fn new(source: impl Into<String>, file_len: usize) -> Self {
+        let max_read = std::rc::Rc::new(std::cell::Cell::new(0));
+        Self {
+            source: source.into(),
+            archive: RefCell::new(Some(file_tar_stream(
+                "result.txt",
+                file_len,
+                max_read.clone(),
+            ))),
+            max_read,
+        }
+    }
+}
+
+impl DockerRuntime for ChunkedArchiveRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+    }
+
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not build containers")
+    }
+
+    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not create containers")
+    }
+
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not start containers")
+    }
+
+    fn exec(&self, _: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not execute commands")
+    }
+
+    fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not copy arbitrary paths")
+    }
+
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source != self.source {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "missing {source}"
+            )));
+        }
+        self.archive.borrow_mut().take().ok_or_else(|| {
+            EvalExecutionError::ArtifactCollection("archive consumed twice".to_owned())
+        })
+    }
+
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        unreachable!("artifact collection does not remove containers")
+    }
 }
 
 impl ArchiveRuntime {
@@ -60,11 +140,12 @@ impl DockerRuntime for ArchiveRuntime {
         unreachable!("artifact collection does not copy arbitrary paths")
     }
 
-    fn copy_archive(&self, _: &str, source: &str) -> Result<Vec<u8>, EvalExecutionError> {
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
         self.archives
             .borrow_mut()
             .get_mut(source)
             .and_then(VecDeque::pop_front)
+            .map(|archive| Box::new(io::Cursor::new(archive)) as Box<dyn Read>)
             .ok_or_else(|| EvalExecutionError::ArtifactCollection(format!("missing {source}")))
     }
 
@@ -157,6 +238,148 @@ fn malicious_archive_path_never_escapes_the_declared_artifact_root() {
 }
 
 #[test]
+fn directory_collection_rejects_archive_members_outside_the_declared_root() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = artifact_task_root(
+        &temporary,
+        "[{ source = \"/work/output\", destination = \"published\" }]",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ArchiveRuntime::new([(
+        "/work/output",
+        tar_archive(&[("unrelated.txt", b"must not collect")]),
+    )]);
+
+    let error = collect_artifacts(
+        &runtime,
+        "agent-container",
+        imported.package.execution_plan().artifacts(),
+        &temporary.path().join("collected"),
+    )
+    .expect_err("a directory archive must remain rooted under its source name");
+
+    assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
+}
+
+#[test]
+fn collection_rejects_link_and_special_archive_entries() {
+    for entry_type in [b'2', b'1', b'3', b'4', b'6'] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = artifact_task_root(&temporary, "[\"/work/result.txt\"]");
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .unwrap();
+        let runtime = ArchiveRuntime::new([(
+            "/work/result.txt",
+            tar_archive_entry("result.txt", b"", entry_type),
+        )]);
+
+        let error = collect_artifacts(
+            &runtime,
+            "agent-container",
+            imported.package.execution_plan().artifacts(),
+            &temporary.path().join("collected"),
+        )
+        .expect_err("links and special files must not cross the artifact boundary");
+
+        assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
+    }
+}
+
+#[test]
+fn collection_rejects_missing_sources_and_duplicate_destinations() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = artifact_task_root(&temporary, "[\"/work/missing.txt\"]");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let missing = ArchiveRuntime::new([] as [(String, Vec<u8>); 0]);
+    assert!(matches!(
+        collect_artifacts(
+            &missing,
+            "agent-container",
+            imported.package.execution_plan().artifacts(),
+            &temporary.path().join("missing"),
+        ),
+        Err(EvalExecutionError::ArtifactCollection(_))
+    ));
+
+    let task_root = artifact_task_root(
+        &temporary,
+        "[{ source = \"/work/one\", destination = \"same\" }, { source = \"/work/two\", destination = \"same\" }]",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let duplicate = ArchiveRuntime::new([
+        ("/work/one", tar_archive(&[("one/result.txt", b"one")])),
+        ("/work/two", tar_archive(&[("two/result.txt", b"two")])),
+    ]);
+    assert!(matches!(
+        collect_artifacts(
+            &duplicate,
+            "agent-container",
+            imported.package.execution_plan().artifacts(),
+            &temporary.path().join("duplicate"),
+        ),
+        Err(EvalExecutionError::ArtifactCollection(_))
+    ));
+}
+
+#[test]
+fn transfer_revalidates_the_collected_file_digest() {
+    let temporary = tempfile::tempdir().unwrap();
+    let source = temporary.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("result.txt"), b"modified").unwrap();
+
+    let error = transfer_artifacts(
+        &source,
+        &temporary.path().join("destination"),
+        &[(
+            "result.txt".to_owned(),
+            aiperf_runtime::eval::ArtifactDigest::from_bytes(b"original"),
+        )],
+    )
+    .expect_err("transfer must verify the collection digest before copying");
+
+    assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
+}
+
+#[test]
+fn collection_consumes_a_chunked_archive_without_allocating_the_file_contents() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = artifact_task_root(&temporary, "[\"/work/result.txt\"]");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let file_len = 8 * 1024 * 1024;
+    let runtime = ChunkedArchiveRuntime::new("/work/result.txt", file_len);
+
+    let collected = collect_artifacts(
+        &runtime,
+        "agent-container",
+        imported.package.execution_plan().artifacts(),
+        &temporary.path().join("collected"),
+    )
+    .unwrap();
+
+    assert_eq!(collected.len(), 1);
+    assert_eq!(
+        fs::metadata(temporary.path().join("collected/result.txt"))
+            .unwrap()
+            .len(),
+        file_len as u64
+    );
+    assert!(
+        runtime.max_read.get() <= 16 * 1024,
+        "collector requested an unbounded read"
+    );
+}
+
+#[test]
 fn local_legacy_execution_rejects_a_declared_artifact_symlink() {
     let temporary = tempfile::tempdir().unwrap();
     let package_path = temporary.path().join("task.json");
@@ -185,27 +408,53 @@ fn local_legacy_execution_rejects_a_declared_artifact_symlink() {
 fn tar_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut archive = Vec::new();
     for (path, contents) in entries {
-        let mut header = [0_u8; 512];
-        header[..path.len()].copy_from_slice(path.as_bytes());
-        header[100..108].copy_from_slice(b"0000644\0");
-        header[108..116].copy_from_slice(b"0000000\0");
-        header[116..124].copy_from_slice(b"0000000\0");
-        let size = format!("{:011o}\0", contents.len());
-        header[124..136].copy_from_slice(size.as_bytes());
-        header[136..148].copy_from_slice(b"00000000000\0");
-        header[148..156].fill(b' ');
-        header[156] = b'0';
-        header[257..263].copy_from_slice(b"ustar\0");
-        header[263..265].copy_from_slice(b"00");
-        let checksum = header.iter().map(|byte| u32::from(*byte)).sum::<u32>();
-        let checksum = format!("{:06o}\0 ", checksum);
-        header[148..156].copy_from_slice(checksum.as_bytes());
-        archive.extend_from_slice(&header);
+        archive.extend_from_slice(&tar_header(path, contents.len(), b'0'));
         archive.extend_from_slice(contents);
         archive.resize(archive.len().next_multiple_of(512), 0);
     }
     archive.resize(archive.len() + 1024, 0);
     archive
+}
+
+fn tar_archive_entry(path: &str, contents: &[u8], entry_type: u8) -> Vec<u8> {
+    let mut archive = tar_header(path, contents.len(), entry_type).to_vec();
+    archive.extend_from_slice(contents);
+    archive.resize(archive.len().next_multiple_of(512) + 1024, 0);
+    archive
+}
+
+fn file_tar_stream(
+    path: &str,
+    file_len: usize,
+    max_read: std::rc::Rc<std::cell::Cell<usize>>,
+) -> Box<dyn Read> {
+    Box::new(
+        io::Cursor::new(tar_header(path, file_len, b'0').to_vec())
+            .chain(ChunkedReader {
+                remaining: file_len,
+                max_read,
+            })
+            .chain(io::Cursor::new(vec![0; 1024])),
+    )
+}
+
+fn tar_header(path: &str, size: usize, entry_type: u8) -> [u8; 512] {
+    let mut header = [0_u8; 512];
+    header[..path.len()].copy_from_slice(path.as_bytes());
+    header[100..108].copy_from_slice(b"0000644\0");
+    header[108..116].copy_from_slice(b"0000000\0");
+    header[116..124].copy_from_slice(b"0000000\0");
+    let size = format!("{:011o}\0", size);
+    header[124..136].copy_from_slice(size.as_bytes());
+    header[136..148].copy_from_slice(b"00000000000\0");
+    header[148..156].fill(b' ');
+    header[156] = entry_type;
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    let checksum = header.iter().map(|byte| u32::from(*byte)).sum::<u32>();
+    let checksum = format!("{:06o}\0 ", checksum);
+    header[148..156].copy_from_slice(checksum.as_bytes());
+    header
 }
 
 fn artifact_task_root(temporary: &tempfile::TempDir, artifacts: &str) -> std::path::PathBuf {

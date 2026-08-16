@@ -3,7 +3,7 @@
 
 //! Redacted, injectable Docker command contracts for benchmark execution.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, io::Read, time::Duration};
 
 use super::{
     BenchmarkExecutionPlan, EnvName, EnvironmentPlan, EvalExecutionError, EvalExecutionPhase,
@@ -339,8 +339,8 @@ pub trait DockerRuntime {
     /// Transfers files through the Docker provider boundary.
     fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError>;
 
-    /// Obtains one declared container path as a Docker archive.
-    fn copy_archive(&self, _: &str, _: &str) -> Result<Vec<u8>, EvalExecutionError> {
+    /// Opens one declared container path as a streaming Docker archive.
+    fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
         Err(EvalExecutionError::ArtifactCollection(
             "Docker provider cannot collect artifact archives".to_owned(),
         ))

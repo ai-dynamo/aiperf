@@ -6,7 +6,8 @@
 use std::{
     cell::{Cell, RefCell},
     fs,
-    process::{Child, Command, Stdio},
+    io::{self, Read},
+    process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -473,17 +474,29 @@ impl DockerRuntime for DockerCliRuntime {
         .map(|_| ())
     }
 
-    fn copy_archive(&self, container: &str, source: &str) -> Result<Vec<u8>, EvalExecutionError> {
-        docker(
-            ["cp", &format!("{container}:{source}"), "-"],
-            "collect artifact archive",
-        )
-        .map_err(|error| match error {
-            EvalExecutionError::ProcessFailure(reason) => {
-                EvalExecutionError::ArtifactCollection(reason)
-            }
-            error => error,
-        })
+    fn copy_archive(
+        &self,
+        container: &str,
+        source: &str,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        let mut child = Command::new("docker")
+            .args(["cp", &format!("{container}:{source}"), "-"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| {
+                EvalExecutionError::ProcessSpawn("docker collect artifact archive".to_owned())
+            })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            EvalExecutionError::ArtifactCollection(
+                "docker collect artifact archive did not provide stdout".to_owned(),
+            )
+        })?;
+        Ok(Box::new(DockerArchiveReader {
+            child,
+            stdout,
+            is_complete: false,
+        }))
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
@@ -492,6 +505,46 @@ impl DockerRuntime for DockerCliRuntime {
             "remove Docker lease",
         )
         .map(|_| ())
+    }
+}
+
+struct DockerArchiveReader {
+    child: Child,
+    stdout: ChildStdout,
+    is_complete: bool,
+}
+
+impl DockerArchiveReader {
+    fn finish(&mut self) -> io::Result<()> {
+        if self.is_complete {
+            return Ok(());
+        }
+        let status = self.child.wait()?;
+        self.is_complete = true;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other("docker collect artifact archive failed"))
+        }
+    }
+}
+
+impl Read for DockerArchiveReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.stdout.read(buffer)?;
+        if count == 0 {
+            self.finish()?;
+        }
+        Ok(count)
+    }
+}
+
+impl Drop for DockerArchiveReader {
+    fn drop(&mut self) {
+        if !self.is_complete && self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
     }
 }
 
