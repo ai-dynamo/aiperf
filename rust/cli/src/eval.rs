@@ -34,8 +34,11 @@ struct EvalFlags {
     #[arg(long, default_value = "/work")]
     workdir: String,
     /// Whether the verifier shares the agent sandbox or receives a fresh root.
-    #[arg(long, value_enum, default_value_t = VerifierModeFlag::Separate)]
-    verifier_mode: VerifierModeFlag,
+    #[arg(long, value_enum)]
+    verifier_mode: Option<VerifierModeFlag>,
+    /// Shell command for an external agent; required by standard task directories.
+    #[arg(long)]
+    agent_command: Option<String>,
 }
 
 /// User-facing verifier sandbox topology.
@@ -75,10 +78,20 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     )?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
     let recipe = HarborSandboxRecipe::new(flags.image, flags.workdir)?;
-    let result = LocalProcessSandbox::new().execute(
+    let agent_command = flags
+        .agent_command
+        .as_deref()
+        .map(agent_command_argv)
+        .unwrap_or_else(|| imported.package.agent_command().to_vec());
+    let verifier_mode = flags
+        .verifier_mode
+        .map(VerifierMode::from)
+        .unwrap_or_else(|| imported.package.verifier_mode());
+    let result = LocalProcessSandbox::new().execute_with_agent_command(
         &recipe,
         &imported.package,
-        flags.verifier_mode.into(),
+        &agent_command,
+        verifier_mode,
     )?;
     println!(
         "{}",
@@ -89,6 +102,10 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         })?
     );
     Ok(0)
+}
+
+fn agent_command_argv(command: &str) -> Vec<String> {
+    vec!["/bin/sh".to_owned(), "-c".to_owned(), command.to_owned()]
 }
 
 fn source_from_flags(
@@ -110,7 +127,7 @@ fn source_from_flags(
 
 #[cfg(test)]
 mod tests {
-    use super::source_from_flags;
+    use super::{agent_command_argv, source_from_flags};
 
     #[test]
     fn source_flags_require_one_complete_source_form() {
@@ -125,5 +142,13 @@ mod tests {
             .is_ok()
         );
         assert!(source_from_flags(None, Some("tasks".to_owned()), None, None).is_err());
+    }
+
+    #[test]
+    fn external_agent_command_uses_a_shell_argv() {
+        assert_eq!(
+            agent_command_argv("printf result > result.txt"),
+            ["/bin/sh", "-c", "printf result > result.txt"]
+        );
     }
 }

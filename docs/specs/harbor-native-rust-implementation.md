@@ -11,7 +11,7 @@ This record defines the implementation program for the Harbor replacement platfo
 
 ## Built P0 native composition
 
-The runtime currently provides native local-file and pinned-Git package acquisition through `NativeSourceAcquirer`, with 40-hex-commit and repository-relative-package-path validation. `HarborEvaluationCoordinator` performs source import before sandbox preflight/open, then prepares the declared verifier artifact transfer. Unsupported package semantics therefore return from import before environment opening.
+The runtime currently provides native local-file and pinned-Git package acquisition through `NativeSourceAcquirer`, with 40-hex-commit and repository-relative-package-path validation. Local standard task directories load `task.toml`, `instruction.md`, `environment/Dockerfile`, and `tests/test.sh`; their source identity covers the complete regular-file tree. `HarborEvaluationCoordinator` performs source import before sandbox preflight/open, then prepares the declared verifier artifact transfer. Unsupported package semantics therefore return from import before environment opening.
 
 P0 acceptance tests cover a local source lifecycle with an external contract, deterministic pinned-Git source identity after repository `HEAD` changes, and a separately provisioned verifier receiving only declared artifacts at their exact paths. The test suite links only native Rust crates; no Harbor executable, runtime, library, wrapper, bridge, or dependency is present in the P0 path.
 
@@ -35,7 +35,7 @@ Harbor-compatible source
 
 ## Import and trial contract
 
-Acquisition supports local directories, pinned Git revisions, and Harbor-style registry references. The importer preserves the source package byte-for-byte, then produces a normalized task/dataset projection plus a machine-readable report with one of `native`, `lossless_normalized`, `lossy_normalized`, or `unsupported`.
+Acquisition supports local directories, pinned Git revisions, and Harbor-style registry references. The importer preserves file packages byte-for-byte and identifies standard local directories from their complete regular-file tree, then produces a normalized task/dataset projection plus a machine-readable report with one of `native`, `lossless_normalized`, `lossy_normalized`, or `unsupported`.
 
 Unsupported semantics stop the trial before environment provisioning. Importing never weakens verifier isolation, egress policy, artifact transfer restrictions, or multi-step continuation requirements.
 

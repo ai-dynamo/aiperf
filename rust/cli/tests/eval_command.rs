@@ -62,6 +62,39 @@ fn native_eval_command_runs_a_pinned_git_harbor_package() {
     assert_eq!(exit, 0);
 }
 
+#[test]
+fn native_eval_command_runs_a_standard_task_directory() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("repair-1");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/repair-1\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Write the result.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test -f result.txt && printf 1 > reward.txt\n",
+    )
+    .unwrap();
+
+    let exit = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--agent-command".to_owned(),
+        "printf result > result.txt".to_owned(),
+    ])
+    .unwrap();
+
+    assert_eq!(exit, 0);
+}
+
 fn run_git<const N: usize>(repository: &std::path::Path, arguments: [&str; N]) {
     let status = Command::new("git")
         .arg("-c")

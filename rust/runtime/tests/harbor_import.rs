@@ -7,7 +7,7 @@ use std::process::Command;
 
 use aiperf_runtime::eval::{
     ArtifactDigest, HarborImporter, HarborSource, ImportDisposition, NativeSourceAcquirer,
-    SourceAcquirer,
+    SourceAcquirer, VerifierMode,
 };
 
 #[derive(Default)]
@@ -234,6 +234,7 @@ memory_mb = 512
         imported.package.verifier_command(),
         ["/bin/sh", "tests/test.sh"]
     );
+    assert_eq!(imported.package.verifier_mode(), VerifierMode::Shared);
 
     fs::write(
         task_root.join("instruction.md"),

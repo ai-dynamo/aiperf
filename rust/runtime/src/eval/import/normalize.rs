@@ -11,7 +11,7 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::eval::{ArtifactDigest, EvalTaskRef};
+use crate::eval::{ArtifactDigest, EvalTaskRef, VerifierMode};
 
 use super::HarborImportError;
 
@@ -24,6 +24,7 @@ pub struct HarborTaskPackage {
     verifier: String,
     agent_command: Vec<String>,
     verifier_command: Vec<String>,
+    verifier_mode: VerifierMode,
     declared_artifacts: Vec<String>,
     source_digest: ArtifactDigest,
     source_bytes: Vec<u8>,
@@ -59,6 +60,11 @@ impl HarborTaskPackage {
     /// Returns the exact argv used to invoke the verifier.
     pub fn verifier_command(&self) -> &[String] {
         &self.verifier_command
+    }
+
+    /// Returns the task-authored verifier topology.
+    pub const fn verifier_mode(&self) -> VerifierMode {
+        self.verifier_mode
     }
 
     /// Returns normalized absolute artifact paths in authored order.
@@ -140,6 +146,7 @@ pub(super) fn normalize(
         verifier: task.verifier,
         agent_command: task.agent_command,
         verifier_command: task.verifier_command,
+        verifier_mode: VerifierMode::Separate,
         declared_artifacts,
         source_digest: ArtifactDigest::from_bytes(bytes),
         source_bytes: bytes.to_vec(),
@@ -152,11 +159,17 @@ pub(super) fn normalize(
 struct StandardTaskManifest {
     schema_version: String,
     task: StandardTaskSection,
+    verifier: Option<StandardVerifierSection>,
 }
 
 #[derive(Debug, Deserialize)]
 struct StandardTaskSection {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StandardVerifierSection {
+    environment_mode: Option<String>,
 }
 
 /// Normalizes a standard task directory without executing its contents.
@@ -193,6 +206,19 @@ pub(super) fn normalize_standard_directory(
     let verifier = ArtifactDigest::from_bytes(
         read_required_source_file(source_root, "tests/test.sh")?.as_bytes(),
     );
+    let verifier_mode = match manifest
+        .verifier
+        .and_then(|verifier| verifier.environment_mode)
+        .as_deref()
+    {
+        None | Some("shared") => VerifierMode::Shared,
+        Some("separate") => VerifierMode::Separate,
+        Some(value) => {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "unsupported verifier environment_mode {value:?}"
+            )));
+        }
+    };
     let reference_digest = ArtifactDigest::from_bytes(
         format!(
             "id={}\u{1f}instruction={}\u{1f}environment={}\u{1f}verifier={}",
@@ -212,6 +238,7 @@ pub(super) fn normalize_standard_directory(
         verifier: verifier.as_str().to_owned(),
         agent_command: vec!["aiperf-task-agent".to_owned()],
         verifier_command: vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()],
+        verifier_mode,
         declared_artifacts: Vec::new(),
         source_digest: ArtifactDigest::from_bytes(manifest_bytes),
         source_bytes: manifest_bytes.to_vec(),

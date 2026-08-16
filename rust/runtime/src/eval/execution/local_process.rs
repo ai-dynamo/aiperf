@@ -65,12 +65,23 @@ impl LocalProcessSandbox {
         package: &HarborTaskPackage,
         verifier_mode: VerifierMode,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        self.execute_with_agent_command(recipe, package, package.agent_command(), verifier_mode)
+    }
+
+    /// Runs a package with a caller-supplied external agent command.
+    pub fn execute_with_agent_command(
+        &self,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        agent_command: &[String],
+        verifier_mode: VerifierMode,
+    ) -> Result<LocalExecutionResult, EvalExecutionError> {
         let agent = self.materialize(recipe, package, SandboxRole::Agent)?;
         let environment = vec![(
             "AIPERF_EVAL_INSTRUCTION".to_owned(),
             package.instruction().to_owned(),
         )];
-        agent.run(package.agent_command(), &environment)?;
+        agent.run(agent_command, &environment)?;
         let artifacts = collect_declared_artifacts(&agent, package)?;
         let reward = match verifier_mode {
             VerifierMode::Shared => {
