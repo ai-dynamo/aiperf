@@ -339,6 +339,16 @@ pub trait DockerRuntime {
     /// Transfers files through the Docker provider boundary.
     fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError>;
 
+    /// Returns the created container's absolute configured working directory.
+    ///
+    /// Providers must return `/` when the image and container leave the working
+    /// directory unset.
+    fn container_workdir(&self, _: &str) -> Result<String, EvalExecutionError> {
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "container workdir inspection",
+        ))
+    }
+
     /// Opens one declared container path as a streaming Docker archive.
     fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
         Err(EvalExecutionError::ArtifactCollection(

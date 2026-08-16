@@ -562,13 +562,20 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 self.runtime,
                 &name,
                 self.image,
-                ContainerWorkspace::read_only(workspace.path(), VERIFIER_ARTIFACT_STAGE),
+                ContainerWorkspace::at_workdir(workspace.path(), None),
                 verifier.environment(),
                 verifier_network,
                 None,
             )?;
             self.containers.push(name.clone());
             self.runtime.start(&DockerStartRequest::new(&name))?;
+            transfer_verifier_artifacts(
+                self.runtime,
+                &name,
+                workspace.path(),
+                verifier_workdir,
+                verifier_network,
+            )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
                 run_healthcheck(
                     self.clock.clone(),
@@ -607,14 +614,6 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 verifier_workdir,
                 verifier_network,
             )?;
-            if verifier.mode() == VerifierMode::Separate {
-                stage_verifier_artifacts(
-                    self.runtime,
-                    &verifier_name,
-                    verifier_workdir,
-                    verifier_network,
-                )?;
-            }
             execute_planned_phase(
                 self.runtime,
                 &verifier_name,
@@ -884,6 +883,27 @@ impl DockerRuntime for DockerCliRuntime {
         .map(|_| ())
     }
 
+    fn container_workdir(&self, container: &str) -> Result<String, EvalExecutionError> {
+        let output = docker(
+            [
+                "container",
+                "inspect",
+                "--format",
+                "{{.Config.WorkingDir}}",
+                container,
+            ],
+            "inspect task container workdir",
+        )?;
+        let workdir = std::str::from_utf8(&output)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?
+            .trim();
+        Ok(if workdir.is_empty() {
+            "/".to_owned()
+        } else {
+            workdir.to_owned()
+        })
+    }
+
     fn copy_archive(
         &self,
         container: &str,
@@ -1041,12 +1061,9 @@ fn redact_secret_values(
     redacted
 }
 
-const VERIFIER_ARTIFACT_STAGE: &str = "/aiperf-eval-artifacts";
-
 struct ContainerWorkspace<'a> {
     path: &'a std::path::Path,
     target: Option<&'a str>,
-    is_read_only: bool,
 }
 
 impl<'a> ContainerWorkspace<'a> {
@@ -1054,15 +1071,6 @@ impl<'a> ContainerWorkspace<'a> {
         Self {
             path,
             target: workdir,
-            is_read_only: false,
-        }
-    }
-
-    fn read_only(path: &'a std::path::Path, target: &'a str) -> Self {
-        Self {
-            path,
-            target: Some(target),
-            is_read_only: true,
         }
     }
 }
@@ -1084,10 +1092,9 @@ fn create_planned_container(
         network_lease.to_owned(),
     ];
     if let Some(target) = workspace.target {
-        let mode = if workspace.is_read_only { ":ro" } else { "" };
         arguments.extend([
             "--volume".to_owned(),
-            format!("{}:{target}{mode}", workspace.path.display()),
+            format!("{}:{target}", workspace.path.display()),
         ]);
     }
     if let Some(resources) = environment.resources() {
@@ -1172,31 +1179,42 @@ fn reset_verifier_files(
     )
 }
 
-fn stage_verifier_artifacts(
+fn transfer_verifier_artifacts(
     runtime: &dyn DockerRuntime,
     container: &str,
+    source: &std::path::Path,
     workdir: Option<&str>,
     network_lease: &str,
 ) -> Result<(), EvalExecutionError> {
+    let target = match workdir {
+        Some(workdir) => workdir.to_owned(),
+        None => runtime.container_workdir(container)?,
+    };
+    if !target.starts_with('/') {
+        return Err(EvalExecutionError::InvalidWorkspace(format!(
+            "container workdir must be absolute: {target}"
+        )));
+    }
     runtime.exec(
         &DockerExecRequest::new(
             container,
-            [
-                "/bin/sh".to_owned(),
-                "-c".to_owned(),
-                format!("cp -R {VERIFIER_ARTIFACT_STAGE}/. ."),
-            ],
+            ["mkdir".to_owned(), "-p".to_owned(), target.clone()],
             Default::default(),
             Default::default(),
         )
         .with_phase(
             EvalExecutionPhase::Verifier,
             Some("root"),
-            workdir,
+            None,
             network_lease,
             None,
         ),
-    )
+    )?;
+    runtime.copy(&DockerCopyRequest::new([
+        "cp".to_owned(),
+        format!("{}/.", source.display()),
+        format!("{container}:{target}"),
+    ]))
 }
 
 fn execute_planned_phase(

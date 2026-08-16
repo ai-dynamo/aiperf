@@ -1153,15 +1153,16 @@ fn separate_verifiers_use_fresh_staging_and_artifact_snapshots() {
     );
     let creates = runtime.creates.into_inner();
     assert_eq!(creates.len(), 3);
-    let workspaces = creates
-        .iter()
-        .map(|create| create.workspace.as_deref().expect("workspace mount"))
-        .collect::<Vec<_>>();
-    assert_ne!(workspaces[0], workspaces[1]);
-    assert_ne!(workspaces[0], workspaces[2]);
-    assert_ne!(workspaces[1], workspaces[2]);
+    assert!(creates[0].workspace.is_some());
+    assert_eq!(creates[1].workspace, None);
+    assert_eq!(creates[2].workspace, None);
     assert!(creates[1].container.contains("verifier-one"));
     assert!(creates[2].container.contains("verifier-two"));
+    let transfers = runtime.artifact_transfers.into_inner();
+    assert_eq!(transfers.len(), 2);
+    assert_ne!(transfers[0].0, transfers[1].0);
+    assert!(transfers[0].1.contains("verifier-one:/work"));
+    assert!(transfers[1].1.contains("verifier-two:/work"));
 }
 
 #[test]
@@ -1193,17 +1194,79 @@ fn separate_verifier_stages_artifacts_without_overriding_image_workdir() {
     let creates = runtime.creates.into_inner();
     assert_eq!(creates.len(), 3);
     assert_eq!(creates[0].workspace, None);
-    assert_ne!(creates[1].workspace, creates[2].workspace);
-    assert_eq!(
-        creates[1].workspace_target.as_deref(),
-        Some("/aiperf-eval-artifacts:ro")
-    );
-    assert_eq!(
-        creates[2].workspace_target.as_deref(),
-        Some("/aiperf-eval-artifacts:ro")
-    );
-    assert_eq!(runtime.stage_workdirs.into_inner(), vec![None, None]);
+    assert_eq!(creates[1].workspace, None);
+    assert_eq!(creates[2].workspace, None);
+    assert_eq!(runtime.inspected_workdirs.borrow().len(), 2);
+    let transfers = runtime.artifact_transfers.into_inner();
+    assert_eq!(transfers.len(), 2);
+    assert_ne!(transfers[0].0, transfers[1].0);
+    assert!(transfers[0].1.ends_with(":/image-workdir"));
+    assert!(transfers[1].1.ends_with(":/image-workdir"));
     assert_eq!(runtime.verifier_workdirs.into_inner(), vec![None, None]);
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn separate_verifier_transfer_preserves_colliding_image_workdir_contents() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, true);
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+artifacts = ["/aiperf-eval-artifacts/result.txt"]
+
+[task]
+name = "example/multi-step-colliding-image-workdir"
+
+[[steps]]
+name = "one"
+[steps.verifier]
+environment_mode = "separate"
+
+[[steps]]
+name = "two"
+[steps.verifier]
+environment_mode = "separate"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN mkdir -p /logs/verifier /aiperf-eval-artifacts && printf image-sentinel > /aiperf-eval-artifacts/image.txt\nWORKDIR /aiperf-eval-artifacts\n",
+    )
+    .unwrap();
+    let verifier = "test \"$(cat image.txt)\" = image-sentinel\ntest \"$(cat result.txt)\" = agent-artifact\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n";
+    fs::write(task_root.join("tests/test.sh"), verifier).unwrap();
+    fs::write(task_root.join("steps/two/tests/test.sh"), verifier).unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+
+    let result = DockerProcessSandbox::new()
+        .execute_multi_step(
+            &recipe,
+            &imported.package,
+            &[
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                "printf agent-artifact > result.txt".to_owned(),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(result.steps.len(), 2);
+    assert!(
+        result
+            .steps
+            .iter()
+            .all(|step| step.reward.metrics.get("reward") == Some(&1.0))
+    );
 }
 
 #[test]
@@ -1378,7 +1441,6 @@ enum StepFailure {
 struct RecordedCreate {
     container: String,
     workspace: Option<String>,
-    workspace_target: Option<String>,
     arguments: Vec<String>,
 }
 
@@ -1395,7 +1457,8 @@ struct StepRecordingRuntime {
     creates: RefCell<Vec<RecordedCreate>>,
     agent_environments: RefCell<Vec<BTreeMap<String, String>>>,
     reset_users: RefCell<Vec<Option<String>>>,
-    stage_workdirs: RefCell<Vec<Option<String>>>,
+    inspected_workdirs: RefCell<Vec<String>>,
+    artifact_transfers: RefCell<Vec<(String, String)>>,
     verifier_workdirs: RefCell<Vec<Option<String>>>,
     failure: Option<StepFailure>,
     fail_reset_call: Option<usize>,
@@ -1440,16 +1503,13 @@ impl DockerRuntime for StepRecordingRuntime {
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
         let arguments = request.public_arguments();
         let container = argument_after(arguments, "--name").to_owned();
-        let volume = argument_after(arguments, "--volume")
+        let workspace = argument_after(arguments, "--volume")
             .split_once(':')
-            .map(|(host, target)| (host.to_owned(), target.to_owned()));
-        let workspace = volume.as_ref().map(|(host, _)| host.clone());
-        let workspace_target = volume.map(|(_, target)| target);
+            .map(|(host, _)| host.to_owned());
         self.events.borrow_mut().push(format!("create:{container}"));
         self.creates.borrow_mut().push(RecordedCreate {
             container,
             workspace,
-            workspace_target,
             arguments: arguments.to_vec(),
         });
         Ok(())
@@ -1484,17 +1544,12 @@ impl DockerRuntime for StepRecordingRuntime {
             }
             return Ok(());
         }
-        if request
-            .public_arguments()
-            .iter()
-            .any(|argument| argument.contains("cp -R /aiperf-eval-artifacts/. ."))
-        {
-            self.stage_workdirs
-                .borrow_mut()
-                .push(request.workdir().map(str::to_owned));
+        if request.public_arguments().first().map(String::as_str) == Some("mkdir") {
+            assert_eq!(request.user(), Some("root"));
+            assert_eq!(request.workdir(), None);
             self.events
                 .borrow_mut()
-                .push(format!("stage-artifacts:{}", request.container()));
+                .push(format!("prepare-artifacts:{}", request.container()));
             return Ok(());
         }
         match request.phase().to_string().as_str() {
@@ -1549,7 +1604,26 @@ impl DockerRuntime for StepRecordingRuntime {
             fs::write(destination, format!("{}\n", self.verifier_execs.get())).unwrap();
             return Ok(());
         }
+        if !source.contains(':') && destination.contains(':') {
+            self.artifact_transfers
+                .borrow_mut()
+                .push((source.to_owned(), destination.to_owned()));
+            self.events
+                .borrow_mut()
+                .push(format!("copy-artifacts:{destination}"));
+            return Ok(());
+        }
         panic!("unexpected Docker copy: {arguments:?}")
+    }
+
+    fn container_workdir(&self, container: &str) -> Result<String, EvalExecutionError> {
+        self.inspected_workdirs
+            .borrow_mut()
+            .push(container.to_owned());
+        self.events
+            .borrow_mut()
+            .push(format!("inspect-workdir:{container}"));
+        Ok("/image-workdir".to_owned())
     }
 
     fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
