@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use aiperf_runtime::eval::{
     ArtifactDigest, EnvBinding, HarborImporter, HarborSource, ImportDisposition,
-    NativeSourceAcquirer, NetworkPolicy, SourceAcquirer, VerifierMode,
+    NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SourceAcquirer, VerifierMode,
 };
 
 #[derive(Default)]
@@ -236,9 +236,20 @@ memory_mb = 512
         ["/bin/sh", "tests/test.sh"]
     );
     assert_eq!(imported.package.verifier_mode(), VerifierMode::Shared);
-    assert_eq!(
-        imported.package.execution_plan().environment.network,
-        NetworkPolicy::Public
+    let plan = imported.package.execution_plan();
+    assert_eq!(plan.environment().network(), &NetworkPolicy::public());
+    assert!(matches!(
+        plan.validate_for(ProviderCapabilities::none()),
+        Err(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("docker"))
+    ));
+    assert!(
+        plan.validate_for(
+            ProviderCapabilities::none()
+                .with_docker()
+                .with_resource_limits()
+                .with_public_network(),
+        )
+        .is_ok()
     );
     assert_eq!(imported.package.container_resources(), Some((1, 512)));
     assert_eq!(
@@ -388,45 +399,77 @@ VERIFY_BASE = "present"
         .unwrap();
     let plan = imported.package.execution_plan();
 
-    assert_eq!(plan.environment.resources.unwrap().cpus, 2);
-    assert_eq!(plan.environment.resources.unwrap().memory_mb, 1024);
-    assert_eq!(plan.environment.workdir.as_deref(), Some("/workspace"));
-    assert_eq!(plan.environment.user.as_deref(), Some("1000:1001"));
     assert_eq!(
-        plan.environment.network,
-        NetworkPolicy::Allowlist {
-            allowed_hosts: vec![
-                "*.example.org".to_owned(),
-                "10.0.0.0/24".to_owned(),
-                "10.0.0.1".to_owned(),
-                "2001:db8::1".to_owned(),
-                "example.com".to_owned(),
-            ],
-        }
+        plan.environment()
+            .image_source()
+            .dockerfile_digest()
+            .as_str(),
+        imported.package.environment()
+    );
+    assert_eq!(plan.environment().resources().unwrap().cpus(), 2);
+    assert_eq!(plan.environment().resources().unwrap().memory_mb(), 1024);
+    assert_eq!(plan.environment().workdir(), Some("/workspace"));
+    assert_eq!(plan.environment().user(), Some("1000:1001"));
+    assert_eq!(
+        plan.environment()
+            .network()
+            .allowed_hosts()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "*.example.org",
+            "10.0.0.0/24",
+            "10.0.0.1",
+            "2001:db8::1",
+            "example.com",
+        ]
     );
     assert_eq!(
-        plan.environment.env.get("API_TOKEN"),
-        Some(&EnvBinding::SecretReference("HOST_API_TOKEN".to_owned()))
+        plan.environment()
+            .env()
+            .get("API_TOKEN")
+            .and_then(EnvBinding::secret_reference),
+        Some("HOST_API_TOKEN")
     );
-    assert_eq!(plan.agent.user.as_deref(), Some("agent"));
-    assert_eq!(plan.agent.network, NetworkPolicy::NoNetwork);
+    assert_eq!(plan.agent().user(), Some("agent"));
+    assert_eq!(plan.agent().network(), &NetworkPolicy::no_network());
     assert_eq!(
-        plan.agent.env.get("AGENT_TOKEN"),
-        Some(&EnvBinding::SecretReference("AGENT_TOKEN".to_owned()))
+        plan.agent()
+            .env()
+            .get("AGENT_TOKEN")
+            .and_then(EnvBinding::secret_reference),
+        Some("AGENT_TOKEN")
     );
-    assert_eq!(plan.verifier.mode, VerifierMode::Separate);
-    assert_eq!(plan.verifier.phase.user.as_deref(), Some("verifier"));
-    assert_eq!(
-        plan.verifier.environment.workdir.as_deref(),
-        Some("/verify")
+    assert_eq!(plan.verifier().mode(), VerifierMode::Separate);
+    assert_eq!(plan.verifier().phase().user(), Some("verifier"));
+    assert_eq!(plan.verifier().environment().workdir(), Some("/verify"));
+    assert_eq!(plan.verifier().environment().user(), Some("2000"));
+    assert_eq!(plan.artifacts().len(), 2);
+    assert_eq!(plan.artifacts()[0].source(), "/work/result.txt");
+    assert!(plan.artifacts()[0].is_exact_file());
+    assert_eq!(plan.artifacts()[1].source(), "/work/output");
+    assert_eq!(plan.artifacts()[1].destination(), Some("results"));
+    assert_eq!(plan.artifacts()[1].exclude(), ["*.tmp"]);
+    assert!(matches!(
+        plan.validate_for(ProviderCapabilities::none().with_docker()),
+        Err(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("allowlist_egress"))
+    ));
+    assert!(
+        plan.validate_for(
+            ProviderCapabilities::none()
+                .with_docker()
+                .with_resource_limits()
+                .with_users()
+                .with_phase_env()
+                .with_healthchecks()
+                .with_no_network()
+                .with_public_network()
+                .with_allowlist_egress(),
+        )
+        .is_ok()
     );
-    assert_eq!(plan.verifier.environment.user.as_deref(), Some("2000"));
-    assert_eq!(plan.artifacts.len(), 2);
-    assert_eq!(plan.artifacts[0].source(), "/work/result.txt");
-    assert!(plan.artifacts[0].is_exact_file());
-    assert_eq!(plan.artifacts[1].source(), "/work/output");
-    assert_eq!(plan.artifacts[1].destination(), Some("results"));
-    assert_eq!(plan.artifacts[1].exclude(), ["*.tmp"]);
 }
 
 #[test]
@@ -455,8 +498,32 @@ environment_mode = "separate"
         .unwrap();
     let plan = imported.package.execution_plan();
 
-    assert_eq!(plan.verifier.mode, VerifierMode::Separate);
-    assert_eq!(plan.verifier.environment, plan.environment);
+    assert_eq!(plan.verifier().mode(), VerifierMode::Separate);
+    assert_eq!(plan.verifier().environment(), plan.environment());
+}
+
+#[test]
+fn rejects_explicit_environment_for_shared_verifier() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "shared-verifier-environment");
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+[task]
+name = "example/shared-verifier-environment"
+[verifier]
+environment_mode = "shared"
+[verifier.environment]
+workdir = "/must-not-apply"
+"#,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
+        Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+    ));
 }
 
 #[test]
@@ -496,6 +563,14 @@ fn rejects_invalid_standard_execution_fields_during_import() {
         (
             "allowlist-missing-hosts",
             "[environment]\nnetwork = \"allowlist\"\n",
+        ),
+        (
+            "duplicate-normalized-allowlist",
+            "[environment]\nnetwork = \"allowlist\"\nallowed_hosts = [\"EXAMPLE.com\", \"example.com\"]\n",
+        ),
+        (
+            "malformed-allowlist",
+            "[environment]\nnetwork = \"allowlist\"\nallowed_hosts = [\"*bad.example\"]\n",
         ),
     ];
     for (name, authored) in cases {

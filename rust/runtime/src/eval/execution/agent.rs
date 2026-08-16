@@ -96,6 +96,8 @@ pub enum EvalExecutionError {
     RuntimeContext(&'static str),
     /// The selected provider cannot honor a required contract capability.
     MissingCapability(AgentCapability),
+    /// The selected provider cannot enforce an authored benchmark requirement.
+    UnsupportedEnforcement(&'static str),
     /// An immutable workspace or artifact identity was invalid.
     InvalidWorkspace(String),
     /// The requested local process command was not a nonempty argv.
@@ -140,6 +142,12 @@ impl Display for EvalExecutionError {
             }
             Self::MissingCapability(capability) => {
                 write!(formatter, "missing sandbox capability {capability:?}")
+            }
+            Self::UnsupportedEnforcement(requirement) => {
+                write!(
+                    formatter,
+                    "provider cannot enforce benchmark requirement {requirement}"
+                )
             }
             Self::InvalidWorkspace(reason) => write!(formatter, "invalid workspace {reason}"),
             Self::InvalidCommand => formatter.write_str("sandbox command must be a nonempty argv"),

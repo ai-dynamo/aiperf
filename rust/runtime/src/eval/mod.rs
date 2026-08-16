@@ -29,9 +29,9 @@ pub use execution::{
     AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources,
     DockerProcessSandbox, EnvBinding, EnvironmentPlan, EvalExecutionError, EvalExecutionPhase,
     EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborEvaluationError,
-    HarborSandboxRecipe, HealthcheckPlan, ImmutablePatch, LocalExecutionResult,
-    LocalProcessSandbox, MaterializedSandbox, NetworkPolicy, PhasePlan, ProcessOutput, SandboxRole,
-    VerifierPlan, WorkspaceOverlay,
+    HarborSandboxRecipe, HealthcheckPlan, ImageSource, ImmutablePatch, LocalExecutionResult,
+    LocalProcessSandbox, MaterializedSandbox, NetworkPolicy, PhasePlan, ProcessOutput,
+    ProviderCapabilities, SandboxRole, VerifierPlan, WorkspaceOverlay,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

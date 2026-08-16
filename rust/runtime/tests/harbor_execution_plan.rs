@@ -12,15 +12,13 @@ fn normalizes_equivalent_allowlist_spelling_deterministically() {
             .unwrap();
 
     assert_eq!(
-        policy,
-        NetworkPolicy::Allowlist {
-            allowed_hosts: vec![
-                "*.example.org".to_owned(),
-                "10.0.0.0/24".to_owned(),
-                "2001:db8::1".to_owned(),
-                "example.com".to_owned(),
-            ],
-        }
+        policy
+            .allowed_hosts()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["*.example.org", "10.0.0.0/24", "2001:db8::1", "example.com"]
     );
 }
 
@@ -28,9 +26,6 @@ fn normalizes_equivalent_allowlist_spelling_deterministically() {
 fn environment_binding_never_captures_the_host_secret_value() {
     let binding = EnvBinding::parse("${HOST_API_TOKEN}").unwrap();
 
-    assert_eq!(
-        binding,
-        EnvBinding::SecretReference("HOST_API_TOKEN".to_owned())
-    );
+    assert_eq!(binding.secret_reference(), Some("HOST_API_TOKEN"));
     assert!(!format!("{binding:?}").contains("super-secret"));
 }

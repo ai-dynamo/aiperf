@@ -14,8 +14,8 @@ use serde::Deserialize;
 
 use crate::eval::{
     ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources, EnvBinding,
-    EnvironmentPlan, EvalTaskRef, HealthcheckPlan, NetworkPolicy, PhasePlan, VerifierMode,
-    VerifierPlan,
+    EnvironmentPlan, EvalTaskRef, HealthcheckPlan, ImageSource, NetworkPolicy, PhasePlan,
+    VerifierMode, VerifierPlan,
 };
 
 use super::HarborImportError;
@@ -168,28 +168,37 @@ pub(super) fn normalize(
     );
     let reference = EvalTaskRef::new(task.id.clone(), digest)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
+    let environment_plan = EnvironmentPlan {
+        image_source: ImageSource::task_dockerfile(environment.clone()),
+        resources: None,
+        workdir: None,
+        user: None,
+        env: BTreeMap::new(),
+        network: NetworkPolicy::public(),
+        healthcheck: None,
+    };
     let execution_plan = BenchmarkExecutionPlan {
-        environment: EnvironmentPlan::default(),
+        environment: environment_plan.clone(),
         agent: PhasePlan {
             user: None,
             env: BTreeMap::new(),
-            network: NetworkPolicy::Public,
+            network: NetworkPolicy::public(),
             timeout: None,
         },
         verifier: VerifierPlan {
             phase: PhasePlan {
                 user: None,
                 env: BTreeMap::new(),
-                network: NetworkPolicy::Public,
+                network: NetworkPolicy::public(),
                 timeout: None,
             },
             mode: VerifierMode::Separate,
-            environment: EnvironmentPlan::default(),
+            environment: environment_plan,
         },
         artifacts: declared_artifacts
             .iter()
             .cloned()
-            .map(|source| ArtifactSpec::ExactFile { source })
+            .map(ArtifactSpec::exact_file)
             .collect(),
     };
     let package = HarborTaskPackage {
@@ -338,7 +347,11 @@ pub(super) fn normalize_standard_directory(
     let verifier_digest = ArtifactDigest::from_bytes(
         read_required_source_file(source_root, "tests/test.sh")?.as_bytes(),
     );
-    let environment = normalize_environment(manifest.environment.unwrap_or_default())?;
+    let image_source = ImageSource::task_dockerfile(environment_digest.clone());
+    let environment = normalize_environment(
+        manifest.environment.unwrap_or_default(),
+        image_source.clone(),
+    )?;
     let agent = normalize_agent_phase(manifest.agent.unwrap_or_default(), &environment.network)?;
     let verifier = manifest.verifier.unwrap_or_default();
     let verifier_mode = match verifier.environment_mode.as_deref() {
@@ -351,7 +364,15 @@ pub(super) fn normalize_standard_directory(
         }
     };
     let verifier_environment = match verifier.environment.clone() {
-        Some(environment) => normalize_environment(environment)?,
+        Some(verifier_environment) if verifier_mode == VerifierMode::Separate => {
+            normalize_environment(verifier_environment, image_source)?
+        }
+        Some(_) => {
+            return Err(HarborImportError::InvalidPackage(
+                "verifier.environment is only valid when verifier.environment_mode = \"separate\""
+                    .to_owned(),
+            ));
+        }
         None => environment.clone(),
     };
     let verifier_phase = normalize_verifier_phase(verifier, &verifier_environment.network)?;
@@ -421,6 +442,7 @@ pub(super) fn normalize_standard_directory(
 
 fn normalize_environment(
     environment: StandardEnvironmentSection,
+    image_source: ImageSource,
 ) -> Result<EnvironmentPlan, HarborImportError> {
     let resources = match (environment.cpus, environment.memory_mb) {
         (None, None) => None,
@@ -449,9 +471,10 @@ fn normalize_environment(
     let network = normalize_network(
         environment.network.as_deref(),
         &environment.allowed_hosts,
-        &NetworkPolicy::Public,
+        &NetworkPolicy::public(),
     )?;
     Ok(EnvironmentPlan {
+        image_source,
         resources,
         workdir,
         user,
@@ -519,8 +542,8 @@ fn normalize_network(
         ));
     };
     match authored {
-        "public" if allowed_hosts.is_empty() => Ok(NetworkPolicy::Public),
-        "no-network" if allowed_hosts.is_empty() => Ok(NetworkPolicy::NoNetwork),
+        "public" if allowed_hosts.is_empty() => Ok(NetworkPolicy::public()),
+        "no-network" if allowed_hosts.is_empty() => Ok(NetworkPolicy::no_network()),
         "allowlist" => {
             NetworkPolicy::allowlist(allowed_hosts).map_err(HarborImportError::InvalidPackage)
         }
@@ -624,17 +647,17 @@ fn normalize_standard_artifacts(
     artifacts
         .into_iter()
         .map(|artifact| match artifact {
-            StandardArtifactDto::ExactFile(source) => Ok(ArtifactSpec::ExactFile {
-                source: normalize_artifact_path(&source)?,
-            }),
-            StandardArtifactDto::Collected(artifact) => Ok(ArtifactSpec::Collected {
-                source: normalize_artifact_path(&artifact.source)?,
-                destination: artifact
+            StandardArtifactDto::ExactFile(source) => {
+                Ok(ArtifactSpec::exact_file(normalize_artifact_path(&source)?))
+            }
+            StandardArtifactDto::Collected(artifact) => Ok(ArtifactSpec::collected(
+                normalize_artifact_path(&artifact.source)?,
+                artifact
                     .destination
                     .map(|destination| normalize_artifact_destination(&destination))
                     .transpose()?,
-                exclude: artifact.exclude,
-            }),
+                artifact.exclude,
+            )),
         })
         .collect()
 }
