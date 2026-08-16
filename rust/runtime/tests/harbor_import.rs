@@ -301,6 +301,8 @@ fn rejects_standard_multi_step_manifest_before_execution() {
 
 fn run_git<const N: usize>(repository: &std::path::Path, arguments: [&str; N]) {
     let status = Command::new("git")
+        .arg("-c")
+        .arg("commit.gpgsign=false")
         .arg("-C")
         .arg(repository)
         .args(arguments)
