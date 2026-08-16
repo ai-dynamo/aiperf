@@ -7,7 +7,7 @@ use std::{fs, process::Command};
 
 use tempfile::TempDir;
 
-use crate::eval::{HarborTaskPackage, RewardDocument, VerifierMode};
+use crate::eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode};
 
 use super::{EvalExecutionError, HarborSandboxRecipe, LocalExecutionResult};
 
@@ -32,11 +32,6 @@ impl DockerProcessSandbox {
         if !package.is_standard_directory() {
             return Err(EvalExecutionError::Materialization(
                 "Docker execution requires a standard task directory".to_owned(),
-            ));
-        }
-        if verifier_mode != VerifierMode::Shared {
-            return Err(EvalExecutionError::Materialization(
-                "separate Docker verifier execution is not available yet".to_owned(),
             ));
         }
         let source_root = package.source_root().ok_or_else(|| {
@@ -95,11 +90,46 @@ impl DockerProcessSandbox {
         )?;
         docker(["start", &lease.container], "start task container")?;
         docker_exec(&lease.container, agent_command, "run agent")?;
+        let artifacts = collect_workspace_artifacts(&workspace, recipe, package)?;
+        let verifier_workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let verifier_container = if verifier_mode == VerifierMode::Separate {
+            copy_workspace_artifacts(&workspace, &verifier_workspace, recipe, package)?;
+            let container = format!("{}-verifier", lease.container);
+            let verifier_lease = ContainerLease { container };
+            docker(
+                [
+                    "create",
+                    "--name",
+                    &verifier_lease.container,
+                    "--network",
+                    "none",
+                    "--workdir",
+                    &recipe.workdir,
+                    "--volume",
+                    &format!("{}:{}", verifier_workspace.path().display(), recipe.workdir),
+                    &lease.image,
+                    "sleep",
+                    "infinity",
+                ],
+                "create separate verifier container",
+            )?;
+            docker(
+                ["start", &verifier_lease.container],
+                "start separate verifier container",
+            )?;
+            Some(verifier_lease)
+        } else {
+            None
+        };
+        let verifier = verifier_container
+            .as_ref()
+            .map_or(lease.container.as_str(), |lease| lease.container.as_str());
         docker(
             [
                 "cp",
                 &format!("{}/.", source_root.join("tests").display()),
-                &format!("{}:/tests", lease.container),
+                &format!("{verifier}:/tests"),
             ],
             "install verifier files",
         )?;
@@ -108,7 +138,7 @@ impl DockerProcessSandbox {
                 "exec",
                 "--user",
                 "root",
-                &lease.container,
+                verifier,
                 "/bin/sh",
                 "-c",
                 "mkdir -p /logs/verifier && chmod 0777 /logs /logs/verifier",
@@ -116,16 +146,36 @@ impl DockerProcessSandbox {
             "prepare verifier logs",
         )?;
         docker_exec(
-            &lease.container,
+            verifier,
             &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
             "run verifier",
         )?;
-        let reward = read_reward(&lease.container, &workspace)?;
+        let reward = read_reward(
+            verifier,
+            if verifier_mode == VerifierMode::Separate {
+                &verifier_workspace
+            } else {
+                &workspace
+            },
+        )?;
         Ok(LocalExecutionResult {
-            artifacts: Vec::new(),
+            artifacts,
             reward,
             verifier: package.source_digest(),
         })
+    }
+}
+
+#[derive(Debug)]
+struct ContainerLease {
+    container: String,
+}
+
+impl Drop for ContainerLease {
+    fn drop(&mut self) {
+        let _ = Command::new("docker")
+            .args(["rm", "--force", &self.container])
+            .output();
     }
 }
 
@@ -217,4 +267,56 @@ fn copy_optional(
     } else {
         Ok(None)
     }
+}
+
+fn collect_workspace_artifacts(
+    workspace: &TempDir,
+    recipe: &HarborSandboxRecipe,
+    package: &HarborTaskPackage,
+) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
+    package
+        .declared_artifacts()
+        .iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(&recipe.workdir)
+                .and_then(|path| path.strip_prefix('/'))
+                .ok_or_else(|| {
+                    EvalExecutionError::Materialization(format!(
+                        "Docker artifact must be under {}: {path}",
+                        recipe.workdir
+                    ))
+                })?;
+            let bytes = fs::read(workspace.path().join(relative))
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            Ok((path.clone(), ArtifactDigest::from_bytes(&bytes)))
+        })
+        .collect()
+}
+
+fn copy_workspace_artifacts(
+    source: &TempDir,
+    destination: &TempDir,
+    recipe: &HarborSandboxRecipe,
+    package: &HarborTaskPackage,
+) -> Result<(), EvalExecutionError> {
+    for path in package.declared_artifacts() {
+        let relative = path
+            .strip_prefix(&recipe.workdir)
+            .and_then(|path| path.strip_prefix('/'))
+            .ok_or_else(|| {
+                EvalExecutionError::Materialization(format!(
+                    "Docker artifact must be under {}: {path}",
+                    recipe.workdir
+                ))
+            })?;
+        let destination_path = destination.path().join(relative);
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        }
+        fs::copy(source.path().join(relative), destination_path)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    }
+    Ok(())
 }

@@ -106,7 +106,7 @@ fn native_eval_command_runs_a_standard_task_directory_in_docker() {
     fs::create_dir_all(task_root.join("tests")).unwrap();
     fs::write(
         task_root.join("task.toml"),
-        "schema_version = \"1.0\"\n[task]\nname = \"example/docker-repair-1\"\n",
+        "schema_version = \"1.0\"\nartifacts = [\"/work/result.txt\"]\n[task]\nname = \"example/docker-repair-1\"\n[verifier]\nenvironment_mode = \"separate\"\n",
     )
     .unwrap();
     fs::write(task_root.join("instruction.md"), "Write the result.\n").unwrap();
@@ -117,7 +117,7 @@ fn native_eval_command_runs_a_standard_task_directory_in_docker() {
     .unwrap();
     fs::write(
         task_root.join("tests/test.sh"),
-        "test -f /work/result.txt\nmkdir -p /logs/verifier\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+        "test -f /work/result.txt\ntest ! -e /work/agent-secret\nmkdir -p /logs/verifier\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
     )
     .unwrap();
 
@@ -128,7 +128,7 @@ fn native_eval_command_runs_a_standard_task_directory_in_docker() {
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "--agent-command".to_owned(),
-        "test ! -e /tests/test.sh && printf result > result.txt".to_owned(),
+        "test ! -e /tests/test.sh && printf secret > agent-secret && printf result > result.txt".to_owned(),
     ])
     .unwrap();
 
