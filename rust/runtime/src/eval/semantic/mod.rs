@@ -6,7 +6,10 @@
 mod comparison;
 mod lowering;
 
-pub use comparison::{PairedComparisonError, PairedComparisonSpec};
+pub use comparison::{
+    PairedComparisonError, PairedComparisonReport, PairedComparisonSpec, PairedMeasurements,
+};
 pub use lowering::{
-    FidelityError, FidelityOutcome, SemanticGraph, SemanticNode, lower_semantic_graph,
+    ExecutableSemanticNode, FidelityError, FidelityOutcome, LoweredSemanticGraph, SemanticGraph,
+    SemanticNode, lower_semantic_graph,
 };

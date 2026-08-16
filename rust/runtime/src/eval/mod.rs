@@ -38,8 +38,9 @@ pub use provider::{ProviderCapability, ProviderError, ProviderProfile};
 pub use registry::{RegistryError, RegistryReference};
 pub use score::{ScoreError, ScoreVersion};
 pub use semantic::{
-    FidelityError, FidelityOutcome, PairedComparisonError, PairedComparisonSpec, SemanticGraph,
-    SemanticNode, lower_semantic_graph,
+    ExecutableSemanticNode, FidelityError, FidelityOutcome, LoweredSemanticGraph,
+    PairedComparisonError, PairedComparisonReport, PairedComparisonSpec, PairedMeasurements,
+    SemanticGraph, SemanticNode, lower_semantic_graph,
 };
 pub use source::{EvalDatasetId, EvalDatasetManifest};
 pub use training::{TrainingError, TrajectoryExportManifest};
