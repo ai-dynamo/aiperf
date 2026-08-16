@@ -184,6 +184,7 @@ impl DockerComposeRuntime for ComposePreflightRuntime {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ComposeSessionFailure {
+    Healthcheck,
     Hook,
     Archive,
     Stop,
@@ -392,6 +393,14 @@ impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
             request.workdir().map(ToOwned::to_owned),
             request.public_arguments().to_vec(),
         ));
+        if request.phase() == aiperf_runtime::eval::EvalExecutionPhase::Healthcheck
+            && self.failure == Some(ComposeSessionFailure::Healthcheck)
+            && request.public_arguments() == ["ready".to_owned()]
+        {
+            return Err(EvalExecutionError::ProcessFailure(
+                "healthcheck failed".to_owned(),
+            ));
+        }
         match request.phase() {
             aiperf_runtime::eval::EvalExecutionPhase::Agent => {
                 let call = self.agent_calls.get() + 1;
@@ -604,8 +613,8 @@ fn compose_terminal_sidecar_evidence_tears_down_before_separate_verifier() {
 }
 
 #[test]
-fn compose_recipe_workdir_override_controls_generated_main_health_and_agent_without_mutating_plan()
-{
+fn compose_recipe_workdir_override_prepares_nonroot_main_workdir_before_health_and_agent_without_mutating_plan()
+ {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_root(
         &temporary,
@@ -680,7 +689,7 @@ environment_mode = "separate"
             && command.as_slice() == ["ready".to_owned()]
     }));
     assert!(calls.iter().any(|(phase, user, workdir, command)| {
-        phase == "agent"
+        phase == "healthcheck"
             && user.as_deref() == Some("root")
             && workdir.as_deref() == Some("/override")
             && command
@@ -692,6 +701,95 @@ environment_mode = "separate"
             && user.as_deref() == Some("bench")
             && workdir.as_deref() == Some("/override")
             && command.as_slice() == ["agent".to_owned()]
+    }));
+    let preparation = calls
+        .iter()
+        .position(|(phase, user, workdir, command)| {
+            phase == "healthcheck"
+                && user.as_deref() == Some("root")
+                && workdir.as_deref() == Some("/override")
+                && command
+                    .first()
+                    .is_some_and(|argument| argument == "/bin/sh")
+        })
+        .expect("root workdir preparation");
+    let healthcheck = calls
+        .iter()
+        .position(|(phase, user, workdir, command)| {
+            phase == "healthcheck"
+                && user.as_deref() == Some("bench")
+                && workdir.as_deref() == Some("/override")
+                && command.as_slice() == ["ready".to_owned()]
+        })
+        .expect("healthcheck execution");
+    let agent = calls
+        .iter()
+        .position(|(phase, user, workdir, command)| {
+            phase == "agent"
+                && user.as_deref() == Some("bench")
+                && workdir.as_deref() == Some("/override")
+                && command.as_slice() == ["agent".to_owned()]
+        })
+        .expect("agent execution");
+    assert!(
+        preparation < healthcheck && healthcheck < agent,
+        "a non-root healthcheck must execute in its prepared workdir before the agent"
+    );
+}
+
+#[test]
+fn compose_healthcheck_failure_still_prevents_agent_after_nonroot_workdir_preparation() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(
+        &temporary,
+        r#"[environment]
+workdir = "/task"
+user = "bench"
+
+[environment.healthcheck]
+command = ["ready"]
+retries = 1
+"#,
+    );
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(Some(ComposeSessionFailure::Healthcheck));
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("unhealthy Compose project must not run the agent");
+
+    assert!(matches!(error, EvalExecutionError::Unhealthy(_)));
+    let calls = runtime.phase_calls.borrow();
+    assert!(calls.iter().any(|(phase, user, workdir, command)| {
+        phase == "healthcheck"
+            && user.as_deref() == Some("root")
+            && workdir.as_deref() == Some("/work")
+            && command
+                .first()
+                .is_some_and(|argument| argument == "/bin/sh")
+    }));
+    assert!(calls.iter().any(|(phase, user, workdir, command)| {
+        phase == "healthcheck"
+            && user.as_deref() == Some("bench")
+            && workdir.as_deref() == Some("/work")
+            && command.as_slice() == ["ready".to_owned()]
+    }));
+    assert!(!calls.iter().any(|(phase, _, _, command)| {
+        phase == "agent" && command.as_slice() == ["agent".to_owned()]
     }));
 }
 

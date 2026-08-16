@@ -649,6 +649,14 @@ impl DockerProcessSandbox {
             .with_network_lease("default"),
         )?;
         lease.start()?;
+        let main = lease.main_service().clone();
+        prepare_lease_workdir_for_user(
+            &mut lease,
+            &main,
+            environment.user(),
+            EvalExecutionPhase::Healthcheck,
+            environment.workdir(),
+        )?;
         if let Some(healthcheck) = environment.healthcheck() {
             run_lease_healthcheck(
                 self.clock.clone(),
@@ -1398,10 +1406,26 @@ fn prepare_lease_workdir(
     execution_phase: EvalExecutionPhase,
     workdir: Option<&str>,
 ) -> Result<(), EvalExecutionError> {
+    prepare_lease_workdir_for_user(
+        lease,
+        service,
+        phase.user().or(environment.user()),
+        execution_phase,
+        workdir,
+    )
+}
+
+fn prepare_lease_workdir_for_user(
+    lease: &mut dyn TaskEnvironmentLease,
+    service: &super::ComposeServiceName,
+    user: Option<&str>,
+    execution_phase: EvalExecutionPhase,
+    workdir: Option<&str>,
+) -> Result<(), EvalExecutionError> {
     let Some(workdir) = workdir else {
         return Ok(());
     };
-    let Some(user) = phase.user().or(environment.user()) else {
+    let Some(user) = user else {
         return Ok(());
     };
     if user == "root" {
