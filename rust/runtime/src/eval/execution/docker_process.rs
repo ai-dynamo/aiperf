@@ -18,16 +18,18 @@ use tempfile::TempDir;
 
 use crate::{
     clock::{Clock, RealClock},
-    eval::{HarborTaskPackage, RewardDocument, VerifierMode},
+    eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode},
 };
 
 use super::{
-    BenchmarkExecutionPlan, DockerBuildRequest, DockerCopyRequest, DockerCreateRequest,
-    DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EvalExecutionError,
-    EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult, NetworkPolicy, SecretProvider,
-    collect_artifacts, preflight_docker, resolve_environment, resolve_phase_environment,
-    transfer_artifacts,
+    BenchmarkExecutionPlan, BenchmarkStepPlan, DockerBuildRequest, DockerCopyRequest,
+    DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
+    EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult,
+    MultiStepExecutionResult, NetworkPolicy, SecretProvider, collect_artifacts, preflight_docker,
+    resolve_environment, resolve_phase_environment, transfer_artifacts,
 };
+
+use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
 
 /// Executes a conventional task in a task-built Docker environment.
 pub struct DockerProcessSandbox {
@@ -92,6 +94,128 @@ impl DockerProcessSandbox {
             agent_command,
             &HostSecretProvider,
         )
+    }
+
+    /// Executes an explicit step layout in one persistent Docker agent environment.
+    pub fn execute_multi_step(
+        &self,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        agent_command: &[String],
+    ) -> Result<MultiStepExecutionResult, EvalExecutionError> {
+        if !package.execution_plan().is_multi_step() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "multi-step execution plan",
+            ));
+        }
+        if package.execution_plan().steps().iter().any(|step| {
+            step.agent().timeout().is_some() || step.verifier().phase().timeout().is_some()
+        }) && tokio::runtime::Handle::try_current().is_ok()
+        {
+            return Err(EvalExecutionError::RuntimeContext(
+                "synchronous Docker execution",
+            ));
+        }
+        let runtime = DockerCliRuntime {
+            clock: self.clock.clone(),
+        };
+        self.execute_multi_step_with_runtime(
+            &runtime,
+            recipe,
+            package,
+            package.execution_plan(),
+            agent_command,
+            &HostSecretProvider,
+        )
+    }
+
+    /// Executes an explicit step layout through an injectable Docker provider.
+    pub fn execute_multi_step_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        agent_command: &[String],
+        secrets: &dyn SecretProvider,
+    ) -> Result<MultiStepExecutionResult, EvalExecutionError> {
+        if !package.execution_plan().is_multi_step() || !plan.is_multi_step() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "multi-step execution plan",
+            ));
+        }
+        let (source_root, environment_root) = standard_task_roots(package)?;
+        preflight_docker(runtime, plan)?;
+        let environment = plan.environment();
+        if !runtime.supports_phase_network_transitions()
+            && plan.steps().iter().any(|step| {
+                step.agent().network() != environment.network()
+                    || step.verifier().phase().network() != step.verifier().environment().network()
+            })
+        {
+            return Err(EvalExecutionError::UnsupportedEnforcement(
+                "phase network transition",
+            ));
+        }
+
+        let workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let (image, container) = docker_run_names(package);
+        let mut containers = vec![container.clone()];
+        let outcome = (|| {
+            let baseline_network = network_lease(environment.network())?;
+            let build_network = build_network_lease(environment.network())?;
+            let environment_workdir = recipe.resolve_workdir(environment.workdir());
+            runtime.build(
+                &DockerBuildRequest::new([
+                    "build",
+                    "--network",
+                    build_network,
+                    "--tag",
+                    &image,
+                    environment_root.to_string_lossy().as_ref(),
+                ])
+                .with_network_lease(build_network),
+            )?;
+            create_planned_container(
+                runtime,
+                &container,
+                &image,
+                workspace.path(),
+                environment,
+                environment_workdir,
+                baseline_network,
+                None,
+            )?;
+            runtime.start(&DockerStartRequest::new(&container))?;
+            if let Some(healthcheck) = environment.healthcheck() {
+                run_healthcheck(
+                    self.clock.clone(),
+                    runtime,
+                    &container,
+                    environment,
+                    environment_workdir,
+                    healthcheck,
+                    baseline_network,
+                    secrets,
+                )?;
+            }
+
+            let mut session = DockerStepSession {
+                clock: self.clock.clone(),
+                runtime,
+                recipe,
+                source_root,
+                environment,
+                image: &image,
+                agent_container: &container,
+                secrets,
+                containers: &mut containers,
+                artifact_collection: None,
+            };
+            execute_benchmark_steps(plan, agent_command, package.source_digest(), &mut session)
+        })();
+        finish_with_cleanup(runtime, containers, outcome)
     }
 
     /// Executes a normalized standard task through an injectable Docker provider.
@@ -312,6 +436,234 @@ impl DockerProcessSandbox {
             (Ok(_), Some(error)) => Err(error),
             (Ok(result), None) => Ok(result),
         }
+    }
+}
+
+struct DockerStepSession<'a> {
+    clock: Rc<dyn Clock>,
+    runtime: &'a dyn DockerRuntime,
+    recipe: &'a HarborSandboxRecipe,
+    source_root: &'a std::path::Path,
+    environment: &'a super::EnvironmentPlan,
+    image: &'a str,
+    agent_container: &'a str,
+    secrets: &'a dyn SecretProvider,
+    containers: &'a mut Vec<String>,
+    artifact_collection: Option<TempDir>,
+}
+
+impl BenchmarkStepSession for DockerStepSession<'_> {
+    fn run_agent(
+        &mut self,
+        step: &BenchmarkStepPlan,
+        command: &[String],
+    ) -> Result<(), EvalExecutionError> {
+        let baseline_network = network_lease(self.environment.network())?;
+        let workdir = self.recipe.resolve_workdir(self.environment.workdir());
+        prepare_workdir(
+            self.runtime,
+            self.agent_container,
+            self.environment,
+            step.agent(),
+            workdir,
+            baseline_network,
+        )?;
+        if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
+            return Err(EvalExecutionError::InvalidCommand);
+        }
+        let resolved = resolve_phase_environment(self.environment, step.agent(), self.secrets)?;
+        let mut public_environment = resolved.public().clone();
+        let mut secret_environment = resolved.secrets().clone();
+        public_environment.insert(
+            "AIPERF_EVAL_INSTRUCTION".to_owned(),
+            step.instruction().to_owned(),
+        );
+        secret_environment.remove("AIPERF_EVAL_INSTRUCTION");
+        let step_network = network_lease(step.agent().network())?;
+        self.runtime.exec(
+            &DockerExecRequest::new(
+                self.agent_container,
+                command.iter().cloned(),
+                public_environment,
+                secret_environment,
+            )
+            .with_phase(
+                EvalExecutionPhase::Agent,
+                step.agent().user().or(self.environment.user()),
+                workdir,
+                step_network,
+                step.agent().timeout(),
+            ),
+        )
+    }
+
+    fn collect_artifacts(
+        &mut self,
+        step: &BenchmarkStepPlan,
+    ) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
+        self.artifact_collection = None;
+        let collection = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        let artifacts = collect_artifacts(
+            self.runtime,
+            self.agent_container,
+            step.artifacts(),
+            collection.path(),
+        )?;
+        self.artifact_collection = Some(collection);
+        Ok(artifacts)
+    }
+
+    fn run_verifier(
+        &mut self,
+        step: &BenchmarkStepPlan,
+        artifacts: &[(String, ArtifactDigest)],
+    ) -> Result<RewardDocument, EvalExecutionError> {
+        let verifier = step.verifier();
+        let verifier_workspace = if verifier.mode() == VerifierMode::Separate {
+            let workspace = tempfile::tempdir()
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o755))
+                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+            let collection =
+                self.artifact_collection
+                    .as_ref()
+                    .ok_or(EvalExecutionError::InvalidRecipe(
+                        "multi-step artifact collection",
+                    ))?;
+            transfer_artifacts(collection.path(), workspace.path(), artifacts)?;
+            Some(workspace)
+        } else {
+            None
+        };
+        let verifier_name = if let Some(workspace) = verifier_workspace.as_ref() {
+            let name = format!("{}-verifier-{}", self.agent_container, step.name());
+            let verifier_network = network_lease(verifier.environment().network())?;
+            let verifier_workdir = self
+                .recipe
+                .resolve_workdir(verifier.environment().workdir());
+            create_planned_container(
+                self.runtime,
+                &name,
+                self.image,
+                workspace.path(),
+                verifier.environment(),
+                verifier_workdir,
+                verifier_network,
+                None,
+            )?;
+            self.containers.push(name.clone());
+            self.runtime.start(&DockerStartRequest::new(&name))?;
+            if let Some(healthcheck) = verifier.environment().healthcheck() {
+                run_healthcheck(
+                    self.clock.clone(),
+                    self.runtime,
+                    &name,
+                    verifier.environment(),
+                    verifier_workdir,
+                    healthcheck,
+                    verifier_network,
+                    self.secrets,
+                )?;
+            }
+            name
+        } else {
+            self.agent_container.to_owned()
+        };
+        let verifier_network = network_lease(verifier.phase().network())?;
+        reset_verifier_files(self.runtime, &verifier_name, verifier_network)?;
+        self.runtime.copy(&DockerCopyRequest::new([
+            "cp".to_owned(),
+            format!(
+                "{}/.",
+                self.source_root.join(step.verifier_test_root()).display()
+            ),
+            format!("{verifier_name}:/tests"),
+        ]))?;
+        let verifier_workdir = self
+            .recipe
+            .resolve_workdir(verifier.environment().workdir());
+        prepare_workdir(
+            self.runtime,
+            &verifier_name,
+            verifier.environment(),
+            verifier.phase(),
+            verifier_workdir,
+            verifier_network,
+        )?;
+        execute_planned_phase(
+            self.runtime,
+            &verifier_name,
+            EvalExecutionPhase::Verifier,
+            &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
+            verifier.environment(),
+            verifier.phase(),
+            verifier_workdir,
+            self.secrets,
+        )?;
+        let reward_workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let reward = read_reward_with_runtime(self.runtime, &verifier_name, &reward_workspace)?;
+        self.artifact_collection = None;
+        Ok(reward)
+    }
+}
+
+fn standard_task_roots(
+    package: &HarborTaskPackage,
+) -> Result<(&std::path::Path, std::path::PathBuf), EvalExecutionError> {
+    if !package.is_standard_directory() {
+        return Err(EvalExecutionError::Materialization(
+            "Docker execution requires a standard task directory".to_owned(),
+        ));
+    }
+    let source_root = package.source_root().ok_or_else(|| {
+        EvalExecutionError::Materialization(
+            "standard task directory was not retained after import".to_owned(),
+        )
+    })?;
+    let environment_root = source_root.join("environment");
+    if !environment_root.join("Dockerfile").is_file() {
+        return Err(EvalExecutionError::Materialization(
+            "standard task is missing environment/Dockerfile".to_owned(),
+        ));
+    }
+    Ok((source_root, environment_root))
+}
+
+fn docker_run_names(package: &HarborTaskPackage) -> (String, String) {
+    let safe_suffix = package
+        .source_digest()
+        .as_str()
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .take(32)
+        .collect::<String>();
+    let run_id = NEXT_DOCKER_RUN_ID.fetch_add(1, Ordering::Relaxed);
+    (
+        docker_image_name(&safe_suffix, std::process::id(), run_id),
+        docker_container_name(&safe_suffix, std::process::id(), run_id),
+    )
+}
+
+fn finish_with_cleanup<T>(
+    runtime: &dyn DockerRuntime,
+    containers: Vec<String>,
+    outcome: Result<T, EvalExecutionError>,
+) -> Result<T, EvalExecutionError> {
+    let cleanup = containers
+        .into_iter()
+        .rev()
+        .fold(None, |first_error, container| {
+            let removal = runtime
+                .remove(&DockerRemoveRequest::new(["rm", "--force", &container]))
+                .err();
+            first_error.or(removal)
+        });
+    match (outcome, cleanup) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Some(error)) => Err(error),
+        (Ok(result), None) => Ok(result),
     }
 }
 
@@ -728,6 +1080,32 @@ fn prepare_workdir(
             EvalExecutionPhase::Agent,
             None,
             Some(workdir),
+            network_lease,
+            None,
+        ),
+    )
+}
+
+fn reset_verifier_files(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    network_lease: &str,
+) -> Result<(), EvalExecutionError> {
+    runtime.exec(
+        &DockerExecRequest::new(
+            container,
+            [
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                "rm -rf /tests /logs/verifier/reward.json /logs/verifier/reward.txt".to_owned(),
+            ],
+            Default::default(),
+            Default::default(),
+        )
+        .with_phase(
+            EvalExecutionPhase::Verifier,
+            Some("root"),
+            None,
             network_lease,
             None,
         ),

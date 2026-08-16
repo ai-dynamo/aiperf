@@ -7,7 +7,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     fs,
-    io::Read,
+    io::{self, Read},
 };
 
 use aiperf_runtime::clock::SimClock;
@@ -968,6 +968,521 @@ fn docker_exec_request_redacts_secret_environment_values() {
         format!("{}", FixedSecret.resolve(&"TOKEN".to_owned()).unwrap()),
         "[REDACTED]"
     );
+}
+
+#[test]
+fn multi_step_session_keeps_one_agent_and_injects_only_the_current_instruction() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let result = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    assert_eq!(runtime.build_calls.get(), 1);
+    assert_eq!(runtime.creates.borrow().len(), 1);
+    assert_eq!(runtime.starts.get(), 1);
+    assert_eq!(runtime.verifier_execs.get(), 2);
+    assert_eq!(result.steps.len(), 2);
+    assert_eq!(
+        runtime.agent_environments.into_inner(),
+        vec![
+            BTreeMap::from([(
+                "AIPERF_EVAL_INSTRUCTION".to_owned(),
+                "First instruction.\n".to_owned(),
+            )]),
+            BTreeMap::from([(
+                "AIPERF_EVAL_INSTRUCTION".to_owned(),
+                "Second instruction.\n".to_owned(),
+            )]),
+        ]
+    );
+    assert!(
+        runtime.creates.into_inner()[0]
+            .arguments
+            .iter()
+            .all(|argument| !argument.contains("AIPERF_EVAL_INSTRUCTION")),
+        "an instruction captured at container creation would become stale"
+    );
+}
+
+#[test]
+fn shared_verifier_resets_tests_before_each_selected_tree_copy() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    let events = runtime.events.into_inner();
+    let reset_indices = events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| event.starts_with("reset-tests:").then_some(index))
+        .collect::<Vec<_>>();
+    let copy_indices = events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| event.starts_with("copy-tests:").then_some(index))
+        .collect::<Vec<_>>();
+    assert_eq!(reset_indices.len(), 2);
+    assert_eq!(copy_indices.len(), 2);
+    assert!(reset_indices[0] < copy_indices[0]);
+    assert!(reset_indices[1] > copy_indices[0]);
+    assert!(reset_indices[1] < copy_indices[1]);
+    assert!(events[copy_indices[0]].contains("/tests/."));
+    assert!(events[copy_indices[1]].contains("/steps/two/tests/."));
+    assert_eq!(
+        runtime.reset_users.into_inner(),
+        vec![Some("root".to_owned()), Some("root".to_owned())]
+    );
+}
+
+#[test]
+fn separate_verifiers_use_fresh_staging_and_artifact_snapshots() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, true);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let result = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.steps[0].artifacts,
+        vec![(
+            "result.txt".to_owned(),
+            aiperf_runtime::eval::ArtifactDigest::from_bytes(b"first snapshot"),
+        )]
+    );
+    assert_eq!(
+        result.steps[1].artifacts,
+        vec![(
+            "result.txt".to_owned(),
+            aiperf_runtime::eval::ArtifactDigest::from_bytes(b"second snapshot"),
+        )]
+    );
+    let creates = runtime.creates.into_inner();
+    assert_eq!(creates.len(), 3);
+    let workspaces = creates
+        .iter()
+        .map(|create| create.workspace.as_deref().expect("workspace mount"))
+        .collect::<Vec<_>>();
+    assert_ne!(workspaces[0], workspaces[1]);
+    assert_ne!(workspaces[0], workspaces[2]);
+    assert_ne!(workspaces[1], workspaces[2]);
+    assert!(creates[1].container.contains("verifier-one"));
+    assert!(creates[2].container.contains("verifier-two"));
+}
+
+#[test]
+fn multi_step_failures_stop_successors_and_cleanup_every_acquired_lease() {
+    for (failure, expected_counts, expected_error, fail_first_removal) in [
+        (
+            StepFailure::Agent(2),
+            (2, 1, 1, 2),
+            EvalExecutionError::ProcessFailure("agent 2 failed".to_owned()),
+            false,
+        ),
+        (
+            StepFailure::Collection(2),
+            (2, 2, 1, 2),
+            EvalExecutionError::ArtifactCollection("collection 2 failed".to_owned()),
+            false,
+        ),
+        (
+            StepFailure::Verifier(1),
+            (1, 1, 1, 2),
+            EvalExecutionError::ProcessFailure("verifier 1 failed".to_owned()),
+            false,
+        ),
+        (
+            StepFailure::Verifier(2),
+            (2, 2, 2, 3),
+            EvalExecutionError::ProcessFailure("verifier 2 failed".to_owned()),
+            true,
+        ),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = multi_step_task_root(&temporary, true);
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .unwrap();
+        let recipe = HarborSandboxRecipe::new(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "/work",
+        )
+        .unwrap();
+        let runtime = StepRecordingRuntime::failing(failure, fail_first_removal);
+
+        let error = DockerProcessSandbox::new()
+            .execute_multi_step_with_runtime(
+                &runtime,
+                &recipe,
+                &imported.package,
+                imported.package.execution_plan(),
+                &["agent".to_owned()],
+                &FixedSecret,
+            )
+            .expect_err("the injected phase failure must be terminal");
+
+        assert_eq!(error, expected_error);
+        assert_eq!(runtime.agent_execs.get(), expected_counts.0);
+        assert_eq!(runtime.collection_calls.get(), expected_counts.1);
+        assert_eq!(runtime.verifier_execs.get(), expected_counts.2);
+        assert_eq!(runtime.creates.borrow().len(), expected_counts.3);
+        assert_eq!(runtime.removals.get(), expected_counts.3);
+    }
+}
+
+#[tokio::test]
+async fn step_only_timeouts_refuse_nested_synchronous_docker_execution() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_task_root(&temporary, false);
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+[task]
+name = "example/multi-step-timeouts"
+[[steps]]
+name = "one"
+[[steps]]
+name = "two"
+[steps.agent]
+timeout_sec = 2
+[steps.verifier]
+timeout_sec = 2
+"#,
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_eq!(imported.package.timeouts(), None);
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    assert_eq!(
+        DockerProcessSandbox::new().execute_multi_step(
+            &recipe,
+            &imported.package,
+            &["agent".to_owned()],
+        ),
+        Err(EvalExecutionError::RuntimeContext(
+            "synchronous Docker execution"
+        ))
+    );
+}
+
+#[derive(Clone, Copy)]
+enum StepFailure {
+    Agent(usize),
+    Collection(usize),
+    Verifier(usize),
+}
+
+struct RecordedCreate {
+    container: String,
+    workspace: Option<String>,
+    arguments: Vec<String>,
+}
+
+#[derive(Default)]
+struct StepRecordingRuntime {
+    build_calls: Cell<usize>,
+    starts: Cell<usize>,
+    agent_execs: Cell<usize>,
+    collection_calls: Cell<usize>,
+    verifier_execs: Cell<usize>,
+    removals: Cell<usize>,
+    events: RefCell<Vec<String>>,
+    creates: RefCell<Vec<RecordedCreate>>,
+    agent_environments: RefCell<Vec<BTreeMap<String, String>>>,
+    reset_users: RefCell<Vec<Option<String>>>,
+    failure: Option<StepFailure>,
+    fail_first_removal: bool,
+}
+
+impl StepRecordingRuntime {
+    fn failing(failure: StepFailure, fail_first_removal: bool) -> Self {
+        Self {
+            failure: Some(failure),
+            fail_first_removal,
+            ..Self::default()
+        }
+    }
+}
+
+impl DockerRuntime for StepRecordingRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        self.events.borrow_mut().push("preflight".to_owned());
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_separate_verifier()
+            .with_no_network()
+            .with_public_network()
+    }
+
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        self.build_calls.set(self.build_calls.get() + 1);
+        self.events.borrow_mut().push("build".to_owned());
+        Ok(())
+    }
+
+    fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        let arguments = request.public_arguments();
+        let container = argument_after(arguments, "--name").to_owned();
+        let workspace = argument_after(arguments, "--volume")
+            .split_once(':')
+            .map(|(host, _)| host.to_owned());
+        self.events.borrow_mut().push(format!("create:{container}"));
+        self.creates.borrow_mut().push(RecordedCreate {
+            container,
+            workspace,
+            arguments: arguments.to_vec(),
+        });
+        Ok(())
+    }
+
+    fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        self.starts.set(self.starts.get() + 1);
+        self.events
+            .borrow_mut()
+            .push(format!("start:{}", request.container()));
+        Ok(())
+    }
+
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        if request
+            .public_arguments()
+            .iter()
+            .any(|argument| argument.contains("rm -rf /tests"))
+        {
+            self.reset_users
+                .borrow_mut()
+                .push(request.user().map(str::to_owned));
+            self.events
+                .borrow_mut()
+                .push(format!("reset-tests:{}", request.container()));
+            return Ok(());
+        }
+        match request.phase().to_string().as_str() {
+            "agent" => {
+                let call = self.agent_execs.get() + 1;
+                self.agent_execs.set(call);
+                self.agent_environments
+                    .borrow_mut()
+                    .push(request.public_environment().clone());
+                self.events.borrow_mut().push(format!("agent:{call}"));
+                if matches!(self.failure, Some(StepFailure::Agent(failed)) if failed == call) {
+                    return Err(EvalExecutionError::ProcessFailure(format!(
+                        "agent {call} failed"
+                    )));
+                }
+                Ok(())
+            }
+            "verifier" => {
+                let call = self.verifier_execs.get() + 1;
+                self.verifier_execs.set(call);
+                self.events.borrow_mut().push(format!("verifier:{call}"));
+                if matches!(self.failure, Some(StepFailure::Verifier(failed)) if failed == call) {
+                    return Err(EvalExecutionError::ProcessFailure(format!(
+                        "verifier {call} failed"
+                    )));
+                }
+                Ok(())
+            }
+            phase => panic!("unexpected {phase} phase"),
+        }
+    }
+
+    fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        let arguments = request.public_arguments();
+        let source = &arguments[1];
+        let destination = &arguments[2];
+        if destination.ends_with(":/tests") {
+            self.events
+                .borrow_mut()
+                .push(format!("copy-tests:{source}"));
+            return Ok(());
+        }
+        if source.ends_with("/reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        if source.ends_with("/reward.txt") {
+            fs::write(destination, format!("{}\n", self.verifier_execs.get())).unwrap();
+            return Ok(());
+        }
+        panic!("unexpected Docker copy: {arguments:?}")
+    }
+
+    fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        let call = self.collection_calls.get() + 1;
+        self.collection_calls.set(call);
+        self.events.borrow_mut().push(format!("collect:{call}"));
+        if matches!(self.failure, Some(StepFailure::Collection(failed)) if failed == call) {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "collection {call} failed"
+            )));
+        }
+        let contents = if call == 1 {
+            b"first snapshot".as_slice()
+        } else {
+            b"second snapshot".as_slice()
+        };
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            "result.txt",
+            contents,
+        ))))
+    }
+
+    fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        let call = self.removals.get() + 1;
+        self.removals.set(call);
+        self.events.borrow_mut().push(format!(
+            "remove:{}",
+            request.public_arguments().last().unwrap()
+        ));
+        if self.fail_first_removal && call == 1 {
+            Err(EvalExecutionError::ProcessFailure(
+                "first removal failed".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn argument_after<'a>(arguments: &'a [String], flag: &str) -> &'a str {
+    arguments
+        .windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].as_str())
+        .unwrap_or("")
+}
+
+fn test_tar_archive(path: &str, contents: &[u8]) -> Vec<u8> {
+    let mut header = [0_u8; 512];
+    header[..path.len()].copy_from_slice(path.as_bytes());
+    header[100..108].copy_from_slice(b"0000644\0");
+    header[108..116].copy_from_slice(b"0000000\0");
+    header[116..124].copy_from_slice(b"0000000\0");
+    let size = format!("{:011o}\0", contents.len());
+    header[124..136].copy_from_slice(size.as_bytes());
+    header[136..148].copy_from_slice(b"00000000000\0");
+    header[148..156].fill(b' ');
+    header[156] = b'0';
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    let checksum = header.iter().map(|byte| u32::from(*byte)).sum::<u32>();
+    header[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
+    let mut archive = header.to_vec();
+    archive.extend_from_slice(contents);
+    archive.resize(archive.len().next_multiple_of(512) + 1024, 0);
+    archive
+}
+
+fn multi_step_task_root(
+    temporary: &tempfile::TempDir,
+    has_separate_verifiers: bool,
+) -> std::path::PathBuf {
+    let task_root = temporary.path().join("multi-step-task");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("steps/one")).unwrap();
+    fs::create_dir_all(task_root.join("steps/two/tests")).unwrap();
+    let verifier = has_separate_verifiers
+        .then_some("\n[steps.verifier]\nenvironment_mode = \"separate\"\n")
+        .unwrap_or("");
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+artifacts = ["/work/result.txt"]
+
+[task]
+name = "example/multi-step-runtime"
+
+[[steps]]
+name = "one"
+{verifier}
+[[steps]]
+name = "two"
+{verifier}"#,
+        ),
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Legacy instruction.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(
+        task_root.join("steps/one/instruction.md"),
+        "First instruction.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/two/instruction.md"),
+        "Second instruction.\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("steps/two/tests/test.sh"), "exit 0\n").unwrap();
+    task_root
 }
 
 fn standard_task_root(temporary: &tempfile::TempDir, manifest_suffix: &str) -> std::path::PathBuf {
