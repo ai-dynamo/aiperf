@@ -30,6 +30,7 @@ pub struct HarborTaskPackage {
     source_bytes: Vec<u8>,
     source_root: Option<std::path::PathBuf>,
     is_standard_directory: bool,
+    container_resources: Option<(u64, u64)>,
 }
 
 impl HarborTaskPackage {
@@ -91,6 +92,11 @@ impl HarborTaskPackage {
     /// Reports whether this package originated from a standard task directory.
     pub const fn is_standard_directory(&self) -> bool {
         self.is_standard_directory
+    }
+
+    /// Returns authored CPU and memory limits for a standard task container.
+    pub const fn container_resources(&self) -> Option<(u64, u64)> {
+        self.container_resources
     }
 
     /// Associates an acquired local source tree with this immutable package material.
@@ -158,6 +164,7 @@ pub(super) fn normalize(
         source_bytes: bytes.to_vec(),
         source_root: None,
         is_standard_directory: false,
+        container_resources: None,
     };
     Ok((package, reference))
 }
@@ -169,6 +176,7 @@ struct StandardTaskManifest {
     verifier: Option<StandardVerifierSection>,
     #[serde(default)]
     artifacts: Vec<String>,
+    environment: Option<StandardEnvironmentSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +187,12 @@ struct StandardTaskSection {
 #[derive(Debug, Deserialize)]
 struct StandardVerifierSection {
     environment_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StandardEnvironmentSection {
+    cpus: Option<u64>,
+    memory_mb: Option<u64>,
 }
 
 /// Normalizes a standard task directory without executing its contents.
@@ -229,6 +243,9 @@ pub(super) fn normalize_standard_directory(
         }
     };
     let declared_artifacts = normalize_declared_artifacts(manifest.artifacts)?;
+    let container_resources = manifest
+        .environment
+        .and_then(|environment| Some((environment.cpus?, environment.memory_mb?)));
     let reference_digest = ArtifactDigest::from_bytes(
         format!(
             "id={}\u{1f}instruction={}\u{1f}environment={}\u{1f}verifier={}",
@@ -254,6 +271,7 @@ pub(super) fn normalize_standard_directory(
         source_bytes: manifest_bytes.to_vec(),
         source_root: None,
         is_standard_directory: true,
+        container_resources,
     };
     Ok((package, task))
 }

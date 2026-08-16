@@ -235,6 +235,7 @@ memory_mb = 512
         ["/bin/sh", "tests/test.sh"]
     );
     assert_eq!(imported.package.verifier_mode(), VerifierMode::Shared);
+    assert_eq!(imported.package.container_resources(), Some((1, 512)));
 
     fs::write(
         task_root.join("instruction.md"),

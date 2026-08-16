@@ -69,24 +69,13 @@ impl DockerProcessSandbox {
             ],
             "build task environment",
         )?;
-        docker(
-            [
-                "create",
-                "--name",
-                &lease.container,
-                "--network",
-                "none",
-                "--workdir",
-                &recipe.workdir,
-                "--env",
-                &format!("AIPERF_EVAL_INSTRUCTION={}", package.instruction()),
-                "--volume",
-                &format!("{}:{}", workspace.path().display(), recipe.workdir),
-                &lease.image,
-                "sleep",
-                "infinity",
-            ],
-            "create task container",
+        create_container(
+            &lease.container,
+            &lease.image,
+            workspace.path(),
+            recipe,
+            package,
+            true,
         )?;
         docker(["start", &lease.container], "start task container")?;
         docker_exec(&lease.container, agent_command, "run agent")?;
@@ -97,22 +86,13 @@ impl DockerProcessSandbox {
             copy_workspace_artifacts(&workspace, &verifier_workspace, recipe, package)?;
             let container = format!("{}-verifier", lease.container);
             let verifier_lease = ContainerLease { container };
-            docker(
-                [
-                    "create",
-                    "--name",
-                    &verifier_lease.container,
-                    "--network",
-                    "none",
-                    "--workdir",
-                    &recipe.workdir,
-                    "--volume",
-                    &format!("{}:{}", verifier_workspace.path().display(), recipe.workdir),
-                    &lease.image,
-                    "sleep",
-                    "infinity",
-                ],
-                "create separate verifier container",
+            create_container(
+                &verifier_lease.container,
+                &lease.image,
+                verifier_workspace.path(),
+                recipe,
+                package,
+                false,
             )?;
             docker(
                 ["start", &verifier_lease.container],
@@ -164,6 +144,47 @@ impl DockerProcessSandbox {
             verifier: package.source_digest(),
         })
     }
+}
+
+fn create_container(
+    container: &str,
+    image: &str,
+    workspace: &std::path::Path,
+    recipe: &HarborSandboxRecipe,
+    package: &HarborTaskPackage,
+    has_agent_instruction: bool,
+) -> Result<(), EvalExecutionError> {
+    let mut arguments = vec![
+        "create".to_owned(),
+        "--name".to_owned(),
+        container.to_owned(),
+        "--network".to_owned(),
+        "none".to_owned(),
+        "--workdir".to_owned(),
+        recipe.workdir.clone(),
+        "--volume".to_owned(),
+        format!("{}:{}", workspace.display(), recipe.workdir),
+    ];
+    if let Some((cpus, memory_mb)) = package.container_resources() {
+        arguments.extend([
+            "--cpus".to_owned(),
+            cpus.to_string(),
+            "--memory".to_owned(),
+            format!("{memory_mb}m"),
+        ]);
+    }
+    if has_agent_instruction {
+        arguments.extend([
+            "--env".to_owned(),
+            format!("AIPERF_EVAL_INSTRUCTION={}", package.instruction()),
+        ]);
+    }
+    arguments.extend([image.to_owned(), "sleep".to_owned(), "infinity".to_owned()]);
+    docker(
+        arguments.iter().map(String::as_str),
+        "create task container",
+    )
+    .map(|_| ())
 }
 
 #[derive(Debug)]
