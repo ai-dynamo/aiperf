@@ -1721,11 +1721,14 @@ impl DockerComposeRuntime for DockerCliRuntime {
     }
 
     fn compose_exec(&self, request: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
+        let deadline_ns = request
+            .deadline()
+            .map(|deadline| provider_deadline_ns(&self.clock, deadline));
         let container = compose_service_container(
             self.clock.clone(),
             request.project(),
             request.service(),
-            request.deadline(),
+            remaining_optional_provider_deadline(&self.clock, deadline_ns, request.project())?,
         )?;
         self.exec(
             &DockerExecRequest::new(
@@ -1739,7 +1742,7 @@ impl DockerComposeRuntime for DockerCliRuntime {
                 request.user(),
                 request.workdir(),
                 "default",
-                request.deadline(),
+                remaining_optional_provider_deadline(&self.clock, deadline_ns, request.project())?,
             ),
         )
     }
@@ -1762,13 +1765,22 @@ impl DockerComposeRuntime for DockerCliRuntime {
         request: &DockerComposeArchiveRequest,
         deadline: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        let deadline_ns = provider_deadline_ns(&self.clock, deadline);
         let container = compose_service_container(
             self.clock.clone(),
             request.project(),
             request.service(),
-            Some(deadline),
+            Some(remaining_provider_deadline(
+                &self.clock,
+                deadline_ns,
+                request.project().as_str(),
+            )?),
         )?;
-        self.copy_archive_to_file_bounded(&container, request.source(), deadline)
+        self.copy_archive_to_file_bounded(
+            &container,
+            request.source(),
+            remaining_provider_deadline(&self.clock, deadline_ns, request.project().as_str())?,
+        )
     }
 
     fn compose_copy_into(
@@ -1799,18 +1811,23 @@ impl DockerComposeRuntime for DockerCliRuntime {
         &self,
         request: &DockerComposeStopRequest,
     ) -> Result<(), EvalExecutionError> {
+        let deadline_ns = request
+            .deadline()
+            .map(|deadline| provider_deadline_ns(&self.clock, deadline));
         let container = compose_service_container(
             self.clock.clone(),
             request.project(),
             request.service(),
-            request.deadline(),
+            remaining_optional_provider_deadline(&self.clock, deadline_ns, request.project())?,
         )?;
-        let arguments = compose_stop_arguments(&container, request.deadline());
+        let deadline =
+            remaining_optional_provider_deadline(&self.clock, deadline_ns, request.project())?;
+        let arguments = compose_stop_arguments(&container, deadline);
         docker_command_bounded(
             self.clock.clone(),
             arguments,
             request.project().as_str(),
-            request.deadline(),
+            deadline,
         )
     }
 
@@ -1885,6 +1902,22 @@ fn remaining_provider_deadline(
         });
     }
     Ok(Duration::from_nanos(remaining_ns as u64))
+}
+
+fn provider_deadline_ns(clock: &Rc<dyn Clock>, deadline: Duration) -> i64 {
+    clock
+        .now_ns()
+        .saturating_add(deadline.as_nanos().min(i64::MAX as u128) as i64)
+}
+
+fn remaining_optional_provider_deadline(
+    clock: &Rc<dyn Clock>,
+    deadline_ns: Option<i64>,
+    project: &ComposeProjectId,
+) -> Result<Option<Duration>, EvalExecutionError> {
+    deadline_ns
+        .map(|deadline_ns| remaining_provider_deadline(clock, deadline_ns, project.as_str()))
+        .transpose()
 }
 
 fn compose_project_arguments(
