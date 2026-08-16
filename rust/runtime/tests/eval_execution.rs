@@ -5,11 +5,11 @@ use std::cell::{Cell, RefCell};
 use std::fs;
 
 use aiperf_runtime::eval::{
-    AgentCapability, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvalExecutionError,
-    EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborImportError,
-    HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox, NativeSourceAcquirer,
-    SandboxRole, SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory,
-    WorkspaceOverlay,
+    AgentCapability, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, DockerProcessSandbox,
+    EvalExecutionError, EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator,
+    HarborImportError, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
+    NativeSourceAcquirer, SandboxRole, SourceAcquirer, VerifierExecutionError, VerifierMode,
+    VerifierSandboxFactory, WorkspaceOverlay,
 };
 
 struct RecordingFactory {
@@ -250,4 +250,30 @@ fn local_process_sandbox_materializes_regular_package_fixture_files() {
         .unwrap();
 
     assert_eq!(result.reward.metrics["reward"], 1.0);
+}
+
+#[test]
+fn docker_process_requires_a_standard_task_directory() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["true"],"declared_artifacts":[]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    assert!(
+        DockerProcessSandbox::new()
+            .execute(
+                &recipe,
+                &imported.package,
+                &["true".to_owned()],
+                VerifierMode::Shared,
+            )
+            .is_err()
+    );
 }

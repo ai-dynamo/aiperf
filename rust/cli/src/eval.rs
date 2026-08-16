@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use aiperf_runtime::eval::{
-    HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox, NativeSourceAcquirer,
-    VerifierMode,
+    DockerProcessSandbox, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
+    NativeSourceAcquirer, VerifierMode,
 };
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
@@ -39,6 +39,9 @@ struct EvalFlags {
     /// Shell command for an external agent; required by standard task directories.
     #[arg(long)]
     agent_command: Option<String>,
+    /// Sandbox backend; `auto` uses Docker for standard task directories.
+    #[arg(long, value_enum, default_value_t = SandboxFlag::Auto)]
+    sandbox: SandboxFlag,
 }
 
 /// User-facing verifier sandbox topology.
@@ -48,6 +51,17 @@ enum VerifierModeFlag {
     Shared,
     /// Copy only declared artifacts into a fresh verifier sandbox.
     Separate,
+}
+
+/// User-facing execution backend selection.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SandboxFlag {
+    /// Use Docker for conventional task directories and local execution otherwise.
+    Auto,
+    /// Use the temporary-root local process backend.
+    Local,
+    /// Build and execute a conventional task directory in Docker.
+    Docker,
 }
 
 impl From<VerifierModeFlag> for VerifierMode {
@@ -87,12 +101,26 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .verifier_mode
         .map(VerifierMode::from)
         .unwrap_or_else(|| imported.package.verifier_mode());
-    let result = LocalProcessSandbox::new().execute_with_agent_command(
-        &recipe,
-        &imported.package,
-        &agent_command,
-        verifier_mode,
-    )?;
+    let use_docker = match flags.sandbox {
+        SandboxFlag::Auto => imported.package.is_standard_directory(),
+        SandboxFlag::Local => false,
+        SandboxFlag::Docker => true,
+    };
+    let result = if use_docker {
+        DockerProcessSandbox::new().execute(
+            &recipe,
+            &imported.package,
+            &agent_command,
+            verifier_mode,
+        )?
+    } else {
+        LocalProcessSandbox::new().execute_with_agent_command(
+            &recipe,
+            &imported.package,
+            &agent_command,
+            verifier_mode,
+        )?
+    };
     println!(
         "{}",
         serde_json::to_string(&EvalOutput {

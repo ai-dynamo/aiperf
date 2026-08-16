@@ -89,6 +89,46 @@ fn native_eval_command_runs_a_standard_task_directory() {
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "--agent-command".to_owned(),
         "printf result > result.txt".to_owned(),
+        "--sandbox".to_owned(),
+        "local".to_owned(),
+    ])
+    .unwrap();
+
+    assert_eq!(exit, 0);
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
+fn native_eval_command_runs_a_standard_task_directory_in_docker() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("docker-repair-1");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/docker-repair-1\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Write the result.\n").unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM openclaw-sandbox:bookworm-slim\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test -f /work/result.txt\nmkdir -p /logs/verifier\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+
+    let exit = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--agent-command".to_owned(),
+        "test ! -e /tests/test.sh && printf result > result.txt".to_owned(),
     ])
     .unwrap();
 

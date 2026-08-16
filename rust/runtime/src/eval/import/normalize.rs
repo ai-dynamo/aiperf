@@ -29,6 +29,7 @@ pub struct HarborTaskPackage {
     source_digest: ArtifactDigest,
     source_bytes: Vec<u8>,
     source_root: Option<std::path::PathBuf>,
+    is_standard_directory: bool,
 }
 
 impl HarborTaskPackage {
@@ -85,6 +86,11 @@ impl HarborTaskPackage {
     /// Returns the local source tree retained for fixture materialization, when available.
     pub(crate) fn source_root(&self) -> Option<&std::path::Path> {
         self.source_root.as_deref()
+    }
+
+    /// Reports whether this package originated from a standard task directory.
+    pub const fn is_standard_directory(&self) -> bool {
+        self.is_standard_directory
     }
 
     /// Associates an acquired local source tree with this immutable package material.
@@ -151,6 +157,7 @@ pub(super) fn normalize(
         source_digest: ArtifactDigest::from_bytes(bytes),
         source_bytes: bytes.to_vec(),
         source_root: None,
+        is_standard_directory: false,
     };
     Ok((package, reference))
 }
@@ -243,6 +250,7 @@ pub(super) fn normalize_standard_directory(
         source_digest: ArtifactDigest::from_bytes(manifest_bytes),
         source_bytes: manifest_bytes.to_vec(),
         source_root: None,
+        is_standard_directory: true,
     };
     Ok((package, task))
 }

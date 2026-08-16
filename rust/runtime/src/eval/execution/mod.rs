@@ -5,12 +5,14 @@
 
 mod agent;
 mod coordinator;
+mod docker_process;
 mod local_process;
 mod recipe;
 mod workspace;
 
 pub use agent::{AgentCapability, EvalExecutionError, EvalSandboxFactory, HarborAgentContract};
 pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
+pub use docker_process::DockerProcessSandbox;
 pub use local_process::{
     LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,
 };
