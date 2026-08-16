@@ -92,6 +92,8 @@ pub trait EvalSandboxFactory {
 pub enum EvalExecutionError {
     /// A sandbox recipe lacked a required immutable field.
     InvalidRecipe(&'static str),
+    /// A synchronous sandbox operation was invoked from an incompatible async runtime.
+    RuntimeContext(&'static str),
     /// The selected provider cannot honor a required contract capability.
     MissingCapability(AgentCapability),
     /// An immutable workspace or artifact identity was invalid.
@@ -133,6 +135,9 @@ impl Display for EvalExecutionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRecipe(field) => write!(formatter, "invalid sandbox recipe {field}"),
+            Self::RuntimeContext(operation) => {
+                write!(formatter, "invalid runtime context for {operation}")
+            }
             Self::MissingCapability(capability) => {
                 write!(formatter, "missing sandbox capability {capability:?}")
             }

@@ -58,6 +58,11 @@ impl DockerProcessSandbox {
         agent_command: &[String],
         verifier_mode: VerifierMode,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if package.timeouts().is_some() && tokio::runtime::Handle::try_current().is_ok() {
+            return Err(EvalExecutionError::RuntimeContext(
+                "synchronous Docker execution",
+            ));
+        }
         if !package.is_standard_directory() {
             return Err(EvalExecutionError::Materialization(
                 "Docker execution requires a standard task directory".to_owned(),
@@ -325,6 +330,12 @@ enum DockerExecState {
     Failed(String),
 }
 
+impl DockerExecState {
+    fn is_terminal(&self) -> bool {
+        !matches!(self, Self::Running)
+    }
+}
+
 trait DockerExecProcess {
     fn try_wait(&mut self) -> Result<DockerExecState, String>;
     fn kill(&mut self) -> Result<(), String>;
@@ -417,13 +428,20 @@ where
         .saturating_add(timeout.as_nanos().min(i64::MAX as u128) as i64);
     loop {
         if clock.now_ns() >= deadline {
-            return terminate_timed_out_exec(process, container, phase, timeout, remove);
+            return terminate_timed_out_exec(process, container, phase, timeout, false, remove);
         }
         let state = process.try_wait().map_err(|reason| {
             EvalExecutionError::ProcessFailure(format!("docker exec process check: {reason}"))
         })?;
         if clock.now_ns() >= deadline {
-            return terminate_timed_out_exec(process, container, phase, timeout, remove);
+            return terminate_timed_out_exec(
+                process,
+                container,
+                phase,
+                timeout,
+                state.is_terminal(),
+                remove,
+            );
         }
         match state {
             DockerExecState::Succeeded => {
@@ -450,20 +468,21 @@ fn terminate_timed_out_exec<P, F>(
     container: &str,
     phase: EvalExecutionPhase,
     timeout: Duration,
+    has_observed_terminal_client: bool,
     remove: &mut F,
 ) -> Result<(), EvalExecutionError>
 where
     P: DockerExecProcess,
     F: for<'a> FnMut(&'a str) -> Result<(), EvalExecutionError>,
 {
-    let kill = process.kill();
+    let kill = (!has_observed_terminal_client).then(|| process.kill());
     let reap = process.wait();
     let removal = remove(container);
     if let Err(error) = removal {
         return Err(error);
     }
     let uncertainties = [
-        kill.err()
+        kill.and_then(Result::err)
             .map(|reason| format!("could not kill docker exec client: {reason}")),
         reap.err()
             .map(|reason| format!("could not reap docker exec client: {reason}")),
@@ -618,13 +637,16 @@ fn copy_workspace_artifacts(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, collections::VecDeque, rc::Rc, time::Duration};
+    use std::{cell::Cell, collections::VecDeque, fs, rc::Rc, time::Duration};
 
     use super::{
-        DockerExecProcess, DockerExecState, EvalExecutionError, EvalExecutionPhase,
-        drive_docker_exec,
+        DockerExecProcess, DockerExecState, DockerProcessSandbox, EvalExecutionError,
+        EvalExecutionPhase, drive_docker_exec,
     };
     use crate::clock::SimClock;
+    use crate::eval::{
+        HarborImporter, HarborSandboxRecipe, HarborSource, NativeSourceAcquirer, VerifierMode,
+    };
 
     #[test]
     fn completed_command_observed_after_deadline_times_out() {
@@ -654,7 +676,7 @@ mod tests {
             })
         );
         assert!(was_removed.get());
-        assert!(process.was_killed.get());
+        assert!(!process.was_killed.get());
         assert!(process.was_reaped.get());
     }
 
@@ -689,6 +711,7 @@ mod tests {
             })
         );
         assert!(was_removed.get());
+        assert!(!process.was_killed.get());
     }
 
     #[test]
@@ -756,12 +779,58 @@ mod tests {
         assert!(process.was_reaped.get());
     }
 
+    #[tokio::test]
+    async fn execute_within_tokio_runtime_returns_explicit_context_error() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temporary.path().join("environment")).unwrap();
+        fs::create_dir_all(temporary.path().join("tests")).unwrap();
+        fs::write(
+            temporary.path().join("task.toml"),
+            "schema_version = \"1.0\"\n[task]\nname = \"example/runtime-context\"\n[agent]\ntimeout_sec = 1\n[verifier]\ntimeout_sec = 1\n",
+        )
+        .unwrap();
+        fs::write(
+            temporary.path().join("instruction.md"),
+            "Complete the task.\n",
+        )
+        .unwrap();
+        fs::write(
+            temporary.path().join("environment/Dockerfile"),
+            "FROM scratch\n",
+        )
+        .unwrap();
+        fs::write(temporary.path().join("tests/test.sh"), "exit 0\n").unwrap();
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(temporary.path().to_string_lossy()).unwrap())
+            .unwrap();
+        let recipe = HarborSandboxRecipe::new(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "/work",
+        )
+        .unwrap();
+
+        let error = DockerProcessSandbox::new()
+            .execute(
+                &recipe,
+                &imported.package,
+                &["true".to_owned()],
+                VerifierMode::Shared,
+            )
+            .expect_err("synchronous Docker execution must not nest a Tokio runtime");
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::RuntimeContext("synchronous Docker execution")
+        ));
+    }
+
     struct FakeDockerExec {
         clock: Rc<SimClock>,
         states: VecDeque<DockerExecState>,
         advance_terminal_to: Option<i64>,
         kill_fails: bool,
         wait_fails: bool,
+        terminal_observed: bool,
         was_killed: Cell<bool>,
         was_reaped: Cell<bool>,
     }
@@ -774,6 +843,7 @@ mod tests {
                 advance_terminal_to: None,
                 kill_fails: false,
                 wait_fails: false,
+                terminal_observed: false,
                 was_killed: Cell::new(false),
                 was_reaped: Cell::new(false),
             }
@@ -799,6 +869,7 @@ mod tests {
         fn try_wait(&mut self) -> Result<DockerExecState, String> {
             let state = self.states.pop_front().unwrap_or(DockerExecState::Running);
             if state != DockerExecState::Running {
+                self.terminal_observed = true;
                 if let Some(time_ns) = self.advance_terminal_to {
                     self.clock.advance_to(time_ns);
                 }
@@ -808,7 +879,9 @@ mod tests {
 
         fn kill(&mut self) -> Result<(), String> {
             self.was_killed.set(true);
-            if self.kill_fails {
+            if self.terminal_observed {
+                Err("cannot kill an observed terminal child".to_owned())
+            } else if self.kill_fails {
                 Err("simulated kill failure".to_owned())
             } else {
                 Ok(())
