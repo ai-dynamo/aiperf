@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, HarborImporter, HarborSource, ImportDisposition, NativeSourceAcquirer,
-    SourceAcquirer, VerifierMode,
+    ArtifactDigest, EnvBinding, HarborImporter, HarborSource, ImportDisposition,
+    NativeSourceAcquirer, NetworkPolicy, SourceAcquirer, VerifierMode,
 };
 
 #[derive(Default)]
@@ -236,6 +236,10 @@ memory_mb = 512
         ["/bin/sh", "tests/test.sh"]
     );
     assert_eq!(imported.package.verifier_mode(), VerifierMode::Shared);
+    assert_eq!(
+        imported.package.execution_plan().environment.network,
+        NetworkPolicy::Public
+    );
     assert_eq!(imported.package.container_resources(), Some((1, 512)));
     assert_eq!(
         imported.package.timeouts(),
@@ -316,6 +320,209 @@ environment_mode = "separate"
 
     assert_eq!(imported.package.verifier_mode(), VerifierMode::Separate);
     assert_eq!(imported.package.declared_artifacts(), ["/work/result.txt"]);
+}
+
+#[test]
+fn normalizes_standard_execution_fields_without_reading_host_secrets() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "full-plan");
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+artifacts = ["/work/result.txt", { source = "/work/output", destination = "results", exclude = ["*.tmp"] }]
+
+[task]
+name = "example/full-plan"
+
+[environment]
+cpus = 2
+memory_mb = 1024
+workdir = "/workspace"
+user = "1000:1001"
+network = "allowlist"
+allowed_hosts = ["EXAMPLE.com", "*.Example.ORG", "10.0.0.1", "10.0.0.0/24", "2001:DB8::1"]
+
+[environment.env]
+BASE = "base"
+API_TOKEN = "${HOST_API_TOKEN}"
+
+[environment.healthcheck]
+command = ["sh", "-c", "true"]
+start_period_sec = 1.0
+start_interval_sec = 0.5
+interval_sec = 2.0
+timeout_sec = 3.0
+retries = 4
+
+[agent]
+timeout_sec = 7.5
+user = "agent"
+network = "no-network"
+
+[agent.env]
+BASE = "agent"
+AGENT_TOKEN = "${AGENT_TOKEN}"
+
+[verifier]
+environment_mode = "separate"
+timeout_sec = 3.25
+user = "verifier"
+network = "public"
+
+[verifier.env]
+CHECK = "1"
+
+[verifier.environment]
+workdir = "/verify"
+user = "2000"
+network = "public"
+
+[verifier.environment.env]
+VERIFY_BASE = "present"
+"#,
+    )
+    .unwrap();
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let plan = imported.package.execution_plan();
+
+    assert_eq!(plan.environment.resources.unwrap().cpus, 2);
+    assert_eq!(plan.environment.resources.unwrap().memory_mb, 1024);
+    assert_eq!(plan.environment.workdir.as_deref(), Some("/workspace"));
+    assert_eq!(plan.environment.user.as_deref(), Some("1000:1001"));
+    assert_eq!(
+        plan.environment.network,
+        NetworkPolicy::Allowlist {
+            allowed_hosts: vec![
+                "*.example.org".to_owned(),
+                "10.0.0.0/24".to_owned(),
+                "10.0.0.1".to_owned(),
+                "2001:db8::1".to_owned(),
+                "example.com".to_owned(),
+            ],
+        }
+    );
+    assert_eq!(
+        plan.environment.env.get("API_TOKEN"),
+        Some(&EnvBinding::SecretReference("HOST_API_TOKEN".to_owned()))
+    );
+    assert_eq!(plan.agent.user.as_deref(), Some("agent"));
+    assert_eq!(plan.agent.network, NetworkPolicy::NoNetwork);
+    assert_eq!(
+        plan.agent.env.get("AGENT_TOKEN"),
+        Some(&EnvBinding::SecretReference("AGENT_TOKEN".to_owned()))
+    );
+    assert_eq!(plan.verifier.mode, VerifierMode::Separate);
+    assert_eq!(plan.verifier.phase.user.as_deref(), Some("verifier"));
+    assert_eq!(
+        plan.verifier.environment.workdir.as_deref(),
+        Some("/verify")
+    );
+    assert_eq!(plan.verifier.environment.user.as_deref(), Some("2000"));
+    assert_eq!(plan.artifacts.len(), 2);
+    assert_eq!(plan.artifacts[0].source(), "/work/result.txt");
+    assert!(plan.artifacts[0].is_exact_file());
+    assert_eq!(plan.artifacts[1].source(), "/work/output");
+    assert_eq!(plan.artifacts[1].destination(), Some("results"));
+    assert_eq!(plan.artifacts[1].exclude(), ["*.tmp"]);
+}
+
+#[test]
+fn separate_verifier_without_environment_receives_fresh_environment_copy() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "fresh-verifier-environment");
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+[task]
+name = "example/fresh-verifier-environment"
+[environment]
+workdir = "/workspace"
+user = "1000"
+network = "no-network"
+[environment.env]
+BASE = "value"
+[verifier]
+environment_mode = "separate"
+"#,
+    )
+    .unwrap();
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let plan = imported.package.execution_plan();
+
+    assert_eq!(plan.verifier.mode, VerifierMode::Separate);
+    assert_eq!(plan.verifier.environment, plan.environment);
+}
+
+#[test]
+fn rejects_invalid_standard_execution_fields_during_import() {
+    let cases = [
+        ("unknown", "[environment]\nunknown = true\n"),
+        ("incomplete-resources", "[environment]\ncpus = 1\n"),
+        (
+            "relative-workdir",
+            "[environment]\nworkdir = \"workspace\"\n",
+        ),
+        (
+            "dot-workdir",
+            "[environment]\nworkdir = \"/work/../secret\"\n",
+        ),
+        ("invalid-user", "[agent]\nuser = \"root:wheel:extra\"\n"),
+        (
+            "invalid-template",
+            "[environment.env]\nTOKEN = \"${NOT CLOSED\"\n",
+        ),
+        (
+            "non-positive-health-timing",
+            "[environment.healthcheck]\ncommand = [\"true\"]\ninterval_sec = 0\n",
+        ),
+        (
+            "non-finite-health-timing",
+            "[environment.healthcheck]\ncommand = [\"true\"]\ntimeout_sec = inf\n",
+        ),
+        (
+            "allowlist-with-public",
+            "[environment]\nnetwork = \"public\"\nallowed_hosts = [\"example.com\"]\n",
+        ),
+        (
+            "allowlist-url",
+            "[environment]\nnetwork = \"allowlist\"\nallowed_hosts = [\"https://example.com\"]\n",
+        ),
+        (
+            "allowlist-missing-hosts",
+            "[environment]\nnetwork = \"allowlist\"\n",
+        ),
+    ];
+    for (name, authored) in cases {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!("schema_version = \"1.0\"\n[task]\nname = \"example/{name}\"\n{authored}"),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            HarborImporter::new(&NativeSourceAcquirer)
+                .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
+            Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+        ));
+    }
+}
+
+fn standard_task_root(temporary: &tempfile::TempDir, name: &str) -> std::path::PathBuf {
+    let task_root = temporary.path().join(name);
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    task_root
 }
 
 #[test]

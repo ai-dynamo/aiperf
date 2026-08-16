@@ -7,6 +7,7 @@ mod agent;
 mod coordinator;
 mod docker_process;
 mod local_process;
+mod plan;
 mod recipe;
 mod workspace;
 
@@ -19,5 +20,10 @@ pub use docker_process::DockerProcessSandbox;
 pub use local_process::{
     LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,
 };
+pub use plan::{
+    ArtifactSpec, BenchmarkExecutionPlan, ContainerResources, EnvBinding, EnvironmentPlan,
+    HealthcheckPlan, NetworkPolicy, PhasePlan, VerifierPlan,
+};
+pub(crate) use plan::{validate_env_name, validate_user};
 pub use recipe::HarborSandboxRecipe;
 pub use workspace::{ImmutablePatch, WorkspaceOverlay};

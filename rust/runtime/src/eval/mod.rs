@@ -19,15 +19,19 @@ mod training;
 mod trial;
 mod verifier;
 
+pub(crate) use execution::{validate_env_name, validate_user};
+
 pub use artifact_manifest::{
     ArtifactManifestError, DeclaredArtifactManifest, MaterializedArtifactManifest,
 };
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
-    AgentCapability, DockerProcessSandbox, EvalExecutionError, EvalExecutionPhase,
+    AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources,
+    DockerProcessSandbox, EnvBinding, EnvironmentPlan, EvalExecutionError, EvalExecutionPhase,
     EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborEvaluationError,
-    HarborSandboxRecipe, ImmutablePatch, LocalExecutionResult, LocalProcessSandbox,
-    MaterializedSandbox, ProcessOutput, SandboxRole, WorkspaceOverlay,
+    HarborSandboxRecipe, HealthcheckPlan, ImmutablePatch, LocalExecutionResult,
+    LocalProcessSandbox, MaterializedSandbox, NetworkPolicy, PhasePlan, ProcessOutput, SandboxRole,
+    VerifierPlan, WorkspaceOverlay,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

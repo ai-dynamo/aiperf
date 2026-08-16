@@ -4,7 +4,7 @@
 //! Strict native normalization for the executable Harbor task package contract.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path},
     time::Duration,
@@ -12,7 +12,11 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::eval::{ArtifactDigest, EvalTaskRef, VerifierMode};
+use crate::eval::{
+    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources, EnvBinding,
+    EnvironmentPlan, EvalTaskRef, HealthcheckPlan, NetworkPolicy, PhasePlan, VerifierMode,
+    VerifierPlan,
+};
 
 use super::HarborImportError;
 
@@ -33,6 +37,7 @@ pub struct HarborTaskPackage {
     is_standard_directory: bool,
     container_resources: Option<(u64, u64)>,
     timeouts: Option<(Duration, Duration)>,
+    execution_plan: BenchmarkExecutionPlan,
 }
 
 impl HarborTaskPackage {
@@ -106,6 +111,11 @@ impl HarborTaskPackage {
         self.timeouts
     }
 
+    /// Returns the immutable execution plan compiled during import.
+    pub fn execution_plan(&self) -> &BenchmarkExecutionPlan {
+        &self.execution_plan
+    }
+
     /// Associates an acquired local source tree with this immutable package material.
     pub(crate) fn set_source_root(&mut self, source_root: std::path::PathBuf) {
         self.source_root = Some(source_root);
@@ -158,6 +168,30 @@ pub(super) fn normalize(
     );
     let reference = EvalTaskRef::new(task.id.clone(), digest)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
+    let execution_plan = BenchmarkExecutionPlan {
+        environment: EnvironmentPlan::default(),
+        agent: PhasePlan {
+            user: None,
+            env: BTreeMap::new(),
+            network: NetworkPolicy::Public,
+            timeout: None,
+        },
+        verifier: VerifierPlan {
+            phase: PhasePlan {
+                user: None,
+                env: BTreeMap::new(),
+                network: NetworkPolicy::Public,
+                timeout: None,
+            },
+            mode: VerifierMode::Separate,
+            environment: EnvironmentPlan::default(),
+        },
+        artifacts: declared_artifacts
+            .iter()
+            .cloned()
+            .map(|source| ArtifactSpec::ExactFile { source })
+            .collect(),
+    };
     let package = HarborTaskPackage {
         id: task.id,
         instruction: task.instruction,
@@ -173,41 +207,95 @@ pub(super) fn normalize(
         is_standard_directory: false,
         container_resources: None,
         timeouts: None,
+        execution_plan,
     };
     Ok((package, reference))
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StandardTaskManifest {
     schema_version: String,
     task: StandardTaskSection,
     agent: Option<StandardAgentSection>,
     verifier: Option<StandardVerifierSection>,
     #[serde(default)]
-    artifacts: Vec<String>,
+    artifacts: Vec<StandardArtifactDto>,
     environment: Option<StandardEnvironmentSection>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StandardTaskSection {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StandardAgentSection {
     timeout_sec: Option<f64>,
+    user: Option<String>,
+    network: Option<String>,
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StandardVerifierSection {
     environment_mode: Option<String>,
     timeout_sec: Option<f64>,
+    user: Option<String>,
+    network: Option<String>,
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    environment: Option<StandardEnvironmentSection>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StandardEnvironmentSection {
     cpus: Option<u64>,
     memory_mb: Option<u64>,
+    workdir: Option<String>,
+    user: Option<String>,
+    network: Option<String>,
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    healthcheck: Option<StandardHealthcheckSection>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum StandardArtifactDto {
+    ExactFile(String),
+    Collected(StandardArtifactTable),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StandardArtifactTable {
+    source: String,
+    destination: Option<String>,
+    #[serde(default)]
+    exclude: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StandardHealthcheckSection {
+    command: Vec<String>,
+    start_period_sec: Option<f64>,
+    start_interval_sec: Option<f64>,
+    interval_sec: Option<f64>,
+    timeout_sec: Option<f64>,
+    retries: Option<u32>,
 }
 
 /// Normalizes a standard task directory without executing its contents.
@@ -244,17 +332,16 @@ pub(super) fn normalize_standard_directory(
             "instruction.md must not be empty".to_owned(),
         ));
     }
-    let environment = ArtifactDigest::from_bytes(
+    let environment_digest = ArtifactDigest::from_bytes(
         read_required_source_file(source_root, "environment/Dockerfile")?.as_bytes(),
     );
-    let verifier = ArtifactDigest::from_bytes(
+    let verifier_digest = ArtifactDigest::from_bytes(
         read_required_source_file(source_root, "tests/test.sh")?.as_bytes(),
     );
-    let verifier_mode = match manifest
-        .verifier
-        .as_ref()
-        .and_then(|verifier| verifier.environment_mode.as_deref())
-    {
+    let environment = normalize_environment(manifest.environment.unwrap_or_default())?;
+    let agent = normalize_agent_phase(manifest.agent.unwrap_or_default(), &environment.network)?;
+    let verifier = manifest.verifier.unwrap_or_default();
+    let verifier_mode = match verifier.environment_mode.as_deref() {
         None | Some("shared") => VerifierMode::Shared,
         Some("separate") => VerifierMode::Separate,
         Some(value) => {
@@ -263,24 +350,50 @@ pub(super) fn normalize_standard_directory(
             )));
         }
     };
-    let timeouts = normalize_timeouts(
-        manifest.agent.as_ref().and_then(|agent| agent.timeout_sec),
-        manifest
-            .verifier
-            .as_ref()
-            .and_then(|verifier| verifier.timeout_sec),
-    )?;
-    let declared_artifacts = normalize_declared_artifacts(manifest.artifacts)?;
-    let container_resources = manifest
-        .environment
-        .and_then(|environment| Some((environment.cpus?, environment.memory_mb?)));
+    let verifier_environment = match verifier.environment.clone() {
+        Some(environment) => normalize_environment(environment)?,
+        None => environment.clone(),
+    };
+    let verifier_phase = normalize_verifier_phase(verifier, &verifier_environment.network)?;
+    let timeouts = match (agent.timeout, verifier_phase.timeout) {
+        (None, None) => None,
+        (Some(agent), Some(verifier)) => Some((agent, verifier)),
+        (None, Some(_)) => {
+            return Err(HarborImportError::InvalidPackage(
+                "agent.timeout_sec must be configured with verifier.timeout_sec".to_owned(),
+            ));
+        }
+        (Some(_), None) => {
+            return Err(HarborImportError::InvalidPackage(
+                "verifier.timeout_sec must be configured with agent.timeout_sec".to_owned(),
+            ));
+        }
+    };
+    let artifacts = normalize_standard_artifacts(manifest.artifacts)?;
+    let declared_artifacts = artifacts
+        .iter()
+        .map(|artifact| artifact.source().to_owned())
+        .collect();
+    let container_resources = environment
+        .resources
+        .map(|resources| (resources.cpus, resources.memory_mb));
+    let execution_plan = BenchmarkExecutionPlan {
+        environment,
+        agent,
+        verifier: VerifierPlan {
+            phase: verifier_phase,
+            mode: verifier_mode,
+            environment: verifier_environment,
+        },
+        artifacts,
+    };
     let reference_digest = ArtifactDigest::from_bytes(
         format!(
             "id={}\u{1f}instruction={}\u{1f}environment={}\u{1f}verifier={}",
             manifest.task.name,
             instruction,
-            environment.as_str(),
-            verifier.as_str(),
+            environment_digest.as_str(),
+            verifier_digest.as_str(),
         )
         .as_bytes(),
     );
@@ -289,8 +402,8 @@ pub(super) fn normalize_standard_directory(
     let package = HarborTaskPackage {
         id: manifest.task.name,
         instruction,
-        environment: environment.as_str().to_owned(),
-        verifier: verifier.as_str().to_owned(),
+        environment: environment_digest.as_str().to_owned(),
+        verifier: verifier_digest.as_str().to_owned(),
         agent_command: vec!["aiperf-task-agent".to_owned()],
         verifier_command: vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()],
         verifier_mode,
@@ -301,30 +414,229 @@ pub(super) fn normalize_standard_directory(
         is_standard_directory: true,
         container_resources,
         timeouts,
+        execution_plan,
     };
     Ok((package, task))
 }
 
-fn normalize_timeouts(
-    agent_seconds: Option<f64>,
-    verifier_seconds: Option<f64>,
-) -> Result<Option<(Duration, Duration)>, HarborImportError> {
-    let Some(agent_seconds) = agent_seconds else {
-        if verifier_seconds.is_some() {
+fn normalize_environment(
+    environment: StandardEnvironmentSection,
+) -> Result<EnvironmentPlan, HarborImportError> {
+    let resources = match (environment.cpus, environment.memory_mb) {
+        (None, None) => None,
+        (Some(cpus), Some(memory_mb)) if cpus > 0 && memory_mb > 0 => {
+            Some(ContainerResources { cpus, memory_mb })
+        }
+        (Some(_), Some(_)) => {
             return Err(HarborImportError::InvalidPackage(
-                "agent.timeout_sec must be configured with verifier.timeout_sec".to_owned(),
+                "environment.cpus and environment.memory_mb must be positive".to_owned(),
             ));
         }
-        return Ok(None);
+        _ => {
+            return Err(HarborImportError::InvalidPackage(
+                "environment.cpus and environment.memory_mb must be configured together".to_owned(),
+            ));
+        }
     };
-    let Some(verifier_seconds) = verifier_seconds else {
+    let workdir = environment
+        .workdir
+        .map(|workdir| normalize_workdir(&workdir))
+        .transpose()?;
+    let user = environment
+        .user
+        .map(|user| normalize_user(&user))
+        .transpose()?;
+    let network = normalize_network(
+        environment.network.as_deref(),
+        &environment.allowed_hosts,
+        &NetworkPolicy::Public,
+    )?;
+    Ok(EnvironmentPlan {
+        resources,
+        workdir,
+        user,
+        env: normalize_environment_bindings(environment.env)?,
+        network,
+        healthcheck: environment
+            .healthcheck
+            .map(normalize_healthcheck)
+            .transpose()?,
+    })
+}
+
+fn normalize_agent_phase(
+    agent: StandardAgentSection,
+    inherited_network: &NetworkPolicy,
+) -> Result<PhasePlan, HarborImportError> {
+    Ok(PhasePlan {
+        user: agent.user.map(|user| normalize_user(&user)).transpose()?,
+        env: normalize_environment_bindings(agent.env)?,
+        network: normalize_network(
+            agent.network.as_deref(),
+            &agent.allowed_hosts,
+            inherited_network,
+        )?,
+        timeout: agent
+            .timeout_sec
+            .map(|seconds| normalize_timeout("agent.timeout_sec", seconds))
+            .transpose()?,
+    })
+}
+
+fn normalize_verifier_phase(
+    verifier: StandardVerifierSection,
+    inherited_network: &NetworkPolicy,
+) -> Result<PhasePlan, HarborImportError> {
+    Ok(PhasePlan {
+        user: verifier
+            .user
+            .map(|user| normalize_user(&user))
+            .transpose()?,
+        env: normalize_environment_bindings(verifier.env)?,
+        network: normalize_network(
+            verifier.network.as_deref(),
+            &verifier.allowed_hosts,
+            inherited_network,
+        )?,
+        timeout: verifier
+            .timeout_sec
+            .map(|seconds| normalize_timeout("verifier.timeout_sec", seconds))
+            .transpose()?,
+    })
+}
+
+fn normalize_network(
+    authored: Option<&str>,
+    allowed_hosts: &[String],
+    inherited: &NetworkPolicy,
+) -> Result<NetworkPolicy, HarborImportError> {
+    let Some(authored) = authored else {
+        if allowed_hosts.is_empty() {
+            return Ok(inherited.clone());
+        }
         return Err(HarborImportError::InvalidPackage(
-            "verifier.timeout_sec must be configured with agent.timeout_sec".to_owned(),
+            "allowed_hosts requires network = \"allowlist\"".to_owned(),
         ));
     };
-    let agent = normalize_timeout("agent.timeout_sec", agent_seconds)?;
-    let verifier = normalize_timeout("verifier.timeout_sec", verifier_seconds)?;
-    Ok(Some((agent, verifier)))
+    match authored {
+        "public" if allowed_hosts.is_empty() => Ok(NetworkPolicy::Public),
+        "no-network" if allowed_hosts.is_empty() => Ok(NetworkPolicy::NoNetwork),
+        "allowlist" => {
+            NetworkPolicy::allowlist(allowed_hosts).map_err(HarborImportError::InvalidPackage)
+        }
+        "public" | "no-network" => Err(HarborImportError::InvalidPackage(
+            "allowed_hosts requires network = \"allowlist\"".to_owned(),
+        )),
+        _ => Err(HarborImportError::InvalidPackage(format!(
+            "unsupported network policy {authored:?}"
+        ))),
+    }
+}
+
+fn normalize_environment_bindings(
+    bindings: BTreeMap<String, String>,
+) -> Result<BTreeMap<String, EnvBinding>, HarborImportError> {
+    bindings
+        .into_iter()
+        .map(|(name, value)| {
+            crate::eval::validate_env_name(&name).map_err(HarborImportError::InvalidPackage)?;
+            let value = EnvBinding::parse(&value).map_err(HarborImportError::InvalidPackage)?;
+            Ok((name, value))
+        })
+        .collect()
+}
+
+fn normalize_user(user: &str) -> Result<String, HarborImportError> {
+    crate::eval::validate_user(user).map_err(HarborImportError::InvalidPackage)?;
+    Ok(user.to_owned())
+}
+
+fn normalize_workdir(workdir: &str) -> Result<String, HarborImportError> {
+    let parsed = Path::new(workdir);
+    if !parsed.is_absolute()
+        || parsed.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::CurDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "workdir must be an absolute isolated path: {workdir:?}"
+        )));
+    }
+    Ok(format!(
+        "/{}",
+        parsed
+            .components()
+            .filter_map(|component| match component {
+                Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    ))
+}
+
+fn normalize_healthcheck(
+    healthcheck: StandardHealthcheckSection,
+) -> Result<HealthcheckPlan, HarborImportError> {
+    validate_command("environment.healthcheck.command", &healthcheck.command)?;
+    if healthcheck.retries == Some(0) {
+        return Err(HarborImportError::InvalidPackage(
+            "environment.healthcheck.retries must be positive".to_owned(),
+        ));
+    }
+    Ok(HealthcheckPlan {
+        command: healthcheck.command,
+        start_period: normalize_optional_duration(
+            "environment.healthcheck.start_period_sec",
+            healthcheck.start_period_sec,
+        )?,
+        start_interval: normalize_optional_duration(
+            "environment.healthcheck.start_interval_sec",
+            healthcheck.start_interval_sec,
+        )?,
+        interval: normalize_optional_duration(
+            "environment.healthcheck.interval_sec",
+            healthcheck.interval_sec,
+        )?,
+        timeout: normalize_optional_duration(
+            "environment.healthcheck.timeout_sec",
+            healthcheck.timeout_sec,
+        )?,
+        retries: healthcheck.retries,
+    })
+}
+
+fn normalize_optional_duration(
+    field: &str,
+    seconds: Option<f64>,
+) -> Result<Option<Duration>, HarborImportError> {
+    seconds
+        .map(|seconds| normalize_timeout(field, seconds))
+        .transpose()
+}
+
+fn normalize_standard_artifacts(
+    artifacts: Vec<StandardArtifactDto>,
+) -> Result<Vec<ArtifactSpec>, HarborImportError> {
+    artifacts
+        .into_iter()
+        .map(|artifact| match artifact {
+            StandardArtifactDto::ExactFile(source) => Ok(ArtifactSpec::ExactFile {
+                source: normalize_artifact_path(&source)?,
+            }),
+            StandardArtifactDto::Collected(artifact) => Ok(ArtifactSpec::Collected {
+                source: normalize_artifact_path(&artifact.source)?,
+                destination: artifact
+                    .destination
+                    .map(|destination| normalize_artifact_destination(&destination))
+                    .transpose()?,
+                exclude: artifact.exclude,
+            }),
+        })
+        .collect()
 }
 
 fn normalize_timeout(field: &str, seconds: f64) -> Result<Duration, HarborImportError> {
@@ -401,6 +713,34 @@ fn normalize_artifact_path(path: &str) -> Result<String, HarborImportError> {
             .collect::<Vec<_>>()
             .join("/")
     ))
+}
+
+fn normalize_artifact_destination(path: &str) -> Result<String, HarborImportError> {
+    let parsed = Path::new(path);
+    if parsed.is_absolute()
+        || parsed.as_os_str().is_empty()
+        || parsed.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir
+                    | Component::CurDir
+                    | Component::Prefix(_)
+                    | Component::RootDir
+            )
+        })
+    {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "artifact destination must be a relative isolated path: {path:?}"
+        )));
+    }
+    Ok(parsed
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 fn invalid_artifact_path(path: &str) -> HarborImportError {
