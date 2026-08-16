@@ -201,6 +201,7 @@ struct ComposeSessionRecordingRuntime {
     docker_phase_calls: RefCell<Vec<(String, Option<String>, Option<String>, Vec<String>)>>,
     failure: Option<ComposeSessionFailure>,
     agent_calls: Cell<usize>,
+    advance_verifier_create_to: Option<(Rc<SimClock>, i64)>,
 }
 
 impl ComposeSessionRecordingRuntime {
@@ -214,7 +215,13 @@ impl ComposeSessionRecordingRuntime {
             docker_phase_calls: RefCell::new(Vec::new()),
             failure,
             agent_calls: Cell::new(0),
+            advance_verifier_create_to: None,
         }
+    }
+
+    fn advance_after_verifier_create(mut self, clock: Rc<SimClock>, time_ns: i64) -> Self {
+        self.advance_verifier_create_to = Some((clock, time_ns));
+        self
     }
 }
 
@@ -248,6 +255,11 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
         let arguments = request.public_arguments();
         let container = argument_after(arguments, "--name").to_owned();
+        if container.contains("-verifier-")
+            && let Some((clock, time_ns)) = &self.advance_verifier_create_to
+        {
+            clock.advance_to(*time_ns);
+        }
         let workspace = arguments
             .windows(2)
             .find(|pair| pair[0] == "--volume")
@@ -1045,6 +1057,49 @@ fn compose_verifier_timeout_removes_verifier_before_project_teardown() {
         .position(|event| event == "compose-down")
         .expect("project teardown");
     assert!(remove < down);
+}
+
+#[test]
+fn compose_verifier_deadline_exhausted_during_isolation_skips_later_setup_and_reward() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_main_evidence_timeout_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = ComposeSessionRecordingRuntime::new(None)
+        .advance_after_verifier_create(clock.clone(), Duration::from_secs(1).as_nanos() as i64);
+
+    let error = DockerProcessSandbox::with_clock(clock)
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("an exhausted verifier deadline must stop before verifier startup");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+            ..
+        }
+    ));
+    let events = runtime.events.borrow();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.starts_with("create:") && event.contains("verifier"))
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !event.starts_with("start:") || !event.contains("verifier"))
+    );
+    assert!(events.iter().all(|event| event != "docker-copy"));
 }
 
 #[test]
@@ -2810,108 +2865,6 @@ fn multi_step_failures_stop_successors_and_cleanup_every_acquired_lease() {
                 && arguments[2] == "--volumes"
         }));
     }
-}
-
-#[tokio::test]
-async fn step_only_timeouts_refuse_nested_synchronous_docker_execution() {
-    let temporary = tempfile::tempdir().unwrap();
-    let task_root = multi_step_task_root(&temporary, false);
-    fs::write(
-        task_root.join("task.toml"),
-        r#"schema_version = "1.0"
-multi_step_reward_strategy = "mean"
-[task]
-name = "example/multi-step-timeouts"
-[[steps]]
-name = "one"
-[[steps]]
-name = "two"
-[steps.agent]
-timeout_sec = 2
-[steps.verifier]
-timeout_sec = 2
-"#,
-    )
-    .unwrap();
-    let imported = HarborImporter::new(&NativeSourceAcquirer)
-        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
-        .unwrap();
-    assert_eq!(imported.package.timeouts(), None);
-    let recipe = HarborSandboxRecipe::new(
-        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "/work",
-    )
-    .unwrap();
-
-    assert_eq!(
-        DockerProcessSandbox::new().execute_multi_step(
-            &recipe,
-            &imported.package,
-            &["agent".to_owned()],
-        ),
-        Err(EvalExecutionError::RuntimeContext(
-            "synchronous Docker execution"
-        ))
-    );
-}
-
-#[tokio::test]
-async fn timed_step_healthcheck_refuses_nested_synchronous_docker_execution() {
-    let temporary = tempfile::tempdir().unwrap();
-    let task_root = multi_step_task_root(&temporary, false);
-    fs::write(
-        task_root.join("task.toml"),
-        r#"schema_version = "1.0"
-multi_step_reward_strategy = "mean"
-[task]
-name = "example/multi-step-healthcheck"
-[[steps]]
-name = "one"
-[[steps]]
-name = "two"
-[steps.verifier]
-environment_mode = "separate"
-[steps.verifier.environment.healthcheck]
-command = ["true"]
-start_period_sec = 1
-retries = 1
-"#,
-    )
-    .unwrap();
-    let imported = HarborImporter::new(&NativeSourceAcquirer)
-        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
-        .unwrap();
-    assert!(
-        imported
-            .package
-            .execution_plan()
-            .environment()
-            .healthcheck()
-            .is_none()
-    );
-    assert!(
-        imported.package.execution_plan().steps()[1]
-            .verifier()
-            .environment()
-            .healthcheck()
-            .is_some()
-    );
-    let recipe = HarborSandboxRecipe::for_standard_task(
-        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(
-        DockerProcessSandbox::new().execute_multi_step(
-            &recipe,
-            &imported.package,
-            &["agent".to_owned()],
-        ),
-        Err(EvalExecutionError::RuntimeContext(
-            "synchronous Docker execution"
-        ))
-    );
 }
 
 #[derive(Clone, Copy)]

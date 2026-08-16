@@ -665,6 +665,7 @@ impl DockerBuildRequest {
 pub struct DockerCreateRequest {
     public_arguments: Vec<String>,
     network_lease: Option<String>,
+    deadline: Option<Duration>,
 }
 
 impl DockerCreateRequest {
@@ -673,6 +674,7 @@ impl DockerCreateRequest {
         Self {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
             network_lease: None,
+            deadline: None,
         }
     }
 
@@ -691,12 +693,24 @@ impl DockerCreateRequest {
     pub fn network_lease(&self) -> Option<&str> {
         self.network_lease.as_deref()
     }
+
+    /// Bounds container creation by the enclosing phase deadline.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns the host creation deadline when one is configured.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
+    }
 }
 
 /// A Docker container-start request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockerStartRequest {
     container: String,
+    deadline: Option<Duration>,
 }
 
 impl DockerStartRequest {
@@ -704,12 +718,24 @@ impl DockerStartRequest {
     pub fn new(container: impl Into<String>) -> Self {
         Self {
             container: container.into(),
+            deadline: None,
         }
     }
 
     /// Returns the container identifier.
     pub fn container(&self) -> &str {
         &self.container
+    }
+
+    /// Bounds container startup by the enclosing phase deadline.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns the host startup deadline when one is configured.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 }
 
@@ -819,6 +845,7 @@ impl DockerExecRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockerCopyRequest {
     public_arguments: Vec<String>,
+    deadline: Option<Duration>,
 }
 
 impl DockerCopyRequest {
@@ -826,12 +853,24 @@ impl DockerCopyRequest {
     pub fn new(arguments: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
+            deadline: None,
         }
     }
 
     /// Returns Docker arguments that may appear in diagnostics.
     pub fn public_arguments(&self) -> &[String] {
         &self.public_arguments
+    }
+
+    /// Bounds host file transfer by the enclosing phase deadline.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns the host transfer deadline when one is configured.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 }
 

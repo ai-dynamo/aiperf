@@ -201,6 +201,7 @@ impl DockerProcessSandbox {
                 environment,
                 baseline_network,
                 None,
+                None,
             )?;
             runtime.start(&DockerStartRequest::new(&container))?;
             validate_shared_verifier_workdir(runtime, plan, Some(&container), environment_workdir)?;
@@ -318,6 +319,7 @@ impl DockerProcessSandbox {
                 environment,
                 baseline_network,
                 Some(package.instruction()),
+                None,
             )?;
             runtime.start(&DockerStartRequest::new(&container))?;
             validate_shared_verifier_workdir(runtime, plan, Some(&container), environment_workdir)?;
@@ -388,6 +390,7 @@ impl DockerProcessSandbox {
                     verifier.environment(),
                     verifier_network,
                     None,
+                    None,
                 )?;
                 containers.push(name.clone());
                 runtime.start(&DockerStartRequest::new(&name))?;
@@ -406,6 +409,7 @@ impl DockerProcessSandbox {
                         verifier_workspace.path(),
                         Some(&effective_verifier_workdir),
                         verifier_network,
+                        None,
                     )?;
                 }
                 if let Some(healthcheck) = verifier.environment().healthcheck() {
@@ -455,7 +459,7 @@ impl DockerProcessSandbox {
             )?;
             let reward_workspace = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            let reward = read_reward_with_runtime(runtime, verifier_name, &reward_workspace)?;
+            let reward = read_reward_with_runtime(runtime, verifier_name, &reward_workspace, None)?;
             Ok(LocalExecutionResult {
                 artifacts,
                 reward,
@@ -731,6 +735,11 @@ impl<'a> ComposeStepSession<'a> {
         artifacts: &[(String, ArtifactDigest)],
     ) -> Result<RewardDocument, EvalExecutionError> {
         let verifier = step.verifier();
+        let deadline = verifier.phase().timeout().map(|timeout| {
+            Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Verifier, timeout)
+        });
+        let remaining =
+            |deadline: &Option<Deadline>| deadline.as_ref().map(Deadline::remaining).transpose();
         let workspace = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
         fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o755))
@@ -760,8 +769,13 @@ impl<'a> ComposeStepSession<'a> {
                 verifier.environment(),
                 verifier_network,
                 None,
+                remaining(&deadline)?,
             )?;
-            self.runtime.start(&DockerStartRequest::new(&name))?;
+            let start = match remaining(&deadline)? {
+                Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
+                None => DockerStartRequest::new(&name),
+            };
+            self.runtime.start(&start)?;
             let effective_workdir = match verifier_workdir {
                 Some(workdir) => workdir.to_owned(),
                 None => self.runtime.container_workdir(&name)?,
@@ -773,14 +787,16 @@ impl<'a> ComposeStepSession<'a> {
                 workspace.path(),
                 Some(&effective_workdir),
                 verifier_network,
+                remaining(&deadline)?,
             )?;
-            prepare_workdir(
+            prepare_workdir_with_deadline(
                 self.runtime,
                 &name,
                 verifier.environment(),
                 verifier.phase(),
                 verifier_workdir,
                 verifier_network,
+                remaining(&deadline)?,
             )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
                 run_healthcheck(
@@ -794,16 +810,26 @@ impl<'a> ComposeStepSession<'a> {
                     self.secrets,
                 )?;
             }
-            prepare_verifier_files(self.runtime, &name, verifier_network)?;
-            self.runtime.copy(&DockerCopyRequest::new([
+            prepare_verifier_files_with_deadline(
+                self.runtime,
+                &name,
+                verifier_network,
+                remaining(&deadline)?,
+            )?;
+            let copy = DockerCopyRequest::new([
                 "cp".to_owned(),
                 format!(
                     "{}/.",
                     self.source_root.join(step.verifier_test_root()).display()
                 ),
                 format!("{name}:/tests"),
-            ]))?;
-            execute_planned_phase(
+            ]);
+            let copy = match remaining(&deadline)? {
+                Some(deadline) => copy.with_deadline(deadline),
+                None => copy,
+            };
+            self.runtime.copy(&copy)?;
+            execute_planned_phase_with_deadline(
                 self.runtime,
                 &name,
                 EvalExecutionPhase::Verifier,
@@ -812,10 +838,16 @@ impl<'a> ComposeStepSession<'a> {
                 verifier.phase(),
                 verifier_workdir,
                 self.secrets,
+                remaining(&deadline)?,
             )?;
             let reward_workspace = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            read_reward_with_runtime(self.runtime, &name, &reward_workspace)
+            read_reward_with_runtime(
+                self.runtime,
+                &name,
+                &reward_workspace,
+                remaining(&deadline)?,
+            )
         })();
         let cleanup = self.runtime.remove(&DockerRemoveRequest::new([
             "rm",
@@ -1071,6 +1103,11 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
         artifacts: &[(String, ArtifactDigest)],
     ) -> Result<RewardDocument, EvalExecutionError> {
         let verifier = step.verifier();
+        let deadline = verifier.phase().timeout().map(|timeout| {
+            Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Verifier, timeout)
+        });
+        let remaining =
+            |deadline: &Option<Deadline>| deadline.as_ref().map(Deadline::remaining).transpose();
         let verifier_workspace = if verifier.mode() == VerifierMode::Separate {
             let workspace = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
@@ -1104,9 +1141,14 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 verifier.environment(),
                 verifier_network,
                 None,
+                remaining(&deadline)?,
             )?;
             self.containers.push(name.clone());
-            self.runtime.start(&DockerStartRequest::new(&name))?;
+            let start = match remaining(&deadline)? {
+                Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
+                None => DockerStartRequest::new(&name),
+            };
+            self.runtime.start(&start)?;
             let effective_verifier_workdir = match verifier_workdir {
                 Some(workdir) => workdir.to_owned(),
                 None => self.runtime.container_workdir(&name)?,
@@ -1118,6 +1160,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 workspace.path(),
                 Some(&effective_verifier_workdir),
                 verifier_network,
+                remaining(&deadline)?,
             )?;
             if let Some(healthcheck) = verifier.environment().healthcheck() {
                 run_healthcheck(
@@ -1137,27 +1180,38 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
         };
         let verifier_network = network_lease(verifier.phase().network())?;
         let outcome = (|| {
-            prepare_verifier_files(self.runtime, &verifier_name, verifier_network)?;
-            self.runtime.copy(&DockerCopyRequest::new([
+            prepare_verifier_files_with_deadline(
+                self.runtime,
+                &verifier_name,
+                verifier_network,
+                remaining(&deadline)?,
+            )?;
+            let copy = DockerCopyRequest::new([
                 "cp".to_owned(),
                 format!(
                     "{}/.",
                     self.source_root.join(step.verifier_test_root()).display()
                 ),
                 format!("{verifier_name}:/tests"),
-            ]))?;
+            ]);
+            let copy = match remaining(&deadline)? {
+                Some(deadline) => copy.with_deadline(deadline),
+                None => copy,
+            };
+            self.runtime.copy(&copy)?;
             let verifier_workdir = self
                 .recipe
                 .resolve_workdir(verifier.environment().workdir());
-            prepare_workdir(
+            prepare_workdir_with_deadline(
                 self.runtime,
                 &verifier_name,
                 verifier.environment(),
                 verifier.phase(),
                 verifier_workdir,
                 verifier_network,
+                remaining(&deadline)?,
             )?;
-            execute_planned_phase(
+            execute_planned_phase_with_deadline(
                 self.runtime,
                 &verifier_name,
                 EvalExecutionPhase::Verifier,
@@ -1166,10 +1220,16 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 verifier.phase(),
                 verifier_workdir,
                 self.secrets,
+                remaining(&deadline)?,
             )?;
             let reward_workspace = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            read_reward_with_runtime(self.runtime, &verifier_name, &reward_workspace)
+            read_reward_with_runtime(
+                self.runtime,
+                &verifier_name,
+                &reward_workspace,
+                remaining(&deadline)?,
+            )
         })();
         let cleanup = if verifier.mode() == VerifierMode::Shared {
             clear_verifier_files(self.runtime, &verifier_name, verifier_network)
@@ -1529,15 +1589,21 @@ impl DockerRuntime for DockerCliRuntime {
         if request.network_lease() == Some(PUBLIC_NETWORK_LEASE) {
             ensure_public_network()?;
         }
-        docker(
-            request.public_arguments().iter().map(String::as_str),
-            "create task container",
+        docker_command_bounded(
+            self.clock.clone(),
+            request.public_arguments().iter().cloned(),
+            "task container creation",
+            request.deadline(),
         )
-        .map(|_| ())
     }
 
     fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError> {
-        docker(["start", request.container()], "start task container").map(|_| ())
+        docker_command_bounded(
+            self.clock.clone(),
+            ["start".to_owned(), request.container().to_owned()],
+            request.container(),
+            request.deadline(),
+        )
     }
 
     fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
@@ -1587,11 +1653,12 @@ impl DockerRuntime for DockerCliRuntime {
     }
 
     fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
-        docker(
-            request.public_arguments().iter().map(String::as_str),
-            "copy Docker files",
+        docker_command_bounded(
+            self.clock.clone(),
+            request.public_arguments().iter().cloned(),
+            "Docker file transfer",
+            request.deadline(),
         )
-        .map(|_| ())
     }
 
     fn container_workdir(&self, container: &str) -> Result<String, EvalExecutionError> {
@@ -2409,6 +2476,7 @@ fn create_planned_container(
     environment: &super::EnvironmentPlan,
     network_lease: &str,
     instruction: Option<&str>,
+    deadline: Option<Duration>,
 ) -> Result<(), EvalExecutionError> {
     let mut arguments = vec![
         "create".to_owned(),
@@ -2438,7 +2506,13 @@ fn create_planned_container(
         ]);
     }
     arguments.extend([image.to_owned(), "sleep".to_owned(), "infinity".to_owned()]);
-    runtime.create(&DockerCreateRequest::new(arguments).with_network_lease(network_lease))
+    let request = match deadline {
+        Some(deadline) => DockerCreateRequest::new(arguments)
+            .with_network_lease(network_lease)
+            .with_deadline(deadline),
+        None => DockerCreateRequest::new(arguments).with_network_lease(network_lease),
+    };
+    runtime.create(&request)
 }
 
 fn prepare_workdir(
@@ -2448,6 +2522,26 @@ fn prepare_workdir(
     phase: &super::PhasePlan,
     workdir: Option<&str>,
     network_lease: &str,
+) -> Result<(), EvalExecutionError> {
+    prepare_workdir_with_deadline(
+        runtime,
+        container,
+        environment,
+        phase,
+        workdir,
+        network_lease,
+        None,
+    )
+}
+
+fn prepare_workdir_with_deadline(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    environment: &super::EnvironmentPlan,
+    phase: &super::PhasePlan,
+    workdir: Option<&str>,
+    network_lease: &str,
+    deadline: Option<Duration>,
 ) -> Result<(), EvalExecutionError> {
     let Some(workdir) = workdir else {
         return Ok(());
@@ -2470,7 +2564,7 @@ fn prepare_workdir(
             None,
             Some(workdir),
             network_lease,
-            phase.timeout(),
+            deadline.or(phase.timeout()),
         ),
     )
 }
@@ -2479,6 +2573,15 @@ fn prepare_verifier_files(
     runtime: &dyn DockerRuntime,
     container: &str,
     network_lease: &str,
+) -> Result<(), EvalExecutionError> {
+    prepare_verifier_files_with_deadline(runtime, container, network_lease, None)
+}
+
+fn prepare_verifier_files_with_deadline(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    network_lease: &str,
+    deadline: Option<Duration>,
 ) -> Result<(), EvalExecutionError> {
     runtime.exec(
         &DockerExecRequest::new(
@@ -2497,7 +2600,7 @@ fn prepare_verifier_files(
             Some("root"),
             None,
             network_lease,
-            None,
+            deadline,
         ),
     )
 }
@@ -2534,6 +2637,7 @@ fn transfer_verifier_artifacts(
     source: &std::path::Path,
     workdir: Option<&str>,
     network_lease: &str,
+    deadline: Option<Duration>,
 ) -> Result<(), EvalExecutionError> {
     let target = match workdir {
         Some(workdir) => workdir.to_owned(),
@@ -2556,14 +2660,19 @@ fn transfer_verifier_artifacts(
             Some("root"),
             None,
             network_lease,
-            None,
+            deadline,
         ),
     )?;
-    runtime.copy(&DockerCopyRequest::new([
+    let request = DockerCopyRequest::new([
         "cp".to_owned(),
         format!("{}/.", source.display()),
         format!("{container}:{target}"),
-    ]))
+    ]);
+    let request = match deadline {
+        Some(deadline) => request.with_deadline(deadline),
+        None => request,
+    };
+    runtime.copy(&request)
 }
 
 fn execute_planned_phase(
@@ -2575,6 +2684,30 @@ fn execute_planned_phase(
     phase: &super::PhasePlan,
     workdir: Option<&str>,
     secrets: &dyn SecretProvider,
+) -> Result<(), EvalExecutionError> {
+    execute_planned_phase_with_deadline(
+        runtime,
+        container,
+        execution_phase,
+        command,
+        environment,
+        phase,
+        workdir,
+        secrets,
+        None,
+    )
+}
+
+fn execute_planned_phase_with_deadline(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    execution_phase: EvalExecutionPhase,
+    command: &[String],
+    environment: &super::EnvironmentPlan,
+    phase: &super::PhasePlan,
+    workdir: Option<&str>,
+    secrets: &dyn SecretProvider,
+    deadline: Option<Duration>,
 ) -> Result<(), EvalExecutionError> {
     if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
         return Err(EvalExecutionError::InvalidCommand);
@@ -2593,7 +2726,7 @@ fn execute_planned_phase(
             phase.user().or(environment.user()),
             workdir,
             network_lease,
-            phase.timeout(),
+            deadline.or(phase.timeout()),
         ),
     )
 }
@@ -2602,6 +2735,7 @@ fn read_reward_with_runtime(
     runtime: &dyn DockerRuntime,
     container: &str,
     workspace: &TempDir,
+    deadline: Option<Duration>,
 ) -> Result<RewardDocument, EvalExecutionError> {
     let json = copy_optional_with_runtime(
         runtime,
@@ -2609,6 +2743,7 @@ fn read_reward_with_runtime(
         "/logs/verifier/reward.json",
         workspace,
         "reward.json",
+        deadline,
     )?;
     let text = copy_optional_with_runtime(
         runtime,
@@ -2616,6 +2751,7 @@ fn read_reward_with_runtime(
         "/logs/verifier/reward.txt",
         workspace,
         "reward.txt",
+        deadline,
     )?;
     RewardDocument::parse(json.as_deref(), text.as_deref())
         .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
@@ -2681,13 +2817,19 @@ fn copy_optional_with_runtime(
     source: &str,
     workspace: &TempDir,
     destination: &str,
+    deadline: Option<Duration>,
 ) -> Result<Option<Vec<u8>>, EvalExecutionError> {
     let destination_path = workspace.path().join(destination);
-    match runtime.copy(&DockerCopyRequest::new([
+    let request = DockerCopyRequest::new([
         "cp".to_owned(),
         format!("{container}:{source}"),
         destination_path.to_string_lossy().into_owned(),
-    ])) {
+    ]);
+    let request = match deadline {
+        Some(deadline) => request.with_deadline(deadline),
+        None => request,
+    };
+    match runtime.copy(&request) {
         Ok(()) => {}
         Err(EvalExecutionError::ProcessFailure(_)) => return Ok(None),
         Err(error) => return Err(error),
