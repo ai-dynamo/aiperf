@@ -601,16 +601,6 @@ impl DockerProcessSandbox {
         environment.workdir = recipe
             .resolve_workdir(environment.workdir())
             .map(ToOwned::to_owned);
-        resolve_environment(&environment, secrets)?;
-        for step in plan.steps() {
-            resolve_phase_environment(&environment, step.agent(), secrets)?;
-            resolve_environment(step.verifier().environment(), secrets)?;
-            resolve_phase_environment(
-                step.verifier().environment(),
-                step.verifier().phase(),
-                secrets,
-            )?;
-        }
         let materialized = package.materialize_source()?;
         let (source_root, environment_root) = standard_task_roots(package, materialized.root())?;
         let source_root = source_root.to_path_buf();
@@ -619,8 +609,9 @@ impl DockerProcessSandbox {
         fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o755))
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
         let (image, _) = docker_run_names(package);
-        let mut lease = ComposeProjectLease::reserve(
+        let mut lease = ComposeProjectLease::reserve_with_clock(
             compose_runtime,
+            self.clock.clone(),
             compose,
             package.source_digest().as_str(),
             source_root.to_string_lossy(),
@@ -665,6 +656,9 @@ impl DockerProcessSandbox {
             environment.user(),
             EvalExecutionPhase::Healthcheck,
             environment.workdir(),
+            environment
+                .healthcheck()
+                .and_then(|healthcheck| healthcheck.timeout()),
         )?;
         if let Some(healthcheck) = environment.healthcheck() {
             run_lease_healthcheck(
@@ -1421,6 +1415,7 @@ fn prepare_lease_workdir(
         phase.user().or(environment.user()),
         execution_phase,
         workdir,
+        phase.timeout(),
     )
 }
 
@@ -1430,6 +1425,7 @@ fn prepare_lease_workdir_for_user(
     user: Option<&str>,
     execution_phase: EvalExecutionPhase,
     workdir: Option<&str>,
+    deadline: Option<Duration>,
 ) -> Result<(), EvalExecutionError> {
     let Some(workdir) = workdir else {
         return Ok(());
@@ -1449,7 +1445,7 @@ fn prepare_lease_workdir_for_user(
         user: Some("root"),
         workdir: Some(workdir),
         network_lease: "default",
-        deadline: None,
+        deadline,
     })
 }
 
@@ -1725,7 +1721,12 @@ impl DockerComposeRuntime for DockerCliRuntime {
     }
 
     fn compose_exec(&self, request: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
-        let container = compose_service_container(request.project(), request.service())?;
+        let container = compose_service_container(
+            self.clock.clone(),
+            request.project(),
+            request.service(),
+            request.deadline(),
+        )?;
         self.exec(
             &DockerExecRequest::new(
                 container,
@@ -1747,7 +1748,12 @@ impl DockerComposeRuntime for DockerCliRuntime {
         &self,
         request: &DockerComposeArchiveRequest,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
-        let container = compose_service_container(request.project(), request.service())?;
+        let container = compose_service_container(
+            self.clock.clone(),
+            request.project(),
+            request.service(),
+            None,
+        )?;
         self.copy_archive(&container, request.source())
     }
 
@@ -1756,7 +1762,12 @@ impl DockerComposeRuntime for DockerCliRuntime {
         request: &DockerComposeArchiveRequest,
         deadline: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
-        let container = compose_service_container(request.project(), request.service())?;
+        let container = compose_service_container(
+            self.clock.clone(),
+            request.project(),
+            request.service(),
+            Some(deadline),
+        )?;
         self.copy_archive_to_file_bounded(&container, request.source(), deadline)
     }
 
@@ -1764,7 +1775,12 @@ impl DockerComposeRuntime for DockerCliRuntime {
         &self,
         request: &DockerComposeCopyRequest,
     ) -> Result<(), EvalExecutionError> {
-        let container = compose_service_container(request.project(), request.service())?;
+        let container = compose_service_container(
+            self.clock.clone(),
+            request.project(),
+            request.service(),
+            None,
+        )?;
         self.copy(&DockerCopyRequest::new([
             "cp".to_owned(),
             request.source().to_owned(),
@@ -1783,7 +1799,12 @@ impl DockerComposeRuntime for DockerCliRuntime {
         &self,
         request: &DockerComposeStopRequest,
     ) -> Result<(), EvalExecutionError> {
-        let container = compose_service_container(request.project(), request.service())?;
+        let container = compose_service_container(
+            self.clock.clone(),
+            request.project(),
+            request.service(),
+            request.deadline(),
+        )?;
         let arguments = compose_stop_arguments(&container, request.deadline());
         docker_command_bounded(
             self.clock.clone(),
@@ -1817,6 +1838,10 @@ impl DockerComposeRuntime for DockerCliRuntime {
         deadline: Duration,
     ) -> Result<super::OwnedComposeResources, EvalExecutionError> {
         let filters = compose_ownership_filters(project);
+        let deadline_ns = self
+            .clock
+            .now_ns()
+            .saturating_add(deadline.as_nanos().min(i64::MAX as u128) as i64);
         let resources = |kind: &str, extra: &[&str]| -> Result<Vec<String>, EvalExecutionError> {
             let mut arguments = vec![kind.to_owned(), "ls".to_owned(), "-q".to_owned()];
             arguments.extend(extra.iter().map(|value| (*value).to_owned()));
@@ -1827,7 +1852,11 @@ impl DockerComposeRuntime for DockerCliRuntime {
                 self.clock.clone(),
                 arguments,
                 project.as_str(),
-                Some(deadline),
+                Some(remaining_provider_deadline(
+                    &self.clock,
+                    deadline_ns,
+                    project.as_str(),
+                )?),
             )?;
             Ok(String::from_utf8_lossy(&output)
                 .lines()
@@ -1841,6 +1870,21 @@ impl DockerComposeRuntime for DockerCliRuntime {
             resources("volume", &[])?,
         ))
     }
+}
+
+fn remaining_provider_deadline(
+    clock: &Rc<dyn Clock>,
+    deadline_ns: i64,
+    target: &str,
+) -> Result<Duration, EvalExecutionError> {
+    let remaining_ns = deadline_ns.saturating_sub(clock.now_ns());
+    if remaining_ns <= 0 {
+        return Err(EvalExecutionError::ContainerTeardown {
+            container: target.to_owned(),
+            reason: "Docker provider deadline elapsed".to_owned(),
+        });
+    }
+    Ok(Duration::from_nanos(remaining_ns as u64))
 }
 
 fn compose_project_arguments(
@@ -1937,7 +1981,7 @@ fn docker_command_bounded(
         .spawn()
         .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose command".to_owned()))?;
     let mut process = DockerExecChild { child };
-    let mut no_remove = |_target: &str| Ok(());
+    let mut no_remove = |_target: &str, _: Duration| Ok(());
     drive_docker_exec(
         clock,
         &mut process,
@@ -1975,7 +2019,7 @@ fn docker_output_bounded(
         .spawn()
         .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose command".to_owned()))?;
     let mut process = DockerExecChild { child };
-    let mut no_remove = |_target: &str| Ok(());
+    let mut no_remove = |_target: &str, _: Duration| Ok(());
     drive_docker_exec(
         clock,
         &mut process,
@@ -1996,8 +2040,10 @@ fn docker_output_bounded(
 }
 
 fn compose_service_container(
+    clock: Rc<dyn Clock>,
     project: &ComposeProjectId,
     service: &super::ComposeServiceName,
+    deadline: Option<Duration>,
 ) -> Result<String, EvalExecutionError> {
     let mut arguments = vec![
         "container".to_owned(),
@@ -2012,10 +2058,7 @@ fn compose_service_container(
         "--filter".to_owned(),
         format!("label=com.docker.compose.service={}", service.as_str()),
     ]);
-    let output = docker(
-        arguments.iter().map(String::as_str),
-        "find Compose service container",
-    )?;
+    let output = docker_output_bounded(clock, arguments, project.as_str(), deadline)?;
     let output = String::from_utf8_lossy(&output);
     let mut containers = output.lines().filter(|line| !line.trim().is_empty());
     let container = containers
@@ -2099,7 +2142,7 @@ impl DockerCliRuntime {
                 EvalExecutionError::ProcessSpawn("docker collect artifact archive".to_owned())
             })?;
         let mut process = DockerExecChild { child };
-        let mut no_remove = |_target: &str| Ok(());
+        let mut no_remove = |_target: &str, _: Duration| Ok(());
         drive_docker_exec(
             self.clock.clone(),
             &mut process,
@@ -2148,7 +2191,7 @@ fn docker_remove_bounded(
             reason: "could not start bounded Docker removal".to_owned(),
         })?;
     let mut process = DockerExecChild { child };
-    let mut no_remove = |_target: &str| Ok(());
+    let mut no_remove = |_target: &str, _: Duration| Ok(());
     let outcome = drive_docker_exec(
         clock,
         &mut process,
@@ -2400,7 +2443,7 @@ fn prepare_workdir(
             None,
             Some(workdir),
             network_lease,
-            None,
+            phase.timeout(),
         ),
     )
 }
@@ -2665,7 +2708,8 @@ fn docker_exec_bounded(
         .spawn()
         .map_err(|_| EvalExecutionError::ProcessSpawn(format!("docker {action}")))?;
     let mut process = DockerExecChild { child };
-    let mut remove = remove_timed_out_container;
+    let mut remove =
+        |container, deadline| remove_timed_out_container(clock.clone(), container, deadline);
     drive_docker_exec(clock, &mut process, container, phase, timeout, &mut remove).map_err(
         |error| match error {
             EvalExecutionError::ProcessFailure(reason) => {
@@ -2694,7 +2738,6 @@ impl DockerExecState {
 trait DockerExecProcess {
     fn try_wait(&mut self) -> Result<DockerExecState, String>;
     fn kill(&mut self) -> Result<(), String>;
-    fn wait(&mut self) -> Result<(), String>;
 }
 
 struct DockerExecChild {
@@ -2721,13 +2764,6 @@ impl DockerExecProcess for DockerExecChild {
     fn kill(&mut self) -> Result<(), String> {
         self.child.kill().map_err(|error| error.to_string())
     }
-
-    fn wait(&mut self) -> Result<(), String> {
-        self.child
-            .wait()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
 }
 
 fn drive_docker_exec<P, F>(
@@ -2740,7 +2776,7 @@ fn drive_docker_exec<P, F>(
 ) -> Result<(), EvalExecutionError>
 where
     P: DockerExecProcess,
-    F: for<'a> FnMut(&'a str) -> Result<(), EvalExecutionError>,
+    F: for<'a> FnMut(&'a str, Duration) -> Result<(), EvalExecutionError>,
 {
     let result = Rc::new(RefCell::new(None));
     let result_slot = result.clone();
@@ -2776,27 +2812,32 @@ async fn wait_for_docker_exec<P, F>(
 ) -> Result<(), EvalExecutionError>
 where
     P: DockerExecProcess,
-    F: for<'a> FnMut(&'a str) -> Result<(), EvalExecutionError>,
+    F: for<'a> FnMut(&'a str, Duration) -> Result<(), EvalExecutionError>,
 {
     let deadline = clock
         .now_ns()
         .saturating_add(timeout.as_nanos().min(i64::MAX as u128) as i64);
     loop {
         if clock.now_ns() >= deadline {
-            return terminate_timed_out_exec(process, container, phase, timeout, false, remove);
+            return terminate_timed_out_exec(
+                clock, process, container, phase, timeout, false, remove,
+            )
+            .await;
         }
         let state = process.try_wait().map_err(|reason| {
             EvalExecutionError::ProcessFailure(format!("docker exec process check: {reason}"))
         })?;
         if clock.now_ns() >= deadline {
             return terminate_timed_out_exec(
+                clock,
                 process,
                 container,
                 phase,
                 timeout,
                 state.is_terminal(),
                 remove,
-            );
+            )
+            .await;
         }
         match state {
             DockerExecState::Succeeded => {
@@ -2818,7 +2859,8 @@ where
     }
 }
 
-fn terminate_timed_out_exec<P, F>(
+async fn terminate_timed_out_exec<P, F>(
+    clock: Rc<dyn Clock>,
     process: &mut P,
     container: &str,
     phase: EvalExecutionPhase,
@@ -2828,11 +2870,14 @@ fn terminate_timed_out_exec<P, F>(
 ) -> Result<(), EvalExecutionError>
 where
     P: DockerExecProcess,
-    F: for<'a> FnMut(&'a str) -> Result<(), EvalExecutionError>,
+    F: for<'a> FnMut(&'a str, Duration) -> Result<(), EvalExecutionError>,
 {
+    let cleanup_deadline = clock.now_ns().saturating_add(TERMINAL_DOCKER_CLEANUP_NS);
     let kill = (!has_observed_terminal_client).then(|| process.kill());
-    let reap = process.wait();
-    let removal = remove(container);
+    let reap = wait_for_docker_client_exit(clock.clone(), process, cleanup_deadline).await;
+    let removal_deadline = remaining_provider_deadline(&clock, cleanup_deadline, container)
+        .unwrap_or(Duration::from_nanos(1));
+    let removal = remove(container, removal_deadline);
     if let Err(error) = removal {
         return Err(error);
     }
@@ -2855,41 +2900,56 @@ where
     Err(EvalExecutionError::Timeout { phase, timeout })
 }
 
-fn remove_timed_out_container(container: &str) -> Result<(), EvalExecutionError> {
-    let removal = Command::new("docker")
-        .args(["rm", "--force", "--volumes", container])
-        .output()
-        .map_err(|_| EvalExecutionError::ContainerTeardown {
-            container: container.to_owned(),
-            reason: "could not start docker rm --force --volumes".to_owned(),
-        })?;
-    if !removal.status.success() && !reports_absent_container(&removal.stderr) {
-        return Err(EvalExecutionError::ContainerTeardown {
-            container: container.to_owned(),
-            reason: String::from_utf8_lossy(&removal.stderr).trim().to_owned(),
-        });
+const TERMINAL_DOCKER_CLEANUP_NS: i64 = 10_000_000_000;
+
+async fn wait_for_docker_client_exit<P: DockerExecProcess>(
+    clock: Rc<dyn Clock>,
+    process: &mut P,
+    deadline_ns: i64,
+) -> Result<(), String> {
+    loop {
+        match process.try_wait()? {
+            DockerExecState::Succeeded | DockerExecState::Failed(_) => return Ok(()),
+            DockerExecState::Running => {}
+        }
+        let remaining_ns = deadline_ns.saturating_sub(clock.now_ns());
+        if remaining_ns <= 0 {
+            return Err("timed out reaping docker exec client".to_owned());
+        }
+        clock
+            .clone()
+            .sleep(remaining_ns.min(DOCKER_EXEC_POLL_NS))
+            .await;
     }
-    let inspection = Command::new("docker")
-        .args(["container", "inspect", container])
-        .output()
-        .map_err(|_| EvalExecutionError::ContainerTeardown {
+}
+
+fn remove_timed_out_container(
+    clock: Rc<dyn Clock>,
+    container: &str,
+    deadline: Duration,
+) -> Result<(), EvalExecutionError> {
+    docker_remove_bounded(
+        clock.clone(),
+        vec!["rm", "--force", "--volumes", container],
+        deadline,
+    )?;
+    match docker_output_bounded(
+        clock,
+        [
+            "container".to_owned(),
+            "inspect".to_owned(),
+            container.to_owned(),
+        ],
+        container,
+        Some(deadline),
+    ) {
+        Ok(_) => Err(EvalExecutionError::ContainerTeardown {
             container: container.to_owned(),
-            reason: "could not start docker container inspect".to_owned(),
-        })?;
-    if !inspection.status.success() && reports_absent_container(&inspection.stderr) {
-        return Ok(());
+            reason: "docker container inspect found the container after forced removal".to_owned(),
+        }),
+        Err(EvalExecutionError::ProcessFailure(_)) => Ok(()),
+        Err(error) => Err(error),
     }
-    let reason = if inspection.status.success() {
-        "docker container inspect found the container after forced removal".to_owned()
-    } else {
-        String::from_utf8_lossy(&inspection.stderr)
-            .trim()
-            .to_owned()
-    };
-    Err(EvalExecutionError::ContainerTeardown {
-        container: container.to_owned(),
-        reason,
-    })
 }
 
 fn reports_absent_container(stderr: &[u8]) -> bool {
@@ -2993,7 +3053,7 @@ mod tests {
         let mut process = FakeDockerExec::new(clock.clone(), [DockerExecState::Succeeded])
             .advance_terminal_to(100);
         let was_removed = Cell::new(false);
-        let mut remove = |_: &str| {
+        let mut remove = |_: &str, _: Duration| {
             was_removed.set(true);
             Ok(())
         };
@@ -3016,7 +3076,6 @@ mod tests {
         );
         assert!(was_removed.get());
         assert!(!process.was_killed.get());
-        assert!(process.was_reaped.get());
     }
 
     #[test]
@@ -3028,7 +3087,7 @@ mod tests {
         )
         .advance_terminal_to(100);
         let was_removed = Cell::new(false);
-        let mut remove = |_: &str| {
+        let mut remove = |_: &str, _: Duration| {
             was_removed.set(true);
             Ok(())
         };
@@ -3059,7 +3118,7 @@ mod tests {
         let mut process =
             FakeDockerExec::new(clock.clone(), [DockerExecState::Running]).kill_fails();
         let was_removed = Cell::new(false);
-        let mut remove = |_: &str| {
+        let mut remove = |_: &str, _: Duration| {
             was_removed.set(true);
             Ok(())
         };
@@ -3082,16 +3141,14 @@ mod tests {
             }) if container == "agent-container"
         ));
         assert!(was_removed.get());
-        assert!(process.was_reaped.get());
     }
 
     #[test]
-    fn reap_failure_returns_typed_terminal_uncertainty_after_removal() {
+    fn reap_deadline_returns_typed_terminal_uncertainty_after_removal() {
         let clock = Rc::new(SimClock::new());
-        let mut process =
-            FakeDockerExec::new(clock.clone(), [DockerExecState::Running]).wait_fails();
+        let mut process = FakeDockerExec::new(clock.clone(), [DockerExecState::Running]);
         let was_removed = Cell::new(false);
-        let mut remove = |_: &str| {
+        let mut remove = |_: &str, _: Duration| {
             was_removed.set(true);
             Ok(())
         };
@@ -3115,7 +3172,6 @@ mod tests {
         ));
         assert!(was_removed.get());
         assert!(process.was_killed.get());
-        assert!(process.was_reaped.get());
     }
 
     #[tokio::test]
@@ -3225,10 +3281,8 @@ mod tests {
         states: VecDeque<DockerExecState>,
         advance_terminal_to: Option<i64>,
         kill_fails: bool,
-        wait_fails: bool,
         terminal_observed: bool,
         was_killed: Cell<bool>,
-        was_reaped: Cell<bool>,
     }
 
     impl FakeDockerExec {
@@ -3238,10 +3292,8 @@ mod tests {
                 states: states.into_iter().collect(),
                 advance_terminal_to: None,
                 kill_fails: false,
-                wait_fails: false,
                 terminal_observed: false,
                 was_killed: Cell::new(false),
-                was_reaped: Cell::new(false),
             }
         }
 
@@ -3252,11 +3304,6 @@ mod tests {
 
         fn kill_fails(mut self) -> Self {
             self.kill_fails = true;
-            self
-        }
-
-        fn wait_fails(mut self) -> Self {
-            self.wait_fails = true;
             self
         }
     }
@@ -3279,15 +3326,6 @@ mod tests {
                 Err("cannot kill an observed terminal child".to_owned())
             } else if self.kill_fails {
                 Err("simulated kill failure".to_owned())
-            } else {
-                Ok(())
-            }
-        }
-
-        fn wait(&mut self) -> Result<(), String> {
-            self.was_reaped.set(true);
-            if self.wait_fails {
-                Err("simulated reap failure".to_owned())
             } else {
                 Ok(())
             }

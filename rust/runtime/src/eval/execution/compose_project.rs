@@ -3,11 +3,9 @@
 
 //! State-bounded lifecycle management for a task-owned Compose project.
 
-use std::{
-    collections::BTreeSet,
-    io::Read,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeSet, io::Read, rc::Rc, time::Duration};
+
+use crate::clock::{Clock, RealClock};
 
 use super::task_environment::{
     ServiceArchiveRequest, ServiceExecRequest, ServiceHandle, TaskEnvironmentLease,
@@ -27,20 +25,26 @@ use super::{
 pub(crate) const TERMINAL_COMPOSE_CLEANUP_DEADLINE: Duration = Duration::from_secs(10);
 
 /// One host deadline shared by terminal cleanup provider operations.
-struct CleanupDeadline(Instant);
+struct CleanupDeadline {
+    clock: Rc<dyn Clock>,
+    deadline_ns: i64,
+}
 
 impl CleanupDeadline {
-    fn new(timeout: Duration) -> Self {
-        Self(Instant::now() + timeout)
+    fn new(clock: Rc<dyn Clock>, timeout: Duration) -> Self {
+        let timeout_ns = timeout.as_nanos().min(i64::MAX as u128) as i64;
+        let deadline_ns = clock.now_ns().saturating_add(timeout_ns);
+        Self { clock, deadline_ns }
     }
     fn remaining(&self) -> Result<Duration, EvalExecutionError> {
-        self.0
-            .checked_duration_since(Instant::now())
-            .filter(|value| !value.is_zero())
-            .ok_or_else(|| EvalExecutionError::ContainerTeardown {
+        let remaining_ns = self.deadline_ns.saturating_sub(self.clock.now_ns());
+        if remaining_ns <= 0 {
+            return Err(EvalExecutionError::ContainerTeardown {
                 container: "Compose project".to_owned(),
                 reason: "terminal cleanup deadline elapsed".to_owned(),
-            })
+            });
+        }
+        Ok(Duration::from_nanos(remaining_ns as u64))
     }
 }
 
@@ -57,6 +61,7 @@ pub(crate) enum ComposeLeaseState {
 /// A registered task-owned Compose project lease.
 pub(crate) struct ComposeProjectLease<'a> {
     runtime: &'a dyn DockerComposeRuntime,
+    clock: Rc<dyn Clock>,
     project: ComposeProjectId,
     project_directory: String,
     services: BTreeSet<ComposeServiceName>,
@@ -77,6 +82,24 @@ impl<'a> ComposeProjectLease<'a> {
         project_directory: impl Into<String>,
         main_image: impl Into<String>,
     ) -> Result<Self, EvalExecutionError> {
+        Self::reserve_with_clock(
+            runtime,
+            RealClock::new(),
+            plan,
+            source_digest,
+            project_directory,
+            main_image,
+        )
+    }
+
+    pub(crate) fn reserve_with_clock(
+        runtime: &'a dyn DockerComposeRuntime,
+        clock: Rc<dyn Clock>,
+        plan: &ComposeProjectPlan,
+        source_digest: &str,
+        project_directory: impl Into<String>,
+        main_image: impl Into<String>,
+    ) -> Result<Self, EvalExecutionError> {
         let prefix: String = source_digest
             .chars()
             .filter(char::is_ascii_alphanumeric)
@@ -89,6 +112,7 @@ impl<'a> ComposeProjectLease<'a> {
             ComposeProjectId::new(format!("aiperf-{prefix}-{}", uuid::Uuid::new_v4().simple()));
         Ok(Self {
             runtime,
+            clock,
             project,
             project_directory: project_directory.into(),
             services: plan.services().clone(),
@@ -146,7 +170,7 @@ impl<'a> ComposeProjectLease<'a> {
         &mut self,
         phase_error: EvalExecutionError,
     ) -> Result<(), EvalExecutionError> {
-        match self.teardown() {
+        match self.teardown_after_terminal_failure(TERMINAL_COMPOSE_CLEANUP_DEADLINE) {
             Ok(()) => Err(phase_error),
             Err(cleanup_error) => Err(EvalExecutionError::ContainerTeardown {
                 container: self.project.as_str().to_owned(),
@@ -208,7 +232,7 @@ impl<'a> ComposeProjectLease<'a> {
         if self.state == ComposeLeaseState::Down {
             return Ok(());
         }
-        let cleanup_deadline = CleanupDeadline::new(deadline);
+        let cleanup_deadline = CleanupDeadline::new(self.clock.clone(), deadline);
         let request = DockerComposeDownRequest::new(self.project.clone(), &self.project_directory)
             .with_deadline(cleanup_deadline.remaining()?);
         let request = if is_terminal_failure {
