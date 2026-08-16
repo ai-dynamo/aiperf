@@ -3,6 +3,7 @@
 
 //! Immutable evaluation identities and evidence contracts.
 
+mod artifact_manifest;
 mod evidence;
 mod execution;
 mod health;
@@ -18,6 +19,9 @@ mod training;
 mod trial;
 mod verifier;
 
+pub use artifact_manifest::{
+    ArtifactManifestError, DeclaredArtifactManifest, MaterializedArtifactManifest,
+};
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
     AgentCapability, DockerProcessSandbox, EvalExecutionError, EvalExecutionPhase,
