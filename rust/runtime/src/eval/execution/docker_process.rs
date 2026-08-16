@@ -10,7 +10,11 @@ use std::{
     os::unix::fs::PermissionsExt,
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    thread::{self, sleep},
     time::Duration,
 };
 
@@ -1051,24 +1055,16 @@ impl DockerRuntime for DockerCliRuntime {
         container: &str,
         source: &str,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
-        let mut child = Command::new("docker")
-            .args(["cp", &format!("{container}:{source}"), "-"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| {
-                EvalExecutionError::ProcessSpawn("docker collect artifact archive".to_owned())
-            })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            EvalExecutionError::ArtifactCollection(
-                "docker collect artifact archive did not provide stdout".to_owned(),
-            )
-        })?;
-        Ok(Box::new(DockerArchiveReader {
-            child,
-            stdout,
-            is_complete: false,
-        }))
+        self.copy_archive_with_deadline(container, source, None)
+    }
+
+    fn copy_archive_bounded(
+        &self,
+        container: &str,
+        source: &str,
+        deadline: Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        self.copy_archive_with_deadline(container, source, Some(deadline))
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
@@ -1103,6 +1099,51 @@ impl DockerRuntime for DockerCliRuntime {
             }
             Err(error) => Err(error),
         }
+    }
+}
+
+impl DockerCliRuntime {
+    fn copy_archive_with_deadline(
+        &self,
+        container: &str,
+        source: &str,
+        deadline: Option<Duration>,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        let mut child = Command::new("docker")
+            .args(["cp", &format!("{container}:{source}"), "-"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| {
+                EvalExecutionError::ProcessSpawn("docker collect artifact archive".to_owned())
+            })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            EvalExecutionError::ArtifactCollection(
+                "docker collect artifact archive did not provide stdout".to_owned(),
+            )
+        })?;
+        let child = Arc::new(Mutex::new(child));
+        let timed_out = Arc::new(AtomicBool::new(false));
+        if let Some(deadline) = deadline {
+            let timer_child = child.clone();
+            let timer_timed_out = timed_out.clone();
+            thread::spawn(move || {
+                sleep(deadline);
+                let Ok(mut child) = timer_child.lock() else {
+                    return;
+                };
+                if child.try_wait().ok().flatten().is_none() {
+                    timer_timed_out.store(true, Ordering::Relaxed);
+                    let _ = child.kill();
+                }
+            });
+        }
+        Ok(Box::new(DockerArchiveReader {
+            child,
+            stdout,
+            is_complete: false,
+            timed_out,
+        }))
     }
 }
 
@@ -1177,9 +1218,10 @@ fn classify_bounded_remove_result(
 }
 
 struct DockerArchiveReader {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     stdout: ChildStdout,
     is_complete: bool,
+    timed_out: Arc<AtomicBool>,
 }
 
 impl DockerArchiveReader {
@@ -1187,8 +1229,18 @@ impl DockerArchiveReader {
         if self.is_complete {
             return Ok(());
         }
-        let status = self.child.wait()?;
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| io::Error::other("docker archive process lock poisoned"))?;
+        let status = child.wait()?;
         self.is_complete = true;
+        if self.timed_out.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "docker collect artifact archive timed out",
+            ));
+        }
         if status.success() {
             Ok(())
         } else {
@@ -1209,9 +1261,12 @@ impl Read for DockerArchiveReader {
 
 impl Drop for DockerArchiveReader {
     fn drop(&mut self) {
-        if !self.is_complete && self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+        if !self.is_complete
+            && let Ok(mut child) = self.child.lock()
+            && child.try_wait().ok().flatten().is_none()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }

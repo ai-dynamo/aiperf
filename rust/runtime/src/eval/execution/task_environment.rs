@@ -3,7 +3,7 @@
 
 //! Backend-neutral leases for task-owned benchmark environments.
 
-use std::{collections::BTreeMap, io::Read};
+use std::{collections::BTreeMap, io::Read, time::Duration};
 
 use super::{
     ComposeServiceName, DockerExecRequest, DockerRuntime, EnvName, EvalExecutionError,
@@ -38,6 +38,13 @@ pub(crate) struct ServiceExecRequest<'a> {
     pub(crate) deadline: Option<std::time::Duration>,
 }
 
+/// A bounded archive request directed to one task service.
+pub(crate) struct ServiceArchiveRequest<'a> {
+    pub(crate) service: &'a ComposeServiceName,
+    pub(crate) source: &'a str,
+    pub(crate) deadline: Duration,
+}
+
 /// A live, task-owned environment whose services can be used by benchmark phases.
 pub(crate) trait TaskEnvironmentLease {
     fn main_service(&self) -> &ComposeServiceName;
@@ -45,8 +52,7 @@ pub(crate) trait TaskEnvironmentLease {
     fn exec(&mut self, request: ServiceExecRequest<'_>) -> Result<(), EvalExecutionError>;
     fn archive(
         &mut self,
-        service: &ComposeServiceName,
-        source: &str,
+        request: ServiceArchiveRequest<'_>,
     ) -> Result<Box<dyn Read>, EvalExecutionError>;
     fn stop_main(&mut self) -> Result<(), EvalExecutionError>;
     fn main_image_id(&self) -> Result<&str, EvalExecutionError>;
@@ -105,13 +111,13 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
     }
     fn archive(
         &mut self,
-        service: &ComposeServiceName,
-        source: &str,
+        request: ServiceArchiveRequest<'_>,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
-        if service != &self.main {
+        if request.service != &self.main {
             return Err(EvalExecutionError::InvalidRecipe("Dockerfile service"));
         }
-        self.runtime.copy_archive(&self.container, source)
+        self.runtime
+            .copy_archive_bounded(&self.container, request.source, request.deadline)
     }
     fn stop_main(&mut self) -> Result<(), EvalExecutionError> {
         Ok(())

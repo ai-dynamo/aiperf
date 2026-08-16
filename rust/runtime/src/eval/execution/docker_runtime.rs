@@ -819,6 +819,16 @@ pub trait DockerRuntime {
         ))
     }
 
+    /// Opens one declared container path while enforcing its collection deadline.
+    fn copy_archive_bounded(
+        &self,
+        container: &str,
+        source: &str,
+        _: Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        self.copy_archive(container, source)
+    }
+
     /// Removes a container, image, or related lease.
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError>;
 }
@@ -848,6 +858,15 @@ pub trait DockerComposeRuntime: DockerRuntime {
         &self,
         request: &DockerComposeArchiveRequest,
     ) -> Result<Box<dyn Read>, EvalExecutionError>;
+
+    /// Opens one service path while enforcing its collection deadline.
+    fn compose_copy_archive_bounded(
+        &self,
+        request: &DockerComposeArchiveRequest,
+        _: Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        self.compose_copy_archive(request)
+    }
 
     /// Stops one service.
     fn compose_stop_service(

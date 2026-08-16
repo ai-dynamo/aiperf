@@ -9,6 +9,7 @@ use std::{
     io::{self, Read, Write},
     os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use tar::{Archive, EntryType};
@@ -16,7 +17,36 @@ use tempfile::NamedTempFile;
 
 use crate::eval::ArtifactDigest;
 
-use super::{ArtifactSpec, DockerRuntime, EvalExecutionError};
+use super::{
+    ArtifactSpec, DockerRuntime, EvalExecutionError, EvalExecutionPhase, VerifierCollectHook,
+    task_environment::{ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease},
+};
+
+/// A monotonic deadline shared by collection hooks and archive snapshots.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Deadline {
+    started: Instant,
+    timeout: Duration,
+}
+
+impl Deadline {
+    pub(crate) fn from_timeout(timeout: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            timeout,
+        }
+    }
+
+    fn remaining(self) -> Result<Duration, EvalExecutionError> {
+        self.timeout
+            .checked_sub(self.started.elapsed())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or(EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::CollectionHook,
+                timeout: self.timeout,
+            })
+    }
+}
 
 /// Collects exactly the declared container files into a private host directory.
 pub fn collect_artifacts(
@@ -26,6 +56,7 @@ pub fn collect_artifacts(
     destination: &Path,
 ) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
     fs::create_dir_all(destination).map_err(artifact_error)?;
+    fs::set_permissions(destination, fs::Permissions::from_mode(0o700)).map_err(artifact_error)?;
     let mut collected = Vec::new();
     let mut destinations = BTreeSet::new();
     for artifact in artifacts {
@@ -40,6 +71,145 @@ pub fn collect_artifacts(
     }
     collected.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(collected)
+}
+
+/// Collects declared files from their owning task services into one frozen snapshot.
+pub(crate) fn collect_service_artifacts(
+    lease: &mut dyn TaskEnvironmentLease,
+    artifacts: &[ArtifactSpec],
+    destination: &Path,
+    deadline: Deadline,
+) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
+    fs::create_dir_all(destination).map_err(artifact_error)?;
+    fs::set_permissions(destination, fs::Permissions::from_mode(0o700)).map_err(artifact_error)?;
+    let mut collected = Vec::new();
+    let mut destinations = BTreeSet::new();
+    for artifact in artifacts {
+        collect_one_service_artifact(
+            lease,
+            artifact,
+            destination,
+            deadline,
+            &mut destinations,
+            &mut collected,
+        )?;
+    }
+    collected.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(collected)
+}
+
+/// Collects a terminal step's service evidence in its required shutdown order.
+pub(crate) fn collect_service_evidence(
+    lease: &mut dyn TaskEnvironmentLease,
+    hooks: &[VerifierCollectHook],
+    artifacts: &[ArtifactSpec],
+    destination: &Path,
+    deadline: Deadline,
+) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
+    let outcome = (|| {
+        fs::create_dir_all(destination).map_err(artifact_error)?;
+        fs::set_permissions(destination, fs::Permissions::from_mode(0o700))
+            .map_err(artifact_error)?;
+        let mut collected = Vec::new();
+        let mut destinations = BTreeSet::new();
+        let main = lease.main_service().clone();
+        for hook in hooks.iter().filter(|hook| hook.service() == &main) {
+            run_collection_hook(lease, hook, deadline)?;
+        }
+        for artifact in artifacts
+            .iter()
+            .filter(|artifact| artifact.service_name() == &main)
+        {
+            collect_one_service_artifact(
+                lease,
+                artifact,
+                destination,
+                deadline,
+                &mut destinations,
+                &mut collected,
+            )?;
+        }
+        let has_non_main = hooks.iter().any(|hook| hook.service() != &main)
+            || artifacts
+                .iter()
+                .any(|artifact| artifact.service_name() != &main);
+        if has_non_main {
+            deadline.remaining()?;
+            lease.stop_main()?;
+        }
+        for hook in hooks.iter().filter(|hook| hook.service() != &main) {
+            run_collection_hook(lease, hook, deadline)?;
+        }
+        for artifact in artifacts
+            .iter()
+            .filter(|artifact| artifact.service_name() != &main)
+        {
+            collect_one_service_artifact(
+                lease,
+                artifact,
+                destination,
+                deadline,
+                &mut destinations,
+                &mut collected,
+            )?;
+        }
+        collected.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(collected)
+    })();
+    if outcome.is_err() {
+        let _ = lease.teardown();
+    }
+    outcome
+}
+
+fn collect_one_service_artifact(
+    lease: &mut dyn TaskEnvironmentLease,
+    artifact: &ArtifactSpec,
+    destination: &Path,
+    deadline: Deadline,
+    destinations: &mut BTreeSet<String>,
+    collected: &mut Vec<(String, ArtifactDigest)>,
+) -> Result<(), EvalExecutionError> {
+    deadline.remaining()?;
+    let archive = lease.archive(ServiceArchiveRequest {
+        service: artifact.service_name(),
+        source: artifact.source(),
+        deadline: deadline.remaining()?,
+    })?;
+    collect_archive(artifact, archive, destination, destinations, collected)?;
+    deadline.remaining()?;
+    Ok(())
+}
+
+/// Runs one declared collection hook without exposing phase secrets to the service.
+pub(crate) fn run_collection_hook(
+    lease: &mut dyn TaskEnvironmentLease,
+    hook: &VerifierCollectHook,
+    deadline: Deadline,
+) -> Result<(), EvalExecutionError> {
+    let timeout = hook.timeout().min(deadline.remaining()?);
+    let request = ServiceExecRequest {
+        service: hook.service(),
+        arguments: hook.command(),
+        public_environment: Default::default(),
+        secret_environment: Default::default(),
+        phase: EvalExecutionPhase::CollectionHook,
+        user: hook.user(),
+        workdir: None,
+        network_lease: "default",
+        deadline: Some(timeout),
+    };
+    match lease.exec(request) {
+        Ok(()) => deadline.remaining().map(|_| ()),
+        Err(EvalExecutionError::Timeout { timeout, .. }) => Err(EvalExecutionError::Timeout {
+            phase: EvalExecutionPhase::CollectionHook,
+            timeout,
+        }),
+        Err(error) => Err(EvalExecutionError::CollectionHook {
+            service: hook.service().as_str().to_owned(),
+            reason: error.to_string(),
+        }),
+    }
 }
 
 /// Copies a verified collection directory into an isolated verifier directory.
@@ -323,4 +493,360 @@ fn glob_matches_bytes(pattern: &[u8], path: &[u8]) -> bool {
 
 fn artifact_error(error: std::io::Error) -> EvalExecutionError {
     EvalExecutionError::ArtifactCollection(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::BTreeMap,
+        io::{self, Read},
+        time::Duration,
+    };
+
+    use tempfile::tempdir;
+
+    use crate::eval::ComposeServiceName;
+
+    use super::*;
+    use crate::eval::execution::task_environment::{
+        ServiceArchiveRequest, ServiceExecRequest, ServiceHandle, TaskEnvironmentLease,
+    };
+
+    #[test]
+    fn service_collection_uses_each_declared_service_archive() {
+        let mut lease = RecordingLease::with_archives([
+            ("main", tar_archive("main.txt", b"main")),
+            ("api", tar_archive("api.txt", b"api")),
+        ]);
+        let artifacts = [
+            ArtifactSpec::exact_file_for_service(
+                "/workspace/main.txt".to_owned(),
+                ComposeServiceName::main(),
+            ),
+            ArtifactSpec::exact_file_for_service(
+                "/evidence/api.txt".to_owned(),
+                ComposeServiceName::parse("api").unwrap(),
+            ),
+        ];
+        let destination = tempdir().unwrap();
+
+        let collected = collect_service_artifacts(
+            &mut lease,
+            &artifacts,
+            destination.path(),
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            lease.archives,
+            ["main:/workspace/main.txt", "api:/evidence/api.txt"]
+        );
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn collection_hook_forwards_exact_argv_without_secrets() {
+        let mut lease = RecordingLease::with_archives([]);
+        let hook = VerifierCollectHook {
+            service: ComposeServiceName::parse("api").unwrap(),
+            command: vec!["collector".to_owned(), "--format=json".to_owned()],
+            timeout: Duration::from_secs(3),
+            user: Some("1000".to_owned()),
+        };
+
+        run_collection_hook(
+            &mut lease,
+            &hook,
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            lease.executions,
+            [(
+                "api".to_owned(),
+                vec!["collector".to_owned(), "--format=json".to_owned()],
+                Some("1000".to_owned()),
+                0,
+            )]
+        );
+    }
+
+    #[test]
+    fn expired_collection_window_runs_no_hook() {
+        let mut lease = RecordingLease::with_archives([]);
+        let hook = VerifierCollectHook {
+            service: ComposeServiceName::main(),
+            command: vec!["collector".to_owned()],
+            timeout: Duration::from_secs(3),
+            user: None,
+        };
+
+        let error = run_collection_hook(&mut lease, &hook, Deadline::from_timeout(Duration::ZERO))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::CollectionHook,
+                ..
+            }
+        ));
+        assert!(lease.executions.is_empty());
+    }
+
+    #[test]
+    fn provider_hook_timeout_is_classified_as_collection_work() {
+        let mut lease = RecordingLease::with_archives([]);
+        lease.timeout_hook_service = Some("main".to_owned());
+        let hook = hook("main", ["collector"]);
+
+        let error = run_collection_hook(
+            &mut lease,
+            &hook,
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::CollectionHook,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn terminal_evidence_stops_main_before_sidecar_and_tears_down_on_hook_failure() {
+        let mut lease = RecordingLease::with_archives([
+            ("main", tar_archive("main.txt", b"main")),
+            ("api", tar_archive("api.txt", b"api")),
+        ]);
+        lease.fail_hook_service = Some("main".to_owned());
+        let hooks = [hook("main", ["main-hook"]), hook("api", ["api-hook"])];
+        let artifacts = [
+            ArtifactSpec::exact_file_for_service(
+                "/workspace/main.txt".to_owned(),
+                ComposeServiceName::main(),
+            ),
+            ArtifactSpec::exact_file_for_service(
+                "/evidence/api.txt".to_owned(),
+                ComposeServiceName::parse("api").unwrap(),
+            ),
+        ];
+        let destination = tempdir().unwrap();
+
+        let error = collect_service_evidence(
+            &mut lease,
+            &hooks,
+            &artifacts,
+            destination.path(),
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, EvalExecutionError::CollectionHook { .. }));
+        assert_eq!(lease.events, ["hook:main", "teardown"]);
+    }
+
+    #[test]
+    fn terminal_evidence_orders_main_then_sidecar_services() {
+        let mut lease = RecordingLease::with_archives([
+            ("main", tar_archive("main.txt", b"main")),
+            ("api", tar_archive("api.txt", b"api")),
+        ]);
+        let hooks = [hook("main", ["main-hook"]), hook("api", ["api-hook"])];
+        let artifacts = [
+            ArtifactSpec::exact_file_for_service(
+                "/workspace/main.txt".to_owned(),
+                ComposeServiceName::main(),
+            ),
+            ArtifactSpec::exact_file_for_service(
+                "/evidence/api.txt".to_owned(),
+                ComposeServiceName::parse("api").unwrap(),
+            ),
+        ];
+        let destination = tempdir().unwrap();
+
+        collect_service_evidence(
+            &mut lease,
+            &hooks,
+            &artifacts,
+            destination.path(),
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            lease.events,
+            [
+                "hook:main",
+                "archive:main:/workspace/main.txt",
+                "stop:main",
+                "hook:api",
+                "archive:api:/evidence/api.txt",
+            ]
+        );
+    }
+
+    #[test]
+    fn archive_timeout_prevents_later_service_work_and_tears_down() {
+        let mut lease = RecordingLease::with_archives([
+            ("main", tar_archive("main.txt", b"main")),
+            ("api", tar_archive("api.txt", b"api")),
+        ]);
+        lease.timeout_archive_service = Some("main".to_owned());
+        let hooks = [hook("main", ["main-hook"]), hook("api", ["api-hook"])];
+        let artifacts = [
+            ArtifactSpec::exact_file_for_service(
+                "/workspace/main.txt".to_owned(),
+                ComposeServiceName::main(),
+            ),
+            ArtifactSpec::exact_file_for_service(
+                "/evidence/api.txt".to_owned(),
+                ComposeServiceName::parse("api").unwrap(),
+            ),
+        ];
+        let destination = tempdir().unwrap();
+
+        let error = collect_service_evidence(
+            &mut lease,
+            &hooks,
+            &artifacts,
+            destination.path(),
+            Deadline::from_timeout(Duration::from_secs(5)),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::CollectionHook,
+                ..
+            }
+        ));
+        assert_eq!(
+            lease.events,
+            ["hook:main", "archive:main:/workspace/main.txt", "teardown",]
+        );
+    }
+
+    fn hook<const N: usize>(service: &str, command: [&str; N]) -> VerifierCollectHook {
+        VerifierCollectHook {
+            service: ComposeServiceName::parse(service).unwrap(),
+            command: command.into_iter().map(str::to_owned).collect(),
+            timeout: Duration::from_secs(3),
+            user: None,
+        }
+    }
+
+    fn tar_archive(path: &str, contents: &[u8]) -> Vec<u8> {
+        let mut archive = Vec::new();
+        let mut builder = tar::Builder::new(&mut archive);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, path, contents).unwrap();
+        builder.finish().unwrap();
+        drop(builder);
+        archive
+    }
+
+    struct RecordingLease {
+        main: ComposeServiceName,
+        archives: Vec<String>,
+        executions: Vec<(String, Vec<String>, Option<String>, usize)>,
+        events: Vec<String>,
+        fail_hook_service: Option<String>,
+        timeout_hook_service: Option<String>,
+        timeout_archive_service: Option<String>,
+        bytes: BTreeMap<String, Vec<u8>>,
+    }
+
+    impl RecordingLease {
+        fn with_archives(entries: impl IntoIterator<Item = (&'static str, Vec<u8>)>) -> Self {
+            Self {
+                main: ComposeServiceName::main(),
+                archives: Vec::new(),
+                executions: Vec::new(),
+                events: Vec::new(),
+                fail_hook_service: None,
+                timeout_hook_service: None,
+                timeout_archive_service: None,
+                bytes: entries
+                    .into_iter()
+                    .map(|(service, archive)| (service.to_owned(), archive))
+                    .collect(),
+            }
+        }
+    }
+
+    impl TaskEnvironmentLease for RecordingLease {
+        fn main_service(&self) -> &ComposeServiceName {
+            &self.main
+        }
+        fn service(&self, name: &ComposeServiceName) -> Result<ServiceHandle, EvalExecutionError> {
+            Ok(ServiceHandle::new(name.clone()))
+        }
+        fn exec(&mut self, request: ServiceExecRequest<'_>) -> Result<(), EvalExecutionError> {
+            self.events
+                .push(format!("hook:{}", request.service.as_str()));
+            self.executions.push((
+                request.service.as_str().to_owned(),
+                request.arguments.to_vec(),
+                request.user.map(str::to_owned),
+                request.secret_environment.len(),
+            ));
+            if self.timeout_hook_service.as_deref() == Some(request.service.as_str()) {
+                return Err(EvalExecutionError::Timeout {
+                    phase: EvalExecutionPhase::Agent,
+                    timeout: request.deadline.unwrap_or_default(),
+                });
+            }
+            if self.fail_hook_service.as_deref() == Some(request.service.as_str()) {
+                return Err(EvalExecutionError::ProcessFailure("hook failed".to_owned()));
+            }
+            Ok(())
+        }
+        fn archive(
+            &mut self,
+            request: ServiceArchiveRequest<'_>,
+        ) -> Result<Box<dyn Read>, EvalExecutionError> {
+            self.archives
+                .push(format!("{}:{}", request.service.as_str(), request.source));
+            self.events.push(format!(
+                "archive:{}:{}",
+                request.service.as_str(),
+                request.source
+            ));
+            if self.timeout_archive_service.as_deref() == Some(request.service.as_str()) {
+                return Err(EvalExecutionError::Timeout {
+                    phase: EvalExecutionPhase::CollectionHook,
+                    timeout: request.deadline,
+                });
+            }
+            let bytes = self
+                .bytes
+                .get(request.service.as_str())
+                .cloned()
+                .ok_or_else(|| {
+                    EvalExecutionError::ArtifactCollection("missing archive".to_owned())
+                })?;
+            Ok(Box::new(io::Cursor::new(bytes)))
+        }
+        fn stop_main(&mut self) -> Result<(), EvalExecutionError> {
+            self.events.push("stop:main".to_owned());
+            Ok(())
+        }
+        fn main_image_id(&self) -> Result<&str, EvalExecutionError> {
+            Ok("image")
+        }
+        fn teardown(&mut self) -> Result<(), EvalExecutionError> {
+            self.events.push("teardown".to_owned());
+            Ok(())
+        }
+    }
 }

@@ -10,7 +10,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use super::task_environment::{ServiceExecRequest, ServiceHandle, TaskEnvironmentLease};
+use super::task_environment::{
+    ServiceArchiveRequest, ServiceExecRequest, ServiceHandle, TaskEnvironmentLease,
+};
 use super::{
     ComposeProjectId, ComposeProjectPlan, ComposeServiceName, DockerComposeArchiveRequest,
     DockerComposeBuildRequest, DockerComposeDownRequest, DockerComposeExecRequest,
@@ -202,19 +204,20 @@ impl TaskEnvironmentLease for ComposeProjectLease {
     }
     fn archive(
         &mut self,
-        service: &ComposeServiceName,
-        source: &str,
+        request: ServiceArchiveRequest<'_>,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
         self.ensure_started()?;
-        if !self.services.contains(service) {
+        if !self.services.contains(request.service) {
             return Err(EvalExecutionError::InvalidRecipe("Compose service"));
         }
-        self.runtime
-            .compose_copy_archive(&DockerComposeArchiveRequest::new(
+        self.runtime.compose_copy_archive_bounded(
+            &DockerComposeArchiveRequest::new(
                 self.project.clone(),
-                service.clone(),
-                source,
-            ))
+                request.service.clone(),
+                request.source,
+            ),
+            request.deadline,
+        )
     }
     fn stop_main(&mut self) -> Result<(), EvalExecutionError> {
         self.ensure_started()?;

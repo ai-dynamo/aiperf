@@ -602,6 +602,13 @@ impl ArtifactSpec {
         }
     }
 
+    pub(crate) fn service_name(&self) -> &ComposeServiceName {
+        match &self.0 {
+            ArtifactSpecKind::ExactFile { service, .. }
+            | ArtifactSpecKind::Collected { service, .. } => service,
+        }
+    }
+
     /// Reports whether this declaration names exactly one regular file.
     pub const fn is_exact_file(&self) -> bool {
         matches!(self.0, ArtifactSpecKind::ExactFile { .. })
