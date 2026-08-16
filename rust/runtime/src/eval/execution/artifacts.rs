@@ -29,24 +29,35 @@ pub(crate) struct Deadline {
     clock: Rc<dyn Clock>,
     started_ns: i64,
     timeout: Duration,
+    phase: EvalExecutionPhase,
 }
 
 impl Deadline {
     pub(crate) fn from_timeout(clock: Rc<dyn Clock>, timeout: Duration) -> Self {
+        Self::from_phase_timeout(clock, EvalExecutionPhase::CollectionHook, timeout)
+    }
+
+    /// Starts a deadline for one evaluator phase.
+    pub(crate) fn from_phase_timeout(
+        clock: Rc<dyn Clock>,
+        phase: EvalExecutionPhase,
+        timeout: Duration,
+    ) -> Self {
         Self {
             started_ns: clock.now_ns(),
             clock,
             timeout,
+            phase,
         }
     }
 
-    fn remaining(&self) -> Result<Duration, EvalExecutionError> {
+    pub(crate) fn remaining(&self) -> Result<Duration, EvalExecutionError> {
         let elapsed_ns = self.clock.now_ns().saturating_sub(self.started_ns).max(0) as u64;
         self.timeout
             .checked_sub(Duration::from_nanos(elapsed_ns))
             .filter(|remaining| !remaining.is_zero())
             .ok_or(EvalExecutionError::Timeout {
-                phase: EvalExecutionPhase::CollectionHook,
+                phase: self.phase,
                 timeout: self.timeout,
             })
     }

@@ -637,7 +637,7 @@ impl DockerProcessSandbox {
             generated.into_bytes(),
         )
         .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        runtime.build(
+        if let Err(error) = runtime.build(
             &DockerBuildRequest::new([
                 "build",
                 "--network",
@@ -647,7 +647,18 @@ impl DockerProcessSandbox {
                 environment_root.to_string_lossy().as_ref(),
             ])
             .with_network_lease("default"),
-        )?;
+        ) {
+            let cleanup = lease.teardown_after_terminal_failure(
+                super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
+            );
+            return match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(EvalExecutionError::ContainerTeardown {
+                    container: lease.project().as_str().to_owned(),
+                    reason: format!("{error}; cleanup: {cleanup_error}"),
+                }),
+            };
+        }
         lease.start()?;
         let main = lease.main_service().clone();
         prepare_lease_workdir_for_user(
@@ -856,6 +867,11 @@ impl<'a> ComposeStepSession<'a> {
     ) -> Result<RewardDocument, EvalExecutionError> {
         let verifier = step.verifier();
         let main = self.lease.main_service().clone();
+        let deadline = verifier.phase().timeout().map(|timeout| {
+            Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Verifier, timeout)
+        });
+        let remaining =
+            |deadline: &Option<Deadline>| deadline.as_ref().map(Deadline::remaining).transpose();
         self.lease.exec(ServiceExecRequest {
             service: &main,
             arguments: &[
@@ -870,28 +886,30 @@ impl<'a> ComposeStepSession<'a> {
             user: Some("root"),
             workdir: None,
             network_lease: "default",
-            deadline: None,
+            deadline: remaining(&deadline)?,
         })?;
-        self.lease.copy_into(
-            &main,
-            &format!(
-                "{}/.",
-                self.source_root.join(step.verifier_test_root()).display()
-            ),
-            "/tests",
-        )?;
+        let source = format!(
+            "{}/.",
+            self.source_root.join(step.verifier_test_root()).display()
+        );
+        if let Some(copy_deadline) = remaining(&deadline)? {
+            self.lease
+                .copy_into_bounded(&main, &source, "/tests", copy_deadline)?;
+        } else {
+            self.lease.copy_into(&main, &source, "/tests")?;
+        }
         let resolved =
             resolve_phase_environment(verifier.environment(), verifier.phase(), self.secrets)?;
         let verifier_workdir = self
             .recipe
             .resolve_workdir(verifier.environment().workdir());
-        prepare_lease_workdir(
+        prepare_lease_workdir_for_user(
             self.lease,
             &main,
-            verifier.environment(),
-            verifier.phase(),
+            verifier.phase().user().or(verifier.environment().user()),
             EvalExecutionPhase::Verifier,
             verifier_workdir,
+            remaining(&deadline)?,
         )?;
         self.lease.exec(ServiceExecRequest {
             service: &main,
@@ -902,7 +920,7 @@ impl<'a> ComposeStepSession<'a> {
             user: verifier.phase().user().or(verifier.environment().user()),
             workdir: verifier_workdir,
             network_lease: "default",
-            deadline: verifier.phase().timeout(),
+            deadline: remaining(&deadline)?,
         })?;
         read_reward_from_lease(self.lease, &main)
     }
@@ -1787,17 +1805,26 @@ impl DockerComposeRuntime for DockerCliRuntime {
         &self,
         request: &DockerComposeCopyRequest,
     ) -> Result<(), EvalExecutionError> {
+        let deadline_ns = request
+            .deadline()
+            .map(|deadline| provider_deadline_ns(&self.clock, deadline));
         let container = compose_service_container(
             self.clock.clone(),
             request.project(),
             request.service(),
-            None,
+            remaining_optional_provider_deadline(&self.clock, deadline_ns, request.project())?,
         )?;
-        self.copy(&DockerCopyRequest::new([
+        let arguments = vec![
             "cp".to_owned(),
             request.source().to_owned(),
             format!("{container}:{}", request.destination()),
-        ]))
+        ];
+        docker_command_bounded(
+            self.clock.clone(),
+            arguments,
+            request.project().as_str(),
+            remaining_optional_provider_deadline(&self.clock, deadline_ns, request.project())?,
+        )
     }
 
     fn compose_stop_service(
@@ -2963,11 +2990,13 @@ fn remove_timed_out_container(
     container: &str,
     deadline: Duration,
 ) -> Result<(), EvalExecutionError> {
+    let deadline_ns = provider_deadline_ns(&clock, deadline);
     docker_remove_bounded(
         clock.clone(),
         vec!["rm", "--force", "--volumes", container],
-        deadline,
+        remaining_provider_deadline(&clock, deadline_ns, container)?,
     )?;
+    let inspect_deadline = remaining_provider_deadline(&clock, deadline_ns, container)?;
     match docker_output_bounded(
         clock,
         [
@@ -2976,7 +3005,7 @@ fn remove_timed_out_container(
             container.to_owned(),
         ],
         container,
-        Some(deadline),
+        Some(inspect_deadline),
     ) {
         Ok(_) => Err(EvalExecutionError::ContainerTeardown {
             container: container.to_owned(),

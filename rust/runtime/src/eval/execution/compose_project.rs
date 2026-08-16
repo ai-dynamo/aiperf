@@ -140,14 +140,12 @@ impl<'a> ComposeProjectLease<'a> {
         let build = DockerComposeBuildRequest::new(self.project.clone(), &self.project_directory)
             .with_deadline(self.build_timeout);
         if let Err(error) = self.runtime.compose_build(&build) {
-            self.record_after_failure();
             return self.finish_start_failure(error);
         }
         self.state = ComposeLeaseState::Built;
         let up = DockerComposeUpRequest::new(self.project.clone(), &self.project_directory)
             .with_deadline(self.startup_timeout);
         if let Err(error) = self.runtime.compose_up(&up) {
-            self.record_after_failure();
             return self.finish_start_failure(error);
         }
         match self
@@ -159,10 +157,7 @@ impl<'a> ComposeProjectLease<'a> {
                 self.state = ComposeLeaseState::Started;
                 Ok(())
             }
-            Err(error) => {
-                self.record_after_failure();
-                self.finish_start_failure(error)
-            }
+            Err(error) => self.finish_start_failure(error),
         }
     }
 
@@ -170,7 +165,12 @@ impl<'a> ComposeProjectLease<'a> {
         &mut self,
         phase_error: EvalExecutionError,
     ) -> Result<(), EvalExecutionError> {
-        match self.teardown_after_terminal_failure(TERMINAL_COMPOSE_CLEANUP_DEADLINE) {
+        let cleanup_timeout = *self
+            .terminal_cleanup_deadline
+            .get_or_insert(TERMINAL_COMPOSE_CLEANUP_DEADLINE);
+        let cleanup_deadline = CleanupDeadline::new(self.clock.clone(), cleanup_timeout);
+        self.record_after_failure(&cleanup_deadline);
+        match self.teardown_with_cleanup_deadline(&cleanup_deadline, true) {
             Ok(()) => Err(phase_error),
             Err(cleanup_error) => Err(EvalExecutionError::ContainerTeardown {
                 container: self.project.as_str().to_owned(),
@@ -179,10 +179,11 @@ impl<'a> ComposeProjectLease<'a> {
         }
     }
 
-    fn record_after_failure(&mut self) {
-        if let Ok(resources) = self
-            .runtime
-            .compose_owned_resources(&self.project, self.startup_timeout)
+    fn record_after_failure(&mut self, cleanup_deadline: &CleanupDeadline) {
+        if let Ok(deadline) = cleanup_deadline.remaining()
+            && let Ok(resources) = self
+                .runtime
+                .compose_owned_resources(&self.project, deadline)
         {
             self.recorded = resources;
         }
@@ -233,6 +234,17 @@ impl<'a> ComposeProjectLease<'a> {
             return Ok(());
         }
         let cleanup_deadline = CleanupDeadline::new(self.clock.clone(), deadline);
+        self.teardown_with_cleanup_deadline(&cleanup_deadline, is_terminal_failure)
+    }
+
+    fn teardown_with_cleanup_deadline(
+        &mut self,
+        cleanup_deadline: &CleanupDeadline,
+        is_terminal_failure: bool,
+    ) -> Result<(), EvalExecutionError> {
+        if self.state == ComposeLeaseState::Down {
+            return Ok(());
+        }
         let request = DockerComposeDownRequest::new(self.project.clone(), &self.project_directory)
             .with_deadline(cleanup_deadline.remaining()?);
         let request = if is_terminal_failure {
@@ -345,6 +357,27 @@ impl TaskEnvironmentLease for ComposeProjectLease<'_> {
                 source,
                 destination,
             ))
+    }
+    fn copy_into_bounded(
+        &mut self,
+        service: &ComposeServiceName,
+        source: &str,
+        destination: &str,
+        deadline: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        self.ensure_started()?;
+        if !self.services.contains(service) {
+            return Err(EvalExecutionError::InvalidRecipe("Compose service"));
+        }
+        self.runtime.compose_copy_into(
+            &DockerComposeCopyRequest::new(
+                self.project.clone(),
+                service.clone(),
+                source,
+                destination,
+            )
+            .with_deadline(deadline),
+        )
     }
     fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError> {
         self.ensure_started()?;

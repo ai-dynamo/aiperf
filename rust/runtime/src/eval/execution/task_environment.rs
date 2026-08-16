@@ -60,6 +60,16 @@ pub(crate) trait TaskEnvironmentLease {
         source: &str,
         destination: &str,
     ) -> Result<(), EvalExecutionError>;
+    /// Copies snapshot data while consuming the caller's phase deadline.
+    fn copy_into_bounded(
+        &mut self,
+        service: &ComposeServiceName,
+        source: &str,
+        destination: &str,
+        _: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        self.copy_into(service, source, destination)
+    }
     fn stop_main(&mut self, deadline: Duration) -> Result<(), EvalExecutionError>;
     fn main_image_id(&self) -> Result<&str, EvalExecutionError>;
     fn teardown(&mut self) -> Result<(), EvalExecutionError>;

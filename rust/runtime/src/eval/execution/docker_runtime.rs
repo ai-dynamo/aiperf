@@ -386,6 +386,7 @@ pub struct DockerComposeCopyRequest {
     source: String,
     destination: String,
     labels: BTreeMap<String, String>,
+    deadline: Option<Duration>,
 }
 
 impl DockerComposeCopyRequest {
@@ -403,6 +404,7 @@ impl DockerComposeCopyRequest {
             source: source.into(),
             destination: destination.into(),
             labels,
+            deadline: None,
         }
     }
     /// Returns the project selection.
@@ -424,6 +426,15 @@ impl DockerComposeCopyRequest {
     /// Returns exact ownership labels.
     pub fn labels(&self) -> &BTreeMap<String, String> {
         &self.labels
+    }
+    /// Bounds lookup and transfer as part of a phase deadline.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+    /// Returns the optional transfer deadline.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 }
 
@@ -1446,7 +1457,7 @@ mod compose_lease_tests {
             definition_path: "environment/docker-compose.yaml".to_owned(),
             services: BTreeSet::from([ComposeServiceName::main()]),
             build_timeout: std::time::Duration::from_secs(1),
-            startup_timeout: std::time::Duration::from_secs(1),
+            startup_timeout: std::time::Duration::from_secs(30),
         }
     }
 
@@ -1491,6 +1502,9 @@ mod compose_lease_tests {
             requests[0].1
                 <= crate::eval::execution::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE
         );
+        assert!(runtime.discovery_deadlines.borrow().iter().all(|deadline| {
+            *deadline <= crate::eval::execution::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE
+        }));
     }
 
     #[test]
