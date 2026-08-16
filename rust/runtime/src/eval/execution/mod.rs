@@ -31,9 +31,10 @@ pub use local_process::{
 };
 pub use multi_step::{MultiStepExecutionResult, StepExecutionResult};
 pub use plan::{
-    ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources, EnvBinding,
-    EnvironmentPlan, HealthcheckPlan, ImageSource, ImageSourceKind, MultiStepRewardStrategy,
-    NetworkPolicy, PhasePlan, ProviderCapabilities, VerifierPlan,
+    ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectPlan,
+    ComposeServiceName, ContainerResources, EnvBinding, EnvironmentPlan, HealthcheckPlan,
+    ImageSource, ImageSourceKind, MultiStepRewardStrategy, NetworkPolicy, PhasePlan,
+    ProviderCapabilities, VerifierCollectHook, VerifierPlan,
 };
 pub(crate) use plan::{
     CanonicalPackagePlan, append_identity_field, artifact_source_overlaps_reserved_verifier_path,

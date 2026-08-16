@@ -10,6 +10,7 @@ use std::{
     io::{self, Read},
     os::unix::fs::PermissionsExt,
     sync::Mutex,
+    time::Duration,
 };
 
 use aiperf_runtime::eval::{
@@ -22,6 +23,78 @@ use aiperf_runtime::eval::{
 };
 
 static UMASK_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn compose_standard_task_exposes_generated_main_services_evidence_and_defaults() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+artifacts = [{ source = "/var/lib/api/dump", destination = "api.dump", service = "api" }]
+
+[task]
+name = "example/compose"
+
+[verifier]
+environment_mode = "separate"
+
+[[verifier.collect]]
+service = "main"
+command = ["prepare-main", "--flush"]
+
+[[steps]]
+name = "final"
+
+[[steps.verifier.collect]]
+service = "api"
+command = ["dbctl", "dump"]
+"#,
+    )
+    .unwrap();
+    fs::create_dir_all(task_root.join("steps/final")).unwrap();
+    fs::write(
+        task_root.join("steps/final/instruction.md"),
+        "Collect evidence.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  main:\n    depends_on: [api]\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let plan = imported.package.execution_plan();
+    let compose = plan.compose().unwrap();
+    let step = &plan.steps()[0];
+
+    assert_eq!(compose.definition_path(), "environment/docker-compose.yaml");
+    assert_eq!(
+        compose
+            .services()
+            .iter()
+            .map(|service| service.as_str())
+            .collect::<Vec<_>>(),
+        ["api", "main"]
+    );
+    assert_eq!(compose.build_timeout(), Duration::from_secs(600));
+    assert_eq!(compose.startup_timeout(), Duration::from_secs(120));
+    assert_eq!(step.collection_timeout(), Duration::from_secs(120));
+    assert_eq!(step.artifacts()[0].service(), "api");
+    assert_eq!(step.collect_hooks().len(), 2);
+    assert_eq!(step.collect_hooks()[0].service().as_str(), "main");
+    assert_eq!(
+        step.collect_hooks()[0].command(),
+        ["prepare-main", "--flush"]
+    );
+    assert_eq!(step.collect_hooks()[0].timeout(), Duration::from_secs(60));
+    assert_eq!(step.collect_hooks()[0].user(), None);
+    assert_eq!(step.collect_hooks()[1].service().as_str(), "api");
+    assert_eq!(step.collect_hooks()[1].command(), ["dbctl", "dump"]);
+}
 
 /// A Docker boundary that supplies precise archive bytes for collection tests.
 struct ArchiveRuntime {
@@ -184,6 +257,11 @@ fn declared_files_and_directories_are_collected_at_deterministic_destinations() 
         ),
     ]);
     let destination = temporary.path().join("collected");
+
+    assert_eq!(
+        imported.package.execution_plan().artifacts()[0].service(),
+        "main"
+    );
 
     let collected = collect_artifacts(
         &runtime,
@@ -714,6 +792,7 @@ fn legacy_tasks_synthesize_one_logical_step() {
     let plan = imported.package.execution_plan();
 
     assert!(!plan.is_multi_step());
+    assert!(plan.compose().is_none());
     assert!(plan.multi_step_reward_strategy().is_none());
     assert_eq!(plan.steps().len(), 1);
     assert_eq!(plan.steps()[0].name(), "default");

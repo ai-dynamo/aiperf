@@ -350,6 +350,7 @@ mod tests {
             agent: agent.clone(),
             verifier: verifier.clone(),
             artifacts: Vec::new(),
+            compose: None,
             steps: [
                 ("one", "First instruction."),
                 ("two", "Second instruction."),

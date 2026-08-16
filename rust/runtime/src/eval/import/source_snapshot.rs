@@ -127,6 +127,13 @@ impl AcquiredSource {
         self.read(relative_path).is_ok()
     }
 
+    pub(super) fn contains_path(&self, relative_path: &str) -> bool {
+        match &self.artifact {
+            SourceArtifact::File(_) => relative_path == self.primary_path.as_str(),
+            SourceArtifact::Tree(tree) => tree.contains_path(relative_path),
+        }
+    }
+
     pub(super) fn executable_source_digest(
         &self,
         view: &ExecutableSourceView,
@@ -379,6 +386,14 @@ impl SourceTreeSnapshot {
 
     pub(super) fn contains_file(&self, relative_path: &str) -> bool {
         self.read(relative_path).is_ok()
+    }
+
+    fn contains_path(&self, relative_path: &str) -> bool {
+        SourcePath::parse(relative_path).is_ok_and(|relative_path| {
+            self.entries
+                .binary_search_by(|entry| entry.path.cmp(&relative_path))
+                .is_ok()
+        })
     }
 
     fn file_bytes(&self, relative_path: &SourcePath) -> Result<&Arc<[u8]>, HarborImportError> {

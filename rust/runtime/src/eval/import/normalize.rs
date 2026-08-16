@@ -13,9 +13,10 @@ use serde::Deserialize;
 use tempfile::TempDir;
 
 use crate::eval::{
-    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ContainerResources,
-    EnvBinding, EnvironmentPlan, EvalExecutionError, HealthcheckPlan, ImageSource,
-    MultiStepRewardStrategy, NetworkPolicy, PhasePlan, VerifierMode, VerifierPlan,
+    ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectPlan,
+    ComposeServiceName, ContainerResources, EnvBinding, EnvironmentPlan, EvalExecutionError,
+    HealthcheckPlan, ImageSource, MultiStepRewardStrategy, NetworkPolicy, PhasePlan,
+    VerifierCollectHook, VerifierMode, VerifierPlan,
     artifact_source_overlaps_reserved_verifier_path,
     shared_workdir_conflicts_reserved_verifier_path, verifier_artifact_target_collision,
 };
@@ -265,6 +266,7 @@ pub(super) fn normalize(
         agent: agent.clone(),
         verifier: verifier.clone(),
         artifacts: artifacts.clone(),
+        compose: None,
         steps: vec![BenchmarkStepPlan::new(
             "default".to_owned(),
             task.instruction.clone(),
@@ -343,6 +345,9 @@ struct StandardVerifierSection {
     #[serde(default)]
     env: BTreeMap<String, String>,
     environment: Option<StandardEnvironmentSection>,
+    collection_timeout_sec: Option<f64>,
+    #[serde(default)]
+    collect: Vec<StandardVerifierCollectSection>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -358,6 +363,8 @@ struct StandardEnvironmentSection {
     #[serde(default)]
     env: BTreeMap<String, String>,
     healthcheck: Option<StandardHealthcheckSection>,
+    build_timeout_sec: Option<f64>,
+    startup_timeout_sec: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -374,6 +381,16 @@ struct StandardArtifactTable {
     destination: Option<String>,
     #[serde(default)]
     exclude: Vec<String>,
+    service: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StandardVerifierCollectSection {
+    service: Option<String>,
+    command: Vec<String>,
+    timeout_sec: Option<f64>,
+    user: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,21 +438,26 @@ pub(super) fn normalize_standard_directory(
         ));
     }
     read_required_source_file(source, "environment/Dockerfile")?;
+    let mut environment_section = manifest.environment.unwrap_or_default();
+    let compose = normalize_compose_project(source, &environment_section)?;
+    environment_section.build_timeout_sec = None;
+    environment_section.startup_timeout_sec = None;
     let environment_digest =
         source.executable_source_digest(&ExecutableSourceView::selected_roots(["environment"])?)?;
     let image_source = ImageSource::task_dockerfile(environment_digest.clone());
-    let environment = normalize_environment(
-        manifest.environment.unwrap_or_default(),
-        image_source.clone(),
-    )?;
+    let environment = normalize_environment(environment_section, image_source.clone())?;
     let root_agent =
         normalize_agent_phase(manifest.agent.unwrap_or_default(), &environment.network)?;
-    let root_verifier = normalize_verifier_plan(
-        manifest.verifier.unwrap_or_default(),
-        &environment,
-        image_source,
+    let root_verifier_section = manifest.verifier.unwrap_or_default();
+    let root_collect_hooks =
+        normalize_collect_hooks(&root_verifier_section.collect, compose.as_ref())?;
+    let root_collection_timeout = normalize_collection_timeout(
+        "verifier.collection_timeout_sec",
+        root_verifier_section.collection_timeout_sec,
+        Duration::from_secs(120),
     )?;
-    let root_artifacts = normalize_standard_artifacts(manifest.artifacts)?;
+    let root_verifier = normalize_verifier_plan(root_verifier_section, &environment, image_source)?;
+    let root_artifacts = normalize_standard_artifacts(manifest.artifacts, compose.as_ref())?;
     let (steps, has_explicit_steps, multi_step_reward_strategy, verifier_bytes) =
         if manifest.steps.is_empty() {
             if manifest.multi_step_reward_strategy.is_some() {
@@ -452,15 +474,27 @@ pub(super) fn normalize_standard_directory(
             let verifier_bytes = read_required_source_bytes(source, "tests/test.sh")?;
             validate_phase_timeout_pair(&root_agent, root_verifier.phase())?;
             validate_step_artifacts(&root_artifacts, &root_verifier)?;
+            validate_compose_step_policy(
+                compose.as_ref(),
+                &environment,
+                &root_agent,
+                &root_verifier,
+                &root_artifacts,
+                &root_collect_hooks,
+                true,
+            )?;
             (
-                vec![BenchmarkStepPlan::new(
-                    "default".to_owned(),
-                    instruction,
-                    "tests".to_owned(),
-                    root_agent,
-                    root_verifier,
-                    root_artifacts,
-                )],
+                vec![
+                    BenchmarkStepPlan::new(
+                        "default".to_owned(),
+                        instruction,
+                        "tests".to_owned(),
+                        root_agent,
+                        root_verifier,
+                        root_artifacts,
+                    )
+                    .with_collection(root_collect_hooks, root_collection_timeout),
+                ],
                 false,
                 None,
                 vec![verifier_bytes],
@@ -469,9 +503,10 @@ pub(super) fn normalize_standard_directory(
             let strategy =
                 normalize_multi_step_reward_strategy(manifest.multi_step_reward_strategy)?;
             let mut names = BTreeSet::new();
-            let mut steps = Vec::with_capacity(manifest.steps.len());
-            let mut verifier_bytes = Vec::with_capacity(manifest.steps.len());
-            for step in manifest.steps {
+            let step_count = manifest.steps.len();
+            let mut steps = Vec::with_capacity(step_count);
+            let mut verifier_bytes = Vec::with_capacity(step_count);
+            for (step_index, step) in manifest.steps.into_iter().enumerate() {
                 validate_step_name(&step.name)?;
                 if !names.insert(step.name.clone()) {
                     return Err(HarborImportError::InvalidPackage(format!(
@@ -487,16 +522,39 @@ pub(super) fn normalize_standard_directory(
                     )));
                 }
                 let step_agent = overlay_agent_phase(&root_agent, step.agent.unwrap_or_default())?;
+                let step_verifier_section = step.verifier.unwrap_or_default();
+                let mut collect_hooks = root_collect_hooks.clone();
+                collect_hooks.extend(normalize_collect_hooks(
+                    &step_verifier_section.collect,
+                    compose.as_ref(),
+                )?);
+                let collection_timeout = normalize_collection_timeout(
+                    "steps.verifier.collection_timeout_sec",
+                    step_verifier_section.collection_timeout_sec,
+                    root_collection_timeout,
+                )?;
                 let step_verifier = overlay_verifier_plan(
                     &root_verifier,
-                    step.verifier.unwrap_or_default(),
+                    step_verifier_section,
                     &environment,
                     &environment_digest,
                 )?;
                 validate_phase_timeout_pair(&step_agent, step_verifier.phase())?;
                 let mut artifacts = root_artifacts.clone();
-                artifacts.extend(normalize_standard_artifacts(step.artifacts)?);
+                artifacts.extend(normalize_standard_artifacts(
+                    step.artifacts,
+                    compose.as_ref(),
+                )?);
                 validate_step_artifacts(&artifacts, &step_verifier)?;
+                validate_compose_step_policy(
+                    compose.as_ref(),
+                    &environment,
+                    &step_agent,
+                    &step_verifier,
+                    &artifacts,
+                    &collect_hooks,
+                    step_index + 1 == step_count,
+                )?;
                 let step_test = format!("steps/{}/tests/test.sh", step.name);
                 let (verifier_test_root, bytes) = if source.contains_file(&step_test) {
                     (
@@ -510,14 +568,17 @@ pub(super) fn normalize_standard_directory(
                     )
                 };
                 verifier_bytes.push(bytes);
-                steps.push(BenchmarkStepPlan::new(
-                    step.name,
-                    instruction,
-                    verifier_test_root,
-                    step_agent,
-                    step_verifier,
-                    artifacts,
-                ));
+                steps.push(
+                    BenchmarkStepPlan::new(
+                        step.name,
+                        instruction,
+                        verifier_test_root,
+                        step_agent,
+                        step_verifier,
+                        artifacts,
+                    )
+                    .with_collection(collect_hooks, collection_timeout),
+                );
             }
             (steps, true, Some(strategy), verifier_bytes)
         };
@@ -547,6 +608,7 @@ pub(super) fn normalize_standard_directory(
             environment: verifier.environment().clone(),
         },
         artifacts,
+        compose,
         steps: steps.clone(),
         has_explicit_steps,
         multi_step_reward_strategy,
@@ -573,6 +635,211 @@ pub(super) fn normalize_standard_directory(
     Ok((draft, view))
 }
 
+fn normalize_compose_project(
+    source: &AcquiredSource,
+    environment: &StandardEnvironmentSection,
+) -> Result<Option<ComposeProjectPlan>, HarborImportError> {
+    const DEFINITION_PATH: &str = "environment/docker-compose.yaml";
+    const ALTERNATE_PATHS: [&str; 3] = [
+        "environment/docker-compose.yml",
+        "environment/compose.yaml",
+        "environment/compose.yml",
+    ];
+
+    if let Some(path) = ALTERNATE_PATHS
+        .into_iter()
+        .find(|path| source.contains_path(path))
+    {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "unsupported Compose filename: {path:?}; expected {DEFINITION_PATH:?}"
+        )));
+    }
+    if !source.contains_path(DEFINITION_PATH) {
+        if environment.build_timeout_sec.is_some() || environment.startup_timeout_sec.is_some() {
+            return Err(HarborImportError::InvalidPackage(
+                "environment build/startup timeouts require environment/docker-compose.yaml"
+                    .to_owned(),
+            ));
+        }
+        return Ok(None);
+    }
+
+    let bytes = read_required_source_bytes(source, DEFINITION_PATH)?;
+    let document = serde_yaml::from_slice::<serde_yaml::Value>(&bytes).map_err(|error| {
+        HarborImportError::InvalidPackage(format!("{DEFINITION_PATH}: {error}"))
+    })?;
+    let document = document.as_mapping().ok_or_else(|| {
+        HarborImportError::InvalidPackage(format!("{DEFINITION_PATH} must contain a YAML mapping"))
+    })?;
+    let services = document
+        .get(serde_yaml::Value::String("services".to_owned()))
+        .and_then(serde_yaml::Value::as_mapping)
+        .filter(|services| !services.is_empty())
+        .ok_or_else(|| {
+            HarborImportError::InvalidPackage(format!(
+                "{DEFINITION_PATH}.services must be a nonempty mapping"
+            ))
+        })?;
+
+    let mut normalized_services = BTreeSet::new();
+    for (name, value) in services {
+        let authored_name = name.as_str().ok_or_else(|| {
+            HarborImportError::InvalidPackage(format!(
+                "{DEFINITION_PATH}.services keys must be strings"
+            ))
+        })?;
+        let service =
+            ComposeServiceName::parse(authored_name).map_err(HarborImportError::InvalidPackage)?;
+        if !normalized_services.insert(service.clone()) {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "Compose service name is duplicated after normalization: {:?}",
+                service.as_str()
+            )));
+        }
+        if service.as_str() == "main" {
+            let main = value.as_mapping().ok_or_else(|| {
+                HarborImportError::InvalidPackage(
+                    "services.main must be a mapping containing only depends_on".to_owned(),
+                )
+            })?;
+            for key in main.keys() {
+                if key.as_str() != Some("depends_on") {
+                    return Err(HarborImportError::InvalidPackage(
+                        "services.main may contain only depends_on".to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+    normalized_services.insert(ComposeServiceName::main());
+
+    Ok(Some(ComposeProjectPlan {
+        definition_path: DEFINITION_PATH.to_owned(),
+        services: normalized_services,
+        build_timeout: normalize_timeout(
+            "environment.build_timeout_sec",
+            environment.build_timeout_sec.unwrap_or(600.0),
+        )?,
+        startup_timeout: normalize_timeout(
+            "environment.startup_timeout_sec",
+            environment.startup_timeout_sec.unwrap_or(120.0),
+        )?,
+    }))
+}
+
+fn normalize_service_reference(
+    service: Option<&str>,
+    compose: Option<&ComposeProjectPlan>,
+) -> Result<ComposeServiceName, HarborImportError> {
+    let service = match service {
+        Some(service) => {
+            ComposeServiceName::parse(service).map_err(HarborImportError::InvalidPackage)?
+        }
+        None => ComposeServiceName::main(),
+    };
+    if service.as_str() != "main" {
+        let Some(compose) = compose else {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "non-main service {:?} requires environment/docker-compose.yaml",
+                service.as_str()
+            )));
+        };
+        if !compose.services().contains(&service) {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "unknown Compose service: {:?}",
+                service.as_str()
+            )));
+        }
+    }
+    Ok(service)
+}
+
+fn normalize_collect_hooks(
+    hooks: &[StandardVerifierCollectSection],
+    compose: Option<&ComposeProjectPlan>,
+) -> Result<Vec<VerifierCollectHook>, HarborImportError> {
+    hooks
+        .iter()
+        .map(|hook| {
+            validate_command("verifier.collect.command", &hook.command)?;
+            Ok(VerifierCollectHook {
+                service: normalize_service_reference(hook.service.as_deref(), compose)?,
+                command: hook.command.clone(),
+                timeout: normalize_timeout(
+                    "verifier.collect.timeout_sec",
+                    hook.timeout_sec.unwrap_or(60.0),
+                )?,
+                user: hook.user.as_deref().map(normalize_user).transpose()?,
+            })
+        })
+        .collect()
+}
+
+fn normalize_collection_timeout(
+    field: &str,
+    authored: Option<f64>,
+    inherited: Duration,
+) -> Result<Duration, HarborImportError> {
+    authored
+        .map(|seconds| normalize_timeout(field, seconds))
+        .transpose()
+        .map(|timeout| timeout.unwrap_or(inherited))
+}
+
+fn validate_compose_step_policy(
+    compose: Option<&ComposeProjectPlan>,
+    environment: &EnvironmentPlan,
+    agent: &PhasePlan,
+    verifier: &VerifierPlan,
+    artifacts: &[ArtifactSpec],
+    hooks: &[VerifierCollectHook],
+    allows_non_main_evidence: bool,
+) -> Result<(), HarborImportError> {
+    let mut saw_non_main_hook = false;
+    for hook in hooks {
+        if hook.service().as_str() == "main" {
+            if saw_non_main_hook {
+                return Err(HarborImportError::InvalidPackage(
+                    "main collection hooks must precede non-main collection hooks".to_owned(),
+                ));
+            }
+        } else {
+            saw_non_main_hook = true;
+        }
+    }
+
+    let has_non_main_evidence = artifacts
+        .iter()
+        .any(|artifact| artifact.service() != "main")
+        || hooks.iter().any(|hook| hook.service().as_str() != "main");
+    if has_non_main_evidence && verifier.mode() != VerifierMode::Separate {
+        return Err(HarborImportError::InvalidPackage(
+            "non-main evidence requires verifier.environment_mode = \"separate\"".to_owned(),
+        ));
+    }
+    if has_non_main_evidence && !allows_non_main_evidence {
+        return Err(HarborImportError::InvalidPackage(
+            "non-main evidence is allowed only on the final explicit step".to_owned(),
+        ));
+    }
+
+    if compose.is_some()
+        && [
+            environment.network(),
+            agent.network(),
+            verifier.environment().network(),
+            verifier.phase().network(),
+        ]
+        .into_iter()
+        .any(|network| !network.is_public())
+    {
+        return Err(HarborImportError::InvalidPackage(
+            "Compose tasks require public environment and phase networks".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_shared_verifier_workdir(
     execution_plan: &BenchmarkExecutionPlan,
 ) -> Result<(), HarborImportError> {
@@ -592,6 +859,12 @@ fn normalize_environment(
     environment: StandardEnvironmentSection,
     image_source: ImageSource,
 ) -> Result<EnvironmentPlan, HarborImportError> {
+    if environment.build_timeout_sec.is_some() || environment.startup_timeout_sec.is_some() {
+        return Err(HarborImportError::InvalidPackage(
+            "build_timeout_sec and startup_timeout_sec are valid only in the root environment"
+                .to_owned(),
+        ));
+    }
     let resources = match (environment.cpus, environment.memory_mb) {
         (None, None) => None,
         (Some(cpus), Some(memory_mb)) if cpus > 0 && memory_mb > 0 => {
@@ -818,7 +1091,15 @@ fn validate_effective_artifact_targets(
     artifacts: &[ArtifactSpec],
 ) -> Result<(), HarborImportError> {
     let mut targets = Vec::with_capacity(artifacts.len());
+    let mut sources = BTreeSet::new();
     for artifact in artifacts {
+        if !sources.insert((artifact.service().to_owned(), artifact.source().to_owned())) {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "artifact service/source pair is duplicated: ({:?}, {:?})",
+                artifact.service(),
+                artifact.source()
+            )));
+        }
         let target = artifact.output_target();
         if targets.iter().any(|existing: &String| {
             existing == &target
@@ -999,6 +1280,7 @@ fn normalize_optional_duration(
 
 fn normalize_standard_artifacts(
     artifacts: Vec<StandardArtifactDto>,
+    compose: Option<&ComposeProjectPlan>,
 ) -> Result<Vec<ArtifactSpec>, HarborImportError> {
     artifacts
         .into_iter()
@@ -1006,14 +1288,25 @@ fn normalize_standard_artifacts(
             StandardArtifactDto::ExactFile(source) => {
                 Ok(ArtifactSpec::exact_file(normalize_artifact_path(&source)?))
             }
-            StandardArtifactDto::Collected(artifact) => Ok(ArtifactSpec::collected(
-                normalize_artifact_path(&artifact.source)?,
-                artifact
+            StandardArtifactDto::Collected(artifact) => {
+                let service = normalize_service_reference(artifact.service.as_deref(), compose)?;
+                let source = normalize_artifact_path(&artifact.source)?;
+                let destination = artifact
                     .destination
                     .map(|destination| normalize_artifact_destination(&destination))
-                    .transpose()?,
-                normalize_artifact_exclusions(artifact.exclude)?,
-            )),
+                    .transpose()?;
+                let exclude = normalize_artifact_exclusions(artifact.exclude)?;
+                if service.as_str() == "main" {
+                    Ok(ArtifactSpec::collected(source, destination, exclude))
+                } else {
+                    Ok(ArtifactSpec::collected_for_service(
+                        source,
+                        destination,
+                        exclude,
+                        service,
+                    ))
+                }
+            }
         })
         .collect()
 }

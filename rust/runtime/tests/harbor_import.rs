@@ -672,6 +672,399 @@ fn standard_task_root(temporary: &tempfile::TempDir, name: &str) -> std::path::P
 }
 
 #[test]
+fn compose_identity_binds_services_evidence_hooks_timeouts_and_owned_environment_tree() {
+    let manifest = r#"schema_version = "1.0"
+artifacts = [{ source = "/var/lib/api/dump", destination = "api.dump", service = "api" }]
+
+[task]
+name = "example/compose-identity"
+
+[environment]
+build_timeout_sec = 601
+startup_timeout_sec = 121
+
+[verifier]
+environment_mode = "separate"
+collection_timeout_sec = 122
+
+[[verifier.collect]]
+service = "main"
+command = ["prepare-main", "--flush"]
+timeout_sec = 61
+user = "1000"
+
+[[verifier.collect]]
+service = "api"
+command = ["dbctl", "dump"]
+timeout_sec = 62
+"#;
+    let compose = "services:\n  main:\n    depends_on: [api]\n  api:\n    image: api:fixture\n";
+    let baseline = import_compose_task_digest(manifest, compose, b"nested input\n");
+    let cases = [
+        (
+            "service target",
+            manifest.replacen("service = \"api\"", "service = \"main\"", 1),
+            compose.to_owned(),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "hook argv",
+            manifest.replacen("[\"dbctl\", \"dump\"]", "[\"dbctl\", \"export\"]", 1),
+            compose.to_owned(),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "hook user",
+            manifest.replacen("user = \"1000\"", "user = \"1001\"", 1),
+            compose.to_owned(),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "hook timeout",
+            manifest.replacen("timeout_sec = 62", "timeout_sec = 63", 1),
+            compose.to_owned(),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "build timeout",
+            manifest.replacen("build_timeout_sec = 601", "build_timeout_sec = 602", 1),
+            compose.to_owned(),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "startup timeout",
+            manifest.replacen("startup_timeout_sec = 121", "startup_timeout_sec = 123", 1),
+            compose.to_owned(),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "collection timeout",
+            manifest.replacen(
+                "collection_timeout_sec = 122",
+                "collection_timeout_sec = 124",
+                1,
+            ),
+            compose.to_owned(),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "sidecar service",
+            manifest.replace("api", "db"),
+            compose.replace("api", "db"),
+            b"nested input\n".as_slice(),
+        ),
+        (
+            "nested build input",
+            manifest.to_owned(),
+            compose.to_owned(),
+            b"changed nested input\n".as_slice(),
+        ),
+    ];
+
+    for (name, changed_manifest, changed_compose, nested_input) in cases {
+        assert_ne!(
+            baseline,
+            import_compose_task_digest(&changed_manifest, &changed_compose, nested_input),
+            "compose identity did not change for {name}"
+        );
+    }
+}
+
+#[test]
+fn compose_source_selection_and_service_shape_fail_closed() {
+    let valid_manifest = "schema_version = \"1.0\"\n[task]\nname = \"example/compose-invalid\"\n";
+    let invalid_compose_documents = [
+        ("non-utf8", vec![0xff]),
+        ("empty", Vec::new()),
+        ("non-mapping", b"[]\n".to_vec()),
+        ("missing-services", b"version: '3'\n".to_vec()),
+        ("non-mapping-services", b"services: []\n".to_vec()),
+        ("empty-services", b"services: {}\n".to_vec()),
+        ("uppercase-service", b"services:\n  API: {}\n".to_vec()),
+        ("unsafe-service", b"services:\n  '../api': {}\n".to_vec()),
+        (
+            "long-service",
+            format!("services:\n  {}: {{}}\n", "a".repeat(64)).into_bytes(),
+        ),
+        ("non-mapping-main", b"services:\n  main: image\n".to_vec()),
+        (
+            "main-image",
+            b"services:\n  main:\n    image: task-controlled\n".to_vec(),
+        ),
+        (
+            "main-command",
+            b"services:\n  main:\n    command: [true]\n".to_vec(),
+        ),
+        (
+            "duplicate-service",
+            b"services:\n  api: {}\n  api: {}\n".to_vec(),
+        ),
+    ];
+    for (name, compose) in invalid_compose_documents {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(task_root.join("task.toml"), valid_manifest).unwrap();
+        fs::write(task_root.join("environment/docker-compose.yaml"), compose).unwrap();
+        assert_invalid_standard_task(&task_root, name);
+    }
+
+    for alternate in ["docker-compose.yml", "compose.yaml", "compose.yml"] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, alternate);
+        fs::write(task_root.join("task.toml"), valid_manifest).unwrap();
+        fs::write(
+            task_root.join("environment").join(alternate),
+            "services:\n  api: {}\n",
+        )
+        .unwrap();
+        assert_invalid_standard_task(&task_root, alternate);
+    }
+
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "missing-dockerfile");
+    fs::write(task_root.join("task.toml"), valid_manifest).unwrap();
+    fs::remove_file(task_root.join("environment/Dockerfile")).unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api: {}\n",
+    )
+    .unwrap();
+    assert_invalid_standard_task(&task_root, "missing Dockerfile");
+}
+
+#[test]
+fn compose_evidence_hooks_and_topology_fail_closed() {
+    let compose = "services:\n  api: {}\n  db: {}\n";
+    let invalid_manifests = [
+        (
+            "unknown-artifact-service",
+            r#"artifacts = [{ source = "/data/dump", service = "missing" }]
+[task]
+name = "example/invalid"
+[verifier]
+environment_mode = "separate"
+"#,
+        ),
+        (
+            "empty-hook-argv",
+            r#"[task]
+name = "example/invalid"
+[verifier]
+[[verifier.collect]]
+command = []
+"#,
+        ),
+        (
+            "blank-hook-argument",
+            r#"[task]
+name = "example/invalid"
+[verifier]
+[[verifier.collect]]
+command = ["dbctl", " "]
+"#,
+        ),
+        (
+            "bad-hook-user",
+            r#"[task]
+name = "example/invalid"
+[verifier]
+[[verifier.collect]]
+command = ["true"]
+user = "bad user"
+"#,
+        ),
+        (
+            "unknown-hook-field",
+            r#"[task]
+name = "example/invalid"
+[verifier]
+[[verifier.collect]]
+command = ["true"]
+environment = { TOKEN = "value" }
+"#,
+        ),
+        (
+            "unknown-artifact-field",
+            r#"artifacts = [{ source = "/data/dump", command = ["true"] }]
+[task]
+name = "example/invalid"
+"#,
+        ),
+        (
+            "duplicate-service-source",
+            r#"artifacts = [
+  { source = "/data/dump", destination = "one", service = "api" },
+  { source = "/data/dump", destination = "two", service = "api" },
+]
+[task]
+name = "example/invalid"
+[verifier]
+environment_mode = "separate"
+"#,
+        ),
+        (
+            "cross-service-output-collision",
+            r#"artifacts = [
+  { source = "/main/result", service = "main" },
+  { source = "/api/result", service = "api" },
+]
+[task]
+name = "example/invalid"
+[verifier]
+environment_mode = "separate"
+"#,
+        ),
+        (
+            "main-hook-after-sidecar",
+            r#"[task]
+name = "example/invalid"
+[verifier]
+environment_mode = "separate"
+[[verifier.collect]]
+service = "api"
+command = ["api-dump"]
+[[verifier.collect]]
+service = "main"
+command = ["main-flush"]
+"#,
+        ),
+        (
+            "shared-sidecar-evidence",
+            r#"artifacts = [{ source = "/data/dump", service = "api" }]
+[task]
+name = "example/invalid"
+"#,
+        ),
+        (
+            "restricted-environment-network",
+            r#"[task]
+name = "example/invalid"
+[environment]
+network = "no-network"
+"#,
+        ),
+        (
+            "restricted-agent-network",
+            r#"[task]
+name = "example/invalid"
+[agent]
+network = "no-network"
+"#,
+        ),
+        (
+            "restricted-verifier-network",
+            r#"[task]
+name = "example/invalid"
+[verifier]
+network = "no-network"
+"#,
+        ),
+    ];
+    for (name, suffix) in invalid_manifests {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!("schema_version = \"1.0\"\n{suffix}"),
+        )
+        .unwrap();
+        fs::write(task_root.join("environment/docker-compose.yaml"), compose).unwrap();
+        assert_invalid_standard_task(&task_root, name);
+    }
+
+    for (name, timeout) in [
+        ("nonfinite", "inf"),
+        ("zero", "0"),
+        ("negative", "-1"),
+        ("subnanosecond", "0.0000000001"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = standard_task_root(&temporary, name);
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                "schema_version = \"1.0\"\n[task]\nname = \"example/{name}\"\n[verifier]\n[[verifier.collect]]\ncommand = [\"true\"]\ntimeout_sec = {timeout}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(task_root.join("environment/docker-compose.yaml"), compose).unwrap();
+        assert_invalid_standard_task(&task_root, name);
+    }
+
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "without-compose");
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+artifacts = [{ source = "/data/dump", service = "api" }]
+[task]
+name = "example/without-compose"
+[verifier]
+environment_mode = "separate"
+"#,
+    )
+    .unwrap();
+    assert_invalid_standard_task(&task_root, "sidecar reference without Compose");
+
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "non-final-sidecar");
+    for step in ["one", "two"] {
+        fs::create_dir_all(task_root.join(format!("steps/{step}"))).unwrap();
+        fs::write(
+            task_root.join(format!("steps/{step}/instruction.md")),
+            "Do step work.\n",
+        )
+        .unwrap();
+    }
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+[task]
+name = "example/non-final-sidecar"
+[verifier]
+environment_mode = "separate"
+[[steps]]
+name = "one"
+artifacts = [{ source = "/data/dump", service = "api" }]
+[[steps]]
+name = "two"
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("environment/docker-compose.yaml"), compose).unwrap();
+    assert_invalid_standard_task(&task_root, "non-final sidecar evidence");
+}
+
+fn import_compose_task_digest(
+    manifest: &str,
+    compose: &str,
+    nested_input: &[u8],
+) -> ArtifactDigest {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "compose-identity");
+    fs::create_dir_all(task_root.join("environment/context")).unwrap();
+    fs::write(task_root.join("task.toml"), manifest).unwrap();
+    fs::write(task_root.join("environment/docker-compose.yaml"), compose).unwrap();
+    fs::write(
+        task_root.join("environment/context/build-input.txt"),
+        nested_input,
+    )
+    .unwrap();
+    import_task_digest(&task_root)
+}
+
+fn assert_invalid_standard_task(task_root: &std::path::Path, case: &str) {
+    assert!(
+        matches!(
+            HarborImporter::new(&NativeSourceAcquirer)
+                .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
+            Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+        ),
+        "{case} must be refused during import"
+    );
+}
+
+#[test]
 fn imports_standard_multi_step_manifest_in_authored_order() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("multi-step");

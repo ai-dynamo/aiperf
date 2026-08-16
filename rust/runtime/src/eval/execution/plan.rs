@@ -145,6 +145,72 @@ pub enum ImageSourceKind {
     LegacyArtifact,
 }
 
+/// One normalized service name in a generated-main Compose project.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ComposeServiceName(String);
+
+impl ComposeServiceName {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        let trimmed = value.trim();
+        if trimmed != value {
+            return Err(format!(
+                "Compose service name must not contain surrounding whitespace: {value:?}"
+            ));
+        }
+        let value = trimmed;
+        let mut bytes = value.bytes();
+        if value.len() > 63
+            || !matches!(bytes.next(), Some(b'a'..=b'z' | b'0'..=b'9'))
+            || !bytes.all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-'))
+        {
+            return Err(format!(
+                "Compose service name must match [a-z0-9][a-z0-9_.-]{{0,62}}: {value:?}"
+            ));
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub(crate) fn main() -> Self {
+        Self("main".to_owned())
+    }
+
+    /// Returns the normalized service name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Immutable authored-sidecar metadata for one generated-main Compose project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposeProjectPlan {
+    pub(crate) definition_path: String,
+    pub(crate) services: BTreeSet<ComposeServiceName>,
+    pub(crate) build_timeout: Duration,
+    pub(crate) startup_timeout: Duration,
+}
+
+impl ComposeProjectPlan {
+    /// Returns the exact owned Compose overlay path.
+    pub fn definition_path(&self) -> &str {
+        &self.definition_path
+    }
+
+    /// Returns the sorted normalized service set, including generated `main`.
+    pub fn services(&self) -> &BTreeSet<ComposeServiceName> {
+        &self.services
+    }
+
+    /// Returns the complete project build deadline.
+    pub const fn build_timeout(&self) -> Duration {
+        self.build_timeout
+    }
+
+    /// Returns the complete project startup deadline.
+    pub const fn startup_timeout(&self) -> Duration {
+        self.startup_timeout
+    }
+}
+
 impl ImageSource {
     pub(crate) fn task_dockerfile(build_context_digest: ArtifactDigest) -> Self {
         Self {
@@ -347,6 +413,8 @@ pub struct BenchmarkStepPlan {
     agent: PhasePlan,
     verifier: VerifierPlan,
     artifacts: Vec<ArtifactSpec>,
+    collect_hooks: Vec<VerifierCollectHook>,
+    collection_timeout: Duration,
 }
 
 impl BenchmarkStepPlan {
@@ -365,7 +433,19 @@ impl BenchmarkStepPlan {
             agent,
             verifier,
             artifacts,
+            collect_hooks: Vec::new(),
+            collection_timeout: Duration::from_secs(120),
         }
+    }
+
+    pub(crate) fn with_collection(
+        mut self,
+        collect_hooks: Vec<VerifierCollectHook>,
+        collection_timeout: Duration,
+    ) -> Self {
+        self.collect_hooks = collect_hooks;
+        self.collection_timeout = collection_timeout;
+        self
     }
 
     /// Returns the authored step name.
@@ -397,6 +477,16 @@ impl BenchmarkStepPlan {
     pub fn artifacts(&self) -> &[ArtifactSpec] {
         &self.artifacts
     }
+
+    /// Returns effective collection hooks in root-then-step authored order.
+    pub fn collect_hooks(&self) -> &[VerifierCollectHook] {
+        &self.collect_hooks
+    }
+
+    /// Returns the deadline for all collection work in this step.
+    pub const fn collection_timeout(&self) -> Duration {
+        self.collection_timeout
+    }
 }
 
 impl VerifierPlan {
@@ -420,21 +510,58 @@ impl VerifierPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtifactSpec(ArtifactSpecKind);
 
+/// One exact argv hook executed against a task service before artifact collection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifierCollectHook {
+    pub(crate) service: ComposeServiceName,
+    pub(crate) command: Vec<String>,
+    pub(crate) timeout: Duration,
+    pub(crate) user: Option<String>,
+}
+
+impl VerifierCollectHook {
+    /// Returns the target task service.
+    pub fn service(&self) -> &ComposeServiceName {
+        &self.service
+    }
+
+    /// Returns the exact command argv without an implicit shell.
+    pub fn command(&self) -> &[String] {
+        &self.command
+    }
+
+    /// Returns the hook deadline.
+    pub const fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// Returns the optional container user.
+    pub fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ArtifactSpecKind {
     ExactFile {
         source: String,
+        service: ComposeServiceName,
     },
     Collected {
         source: String,
         destination: Option<String>,
         exclude: Vec<String>,
+        service: ComposeServiceName,
     },
 }
 
 impl ArtifactSpec {
     pub(crate) fn exact_file(source: String) -> Self {
-        Self(ArtifactSpecKind::ExactFile { source })
+        Self::exact_file_for_service(source, ComposeServiceName::main())
+    }
+
+    pub(crate) fn exact_file_for_service(source: String, service: ComposeServiceName) -> Self {
+        Self(ArtifactSpecKind::ExactFile { source, service })
     }
 
     pub(crate) fn collected(
@@ -442,19 +569,36 @@ impl ArtifactSpec {
         destination: Option<String>,
         exclude: Vec<String>,
     ) -> Self {
+        Self::collected_for_service(source, destination, exclude, ComposeServiceName::main())
+    }
+
+    pub(crate) fn collected_for_service(
+        source: String,
+        destination: Option<String>,
+        exclude: Vec<String>,
+        service: ComposeServiceName,
+    ) -> Self {
         Self(ArtifactSpecKind::Collected {
             source,
             destination,
             exclude,
+            service,
         })
     }
 
     /// Returns the validated absolute container source path.
     pub fn source(&self) -> &str {
         match &self.0 {
-            ArtifactSpecKind::ExactFile { source } | ArtifactSpecKind::Collected { source, .. } => {
-                source
-            }
+            ArtifactSpecKind::ExactFile { source, .. }
+            | ArtifactSpecKind::Collected { source, .. } => source,
+        }
+    }
+
+    /// Returns the normalized task service that owns the source path.
+    pub fn service(&self) -> &str {
+        match &self.0 {
+            ArtifactSpecKind::ExactFile { service, .. }
+            | ArtifactSpecKind::Collected { service, .. } => service.as_str(),
         }
     }
 
@@ -624,6 +768,7 @@ pub struct BenchmarkExecutionPlan {
     pub(crate) agent: PhasePlan,
     pub(crate) verifier: VerifierPlan,
     pub(crate) artifacts: Vec<ArtifactSpec>,
+    pub(crate) compose: Option<ComposeProjectPlan>,
     pub(crate) steps: Vec<BenchmarkStepPlan>,
     pub(crate) has_explicit_steps: bool,
     pub(crate) multi_step_reward_strategy: Option<MultiStepRewardStrategy>,
@@ -650,6 +795,11 @@ impl BenchmarkExecutionPlan {
         &self.artifacts
     }
 
+    /// Returns generated-main Compose metadata for a Compose-backed standard task.
+    pub fn compose(&self) -> Option<&ComposeProjectPlan> {
+        self.compose.as_ref()
+    }
+
     /// Returns resolved benchmark steps in authored order.
     pub fn steps(&self) -> &[BenchmarkStepPlan] {
         &self.steps
@@ -673,11 +823,12 @@ impl BenchmarkExecutionPlan {
 
     pub(crate) fn append_identity_material(&self, material: &mut Vec<u8>) {
         let mut encoder = IdentityEncoder { material };
-        encoder.field("execution-plan.format", b"1");
+        encoder.field("execution-plan.format", b"2");
         append_environment_identity(&mut encoder, &self.environment);
         append_phase_identity(&mut encoder, &self.agent);
         append_verifier_identity(&mut encoder, &self.verifier);
         append_artifacts_identity(&mut encoder, &self.artifacts);
+        append_compose_identity(&mut encoder, self.compose.as_ref());
         encoder.bool("execution-plan.has-explicit-steps", self.has_explicit_steps);
         encoder.field(
             "execution-plan.reward-strategy",
@@ -698,6 +849,8 @@ impl BenchmarkExecutionPlan {
             append_phase_identity(&mut encoder, &step.agent);
             append_verifier_identity(&mut encoder, &step.verifier);
             append_artifacts_identity(&mut encoder, &step.artifacts);
+            append_collect_hooks_identity(&mut encoder, &step.collect_hooks);
+            encoder.duration("step.collection-timeout", step.collection_timeout);
         }
     }
 
@@ -828,6 +981,10 @@ impl IdentityEncoder<'_> {
         self.field(tag, &value.to_le_bytes());
     }
 
+    fn u128(&mut self, tag: &str, value: u128) {
+        self.field(tag, &value.to_le_bytes());
+    }
+
     fn usize(&mut self, tag: &str, value: usize) {
         self.u64(tag, value as u64);
     }
@@ -845,6 +1002,10 @@ impl IdentityEncoder<'_> {
             self.u64(tag, value.as_secs());
             self.u32(tag, value.subsec_nanos());
         }
+    }
+
+    fn duration(&mut self, tag: &str, value: Duration) {
+        self.u128(tag, value.as_nanos());
     }
 
     fn optional_u32(&mut self, tag: &str, value: Option<u32>) {
@@ -957,8 +1118,9 @@ fn append_artifacts_identity(encoder: &mut IdentityEncoder<'_>, artifacts: &[Art
     encoder.usize("artifact.count", artifacts.len());
     for artifact in artifacts {
         match &artifact.0 {
-            ArtifactSpecKind::ExactFile { source } => {
+            ArtifactSpecKind::ExactFile { source, service } => {
                 encoder.field("artifact.kind", b"exact-file");
+                encoder.field("artifact.service", service.as_str().as_bytes());
                 encoder.field("artifact.source", source.as_bytes());
                 encoder.bool("artifact.destination", false);
                 encoder.usize("artifact.exclude-count", 0);
@@ -967,8 +1129,10 @@ fn append_artifacts_identity(encoder: &mut IdentityEncoder<'_>, artifacts: &[Art
                 source,
                 destination,
                 exclude,
+                service,
             } => {
                 encoder.field("artifact.kind", b"collected");
+                encoder.field("artifact.service", service.as_str().as_bytes());
                 encoder.field("artifact.source", source.as_bytes());
                 encoder.optional_str("artifact.destination", destination.as_deref());
                 encoder.usize("artifact.exclude-count", exclude.len());
@@ -977,6 +1141,38 @@ fn append_artifacts_identity(encoder: &mut IdentityEncoder<'_>, artifacts: &[Art
                 }
             }
         }
+    }
+}
+
+fn append_compose_identity(
+    encoder: &mut IdentityEncoder<'_>,
+    compose: Option<&ComposeProjectPlan>,
+) {
+    encoder.bool("compose.present", compose.is_some());
+    if let Some(compose) = compose {
+        encoder.field(
+            "compose.definition-path",
+            compose.definition_path.as_bytes(),
+        );
+        encoder.usize("compose.service-count", compose.services.len());
+        for service in &compose.services {
+            encoder.field("compose.service", service.as_str().as_bytes());
+        }
+        encoder.duration("compose.build-timeout", compose.build_timeout);
+        encoder.duration("compose.startup-timeout", compose.startup_timeout);
+    }
+}
+
+fn append_collect_hooks_identity(encoder: &mut IdentityEncoder<'_>, hooks: &[VerifierCollectHook]) {
+    encoder.usize("collect-hook.count", hooks.len());
+    for hook in hooks {
+        encoder.field("collect-hook.service", hook.service.as_str().as_bytes());
+        encoder.usize("collect-hook.command-count", hook.command.len());
+        for argument in &hook.command {
+            encoder.field("collect-hook.command", argument.as_bytes());
+        }
+        encoder.duration("collect-hook.timeout", hook.timeout);
+        encoder.optional_str("collect-hook.user", hook.user.as_deref());
     }
 }
 
