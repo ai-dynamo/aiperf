@@ -5,7 +5,7 @@
 
 use std::{fs, path::Path, process::Command};
 
-use super::HarborImportError;
+use super::{AcquiredSource, HarborImportError, source_snapshot::SourceTreeSnapshot};
 
 /// An immutable Harbor-compatible package source reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,6 +82,11 @@ impl HarborSource {
 pub trait SourceAcquirer {
     /// Acquires the exact source bytes identified by a source reference.
     fn acquire(&self, source: &HarborSource) -> Result<Vec<u8>, HarborImportError>;
+
+    /// Acquires an owned artifact detached from its caller-controlled source.
+    fn acquire_artifact(&self, source: &HarborSource) -> Result<AcquiredSource, HarborImportError> {
+        self.acquire(source).map(AcquiredSource::file)
+    }
 }
 
 /// Native local-file and pinned-Git source acquisition.
@@ -116,6 +121,22 @@ impl SourceAcquirer for NativeSourceAcquirer {
                 "offline native source acquirer cannot fetch registry reference {reference:?}"
             ))),
         }
+    }
+
+    fn acquire_artifact(&self, source: &HarborSource) -> Result<AcquiredSource, HarborImportError> {
+        if let HarborSource::Local(location) = source {
+            let root = Path::new(location);
+            if root.is_dir() {
+                let tree = SourceTreeSnapshot::capture(root)?;
+                let primary_path = if tree.contains_file("task.json") {
+                    "task.json"
+                } else {
+                    "task.toml"
+                };
+                return AcquiredSource::tree(primary_path, tree);
+            }
+        }
+        self.acquire(source).map(AcquiredSource::file)
     }
 }
 

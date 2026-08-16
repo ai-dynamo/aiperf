@@ -47,8 +47,8 @@ pub use identity::{
     PolicyIdentity, RuntimeIdentity,
 };
 pub use import::{
-    HarborImportError, HarborImporter, HarborSource, HarborTaskPackage, ImportedTask,
-    NativeSourceAcquirer, SourceAcquirer,
+    AcquiredSource, HarborImportError, HarborImporter, HarborSource, HarborTaskPackage,
+    ImportedTask, NativeSourceAcquirer, SourceAcquirer,
 };
 pub use import_report::{ImportDisposition, ImportReport};
 pub use provider::{ProviderCapability, ProviderError, ProviderProfile};

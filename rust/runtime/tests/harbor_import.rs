@@ -212,6 +212,40 @@ fn native_acquirer_reads_local_and_pinned_git_package_bytes() {
 }
 
 #[test]
+fn native_acquirer_owns_directory_tree_identity_but_preserves_file_byte_identity() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package = supported_package();
+    let directory = temporary.path().join("directory-task");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("task.json"), &package).unwrap();
+    fs::write(directory.join("fixture.txt"), b"original fixture\n").unwrap();
+    let acquirer = NativeSourceAcquirer;
+
+    let acquired = acquirer
+        .acquire_artifact(&HarborSource::local(directory.to_string_lossy()).unwrap())
+        .unwrap();
+    let directory_digest = acquired.source_digest();
+    assert_eq!(acquired.primary_bytes(), package);
+    assert_ne!(directory_digest, ArtifactDigest::from_bytes(&package));
+
+    fs::write(directory.join("task.json"), b"mutated manifest").unwrap();
+    fs::remove_file(directory.join("fixture.txt")).unwrap();
+    assert_eq!(acquired.primary_bytes(), package);
+    assert_eq!(acquired.source_digest(), directory_digest);
+
+    let file = temporary.path().join("single-task.json");
+    fs::write(&file, &package).unwrap();
+    let acquired = acquirer
+        .acquire_artifact(&HarborSource::local(file.to_string_lossy()).unwrap())
+        .unwrap();
+    assert_eq!(acquired.primary_bytes(), package);
+    assert_eq!(
+        acquired.source_digest(),
+        ArtifactDigest::from_bytes(&package)
+    );
+}
+
+#[test]
 fn imports_standard_directory_manifest_with_instruction_and_verifier() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("standard-task");
