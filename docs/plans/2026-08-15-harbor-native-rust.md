@@ -286,7 +286,7 @@ git commit -m "feat(eval): compare semantic Harbor graph variants"
 ### Task 6: P0 product acceptance
 
 **Files:**
-- Create: `rust/e2e-tests/tests/{test_harbor_p0.rs,test_harbor_pinned_git.rs,test_harbor_verifier_isolation.rs}`
+- Create: `rust/e2e-tests/tests/{test_harbor_p0.rs,test_harbor_pinned_git.rs,test_harbor_verifier_isolation.rs,test_harbor_lifecycle_e2e.rs}`
 - Create: `rust/e2e-tests/fixtures/harbor_p0/`
 - Modify: `docs/specs/{harbor-native-rust-implementation.md,harbor-replacement-platform.md,README.md}`, `llms.txt`
 
@@ -327,6 +327,7 @@ cargo fmt -p aiperf-runtime --check
 cargo clippy -p aiperf-runtime --all-targets --features engine
 cargo test -p aiperf-runtime
 cargo test -p aiperf-e2e-tests --test test_harbor_p0 --test test_harbor_pinned_git --test test_harbor_verifier_isolation
+AIPERF_E2E_BIN=$PWD/target/debug/aiperf cargo test -p aiperf-e2e-tests --test test_harbor_lifecycle_e2e -- --ignored --exact pinned_docker_lifecycle_withholds_agent_credential_and_workspace_and_never_invokes_harbor
 cd ..
 /usr/bin/python3 tools/check_agent_files_sync.py
 /usr/bin/python3 tools/check_docs_current.py

@@ -74,6 +74,8 @@ name = "example/lifecycle-e2e"
 workdir = "/work"
 [agent]
 timeout_sec = 10
+[agent.env]
+AIPERF_HARBOR_P0_AGENT_CREDENTIAL = "agent-only-credential"
 [verifier]
 environment_mode = "separate"
 timeout_sec = 10
@@ -92,7 +94,7 @@ timeout_sec = 10
     .expect("write Dockerfile");
     fs::write(
         task.join("tests/test.sh"),
-        "test \"$(cat /work/result.txt)\" = lifecycle-artifact\ntest ! -e /work/private.txt\nprintf '{\"reward\":1.0,\"quality\":0.75}' > /logs/verifier/reward.json\nprintf '0.01' > /logs/verifier/reward.txt\n",
+        "test \"$(cat /work/result.txt)\" = lifecycle-artifact\ntest ! -e /work/private.txt\ntest -z \"${AIPERF_HARBOR_P0_AGENT_CREDENTIAL:-}\"\nprintf '{\"reward\":1.0,\"quality\":0.75}' > /logs/verifier/reward.json\nprintf '0.01' > /logs/verifier/reward.txt\n",
     )
     .expect("write verifier");
     task
@@ -104,7 +106,13 @@ fn run_lifecycle_eval(
     lifecycle: &Path,
     output: &Path,
     command: &str,
+    harbor_process_spy_directory: &Path,
 ) -> Output {
+    let path = format!(
+        "{}:{}",
+        harbor_process_spy_directory.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
     Command::new(exec_binary())
         .args([
             "eval",
@@ -123,13 +131,40 @@ fn run_lifecycle_eval(
             "--lifecycle-output",
             output.to_string_lossy().as_ref(),
         ])
+        .env("PATH", path)
         .output()
         .expect("start native lifecycle evaluation")
 }
 
+fn write_harbor_process_spy(temporary: &Path) -> (PathBuf, PathBuf) {
+    let directory = temporary.join("harbor-process-spy");
+    fs::create_dir(&directory).expect("create Harbor process spy directory");
+    let invoked = temporary.join("harbor-process-invoked");
+    let program = directory.join("harbor");
+    fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nprintf invoked > {}\nexit 97\n",
+            invoked.display()
+        ),
+    )
+    .expect("write Harbor process spy");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&program)
+            .expect("read Harbor process spy permissions")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&program, permissions).expect("make Harbor process spy executable");
+    }
+    (directory, invoked)
+}
+
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
-fn pinned_docker_lifecycle_persists_isolated_declared_evidence_and_score_lineage() {
+fn pinned_docker_lifecycle_withholds_agent_credential_and_workspace_and_never_invokes_harbor() {
     let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().expect("create temporary repository");
     let repository = temporary.path().join("harbor-tasks");
@@ -154,11 +189,20 @@ fn pinned_docker_lifecycle_persists_isolated_declared_evidence_and_score_lineage
     .expect("mutate source after pinning");
     fs::remove_file(task.join("tests/test.sh")).expect("remove mutable verifier source");
 
-    let command = "printf lifecycle-artifact > result.txt && printf private > private.txt";
+    let command = "test \"$AIPERF_HARBOR_P0_AGENT_CREDENTIAL\" = agent-only-credential && printf lifecycle-artifact > result.txt && printf private > private.txt";
     let request = temporary.path().join("lifecycle-request.json");
     let record = temporary.path().join("lifecycle-record.json");
+    let (harbor_process_spy_directory, harbor_process_invoked) =
+        write_harbor_process_spy(temporary.path());
     fs::write(&request, lifecycle_request(command)).expect("write lifecycle request");
-    let output = run_lifecycle_eval(&repository, &revision, &request, &record, command);
+    let output = run_lifecycle_eval(
+        &repository,
+        &revision,
+        &request,
+        &record,
+        command,
+        &harbor_process_spy_directory,
+    );
     assert!(
         output.status.success(),
         "stdout: {}\nstderr: {}",
@@ -176,6 +220,15 @@ fn pinned_docker_lifecycle_persists_isolated_declared_evidence_and_score_lineage
     assert_eq!(summary["reward"]["reward"], 1.0);
     assert_eq!(summary["reward"]["quality"], 0.75);
     assert_eq!(summary["lifecycle"], persisted);
+    assert_eq!(
+        persisted["source"],
+        serde_json::json!({
+            "kind": "pinned_git",
+            "repository": repository,
+            "revision": revision,
+            "package_path": "task/task.toml",
+        })
+    );
     assert_eq!(persisted["trial"]["seed"], 17);
     assert_eq!(persisted["initial_score"]["value"], 1.0);
     assert_eq!(persisted["regraded_score"]["value"], 0.75);
@@ -198,5 +251,9 @@ fn pinned_docker_lifecycle_persists_isolated_declared_evidence_and_score_lineage
             "result.txt",
             format!("blake3:{}", blake3::hash(b"lifecycle-artifact").to_hex())
         ]])
+    );
+    assert!(
+        !harbor_process_invoked.exists(),
+        "native evaluation must not invoke a Harbor executable"
     );
 }
