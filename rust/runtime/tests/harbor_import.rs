@@ -149,6 +149,38 @@ fn supported_package() -> Vec<u8> {
     .to_vec()
 }
 
+#[test]
+fn legacy_json_package_preserves_pre_compose_identity_golden() {
+    let source = HarborSource::local("fixtures/repair-1").unwrap();
+    let mut acquirer = MemoryAcquirer::default();
+    acquirer
+        .packages
+        .insert(source.location().to_owned(), supported_package());
+
+    let imported = HarborImporter::new(&acquirer).import(&source).unwrap();
+
+    assert_eq!(
+        imported.task.digest.as_str(),
+        "blake3:1e8fb5e4a0520db21e05852a53d891ee52c248b1859dae87da335c7cf5a6ae48"
+    );
+}
+
+#[test]
+fn legacy_dockerfile_standard_task_preserves_pre_compose_identity_golden() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "legacy-golden");
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\nartifacts = [\"/work/result.txt\"]\n[task]\nname = \"example/legacy-golden\"\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        import_task_digest(&task_root).as_str(),
+        "blake3:f6e65dd2abc7f38df7d68eb599f81326c6d4a3850d1ef775ac8b449654ac7584"
+    );
+}
+
 fn package_with_mutation(mutate: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
     let mut package = serde_json::from_slice(&supported_package()).unwrap();
     mutate(&mut package);

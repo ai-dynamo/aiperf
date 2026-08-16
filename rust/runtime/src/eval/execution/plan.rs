@@ -823,12 +823,18 @@ impl BenchmarkExecutionPlan {
 
     pub(crate) fn append_identity_material(&self, material: &mut Vec<u8>) {
         let mut encoder = IdentityEncoder { material };
-        encoder.field("execution-plan.format", b"2");
+        let has_compose = self.compose.is_some();
+        encoder.field(
+            "execution-plan.format",
+            if has_compose { b"2" } else { b"1" },
+        );
         append_environment_identity(&mut encoder, &self.environment);
         append_phase_identity(&mut encoder, &self.agent);
         append_verifier_identity(&mut encoder, &self.verifier);
-        append_artifacts_identity(&mut encoder, &self.artifacts);
-        append_compose_identity(&mut encoder, self.compose.as_ref());
+        append_artifacts_identity(&mut encoder, &self.artifacts, has_compose);
+        if has_compose {
+            append_compose_identity(&mut encoder, self.compose.as_ref());
+        }
         encoder.bool("execution-plan.has-explicit-steps", self.has_explicit_steps);
         encoder.field(
             "execution-plan.reward-strategy",
@@ -848,9 +854,11 @@ impl BenchmarkExecutionPlan {
             );
             append_phase_identity(&mut encoder, &step.agent);
             append_verifier_identity(&mut encoder, &step.verifier);
-            append_artifacts_identity(&mut encoder, &step.artifacts);
-            append_collect_hooks_identity(&mut encoder, &step.collect_hooks);
-            encoder.duration("step.collection-timeout", step.collection_timeout);
+            append_artifacts_identity(&mut encoder, &step.artifacts, has_compose);
+            if has_compose {
+                append_collect_hooks_identity(&mut encoder, &step.collect_hooks);
+                encoder.duration("step.collection-timeout", step.collection_timeout);
+            }
         }
     }
 
@@ -1114,13 +1122,19 @@ fn append_network_identity(encoder: &mut IdentityEncoder<'_>, network: &NetworkP
     }
 }
 
-fn append_artifacts_identity(encoder: &mut IdentityEncoder<'_>, artifacts: &[ArtifactSpec]) {
+fn append_artifacts_identity(
+    encoder: &mut IdentityEncoder<'_>,
+    artifacts: &[ArtifactSpec],
+    has_service_identity: bool,
+) {
     encoder.usize("artifact.count", artifacts.len());
     for artifact in artifacts {
         match &artifact.0 {
             ArtifactSpecKind::ExactFile { source, service } => {
                 encoder.field("artifact.kind", b"exact-file");
-                encoder.field("artifact.service", service.as_str().as_bytes());
+                if has_service_identity {
+                    encoder.field("artifact.service", service.as_str().as_bytes());
+                }
                 encoder.field("artifact.source", source.as_bytes());
                 encoder.bool("artifact.destination", false);
                 encoder.usize("artifact.exclude-count", 0);
@@ -1132,7 +1146,9 @@ fn append_artifacts_identity(encoder: &mut IdentityEncoder<'_>, artifacts: &[Art
                 service,
             } => {
                 encoder.field("artifact.kind", b"collected");
-                encoder.field("artifact.service", service.as_str().as_bytes());
+                if has_service_identity {
+                    encoder.field("artifact.service", service.as_str().as_bytes());
+                }
                 encoder.field("artifact.source", source.as_bytes());
                 encoder.optional_str("artifact.destination", destination.as_deref());
                 encoder.usize("artifact.exclude-count", exclude.len());
