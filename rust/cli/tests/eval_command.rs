@@ -184,6 +184,46 @@ fn native_eval_rejects_standard_task_verifier_mode_override() {
 }
 
 #[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn native_eval_command_explicit_workdir_overrides_a_standard_task_manifest() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("docker-workdir-override");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/docker-workdir-override\"\n[environment]\nworkdir = \"/manifest-work\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Record the workdir.\n").unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN mkdir -p /logs/verifier\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test \"$(cat /cli-work/pwd.txt)\" = /cli-work\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+
+    let exit = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--workdir".to_owned(),
+        "/cli-work".to_owned(),
+        "--agent-command".to_owned(),
+        "pwd > pwd.txt".to_owned(),
+    ])
+    .expect("an explicit CLI workdir must override the normalized manifest workdir");
+
+    assert_eq!(exit, 0);
+}
+
+#[test]
 #[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
 fn native_eval_command_runs_a_standard_task_directory_in_docker() {
     let temporary = tempfile::tempdir().unwrap();

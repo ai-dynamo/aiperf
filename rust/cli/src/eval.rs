@@ -33,9 +33,9 @@ struct EvalFlags {
     /// Immutable image identity used by the sandbox recipe.
     #[arg(long)]
     image: Option<String>,
-    /// Absolute working directory inside the selected sandbox recipe.
-    #[arg(long, default_value = "/work")]
-    workdir: String,
+    /// Absolute runtime working-directory override for a standard task.
+    #[arg(long)]
+    workdir: Option<String>,
     /// Whether the verifier shares the agent sandbox or receives a fresh root.
     #[arg(long, value_enum)]
     verifier_mode: Option<VerifierModeFlag>,
@@ -107,7 +107,11 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         }
         None => anyhow::bail!("--image is required for the local sandbox backend"),
     };
-    let recipe = HarborSandboxRecipe::new(image, flags.workdir)?;
+    let recipe = if imported.package.is_standard_directory() {
+        HarborSandboxRecipe::for_standard_task(image, flags.workdir)?
+    } else {
+        HarborSandboxRecipe::new(image, flags.workdir.unwrap_or_else(|| "/work".to_owned()))?
+    };
     let agent_command = flags
         .agent_command
         .as_deref()

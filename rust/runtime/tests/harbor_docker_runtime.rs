@@ -142,6 +142,45 @@ PHASE = "verifier"
 }
 
 #[test]
+fn cli_recipe_workdir_overrides_the_manifest_without_mutating_the_plan() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "[environment]\nworkdir = \"/manifest-work\"\n");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/cli-work".to_owned()),
+    )
+    .unwrap();
+    let runtime = LifecycleRuntime::default();
+
+    DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["true".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    assert_eq!(
+        imported.package.execution_plan().environment().workdir(),
+        Some("/manifest-work")
+    );
+    assert!(
+        runtime
+            .events
+            .into_inner()
+            .iter()
+            .any(|event| event == "agent:root:/cli-work:aiperf-eval-public:"),
+        "the explicit CLI workdir must be applied only at runtime"
+    );
+}
+
+#[test]
 fn each_execution_uses_distinct_image_and_container_names() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_root(&temporary, "");

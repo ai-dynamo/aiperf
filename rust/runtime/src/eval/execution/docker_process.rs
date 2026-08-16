@@ -150,6 +150,7 @@ impl DockerProcessSandbox {
         let outcome = (|| {
             let baseline_network = network_lease(environment.network())?;
             let build_network = build_network_lease(environment.network())?;
+            let environment_workdir = recipe.resolve_workdir(environment.workdir());
             runtime.build(
                 &DockerBuildRequest::new([
                     "build",
@@ -166,8 +167,8 @@ impl DockerProcessSandbox {
                 &container,
                 &image,
                 workspace.path(),
-                recipe,
                 environment,
+                environment_workdir,
                 baseline_network,
                 Some(package.instruction()),
             )?;
@@ -179,6 +180,7 @@ impl DockerProcessSandbox {
                     runtime,
                     &container,
                     environment,
+                    environment_workdir,
                     healthcheck,
                     baseline_network,
                     secrets,
@@ -190,6 +192,7 @@ impl DockerProcessSandbox {
                 &container,
                 environment,
                 plan.agent(),
+                environment_workdir,
                 baseline_network,
             )?;
             execute_planned_phase(
@@ -199,6 +202,7 @@ impl DockerProcessSandbox {
                 agent_command,
                 environment,
                 plan.agent(),
+                environment_workdir,
                 secrets,
             )?;
             let artifact_collection = tempfile::tempdir()
@@ -222,13 +226,14 @@ impl DockerProcessSandbox {
                 )?;
                 let name = format!("{container}-verifier");
                 let verifier_network = network_lease(verifier.environment().network())?;
+                let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
                 create_planned_container(
                     runtime,
                     &name,
                     &image,
                     verifier_workspace.path(),
-                    recipe,
                     verifier.environment(),
+                    verifier_workdir,
                     verifier_network,
                     None,
                 )?;
@@ -240,6 +245,7 @@ impl DockerProcessSandbox {
                         runtime,
                         &name,
                         verifier.environment(),
+                        verifier_workdir,
                         healthcheck,
                         verifier_network,
                         secrets,
@@ -258,11 +264,13 @@ impl DockerProcessSandbox {
                 format!("{verifier_name}:/tests"),
             ]))?;
             let verifier_network = network_lease(verifier.phase().network())?;
+            let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
             prepare_workdir(
                 runtime,
                 verifier_name,
                 verifier.environment(),
                 verifier.phase(),
+                verifier_workdir,
                 verifier_network,
             )?;
             execute_planned_phase(
@@ -272,6 +280,7 @@ impl DockerProcessSandbox {
                 &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
                 verifier.environment(),
                 verifier.phase(),
+                verifier_workdir,
                 secrets,
             )?;
             let reward_workspace = tempfile::tempdir()
@@ -301,6 +310,7 @@ fn run_healthcheck(
     runtime: &dyn DockerRuntime,
     container: &str,
     environment: &super::EnvironmentPlan,
+    workdir: Option<&str>,
     healthcheck: &super::HealthcheckPlan,
     network_lease: &str,
     secrets: &dyn SecretProvider,
@@ -321,7 +331,7 @@ fn run_healthcheck(
         .with_phase(
             EvalExecutionPhase::Healthcheck,
             environment.user(),
-            environment.workdir(),
+            workdir,
             network_lease,
             healthcheck.timeout(),
         );
@@ -631,8 +641,8 @@ fn create_planned_container(
     container: &str,
     image: &str,
     workspace: &std::path::Path,
-    recipe: &HarborSandboxRecipe,
     environment: &super::EnvironmentPlan,
+    workdir: Option<&str>,
     network_lease: &str,
     instruction: Option<&str>,
 ) -> Result<(), EvalExecutionError> {
@@ -643,15 +653,10 @@ fn create_planned_container(
         "--network".to_owned(),
         network_lease.to_owned(),
     ];
-    if let Some(workdir) = environment.workdir() {
+    if let Some(workdir) = workdir {
         arguments.extend([
             "--volume".to_owned(),
             format!("{}:{workdir}", workspace.display()),
-        ]);
-    } else {
-        arguments.extend([
-            "--volume".to_owned(),
-            format!("{}:{}", workspace.display(), recipe.workdir),
         ]);
     }
     if let Some(resources) = environment.resources() {
@@ -677,9 +682,10 @@ fn prepare_workdir(
     container: &str,
     environment: &super::EnvironmentPlan,
     phase: &super::PhasePlan,
+    workdir: Option<&str>,
     network_lease: &str,
 ) -> Result<(), EvalExecutionError> {
-    let Some(workdir) = environment.workdir() else {
+    let Some(workdir) = workdir else {
         return Ok(());
     };
     let Some(user) = phase.user().or(environment.user()) else {
@@ -716,6 +722,7 @@ fn execute_planned_phase(
     command: &[String],
     environment: &super::EnvironmentPlan,
     phase: &super::PhasePlan,
+    workdir: Option<&str>,
     secrets: &dyn SecretProvider,
 ) -> Result<(), EvalExecutionError> {
     if command.is_empty() || command.iter().any(|part| part.trim().is_empty()) {
@@ -733,7 +740,7 @@ fn execute_planned_phase(
         .with_phase(
             execution_phase,
             phase.user().or(environment.user()),
-            environment.workdir(),
+            workdir,
             network_lease,
             phase.timeout(),
         ),
