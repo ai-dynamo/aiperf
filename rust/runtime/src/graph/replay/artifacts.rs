@@ -3,6 +3,7 @@
 
 //! Controller-owned deterministic replay artifact writers.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -27,6 +28,8 @@ pub struct ReplayArtifactPaths {
     pub metrics_json_path: Option<PathBuf>,
     /// Optional normalized metrics CSV destination.
     pub metrics_csv_path: Option<PathBuf>,
+    /// Optional strict resolved-backend metadata destination.
+    pub backend_metadata_path: Option<PathBuf>,
 }
 
 /// One attempted tool command retained without command or output bytes.
@@ -208,6 +211,35 @@ pub fn write_replay_artifacts(
     }
     if let Some(path) = &paths.metrics_csv_path {
         write_metrics_csv(path, &folded)?;
+    }
+    if let Some(path) = &paths.backend_metadata_path {
+        let tools = successful
+            .iter()
+            .flat_map(|trace| trace.tools.iter())
+            .collect::<Vec<_>>();
+        let backends = tools
+            .iter()
+            .map(|tool| tool.backend.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        write_json(
+            path,
+            &BackendMetadataArtifact {
+                schema_version: 1,
+                backend: if tools.is_empty() {
+                    "none".into()
+                } else {
+                    backend_label(&tools)
+                },
+                backends,
+                trace_count: successful
+                    .iter()
+                    .filter(|trace| !trace.tools.is_empty())
+                    .count(),
+                command_count: tools.len(),
+            },
+        )?;
     }
     Ok(())
 }
@@ -392,6 +424,15 @@ struct ToolTimeArtifact {
     median_s: f64,
     max_s: f64,
     durations_s: Vec<f64>,
+}
+
+#[derive(Serialize)]
+struct BackendMetadataArtifact {
+    schema_version: u32,
+    backend: String,
+    backends: Vec<String>,
+    trace_count: usize,
+    command_count: usize,
 }
 
 #[derive(Serialize)]

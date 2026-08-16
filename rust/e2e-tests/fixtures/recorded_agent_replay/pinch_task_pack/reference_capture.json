@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "reference": {
+    "repository": "open-lab-benchmark",
+    "revision": "b8897f5de1664ad6de9cd669a96c3ba5d379e81e",
+    "entrypoint": "python -m minisweagent.run.record_pinchbench",
+    "environment_class": "local"
+  },
+  "capture": {
+    "transport": "raw-openai-http",
+    "warmup_requests": 1,
+    "profile_requests": 5,
+    "profile_request_fixture": "expected_requests.json",
+    "profile_request_sha256": "0247f13c039fd9d32c5bff6e56a8046090c0cf8dc14ba3b1490fff6698872135"
+  }
+}

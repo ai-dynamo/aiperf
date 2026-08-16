@@ -74,6 +74,9 @@ impl From<&TraceTerminalSupplement> for ReplayTraceInstance {
 pub struct PlannedReplayTraceInstance {
     /// Cell assigned by the controller before START.
     pub cell_id: u32,
+    /// Template graph trace identity chosen by the controller for this instance.
+    #[serde(default)]
+    pub template_trace_id: Option<String>,
     /// Planned trace-local trajectory identity.
     pub trajectory_id: String,
     /// Planned graph trace instance identity.
@@ -89,9 +92,17 @@ impl PlannedReplayTraceInstance {
     ) -> Self {
         Self {
             cell_id,
+            template_trace_id: None,
             trajectory_id: trajectory_id.into(),
             trace_id: trace_id.into(),
         }
+    }
+
+    /// Attach the template graph trace identity chosen for this instance.
+    #[must_use]
+    pub fn with_template_trace_id(mut self, template_trace_id: impl Into<String>) -> Self {
+        self.template_trace_id = Some(template_trace_id.into());
+        self
     }
 
     fn from_terminal(cell_id: u32, trace: &TraceTerminalSupplement) -> Self {

@@ -46,8 +46,8 @@ use crate::rng::{RngRoot, namespace};
 use crate::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, GracePeriod, LocalPhaseFuture,
     NoopPhaseObserver, PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError,
-    PhaseExecutionFactory, PhaseObserver, PhaseReturn, PhaseSend, PhaseStats, RampDriver, SlotPool,
-    drive_phases, make_interval_generator,
+    PhaseExecutionFactory, PhaseObserver, PhaseReturn, PhaseSend, PhaseStats, RampDriver,
+    ReleasedStuckSlots, SlotPool, drive_phases, make_interval_generator,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use tokio::sync::{Notify, mpsc};
@@ -1186,6 +1186,7 @@ impl GraphPhaseFailures {
 
 struct GraphPhaseWorkloadObserver {
     progress: Rc<GraphPhaseProgress>,
+    failures: Rc<GraphPhaseFailures>,
 }
 
 impl GraphWorkloadObserver for GraphPhaseWorkloadObserver {
@@ -1195,6 +1196,15 @@ impl GraphWorkloadObserver for GraphPhaseWorkloadObserver {
 
     fn on_sending_complete(&self, _at_ns: i64) {
         self.progress.sink.mark_all_sent();
+    }
+
+    fn on_trace_complete(&self, result: &GraphTraceRunResult) {
+        if let Err(error) = &result.result
+            && !matches!(error, TraceError::Cancelled(_))
+        {
+            self.failures
+                .record(format!("graph trace {:?} failed: {error}", result.trace_id));
+        }
     }
 }
 
@@ -1232,6 +1242,7 @@ struct GraphPhaseExecution {
     sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     drain_stop: Rc<GraphRecordDrainStop>,
     drain_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    workload_completion: Rc<GraphWorkloadCompletion>,
     setup_error: Option<String>,
     /// Warmup lane driver (`agentic_cache_warmup_duration` recycle or AgentX
     /// lane-prime). When present, [`execute`](PhaseExecution::execute) drives it
@@ -1243,6 +1254,94 @@ struct GraphPhaseExecution {
     /// [`GraphWarmupHandoff`] here at the end of [`finalize`](PhaseExecution::finalize)
     /// (after its drain completes); non-warmup phases never write it.
     warmup_handoff: Rc<RefCell<Option<GraphWarmupHandoff>>>,
+}
+
+#[derive(Default)]
+struct GraphWorkloadCompletion {
+    started: Cell<bool>,
+    forced: Cell<bool>,
+    result: RefCell<Option<Result<(), String>>>,
+    task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    notify: Notify,
+}
+
+impl GraphWorkloadCompletion {
+    fn begin(&self) -> bool {
+        !self.started.replace(true)
+    }
+
+    fn finish(&self, result: Result<(), String>) {
+        let mut stored = self.result.borrow_mut();
+        if stored.is_none() {
+            *stored = Some(result);
+            self.notify.notify_waiters();
+        }
+    }
+
+    fn install_task(&self, task: tokio::task::JoinHandle<()>) {
+        *self.task.borrow_mut() = Some(task);
+    }
+
+    fn abort_for_force_completion(&self) {
+        self.forced.set(true);
+        if let Some(task) = self.task.borrow().as_ref() {
+            task.abort();
+        }
+    }
+
+    async fn wait_if_started(&self) -> Result<(), PhaseExecutionError> {
+        if !self.started.get() {
+            return Ok(());
+        }
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(result) = self.result.borrow().clone() {
+                return result.map_err(PhaseExecutionError::new);
+            }
+            notified.await;
+        }
+    }
+
+    async fn join_if_started(&self) -> Result<(), PhaseExecutionError> {
+        if !self.started.get() {
+            return Ok(());
+        }
+        let task = self.task.borrow_mut().take();
+        let Some(task) = task else {
+            return Err(PhaseExecutionError::new(
+                "graph workload task was not retained",
+            ));
+        };
+        match task.await {
+            Ok(()) => Ok(()),
+            Err(error) if error.is_cancelled() && self.forced.get() => Ok(()),
+            Err(error) => Err(PhaseExecutionError::new(format!(
+                "graph workload task failed: {error}"
+            ))),
+        }
+    }
+}
+
+struct GraphWorkloadTaskGuard {
+    completion: Rc<GraphWorkloadCompletion>,
+}
+
+impl Drop for GraphWorkloadTaskGuard {
+    fn drop(&mut self) {
+        if self.completion.result.borrow().is_some() {
+            return;
+        }
+        let result = if self.completion.forced.get() {
+            Ok(())
+        } else if std::thread::panicking() {
+            Err("graph workload task panicked".into())
+        } else {
+            Err("graph workload task was cancelled".into())
+        };
+        self.completion.finish(result);
+    }
 }
 
 impl GraphPhaseExecution {
@@ -1452,28 +1551,45 @@ impl PhaseExecution for GraphPhaseExecution {
         let context = self.context.clone();
         let controller = self.controller.clone();
         let failures = self.failures.clone();
-        Box::pin(async move {
-            let execute = workload.execute();
-            let adaptive_stop = controller.wait_until_stop();
-            let failed = failures.wait();
-            tokio::pin!(execute);
-            tokio::pin!(adaptive_stop);
-            tokio::pin!(failed);
-            tokio::select! {
-                biased;
-                () = &mut failed => Err(PhaseExecutionError::new(
-                    failures.first().unwrap_or_else(|| "graph phase failed".into())
-                )),
-                () = &mut adaptive_stop => {
-                    workload.cancel();
-                    context.mark_all_sent();
-                    Ok(())
-                }
-                result = &mut execute => result
-                    .map(|_| ())
-                    .map_err(|error| PhaseExecutionError::new(error.to_string())),
-            }
-        })
+        let completion = self.workload_completion.clone();
+        if completion.begin() {
+            let task_completion = completion.clone();
+            let completion_guard = GraphWorkloadTaskGuard {
+                completion: completion.clone(),
+            };
+            let task = tokio::task::spawn_local(async move {
+                let _completion_guard = completion_guard;
+                let execute = workload.execute();
+                let adaptive_stop = controller.wait_until_stop();
+                let failed = failures.wait();
+                tokio::pin!(execute);
+                tokio::pin!(adaptive_stop);
+                tokio::pin!(failed);
+                let result = tokio::select! {
+                    biased;
+                    () = &mut failed => {
+                        let error = PhaseExecutionError::new(
+                            failures.first().unwrap_or_else(|| "graph phase failed".into())
+                        );
+                        workload.cancel();
+                        Err(error)
+                    }
+                    () = &mut adaptive_stop => {
+                        workload.cancel();
+                        context.mark_all_sent();
+                        execute.await
+                            .map(|_| ())
+                            .map_err(|error| PhaseExecutionError::new(error.to_string()))
+                    }
+                    result = &mut execute => result
+                        .map(|_| ())
+                        .map_err(|error| PhaseExecutionError::new(error.to_string())),
+                };
+                task_completion.finish(result.map_err(|error| error.to_string()));
+            });
+            completion.install_task(task);
+        }
+        Box::pin(async move { completion.wait_if_started().await })
     }
 
     fn stop_issuing(&self) {
@@ -1489,6 +1605,12 @@ impl PhaseExecution for GraphPhaseExecution {
             .cancel_inflight()
             .map_err(|error| PhaseExecutionError::new(error.to_string()));
         Box::pin(async move { result })
+    }
+
+    fn release_stuck_slots(&self) -> ReleasedStuckSlots {
+        self.workload.force_abort_trace_tasks();
+        self.workload_completion.abort_for_force_completion();
+        ReleasedStuckSlots::default()
     }
 
     fn stop_ramps(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
@@ -1507,8 +1629,10 @@ impl PhaseExecution for GraphPhaseExecution {
     }
 
     fn finalize(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
-        self.drain_stop.stop();
         let drain = self.drain_task.borrow_mut().take();
+        let drain_stop = self.drain_stop.clone();
+        let workload_completion = self.workload_completion.clone();
+        let workload = self.workload.clone();
         let failures = self.failures.clone();
         let sidecars = self.sidecars.clone();
         let clock = self.clock.clone();
@@ -1516,12 +1640,28 @@ impl PhaseExecution for GraphPhaseExecution {
         let pressure_recycle = self.pressure_recycle.clone();
         let warmup_handoff = self.warmup_handoff.clone();
         Box::pin(async move {
+            let workload_result = workload_completion.wait_if_started().await;
+            if workload_result.is_err() {
+                // A primary workload failure has no grace-return path: the phase runner
+                // enters failure finalization immediately. Retain handles until this
+                // boundary, then abort non-cooperative trace work before joining it.
+                workload.force_abort_trace_tasks();
+            }
+            let workload_join_result = workload_completion.join_if_started().await;
+            let trace_join_result = workload
+                .join_trace_tasks()
+                .await
+                .map_err(|error| PhaseExecutionError::new(error.to_string()));
+            drain_stop.stop();
             if let Some(drain) = drain {
                 drain.await.map_err(|error| {
                     PhaseExecutionError::new(format!("graph record drain failed: {error}"))
                 })?;
             }
             finish_phase_sidecars(&sidecars, clock.as_ref(), "graph").await?;
+            workload_result?;
+            workload_join_result?;
+            trace_join_result?;
             if let Some(error) = failures.first() {
                 return Err(PhaseExecutionError::new(error));
             }
@@ -1594,6 +1734,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
         ));
         let observer = Rc::new(GraphPhaseWorkloadObserver {
             progress: progress.clone(),
+            failures: prepared.failures.clone(),
         });
         let mut setup_error = None;
         // Consume the handoff once so later phases cannot reuse a stale frontier.
@@ -1683,6 +1824,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             sidecars,
             drain_stop: Rc::new(GraphRecordDrainStop::default()),
             drain_task: RefCell::new(None),
+            workload_completion: Rc::new(GraphWorkloadCompletion::default()),
             setup_error,
             pressure_recycle,
             warmup_handoff: self.warmup_handoff.clone(),
@@ -2049,6 +2191,28 @@ fn static_graph_plans(input: &GraphInputBundle) -> Result<Vec<GraphTracePlan>> {
         .collect()
 }
 
+/// Clone authored recorded-replay programs that bypass static-plan transforms.
+///
+/// The t* split, warmup-handoff frontier rewrite, and cache-pressure recycle all
+/// operate on plain static graph plans. Recorded replay carries additional
+/// driver, environment, replay, and tool state those transforms cannot preserve,
+/// so the phase runtime must feed the authored programs directly into the trace
+/// source when every root selects the recorded-replay driver.
+fn recorded_replay_programs(input: &GraphInputBundle) -> Result<Vec<GraphTraceProgram>> {
+    input
+        .programs
+        .iter()
+        .map(|program| {
+            ensure!(
+                program.driver.kind == "recorded_replay",
+                "recorded replay phase preparation expected only recorded_replay programs, found {:?}",
+                program.driver.kind
+            );
+            Ok(program.clone())
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_graph_phase(
     phase_index: usize,
@@ -2068,45 +2232,82 @@ fn prepare_graph_phase(
     let phase_rng_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
     let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, phase_rng_index);
     let common = phase.common();
-    let input_plans = static_graph_plans(input)?;
-    // Warmup and profiling use the same deterministic per-trace snapshot instant.
-    let mut phase_plans = apply_tstar_split(&input_plans, phase, t_star);
-    // Drop any trace whose t*-snapshot is empty: a warmup prime sampled past the
-    // trace's last turn, or a profiling chop that keeps nothing, yields a zero-node
-    // graph. Admitting one records a "no dispatchable nodes" failure and — worse —
-    // leaves a one-pass phase's session drain waiting on a session that never
-    // dispatches, deadlocking the phase. The corpus draw and the one-pass session
-    // bound below therefore count only the non-empty snapshots.
-    phase_plans.retain(|plan| !plan.graph.nodes.is_empty());
     let one_pass =
         common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
     let lane_prime = is_lane_prime_warmup(common, t_star);
-    // Lane-prime bounds sessions to concurrency (N in-flight lanes). Unbound
-    // one-pass without an active t* window still covers the non-empty corpus once.
-    let session_limit = if lane_prime {
-        let concurrency = phase.concurrency().unwrap_or(1).max(1);
-        Some(u64::try_from(concurrency).context("graph concurrency exceeds u64")?)
-    } else if one_pass {
-        Some(u64::try_from(phase_plans.len()).context("graph root count exceeds u64")?)
+    let all_static = input
+        .programs
+        .iter()
+        .all(GraphTraceProgram::is_static_graph_program);
+    let all_recorded_replay = input
+        .programs
+        .iter()
+        .all(|program| program.driver.kind == "recorded_replay");
+    let (input_plans, session_limit, pressure, source) = if all_static {
+        let input_plans = static_graph_plans(input)?;
+        // Warmup and profiling use the same deterministic per-trace snapshot instant.
+        let mut phase_plans = apply_tstar_split(&input_plans, phase, t_star);
+        // Drop any trace whose t*-snapshot is empty: a warmup prime sampled past the
+        // trace's last turn, or a profiling chop that keeps nothing, yields a zero-node
+        // graph. Admitting one records a "no dispatchable nodes" failure and — worse —
+        // leaves a one-pass phase's session drain waiting on a session that never
+        // dispatches, deadlocking the phase. The corpus draw and the one-pass session
+        // bound below therefore count only the non-empty snapshots.
+        phase_plans.retain(|plan| !plan.graph.nodes.is_empty());
+        // Lane-prime bounds sessions to concurrency (N in-flight lanes). Unbound
+        // one-pass without an active t* window still covers the non-empty corpus once.
+        let session_limit = if lane_prime {
+            let concurrency = phase.concurrency().unwrap_or(1).max(1);
+            Some(u64::try_from(concurrency).context("graph concurrency exceeds u64")?)
+        } else if one_pass {
+            Some(u64::try_from(phase_plans.len()).context("graph root count exceeds u64")?)
+        } else {
+            common.sessions
+        };
+        // Cache-pressure recycle (duration) or AgentX lane-prime (unbound + t*).
+        let pressure = build_pressure_recycle(&phase_plans, &input_plans, phase, common, t_star)
+            .with_context(|| {
+                format!("preparing warmup cache-pressure recycle for phase {phase_index}")
+            })?;
+        let source = build_graph_trace_source(
+            phase_plans,
+            session_limit,
+            common.requests,
+            trace_instances.clone(),
+            // Up-front build: no warmup handoff yet, so the corpus draw starts at 0.
+            // A profiling phase that later pops a handoff rebuilds its source with the
+            // resume cursor in `rebuild_resume_workload`.
+            0,
+            t_star,
+        )?;
+        (Some(input_plans), session_limit, pressure, source)
+    } else if all_recorded_replay {
+        ensure!(
+            t_star == TStarWindow::default(),
+            "recorded replay graph phases do not support t* trajectory splitting"
+        );
+        ensure!(
+            !lane_prime && common.agentic_cache_warmup_duration.is_none(),
+            "recorded replay graph phases do not support cache-pressure or lane-prime warmup"
+        );
+        let programs = recorded_replay_programs(input)?;
+        let session_limit = if one_pass {
+            Some(u64::try_from(programs.len()).context("graph root count exceeds u64")?)
+        } else {
+            common.sessions
+        };
+        let source = build_graph_program_source(
+            programs,
+            session_limit,
+            common.requests,
+            trace_instances.clone(),
+            0,
+            TStarWindow::default(),
+        )?;
+        (None, session_limit, None, source)
     } else {
-        common.sessions
+        bail!("graph phase input must be all static_graph or all recorded_replay programs");
     };
-    // Cache-pressure recycle (duration) or AgentX lane-prime (unbound + t*).
-    let pressure = build_pressure_recycle(&phase_plans, &input_plans, phase, common, t_star)
-        .with_context(|| {
-            format!("preparing warmup cache-pressure recycle for phase {phase_index}")
-        })?;
-    let source = build_graph_trace_source(
-        phase_plans,
-        session_limit,
-        common.requests,
-        trace_instances.clone(),
-        // Up-front build: no warmup handoff yet, so the corpus draw starts at 0.
-        // A profiling phase that later pops a handoff rebuilds its source with the
-        // resume cursor in `rebuild_resume_workload`.
-        0,
-        t_star,
-    )?;
     let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
     let intervals = Rc::new(RefCell::new(match phase.request_arrival() {
         Some((pattern, rate, smoothness)) => {
@@ -2189,7 +2390,7 @@ fn prepare_graph_phase(
     // two live workloads at once (the discarded prepared workload is dropped).
     let resume = if is_warmup {
         None
-    } else {
+    } else if let Some(input_plans) = input_plans {
         Some(ProfilingResume {
             original_plans: Rc::new(input_plans),
             phase: phase.clone(),
@@ -2203,6 +2404,8 @@ fn prepare_graph_phase(
             session_slots: session_slots.clone(),
             clock: clock.clone(),
         })
+    } else {
+        None
     };
     let workload = assemble_graph_workload(
         clock,
@@ -2614,18 +2817,14 @@ impl GraphTraceSource for LaneResumeGraphTraceSource {
 }
 
 /// Build the cell-aware trace source for one phase.
-fn build_graph_trace_source(
-    plans: Vec<GraphTracePlan>,
+fn build_graph_program_source(
+    programs: Vec<GraphTraceProgram>,
     session_limit: Option<u64>,
     request_limit: Option<u64>,
     trace_instances: GraphTraceInstanceSequence,
     start_ordinal: u64,
     t_star: TStarWindow,
 ) -> Result<Rc<dyn GraphTraceSource>> {
-    let programs = plans
-        .into_iter()
-        .map(GraphTraceProgram::static_graph)
-        .collect::<Vec<_>>();
     // Pressure and profiling resolve template order from the same sampling draw.
     Ok(match ModuloCellPartition::from_env() {
         Some(partition) if partition.cell_count() > 1 && request_limit.is_none() => {
@@ -2656,6 +2855,28 @@ fn build_graph_trace_source(
             .with_sampling(t_star.recycle_draw()),
         ),
     })
+}
+
+/// Build the cell-aware trace source for one phase.
+fn build_graph_trace_source(
+    plans: Vec<GraphTracePlan>,
+    session_limit: Option<u64>,
+    request_limit: Option<u64>,
+    trace_instances: GraphTraceInstanceSequence,
+    start_ordinal: u64,
+    t_star: TStarWindow,
+) -> Result<Rc<dyn GraphTraceSource>> {
+    build_graph_program_source(
+        plans
+            .into_iter()
+            .map(GraphTraceProgram::static_graph)
+            .collect(),
+        session_limit,
+        request_limit,
+        trace_instances,
+        start_ordinal,
+        t_star,
+    )
 }
 
 /// Assemble a graph workload from resolved phase components.
@@ -2879,7 +3100,7 @@ mod tests {
     use crate::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
     use crate::dataset::SegmentPool;
     use crate::engine::graph_input::{CacheBustTarget, GraphSamplingStrategy};
-    use crate::graph::driver::ReplayTaskIdentity;
+    use crate::graph::driver::{ReplayTaskIdentity, ReplayTraceMetadata};
     use crate::graph::errors::TraceError;
     use crate::graph::model::{
         ExecutableGraphNode, GraphRecord, GraphTracePlan, GraphTraceProgram, TraceRecord,
@@ -2892,6 +3113,7 @@ mod tests {
 
     use super::*;
     use crate::engine::records::CapturedModelOutput;
+    use crate::graph::driver::TraceDriverSpec;
 
     fn wrap_policy_input(root_count: usize) -> GraphInputBundle {
         let programs = (0..root_count)
@@ -2929,6 +3151,247 @@ mod tests {
             value["sessions"] = serde_json::json!(sessions);
         }
         serde_json::from_value(value).unwrap()
+    }
+
+    #[derive(Default)]
+    struct NoopTracePlacement;
+
+    #[async_trait::async_trait(?Send)]
+    impl TracePlacement for NoopTracePlacement {
+        async fn execute_trace(&self, _program: GraphTraceProgram) -> Result<(), TraceError> {
+            Ok(())
+        }
+    }
+
+    struct NoopGraphPhaseBackendFactory;
+
+    impl GraphPhaseBackendFactory for NoopGraphPhaseBackendFactory {
+        fn prepare_backend(
+            &self,
+            _config: GraphPhaseBackendConfig,
+        ) -> Result<PreparedGraphPhaseBackend> {
+            Ok(PreparedGraphPhaseBackend {
+                placement: Rc::new(NoopTracePlacement),
+                requires_node_records: false,
+            })
+        }
+    }
+
+    struct DelayedTerminalSupplementBackendFactory;
+
+    impl GraphPhaseBackendFactory for DelayedTerminalSupplementBackendFactory {
+        fn prepare_backend(
+            &self,
+            config: GraphPhaseBackendConfig,
+        ) -> Result<PreparedGraphPhaseBackend> {
+            Ok(PreparedGraphPhaseBackend {
+                placement: Rc::new(DelayedTerminalSupplementPlacement {
+                    events: config.events,
+                }),
+                requires_node_records: true,
+            })
+        }
+    }
+
+    struct DelayedTerminalSupplementPlacement {
+        events: Arc<dyn GraphExecutionEventSink>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl TracePlacement for DelayedTerminalSupplementPlacement {
+        async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+            let trace_id = program.profiling.trace.id.clone();
+            self.events.emit(GraphExecutionEvent::Record {
+                record: Box::new(graph_phase_record(&trace_id, false, false)),
+                node_id: Some("n_0".into()),
+            })?;
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+            self.events.emit(GraphExecutionEvent::TraceSupplement {
+                supplement: TraceTerminalSupplement::new(
+                    "run".into(),
+                    format!("{trace_id}::trajectory"),
+                    trace_id,
+                    0,
+                    "recorded_replay",
+                ),
+            })?;
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_phase_folds_terminal_supplement_after_last_node_satisfies_phase_stop() {
+        let mut program = GraphTraceProgram::static_graph(pressure_one_node_plan("recorded-root"));
+        program.driver = TraceDriverSpec::recorded_replay();
+        let input = GraphInputBundle {
+            programs: vec![program],
+            segments: Arc::new(SegmentPool::new().freeze()),
+            metadata: crate::graph::input::GraphInputMetadata {
+                format: "agent_recording".into(),
+                root_count: 1,
+                node_count: 1,
+                warning_facts: Vec::new(),
+            },
+        };
+
+        let output = tokio::task::LocalSet::new()
+            .run_until(run_graph_phases(
+                &[concurrency_phase(1, Some(1))],
+                "benchmark",
+                Path::new("."),
+                &input,
+                crate::clock::RealClock::new(),
+                RngRoot::new(Some(7)),
+                false,
+                false,
+                TStarWindow::default(),
+                vec![Vec::new()],
+                &DelayedTerminalSupplementBackendFactory,
+                OnFailure::Abort,
+                None,
+            ))
+            .await
+            .expect("successful recorded trace reaches terminal folding");
+
+        assert_eq!(output.captured.len(), 1);
+        assert_eq!(output.supplement.traces.len(), 1);
+        assert_eq!(
+            output.supplement.traces[0].trace_id,
+            "recorded-root::instance-0"
+        );
+    }
+
+    struct PendingTracePlacement {
+        dropped: Rc<Cell<u64>>,
+    }
+
+    struct PendingTraceGuard {
+        dropped: Rc<Cell<u64>>,
+    }
+
+    impl Drop for PendingTraceGuard {
+        fn drop(&mut self) {
+            self.dropped.set(self.dropped.get() + 1);
+        }
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl TracePlacement for PendingTracePlacement {
+        async fn execute_trace(&self, _program: GraphTraceProgram) -> Result<(), TraceError> {
+            let _guard = PendingTraceGuard {
+                dropped: self.dropped.clone(),
+            };
+            std::future::pending().await
+        }
+
+        fn cancel_inflight(&self) -> Result<(), TraceError> {
+            Ok(())
+        }
+    }
+
+    struct PendingTraceBackendFactory {
+        dropped: Rc<Cell<u64>>,
+    }
+
+    impl GraphPhaseBackendFactory for PendingTraceBackendFactory {
+        fn prepare_backend(
+            &self,
+            _config: GraphPhaseBackendConfig,
+        ) -> Result<PreparedGraphPhaseBackend> {
+            Ok(PreparedGraphPhaseBackend {
+                placement: Rc::new(PendingTracePlacement {
+                    dropped: self.dropped.clone(),
+                }),
+                requires_node_records: true,
+            })
+        }
+    }
+
+    struct PendingTraceDropSidecar {
+        dropped: Rc<Cell<u64>>,
+    }
+
+    impl ScheduledPhaseSidecar for PendingTraceDropSidecar {
+        fn start(&self) -> LocalPhaseFuture<Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn finish(&self) -> LocalPhaseFuture<Result<()>> {
+            let dropped = self.dropped.clone();
+            Box::pin(async move {
+                ensure!(
+                    dropped.get() == 1,
+                    "pending placement survived graph phase finalization"
+                );
+                Ok(())
+            })
+        }
+    }
+
+    #[test]
+    fn graph_phase_force_completion_aborts_and_joins_pending_workload() {
+        let sim = Rc::new(crate::clock::SimClock::new());
+        let input = GraphInputBundle {
+            programs: vec![GraphTraceProgram::static_graph(pressure_one_node_plan(
+                "pending-root",
+            ))],
+            segments: Arc::new(SegmentPool::new().freeze()),
+            metadata: crate::graph::input::GraphInputMetadata {
+                format: "weka_trace".into(),
+                root_count: 1,
+                node_count: 1,
+                warning_facts: Vec::new(),
+            },
+        };
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "concurrency": 1,
+            "sessions": 1,
+            "duration": 0.000000001,
+            "grace_period": 0.0,
+        }))
+        .unwrap();
+        let dropped = Rc::new(Cell::new(0));
+        let backend = PendingTraceBackendFactory {
+            dropped: dropped.clone(),
+        };
+        let sidecar: Rc<dyn ScheduledPhaseSidecar> = Rc::new(PendingTraceDropSidecar {
+            dropped: dropped.clone(),
+        });
+        let clock: Rc<dyn Clock> = sim.clone();
+
+        let output = crate::clock::drive_sim(
+            sim.clone(),
+            run_graph_phases(
+                &[phase],
+                "benchmark",
+                Path::new("."),
+                &input,
+                clock,
+                RngRoot::new(Some(7)),
+                false,
+                false,
+                TStarWindow::default(),
+                vec![vec![sidecar]],
+                &backend,
+                OnFailure::Abort,
+                None,
+            ),
+        )
+        .expect("force-completed graph phase must finalize");
+
+        assert_eq!(output.phases.len(), 1);
+        assert_eq!(
+            output.phases[0].completion_reason,
+            Some(crate::timing::PhaseCompletionReason::ForceCompleted)
+        );
+        assert!(output.phases[0].cancel_drain_timeout_triggered);
+        assert_eq!(sim.now_ns(), 10_000_000_001);
+        assert_eq!(dropped.get(), 1, "pending placement must be dropped once");
     }
 
     #[test]
@@ -3063,6 +3526,64 @@ mod tests {
         let input = wrap_policy_input(2);
         validate_dataset_wrap_policy(&[concurrency_phase(3, Some(2))], &input, false).unwrap();
         validate_dataset_wrap_policy(&[concurrency_phase(3, None)], &input, false).unwrap();
+    }
+
+    #[test]
+    fn prepare_graph_phase_accepts_recorded_replay_programs_without_static_projection() {
+        let mut recorded = GraphTraceProgram::static_graph(GraphTracePlan {
+            graph: GraphRecord::default(),
+            trace: TraceRecord {
+                id: "recorded-root".into(),
+                graph_ref: None,
+                initial_state: Default::default(),
+            },
+            arrival_offset_ns: None,
+        });
+        recorded.driver = TraceDriverSpec::recorded_replay();
+        recorded.replay = Some(ReplayTraceMetadata {
+            manifest_ordinal: 0,
+            identity: ReplayTaskIdentity {
+                adapter: "adapter".into(),
+                family: "family".into(),
+                task_id: "task".into(),
+                primary_role: None,
+            },
+            source_digest: "digest".into(),
+            normalization_target_digest: None,
+            target_output_tokens: vec![8],
+            expected_llm_node_count: 1,
+            expected_tool_node_count: 0,
+            request_profile_identity: "profile".into(),
+            comparability_annotations: BTreeMap::new(),
+        });
+        let input = GraphInputBundle {
+            programs: vec![recorded],
+            segments: Arc::new(SegmentPool::new().freeze()),
+            metadata: crate::graph::input::GraphInputMetadata {
+                format: "agent_recording".into(),
+                root_count: 1,
+                node_count: 0,
+                warning_facts: Vec::new(),
+            },
+        };
+        let phase = concurrency_phase(1, Some(1));
+
+        prepare_graph_phase(
+            0,
+            Some(0),
+            &phase,
+            "benchmark",
+            Path::new("."),
+            &input,
+            Rc::new(crate::clock::SimClock::new()),
+            RngRoot::new(Some(7)),
+            TStarWindow::default(),
+            GraphTraceInstanceSequence::default(),
+            Some(Rc::new(SlotPool::new(1))),
+            &NoopGraphPhaseBackendFactory,
+            OnFailure::Abort,
+        )
+        .expect("recorded replay programs should bypass static-graph projection");
     }
 
     fn named_concurrency_phase(name: &str) -> PhaseSpec {

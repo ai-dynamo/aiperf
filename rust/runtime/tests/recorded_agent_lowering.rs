@@ -220,7 +220,7 @@ fn lowerer_materializes_manifest_extra_body_without_reserializing() {
 #[test]
 fn lowerer_merges_profile_fields_without_normalizing_manifest_extra_body() {
     let extra = br#"{ "top_p" : 0.42, "custom" : { "second" : 2, "first" : 1 } }"#;
-    let expected = br#"{"temperature":0.7,"top_k":20,"min_p":0,"parallel_tool_calls":true, "top_p" : 0.42, "custom" : { "second" : 2, "first" : 1 } }"#;
+    let expected = br#"{"temperature":0.7,"top_k":20,"min_p":0,"repeat_penalty":1.05,"parallel_tool_calls":true, "top_p" : 0.42, "custom" : { "second" : 2, "first" : 1 } }"#;
     let mut corpus = fixture_corpus();
     corpus.manifest = Some(manifest_with_extra(
         std::str::from_utf8(extra).expect("fixture is UTF-8"),
@@ -376,6 +376,7 @@ fn builtin_profile_applies_runner_sampling_and_optional_recorded_overrides() {
             "top_p": 0.2,
             "top_k": 20,
             "min_p": 0,
+            "repeat_penalty": 1.05,
             "parallel_tool_calls": true,
         })
     );
@@ -407,6 +408,7 @@ fn builtin_profile_applies_runner_sampling_and_optional_recorded_overrides() {
             "top_p": 0.8,
             "top_k": 20,
             "min_p": 0,
+            "repeat_penalty": 1.05,
             "parallel_tool_calls": true,
         })
     );

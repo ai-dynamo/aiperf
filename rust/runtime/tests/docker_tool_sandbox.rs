@@ -755,7 +755,7 @@ async fn stock_dispatcher_materializes_pinch_segments_before_mounting_workspace(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn stock_dispatcher_executes_a_local_recipe_without_invoking_docker() {
+async fn stock_dispatcher_virtualizes_absolute_workspace_paths_for_local_recipes() {
     let mut pool = SegmentPool::new();
     let content = pool
         .intern_raw(None, b"local product bytes\n".to_vec())
@@ -804,17 +804,134 @@ async fn stock_dispatcher_executes_a_local_recipe_without_invoking_docker() {
     );
     let result = dispatcher
         .dispatch(
-            ToolDispatchRequest::new("local-call", "cat input.txt"),
+            ToolDispatchRequest::new(
+                "local-write",
+                "printf 'corrected product bytes\\n' > /workspace/input.txt",
+            ),
             &ToolDispatchContext::default(),
         )
         .await
-        .expect("local recipe executes against the materialized workspace");
+        .expect("absolute workspace write executes in the materialized workspace");
     assert_eq!(result.exit_code, 0);
-    assert_eq!(result.output, Bytes::from_static(b"local product bytes\n"));
+    assert!(result.output.is_empty());
+    let result = dispatcher
+        .dispatch(
+            ToolDispatchRequest::new("local-read", "cat /workspace/input.txt"),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("absolute workspace read observes the prior command effect");
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.output,
+        Bytes::from_static(b"corrected product bytes\n")
+    );
+    let literal = dispatcher
+        .dispatch(
+            ToolDispatchRequest::new("local-literal", "printf %s '/workspace-old'"),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("literal path-like output executes");
+    assert_eq!(literal.output, Bytes::from_static(b"/workspace-old"));
+    let heredoc = dispatcher
+        .dispatch(
+            ToolDispatchRequest::new(
+                "local-heredoc",
+                "cat > /workspace/heredoc.txt << 'EOF'\n/workspace/input.txt\n/workspace-old\nEOF",
+            ),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("Pinch-style here-document writes inside the rebased workspace");
+    assert_eq!(heredoc.exit_code, 0);
+    let heredoc = dispatcher
+        .dispatch(
+            ToolDispatchRequest::new("local-heredoc-read", "cat /workspace/heredoc.txt"),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("here-document output remains readable");
+    assert_eq!(
+        heredoc.output,
+        Bytes::from_static(b"/workspace/input.txt\n/workspace-old\n")
+    );
     dispatcher
         .close_trace(&trace)
         .await
         .expect("local recipe closes");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stock_dispatcher_preserves_swe_heredoc_body_while_rebasing_testbed() {
+    let mut pool = SegmentPool::new();
+    let content = pool
+        .intern_raw(None, b"seed\n".to_vec())
+        .expect("workspace bytes are interned");
+    let segments = pool.freeze();
+    let workspace = WorkspaceSpec {
+        files: vec![WorkspaceFile {
+            destination: "seed.txt".into(),
+            content,
+            is_executable: false,
+        }],
+        workdir: "/testbed".into(),
+        interpreter: vec!["bash".into(), "-lc".into()],
+        mount_workspace: true,
+        command_timeout_ns: 5_000_000_000,
+    };
+    let environment = ResolvedTraceEnvironment {
+        kind: EnvironmentRecipe::SweBench,
+        backend: ToolExecutionBackend::Local,
+        image: String::new(),
+        workspace: workspace.clone(),
+    };
+    let trace = trace();
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let run_identity = ReplayRunIdentity::mint(RngRoot::new(Some(32)), "local-swe-heredoc");
+    let dispatcher = DockerToolDispatcherFactory::with_runtime_factory(1024, |_| {
+        panic!("local recipe must not construct a Docker runtime")
+    })
+    .create(&trace.trace_id)
+    .expect("stock dispatcher is created");
+
+    dispatcher
+        .open_trace(TraceOpenContext {
+            trace: &trace,
+            environment: Some(&environment),
+            workspace: Some(&workspace),
+            clock: &clock,
+            segments: &segments,
+            run_identity: &run_identity,
+        })
+        .await
+        .expect("local SWE recipe opens without Docker");
+    let written = dispatcher
+        .dispatch(
+            ToolDispatchRequest::new(
+                "swe-heredoc",
+                "cd /testbed && cat > temp_fix.py << 'EOF'\nprint('/testbed')\nprint('/testbed-old')\nEOF",
+            ),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("SWE-style here-document writes inside the rebased testbed");
+    assert_eq!(written.exit_code, 0);
+    let read = dispatcher
+        .dispatch(
+            ToolDispatchRequest::new("swe-heredoc-read", "cat /testbed/temp_fix.py"),
+            &ToolDispatchContext::default(),
+        )
+        .await
+        .expect("SWE here-document output remains readable");
+    assert_eq!(
+        read.output,
+        Bytes::from_static(b"print('/testbed')\nprint('/testbed-old')\n")
+    );
+    dispatcher
+        .close_trace(&trace)
+        .await
+        .expect("local SWE recipe closes");
 }
 
 #[tokio::test(flavor = "current_thread")]

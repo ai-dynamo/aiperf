@@ -4,7 +4,7 @@
 //! Docker-backed, trace-local recorded-agent tool sandboxes.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -110,6 +110,187 @@ struct DeferredNativeToolDispatcher {
     provisioned_workspace: RefCell<Option<ProvisionedWorkspace>>,
 }
 
+/// Local-backend adapter that rewrites the authored mount path to the staged temp root.
+///
+/// Docker can mount the staged Pinch workspace at `/workspace` directly. The
+/// host-local backend cannot bind an arbitrary absolute path into the process
+/// namespace, so replay commands authored against `/workspace/...` must be
+/// rewritten to the worker-local provisioned root before they hit the shell.
+struct RebasedLocalToolSandbox {
+    inner: LocalSessionSandbox,
+    authored_workdir: String,
+    provisioned_root: PathBuf,
+}
+
+impl RebasedLocalToolSandbox {
+    fn new(
+        inner: LocalSessionSandbox,
+        authored_workdir: String,
+        provisioned_root: PathBuf,
+    ) -> Self {
+        Self {
+            inner,
+            authored_workdir,
+            provisioned_root,
+        }
+    }
+
+    fn rewrite_command(&self, command: &str) -> String {
+        let mut delimiters = VecDeque::new();
+        let mut rewritten = String::with_capacity(command.len());
+        for line in command.split_inclusive('\n') {
+            if let Some((delimiter, strips_tabs)) = delimiters.front() {
+                rewritten.push_str(line);
+                let body_line = line.strip_suffix('\n').unwrap_or(line);
+                let body_line = body_line.strip_suffix('\r').unwrap_or(body_line);
+                let candidate = if *strips_tabs {
+                    body_line.trim_start_matches('\t')
+                } else {
+                    body_line
+                };
+                if candidate == delimiter {
+                    delimiters.pop_front();
+                }
+                continue;
+            }
+            delimiters.extend(heredoc_delimiters(line));
+            self.rewrite_path_tokens(line, &mut rewritten);
+        }
+        rewritten
+    }
+
+    fn rewrite_path_tokens(&self, command: &str, rewritten: &mut String) {
+        let root = self.authored_workdir.as_str();
+        let replacement = self.provisioned_root.to_string_lossy();
+        let mut remainder = command;
+        while let Some(offset) = remainder.find(root) {
+            let (prefix, candidate) = remainder.split_at(offset);
+            let suffix = &candidate[root.len()..];
+            let preceding = prefix.chars().next_back();
+            let following = suffix.chars().next();
+            let has_path_boundary_before = preceding.is_none_or(|character| {
+                !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-' | '.' | '/')
+            });
+            let has_path_boundary_after = following.is_none_or(|character| {
+                matches!(
+                    character,
+                    '/' | ':' | ';' | ',' | ')' | '(' | '|' | '&' | '>' | '<'
+                ) || character.is_whitespace()
+                    || matches!(character, '\'' | '"')
+            });
+            rewritten.push_str(prefix);
+            if has_path_boundary_before && has_path_boundary_after {
+                rewritten.push_str(&replacement);
+            } else {
+                rewritten.push_str(root);
+            }
+            remainder = suffix;
+        }
+        rewritten.push_str(remainder);
+    }
+}
+
+fn heredoc_delimiters(command_line: &str) -> Vec<(String, bool)> {
+    let bytes = command_line.as_bytes();
+    let mut delimiters = Vec::new();
+    let mut index = 0;
+    let mut quote = None;
+    while index < bytes.len() {
+        match (quote, bytes[index]) {
+            (Some(active), character) if character == active => {
+                quote = None;
+                index += 1;
+            }
+            (Some(b'"'), b'\\') | (None, b'\\') => {
+                index = (index + 2).min(bytes.len());
+            }
+            (Some(_), _) => index += 1,
+            (None, character @ (b'\'' | b'"')) => {
+                quote = Some(character);
+                index += 1;
+            }
+            (None, b'<') if bytes.get(index + 1) == Some(&b'<') => {
+                index += 2;
+                if bytes.get(index) == Some(&b'<') {
+                    index += 1;
+                    continue;
+                }
+                let strips_tabs = bytes.get(index) == Some(&b'-');
+                index += usize::from(strips_tabs);
+                while bytes
+                    .get(index)
+                    .is_some_and(|character| matches!(character, b' ' | b'\t'))
+                {
+                    index += 1;
+                }
+                let delimiter = match bytes.get(index) {
+                    Some(quote @ (b'\'' | b'"')) => {
+                        index += 1;
+                        let start = index;
+                        while bytes.get(index).is_some_and(|character| character != quote) {
+                            index += 1;
+                        }
+                        let delimiter = command_line[start..index].to_string();
+                        index += usize::from(index < bytes.len());
+                        delimiter
+                    }
+                    Some(_) => {
+                        let start = index;
+                        while bytes.get(index).is_some_and(|character| {
+                            !character.is_ascii_whitespace()
+                                && !matches!(
+                                    character,
+                                    b';' | b'|' | b'&' | b'(' | b')' | b'<' | b'>'
+                                )
+                        }) {
+                            index += 1;
+                        }
+                        command_line[start..index].to_string()
+                    }
+                    None => String::new(),
+                };
+                if !delimiter.is_empty() {
+                    delimiters.push((delimiter, strips_tabs));
+                }
+            }
+            (None, _) => index += 1,
+        }
+    }
+    delimiters
+}
+
+#[async_trait(?Send)]
+impl ToolSandbox for RebasedLocalToolSandbox {
+    fn backend_identity(&self) -> ToolBackendIdentity {
+        self.inner.backend_identity()
+    }
+
+    async fn open(&self) -> Result<(), ToolSandboxError> {
+        self.inner.open().await
+    }
+
+    async fn run(
+        &self,
+        command: &str,
+        timeout_ns: Option<u64>,
+    ) -> Result<ToolCommandResult, ToolSandboxError> {
+        let rewritten = self.rewrite_command(command);
+        self.inner.run(&rewritten, timeout_ns).await
+    }
+
+    fn recovers_timed_out_commands(&self) -> bool {
+        self.inner.recovers_timed_out_commands()
+    }
+
+    async fn recycle(&self) -> Result<(), ToolSandboxError> {
+        self.inner.recycle().await
+    }
+
+    async fn close(&self) -> Result<(), ToolSandboxError> {
+        self.inner.close().await
+    }
+}
+
 #[async_trait(?Send)]
 impl ToolDispatcher for DeferredNativeToolDispatcher {
     fn backend_identity(&self) -> ToolBackendIdentity {
@@ -168,14 +349,25 @@ impl ToolDispatcher for DeferredNativeToolDispatcher {
             ToolExecutionBackend::Local => {
                 let mut workspace = environment.workspace.clone();
                 if let Some(provisioned) = provisioned_workspace.as_ref() {
+                    let authored_workdir = workspace.workdir.clone();
                     workspace.workdir = provisioned.root.to_string_lossy().into_owned();
                     workspace.mount_workspace = false;
+                    Rc::new(RebasedLocalToolSandbox::new(
+                        LocalSessionSandbox::with_tokio_processes(
+                            workspace,
+                            context.clock.clone(),
+                            self.output_limit,
+                        ),
+                        authored_workdir,
+                        provisioned.root.clone(),
+                    ))
+                } else {
+                    Rc::new(LocalSessionSandbox::with_tokio_processes(
+                        workspace,
+                        context.clock.clone(),
+                        self.output_limit,
+                    ))
                 }
-                Rc::new(LocalSessionSandbox::with_tokio_processes(
-                    workspace,
-                    context.clock.clone(),
-                    self.output_limit,
-                ))
             }
             ToolExecutionBackend::Docker => Rc::new(DockerSessionSandbox::new(
                 environment.clone(),

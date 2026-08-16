@@ -149,6 +149,11 @@ fn write_controller_replay_artifacts(
             .as_ref()
             .map(|path| artifact_path(artifact_dir, path, "graph_replay_metrics_csv_path"))
             .transpose()?,
+        backend_metadata_path: artifacts
+            .graph_replay_backend_metadata_path
+            .as_ref()
+            .map(|path| artifact_path(artifact_dir, path, "graph_replay_backend_metadata_path"))
+            .transpose()?,
     };
     let traces = controller_replay_traces(expected, supplements)?;
     crate::graph::replay::write_replay_artifacts(&paths, &traces)

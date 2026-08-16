@@ -39,5 +39,5 @@ pub use policy::{
 };
 pub use workspace::{
     PinchWorkspaceStager, ProvisionedWorkspace, SegmentWorkspaceProvisioner, WorkspaceEntrySource,
-    WorkspaceFile, WorkspaceProvisioner, WorkspaceSpec,
+    WorkspaceFile, WorkspaceProvisioner, WorkspaceSpec, WorkspaceTreeStager,
 };

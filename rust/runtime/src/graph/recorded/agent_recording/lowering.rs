@@ -124,6 +124,7 @@ impl ReplayRequestProfileResolver for BuiltinReplayRequestProfileResolver {
                 additional_body.insert("top_p".into(), Value::from(0.8));
                 additional_body.insert("top_k".into(), Value::from(20));
                 additional_body.insert("min_p".into(), Value::from(0));
+                additional_body.insert("repeat_penalty".into(), Value::from(1.05));
                 additional_body.insert("parallel_tool_calls".into(), Value::Bool(true));
             }
             "pinchbench" => {}

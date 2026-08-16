@@ -92,17 +92,19 @@ The Rust runtime already supplies the prerequisites the port composes over:
   stores at the controller, and artifact shipping uses an allowlist derived
   from `ArtifactSpec`.
 
-The current graph node map contains only `LlmNode`; `GraphInputBundle` contains
-only profiling plans; trace placement returns only `Result<(), TraceError>`;
-and graph execution has no trace-program lifecycle, tool dispatcher, sandbox,
-graph supplement fold, replay metrics policy, or recorded-agent input adapter. The
-following section is the planned port.
+The native implementation supplies `LlmNode` and ordered `ToolNode` execution,
+owned `GraphTraceProgram` lifecycle, a trace-local tool dispatcher and sandbox,
+controller-folded replay supplements and metrics, and the strict
+`agent_recording` input adapter. Recorded programs retain their environment,
+workspace, response, and replay metadata through graph placement rather than
+being reduced to a static projection.
 
-## Future requirements
+## Supported behavior and non-goals
 
 ### Product behavior and non-goals
 
-The native port shall implement all behavior at the pinned Python branch HEAD:
+The native port implements the following behavior at the pinned Python branch
+HEAD:
 
 1. Read one mini-swe-agent recording, a shallow directory corpus, or an ordered
 recorded-agent replay manifest.
@@ -460,6 +462,10 @@ The node carries:
   usage is absent or zero;
 - the recorded model only when `use_recorded_model` is enabled; and
 - recorded `temperature`/`top_p` only when `use_recorded_sampling` is enabled.
+
+The stock SWE request profile also retains its pinned
+`repeat_penalty: 1.05` additional-body field alongside the standard tool and
+sampling fields; exact replay tests reject a missing or changed value.
 
 Recorded sampling is provenance, not recorded-agent playback configuration. An
 injectable `ReplayRequestProfileResolver` resolves one typed profile from the

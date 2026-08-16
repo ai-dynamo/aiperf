@@ -596,13 +596,13 @@ impl ArtifactReader {
         let Some(path) = self.find_file(glob_pat) else {
             return Vec::new();
         };
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(bytes) = std::fs::read(&path) else {
             return Vec::new();
         };
-        text.lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| serde_json::from_str(l).ok())
-            .collect()
+        serde_json::Deserializer::from_slice(&bytes)
+            .into_iter::<serde_json::Value>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|error| panic!("invalid JSON stream in {}: {error}", path.display()))
     }
 }
 
@@ -688,7 +688,51 @@ fn shell_split(input: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::shell_split;
+    use super::{ArtifactReader, shell_split};
+
+    #[test]
+    fn raw_records_decode_payloads_with_preserved_multiline_json() {
+        let directory = tempfile::tempdir().expect("temporary artifact directory");
+        std::fs::write(
+            directory.path().join("profile_export_raw.jsonl"),
+            concat!(
+                "{\"payload\":{\n  \"messages\": []\n},\"status\":200}\n",
+                "{\"payload\":{\n  \"messages\": [{\"role\": \"user\"}]\n},\"status\":201}\n",
+            ),
+        )
+        .expect("write multiline raw records");
+        let reader = ArtifactReader {
+            dir: directory.path().to_path_buf(),
+        };
+
+        let records = reader.raw_records();
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["status"], 200);
+        assert_eq!(records[1]["payload"]["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn raw_records_reject_malformed_trailing_json() {
+        let directory = tempfile::tempdir().expect("temporary artifact directory");
+        std::fs::write(
+            directory.path().join("profile_export_raw.jsonl"),
+            "{\"status\":200}\n{not-json}\n",
+        )
+        .expect("write malformed raw records");
+        let reader = ArtifactReader {
+            dir: directory.path().to_path_buf(),
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = reader.raw_records();
+        }));
+
+        assert!(
+            result.is_err(),
+            "malformed raw artifact must not be ignored"
+        );
+    }
 
     #[test]
     fn splits_plain_args() {

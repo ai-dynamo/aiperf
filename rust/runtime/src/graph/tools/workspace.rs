@@ -203,6 +203,59 @@ pub struct PinchWorkspaceStager<'a> {
     segments: &'a mut SegmentPool,
 }
 
+/// Stages one explicit host fixture tree into a transportable local workspace.
+pub struct WorkspaceTreeStager<'a> {
+    root: &'a Path,
+    segments: &'a mut SegmentPool,
+}
+
+impl<'a> WorkspaceTreeStager<'a> {
+    /// Construct a stager rooted at the exact directory represented by the workspace.
+    pub fn new(root: &'a Path, segments: &'a mut SegmentPool) -> Self {
+        Self { root, segments }
+    }
+
+    /// Validate, read, and intern the complete tree without retaining its host path.
+    pub fn stage(
+        self,
+        workdir: impl Into<String>,
+        interpreter: Vec<String>,
+        command_timeout_ns: u64,
+    ) -> Result<WorkspaceSpec, TraceEnvironmentError> {
+        let root = self.root.canonicalize().map_err(|error| {
+            TraceEnvironmentError::new(format!("cannot canonicalize workspace tree: {error}"))
+        })?;
+        let mut files = BTreeMap::<String, (Vec<u8>, bool)>::new();
+        stage_asset_tree(&root, Path::new(""), &mut files)?;
+        if files.is_empty() {
+            return Err(TraceEnvironmentError::new(
+                "local workspace fixture tree contains no files",
+            ));
+        }
+        let files = files
+            .into_iter()
+            .map(|(destination, (bytes, is_executable))| {
+                let content = self
+                    .segments
+                    .intern_raw(None, bytes)
+                    .map_err(|error| TraceEnvironmentError::new(error.to_string()))?;
+                Ok(WorkspaceFile {
+                    destination,
+                    content,
+                    is_executable,
+                })
+            })
+            .collect::<Result<Vec<_>, TraceEnvironmentError>>()?;
+        Ok(WorkspaceSpec {
+            files,
+            workdir: workdir.into(),
+            interpreter,
+            mount_workspace: true,
+            command_timeout_ns,
+        })
+    }
+}
+
 impl<'a> PinchWorkspaceStager<'a> {
     /// Construct a stager rooted at one already-selected task pack.
     pub fn new(root: &'a Path, segments: &'a mut SegmentPool) -> Self {

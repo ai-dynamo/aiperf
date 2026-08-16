@@ -585,11 +585,10 @@ Inputs, endpoints, and graph:
   deterministic async dataflow, the recorded-trace compilers, and the
   trajectory-snapshot/warmup-priming subsystem.
 - [`docs/specs/recorded-agent-replay-rust-port.md`](docs/specs/recorded-agent-replay-rust-port.md) —
-  planned native recorded-agent replay: canonical manifest-ordered trace programs,
-  strict request lowering, typed LLM/tool nodes, injectable driver/turn/response/
-  environment/sandbox/metrics seams, a future live/delegated-agent loop boundary,
-  trace-local warmup, normalized timing, safe resume, cellular-safe folds, and
-  parity gates.
+  native recorded-agent replay: canonical manifest-ordered trace programs,
+  strict request lowering, typed LLM/tool nodes, trace-local local/Docker
+  environments and sandboxes, controller-folded metrics/artifacts, safe resume,
+  cellular preflight, and pinned-reference parity coverage.
 - [`docs/specs/agentic-eval-platform.md`](docs/specs/agentic-eval-platform.md) —
   planned agentic SWE evaluation substrate: immutable task/dataset/trial identities,
   sandbox and verifier contracts, provider-neutral trajectory evidence, task-health
@@ -603,7 +602,7 @@ Inputs, endpoints, and graph:
   contract for captured and live agent/application workflows.
 - [`docs/specs/harbor-replacement-platform.md`](docs/specs/harbor-replacement-platform.md) —
   pure native-Rust Harbor replacement bar: compatibility import tiers,
-  task/agent/verifier contracts, regrading, and graph-aware differentiators.
+  task/agent/verifier contracts, re-evaluation, and graph-aware differentiators.
 - [`docs/specs/harbor-native-rust-implementation.md`](docs/specs/harbor-native-rust-implementation.md) —
   native-Rust Harbor delivery architecture: isolated `eval` identities/evidence,
   source import, sandbox/agent/verifier execution, regrade, semantic experiments,

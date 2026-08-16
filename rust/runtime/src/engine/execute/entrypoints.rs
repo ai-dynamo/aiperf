@@ -574,6 +574,18 @@ pub(crate) async fn execute_graph_native(
             .as_ref()
             .map(|path| artifact_path(&request.artifact_dir, path, "graph_replay_metrics_csv_path"))
             .transpose()?,
+        backend_metadata_path: request
+            .artifacts
+            .graph_replay_backend_metadata_path
+            .as_ref()
+            .map(|path| {
+                artifact_path(
+                    &request.artifact_dir,
+                    path,
+                    "graph_replay_backend_metadata_path",
+                )
+            })
+            .transpose()?,
     };
     // A cellular child ships the foldable supplement in its terminal partition. The
     // controller is the sole final-artifact owner; writing here would publish one
@@ -1114,7 +1126,9 @@ fn recorded_replay_terminal_callback(
             profile_digest,
             environment_digest,
             expected,
-        )) = tasks.get(&trace.trace_id)
+        )) = tasks
+            .get(trace.trace_id.as_str())
+            .or_else(|| tasks.get(recorded_replay_template_trace_id(&trace.trace_id)))
         else {
             bail!(
                 "recorded replay terminal trace {:?} has no controller checkpoint task",
@@ -1122,25 +1136,26 @@ fn recorded_replay_terminal_callback(
             );
         };
         let call_count = trace.calls.len() as u64;
-        let classification = if trace.completed && call_count == *expected {
-            ReplayTaskClassification::Successful
-        } else {
-            ReplayTaskClassification::Partial
-        };
         let mut checkpoint = checkpoint.borrow_mut();
-        checkpoint.completed.insert(
-            identity.clone(),
+        let merged = merge_terminal_replay_task(
+            checkpoint.completed.get(identity),
             CompletedReplayTask {
                 manifest_ordinal: *manifest_ordinal,
                 source_digest: source_digest.clone(),
                 request_profile_digest: profile_digest.clone(),
                 environment_digest: environment_digest.clone(),
                 successful_call_count: call_count,
-                classification,
+                classification: if trace.completed && call_count == *expected {
+                    ReplayTaskClassification::Successful
+                } else {
+                    ReplayTaskClassification::Partial
+                },
                 artifact_offset_start: 0,
                 artifact_offset_end: call_count,
             },
-        );
+            *expected,
+        )?;
+        checkpoint.completed.insert(identity.clone(), merged);
         checkpoint.write_atomic(&checkpoint_path).map_err(|error| {
             anyhow!("persisting recorded replay checkpoint after terminal task cleanup: {error}")
         })
@@ -1173,13 +1188,31 @@ fn finalize_recorded_replay_checkpoint(
         .to_hex()
         .to_string();
         environment_digests.insert(key, environment_digest.clone());
-        let terminal = traces.get(program.profiling.trace.id.as_str()).copied();
-        let call_count = terminal.map_or(0, |trace| trace.calls.len() as u64);
-        let succeeded = terminal.is_some_and(|trace| trace.completed)
-            && call_count == replay.expected_llm_node_count;
-        let classification = if succeeded {
+        let terminals = traces
+            .values()
+            .filter(|trace| {
+                trace.trace_id == program.profiling.trace.id
+                    || recorded_replay_template_trace_id(&trace.trace_id)
+                        == program.profiling.trace.id.as_str()
+            })
+            .copied()
+            .collect::<Vec<_>>();
+        let successful = terminals.iter().find(|trace| {
+            trace.completed && trace.calls.len() as u64 == replay.expected_llm_node_count
+        });
+        let call_count = successful.map_or_else(
+            || {
+                terminals
+                    .iter()
+                    .map(|trace| trace.calls.len() as u64)
+                    .max()
+                    .unwrap_or(0)
+            },
+            |trace| trace.calls.len() as u64,
+        );
+        let classification = if successful.is_some() {
             ReplayTaskClassification::Successful
-        } else if terminal.is_some_and(|trace| trace.completed) {
+        } else if terminals.iter().any(|trace| trace.completed) {
             ReplayTaskClassification::Partial
         } else {
             ReplayTaskClassification::Failed
@@ -1249,6 +1282,43 @@ fn finalize_recorded_replay_checkpoint(
             .map_err(|error| anyhow!("writing replay provenance {}: {error}", path.display()))?;
     }
     Ok(())
+}
+
+fn merge_terminal_replay_task(
+    existing: Option<&CompletedReplayTask>,
+    incoming: CompletedReplayTask,
+    expected_call_count: u64,
+) -> Result<CompletedReplayTask> {
+    let Some(existing) = existing else {
+        return Ok(incoming);
+    };
+    ensure!(
+        existing.manifest_ordinal == incoming.manifest_ordinal
+            && existing.source_digest == incoming.source_digest
+            && existing.request_profile_digest == incoming.request_profile_digest
+            && existing.environment_digest == incoming.environment_digest,
+        "recorded replay runtime instances resolved to inconsistent checkpoint task metadata"
+    );
+    if existing.classification == ReplayTaskClassification::Successful {
+        return Ok(existing.clone());
+    }
+    if incoming.classification == ReplayTaskClassification::Successful {
+        return Ok(incoming);
+    }
+    ensure!(
+        expected_call_count > 0,
+        "recorded replay expected call count must be positive for partial checkpoint merging"
+    );
+    Ok(incoming)
+}
+
+fn recorded_replay_template_trace_id(trace_id: &str) -> &str {
+    trace_id
+        .rsplit_once("::instance-")
+        .filter(|(_, ordinal)| {
+            !ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        .map_or(trace_id, |(template, _)| template)
 }
 
 fn write_replay_text(path: &std::path::Path, contents: &str) -> Result<()> {
@@ -1549,10 +1619,23 @@ mod tests {
     use super::*;
 
     fn recorded_replay_input() -> Arc<crate::graph::input::GraphInputBundle> {
+        recorded_replay_input_with_expected_calls(0)
+    }
+
+    fn recorded_replay_input_with_expected_calls(
+        expected_llm_node_count: u64,
+    ) -> Arc<crate::graph::input::GraphInputBundle> {
+        recorded_replay_input_with_trace_id("trace-1", expected_llm_node_count)
+    }
+
+    fn recorded_replay_input_with_trace_id(
+        trace_id: &str,
+        expected_llm_node_count: u64,
+    ) -> Arc<crate::graph::input::GraphInputBundle> {
         let plan = crate::graph::model::GraphTracePlan {
             graph: crate::graph::model::GraphRecord::default(),
             trace: crate::graph::model::TraceRecord {
-                id: "trace-1".into(),
+                id: trace_id.into(),
                 graph_ref: None,
                 initial_state: BTreeMap::new(),
             },
@@ -1571,7 +1654,7 @@ mod tests {
             source_digest: "source-digest".into(),
             normalization_target_digest: None,
             target_output_tokens: Vec::new(),
-            expected_llm_node_count: 0,
+            expected_llm_node_count,
             expected_tool_node_count: 0,
             request_profile_identity: "profile-id".into(),
             comparability_annotations: BTreeMap::new(),
@@ -1619,6 +1702,174 @@ mod tests {
             resumed.run.cache_namespace_digest(),
             first.run.cache_namespace_digest()
         );
+    }
+
+    #[test]
+    fn recorded_replay_terminal_callback_maps_runtime_instance_to_authored_task() {
+        let output = tempfile::tempdir().unwrap();
+        let checkpoint_path = output.path().join("replay-checkpoint.json");
+        let input = recorded_replay_input();
+        let checkpoint = Rc::new(RefCell::new(
+            prepare_recorded_replay_checkpoint(
+                &input,
+                false,
+                &checkpoint_path,
+                RngRoot::new(Some(7)),
+            )
+            .unwrap()
+            .unwrap(),
+        ));
+        let callback =
+            recorded_replay_terminal_callback(&input, checkpoint.clone(), checkpoint_path).unwrap();
+
+        callback(&crate::graph::supplement::TraceTerminalSupplement::new(
+            "run".into(),
+            "trace-1::instance-0::trajectory".into(),
+            "trace-1::instance-0".into(),
+            0,
+            "recorded_replay",
+        ))
+        .expect("runtime instance maps back to the authored replay task");
+
+        assert_eq!(checkpoint.borrow().completed.len(), 1);
+    }
+
+    #[test]
+    fn recorded_replay_terminal_callback_keeps_repeated_runtime_partials_partial() {
+        let output = tempfile::tempdir().unwrap();
+        let checkpoint_path = output.path().join("replay-checkpoint.json");
+        let input = recorded_replay_input_with_expected_calls(5);
+        let checkpoint = Rc::new(RefCell::new(
+            prepare_recorded_replay_checkpoint(
+                &input,
+                false,
+                &checkpoint_path,
+                RngRoot::new(Some(7)),
+            )
+            .unwrap()
+            .unwrap(),
+        ));
+        let callback =
+            recorded_replay_terminal_callback(&input, checkpoint.clone(), checkpoint_path).unwrap();
+
+        let mut first = crate::graph::supplement::TraceTerminalSupplement::new(
+            "run".into(),
+            "trace-1::instance-0::trajectory".into(),
+            "trace-1::instance-0".into(),
+            0,
+            "recorded_replay",
+        );
+        first.completed = true;
+        first.calls = vec![
+            crate::graph::replay::ReplayCallMeasurement::completed("trace-1::instance-0", 0),
+            crate::graph::replay::ReplayCallMeasurement::completed("trace-1::instance-0", 1),
+        ];
+        callback(&first).expect("first runtime instance updates the checkpoint");
+
+        let mut second = crate::graph::supplement::TraceTerminalSupplement::new(
+            "run".into(),
+            "trace-1::instance-1::trajectory".into(),
+            "trace-1::instance-1".into(),
+            0,
+            "recorded_replay",
+        );
+        second.completed = true;
+        second.calls = vec![
+            crate::graph::replay::ReplayCallMeasurement::completed("trace-1::instance-1", 0),
+            crate::graph::replay::ReplayCallMeasurement::completed("trace-1::instance-1", 1),
+            crate::graph::replay::ReplayCallMeasurement::completed("trace-1::instance-1", 2),
+        ];
+        callback(&second)
+            .expect("second runtime instance accumulates without promoting to success");
+
+        let completed = checkpoint
+            .borrow()
+            .completed
+            .values()
+            .next()
+            .cloned()
+            .expect("task checkpoint entry exists");
+        assert_eq!(completed.successful_call_count, 3);
+        assert_eq!(completed.classification, ReplayTaskClassification::Partial);
+    }
+
+    #[test]
+    fn recorded_replay_terminal_callback_keeps_any_completed_runtime_instance_successful() {
+        let output = tempfile::tempdir().unwrap();
+        let checkpoint_path = output.path().join("replay-checkpoint.json");
+        let input = recorded_replay_input_with_expected_calls(2);
+        let checkpoint = Rc::new(RefCell::new(
+            prepare_recorded_replay_checkpoint(
+                &input,
+                false,
+                &checkpoint_path,
+                RngRoot::new(Some(7)),
+            )
+            .unwrap()
+            .unwrap(),
+        ));
+        let callback =
+            recorded_replay_terminal_callback(&input, checkpoint.clone(), checkpoint_path).unwrap();
+
+        for ordinal in 0..2 {
+            let trace_id = format!("trace-1::instance-{ordinal}");
+            let mut terminal = crate::graph::supplement::TraceTerminalSupplement::new(
+                "run".into(),
+                format!("{trace_id}::trajectory"),
+                trace_id.clone(),
+                0,
+                "recorded_replay",
+            );
+            terminal.completed = true;
+            terminal.calls = vec![
+                crate::graph::replay::ReplayCallMeasurement::completed(&trace_id, 0),
+                crate::graph::replay::ReplayCallMeasurement::completed(&trace_id, 1),
+            ];
+            callback(&terminal).expect("completed runtime instance updates the checkpoint");
+        }
+
+        let completed = checkpoint
+            .borrow()
+            .completed
+            .values()
+            .next()
+            .cloned()
+            .expect("task checkpoint entry exists");
+        assert_eq!(completed.successful_call_count, 2);
+        assert_eq!(
+            completed.classification,
+            ReplayTaskClassification::Successful
+        );
+    }
+
+    #[test]
+    fn recorded_replay_terminal_callback_prefers_an_exact_authored_instance_suffix() {
+        let output = tempfile::tempdir().unwrap();
+        let checkpoint_path = output.path().join("replay-checkpoint.json");
+        let input = recorded_replay_input_with_trace_id("trace-1::instance-0", 0);
+        let checkpoint = Rc::new(RefCell::new(
+            prepare_recorded_replay_checkpoint(
+                &input,
+                false,
+                &checkpoint_path,
+                RngRoot::new(Some(7)),
+            )
+            .unwrap()
+            .unwrap(),
+        ));
+        let callback =
+            recorded_replay_terminal_callback(&input, checkpoint.clone(), checkpoint_path).unwrap();
+
+        callback(&crate::graph::supplement::TraceTerminalSupplement::new(
+            "run".into(),
+            "trace-1::instance-0::trajectory".into(),
+            "trace-1::instance-0".into(),
+            0,
+            "recorded_replay",
+        ))
+        .expect("exact authored trace id must not be normalized away");
+
+        assert_eq!(checkpoint.borrow().completed.len(), 1);
     }
 
     #[test]

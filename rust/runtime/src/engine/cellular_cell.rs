@@ -647,8 +647,20 @@ async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
     let Some(raw_dataset) = value.pointer("/run/cfg/datasets/0") else {
         return Ok(());
     };
+    let dataset_type = raw_dataset
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "cellular dataset has no string type tag".to_owned())?;
+    if dataset_type != "file" {
+        return Ok(());
+    }
+    let mut file_dataset = raw_dataset.clone();
+    file_dataset
+        .as_object_mut()
+        .ok_or_else(|| "cellular file dataset must be an object".to_owned())?
+        .remove("type");
     let dataset: crate::engine::dataset_input::FileDatasetSpec =
-        serde_json::from_value(raw_dataset.clone())
+        serde_json::from_value(file_dataset)
             .map_err(|error| format!("decode cellular replay dataset: {error}"))?;
     if dataset.format != "agent_recording" {
         return Ok(());
@@ -1228,6 +1240,20 @@ mod tests {
                 "should not ship {none}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn preflight_ignores_a_tagged_non_replay_file_dataset() {
+        let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            "type": "file",
+            "format": "dag_jsonl",
+            "records": []
+        }]}}});
+
+        let encoded = serde_json::to_vec(&envelope).expect("fixture envelope serializes");
+        preflight_cell_envelope(&encoded)
+            .await
+            .expect("tagged non-replay file datasets bypass replay preflight");
     }
 
     #[test]

@@ -131,6 +131,7 @@ dependencies = [
  "regex",
  "reqwest",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
 ]

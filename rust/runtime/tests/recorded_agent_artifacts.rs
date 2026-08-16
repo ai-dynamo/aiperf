@@ -22,6 +22,7 @@ fn tool_time_schema_excludes_failed_trace_and_reports_mixed_backend() {
             trace_summary_path: Some(trace_summary_path),
             metrics_json_path: None,
             metrics_csv_path: None,
+            backend_metadata_path: None,
         },
         &[
             ReplayTraceSupplement {
@@ -95,4 +96,79 @@ fn strict_writer_rejects_nonfinite_overflow_and_unknown_backend_before_json() {
             "strict failure must not serialize JSON null"
         );
     }
+}
+
+#[test]
+fn backend_metadata_reports_sorted_concrete_backends_from_successful_traces() {
+    let output = tempfile::tempdir().expect("temporary output directory");
+    let path = output.path().join("backend-metadata.json");
+    write_replay_artifacts(
+        &ReplayArtifactPaths {
+            backend_metadata_path: Some(path.clone()),
+            ..ReplayArtifactPaths::default()
+        },
+        &[ReplayTraceSupplement {
+            trace_id: "successful".into(),
+            trajectory_id: "trajectory-successful".into(),
+            worker_id: 0,
+            completed: true,
+            calls: Vec::new(),
+            tools: vec![
+                ToolCallMeasurement::new(0.2, "local").with_call_index(0),
+                ToolCallMeasurement::new(0.4, "docker:pinch:latest").with_call_index(1),
+            ],
+            trace_wall_ms: 1_000.0,
+        }],
+    )
+    .expect("controller writes resolved backend metadata");
+
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).expect("backend metadata artifact exists"))
+            .expect("strict JSON");
+    assert_eq!(
+        artifact,
+        serde_json::json!({
+            "schema_version": 1,
+            "backend": "mixed",
+            "backends": ["docker:pinch:latest", "local"],
+            "trace_count": 1,
+            "command_count": 2
+        })
+    );
+}
+
+#[test]
+fn backend_metadata_writes_a_deterministic_empty_schema_when_no_successful_tools_exist() {
+    let output = tempfile::tempdir().expect("temporary output directory");
+    let path = output.path().join("backend-metadata.json");
+    write_replay_artifacts(
+        &ReplayArtifactPaths {
+            backend_metadata_path: Some(path.clone()),
+            ..ReplayArtifactPaths::default()
+        },
+        &[ReplayTraceSupplement {
+            trace_id: "failed".into(),
+            trajectory_id: "trajectory-failed".into(),
+            worker_id: 0,
+            completed: false,
+            calls: Vec::new(),
+            tools: vec![ToolCallMeasurement::new(0.2, "local").with_call_index(0)],
+            trace_wall_ms: 1_000.0,
+        }],
+    )
+    .expect("controller writes deterministic empty backend metadata");
+
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).expect("backend metadata artifact exists"))
+            .expect("strict JSON");
+    assert_eq!(
+        artifact,
+        serde_json::json!({
+            "schema_version": 1,
+            "backend": "none",
+            "backends": [],
+            "trace_count": 0,
+            "command_count": 0
+        })
+    );
 }

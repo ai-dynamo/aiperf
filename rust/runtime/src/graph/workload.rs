@@ -9,7 +9,7 @@
 //! module does not implement a second benchmark or backend path.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::rc::Rc;
@@ -593,6 +593,8 @@ pub struct GraphWorkload {
     run_failure: Rc<dyn RunFailurePolicy>,
     observer: Rc<dyn GraphWorkloadObserver>,
     cancelled: Rc<Cell<bool>>,
+    trace_tasks: RefCell<BTreeMap<u64, tokio::task::JoinHandle<()>>>,
+    has_force_aborted_trace_tasks: Cell<bool>,
 }
 
 impl GraphWorkload {
@@ -612,6 +614,8 @@ impl GraphWorkload {
             run_failure: Rc::new(ContinueRunFailurePolicy),
             observer: Rc::new(NoopGraphWorkloadObserver),
             cancelled: Rc::new(Cell::new(false)),
+            trace_tasks: RefCell::new(BTreeMap::new()),
+            has_force_aborted_trace_tasks: Cell::new(false),
         }
     }
 
@@ -653,6 +657,32 @@ impl GraphWorkload {
     /// Whether external cancellation has latched.
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.get()
+    }
+
+    /// Abort placement tasks that did not honor graceful cancellation.
+    pub(crate) fn force_abort_trace_tasks(&self) {
+        self.has_force_aborted_trace_tasks.set(true);
+        for task in self.trace_tasks.borrow().values() {
+            task.abort();
+        }
+    }
+
+    /// Join every placement task still owned by this workload.
+    pub(crate) async fn join_trace_tasks(&self) -> Result<(), GraphWorkloadError> {
+        let tasks = std::mem::take(&mut *self.trace_tasks.borrow_mut());
+        let mut first_error = None;
+        for (task_id, task) in tasks {
+            match task.await {
+                Ok(()) => {}
+                Err(error) if error.is_cancelled() && self.has_force_aborted_trace_tasks.get() => {}
+                Err(error) => {
+                    first_error.get_or_insert_with(|| {
+                        GraphWorkloadError(format!("graph trace task {task_id} failed: {error}"))
+                    });
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Execute all admitted traces on the caller's current-thread `LocalSet`.
@@ -738,20 +768,22 @@ impl GraphWorkload {
             self.observer.on_trace_admit(&info, self.clock.now_ns());
             admitted = admitted.saturating_add(1);
             active = active.saturating_add(1);
+            let task_id = admitted;
 
             let trace_id = plan.profiling.trace.id.clone();
             let backend = self.backend.clone();
             let observer = self.observer.clone();
             let run_failure = self.run_failure.clone();
             let completed_tx = completed_tx.clone();
-            tokio::task::spawn_local(async move {
+            let task = tokio::task::spawn_local(async move {
                 let result = backend.execute_trace(plan).await;
                 run_failure.on_trace_result(&trace_id, &result);
                 let outcome = GraphTraceRunResult { trace_id, result };
                 observer.on_trace_complete(&outcome);
-                let _ = completed_tx.send(outcome);
                 drop(permit);
+                let _ = completed_tx.send((task_id, outcome));
             });
+            self.trace_tasks.borrow_mut().insert(task_id, task);
 
             // Let a same-instant failure latch before another burst admission.
             tokio::task::yield_now().await;
@@ -759,10 +791,11 @@ impl GraphWorkload {
 
         self.observer.on_sending_complete(self.clock.now_ns());
         while active > 0 {
-            let outcome = completed_rx.recv().await.ok_or_else(|| {
+            let (task_id, outcome) = completed_rx.recv().await.ok_or_else(|| {
                 GraphWorkloadError("trace completion channel closed with active work".into())
             })?;
             active -= 1;
+            self.trace_tasks.borrow_mut().remove(&task_id);
             push_result(&mut report, outcome);
         }
         report.admitted = admitted;
@@ -771,12 +804,13 @@ impl GraphWorkload {
 
     fn drain_ready_results(
         &self,
-        completed_rx: &mut tokio::sync::mpsc::UnboundedReceiver<GraphTraceRunResult>,
+        completed_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(u64, GraphTraceRunResult)>,
         active: &mut u64,
         report: &mut GraphWorkloadReport,
     ) {
-        while let Ok(outcome) = completed_rx.try_recv() {
+        while let Ok((task_id, outcome)) = completed_rx.try_recv() {
             *active = active.saturating_sub(1);
+            self.trace_tasks.borrow_mut().remove(&task_id);
             push_result(report, outcome);
         }
     }
@@ -1818,5 +1852,59 @@ mod tests {
         let report = report.borrow_mut().take().unwrap();
         assert_eq!(report.failed, 1);
         assert_eq!(report.admitted, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn join_trace_tasks_waits_for_every_handle_and_returns_first_non_cancel_error() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                struct NoopPlacement;
+
+                #[async_trait(?Send)]
+                impl TracePlacement for NoopPlacement {
+                    async fn execute_trace(
+                        &self,
+                        _program: GraphTraceProgram,
+                    ) -> Result<(), TraceError> {
+                        Ok(())
+                    }
+                }
+
+                let workload = GraphWorkload::new(
+                    Rc::new(SimClock::new()),
+                    Rc::new(VecGraphTraceSource::new(Vec::<GraphTraceProgram>::new())),
+                    Rc::new(NoopPlacement),
+                );
+                let joined = Rc::new(Cell::new(0_u64));
+
+                workload.trace_tasks.borrow_mut().insert(
+                    7,
+                    tokio::task::spawn_local(async {
+                        panic!("first failure");
+                    }),
+                );
+
+                let joined_slot = joined.clone();
+                workload.trace_tasks.borrow_mut().insert(
+                    9,
+                    tokio::task::spawn_local(async move {
+                        tokio::task::yield_now().await;
+                        joined_slot.set(joined_slot.get() + 1);
+                        panic!("second failure");
+                    }),
+                );
+
+                let error = workload
+                    .join_trace_tasks()
+                    .await
+                    .expect_err("first non-cancel join error should be returned");
+                assert!(
+                    error.to_string().contains("graph trace task 7 failed"),
+                    "{error}"
+                );
+                assert_eq!(joined.get(), 1, "later handles must still be joined");
+            })
+            .await;
     }
 }

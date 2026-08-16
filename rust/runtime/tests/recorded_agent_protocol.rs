@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(feature = "engine")]
+
 //! Strict protocol-v2 projection coverage for recorded-agent replay.
 
 use aiperf_runtime::engine::protocol_v2::BenchmarkRunWireV2;

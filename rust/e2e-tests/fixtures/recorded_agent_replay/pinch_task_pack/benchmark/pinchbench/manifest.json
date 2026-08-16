@@ -1,0 +1,8 @@
+{
+  "tasks": [
+    {
+      "task_id": "task_k8s_debugging",
+      "path": "tasks/task_k8s_debugging.md"
+    }
+  ]
+}

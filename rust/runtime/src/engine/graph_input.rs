@@ -26,7 +26,9 @@ use crate::graph::recorded::{
 };
 use crate::graph::segment::SegmentPool;
 use crate::graph::supplement::PlannedReplayTraceInstance;
-use crate::graph::tools::{PinchWorkspaceStager, WorkspaceEntrySource};
+use crate::graph::tools::{
+    PinchWorkspaceStager, ToolExecutionBackend, WorkspaceEntrySource, WorkspaceTreeStager,
+};
 use crate::graph::tstar::{
     PermutationDraw, RecycleDrawMode, sampler_random_seed, sampler_shuffle_seed,
 };
@@ -628,6 +630,29 @@ impl RecordedAgentDatasetInput {
                         &identity.task_id,
                         &mut pool,
                     )?;
+                } else if identity.adapter == "swebench"
+                    && environment.backend == ToolExecutionBackend::Local
+                {
+                    let replay_root = replay_root.ok_or_else(|| {
+                        anyhow!(
+                            "local SWE-Bench task {:?} requires dataset.graph.replay_root",
+                            identity.task_id
+                        )
+                    })?;
+                    environment.workspace =
+                        WorkspaceTreeStager::new(&replay_root.join("testbed"), &mut pool)
+                            .stage(
+                                "/testbed",
+                                vec!["bash".into(), "-c".into()],
+                                environment.workspace.command_timeout_ns,
+                            )
+                            .map_err(|error| anyhow!(error.to_string()))
+                            .with_context(|| {
+                                format!(
+                                    "staging local SWE-Bench workspace for {:?}",
+                                    identity.task_id
+                                )
+                            })?;
                 }
                 program.environment = Some(
                     crate::graph::driver::TraceEnvironmentSpec::from_resolved(&environment)
@@ -815,11 +840,10 @@ pub fn plan_recorded_agent_cell_assignments(
     while ordinal < session_limit {
         let template = templates[ordinal as usize % templates.len()];
         let trace_id = format!("{template}::instance-{ordinal}");
-        planned.insert(PlannedReplayTraceInstance::new(
-            cell_id,
-            format!("{trace_id}::trajectory"),
-            trace_id,
-        ));
+        planned.insert(
+            PlannedReplayTraceInstance::new(cell_id, format!("{trace_id}::trajectory"), trace_id)
+                .with_template_trace_id(template),
+        );
         ordinal = ordinal
             .checked_add(u64::from(cell_count))
             .ok_or_else(|| anyhow!("cellular recorded-agent assignment ordinal overflow"))?;
