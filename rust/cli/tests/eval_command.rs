@@ -256,6 +256,50 @@ fn native_eval_command_runs_a_pinned_git_harbor_package() {
 }
 
 #[test]
+fn native_eval_command_runs_a_pinned_git_package_from_a_remote_repository() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repository = temporary.path().join("tasks");
+    fs::create_dir(&repository).unwrap();
+    run_git(&repository, ["init"]);
+    run_git(
+        &repository,
+        ["config", "user.email", "eval@example.invalid"],
+    );
+    run_git(&repository, ["config", "user.name", "Native Eval"]);
+    fs::write(
+        repository.join("task.json"),
+        br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","printf patch > \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["sh","-c","test -f results/patch.diff && printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":["/results/patch.diff"]}"#,
+    )
+    .unwrap();
+    run_git(&repository, ["add", "task.json"]);
+    run_git(&repository, ["commit", "-m", "pinned task"]);
+    let revision = git_output(&repository, ["rev-parse", "HEAD"]);
+    let remote = temporary.path().join("tasks.git");
+    let status = Command::new("git")
+        .args(["clone", "--bare"])
+        .arg(&repository)
+        .arg(&remote)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let exit = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--git-repository".to_owned(),
+        format!("file://{}", remote.display()),
+        "--git-revision".to_owned(),
+        revision,
+        "--git-path".to_owned(),
+        "task.json".to_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+    ])
+    .unwrap();
+
+    assert_eq!(exit, 0);
+}
+
+#[test]
 #[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
 fn native_eval_command_runs_a_pinned_standard_task_directory_in_docker() {
     let temporary = tempfile::tempdir().unwrap();

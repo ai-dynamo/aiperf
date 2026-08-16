@@ -49,7 +49,7 @@ Harbor-compatible source
 
 ## Import and trial contract
 
-Acquisition supports local directories, pinned Git revisions, and Harbor-style registry references. The importer preserves file packages byte-for-byte, captures local directories into one owned tree, and produces a normalized task/dataset projection plus a machine-readable report with one of `native`, `lossless_normalized`, `lossy_normalized`, or `unsupported`. Full-source provenance and normalized package identity are intentionally distinct: comments and unused standard-task files change the source digest but not the package digest when the normalized plan and executable projection are unchanged.
+Acquisition supports local directories and pinned Git revisions; the `eval` CLI materializes a pinned local or remote repository into an owned checkout before import. Harbor-style registry references are parsed as an import format but native acquisition deliberately returns `Unavailable` for them. The importer preserves file packages byte-for-byte, captures local directories into one owned tree, and produces a normalized task/dataset projection plus a machine-readable report with one of `native`, `lossless_normalized`, `lossy_normalized`, or `unsupported`. Full-source provenance and normalized package identity are intentionally distinct: comments and unused standard-task files change the source digest but not the package digest when the normalized plan and executable projection are unchanged.
 
 Unsupported semantics stop the trial before environment provisioning. Importing never weakens verifier isolation, egress policy, artifact transfer restrictions, or multi-step continuation requirements.
 
@@ -71,7 +71,7 @@ A regrade pins a verifier identity and preserved attempt evidence. It appends a 
 
 1. **Recorded replay closure:** complete Task 12 cellular preflight/supplement/artifact shipping and Task 13 product/A-B parity. Its controller-only artifacts remain reusable infrastructure, not Harbor evidence authority.
 2. **Evaluation identity and reports:** establish the isolated `eval` domain, strict DTOs, source digests, provenance, import reports, trial/attempt identity, evidence records, and score versions.
-3. **Acquisition and importer:** implement local, pinned-Git, and registry-reference import; source preservation; strict normalization; and unsupported-semantic refusal.
+3. **Acquisition and importer:** implement local and pinned-Git import; preserve source; strictly normalize; and refuse unavailable registry acquisition and unsupported semantics.
 4. **Sandbox and agent contracts:** implement Harbor recipes, external/installed contracts, overlay workspaces, capability preflight, resource/network/secret policy, and provider fakes.
 5. **Verifier, rewards, and regrade:** implement shared/separate verifier execution, artifact-only handoff, reward parsing, immutable evidence, versioned scores, and regrade.
 6. **Semantic lowering and experiments:** add semantic graph/lowering/fidelity validation and paired quality/cost/latency/critical-path comparison against fixed trial baselines.

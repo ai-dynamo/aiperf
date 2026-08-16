@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native execution of one Harbor-compatible evaluation package.
 
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::{collections::BTreeMap, path::PathBuf, process::Command};
 
 use aiperf_runtime::eval::{
     ArtifactDigest, DockerProcessSandbox, EvalExecutionError, HarborImporter, HarborSandboxRecipe,
@@ -252,40 +248,42 @@ fn materialize_pinned_directory(
     else {
         return Ok((None, source.clone()));
     };
-    if !package_path.ends_with("task.toml") {
-        return Ok((None, source.clone()));
-    }
     let root = tempfile::tempdir()?;
-    let mut archive = Command::new("git");
-    archive
-        .args(["-C", repository, "archive", "--format=tar", revision])
-        .stdout(Stdio::piped());
-    let mut archive = archive.spawn()?;
-    let archive_stdout = archive
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("pinned task archive has no standard output"))?;
-    let output = Command::new("tar")
-        .args(["-x", "-C", root.path().to_string_lossy().as_ref()])
-        .stdin(archive_stdout)
+    let checkout = root.path().join("repository");
+    let clone = Command::new("git")
+        .args(["clone", "--no-checkout", repository])
+        .arg(&checkout)
         .output()?;
-    if !output.status.success() {
+    if !clone.status.success() {
         anyhow::bail!(
-            "unable to materialize pinned task tree: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "unable to clone pinned Git repository: {}",
+            String::from_utf8_lossy(&clone.stderr).trim()
         );
     }
-    if !archive.wait()?.success() {
-        anyhow::bail!("unable to archive pinned task tree");
+    let checkout_result = Command::new("git")
+        .args([
+            "-C",
+            checkout.to_string_lossy().as_ref(),
+            "checkout",
+            "--detach",
+            revision,
+        ])
+        .output()?;
+    if !checkout_result.status.success() {
+        anyhow::bail!(
+            "unable to check out pinned Git revision: {}",
+            String::from_utf8_lossy(&checkout_result.stderr).trim()
+        );
     }
-    let directory = PathBuf::from(package_path).parent().map_or_else(
-        || root.path().to_path_buf(),
-        |parent| root.path().join(parent),
-    );
-    Ok((
-        Some(root),
-        HarborSource::local(directory.to_string_lossy())?,
-    ))
+    let package = checkout.join(package_path);
+    let location = if package_path.ends_with("task.toml") {
+        package
+            .parent()
+            .map_or_else(|| checkout.clone(), std::path::Path::to_path_buf)
+    } else {
+        package
+    };
+    Ok((Some(root), HarborSource::local(location.to_string_lossy())?))
 }
 
 fn agent_command_argv(command: &str) -> Vec<String> {

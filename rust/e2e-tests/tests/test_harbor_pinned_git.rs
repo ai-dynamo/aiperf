@@ -8,6 +8,8 @@ use aiperf_runtime::eval::{ArtifactDigest, HarborImporter, HarborSource, NativeS
 
 fn run_git<const N: usize>(repository: &std::path::Path, arguments: [&str; N]) {
     let status = Command::new("git")
+        .arg("-c")
+        .arg("commit.gpgsign=false")
         .arg("-C")
         .arg(repository)
         .args(arguments)

@@ -9,7 +9,7 @@ use std::{
     collections::BTreeSet,
     fs,
     io::{Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     process::{Command, Output, Stdio},
     sync::{
         Arc, Mutex,
@@ -30,12 +30,56 @@ const IMAGE_DIGEST: &str =
 
 static DOCKER_E2E_LOCK: Mutex<()> = Mutex::new(());
 
+fn docker_e2e_lock() -> std::sync::MutexGuard<'static, ()> {
+    DOCKER_E2E_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+const EVIDENCE_CASE_NAMES: &[&str] = &[
+    "compose-hook-nonzero",
+    "compose-hook-timeout",
+    "compose-archive-failure",
+];
+
+#[test]
+fn evidence_case_selector_rejects_an_unknown_case() {
+    let error = selected_evidence_case(Some("not-a-case")).unwrap_err();
+
+    assert!(error.contains("not-a-case"));
+}
+
+#[test]
+fn request_recorder_drop_does_not_wait_for_a_silent_client() {
+    let recorder = RequestRecorder::new();
+    let port = recorder
+        .url()
+        .rsplit(':')
+        .next()
+        .expect("recorder URL port")
+        .parse()
+        .expect("recorder URL port is numeric");
+    let silent_client = TcpStream::connect(("127.0.0.1", port)).expect("connect silent client");
+    let client_thread = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(1));
+        drop(silent_client);
+    });
+
+    let started = Instant::now();
+    drop(recorder);
+    assert!(
+        started.elapsed() < Duration::from_millis(300),
+        "recorder shutdown waited for a silent client"
+    );
+    client_thread.join().expect("join silent client thread");
+}
+
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn imported_compose_multi_step_snapshot_survives_origin_mutation_and_removal() {
     use std::os::unix::fs::PermissionsExt;
 
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("owned-source-snapshot");
     for directory in [
@@ -143,7 +187,7 @@ RUN test "$(cat /snapshot/context.txt)" = original-context && test -d /snapshot/
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn standard_task_execution_preserves_image_workdir_without_a_cli_override() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("image-workdir");
     fs::create_dir_all(task_root.join("environment")).unwrap();
@@ -191,7 +235,7 @@ fn standard_task_execution_preserves_image_workdir_without_a_cli_override() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn standard_task_exposes_only_declared_host_secrets_to_each_active_phase() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("declared-secrets");
     fs::create_dir_all(task_root.join("environment")).unwrap();
@@ -252,7 +296,7 @@ fn standard_task_exposes_only_declared_host_secrets_to_each_active_phase() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn missing_declared_secret_stops_before_the_agent_without_leaking_host_values() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("missing-secret");
@@ -315,7 +359,7 @@ fn missing_declared_secret_stops_before_the_agent_without_leaking_host_values() 
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn standard_task_enforces_phase_network_user_environment_artifact_and_verifier_isolation() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task(
@@ -391,7 +435,7 @@ fn standard_task_enforces_phase_network_user_environment_artifact_and_verifier_i
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn standard_task_default_public_agent_connects_to_the_controlled_host() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task(
@@ -419,7 +463,7 @@ fn standard_task_default_public_agent_connects_to_the_controlled_host() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn standard_task_retries_readiness_before_starting_the_agent() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task(
         &temporary,
@@ -438,7 +482,7 @@ fn standard_task_retries_readiness_before_starting_the_agent() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn exhausted_readiness_prevents_agent_and_verifier_network_sentinels() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task(
@@ -460,7 +504,7 @@ fn exhausted_readiness_prevents_agent_and_verifier_network_sentinels() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn agent_timeout_cleans_up_the_docker_task_container_before_verifier_startup() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task(
@@ -485,7 +529,7 @@ fn agent_timeout_cleans_up_the_docker_task_container_before_verifier_startup() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn separate_verifier_timeout_removes_every_task_container_before_returning() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task(
         &temporary,
@@ -508,7 +552,7 @@ fn separate_verifier_timeout_removes_every_task_container_before_returning() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn multi_step_mean_execution_preserves_boundaries_and_reports_every_step() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = multi_step_boundary_task(&temporary, "mean");
     let output = run_eval(
@@ -574,7 +618,7 @@ esac"#,
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn multi_step_final_execution_reports_the_final_reward_unchanged() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = multi_step_reward_task(&temporary);
     let output = run_eval(
@@ -606,7 +650,7 @@ esac"#,
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn first_multi_step_verifier_failure_stops_successors_and_cleans_every_container() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = multi_step_failure_task(&temporary, recorder.url());
@@ -933,7 +977,7 @@ fn compose_standard_task(
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_sidecar_evaluation_keeps_verifier_isolated_and_cleans_up() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let before = compose_resource_ids();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("compose-sidecar");
@@ -1003,7 +1047,7 @@ timeout_sec = 10
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_sidecar_readiness_dns_and_final_evidence_preserve_verifier_isolation() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let before = compose_resource_ids();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("compose-boundaries");
@@ -1075,10 +1119,7 @@ timeout_sec = 10
     assert_summary(&summary, "example/compose-boundaries");
     assert_eq!(
         summary["artifacts"],
-        serde_json::json!([[
-            "sidecar-evidence/result.txt",
-            artifact_digest(b"collected"),
-        ]])
+        serde_json::json!([["sidecar-evidence/result.txt", artifact_digest(b"collected"),]])
     );
     assert!(!String::from_utf8_lossy(&output.stdout).contains("agent-secret-value"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("agent-secret-value"));
@@ -1088,7 +1129,7 @@ timeout_sec = 10
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_unhealthy_start_prevents_agent_and_verifier_and_cleans_the_project() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = compose_standard_task(
@@ -1115,8 +1156,10 @@ fn compose_unhealthy_start_prevents_agent_and_verifier_and_cleans_the_project() 
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_terminal_evidence_failures_prevent_the_separate_verifier_and_clean_the_project() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
-    let selected = std::env::var("AIPERF_E2E_EVIDENCE_CASE").ok();
+    let _docker_lock = docker_e2e_lock();
+    let selector = std::env::var("AIPERF_E2E_EVIDENCE_CASE").ok();
+    let selected =
+        selected_evidence_case(selector.as_deref()).unwrap_or_else(|error| panic!("{error}"));
     for (name, manifest_suffix, diagnostic) in [
         (
             "compose-hook-nonzero",
@@ -1134,7 +1177,7 @@ fn compose_terminal_evidence_failures_prevent_the_separate_verifier_and_clean_th
             "archive",
         ),
     ] {
-        if selected.as_deref().is_some_and(|selected| selected != name) {
+        if selected.is_some_and(|selected| selected != name) {
             continue;
         }
         let recorder = RequestRecorder::new();
@@ -1185,10 +1228,19 @@ fn compose_terminal_evidence_failures_prevent_the_separate_verifier_and_clean_th
     }
 }
 
+fn selected_evidence_case(selected: Option<&str>) -> Result<Option<&str>, String> {
+    if let Some(selected) = selected {
+        if !EVIDENCE_CASE_NAMES.contains(&selected) {
+            return Err(format!("unknown AIPERF_E2E_EVIDENCE_CASE: {selected}"));
+        }
+    }
+    Ok(selected)
+}
+
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_agent_and_separate_verifier_failures_cleanup_the_project() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let recorder = RequestRecorder::new();
     let agent_timeout = compose_standard_task(
@@ -1204,12 +1256,12 @@ fn compose_agent_and_separate_verifier_failures_cleanup_the_project() {
         &format!("wget -qO /dev/null {}/agent && sleep 300", recorder.url()),
     );
     assert_eq!(
-            next_request_from_child(
-                &recorder,
-                &mut child,
-                "timed agent phase must start before its deadline",
-                Duration::from_secs(60)
-            ),
+        next_request_from_child(
+            &recorder,
+            &mut child,
+            "timed agent phase must start before its deadline",
+            Duration::from_secs(60)
+        ),
         "/agent"
     );
     let run = asserted_new_compose_run(&before_runs);
@@ -1257,7 +1309,7 @@ fn compose_agent_and_separate_verifier_failures_cleanup_the_project() {
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_terminal_evidence_tears_down_the_project_before_the_separate_verifier_starts() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let recorder = RequestRecorder::new();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = compose_standard_task(
@@ -1303,7 +1355,7 @@ fn compose_terminal_evidence_tears_down_the_project_before_the_separate_verifier
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_multi_step_execution_retains_the_main_project_workspace_until_the_final_step() {
-    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let _docker_lock = docker_e2e_lock();
     let temporary = tempfile::tempdir().unwrap();
     let task_root = compose_standard_task(
         &temporary,
@@ -1564,7 +1616,10 @@ fn next_request_from_child(
                 String::from_utf8_lossy(&stderr)
             );
         }
-        assert!(Instant::now() < deadline, "{context}: timed out waiting for request");
+        assert!(
+            Instant::now() < deadline,
+            "{context}: timed out waiting for request"
+        );
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -1582,8 +1637,25 @@ impl RequestRecorder {
             while !is_shutdown.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        if stream
+                            .set_read_timeout(Some(Duration::from_millis(100)))
+                            .is_err()
+                        {
+                            continue;
+                        }
                         let mut request = [0; 1024];
-                        let count = stream.read(&mut request).unwrap_or(0);
+                        let count = match stream.read(&mut request) {
+                            Ok(count) => count,
+                            Err(error)
+                                if matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                                ) =>
+                            {
+                                continue;
+                            }
+                            Err(_) => continue,
+                        };
                         let path = String::from_utf8_lossy(&request[..count])
                             .lines()
                             .next()
@@ -1638,7 +1710,7 @@ impl Drop for RequestRecorder {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
         if let Some(server) = self.server.take() {
-            server.join().unwrap();
+            let _ = server.join();
         }
     }
 }
