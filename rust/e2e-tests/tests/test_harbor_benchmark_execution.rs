@@ -392,6 +392,353 @@ fn separate_verifier_timeout_removes_every_task_container_before_returning() {
     );
 }
 
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn multi_step_mean_execution_preserves_boundaries_and_reports_every_step() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_boundary_task(&temporary, "mean");
+    let output = run_eval(
+        &task_root,
+        r#"case "$AIPERF_EVAL_INSTRUCTION" in
+  *Prepare*)
+    test "$BASE_SCOPE" = root &&
+    test "$AGENT_SCOPE" = inherited &&
+    test "$(id -un)" = bench &&
+    test "$(pwd)" = /workspace &&
+    test ! -e /tests/test.sh &&
+    printf persistent > shared.txt &&
+    printf first-snapshot > result.txt &&
+    printf agent-private > private.txt
+    ;;
+  *Finish*)
+    test "$BASE_SCOPE" = root &&
+    test "$AGENT_SCOPE" = overridden &&
+    test "$(id -un)" = root &&
+    test "$(pwd)" = /workspace &&
+    test "$(cat shared.txt)" = persistent &&
+    test ! -e /tests/test.sh &&
+    test ! -e /tests/stale-from-prepare &&
+    sleep 1.2 &&
+    printf second-snapshot > result.txt
+    ;;
+  *) exit 91 ;;
+esac"#,
+    );
+
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["task"], "example/multi-step-mean");
+    assert_eq!(
+        summary["reward"],
+        serde_json::json!({
+            "only_first": 0.5,
+            "only_second": 0.25,
+            "quality": 0.5,
+        })
+    );
+    assert_eq!(
+        summary["steps"],
+        serde_json::json!([
+            {
+                "name": "prepare",
+                "artifacts": [["result.txt", artifact_digest(b"first-snapshot")]],
+                "reward": {"only_first": 1.0, "quality": 0.25},
+            },
+            {
+                "name": "finish",
+                "artifacts": [["result.txt", artifact_digest(b"second-snapshot")]],
+                "reward": {"only_second": 0.5, "quality": 0.75},
+            },
+        ])
+    );
+    assert_eq!(
+        summary["artifacts"],
+        serde_json::json!([["result.txt", artifact_digest(b"second-snapshot")]])
+    );
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn multi_step_final_execution_reports_the_final_reward_unchanged() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_reward_task(&temporary);
+    let output = run_eval(
+        &task_root,
+        r#"case "$AIPERF_EVAL_INSTRUCTION" in
+  *First*) printf first > current-step ;;
+  *Second*) test "$(cat current-step)" = first && printf second > current-step ;;
+  *) exit 91 ;;
+esac"#,
+    );
+
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["task"], "example/multi-step-final");
+    assert_eq!(
+        summary["reward"],
+        serde_json::json!({"final": 1.0, "score": 0.9})
+    );
+    assert_eq!(
+        summary["steps"][0]["reward"],
+        serde_json::json!({"score": 0.2})
+    );
+    assert_eq!(
+        summary["steps"][1]["reward"],
+        serde_json::json!({"final": 1.0, "score": 0.9})
+    );
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn first_multi_step_verifier_failure_stops_successors_and_cleans_every_container() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let recorder = RequestRecorder::new();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = multi_step_failure_task(&temporary, recorder.url());
+    let before = task_container_names();
+    let output = run_eval(
+        &task_root,
+        &format!(
+            r#"case "$AIPERF_EVAL_INSTRUCTION" in
+  *First*) wget -qO /dev/null {}/agent-one ;;
+  *Second*) wget -qO /dev/null {}/agent-two ;;
+  *) exit 91 ;;
+esac"#,
+            recorder.url(),
+            recorder.url(),
+        ),
+    );
+
+    assert_failure_without_summary(&output, "planned Docker phase");
+    assert_eq!(
+        task_container_names(),
+        before,
+        "failed multi-step execution leaked a task container"
+    );
+    assert_eq!(
+        recorder.next_request("the first agent must run"),
+        "/agent-one"
+    );
+    assert_eq!(
+        recorder.next_request("the first verifier must run"),
+        "/verifier-one"
+    );
+    recorder.assert_no_request("a failed verifier must prevent every successor phase");
+}
+
+fn multi_step_boundary_task(
+    temporary: &tempfile::TempDir,
+    reward_strategy: &str,
+) -> std::path::PathBuf {
+    let task_root = temporary
+        .path()
+        .join(format!("multi-step-{reward_strategy}"));
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("steps/prepare")).unwrap();
+    fs::create_dir_all(task_root.join("steps/finish/tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            r#"schema_version = "1.0"
+multi_step_reward_strategy = "{reward_strategy}"
+artifacts = ["/workspace/result.txt"]
+
+[task]
+name = "example/multi-step-{reward_strategy}"
+
+[environment]
+workdir = "/workspace"
+user = "bench"
+network = "public"
+
+[environment.env]
+BASE_SCOPE = "root"
+
+[agent]
+timeout_sec = 1
+
+[agent.env]
+AGENT_SCOPE = "inherited"
+
+[verifier]
+timeout_sec = 1
+user = "root"
+
+[verifier.env]
+VERIFIER_SCOPE = "inherited"
+
+[[steps]]
+name = "prepare"
+
+[[steps]]
+name = "finish"
+
+[steps.agent]
+timeout_sec = 3
+user = "root"
+
+[steps.agent.env]
+AGENT_SCOPE = "overridden"
+
+[steps.verifier]
+timeout_sec = 3
+environment_mode = "separate"
+user = "bench"
+
+[steps.verifier.env]
+VERIFIER_SCOPE = "overridden"
+
+[steps.verifier.environment]
+workdir = "/verify"
+"#,
+        ),
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("instruction.md"),
+        "Unused root instruction.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN adduser -D bench && mkdir -p /workspace /verify /logs/verifier && chown -R bench:bench /workspace /verify && chmod 0777 /logs/verifier\nWORKDIR /image-default\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test \"$BASE_SCOPE\" = root\ntest \"$VERIFIER_SCOPE\" = inherited\ntest \"$(id -un)\" = root\ntest \"$(pwd)\" = /workspace\ntest \"$(cat result.txt)\" = first-snapshot\ntest -f /tests/root-only\ntest ! -e /tests/finish-only\ntouch /tests/stale-from-prepare\nprintf '{\"quality\":0.25,\"only_first\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("tests/root-only"), "prepare\n").unwrap();
+    fs::write(
+        task_root.join("steps/prepare/instruction.md"),
+        "Prepare the persistent workspace.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/finish/instruction.md"),
+        "Finish the persistent workspace.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/finish/tests/test.sh"),
+        "test \"$BASE_SCOPE\" = root\ntest \"$VERIFIER_SCOPE\" = overridden\ntest \"$(id -un)\" = bench\ntest \"$(pwd)\" = /verify\ntest -f /tests/finish-only\ntest ! -e /tests/root-only\ntest ! -e /tests/stale-from-prepare\ntest ! -e /workspace/private.txt\ntest \"$(cat result.txt)\" = second-snapshot\nsleep 1.2\nprintf '{\"quality\":0.75,\"only_second\":0.5}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("steps/finish/tests/finish-only"), "finish\n").unwrap();
+    task_root
+}
+
+fn multi_step_reward_task(temporary: &tempfile::TempDir) -> std::path::PathBuf {
+    let task_root = temporary.path().join("multi-step-final");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("steps/first")).unwrap();
+    fs::create_dir_all(task_root.join("steps/second")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "final"
+[task]
+name = "example/multi-step-final"
+[environment]
+workdir = "/work"
+[[steps]]
+name = "first"
+[[steps]]
+name = "second"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("instruction.md"),
+        "Unused root instruction.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN mkdir -p /work /logs/verifier\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "case \"$(cat current-step)\" in\n  first) printf '{\"score\":0.2}' > /logs/verifier/reward.json ;;\n  second) printf '{\"score\":0.9,\"final\":1.0}' > /logs/verifier/reward.json ;;\n  *) exit 92 ;;\nesac\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/first/instruction.md"),
+        "First reward step.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/second/instruction.md"),
+        "Second reward step.\n",
+    )
+    .unwrap();
+    task_root
+}
+
+fn multi_step_failure_task(
+    temporary: &tempfile::TempDir,
+    recorder_url: &str,
+) -> std::path::PathBuf {
+    let task_root = temporary.path().join("multi-step-failure");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("steps/first")).unwrap();
+    fs::create_dir_all(task_root.join("steps/second")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+[task]
+name = "example/multi-step-failure"
+[environment]
+network = "public"
+[verifier]
+environment_mode = "separate"
+[[steps]]
+name = "first"
+[[steps]]
+name = "second"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("instruction.md"),
+        "Unused root instruction.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM alpine:3.20\nRUN mkdir -p /logs/verifier\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        format!("wget -qO /dev/null {recorder_url}/verifier-one\nexit 17\n"),
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/first/instruction.md"),
+        "First failing step.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/second/instruction.md"),
+        "Second forbidden step.\n",
+    )
+    .unwrap();
+    task_root
+}
+
+fn artifact_digest(bytes: &[u8]) -> String {
+    format!("blake3:{}", blake3::hash(bytes).to_hex())
+}
+
 fn standard_task(
     temporary: &tempfile::TempDir,
     name: &str,
