@@ -22,15 +22,16 @@ use crate::{
 };
 
 use super::{
-    BenchmarkExecutionPlan, BenchmarkStepPlan, DockerBuildRequest, DockerCopyRequest,
-    DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
-    EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult,
-    MultiStepExecutionResult, NetworkPolicy, SecretProvider, collect_artifacts, preflight_docker,
-    resolve_environment, resolve_phase_environment,
+    BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId, DockerBuildRequest,
+    DockerCopyRequest, DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe,
+    LocalExecutionResult, MultiStepExecutionResult, NetworkPolicy, SecretProvider,
+    collect_artifacts, preflight_docker, resolve_environment, resolve_phase_environment,
     shared_workdir_conflicts_reserved_verifier_path, transfer_artifacts,
     verifier_artifact_target_collision,
 };
 
+use super::docker_runtime::preflight_compose_configuration;
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
 
 /// Executes a conventional task in a task-built Docker environment.
@@ -151,6 +152,11 @@ impl DockerProcessSandbox {
             ));
         }
         preflight_docker(runtime, plan)?;
+        if plan.compose().is_some() {
+            return compose_preflight_from_snapshot(runtime, package, plan, secrets).and(Err(
+                EvalExecutionError::UnsupportedEnforcement("Compose lifecycle"),
+            ));
+        }
         let environment = plan.environment();
         if !runtime.supports_phase_network_transitions()
             && plan.steps().iter().any(|step| {
@@ -249,6 +255,11 @@ impl DockerProcessSandbox {
             ));
         }
         preflight_docker(runtime, plan)?;
+        if plan.compose().is_some() {
+            return compose_preflight_from_snapshot(runtime, package, plan, secrets).and(Err(
+                EvalExecutionError::UnsupportedEnforcement("Compose lifecycle"),
+            ));
+        }
         let environment = plan.environment();
         let verifier = plan.verifier();
         if !runtime.supports_phase_network_transitions()
@@ -465,6 +476,52 @@ impl DockerProcessSandbox {
             (Ok(result), None) => Ok(result),
         }
     }
+}
+
+fn compose_preflight_from_snapshot(
+    runtime: &dyn DockerRuntime,
+    package: &HarborTaskPackage,
+    plan: &BenchmarkExecutionPlan,
+    secrets: &dyn SecretProvider,
+) -> Result<(), EvalExecutionError> {
+    resolve_environment(plan.environment(), secrets)?;
+    for step in plan.steps() {
+        resolve_phase_environment(plan.environment(), step.agent(), secrets)?;
+        resolve_environment(step.verifier().environment(), secrets)?;
+        resolve_phase_environment(
+            step.verifier().environment(),
+            step.verifier().phase(),
+            secrets,
+        )?;
+    }
+    let materialized = package.materialize_source()?;
+    let (_, environment_root) = standard_task_roots(package, materialized.root())?;
+    let overlay = fs::read(
+        materialized.root().join(
+            plan.compose()
+                .ok_or(EvalExecutionError::InvalidRecipe("Compose project plan"))?
+                .definition_path(),
+        ),
+    )
+    .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    let workspace = tempfile::tempdir()
+        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    let project = ComposeProjectId::new(format!("aiperf-{}", package.source_digest().as_str()));
+    let labels = std::collections::BTreeMap::from([
+        ("aiperf.project".to_owned(), project.as_str().to_owned()),
+        ("aiperf.run".to_owned(), "preflight".to_owned()),
+    ]);
+    preflight_compose_configuration(
+        runtime,
+        plan,
+        &environment_root,
+        project,
+        materialized.root(),
+        "aiperf-compose-preflight",
+        &labels,
+        workspace.path(),
+        &overlay,
+    )
 }
 
 fn multi_step_uses_clock_drive(plan: &BenchmarkExecutionPlan) -> bool {

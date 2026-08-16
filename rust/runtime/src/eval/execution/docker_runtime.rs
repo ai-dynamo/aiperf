@@ -33,11 +33,12 @@ pub fn preflight_docker(
 ///
 /// Callers must pass paths below an acquired package materialization. This
 /// function never builds, creates, or starts project resources.
-pub fn preflight_compose_configuration(
+pub(crate) fn preflight_compose_configuration(
     runtime: &dyn DockerRuntime,
     plan: &BenchmarkExecutionPlan,
     environment_root: &Path,
-    request: &DockerComposeConfigRequest,
+    project: ComposeProjectId,
+    project_directory: &Path,
     image_tag: &str,
     project_labels: &BTreeMap<String, String>,
     workspace: &Path,
@@ -58,18 +59,19 @@ pub fn preflight_compose_configuration(
         plan.environment(),
         workspace,
     )?;
-    if request.generated_definition() != rendered.bytes() {
-        return Err(EvalExecutionError::InvalidRecipe(
-            "generated Compose definition",
-        ));
-    }
+    let request = DockerComposeConfigRequest::new(
+        project,
+        project_directory,
+        rendered.bytes().to_vec(),
+        project_directory.join(compose_plan.definition_path()),
+    );
     let compose_runtime =
         runtime
             .compose_runtime()
             .ok_or(EvalExecutionError::UnsupportedEnforcement(
                 "Docker Compose runtime",
             ))?;
-    let canonical = compose_runtime.compose_config(request)?;
+    let canonical = compose_runtime.compose_config(&request)?;
     super::compose_policy::validate_provider_compose_config(
         &canonical,
         compose_plan,

@@ -28,8 +28,8 @@ pub use docker_runtime::{
     DockerComposeConfigRequest, DockerComposeDownRequest, DockerComposeExecRequest,
     DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
     DockerCreateRequest, DockerEnvironment, DockerExecRequest, DockerRemoveRequest, DockerRuntime,
-    DockerStartRequest, OwnedComposeResources, preflight_compose_configuration, preflight_docker,
-    resolve_environment, resolve_phase_environment,
+    DockerStartRequest, OwnedComposeResources, preflight_docker, resolve_environment,
+    resolve_phase_environment,
 };
 pub use local_process::{
     LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,

@@ -22,8 +22,7 @@ use aiperf_runtime::eval::{
     DockerCreateRequest, DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest,
     DockerRuntime, DockerStartRequest, EnvName, EvalExecutionError, HarborImporter,
     HarborSandboxRecipe, HarborSource, NativeSourceAcquirer, OwnedComposeResources,
-    ProviderCapabilities, SecretProvider, SecretValue, preflight_compose_configuration,
-    preflight_docker,
+    ProviderCapabilities, SecretProvider, SecretValue, preflight_docker,
 };
 use std::rc::Rc;
 
@@ -173,27 +172,20 @@ fn compose_preflight_runs_only_read_only_configuration_before_lifecycle() {
         .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
         .unwrap();
     let runtime = ComposePreflightRuntime::default();
-    let request = DockerComposeConfigRequest::new(
-        ComposeProjectId::new("aiperf-test"),
-        task_root.join("environment"),
-        b"services: {}\n".to_vec(),
-        task_root.join("environment/docker-compose.yaml"),
-    );
-
-    assert!(
-        preflight_compose_configuration(
-            &runtime,
-            imported.package.execution_plan(),
-            &task_root.join("environment"),
-            &request,
-            "aiperf-main:test",
-            &BTreeMap::new(),
-            task_root.as_path(),
-            b"services:\n  api:\n    image: api:fixture\n",
+    let result = DockerProcessSandbox::new().execute_with_runtime(
+        &runtime,
+        &HarborSandboxRecipe::new(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "/work",
         )
-        .is_err()
+        .unwrap(),
+        &imported.package,
+        imported.package.execution_plan(),
+        &["true".to_owned()],
+        &FixedSecret,
     );
-    assert_eq!(runtime.config_calls.get(), 0);
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(runtime.config_calls.get(), 1);
     assert_eq!(runtime.build_calls.get(), 0);
     assert_eq!(runtime.up_calls.get(), 0);
 }

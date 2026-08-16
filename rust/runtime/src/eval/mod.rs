@@ -43,8 +43,7 @@ pub use execution::{
     MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy, OwnedComposeResources,
     PhasePlan, ProcessOutput, ProviderCapabilities, SandboxRole, SecretProvider, SecretValue,
     StepExecutionResult, VerifierCollectHook, VerifierPlan, WorkspaceOverlay, collect_artifacts,
-    preflight_compose_configuration, preflight_docker, resolve_phase_environment,
-    transfer_artifacts,
+    preflight_docker, resolve_phase_environment, transfer_artifacts,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{
