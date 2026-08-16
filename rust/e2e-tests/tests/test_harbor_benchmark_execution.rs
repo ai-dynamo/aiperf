@@ -10,14 +10,14 @@ use std::{
     fs,
     io::{Read, Write},
     net::TcpListener,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver},
+        mpsc::{self, Receiver, TryRecvError},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use aiperf_runtime::eval::{
@@ -32,7 +32,7 @@ static DOCKER_E2E_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
-fn imported_multi_step_snapshot_survives_origin_mutation_and_removal() {
+fn imported_compose_multi_step_snapshot_survives_origin_mutation_and_removal() {
     use std::os::unix::fs::PermissionsExt;
 
     let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
@@ -72,6 +72,11 @@ COPY context-empty /snapshot/context-empty
 COPY helper.sh /snapshot/helper.sh
 RUN test "$(cat /snapshot/context.txt)" = original-context && test -d /snapshot/context-empty && test -x /snapshot/helper.sh && mkdir -p /work /logs/verifier && chmod 0777 /logs/verifier
 "#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: alpine:3.20\n    command: [\"sleep\", \"infinity\"]\n",
     )
     .unwrap();
     fs::write(
@@ -887,6 +892,44 @@ fn run_eval(task_root: &std::path::Path, agent_command: &str) -> Output {
         .expect("start native aiperf eval")
 }
 
+fn start_eval(task_root: &std::path::Path, agent_command: &str) -> std::process::Child {
+    Command::new(exec_binary())
+        .args([
+            "eval",
+            "--task",
+            task_root.to_string_lossy().as_ref(),
+            "--image",
+            IMAGE_DIGEST,
+            "--agent-command",
+            agent_command,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start native aiperf eval")
+}
+
+fn compose_standard_task(
+    temporary: &tempfile::TempDir,
+    name: &str,
+    manifest_suffix: &str,
+    verifier: &str,
+) -> std::path::PathBuf {
+    let task_root = standard_task(
+        temporary,
+        name,
+        manifest_suffix,
+        "FROM alpine:3.20\nRUN mkdir -p /work /logs/verifier\n",
+        verifier,
+    );
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: alpine:3.20\n    command: [\"sleep\", \"infinity\"]\n",
+    )
+    .unwrap();
+    task_root
+}
+
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn compose_sidecar_evaluation_keeps_verifier_isolated_and_cleans_up() {
@@ -1042,6 +1085,281 @@ timeout_sec = 10
     assert_eq!(compose_resource_ids(), before);
 }
 
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn compose_unhealthy_start_prevents_agent_and_verifier_and_cleans_the_project() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let recorder = RequestRecorder::new();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_standard_task(
+        &temporary,
+        "compose-unhealthy",
+        "[environment]\nnetwork = \"public\"\n[environment.healthcheck]\ncommand = [\"false\"]\ntimeout_sec = 1\nretries = 1\n[verifier]\nenvironment_mode = \"separate\"\n",
+        &format!("wget -qO /dev/null {}/verifier\n", recorder.url()),
+    );
+    let before = compose_resource_ids();
+    let output = run_eval(
+        &task_root,
+        &format!("wget -qO /dev/null {}/agent", recorder.url()),
+    );
+
+    assert_failure_without_summary(&output, "unhealthy");
+    recorder.assert_no_request("unhealthy Compose startup must prevent every phase");
+    assert_eq!(
+        compose_resource_ids(),
+        before,
+        "unhealthy Compose startup leaked resources"
+    );
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn compose_terminal_evidence_failures_prevent_the_separate_verifier_and_clean_the_project() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let selected = std::env::var("AIPERF_E2E_EVIDENCE_CASE").ok();
+    for (name, manifest_suffix, diagnostic) in [
+        (
+            "compose-hook-nonzero",
+            "[verifier]\nenvironment_mode = \"separate\"\n[[verifier.collect]]\nservice = \"api\"\ncommand = [\"/bin/sh\", \"-c\", \"exit 31\"]\ntimeout_sec = 10\n",
+            "planned Docker phase",
+        ),
+        (
+            "compose-hook-timeout",
+            "[verifier]\nenvironment_mode = \"separate\"\n[[verifier.collect]]\nservice = \"api\"\ncommand = [\"/bin/sh\", \"-c\", \"sleep 300\"]\ntimeout_sec = 0.2\n",
+            "timed out",
+        ),
+        (
+            "compose-archive-failure",
+            "artifacts = [{ source = \"/missing\", destination = \"evidence\", service = \"api\" }]\n[verifier]\nenvironment_mode = \"separate\"\n",
+            "archive",
+        ),
+    ] {
+        if selected.as_deref().is_some_and(|selected| selected != name) {
+            continue;
+        }
+        let recorder = RequestRecorder::new();
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = compose_standard_task(
+            &temporary,
+            name,
+            &format!("{manifest_suffix}\n[environment]\nnetwork = \"public\"\n"),
+            &format!("wget -qO /dev/null {}/verifier\n", recorder.url()),
+        );
+        let before_runs = compose_run_labels();
+        let started = Instant::now();
+        let mut child = start_eval(
+            &task_root,
+            &format!("wget -qO /dev/null {}/agent && sleep 2", recorder.url()),
+        );
+        assert_eq!(
+            next_request_from_child(
+                &recorder,
+                &mut child,
+                "agent must run before terminal evidence collection",
+                Duration::from_secs(60)
+            ),
+            "/agent"
+        );
+        let run = asserted_new_compose_run(&before_runs);
+        assert!(
+            !compose_resource_ids_for_run(&run).is_empty(),
+            "the active Compose run must own resources before evidence collection"
+        );
+        let output = child
+            .wait_with_output()
+            .expect("wait for native aiperf eval");
+
+        assert_failure_without_summary(&output, diagnostic);
+        if name.ends_with("timeout") {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "{name} exceeded the end-to-end timeout budget: {:?}",
+                started.elapsed()
+            );
+        }
+        assert_eq!(
+            compose_resource_ids_for_run(&run),
+            BTreeSet::new(),
+            "{name} leaked a resource from its exact Compose run"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn compose_agent_and_separate_verifier_failures_cleanup_the_project() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let recorder = RequestRecorder::new();
+    let agent_timeout = compose_standard_task(
+        &temporary,
+        "compose-agent-timeout",
+        "[environment]\nnetwork = \"public\"\n[agent]\ntimeout_sec = 0.2\n[verifier]\ntimeout_sec = 2\nenvironment_mode = \"separate\"\n",
+        "exit 91\n",
+    );
+    let before_runs = compose_run_labels();
+    let started = Instant::now();
+    let mut child = start_eval(
+        &agent_timeout,
+        &format!("wget -qO /dev/null {}/agent && sleep 300", recorder.url()),
+    );
+    assert_eq!(
+            next_request_from_child(
+                &recorder,
+                &mut child,
+                "timed agent phase must start before its deadline",
+                Duration::from_secs(60)
+            ),
+        "/agent"
+    );
+    let run = asserted_new_compose_run(&before_runs);
+    let output = child
+        .wait_with_output()
+        .expect("wait for native aiperf eval");
+    assert_failure_without_summary(&output, "timed out");
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "agent timeout exceeded the end-to-end timeout budget: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(compose_resource_ids_for_run(&run), BTreeSet::new());
+
+    let verifier_failure = compose_standard_task(
+        &temporary,
+        "compose-verifier-failure",
+        "[environment]\nnetwork = \"public\"\n[verifier]\nenvironment_mode = \"separate\"\n",
+        "exit 37\n",
+    );
+    let before_runs = compose_run_labels();
+    let child = start_eval(
+        &verifier_failure,
+        &format!("wget -qO /dev/null {}/agent", recorder.url()),
+    );
+    assert_eq!(
+        recorder.next_request_with_timeout(
+            "agent must complete before separate verifier failure",
+            Duration::from_secs(60)
+        ),
+        "/agent"
+    );
+    let run = asserted_new_compose_run(&before_runs);
+    let output = child
+        .wait_with_output()
+        .expect("wait for native aiperf eval");
+    assert_failure_without_summary(&output, "planned Docker phase");
+    assert_eq!(
+        compose_resource_ids_for_run(&run),
+        BTreeSet::new(),
+        "separate verifier failure leaked its exact Compose run resources"
+    );
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn compose_terminal_evidence_tears_down_the_project_before_the_separate_verifier_starts() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let recorder = RequestRecorder::new();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_standard_task(
+        &temporary,
+        "compose-teardown-before-verifier",
+        "artifacts = [{ source = \"/data\", destination = \"evidence\", service = \"api\" }]\n[environment]\nnetwork = \"public\"\n[verifier]\nenvironment_mode = \"separate\"\n[[verifier.collect]]\nservice = \"api\"\ncommand = [\"/bin/sh\", \"-c\", \"mkdir -p /data && printf collected > /data/result\"]\ntimeout_sec = 10\n",
+        &format!(
+            "test \"$(cat /work/evidence/result)\" = collected\nwget -qO /dev/null {}/verifier\nprintf '{{\"reward\":1.0}}' > /logs/verifier/reward.json\n",
+            recorder.url()
+        ),
+    );
+    let before_runs = compose_run_labels();
+    let child = start_eval(
+        &task_root,
+        &format!("wget -qO /dev/null {}/agent && sleep 2", recorder.url()),
+    );
+    assert_eq!(
+        recorder.next_request_with_timeout(
+            "agent must start before terminal sidecar evidence",
+            Duration::from_secs(60)
+        ),
+        "/agent"
+    );
+    let run = asserted_new_compose_run(&before_runs);
+    assert_eq!(
+        recorder.next_request_with_timeout(
+            "separate verifier must run after collecting sidecar evidence",
+            Duration::from_secs(60)
+        ),
+        "/verifier"
+    );
+    assert_eq!(
+        compose_resource_ids_for_run(&run),
+        BTreeSet::new(),
+        "the Compose project survived into the separate verifier phase"
+    );
+    let output = child
+        .wait_with_output()
+        .expect("wait for native aiperf eval");
+    assert_success(&output);
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn compose_multi_step_execution_retains_the_main_project_workspace_until_the_final_step() {
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_standard_task(
+        &temporary,
+        "compose-multi-step-persistence",
+        "multi_step_reward_strategy = \"final\"\nartifacts = [\"/work/result.txt\"]\n[environment]\nworkdir = \"/work\"\n[[steps]]\nname = \"one\"\n[[steps]]\nname = \"two\"\n[steps.verifier]\nenvironment_mode = \"separate\"\n",
+        "if test -f /work/state; then\n  test \"$(cat /work/state)\" = one && test \"$(cat /work/result.txt)\" = first && printf '{\"score\":0.25}' > /logs/verifier/reward.json\nelse\n  test \"$(cat /work/result.txt)\" = second && printf '{\"score\":1.0}' > /logs/verifier/reward.json\nfi\n",
+    );
+    fs::create_dir_all(task_root.join("steps/one")).unwrap();
+    fs::create_dir_all(task_root.join("steps/two")).unwrap();
+    fs::write(
+        task_root.join("steps/one/instruction.md"),
+        "Compose step one.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/two/instruction.md"),
+        "Compose step two.\n",
+    )
+    .unwrap();
+
+    let before = compose_resource_ids();
+    let output = run_eval(
+        &task_root,
+        r#"case "$AIPERF_EVAL_INSTRUCTION" in
+  *one*) printf one > state && printf first > result.txt ;;
+  *two*) test "$(cat state)" = one && nslookup api >/dev/null && printf two > state && printf second > result.txt ;;
+  *) exit 42 ;;
+esac"#,
+    );
+
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["task"], "example/compose-multi-step-persistence");
+    assert_eq!(summary["reward"], serde_json::json!({"score": 1.0}));
+    assert_eq!(
+        summary["steps"],
+        serde_json::json!([
+            {
+                "name": "one",
+                "artifacts": [["result.txt", artifact_digest(b"first")]],
+                "reward": {"score": 0.25},
+            },
+            {
+                "name": "two",
+                "artifacts": [["result.txt", artifact_digest(b"second")]],
+                "reward": {"score": 1.0},
+            },
+        ])
+    );
+    assert_eq!(
+        compose_resource_ids(),
+        before,
+        "multi-step Compose project leaked resources"
+    );
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -1124,11 +1442,131 @@ fn compose_resource_ids() -> BTreeSet<String> {
     .collect()
 }
 
+fn compose_run_labels() -> BTreeSet<String> {
+    let output = Command::new("docker")
+        .args([
+            "container",
+            "ls",
+            "--all",
+            "--quiet",
+            "--filter",
+            "label=aiperf.run",
+        ])
+        .output()
+        .expect("list Compose run containers");
+    assert!(
+        output.status.success(),
+        "Docker Compose run container listing failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|container| {
+            let output = Command::new("docker")
+                .args([
+                    "container",
+                    "inspect",
+                    "--format",
+                    "{{index .Config.Labels \"aiperf.run\"}}",
+                    container,
+                ])
+                .output()
+                .expect("inspect Compose run label");
+            assert!(
+                output.status.success(),
+                "Docker Compose run label inspection failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let label = String::from_utf8(output.stdout).unwrap();
+            let label = label.trim();
+            (!label.is_empty()).then(|| label.to_owned())
+        })
+        .collect()
+}
+
+fn compose_resource_ids_for_run(run: &str) -> BTreeSet<String> {
+    [
+        ("container", vec!["container", "ls", "--all", "--quiet"]),
+        ("network", vec!["network", "ls", "--quiet"]),
+        ("volume", vec!["volume", "ls", "--quiet"]),
+    ]
+    .into_iter()
+    .flat_map(|(kind, arguments)| {
+        let output = Command::new("docker")
+            .args(arguments)
+            .args(["--filter", &format!("label=aiperf.run={run}")])
+            .output()
+            .expect("inspect Compose run resources");
+        assert!(
+            output.status.success(),
+            "docker {kind} run resource listing failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(move |id| format!("{kind}:{id}"))
+            .collect::<Vec<_>>()
+    })
+    .collect()
+}
+
+fn asserted_new_compose_run(before: &BTreeSet<String>) -> String {
+    let runs = compose_run_labels();
+    let new = runs.difference(before).collect::<Vec<_>>();
+    assert_eq!(
+        new.len(),
+        1,
+        "exactly one run label must appear after the controlled agent request; active runs: {runs:?}"
+    );
+    (*new[0]).clone()
+}
+
 struct RequestRecorder {
     url: String,
     requests: Receiver<String>,
     shutdown: Arc<AtomicBool>,
     server: Option<JoinHandle<()>>,
+}
+
+fn next_request_from_child(
+    recorder: &RequestRecorder,
+    child: &mut std::process::Child,
+    context: &str,
+    timeout: Duration,
+) -> String {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match recorder.requests.try_recv() {
+            Ok(request) => return request,
+            Err(TryRecvError::Disconnected) => panic!("{context}: recorder disconnected"),
+            Err(TryRecvError::Empty) => {}
+        }
+        if let Some(status) = child.try_wait().expect("poll native aiperf eval") {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            child
+                .stdout
+                .take()
+                .expect("native aiperf eval stdout")
+                .read_to_end(&mut stdout)
+                .expect("read native aiperf eval stdout");
+            child
+                .stderr
+                .take()
+                .expect("native aiperf eval stderr")
+                .read_to_end(&mut stderr)
+                .expect("read native aiperf eval stderr");
+            panic!(
+                "{context}: native aiperf eval exited early with {status}; stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            );
+        }
+        assert!(Instant::now() < deadline, "{context}: timed out waiting for request");
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 impl RequestRecorder {
@@ -1177,8 +1615,12 @@ impl RequestRecorder {
     }
 
     fn next_request(&self, context: &str) -> String {
+        self.next_request_with_timeout(context, Duration::from_secs(3))
+    }
+
+    fn next_request_with_timeout(&self, context: &str, timeout: Duration) -> String {
         self.requests
-            .recv_timeout(Duration::from_secs(3))
+            .recv_timeout(timeout)
             .unwrap_or_else(|error| panic!("{context}: {error}"))
     }
 
