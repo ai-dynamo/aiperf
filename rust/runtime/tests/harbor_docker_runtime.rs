@@ -177,6 +177,7 @@ impl DockerComposeRuntime for ComposePreflightRuntime {
     fn compose_owned_resources(
         &self,
         _: &ComposeProjectId,
+        _: Duration,
     ) -> Result<OwnedComposeResources, EvalExecutionError> {
         Ok(OwnedComposeResources::default())
     }
@@ -506,6 +507,7 @@ impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
     fn compose_owned_resources(
         &self,
         _: &ComposeProjectId,
+        _: Duration,
     ) -> Result<OwnedComposeResources, EvalExecutionError> {
         Ok(OwnedComposeResources::default())
     }
