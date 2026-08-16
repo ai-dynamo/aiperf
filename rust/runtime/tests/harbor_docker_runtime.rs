@@ -137,6 +137,7 @@ PHASE = "verifier"
             "healthcheck:bench:/task:none:BASE=baseline",
             "prepare:root:/task:none",
             "agent:agent:/task:aiperf-eval-public:BASE=baseline,PHASE=agent",
+            "prepare-verifier-files",
             "copy-tests",
             "prepare:root:/task:none",
             "verifier:verifier:/task:none:BASE=baseline,PHASE=verifier",
@@ -744,6 +745,7 @@ fn separate_verifier_failure_removes_both_container_leases() {
             "agent",
             "create",
             "start",
+            "prepare-verifier-files",
             "copy-tests",
             "verifier",
             "remove",
@@ -966,6 +968,17 @@ impl DockerRuntime for VerifierFailureRuntime {
     }
 
     fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        if request
+            .public_arguments()
+            .iter()
+            .any(|argument| argument.contains("rm -rf /tests /logs/verifier"))
+        {
+            assert_eq!(request.user(), Some("root"));
+            self.events
+                .borrow_mut()
+                .push("prepare-verifier-files".to_owned());
+            return Ok(());
+        }
         match request.phase().to_string().as_str() {
             "agent" => {
                 self.events.borrow_mut().push("agent".to_owned());
@@ -1058,6 +1071,21 @@ impl DockerRuntime for LifecycleRuntime {
     }
 
     fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        if request
+            .public_arguments()
+            .iter()
+            .any(|argument| argument.contains("rm -rf /tests /logs/verifier"))
+        {
+            assert_eq!(request.user(), Some("root"));
+            assert!(request.public_arguments().iter().any(|argument| {
+                argument.contains("mkdir -p /logs/verifier")
+                    && argument.contains("chmod 0777 /logs/verifier")
+            }));
+            self.events
+                .borrow_mut()
+                .push("prepare-verifier-files".to_owned());
+            return Ok(());
+        }
         if request
             .public_arguments()
             .iter()

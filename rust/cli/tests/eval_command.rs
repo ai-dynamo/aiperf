@@ -271,7 +271,7 @@ fn native_eval_command_runs_a_pinned_standard_task_directory_in_docker() {
     fs::create_dir_all(repository.join("task/tests")).unwrap();
     fs::write(
         repository.join("task/task.toml"),
-        "schema_version = \"1.0\"\n[task]\nname = \"example/pinned-standard\"\n",
+        "schema_version = \"1.0\"\n[task]\nname = \"example/pinned-standard\"\n[environment]\nworkdir = \"/work\"\n",
     )
     .unwrap();
     fs::write(repository.join("task/instruction.md"), "Write a result.\n").unwrap();
@@ -426,7 +426,7 @@ fn native_eval_command_runs_a_standard_task_directory_in_docker() {
     fs::create_dir_all(task_root.join("tests")).unwrap();
     fs::write(
         task_root.join("task.toml"),
-        "schema_version = \"1.0\"\nartifacts = [\"/work/result.txt\"]\n[task]\nname = \"example/docker-repair-1\"\n[verifier]\nenvironment_mode = \"separate\"\n",
+        "schema_version = \"1.0\"\nartifacts = [\"/work/result.txt\"]\n[task]\nname = \"example/docker-repair-1\"\n[environment]\nworkdir = \"/work\"\n[verifier]\nenvironment_mode = \"separate\"\n",
     )
     .unwrap();
     fs::write(task_root.join("instruction.md"), "Write the result.\n").unwrap();

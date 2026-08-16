@@ -388,12 +388,13 @@ impl DockerProcessSandbox {
             let verifier_name = verifier_container
                 .as_ref()
                 .map_or(container.as_str(), |(name, _)| name.as_str());
+            let verifier_network = network_lease(verifier.phase().network())?;
+            prepare_verifier_files(runtime, verifier_name, verifier_network)?;
             runtime.copy(&DockerCopyRequest::new([
                 "cp".to_owned(),
                 format!("{}/.", source_root.join("tests").display()),
                 format!("{verifier_name}:/tests"),
             ]))?;
-            let verifier_network = network_lease(verifier.phase().network())?;
             let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
             prepare_workdir(
                 runtime,
@@ -611,7 +612,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
         };
         let verifier_network = network_lease(verifier.phase().network())?;
         let outcome = (|| {
-            reset_verifier_files(self.runtime, &verifier_name, verifier_network)?;
+            prepare_verifier_files(self.runtime, &verifier_name, verifier_network)?;
             self.runtime.copy(&DockerCopyRequest::new([
                 "cp".to_owned(),
                 format!(
@@ -646,7 +647,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             read_reward_with_runtime(self.runtime, &verifier_name, &reward_workspace)
         })();
         let cleanup = if verifier.mode() == VerifierMode::Shared {
-            reset_verifier_files(self.runtime, &verifier_name, verifier_network)
+            clear_verifier_files(self.runtime, &verifier_name, verifier_network)
         } else {
             Ok(())
         };
@@ -1215,7 +1216,7 @@ fn prepare_workdir(
     )
 }
 
-fn reset_verifier_files(
+fn prepare_verifier_files(
     runtime: &dyn DockerRuntime,
     container: &str,
     network_lease: &str,
@@ -1226,7 +1227,34 @@ fn reset_verifier_files(
             [
                 "/bin/sh".to_owned(),
                 "-c".to_owned(),
-                "rm -rf /tests /logs/verifier/reward.json /logs/verifier/reward.txt".to_owned(),
+                "rm -rf /tests /logs/verifier && mkdir -p /logs/verifier && chmod 0777 /logs/verifier"
+                    .to_owned(),
+            ],
+            Default::default(),
+            Default::default(),
+        )
+        .with_phase(
+            EvalExecutionPhase::Verifier,
+            Some("root"),
+            None,
+            network_lease,
+            None,
+        ),
+    )
+}
+
+fn clear_verifier_files(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    network_lease: &str,
+) -> Result<(), EvalExecutionError> {
+    runtime.exec(
+        &DockerExecRequest::new(
+            container,
+            [
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                "rm -rf /tests /logs/verifier".to_owned(),
             ],
             Default::default(),
             Default::default(),
