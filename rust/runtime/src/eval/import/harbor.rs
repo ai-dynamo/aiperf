@@ -78,7 +78,22 @@ impl<'a> HarborImporter<'a> {
                 disposition: ImportDisposition::Unsupported,
             }));
         }
-        let (package, task) = normalize::normalize(&bytes)?;
+        let (mut package, task) = normalize::normalize(&bytes)?;
+        if let HarborSource::Local(location) = source {
+            let path = std::path::Path::new(location);
+            let source_root = if path.is_dir() {
+                path.to_path_buf()
+            } else {
+                path.parent()
+                    .ok_or_else(|| {
+                        HarborImportError::Unavailable(format!(
+                            "local package has no parent: {location}"
+                        ))
+                    })?
+                    .to_path_buf()
+            };
+            package.set_source_root(source_root);
+        }
         let report = ImportReport {
             source_digest,
             normalized_digest: task.digest.clone(),

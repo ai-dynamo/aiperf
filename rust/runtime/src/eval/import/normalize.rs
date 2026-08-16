@@ -26,6 +26,7 @@ pub struct HarborTaskPackage {
     declared_artifacts: Vec<String>,
     source_digest: ArtifactDigest,
     source_bytes: Vec<u8>,
+    source_root: Option<std::path::PathBuf>,
 }
 
 impl HarborTaskPackage {
@@ -72,6 +73,16 @@ impl HarborTaskPackage {
     /// Returns the immutable, exactly acquired package bytes.
     pub fn source_bytes(&self) -> &[u8] {
         &self.source_bytes
+    }
+
+    /// Returns the local source tree retained for fixture materialization, when available.
+    pub(crate) fn source_root(&self) -> Option<&std::path::Path> {
+        self.source_root.as_deref()
+    }
+
+    /// Associates an acquired local source tree with this immutable package material.
+    pub(crate) fn set_source_root(&mut self, source_root: std::path::PathBuf) {
+        self.source_root = Some(source_root);
     }
 }
 
@@ -126,6 +137,7 @@ pub(super) fn normalize(
         declared_artifacts,
         source_digest: ArtifactDigest::from_bytes(bytes),
         source_bytes: bytes.to_vec(),
+        source_root: None,
     };
     Ok((package, reference))
 }

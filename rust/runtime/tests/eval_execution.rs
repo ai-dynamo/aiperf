@@ -7,8 +7,9 @@ use std::fs;
 use aiperf_runtime::eval::{
     AgentCapability, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvalExecutionError,
     EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborImportError,
-    HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox, SandboxRole,
-    SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory, WorkspaceOverlay,
+    HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox, NativeSourceAcquirer,
+    SandboxRole, SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory,
+    WorkspaceOverlay,
 };
 
 struct RecordingFactory {
@@ -214,6 +215,30 @@ fn separate_local_verifier_cannot_read_an_undeclared_agent_file() {
     })
     .import(&HarborSource::local("task.json").unwrap())
     .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    let result = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Separate)
+        .unwrap();
+
+    assert_eq!(result.reward.metrics["reward"], 1.0);
+}
+
+#[test]
+fn local_process_sandbox_materializes_regular_package_fixture_files() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package_root = temporary.path().join("package");
+    fs::create_dir_all(package_root.join("fixtures")).unwrap();
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","test -f fixtures/input.txt"],"verifier_command":["sh","-c","printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":[]}"#;
+    fs::write(package_root.join("task.json"), package).unwrap();
+    fs::write(package_root.join("fixtures/input.txt"), "fixture").unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(package_root.to_string_lossy()).unwrap())
+        .unwrap();
     let recipe = HarborSandboxRecipe::new(
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "/work",

@@ -3,8 +3,7 @@
 
 //! Immutable source locations and native source acquisition.
 
-use std::fs;
-use std::process::Command;
+use std::{fs, path::Path, process::Command};
 
 use super::HarborImportError;
 
@@ -92,8 +91,17 @@ pub struct NativeSourceAcquirer;
 impl SourceAcquirer for NativeSourceAcquirer {
     fn acquire(&self, source: &HarborSource) -> Result<Vec<u8>, HarborImportError> {
         match source {
-            HarborSource::Local(location) => fs::read(location)
-                .map_err(|error| HarborImportError::Unavailable(format!("{location}: {error}"))),
+            HarborSource::Local(location) => {
+                let path = Path::new(location);
+                let package = if path.is_dir() {
+                    path.join("task.json")
+                } else {
+                    path.to_path_buf()
+                };
+                fs::read(&package).map_err(|error| {
+                    HarborImportError::Unavailable(format!("{}: {error}", package.display()))
+                })
+            }
             HarborSource::PinnedGit {
                 repository,
                 revision,
