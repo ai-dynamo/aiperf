@@ -182,6 +182,485 @@ impl DockerComposeRuntime for ComposePreflightRuntime {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComposeSessionFailure {
+    Hook,
+    Archive,
+    Stop,
+    VerifierTimeout,
+}
+
+struct ComposeSessionRecordingRuntime {
+    events: RefCell<Vec<String>>,
+    creates: RefCell<Vec<RecordedCreate>>,
+    artifact_transfer_sources: RefCell<Vec<String>>,
+    failure: Option<ComposeSessionFailure>,
+    agent_calls: Cell<usize>,
+}
+
+impl ComposeSessionRecordingRuntime {
+    fn new(failure: Option<ComposeSessionFailure>) -> Self {
+        Self {
+            events: RefCell::new(Vec::new()),
+            creates: RefCell::new(Vec::new()),
+            artifact_transfer_sources: RefCell::new(Vec::new()),
+            failure,
+            agent_calls: Cell::new(0),
+        }
+    }
+}
+
+impl DockerRuntime for ComposeSessionRecordingRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_public_network()
+            .with_phase_timeouts()
+            .with_separate_verifier()
+            .with_compose_project()
+            .with_compose_config()
+            .with_service_exec()
+            .with_service_archive()
+            .with_service_stop()
+    }
+
+    fn compose_runtime(&self) -> Option<&dyn DockerComposeRuntime> {
+        Some(self)
+    }
+
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("docker-build".to_owned());
+        Ok(())
+    }
+
+    fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        let arguments = request.public_arguments();
+        let container = argument_after(arguments, "--name").to_owned();
+        let workspace = arguments
+            .windows(2)
+            .find(|pair| pair[0] == "--volume")
+            .map(|pair| {
+                pair[1]
+                    .split_once(':')
+                    .map_or_else(|| pair[1].clone(), |(host, _)| host.to_owned())
+            });
+        self.events.borrow_mut().push(format!("create:{container}"));
+        self.creates.borrow_mut().push(RecordedCreate {
+            container,
+            workspace,
+            arguments: arguments.to_vec(),
+        });
+        Ok(())
+    }
+
+    fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        self.events
+            .borrow_mut()
+            .push(format!("start:{}", request.container()));
+        Ok(())
+    }
+
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        if request.phase() == aiperf_runtime::eval::EvalExecutionPhase::Verifier
+            && self.failure == Some(ComposeSessionFailure::VerifierTimeout)
+        {
+            self.events.borrow_mut().push("verifier-timeout".to_owned());
+            return Err(EvalExecutionError::Timeout {
+                phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+                timeout: request.deadline().unwrap_or(Duration::from_secs(1)),
+            });
+        }
+        self.events
+            .borrow_mut()
+            .push(format!("docker-exec:{}", request.phase()));
+        Ok(())
+    }
+
+    fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        let source = &request.public_arguments()[1];
+        let destination = &request.public_arguments()[2];
+        if source.ends_with("/reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward json absent".to_owned(),
+            ));
+        }
+        if source.ends_with("/reward.txt") {
+            fs::write(destination, "1\n")
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            return Ok(());
+        }
+        if !source.contains(':') && destination.contains(':') && !destination.ends_with(":/tests") {
+            self.artifact_transfer_sources
+                .borrow_mut()
+                .push(source.to_owned());
+        }
+        self.events.borrow_mut().push("docker-copy".to_owned());
+        Ok(())
+    }
+
+    fn container_workdir(&self, _: &str) -> Result<String, EvalExecutionError> {
+        Ok("/work".to_owned())
+    }
+
+    fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push(format!(
+            "remove:{}",
+            request.public_arguments().last().unwrap_or(&String::new())
+        ));
+        Ok(())
+    }
+}
+
+impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
+    fn compose_config(
+        &self,
+        request: &DockerComposeConfigRequest,
+    ) -> Result<Vec<u8>, EvalExecutionError> {
+        self.events.borrow_mut().push("compose-config".to_owned());
+        assert!(request.interpolation_disabled());
+        assert!(request.env_file_disabled());
+        let mut generated =
+            serde_yaml::from_slice::<serde_yaml::Value>(request.generated_definition())
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let overlay = fs::read(request.overlay_definition())
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let overlay = serde_yaml::from_slice::<serde_yaml::Value>(&overlay)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        merge_compose_yaml(&mut generated, overlay);
+        let mut canonical = serde_json::to_value(generated)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let services = canonical
+            .get_mut("services")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or(EvalExecutionError::Materialization(
+                "generated Compose services are missing".to_owned(),
+            ))?;
+        for service in services.values_mut() {
+            let service = service
+                .as_object_mut()
+                .ok_or(EvalExecutionError::Materialization(
+                    "canonical Compose service is not an object".to_owned(),
+                ))?;
+            let networks = service
+                .get("networks")
+                .and_then(serde_json::Value::as_array)
+                .map(|networks| {
+                    networks
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(|name| (name.to_owned(), serde_json::Value::Null))
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    serde_json::Map::from_iter([(String::from("default"), serde_json::Value::Null)])
+                });
+            service.insert("networks".to_owned(), serde_json::Value::Object(networks));
+        }
+        serde_json::to_vec(&canonical)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))
+    }
+
+    fn compose_build(&self, _: &DockerComposeBuildRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("compose-build".to_owned());
+        Ok(())
+    }
+
+    fn compose_up(&self, _: &DockerComposeUpRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("compose-up".to_owned());
+        Ok(())
+    }
+
+    fn compose_exec(&self, request: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
+        match request.phase() {
+            aiperf_runtime::eval::EvalExecutionPhase::Agent => {
+                let call = self.agent_calls.get() + 1;
+                self.agent_calls.set(call);
+                self.events.borrow_mut().push(format!("agent:{call}"));
+            }
+            aiperf_runtime::eval::EvalExecutionPhase::CollectionHook => {
+                self.events
+                    .borrow_mut()
+                    .push(format!("hook:{}", request.service().as_str()));
+                if self.failure == Some(ComposeSessionFailure::Hook) {
+                    return Err(EvalExecutionError::ProcessFailure("hook failed".to_owned()));
+                }
+            }
+            aiperf_runtime::eval::EvalExecutionPhase::Verifier => {
+                self.events.borrow_mut().push("shared-verifier".to_owned());
+            }
+            phase => self
+                .events
+                .borrow_mut()
+                .push(format!("compose-exec:{phase}")),
+        }
+        Ok(())
+    }
+
+    fn compose_copy_archive(
+        &self,
+        request: &DockerComposeArchiveRequest,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        self.compose_copy_archive_bounded(request, Duration::from_secs(1))
+    }
+
+    fn compose_copy_archive_bounded(
+        &self,
+        request: &DockerComposeArchiveRequest,
+        _: Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        self.events
+            .borrow_mut()
+            .push(format!("archive:{}", request.service().as_str()));
+        if self.failure == Some(ComposeSessionFailure::Archive) {
+            return Err(EvalExecutionError::ArtifactCollection(
+                "archive failed".to_owned(),
+            ));
+        }
+        let path = if request.source().starts_with("/work/") {
+            "result.txt"
+        } else {
+            "result.txt/payload"
+        };
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            path,
+            b"compose snapshot",
+        ))))
+    }
+
+    fn compose_copy_into(&self, _: &DockerComposeCopyRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("compose-copy".to_owned());
+        Ok(())
+    }
+
+    fn compose_stop_service(
+        &self,
+        request: &DockerComposeStopRequest,
+    ) -> Result<(), EvalExecutionError> {
+        self.compose_stop_service_bounded(request)
+    }
+
+    fn compose_stop_service_bounded(
+        &self,
+        request: &DockerComposeStopRequest,
+    ) -> Result<(), EvalExecutionError> {
+        self.events
+            .borrow_mut()
+            .push(format!("stop:{}", request.service().as_str()));
+        if self.failure == Some(ComposeSessionFailure::Stop) {
+            return Err(EvalExecutionError::ProcessFailure("stop failed".to_owned()));
+        }
+        Ok(())
+    }
+
+    fn compose_down(&self, _: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("compose-down".to_owned());
+        Ok(())
+    }
+
+    fn compose_owned_resources(
+        &self,
+        _: &ComposeProjectId,
+    ) -> Result<OwnedComposeResources, EvalExecutionError> {
+        Ok(OwnedComposeResources::default())
+    }
+}
+
+fn merge_compose_yaml(base: &mut serde_yaml::Value, overlay: serde_yaml::Value) {
+    let (Some(base), Some(overlay)) = (base.as_mapping_mut(), overlay.as_mapping()) else {
+        return;
+    };
+    for (key, value) in overlay {
+        match (base.get_mut(key), value) {
+            (Some(base_value), serde_yaml::Value::Mapping(overlay_mapping)) => {
+                merge_compose_yaml(
+                    base_value,
+                    serde_yaml::Value::Mapping(overlay_mapping.clone()),
+                );
+            }
+            _ => {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn compose_multi_step_session_keeps_one_project_and_fresh_verifiers() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_multi_step_task_root(&temporary, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(None);
+
+    let result = DockerProcessSandbox::new()
+        .execute_multi_step_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect("Compose multi-step execution");
+
+    assert_eq!(result.steps.len(), 2);
+    assert_eq!(runtime.agent_calls.get(), 2);
+    let events = runtime.events.borrow();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| *event == "compose-build")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events.iter().filter(|event| *event == "compose-up").count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| *event == "compose-down")
+            .count(),
+        1
+    );
+    let first_verifier = events
+        .iter()
+        .position(|event| event.starts_with("create:") && event.contains("verifier-one"))
+        .expect("first verifier create");
+    let second_agent = events
+        .iter()
+        .position(|event| event == "agent:2")
+        .expect("second agent");
+    let project_down = events
+        .iter()
+        .position(|event| event == "compose-down")
+        .expect("project teardown");
+    assert!(first_verifier < second_agent);
+    assert!(
+        second_agent < project_down,
+        "the project remains live for the next step"
+    );
+    let snapshots = runtime.artifact_transfer_sources.borrow();
+    assert_eq!(snapshots.len(), 2);
+    assert_ne!(snapshots[0], snapshots[1]);
+}
+
+#[test]
+fn compose_terminal_sidecar_evidence_tears_down_before_separate_verifier() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_terminal_evidence_task_root(&temporary, false, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(None);
+
+    DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect("terminal Compose evidence execution");
+
+    let events = runtime.events.borrow();
+    let down = events
+        .iter()
+        .position(|event| event == "compose-down")
+        .expect("sidecar project teardown");
+    let verifier = events
+        .iter()
+        .position(|event| event.starts_with("create:") && event.contains("verifier-"))
+        .expect("separate verifier create");
+    assert!(
+        down < verifier,
+        "sidecar evidence must be terminal before verifier creation"
+    );
+}
+
+#[test]
+fn compose_evidence_failures_never_create_a_verifier_and_always_teardown() {
+    for (failure, expected) in [
+        (ComposeSessionFailure::Hook, "hook:api"),
+        (ComposeSessionFailure::Archive, "archive:api"),
+        (ComposeSessionFailure::Stop, "stop:main"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = compose_terminal_evidence_task_root(&temporary, true, false);
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .unwrap();
+        let runtime = ComposeSessionRecordingRuntime::new(Some(failure));
+
+        let error = DockerProcessSandbox::new()
+            .execute_with_runtime(
+                &runtime,
+                &compose_recipe(),
+                &imported.package,
+                imported.package.execution_plan(),
+                &["agent".to_owned()],
+                &FixedSecret,
+            )
+            .expect_err("collection failure must stop before verifier provisioning");
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::CollectionHook { .. } | EvalExecutionError::ArtifactCollection(_)
+        ));
+        let events = runtime.events.borrow();
+        assert!(events.iter().any(|event| event == expected));
+        assert!(events.iter().any(|event| event == "compose-down"));
+        assert!(events.iter().all(|event| !event.starts_with("create:")));
+    }
+}
+
+#[test]
+fn compose_verifier_timeout_removes_verifier_before_project_teardown() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_main_evidence_timeout_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(Some(ComposeSessionFailure::VerifierTimeout));
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("verifier timeout");
+
+    assert!(
+        matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+                ..
+            }
+        ),
+        "unexpected verifier error: {error:?}"
+    );
+    let events = runtime.events.borrow();
+    let remove = events
+        .iter()
+        .position(|event| event.starts_with("remove:") && event.contains("verifier-"))
+        .expect("verifier removal");
+    let down = events
+        .iter()
+        .position(|event| event == "compose-down")
+        .expect("project teardown");
+    assert!(remove < down);
+}
+
 #[test]
 fn compose_preflight_runs_only_read_only_configuration_before_lifecycle() {
     let temporary = tempfile::tempdir().unwrap();
@@ -2633,6 +3112,116 @@ fn standard_task_with_artifacts(
         format!(
             "schema_version = \"1.0\"\nartifacts = {artifacts}\n\n[task]\nname = \"example/artifacts\"\n{manifest_suffix}"
         ),
+    )
+    .unwrap();
+    task_root
+}
+
+fn compose_recipe() -> HarborSandboxRecipe {
+    HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/work".to_owned()),
+    )
+    .unwrap()
+}
+
+fn compose_multi_step_task_root(
+    temporary: &tempfile::TempDir,
+    terminal_sidecar_evidence: bool,
+) -> PathBuf {
+    let task_root = multi_step_task_root(temporary, true);
+    let artifact = if terminal_sidecar_evidence {
+        "{ source = \"/var/lib/api/result.txt\", destination = \"result.txt\", service = \"api\" }"
+    } else {
+        "\"/work/result.txt\""
+    };
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+artifacts = [{artifact}]
+
+[task]
+name = "example/compose-multi-step"
+
+[[steps]]
+name = "one"
+[steps.verifier]
+environment_mode = "separate"
+
+[[steps]]
+name = "two"
+[steps.verifier]
+environment_mode = "separate""#,
+        ),
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    task_root
+}
+
+fn compose_terminal_evidence_task_root(
+    temporary: &tempfile::TempDir,
+    has_hook: bool,
+    has_verifier_timeout: bool,
+) -> PathBuf {
+    let task_root = standard_task_root(temporary, "");
+    let hook = has_hook
+        .then_some("\n[[verifier.collect]]\nservice = \"api\"\ncommand = [\"flush-api\"]\n")
+        .unwrap_or("");
+    let verifier_timeout = has_verifier_timeout
+        .then_some("timeout_sec = 1\n[agent]\ntimeout_sec = 1\n")
+        .unwrap_or("");
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            r#"schema_version = "1.0"
+artifacts = [{{ source = "/var/lib/api/result.txt", destination = "result.txt", service = "api" }}]
+
+[task]
+name = "example/compose-terminal-evidence"
+
+[verifier]
+environment_mode = "separate"
+{verifier_timeout}{hook}"#,
+        ),
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
+    )
+    .unwrap();
+    task_root
+}
+
+fn compose_main_evidence_timeout_task_root(temporary: &tempfile::TempDir) -> PathBuf {
+    let task_root = standard_task_root(temporary, "");
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+artifacts = ["/work/result.txt"]
+
+[task]
+name = "example/compose-main-timeout"
+
+[agent]
+timeout_sec = 1
+
+[verifier]
+environment_mode = "separate"
+timeout_sec = 1
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  api:\n    image: api:fixture\n",
     )
     .unwrap();
     task_root
