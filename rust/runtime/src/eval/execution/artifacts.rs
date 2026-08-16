@@ -176,7 +176,9 @@ pub(crate) fn collect_service_evidence(
         Ok(collected)
     })();
     if outcome.is_err() {
-        let _ = lease.teardown_after_terminal_failure(Duration::from_secs(60));
+        let _ = lease.teardown_after_terminal_failure(
+            super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
+        );
     }
     outcome
 }
@@ -695,10 +697,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, EvalExecutionError::CollectionHook { .. }));
-        assert_eq!(
-            lease.events,
-            ["hook:main", "terminal-teardown:60000000000"]
-        );
+        assert_eq!(lease.events, ["hook:main", "terminal-teardown:10000000000"]);
     }
 
     #[test]
@@ -784,10 +783,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(
-            lease.events,
-            ["stop:main", "terminal-teardown:60000000000"]
-        );
+        assert_eq!(lease.events, ["stop:main", "terminal-teardown:10000000000"]);
     }
 
     #[test]
@@ -831,7 +827,7 @@ mod tests {
             [
                 "hook:main",
                 "archive:main:/workspace/main.txt",
-                "terminal-teardown:60000000000",
+                "terminal-teardown:10000000000",
             ]
         );
     }

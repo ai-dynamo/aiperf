@@ -530,9 +530,9 @@ impl DockerProcessSandbox {
             })
         })();
         let cleanup = if outcome.is_err() {
-            prepared
-                .lease
-                .teardown_after_terminal_failure(Duration::from_secs(60))
+            prepared.lease.teardown_after_terminal_failure(
+                super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
+            )
         } else {
             prepared.lease.teardown()
         };
@@ -567,9 +567,9 @@ impl DockerProcessSandbox {
             execute_benchmark_steps(plan, agent_command, package.source_digest(), &mut session)
         })();
         let cleanup = if outcome.is_err() {
-            prepared
-                .lease
-                .teardown_after_terminal_failure(Duration::from_secs(60))
+            prepared.lease.teardown_after_terminal_failure(
+                super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
+            )
         } else {
             prepared.lease.teardown()
         };

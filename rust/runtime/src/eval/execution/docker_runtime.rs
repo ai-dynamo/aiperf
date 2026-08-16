@@ -1305,6 +1305,7 @@ mod compose_lease_tests {
         remove_failures: Cell<usize>,
         resources: RefCell<OwnedComposeResources>,
         removals: RefCell<Vec<String>>,
+        down_requests: RefCell<Vec<(Duration, Duration)>>,
     }
 
     impl DockerRuntime for CleanupRuntime {
@@ -1400,7 +1401,14 @@ mod compose_lease_tests {
             );
             Ok(())
         }
-        fn compose_down(&self, _: &DockerComposeDownRequest) -> Result<(), EvalExecutionError> {
+        fn compose_down(
+            &self,
+            request: &DockerComposeDownRequest,
+        ) -> Result<(), EvalExecutionError> {
+            self.down_requests.borrow_mut().push((
+                request.container_grace(),
+                request.deadline().unwrap_or_default(),
+            ));
             if self.down_failures.get() > 0 {
                 self.down_failures.set(self.down_failures.get() - 1);
                 Err(EvalExecutionError::ProcessFailure("down".to_owned()))
@@ -1441,6 +1449,7 @@ mod compose_lease_tests {
                 Vec::new(),
             )),
             removals: RefCell::new(Vec::new()),
+            down_requests: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
             runtime.as_ref(),
@@ -1474,6 +1483,7 @@ mod compose_lease_tests {
                 Vec::new(),
             )),
             removals: RefCell::new(Vec::new()),
+            down_requests: RefCell::new(Vec::new()),
         });
         {
             let mut lease = ComposeProjectLease::reserve(
@@ -1501,6 +1511,7 @@ mod compose_lease_tests {
             remove_failures: Cell::new(0),
             resources: RefCell::new(OwnedComposeResources::default()),
             removals: RefCell::new(Vec::new()),
+            down_requests: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
             runtime.as_ref(),
@@ -1524,6 +1535,42 @@ mod compose_lease_tests {
     }
 
     #[test]
+    fn compose_lease_drop_retries_terminal_down_without_grace() {
+        let runtime = Rc::new(CleanupRuntime {
+            fail_up: false,
+            down_failures: Cell::new(1),
+            down_clears_resources: true,
+            remove_failures: Cell::new(0),
+            resources: RefCell::new(OwnedComposeResources::default()),
+            removals: RefCell::new(Vec::new()),
+            down_requests: RefCell::new(Vec::new()),
+        });
+        {
+            let mut lease = ComposeProjectLease::reserve(
+                runtime.as_ref(),
+                &cleanup_plan(),
+                "abcdef",
+                "/tmp",
+                "main",
+            )
+            .unwrap();
+            lease.start().unwrap();
+            assert!(
+                lease
+                    .teardown_after_terminal_failure(Duration::from_secs(3))
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            &*runtime.down_requests.borrow(),
+            &[
+                (Duration::ZERO, Duration::from_secs(3)),
+                (Duration::ZERO, Duration::from_secs(3))
+            ]
+        );
+    }
+
+    #[test]
     fn compose_lease_attempts_every_exact_resource_when_one_forced_remove_fails() {
         let runtime = Rc::new(CleanupRuntime {
             fail_up: false,
@@ -1536,6 +1583,7 @@ mod compose_lease_tests {
                 vec!["volume".to_owned()],
             )),
             removals: RefCell::new(Vec::new()),
+            down_requests: RefCell::new(Vec::new()),
         });
         let mut lease = ComposeProjectLease::reserve(
             runtime.as_ref(),

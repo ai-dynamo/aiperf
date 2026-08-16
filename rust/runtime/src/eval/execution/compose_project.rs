@@ -15,6 +15,13 @@ use super::{
     DockerComposeUpRequest, DockerRemoveRequest, EvalExecutionError, OwnedComposeResources,
 };
 
+/// Terminal benchmark failures get at most this host-side cleanup allowance.
+///
+/// This is intentionally independent from an expired phase deadline: cleanup must
+/// still reclaim exact task-owned resources, but must never turn a sub-second
+/// phase timeout into the former minute-long teardown wait.
+pub(crate) const TERMINAL_COMPOSE_CLEANUP_DEADLINE: Duration = Duration::from_secs(10);
+
 /// The monotonic lifecycle state of a Compose task environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ComposeLeaseState {
@@ -37,6 +44,7 @@ pub(crate) struct ComposeProjectLease<'a> {
     startup_timeout: std::time::Duration,
     state: ComposeLeaseState,
     recorded: OwnedComposeResources,
+    terminal_cleanup_deadline: Option<Duration>,
 }
 
 impl<'a> ComposeProjectLease<'a> {
@@ -68,6 +76,7 @@ impl<'a> ComposeProjectLease<'a> {
             startup_timeout: plan.startup_timeout(),
             state: ComposeLeaseState::Reserved,
             recorded: OwnedComposeResources::default(),
+            terminal_cleanup_deadline: None,
         })
     }
 
@@ -134,26 +143,25 @@ impl<'a> ComposeProjectLease<'a> {
         }
     }
 
-    fn force_recorded_resources(&self) -> Result<(), EvalExecutionError> {
+    fn force_recorded_resources(&self, deadline: Duration) -> Result<(), EvalExecutionError> {
         let mut first_error = None;
         for container in self.recorded.containers() {
             let removal = self.runtime.remove(
                 &DockerRemoveRequest::new(["rm", "--force", "--volumes", container])
-                    .with_deadline(std::time::Duration::from_secs(10)),
+                    .with_deadline(deadline),
             );
             first_error = first_error.or(removal.err());
         }
         for network in self.recorded.networks() {
             let removal = self.runtime.remove(
-                &DockerRemoveRequest::new(["network", "rm", network])
-                    .with_deadline(std::time::Duration::from_secs(10)),
+                &DockerRemoveRequest::new(["network", "rm", network]).with_deadline(deadline),
             );
             first_error = first_error.or(removal.err());
         }
         for volume in self.recorded.volumes() {
             let removal = self.runtime.remove(
                 &DockerRemoveRequest::new(["volume", "rm", "--force", volume])
-                    .with_deadline(std::time::Duration::from_secs(10)),
+                    .with_deadline(deadline),
             );
             first_error = first_error.or(removal.err());
         }
@@ -182,7 +190,7 @@ impl<'a> ComposeProjectLease<'a> {
         }
         let needs_force = matches!(&remaining_after_down, Ok(resources) if resources != &OwnedComposeResources::default());
         let forced = if needs_force {
-            self.force_recorded_resources()
+            self.force_recorded_resources(deadline)
         } else {
             Ok(())
         };
@@ -291,13 +299,17 @@ impl TaskEnvironmentLease for ComposeProjectLease<'_> {
         Ok(&self.main_image)
     }
     fn teardown(&mut self) -> Result<(), EvalExecutionError> {
-        self.teardown_with_terminal_failure(Duration::from_secs(60), false)
+        match self.terminal_cleanup_deadline {
+            Some(deadline) => self.teardown_with_terminal_failure(deadline, true),
+            None => self.teardown_with_terminal_failure(Duration::from_secs(60), false),
+        }
     }
 
     fn teardown_after_terminal_failure(
         &mut self,
         deadline: Duration,
     ) -> Result<(), EvalExecutionError> {
+        let deadline = *self.terminal_cleanup_deadline.get_or_insert(deadline);
         self.teardown_with_terminal_failure(deadline, true)
     }
 }
