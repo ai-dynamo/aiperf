@@ -169,7 +169,7 @@ pub(super) fn normalize(
     let reference = EvalTaskRef::new(task.id.clone(), digest)
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
     let environment_plan = EnvironmentPlan {
-        image_source: ImageSource::task_dockerfile(environment.clone()),
+        image_source: ImageSource::legacy_artifact(environment.clone()),
         resources: None,
         workdir: None,
         user: None,

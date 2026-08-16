@@ -121,17 +121,47 @@ impl NetworkPolicy {
 /// The immutable image input for a standard task environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageSource {
-    dockerfile_digest: ArtifactDigest,
+    kind: ImageSourceKind,
+    digest: ArtifactDigest,
+}
+
+/// The provenance of an immutable environment image input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageSourceKind {
+    /// A standard task directory's `environment/Dockerfile`.
+    TaskDockerfile,
+    /// A legacy JSON package's immutable environment artifact.
+    LegacyArtifact,
 }
 
 impl ImageSource {
     pub(crate) fn task_dockerfile(dockerfile_digest: ArtifactDigest) -> Self {
-        Self { dockerfile_digest }
+        Self {
+            kind: ImageSourceKind::TaskDockerfile,
+            digest: dockerfile_digest,
+        }
+    }
+
+    pub(crate) fn legacy_artifact(digest: ArtifactDigest) -> Self {
+        Self {
+            kind: ImageSourceKind::LegacyArtifact,
+            digest,
+        }
+    }
+
+    /// Returns the source provenance without exposing construction internals.
+    pub const fn kind(&self) -> ImageSourceKind {
+        self.kind
+    }
+
+    /// Returns the immutable source digest.
+    pub fn digest(&self) -> &ArtifactDigest {
+        &self.digest
     }
 
     /// Returns the digest of the standard task's `environment/Dockerfile`.
-    pub fn dockerfile_digest(&self) -> &ArtifactDigest {
-        &self.dockerfile_digest
+    pub fn dockerfile_digest(&self) -> Option<&ArtifactDigest> {
+        (self.kind == ImageSourceKind::TaskDockerfile).then_some(&self.digest)
     }
 }
 
@@ -370,9 +400,13 @@ impl ArtifactSpec {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ProviderCapabilities {
     docker: bool,
+    image_source: bool,
     resource_limits: bool,
     users: bool,
     phase_env: bool,
+    workdir: bool,
+    phase_timeouts: bool,
+    separate_verifier: bool,
     healthchecks: bool,
     no_network: bool,
     public_network: bool,
@@ -384,9 +418,13 @@ impl ProviderCapabilities {
     pub const fn none() -> Self {
         Self {
             docker: false,
+            image_source: false,
             resource_limits: false,
             users: false,
             phase_env: false,
+            workdir: false,
+            phase_timeouts: false,
+            separate_verifier: false,
             healthchecks: false,
             no_network: false,
             public_network: false,
@@ -397,6 +435,12 @@ impl ProviderCapabilities {
     /// Declares Docker-backed execution support.
     pub const fn with_docker(mut self) -> Self {
         self.docker = true;
+        self
+    }
+
+    /// Declares support for the normalized immutable image source.
+    pub const fn with_image_source(mut self) -> Self {
+        self.image_source = true;
         self
     }
 
@@ -415,6 +459,24 @@ impl ProviderCapabilities {
     /// Declares phase environment binding enforcement.
     pub const fn with_phase_env(mut self) -> Self {
         self.phase_env = true;
+        self
+    }
+
+    /// Declares effective working-directory enforcement.
+    pub const fn with_workdir(mut self) -> Self {
+        self.workdir = true;
+        self
+    }
+
+    /// Declares command-phase deadline enforcement.
+    pub const fn with_phase_timeouts(mut self) -> Self {
+        self.phase_timeouts = true;
+        self
+    }
+
+    /// Declares isolated separate-verifier environment enforcement.
+    pub const fn with_separate_verifier(mut self) -> Self {
+        self.separate_verifier = true;
         self
     }
 
@@ -445,9 +507,13 @@ impl ProviderCapabilities {
     fn supports(self, capability: &str) -> bool {
         match capability {
             "docker" => self.docker,
+            "image_source" => self.image_source,
             "resource_limits" => self.resource_limits,
             "users" => self.users,
             "phase_env" => self.phase_env,
+            "workdir" => self.workdir,
+            "phase_timeouts" => self.phase_timeouts,
+            "separate_verifier" => self.separate_verifier,
             "healthchecks" => self.healthchecks,
             "no_network" => self.no_network,
             "public_network" => self.public_network,
@@ -493,10 +559,7 @@ impl BenchmarkExecutionPlan {
         capabilities: ProviderCapabilities,
     ) -> Result<(), EvalExecutionError> {
         require(capabilities, "docker")?;
-        require_network(capabilities, &self.environment.network)?;
-        require_network(capabilities, &self.agent.network)?;
-        require_network(capabilities, &self.verifier.environment.network)?;
-        require_network(capabilities, &self.verifier.phase.network)?;
+        require(capabilities, "image_source")?;
         for environment in [&self.environment, &self.verifier.environment] {
             if environment.resources.is_some() {
                 require(capabilities, "resource_limits")?;
@@ -506,6 +569,9 @@ impl BenchmarkExecutionPlan {
             }
             if !environment.env.is_empty() {
                 require(capabilities, "phase_env")?;
+            }
+            if environment.workdir.is_some() {
+                require(capabilities, "workdir")?;
             }
             if environment.healthcheck.is_some() {
                 require(capabilities, "healthchecks")?;
@@ -518,7 +584,17 @@ impl BenchmarkExecutionPlan {
             if !phase.env.is_empty() {
                 require(capabilities, "phase_env")?;
             }
+            if phase.timeout.is_some() {
+                require(capabilities, "phase_timeouts")?;
+            }
         }
+        if self.verifier.mode == VerifierMode::Separate {
+            require(capabilities, "separate_verifier")?;
+        }
+        require_network(capabilities, &self.environment.network)?;
+        require_network(capabilities, &self.agent.network)?;
+        require_network(capabilities, &self.verifier.environment.network)?;
+        require_network(capabilities, &self.verifier.phase.network)?;
         Ok(())
     }
 }

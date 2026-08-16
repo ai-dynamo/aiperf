@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, EnvBinding, HarborImporter, HarborSource, ImportDisposition,
+    ArtifactDigest, EnvBinding, HarborImporter, HarborSource, ImageSourceKind, ImportDisposition,
     NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SourceAcquirer, VerifierMode,
 };
 
@@ -71,6 +71,24 @@ fn retains_executable_task_material() {
     assert_eq!(
         imported.package.declared_artifacts(),
         ["/results/patch.diff"]
+    );
+    assert_eq!(
+        imported
+            .package
+            .execution_plan()
+            .environment()
+            .image_source()
+            .kind(),
+        ImageSourceKind::LegacyArtifact
+    );
+    assert!(
+        imported
+            .package
+            .execution_plan()
+            .environment()
+            .image_source()
+            .dockerfile_digest()
+            .is_none()
     );
     assert_eq!(
         imported.package.source_digest(),
@@ -246,7 +264,9 @@ memory_mb = 512
         plan.validate_for(
             ProviderCapabilities::none()
                 .with_docker()
+                .with_image_source()
                 .with_resource_limits()
+                .with_phase_timeouts()
                 .with_public_network(),
         )
         .is_ok()
@@ -403,6 +423,7 @@ VERIFY_BASE = "present"
         plan.environment()
             .image_source()
             .dockerfile_digest()
+            .unwrap()
             .as_str(),
         imported.package.environment()
     );
@@ -452,23 +473,37 @@ VERIFY_BASE = "present"
     assert_eq!(plan.artifacts()[1].source(), "/work/output");
     assert_eq!(plan.artifacts()[1].destination(), Some("results"));
     assert_eq!(plan.artifacts()[1].exclude(), ["*.tmp"]);
+    let existing_capabilities = ProviderCapabilities::none()
+        .with_docker()
+        .with_resource_limits()
+        .with_users()
+        .with_phase_env()
+        .with_healthchecks()
+        .with_no_network()
+        .with_public_network()
+        .with_allowlist_egress();
     assert!(matches!(
-        plan.validate_for(ProviderCapabilities::none().with_docker()),
-        Err(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("allowlist_egress"))
+        plan.validate_for(existing_capabilities),
+        Err(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("image_source"))
+    ));
+    let with_image_source = existing_capabilities.with_image_source();
+    assert!(matches!(
+        plan.validate_for(with_image_source),
+        Err(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("workdir"))
+    ));
+    let with_workdir = with_image_source.with_workdir();
+    assert!(matches!(
+        plan.validate_for(with_workdir),
+        Err(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("phase_timeouts"))
+    ));
+    let with_phase_timeouts = with_workdir.with_phase_timeouts();
+    assert!(matches!(
+        plan.validate_for(with_phase_timeouts),
+        Err(aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement("separate_verifier"))
     ));
     assert!(
-        plan.validate_for(
-            ProviderCapabilities::none()
-                .with_docker()
-                .with_resource_limits()
-                .with_users()
-                .with_phase_env()
-                .with_healthchecks()
-                .with_no_network()
-                .with_public_network()
-                .with_allowlist_egress(),
-        )
-        .is_ok()
+        plan.validate_for(with_phase_timeouts.with_separate_verifier())
+            .is_ok()
     );
 }
 
