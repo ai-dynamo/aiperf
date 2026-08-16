@@ -24,6 +24,7 @@ pub use agent::{
 pub use artifacts::{collect_artifacts, transfer_artifacts};
 pub use coordinator::{
     HarborCompletedEvaluation, HarborEvaluationCoordinator, HarborEvaluationError,
+    HarborLifecycleAgentContract, HarborLifecycleRequest, HarborLifecycleScoreRequest,
     HarborLocalEvaluationRequest,
 };
 pub use docker_process::DockerProcessSandbox;

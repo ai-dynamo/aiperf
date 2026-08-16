@@ -39,6 +39,7 @@ pub use execution::{
     DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding, EnvName, EnvironmentPlan,
     EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract,
     HarborCompletedEvaluation, HarborEvaluationCoordinator, HarborEvaluationError,
+    HarborLifecycleAgentContract, HarborLifecycleRequest, HarborLifecycleScoreRequest,
     HarborLocalEvaluationRequest, HarborSandboxRecipe, HealthcheckPlan, ImageSource,
     ImageSourceKind, ImmutablePatch, LocalExecutionResult, LocalProcessSandbox,
     MaterializedSandbox, MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy,

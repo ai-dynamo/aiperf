@@ -2,12 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native execution of one Harbor-compatible evaluation package.
 
-use std::{collections::BTreeMap, path::PathBuf, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, DockerProcessSandbox, EvalExecutionError, HarborImporter, HarborSandboxRecipe,
+    ArtifactDigest, DockerProcessSandbox, EvalExecutionError, HarborEvaluationCoordinator,
+    HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest, HarborSandboxRecipe,
     HarborSource, LocalExecutionResult, LocalProcessSandbox, MultiStepExecutionResult,
-    NativeSourceAcquirer, VerifierMode,
+    NativeSourceAcquirer, TrialSpec, VerifierMode,
 };
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
@@ -43,6 +50,12 @@ struct EvalFlags {
     /// Sandbox backend; `auto` uses Docker for standard task directories.
     #[arg(long, value_enum, default_value_t = SandboxFlag::Auto)]
     sandbox: SandboxFlag,
+    /// Strict versioned JSON request that persists the full immutable evaluation lifecycle.
+    #[arg(long)]
+    lifecycle_request: Option<PathBuf>,
+    /// Destination for the canonical lifecycle record; defaults to `aiperf-eval-lifecycle.json`.
+    #[arg(long, requires = "lifecycle_request")]
+    lifecycle_output: Option<PathBuf>,
 }
 
 /// User-facing verifier sandbox topology.
@@ -104,6 +117,16 @@ struct MultiStepEvalStepOutput {
     reward: BTreeMap<String, f64>,
 }
 
+#[derive(Serialize)]
+struct LifecycleRecord<'a> {
+    version: u32,
+    trial: &'a TrialSpec,
+    verifier_result: &'a aiperf_runtime::eval::VerifierResult,
+    initial_score: &'a aiperf_runtime::eval::ScoreVersion,
+    regraded_score: &'a aiperf_runtime::eval::ScoreVersion,
+    evidence: &'a [aiperf_runtime::eval::EvidenceEvent],
+}
+
 /// Serializes a completed native evaluation result into its public JSON shape.
 pub fn serialize_eval_result(
     task: &str,
@@ -144,6 +167,15 @@ pub fn serialize_eval_result(
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let flags =
         EvalFlags::try_parse_from(std::iter::once("eval".to_owned()).chain(args.iter().cloned()))?;
+    let lifecycle = flags
+        .lifecycle_request
+        .as_deref()
+        .map(read_lifecycle_request)
+        .transpose()?;
+    let lifecycle_output = flags
+        .lifecycle_output
+        .unwrap_or_else(|| PathBuf::from("aiperf-eval-lifecycle.json"));
+    let has_external_agent_command = flags.agent_command.is_some();
     let source = source_from_flags(
         flags.task,
         flags.git_repository,
@@ -176,6 +208,16 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .unwrap_or_else(|| imported.package.agent_command().to_vec());
     let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
     let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());
+    if let Some(lifecycle) = &lifecycle {
+        validate_lifecycle_execution(
+            lifecycle,
+            &imported,
+            use_docker,
+            verifier_mode,
+            has_external_agent_command,
+            &agent_command,
+        )?;
+    }
     if use_docker && imported.package.is_standard_directory() {
         let plan = imported.package.execution_plan();
         let has_verifier_mode_conflict = requested_verifier_mode.is_some_and(|requested| {
@@ -194,6 +236,11 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         }
     }
     if imported.package.execution_plan().is_multi_step() {
+        if lifecycle.is_some() {
+            anyhow::bail!(
+                "lifecycle records require a single resolved verifier attempt; explicit multi-step packages are not yet lifecycle-addressable"
+            );
+        }
         if !use_docker {
             return Err(EvalExecutionError::UnsupportedMultiStep.into());
         }
@@ -225,16 +272,121 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
                 verifier_mode,
             )?
         };
-        println!(
-            "{}",
-            serde_json::to_string(&EvalOutput {
-                task: imported.task.id.as_str(),
-                artifacts: &result.artifacts,
-                reward: &result.reward.metrics,
-            })?
-        );
+        let mut output = serde_json::to_value(EvalOutput {
+            task: imported.task.id.as_str(),
+            artifacts: &result.artifacts,
+            reward: &result.reward.metrics,
+        })?;
+        if let Some(lifecycle) = lifecycle {
+            let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)?;
+            let completed = HarborEvaluationCoordinator::complete_attempt(
+                imported.clone(),
+                trial,
+                &agent_command,
+                result,
+                &lifecycle,
+            )?;
+            let record = LifecycleRecord {
+                version: lifecycle.version,
+                trial: &completed.trial,
+                verifier_result: &completed.verifier_result,
+                initial_score: &completed.initial_score,
+                regraded_score: &completed.regraded_score,
+                evidence: &completed.evidence,
+            };
+            let record_json = serde_json::to_value(&record)?;
+            output
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("evaluation output was not an object"))?
+                .insert("lifecycle".to_owned(), record_json.clone());
+            persist_lifecycle_record(&lifecycle_output, &record_json)?;
+        }
+        println!("{}", serde_json::to_string(&output)?);
     }
     Ok(0)
+}
+
+fn read_lifecycle_request(path: &Path) -> anyhow::Result<HarborLifecycleRequest> {
+    let bytes = fs::read(path).map_err(|error| {
+        anyhow::anyhow!(
+            "unable to read lifecycle request {}: {error}",
+            path.display()
+        )
+    })?;
+    let request = serde_json::from_slice::<HarborLifecycleRequest>(&bytes).map_err(|error| {
+        anyhow::anyhow!("invalid lifecycle request {}: {error}", path.display())
+    })?;
+    request.validate()?;
+    Ok(request)
+}
+
+fn validate_lifecycle_execution(
+    lifecycle: &HarborLifecycleRequest,
+    imported: &aiperf_runtime::eval::ImportedTask,
+    use_docker: bool,
+    verifier_mode: VerifierMode,
+    has_external_agent_command: bool,
+    command: &[String],
+) -> anyhow::Result<()> {
+    lifecycle.validate()?;
+    if lifecycle.command != command {
+        anyhow::bail!("lifecycle command provenance disagrees with the selected agent command");
+    }
+    match lifecycle.agent_contract {
+        HarborLifecycleAgentContract::External if !has_external_agent_command => {
+            anyhow::bail!("an external lifecycle contract requires --agent-command")
+        }
+        HarborLifecycleAgentContract::Installed if has_external_agent_command => {
+            anyhow::bail!("an installed lifecycle contract must use the package agent command")
+        }
+        HarborLifecycleAgentContract::NativeGraph => {
+            anyhow::bail!(
+                "native_graph lifecycle contracts are not executable through --agent-command"
+            )
+        }
+        HarborLifecycleAgentContract::External | HarborLifecycleAgentContract::Installed => {}
+    }
+    if !use_docker && verifier_mode == VerifierMode::Separate {
+        return Err(EvalExecutionError::UnsupportedEnforcement(
+            "separate verifier isolation for local lifecycle execution",
+        )
+        .into());
+    }
+    let (execution, verifier) = imported.package.timeouts().ok_or_else(|| {
+        anyhow::anyhow!(
+            "lifecycle execution requires paired agent.timeout_sec and verifier.timeout_sec for enforceable budgets"
+        )
+    })?;
+    if lifecycle.budget.execution_seconds != execution.as_secs_f64()
+        || lifecycle.budget.verifier_seconds != verifier.as_secs_f64()
+    {
+        anyhow::bail!("lifecycle budget disagrees with the package's effective phase deadlines");
+    }
+    Ok(())
+}
+
+fn persist_lifecycle_record(path: &Path, record: &serde_json::Value) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|error| {
+        anyhow::anyhow!(
+            "unable to create lifecycle record beside {}: {error}",
+            path.display()
+        )
+    })?;
+    let bytes = serde_json::to_vec(record)?;
+    temporary.write_all(&bytes)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| {
+        anyhow::anyhow!(
+            "unable to atomically persist lifecycle record {}: {}",
+            path.display(),
+            error.error
+        )
+    })?;
+    Ok(())
 }
 
 fn materialize_pinned_directory(
@@ -311,7 +463,10 @@ fn source_from_flags(
 mod tests {
     use std::{fs, process::Command};
 
-    use super::{agent_command_argv, materialize_pinned_directory, source_from_flags};
+    use super::{
+        agent_command_argv, materialize_pinned_directory, persist_lifecycle_record,
+        read_lifecycle_request, source_from_flags,
+    };
     use aiperf_runtime::eval::HarborSource;
 
     #[test]
@@ -335,6 +490,38 @@ mod tests {
             agent_command_argv("printf result > result.txt"),
             ["/bin/sh", "-c", "printf result > result.txt"]
         );
+    }
+
+    #[test]
+    fn lifecycle_request_is_versioned_strict_and_persists_canonical_record() {
+        let temporary = tempfile::tempdir().unwrap();
+        let request_path = temporary.path().join("request.json");
+        let digest = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        fs::write(
+            &request_path,
+            format!(
+                r#"{{"version":1,"agent_variant":"agent:v1","model":{{"provider":"provider","model":"model"}},"seed":7,"policy":"{digest}","runtime":"native:v1","attempt":"attempt-1","budget":{{"execution_seconds":2.0,"verifier_seconds":3.0}},"agent_contract":"external","command":["/bin/sh","-c","true"],"initial_score":{{"metric":"reward","rationale":"{digest}"}},"regrade":{{"metric":"reward","rationale":"{digest}"}}}}"#
+            ),
+        )
+        .unwrap();
+        let request = read_lifecycle_request(&request_path).unwrap();
+        assert_eq!(request.version, 1);
+        let output_path = temporary.path().join("record.json");
+        let record = serde_json::json!({"version": request.version, "trial": {"seed": 7}});
+        persist_lifecycle_record(&output_path, &record).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(output_path).unwrap()).unwrap(),
+            record
+        );
+
+        fs::write(
+            &request_path,
+            format!(
+                r#"{{"version":1,"agent_variant":"agent:v1","model":{{"provider":"provider","model":"model"}},"seed":7,"policy":"{digest}","runtime":"native:v1","attempt":"attempt-1","budget":{{"execution_seconds":2.0,"verifier_seconds":3.0}},"agent_contract":"external","command":["/bin/sh"],"initial_score":{{"metric":"reward","rationale":"{digest}"}},"regrade":{{"metric":"reward","rationale":"{digest}"}},"forged_environment":"no"}}"#
+            ),
+        )
+        .unwrap();
+        assert!(read_lifecycle_request(&request_path).is_err());
     }
 
     #[test]

@@ -5,14 +5,16 @@
 
 use std::fmt::{self, Display, Formatter};
 
+use serde::{Deserialize, Serialize};
+
 use crate::eval::{
     AgentVariantRef, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvidenceEvent,
     EvidenceKind, HarborImportError, HarborImporter, HarborSource, ImportedTask,
-    LocalProcessSandbox, ModelIdentity, PairedComparisonError, PairedComparisonReport,
-    PairedComparisonSpec, PairedMeasurements, PolicyIdentity, RegradeError, RegradeRequest,
-    RuntimeIdentity, ScoreVersion, SourceAcquirer, TrialBudget, TrialIdentityError, TrialSpec,
-    VerifierExecutionError, VerifierMode, VerifierResult, VerifierSandboxFactory, prepare_verifier,
-    regrade,
+    LocalExecutionResult, LocalProcessSandbox, ModelIdentity, PairedComparisonError,
+    PairedComparisonReport, PairedComparisonSpec, PairedMeasurements, PolicyIdentity, RegradeError,
+    RegradeRequest, RuntimeIdentity, ScoreVersion, SourceAcquirer, TrialBudget, TrialIdentityError,
+    TrialSpec, VerifierExecutionError, VerifierMode, VerifierResult, VerifierSandboxFactory,
+    prepare_verifier, regrade,
 };
 
 use super::{EvalExecutionError, EvalSandboxFactory, HarborAgentContract, HarborSandboxRecipe};
@@ -58,6 +60,88 @@ pub struct HarborLocalEvaluationRequest {
     pub regrade_metric: String,
     /// Immutable regrade rationale.
     pub regrade_rationale: ArtifactDigest,
+}
+
+/// Versioned caller-authored identity inputs for one persisted evaluation lifecycle.
+///
+/// Package, environment, verifier, and backend identities are deliberately absent: the
+/// executor derives those from its owned imported snapshot and selected backend.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HarborLifecycleRequest {
+    /// Wire-contract version. Native execution currently supports only version one.
+    pub version: u32,
+    /// Immutable selected agent variant.
+    pub agent_variant: AgentVariantRef,
+    /// Explicit model identity.
+    pub model: ModelIdentity,
+    /// Deterministic attempt seed.
+    pub seed: u64,
+    /// Explicit immutable policy identity.
+    pub policy: PolicyIdentity,
+    /// Explicit native runtime identity.
+    pub runtime: RuntimeIdentity,
+    /// Append-only attempt identifier.
+    pub attempt: AttemptId,
+    /// Enforced agent and verifier phase budgets.
+    pub budget: TrialBudget,
+    /// Agent contract selected for the execution.
+    pub agent_contract: HarborLifecycleAgentContract,
+    /// Exact argv provenance selected by the caller.
+    pub command: Vec<String>,
+    /// Metric and rationale for the initial score.
+    pub initial_score: HarborLifecycleScoreRequest,
+    /// Metric and rationale for the append-only regrade.
+    pub regrade: HarborLifecycleScoreRequest,
+}
+
+/// Agent contract recorded in a lifecycle request.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HarborLifecycleAgentContract {
+    /// The package image provides the selected agent command.
+    Installed,
+    /// The caller supplies an external command.
+    External,
+    /// The runtime executes a native graph agent.
+    NativeGraph,
+}
+
+/// Immutable score selection supplied for one lifecycle revision.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HarborLifecycleScoreRequest {
+    /// Exact finite metric emitted by the verifier.
+    pub metric: String,
+    /// Immutable rationale digest retained with the score.
+    pub rationale: ArtifactDigest,
+}
+
+impl HarborLifecycleRequest {
+    /// Validates the version and caller-owned fields before any environment provisioning.
+    pub fn validate(&self) -> Result<(), HarborEvaluationError> {
+        if self.version != 1 {
+            return Err(HarborEvaluationError::InvalidRequest(format!(
+                "unsupported lifecycle request version {}",
+                self.version
+            )));
+        }
+        TrialBudget::new(self.budget.execution_seconds, self.budget.verifier_seconds)
+            .map_err(HarborEvaluationError::Trial)?;
+        if self.command.is_empty() || self.command.iter().any(|value| value.trim().is_empty()) {
+            return Err(HarborEvaluationError::InvalidRequest(
+                "lifecycle command provenance must be a nonempty argv".to_owned(),
+            ));
+        }
+        for metric in [&self.initial_score.metric, &self.regrade.metric] {
+            if metric.trim().is_empty() {
+                return Err(HarborEvaluationError::InvalidRequest(
+                    "lifecycle score metrics must not be empty".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Immutable outputs from a completed local native evaluation attempt.
@@ -106,19 +190,17 @@ impl<'a> HarborEvaluationCoordinator<'a> {
         Ok(imported)
     }
 
-    /// Executes one local process attempt from import through evidence and score regrade.
-    pub fn execute_local(
-        &self,
-        local: &LocalProcessSandbox,
-        request: HarborLocalEvaluationRequest,
-    ) -> Result<HarborCompletedEvaluation, HarborEvaluationError> {
-        validate_local_request(&request)?;
-        let imported = HarborImporter::new(self.acquirer).import(&request.source)?;
+    /// Resolves the complete immutable trial before an executor provisions an environment.
+    pub fn resolve_trial(
+        imported: &ImportedTask,
+        request: &HarborLifecycleRequest,
+    ) -> Result<TrialSpec, HarborEvaluationError> {
+        request.validate()?;
         let environment = ArtifactDigest::parse(imported.package.environment())
             .map_err(|error| HarborEvaluationError::InvalidRequest(error.to_string()))?;
         let verifier = ArtifactDigest::parse(imported.package.verifier())
             .map_err(|error| HarborEvaluationError::InvalidRequest(error.to_string()))?;
-        let trial = TrialSpec::new(
+        TrialSpec::new(
             imported.task.clone(),
             request.agent_variant.clone(),
             request.model.clone(),
@@ -128,22 +210,27 @@ impl<'a> HarborEvaluationCoordinator<'a> {
             environment,
             verifier,
             request.runtime.clone(),
-        )?;
+        )
+        .map_err(HarborEvaluationError::Trial)
+    }
 
-        self.sandbox.preflight(&request.recipe, &request.contract)?;
-        self.sandbox.open(&request.recipe)?;
-        let command = request
-            .agent_command
-            .as_deref()
-            .unwrap_or_else(|| imported.package.agent_command());
-        let execution = local
-            .execute_with_agent_command(
-                &request.recipe,
-                &imported.package,
-                command,
-                request.verifier_mode,
-            )
-            .map_err(HarborEvaluationError::Execution)?;
+    /// Completes immutable attempt records from executor-owned factual execution output.
+    ///
+    /// This method is executor-neutral: Docker and local paths supply the same completed
+    /// execution result, while this coordinator owns score lineage and evidence ordering.
+    pub fn complete_attempt(
+        imported: ImportedTask,
+        trial: TrialSpec,
+        command: &[String],
+        execution: LocalExecutionResult,
+        request: &HarborLifecycleRequest,
+    ) -> Result<HarborCompletedEvaluation, HarborEvaluationError> {
+        request.validate()?;
+        if command != request.command {
+            return Err(HarborEvaluationError::InvalidRequest(
+                "executed command disagrees with lifecycle command provenance".to_owned(),
+            ));
+        }
         let verifier_result = VerifierResult::new(
             request.attempt.clone(),
             execution.verifier.clone(),
@@ -153,17 +240,17 @@ impl<'a> HarborEvaluationCoordinator<'a> {
                 .map(|(_, digest)| digest.clone())
                 .collect(),
             execution.reward.clone(),
-            request.regrade_rationale,
+            request.regrade.rationale.clone(),
         )?;
         let initial_score = execution.initial_score(
             request.attempt.clone(),
-            request.score_metric,
-            request.initial_rationale,
+            request.initial_score.metric.clone(),
+            request.initial_score.rationale.clone(),
         )?;
         let regraded_score = regrade(RegradeRequest::new(
             initial_score.clone(),
             verifier_result.clone(),
-            request.regrade_metric,
+            request.regrade.metric.clone(),
         )?)?;
         let evidence = completed_evidence(
             &imported,
@@ -172,7 +259,6 @@ impl<'a> HarborEvaluationCoordinator<'a> {
             &execution,
             &verifier_result,
         );
-
         Ok(HarborCompletedEvaluation {
             imported,
             trial,
@@ -181,6 +267,58 @@ impl<'a> HarborEvaluationCoordinator<'a> {
             verifier_result,
             evidence,
         })
+    }
+
+    /// Executes one local process attempt from import through evidence and score regrade.
+    pub fn execute_local(
+        &self,
+        local: &LocalProcessSandbox,
+        request: HarborLocalEvaluationRequest,
+    ) -> Result<HarborCompletedEvaluation, HarborEvaluationError> {
+        validate_local_request(&request)?;
+        let imported = HarborImporter::new(self.acquirer).import(&request.source)?;
+        let lifecycle = HarborLifecycleRequest {
+            version: 1,
+            agent_variant: request.agent_variant.clone(),
+            model: request.model.clone(),
+            seed: request.seed,
+            policy: request.policy.clone(),
+            runtime: request.runtime.clone(),
+            attempt: request.attempt.clone(),
+            budget: request.budget.clone(),
+            agent_contract: match &request.contract {
+                HarborAgentContract::Installed { .. } => HarborLifecycleAgentContract::Installed,
+                HarborAgentContract::External { .. } => HarborLifecycleAgentContract::External,
+                HarborAgentContract::NativeGraph { .. } => {
+                    HarborLifecycleAgentContract::NativeGraph
+                }
+            },
+            command: request
+                .agent_command
+                .clone()
+                .unwrap_or_else(|| imported.package.agent_command().to_vec()),
+            initial_score: HarborLifecycleScoreRequest {
+                metric: request.score_metric.clone(),
+                rationale: request.initial_rationale.clone(),
+            },
+            regrade: HarborLifecycleScoreRequest {
+                metric: request.regrade_metric.clone(),
+                rationale: request.regrade_rationale.clone(),
+            },
+        };
+        let trial = Self::resolve_trial(&imported, &lifecycle)?;
+
+        self.sandbox.preflight(&request.recipe, &request.contract)?;
+        self.sandbox.open(&request.recipe)?;
+        let execution = local
+            .execute_with_agent_command(
+                &request.recipe,
+                &imported.package,
+                &lifecycle.command,
+                request.verifier_mode,
+            )
+            .map_err(HarborEvaluationError::Execution)?;
+        Self::complete_attempt(imported, trial, &lifecycle.command, execution, &lifecycle)
     }
 
     /// Compares completed attempts only when their derived fixed baselines match `spec`.
