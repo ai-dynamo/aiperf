@@ -602,8 +602,31 @@ Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loa
 
 #### `--graph-format` `<str>`
 
-Select the recorded-graph format for `--input-file`, overriding graph-adapter auto-detection. Registered names: `dynamo_trace`. Requires `--input-file`. Mutually exclusive with --custom-dataset-type.
-<br/>_Choices: [`dynamo_trace`]_
+Select the recorded-graph format for `--input-file`, overriding graph-adapter auto-detection. Requires `--input-file`. Mutually exclusive with --custom-dataset-type.
+<br/>_Choices: [`dynamo_trace`, `mini_swe_agent_trace`]_
+
+#### `--graph-execute-tools`
+
+EXECUTE the recorded tool calls of an Agent Trace Replay recording for real instead of replaying their recorded durations. Each recorded inter-model gap lowers into a tool node that runs the captured commands on this host, so the benchmark measures THIS device's tool latency rather than the capture host's. Cannot be combined with open-loop replay: node arrival would be paced against a recorded timeline that already contains the recorded tool durations, flooring end-to-end time at the capture host's wall clock. Pass `--no-open-loop-replay` alongside it. Maps to FileDataset ``graph_execute_tools``.
+<br/>_Flag (no value required)_
+
+#### `--graph-tool-image` `<str>`
+
+Container image in which to run `--graph-execute-tools` commands. UNSET (the default) runs them in a local shell rooted at a per-trace workspace under the run's artifact directory -- fastest, and the right choice when the host IS the device under test. PinchBench recordings may still select their recorded default task image. Setting an image runs each trace in its own container from that image, with the workspace bind-mounted and networking disabled, which is what recorded SWE-style trajectories expecting a task image need. Ignored without --graph-execute-tools. Maps to FileDataset ``graph_tool_image``.
+
+#### `--graph-tool-persistent-session`, `--no-graph-tool-persistent-session`
+
+Docker sandbox execution mode for `--graph-execute-tools`. False (default): fresh `docker exec` per command, matching Agent Trace Replay's own execution model — container startup cost is in `sandbox_setup_s` and each command pays a Docker daemon roundtrip (~37ms). True: a single `docker exec -i bash` session is kept open for the lifetime of the trace; per-command overhead is negligible (~37ms amortised across all commands). Ignored without `--graph-tool-image`. Maps to FileDataset ``graph_tool_persistent_session``.
+
+#### `--graph-use-family-sampling`, `--no-graph-use-family-sampling`
+
+Inject Agent Trace Replay's per-family wire sampling into replayed nodes. When True (default) the `mini_swe_agent_trace` adapter overlays benchmark-family-specific params (e.g. `temperature=0.0, parallel_tool_calls=True` for swebench) so replayed bodies match what the source playback puts on the wire. Pass `--no-graph-use-family-sampling` to disable, useful when matching a custom playback script that applies different overrides. Maps to FileDataset ``graph_use_family_sampling``.
+<br/>_Default: `True`_
+
+#### `--graph-emit-warmup`
+
+Prepend a warmup LlmNode to each Agent Trace Replay recording's graph. When enabled, each recording starts with a single-message 'Reply with exactly: ok' call (max 8 tokens, same tools as the first recorded call, same family sampling) before the first real model turn. Mirrors the per-recording warmup that the source playback emits, so A/B comparisons that include warmup calls can verify them. Maps to FileDataset ``graph_emit_warmup``.
+<br/>_Flag (no value required)_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -762,6 +785,12 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay and agent_graph timing modes. 'none' disables the feature (default). See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples.
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
+
+#### `--cache-bust-scope` `<str>`
+
+Whether agent-graph cache-bust markers are shared for the entire run or kept unique to each trace instance.
+<br/>_Choices: [`trace`, `run`]_
+<br/>_Default: `trace`_
 
 ### Prefix Prompt
 
@@ -2169,8 +2198,31 @@ Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loa
 
 #### `--graph-format` `<str>`
 
-Select the recorded-graph format for `--input-file`, overriding graph-adapter auto-detection. Registered names: `dynamo_trace`. Requires `--input-file`. Mutually exclusive with --custom-dataset-type.
-<br/>_Choices: [`dynamo_trace`]_
+Select the recorded-graph format for `--input-file`, overriding graph-adapter auto-detection. Requires `--input-file`. Mutually exclusive with --custom-dataset-type.
+<br/>_Choices: [`dynamo_trace`, `mini_swe_agent_trace`]_
+
+#### `--graph-execute-tools`
+
+EXECUTE the recorded tool calls of an Agent Trace Replay recording for real instead of replaying their recorded durations. Each recorded inter-model gap lowers into a tool node that runs the captured commands on this host, so the benchmark measures THIS device's tool latency rather than the capture host's. Cannot be combined with open-loop replay: node arrival would be paced against a recorded timeline that already contains the recorded tool durations, flooring end-to-end time at the capture host's wall clock. Pass `--no-open-loop-replay` alongside it. Maps to FileDataset ``graph_execute_tools``.
+<br/>_Flag (no value required)_
+
+#### `--graph-tool-image` `<str>`
+
+Container image in which to run `--graph-execute-tools` commands. UNSET (the default) runs them in a local shell rooted at a per-trace workspace under the run's artifact directory -- fastest, and the right choice when the host IS the device under test. PinchBench recordings may still select their recorded default task image. Setting an image runs each trace in its own container from that image, with the workspace bind-mounted and networking disabled, which is what recorded SWE-style trajectories expecting a task image need. Ignored without --graph-execute-tools. Maps to FileDataset ``graph_tool_image``.
+
+#### `--graph-tool-persistent-session`, `--no-graph-tool-persistent-session`
+
+Docker sandbox execution mode for `--graph-execute-tools`. False (default): fresh `docker exec` per command, matching Agent Trace Replay's own execution model — container startup cost is in `sandbox_setup_s` and each command pays a Docker daemon roundtrip (~37ms). True: a single `docker exec -i bash` session is kept open for the lifetime of the trace; per-command overhead is negligible (~37ms amortised across all commands). Ignored without `--graph-tool-image`. Maps to FileDataset ``graph_tool_persistent_session``.
+
+#### `--graph-use-family-sampling`, `--no-graph-use-family-sampling`
+
+Inject Agent Trace Replay's per-family wire sampling into replayed nodes. When True (default) the `mini_swe_agent_trace` adapter overlays benchmark-family-specific params (e.g. `temperature=0.0, parallel_tool_calls=True` for swebench) so replayed bodies match what the source playback puts on the wire. Pass `--no-graph-use-family-sampling` to disable, useful when matching a custom playback script that applies different overrides. Maps to FileDataset ``graph_use_family_sampling``.
+<br/>_Default: `True`_
+
+#### `--graph-emit-warmup`
+
+Prepend a warmup LlmNode to each Agent Trace Replay recording's graph. When enabled, each recording starts with a single-message 'Reply with exactly: ok' call (max 8 tokens, same tools as the first recorded call, same family sampling) before the first real model turn. Mirrors the per-recording warmup that the source playback emits, so A/B comparisons that include warmup calls can verify them. Maps to FileDataset ``graph_emit_warmup``.
+<br/>_Flag (no value required)_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -2329,6 +2381,12 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay and agent_graph timing modes. 'none' disables the feature (default). See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples.
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
+
+#### `--cache-bust-scope` `<str>`
+
+Whether agent-graph cache-bust markers are shared for the entire run or kept unique to each trace instance.
+<br/>_Choices: [`trace`, `run`]_
+<br/>_Default: `trace`_
 
 ### Prefix Prompt
 

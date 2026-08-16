@@ -352,6 +352,10 @@ def resolve_graph_parse_context(run: BenchmarkRun) -> GraphParseContext:
         ignore_trace_delays=bool(dataset is not None and dataset.ignore_trace_delays),
         use_think_time_only=bool(dataset is not None and dataset.use_think_time_only),
         endpoint_extra=endpoint_info.endpoint.extra,
+        open_loop_replay=_resolve_open_loop_replay(run),
+        execute_tools=_resolve_execute_tools(run),
+        use_family_sampling=_resolve_use_family_sampling(run),
+        emit_warmup=_resolve_emit_warmup(run),
         replay_only_knobs=_resolve_replay_only_knobs(run),
     )
 
@@ -567,6 +571,57 @@ def _resolve_graph_idle_gap_cap(run: BenchmarkRun) -> float | None:
     """
     dataset = _trace_replay_dataset(run)
     return dataset.trace_idle_gap_cap_seconds if dataset is not None else None
+
+
+def _resolve_open_loop_replay(run: BenchmarkRun) -> bool | None:
+    """Resolve the run's EFFECTIVE open-loop replay setting, or None if absent.
+
+    Reported as a value, not through :func:`_resolve_replay_only_knobs`: that
+    tuple is keyed on value-differs-from-default and ``open_loop_replay``
+    defaults to True, so the default-on case -- the one a tool-execution run
+    actually hits -- would never appear there.
+
+    ``open_loop_strict`` implies open-loop pacing (it is an open-loop-only
+    modifier, enforced by ``FileDataset``'s own validator), so it is folded in
+    here rather than left for each consumer to remember.
+    """
+    dataset = _trace_replay_dataset(run)
+    if dataset is None:
+        return None
+    return bool(
+        getattr(dataset, "open_loop_replay", False)
+        or getattr(dataset, "open_loop_strict", False)
+    )
+
+
+def _resolve_execute_tools(run: BenchmarkRun) -> bool | None:
+    """Resolve the run's ``--graph-execute-tools`` setting, or None if absent.
+
+    ``graph_execute_tools`` is declared on ``FileDataset`` only (like
+    ``graph_format``), so a synthetic/public/absent default dataset yields
+    ``None`` -- "nothing told the adapter", which leaves the adapter default
+    (off) in force. Reported as a value rather than through
+    :func:`_resolve_replay_only_knobs` because the adapter needs the SETTING,
+    not the name of a flag it cannot honor.
+    """
+    dataset = _file_dataset(run)
+    if dataset is None:
+        return None
+    return bool(dataset.graph_execute_tools)
+
+
+def _resolve_use_family_sampling(run: BenchmarkRun) -> bool:
+    dataset = _file_dataset(run)
+    if dataset is None:
+        return True
+    return bool(getattr(dataset, "graph_use_family_sampling", True))
+
+
+def _resolve_emit_warmup(run: BenchmarkRun) -> bool:
+    dataset = _file_dataset(run)
+    if dataset is None:
+        return False
+    return bool(getattr(dataset, "graph_emit_warmup", False))
 
 
 def _resolve_replay_only_knobs(run: BenchmarkRun) -> tuple[str, ...]:

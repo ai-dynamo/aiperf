@@ -151,6 +151,7 @@ class TestCreditReturnValidation:
             first_token_sent=True,
             cancelled=False,
             request_latency_ns=456_000_000,
+            ttft_ns=123_000_000,
             inter_token_latency_ns=12_000_000,
             output_sequence_length=128,
         )
@@ -161,6 +162,7 @@ class TestCreditReturnValidation:
         assert decoded.first_token_sent == original.first_token_sent
         assert decoded.cancelled == original.cancelled
         assert decoded.request_latency_ns == original.request_latency_ns
+        assert decoded.ttft_ns == original.ttft_ns
         assert decoded.inter_token_latency_ns == original.inter_token_latency_ns
         assert decoded.output_sequence_length == original.output_sequence_length
 

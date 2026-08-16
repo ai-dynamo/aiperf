@@ -14,7 +14,7 @@ Per-kind ``_execute`` implementations live in
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import singledispatchmethod
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +26,7 @@ from aiperf.dataset.graph.models import (
     LlmNode,
     NodeUnion,
     ParsedGraph,
+    ToolNode,
 )
 from aiperf.graph.channel_store import (
     VersionedChannelStore,
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
         ChannelSpec,
         TraceRecord,
     )
+    from aiperf.graph.tool_dispatch.protocols import ToolDispatcher
 
 __all__ = ["TraceExecutor", "TraceResult"]
 
@@ -65,11 +67,32 @@ def _default_store_factory(
 class TraceResult:
     """The return value of `TraceExecutor.run`.
 
-    Carries the trace id and the post-run channel snapshot.
+    Carries the trace id, the post-run channel snapshot, and the per-command
+    tool durations this trace accumulated.
     """
 
     trace_id: str
     channels: dict[str, Any]
+    # One entry per executed tool command, in completion order. Empty for a graph
+    # with no ToolNode. Its own series, never folded into request latency.
+    tool_durations_s: list[float] = field(default_factory=list)
+    # One entry per LLM dispatch (dispatch start → response complete).
+    llm_durations_s: list[float] = field(default_factory=list)
+    # Worker request latency per LLM dispatch; parallel to llm_durations_s.
+    llm_request_latency_s: list[float | None] = field(default_factory=list)
+    # Time to first token per LLM dispatch. Parallel to llm_durations_s; None
+    # when no first-token event was observed.
+    llm_ttft_s: list[float | None] = field(default_factory=list)
+    # Recorded output-token count per LlmNode (target OSL). Parallel to llm_durations_s.
+    llm_target_osl: list[int | None] = field(default_factory=list)
+    # Observed output-token count from server reply. Parallel to llm_durations_s.
+    llm_observed_osl: list[int | None] = field(default_factory=list)
+    # Total wall time of this trace (frontier open → frontier closed), in seconds.
+    # Includes all LLM and tool time plus scheduling overhead.
+    trace_wall_s: float = 0.0
+    # Time spent in open_trace() — Docker container start + bash session setup.
+    # Inside the wall window but not in tool_durations_s. Zero for local/no-tool runs.
+    sandbox_setup_s: float = 0.0
 
 
 _logger = AIPerfLogger(__name__)
@@ -90,6 +113,7 @@ class TraceExecutor:
         parsed: ParsedGraph,
         *,
         credit_issuer: Any = None,
+        tool_dispatcher: ToolDispatcher | None = None,
         scheduler: Scheduler | None = None,
         producers_per_channel: dict[str, int] | None = None,
         compress_edge_delays: bool = False,
@@ -136,6 +160,22 @@ class TraceExecutor:
         # mutable `_credit_issuer` (monkeypatched per-run) stays per-instance.
         self._scheduler = scheduler or Scheduler(parsed.graph)
         self._credit_issuer = credit_issuer
+        # Executes ToolNode steps. Injected exactly like `credit_issuer` so the
+        # executor never imports a tool backend, and so later modes (live tool
+        # calls, recorded-delay replay, remote execution) are a swap here rather
+        # than a change to `_execute_tool`.
+        self._tool_dispatcher = tool_dispatcher
+        # A stable property of this executor's graph, so it is scanned once
+        # rather than per trace. Read from `self._parsed.graph` like every other
+        # topology read here: `parsed_for_trace` / `rewrite_for_warmup` project
+        # `.graph` to the per-trace (or chopped / warmup) topology but leave
+        # `parsed.graphs` and `trace.graph_ref` pointing at the ORIGINAL, so
+        # resolving through the ref would resurrect ToolNodes a chopped instance
+        # can never fire -- starting a container for zero commands, or hard-
+        # raising on a phase that needs no tool wiring at all.
+        self._has_tool_nodes = any(
+            isinstance(node, ToolNode) for node in parsed.graph.nodes.values()
+        )
         self._producers_per_channel = (
             producers_per_channel
             if producers_per_channel is not None
@@ -180,31 +220,102 @@ class TraceExecutor:
 
         ctx = _TraceContext(trace=trace, store=store)
 
-        watchdog_s = Environment.GRAPH.EXECUTOR_WATCHDOG_TIMEOUT
-        if watchdog_s is not None:
-            try:
-                await asyncio.wait_for(self._drive_frontier(ctx), timeout=watchdog_s)
-            except TimeoutError as e:
-                # A bare TimeoutError names nothing, which defeats the point of
-                # the guard: the operator enabled it precisely because a run
-                # wedged with no diagnostic. Re-raise with the trace id and the
-                # still-pending nodes so the wedge is attributable.
-                raise TimeoutError(
-                    f"graph executor watchdog fired after {watchdog_s}s on trace "
-                    f"{trace.id!r}: nodes still pending "
-                    f"{sorted(self._pending_node_ids(ctx))}. Either the firing "
-                    "loop is wedged on an unsatisfiable channel input, or the "
-                    "trace's recorded idle gaps legitimately exceed the "
-                    "watchdog -- raise or unset "
-                    "AIPERF_GRAPH_EXECUTOR_WATCHDOG_TIMEOUT if the latter."
-                ) from e
-        else:
-            await self._drive_frontier(ctx)
+        if self._has_tool_nodes and self._tool_dispatcher is None:
+            raise RuntimeError(
+                f"trace {trace.id!r} contains ToolNode steps but the executor was "
+                "built with no tool dispatcher; tool execution requires one"
+            )
+
+        t_start_us = self._loop_wall_us()
+        sandbox_setup_s = 0.0
+        try:
+            # Inside the try: a dispatcher whose `open_trace` fails PART WAY
+            # (the Docker sandbox starts its detached container, then spawns the
+            # exec session) already owns a resource, so the failure path must
+            # still reach teardown. `close_trace` is idempotent, so entering the
+            # finally without a successful open is safe.
+            if self._has_tool_nodes:
+                t_open_us = self._loop_wall_us()
+                await self._tool_dispatcher.open_trace(trace.id)
+                sandbox_setup_s = (self._loop_wall_us() - t_open_us) / 1_000_000
+
+            watchdog_s = Environment.GRAPH.EXECUTOR_WATCHDOG_TIMEOUT
+            if watchdog_s is not None:
+                try:
+                    await asyncio.wait_for(
+                        self._drive_frontier(ctx), timeout=watchdog_s
+                    )
+                except TimeoutError as e:
+                    # A bare TimeoutError names nothing, which defeats the point
+                    # of the guard: the operator enabled it precisely because a
+                    # run wedged with no diagnostic. Re-raise with the trace id
+                    # and the still-pending nodes so the wedge is attributable.
+                    raise TimeoutError(
+                        f"graph executor watchdog fired after {watchdog_s}s on trace "
+                        f"{trace.id!r}: nodes still pending "
+                        f"{sorted(self._pending_node_ids(ctx))}. Either the firing "
+                        "loop is wedged on an unsatisfiable channel input, or the "
+                        "trace's recorded idle gaps legitimately exceed the "
+                        "watchdog -- raise or unset "
+                        "AIPERF_GRAPH_EXECUTOR_WATCHDOG_TIMEOUT if the latter."
+                    ) from e
+            else:
+                await self._drive_frontier(ctx)
+            trace_wall_s = (self._loop_wall_us() - t_start_us) / 1_000_000
+        finally:
+            if self._has_tool_nodes:
+                await self._close_tool_trace(trace.id)
 
         return TraceResult(
             trace_id=trace.id,
             channels=store.snapshot(),
+            tool_durations_s=list(ctx.tool_durations_s),
+            llm_durations_s=list(ctx.llm_durations_s),
+            llm_request_latency_s=list(ctx.llm_request_latency_s),
+            llm_ttft_s=list(ctx.llm_ttft_s),
+            llm_target_osl=list(ctx.llm_target_osl),
+            llm_observed_osl=list(ctx.llm_observed_osl),
+            trace_wall_s=trace_wall_s,
+            sandbox_setup_s=sandbox_setup_s,
         )
+
+    async def _close_tool_trace(self, trace_id: str) -> None:
+        """Release the tool dispatcher's per-trace resources, come what may.
+
+        A sandbox container outlives the worker that created it, so teardown has
+        to survive the two ways this trace can unwind:
+
+        - CANCELLATION (issuer refusal, run cancel). Awaiting `close_trace`
+          directly in an already-cancelled task raises `CancelledError` at its
+          first await, before `docker rm -f` ever runs -- and the sandbox's
+          `contextlib.suppress(Exception)` does not cover `BaseException`. So
+          the call runs as its own task behind a shield, and a cancellation
+          aimed at us waits for that task before propagating.
+        - A TEARDOWN FAILURE. It is logged, never raised, so it cannot replace
+          the trace error or the watchdog `TimeoutError` already propagating
+          through the `finally` -- the real cause must reach the caller.
+        """
+        task = asyncio.ensure_future(self._guarded_close_trace(trace_id))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The shield absorbed a cancellation aimed at this frame; the
+            # teardown task itself is still running. Let it finish before the
+            # trace unwinds, or the container outlives the run after all.
+            await asyncio.wait([task])
+            raise
+
+    async def _guarded_close_trace(self, trace_id: str) -> None:
+        """`close_trace` that reports its own failure instead of propagating it."""
+        try:
+            await self._tool_dispatcher.close_trace(trace_id)
+        except Exception as exc:
+            # Bound as a default: Python clears the `except` name on block exit,
+            # so a lazily-evaluated closure over it would raise NameError.
+            _logger.warning(
+                lambda exc=exc: f"tool dispatcher teardown failed for trace "
+                f"{trace_id!r}; sandbox resources may have leaked: {exc!r}"
+            )
 
     @staticmethod
     def _pending_node_ids(ctx: _TraceContext) -> set[str]:

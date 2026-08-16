@@ -109,6 +109,7 @@ class StaticEdge(
 
 class NodeKind(str, Enum):
     LLM = "llm"
+    TOOL = "tool"
 
 
 class ExpectedTokens(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
@@ -239,6 +240,36 @@ class LlmNode(
         return [self.output]
 
 
+class ToolNode(
+    _BaseNode,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+    forbid_unknown_fields=True,
+    tag_field="node_type",
+    tag=NodeKind.TOOL.value,
+):
+    """One recorded agent tool step, executed for real in the trace's sandbox.
+
+    Carries the recorded commands rather than reading them from a producer's
+    reply: Mode B prompts are predetermined, so the trajectory is known at parse
+    time. A live-response-driven variant would instead declare an `inputs`
+    requirement on the producing node's output channel.
+    """
+
+    # Recorded shell commands for this step, executed in order. A single
+    # recorded step may batch several tool calls; they run sequentially, as the
+    # capture did.
+    commands: list[str]
+    output: str  # Channel name the observation is written to.
+    # Per-command wall-clock ceiling. None inherits the sandbox default.
+    timeout_s: Annotated[float, msgspec.Meta(gt=0)] | None = None
+
+    @property
+    def write_channels(self) -> list[str]:
+        return [self.output]
+
+
 class ProvenanceSpec(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
     """Where this benchmark file came from."""
 
@@ -251,7 +282,20 @@ class ProvenanceSpec(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=Tr
     extra: dict[str, Any] = {}
 
 
-NodeUnion = LlmNode
+NodeUnion = LlmNode | ToolNode
+
+
+class ToolSandboxSpec(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
+    """Per-trace sandbox configuration for tool execution.
+
+    Carried on :class:`TraceRecord` so each trace can declare the environment
+    its recorded commands expect.  All fields are optional and fall back to
+    the run-level ``--graph-tool-image`` when unset.
+    """
+
+    container: str | None = None  # Docker image reference for this trace's sandbox.
+    cwd: str | None = None  # Working directory used for each tool command.
+    interpreter: tuple[str, ...] | None = None  # Shell argv used to run each command.
 
 
 class GraphRecord(
@@ -283,8 +327,11 @@ class TraceRecord(
     """Per-trace data."""
 
     id: str  # Stable trace identifier.
-    # Opaque labels. Round-tripped through the codec/sidecar; no runtime
-    # consumer reads them yet (authorable surface, kept for provenance).
+    # Opaque provenance labels. Round-tripped through the codec/sidecar; must
+    # not carry routing semantics -- they are authorable surface for external
+    # tooling. The one legitimate runtime producer is VIRTUAL_HASH_FALLBACK_TAG
+    # (dynamo trie lowering), which marks traces whose prompt hash fell back to
+    # a virtual segment rather than a real one.
     tags: list[str] = []
     # Selects this trace's top-level graph from `ParsedGraph.graphs`. None (the
     # default) means the trace runs against the single `ParsedGraph.graph`. A
@@ -299,6 +346,12 @@ class TraceRecord(
     # files (not included in this release); adapters never populate it, and
     # the structural sidecar strip clears it.
     replay_outputs: dict[str, dict[str, Any]] = {}
+    # Per-trace sandbox override. When set, the trace's tool nodes run inside
+    # the declared container rather than the run-level --graph-tool-image.
+    # Adapters that record per-task Docker images (e.g. SWEBench) populate
+    # this so each trace runs in its task-specific environment without
+    # requiring a global flag. Falls back to the global when None.
+    tool_sandbox: ToolSandboxSpec | None = None
 
 
 class ParsedGraph(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
@@ -315,7 +368,16 @@ class ParsedGraph(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True)
     # Empty for single-graph workloads.
     # Resolve a trace's graph with `resolve_trace_graph`.
     graphs: dict[str, GraphRecord] = {}
-    traces: list[TraceRecord] = []  # Trace records in file order.
+    traces: list[TraceRecord] = []  # Profiled trace records, in file order.
+    # Corpus-supplied WARMUP traces: complete, dispatchable graphs that run
+    # under CreditPhase.WARMUP before the profiling phase to prime the server
+    # KV cache (e.g. Agent Trace Replay's per-recording "Reply with exactly: ok" call).
+    # DISJOINT from `traces` (never profiled, never counted toward the session
+    # budget) but resolved through the same `graphs` map and materialized from
+    # the same `segment_pool`. Empty for every corpus that emits no warmup;
+    # under omit_defaults=True this keeps the msgpack encoding of every
+    # pre-existing corpus byte-identical.
+    warmup_traces: list[TraceRecord] = []
     # The content-addressed ``segment_trie.pool.SegmentPool`` whose entries every
     # ``LlmNode``'s ``metadata["trie"]["prompt_segment_ids"]`` path indexes.
     # Set by every live producer (the dynamo trie build); the build plane
@@ -325,6 +387,18 @@ class ParsedGraph(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True)
     # dataclass) so the msgpack codec round-trips the real pool across worker
     # processes instead of decoding it to a bare ``dict``.
     segment_pool: SegmentPool | None = None
+
+    @property
+    def all_traces(self) -> list[TraceRecord]:
+        """Every trace whose topology and segments must exist in the built store.
+
+        ``traces`` alone is the PROFILED corpus; warmup traces dispatch real
+        requests and need catalog ordinals, node manifests, and interned segments
+        exactly like a profiled trace. Returns ``traces`` itself (identity, no
+        copy) in the overwhelmingly common warmup-free case so the hot build
+        path allocates nothing.
+        """
+        return self.traces + self.warmup_traces if self.warmup_traces else self.traces
 
 
 def graph_recorded_start_ms(graph: GraphRecord) -> int | None:

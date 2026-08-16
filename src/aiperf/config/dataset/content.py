@@ -24,6 +24,7 @@ from pydantic import (
 
 from aiperf.common.enums import (
     AudioFormat,
+    CacheBustScope,
     CacheBustTarget,
     ImageFormat,
     ImageSource,
@@ -92,6 +93,16 @@ class CacheBustConfig(BaseConfig):
                 "suffix variants append after existing content. "
                 "'none' disables the feature (default)."
             ),
+        ),
+    ]
+
+    scope: Annotated[
+        CacheBustScope,
+        Field(
+            default=CacheBustScope.TRACE,
+            description="Whether agent-graph replay shares a marker across the "
+            "whole run or uses one per trace instance. 'trace' preserves each "
+            "trace's own KV cache while preventing cross-trace reuse.",
         ),
     ]
 

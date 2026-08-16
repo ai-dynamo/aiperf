@@ -112,6 +112,9 @@ class CreditReturn(
         request_latency_ns: Request latency in nanoseconds using the same
             start/end semantics as the records-pipeline request_latency metric.
             None when the request did not produce a valid content response.
+        ttft_ns: Time to first meaningful output token in nanoseconds using the
+            same request start as ``request_latency_ns``. None when the request
+            did not produce meaningful streamed content.
         inter_token_latency_ns: Inter-token latency in nanoseconds for adaptive SLA evaluation.
             None when the request does not have valid content timing and
             output sequence length.
@@ -128,6 +131,7 @@ class CreditReturn(
     first_token_sent: bool = False
     error: str | None = None
     request_latency_ns: int | None = None
+    ttft_ns: int | None = None
     inter_token_latency_ns: float | None = None
     output_sequence_length: int | None = None
     worker_id: str | None = None

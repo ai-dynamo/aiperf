@@ -67,28 +67,56 @@ async def test_graph_return_observer_fires_unconditionally(
     # No phase is registered, so can_send_any_turn is False and the gated strategy
     # path no-ops -- the observer must fire anyway.
     handler = _make_handler()
-    seen: list[tuple[Credit, str | None, bool]] = []
+    seen: list[tuple[Credit, str | None, bool, int | None, int | None, int | None]] = []
 
-    def _observer(credit: Credit, err: str | None, was_cancelled: bool) -> None:
-        seen.append((credit, err, was_cancelled))
+    def _observer(
+        credit: Credit,
+        err: str | None,
+        was_cancelled: bool,
+        *,
+        osl: int | None,
+        request_latency_ns: int | None,
+        ttft_ns: int | None,
+    ) -> None:
+        seen.append(
+            (
+                credit,
+                err,
+                was_cancelled,
+                osl,
+                request_latency_ns,
+                ttft_ns,
+            )
+        )
 
     handler.set_graph_return_observer(_observer)
 
-    ret = CreditReturn(credit=_graph_credit(), cancelled=cancelled, error=error)
+    ret = CreditReturn(
+        credit=_graph_credit(),
+        cancelled=cancelled,
+        error=error,
+        request_latency_ns=900_000_000,
+        ttft_ns=300_000_000,
+    )
     await handler.on_credit_return("w0", ret)
 
     assert len(seen) == 1
-    got_credit, got_error, got_cancelled = seen[0]
+    got_credit, got_error, got_cancelled, got_osl, got_latency, got_ttft = seen[0]
     assert got_credit.trace_id == "t0"
     assert got_error == error
     assert got_cancelled is cancelled
+    assert got_osl is None
+    assert got_latency == 900_000_000
+    assert got_ttft == 300_000_000
 
 
 async def test_non_graph_credit_does_not_invoke_graph_observer() -> None:
     """A credit without a trace_id is not routed to the graph observer."""
     handler = _make_handler()
     seen: list[Credit] = []
-    handler.set_graph_return_observer(lambda c, e, x: seen.append(c))
+    handler.set_graph_return_observer(
+        lambda c, e, x, osl, latency, ttft: seen.append(c)
+    )
 
     await handler.on_credit_return(
         "w0", CreditReturn(credit=_non_graph_credit(), cancelled=False, error=None)
@@ -106,7 +134,14 @@ async def test_raising_observer_is_contained() -> None:
     """
     handler = _make_handler()
 
-    def _boom(credit: Credit, err: str | None, was_cancelled: bool) -> None:
+    def _boom(
+        credit: Credit,
+        err: str | None,
+        was_cancelled: bool,
+        output_sequence_length: int | None,
+        request_latency_ns: int | None,
+        ttft_ns: int | None,
+    ) -> None:
         raise RuntimeError("observer exploded")
 
     handler.set_graph_return_observer(_boom)

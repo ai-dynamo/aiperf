@@ -144,3 +144,10 @@ def test_unset_wrap_omits_synthesis_key(
     synthesis = ds.get("synthesis") or {}
     assert "max_context_length" not in synthesis
     assert "allow_dataset_wrap" not in synthesis
+
+
+def test_graph_tool_image_description_mentions_pinchbench_exception() -> None:
+    """The local-default help names PinchBench's recorded-image exception."""
+    description = CLIConfig.model_fields["graph_tool_image"].description
+    assert description is not None
+    assert "PinchBench" in description

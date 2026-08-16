@@ -129,16 +129,22 @@ def flat_trie_ordinals(parsed: ParsedGraph, trace: TraceRecord) -> dict[str, int
 
 
 def _trie_llm_nodes(parsed: ParsedGraph, trace: TraceRecord) -> dict[str, LlmNode]:
-    """The trie graph's ``LlmNode``s for ``trace`` (the flat ``LlmNode`` form has only these).
+    """The trie graph's ``LlmNode``s for ``trace``.
 
-    The trie builder emits a single top graph with ALL nodes ``LlmNode`` and no
-    subgraphs; resolve through the trace's graph_ref so a multi-trace merge still
-    addresses the right topology.
+    Non-LLM kinds are filtered out rather than assumed absent: a ``ToolNode``
+    has no prompt manifest, so letting one through would both consume an ordinal
+    (desynchronising the build-plane and schedule-plane ordinal schemes, which
+    both derive from this function) and crash ``_trie_envelope``, which reads
+    ``extra_body`` / ``model`` / ``max_tokens`` / ``raw_tools``.
     """
-    from aiperf.dataset.graph.models import resolve_trace_graph
+    from aiperf.dataset.graph.models import LlmNode, resolve_trace_graph
 
     top = resolve_trace_graph(parsed, trace)
-    return dict(top.nodes)
+    return {
+        node_id: node
+        for node_id, node in top.nodes.items()
+        if isinstance(node, LlmNode)
+    }
 
 
 def _prompt_segment_ids(node: LlmNode) -> list[str] | None:
@@ -185,6 +191,13 @@ def _trie_envelope(node: LlmNode, prompt_segment_ids: list[str]) -> dict:
     dispatch_meta = (node.metadata or {}).get("dispatch", {})
     if dispatch_meta.get("endpoint_extra_applied"):
         envelope["endpoint_extra_applied"] = True
+    if dispatch_meta.get("own_output_cap"):
+        # The adapter stamped an explicit output cap that must not be overridden
+        # by the worker's warmup cap (which is correct for BOUNDARY_SNAPSHOT
+        # priming but wrong for RECORDED warmup with its own authored max_tokens).
+        envelope["own_output_cap"] = True
+    if dispatch_meta.get("disable_cache_bust"):
+        envelope["disable_cache_bust"] = True
     return envelope
 
 
@@ -304,7 +317,7 @@ def iter_trace_segment_payloads(parsed: ParsedGraph) -> Iterator[TraceSegmentPay
     # Segments are shipped once per trace; the consumer dedups by id. A
     # single-trace ParsedGraph (the streaming worker case) carries only its own
     # trace's pool, so this stays memory-bounded.
-    for index, trace in enumerate(parsed.traces):
+    for index, trace in enumerate(parsed.all_traces):
         llm_nodes = _trie_llm_nodes(parsed, trace)
         ordinals = trie_node_ordinals(llm_nodes)
         envelopes = _trace_trie_envelopes(llm_nodes, ordinals)
@@ -374,6 +387,7 @@ async def build_unified_trie_store_from_payloads(
                 bool(envelope.get("stream", False)),
                 extra_headers=envelope.get("extra_headers"),
                 endpoint_extra_applied=bool(envelope.get("endpoint_extra_applied")),
+                own_output_cap=bool(envelope.get("own_output_cap")),
             )
         catalog[payload.trace_id] = payload.node_ordinals
         if structural_sink is not None and payload.structural_graph:
@@ -459,7 +473,7 @@ async def build_unified_trie_store_interned(
         )
 
     catalog: dict[str, dict[str, int]] = {}
-    for trace in parsed.traces:
+    for trace in parsed.all_traces:
         nodes = _trie_llm_nodes(parsed, trace)
         ordinals = flat_trie_ordinals(parsed, trace)
         for catalog_key, ordinal in ordinals.items():
@@ -493,6 +507,7 @@ async def build_unified_trie_store_interned(
                 capture=bool(trie_meta.get("capture")),
                 extra_headers=envelope.get("extra_headers"),
                 endpoint_extra_applied=bool(envelope.get("endpoint_extra_applied")),
+                own_output_cap=bool(envelope.get("own_output_cap")),
             )
         catalog[trace.id] = ordinals
     await store.finalize()

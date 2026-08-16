@@ -9,11 +9,12 @@ import copy
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CacheBustTarget
+from aiperf.common.enums import CacheBustScope, CacheBustTarget
 from aiperf.graph.worker_materialize import stamp_cache_bust_marker
 from aiperf.timing.strategies.cache_bust import (
     build_trace_instance_marker,
     inject_marker_at_first_user_message,
+    inject_marker_at_system_message,
 )
 
 _BENCH = "bench-42"
@@ -192,3 +193,115 @@ def test_stamp_tolerates_payload_without_messages_list(
     original = copy.deepcopy(payload)
     _stamp(payload, "t-1#0")
     assert payload == original
+
+
+# ---------------------------------------------------------------------------
+# SYSTEM_PREFIX / SYSTEM_SUFFIX (per-instance, graph path)
+# ---------------------------------------------------------------------------
+
+_SP = CacheBustTarget.SYSTEM_PREFIX
+_SS = CacheBustTarget.SYSTEM_SUFFIX
+
+
+def test_system_prefix_stamps_system_message_not_user() -> None:
+    """SYSTEM_PREFIX prepends to the system message; user turns are untouched."""
+    payload = _payload()
+    stamp_cache_bust_marker(
+        payload, benchmark_id=_BENCH, trace_instance_id="t-1#0", target=_SP
+    )
+    msgs = payload["messages"]
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"].startswith("[rid:")
+    assert msgs[0]["content"].endswith("you are a helpful assistant")
+    # user turns unchanged
+    assert msgs[1] == {"role": "user", "content": "first user turn"}
+    assert msgs[3] == {"role": "user", "content": "second user turn"}
+
+
+def test_system_suffix_stamps_system_message_suffix() -> None:
+    """SYSTEM_SUFFIX appends to the system message."""
+    payload = _payload()
+    stamp_cache_bust_marker(
+        payload, benchmark_id=_BENCH, trace_instance_id="t-1#0", target=_SS
+    )
+    msgs = payload["messages"]
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"].startswith("you are a helpful assistant")
+    assert "[rid:" in msgs[0]["content"]
+
+
+def test_system_prefix_is_per_instance() -> None:
+    """Two instances in the same run carry different system-prompt markers."""
+    p1 = _payload()
+    p2 = _payload()
+    stamp_cache_bust_marker(
+        p1, benchmark_id=_BENCH, trace_instance_id="t-1#0", target=_SP
+    )
+    stamp_cache_bust_marker(
+        p2, benchmark_id=_BENCH, trace_instance_id="t-2#0", target=_SP
+    )
+    assert p1["messages"][0]["content"] != p2["messages"][0]["content"]
+
+
+def test_system_prefix_run_scope_is_shared() -> None:
+    """Run scope deliberately permits cross-trace system-prompt cache reuse."""
+    p1 = _payload()
+    p2 = _payload()
+    stamp_cache_bust_marker(
+        p1,
+        benchmark_id=_BENCH,
+        trace_instance_id="t-1#0",
+        target=_SP,
+        scope=CacheBustScope.RUN,
+    )
+    stamp_cache_bust_marker(
+        p2,
+        benchmark_id=_BENCH,
+        trace_instance_id="t-2#0",
+        target=_SP,
+        scope=CacheBustScope.RUN,
+    )
+    assert p1["messages"][0]["content"] == p2["messages"][0]["content"]
+
+
+def test_system_prefix_reuses_the_trace_instance_marker() -> None:
+    """SYSTEM_PREFIX shares the trace marker but applies it to a system message."""
+    sp_marker = build_trace_instance_marker(_BENCH, "t-1#0", target=_SP)
+    ftp_marker = build_trace_instance_marker(_BENCH, "t-1#0", target=_FTP)
+    assert sp_marker == ftp_marker
+
+
+def test_system_prefix_stamp_is_idempotent() -> None:
+    """Re-stamping SYSTEM_PREFIX on the same payload does not stack the marker."""
+    payload = _payload()
+    stamp_cache_bust_marker(
+        payload, benchmark_id=_BENCH, trace_instance_id="t-1#0", target=_SP
+    )
+    once = copy.deepcopy(payload)
+    stamp_cache_bust_marker(
+        payload, benchmark_id=_BENCH, trace_instance_id="t-1#0", target=_SP
+    )
+    assert payload == once
+
+
+def test_inject_system_message_multimodal() -> None:
+    """SYSTEM_PREFIX on a multimodal system message inserts a leading text part."""
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": "sys"}]},
+        {"role": "user", "content": "hi"},
+    ]
+    marker = build_trace_instance_marker(_BENCH, "t-1#0", target=_SP)
+    inject_marker_at_system_message(messages, marker, is_prefix=True)
+    content = messages[0]["content"]
+    assert content[0] == {"type": "text", "text": marker.strip()}
+    assert content[1] == {"type": "text", "text": "sys"}
+    # user untouched
+    assert messages[1] == {"role": "user", "content": "hi"}
+
+
+def test_inject_system_message_no_system_role_is_noop() -> None:
+    """No system-role message -> nothing is stamped."""
+    messages = [{"role": "user", "content": "hi"}]
+    original = copy.deepcopy(messages)
+    inject_marker_at_system_message(messages, "[rid:abc]\n\n", is_prefix=True)
+    assert messages == original

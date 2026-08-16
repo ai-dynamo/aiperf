@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field, field_serializer
 
 from aiperf.common.enums import (
+    CacheBustScope,
     CacheBustTarget,
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
@@ -132,6 +133,11 @@ class EndpointInfo(AIPerfBaseModel):
         "reset on recycle, so the inference server's KV cache sees a distinct prefix "
         "per trace instance, defeating cross-instance prefix-cache hits.",
     )
+    cache_bust_scope: CacheBustScope = Field(
+        default=CacheBustScope.TRACE,
+        description="Whether agent-graph cache-bust markers are shared per run or "
+        "kept distinct per trace instance.",
+    )
     connection_reuse_strategy: ConnectionReuseStrategy = Field(
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
@@ -226,6 +232,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 # prompts.cache_bust, file: cache_bust), so the single resolved
                 # read is the config helper, not an endpoint field.
                 cache_bust=cfg.get_cache_bust_target(),
+                cache_bust_scope=cfg.get_cache_bust_scope(),
                 connection_reuse_strategy=ep.connection_reuse,
                 download_video_content=ep.download_video_content,
                 request_content_type=ep.request_content_type,

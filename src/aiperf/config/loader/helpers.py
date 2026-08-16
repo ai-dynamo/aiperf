@@ -18,6 +18,7 @@ from aiperf.config.comm.build import build_comm_config
 if TYPE_CHECKING:
     from aiperf.common.enums import (
         AIPerfLogLevel,
+        CacheBustScope,
         CacheBustTarget,
         GPUTelemetryMode,
         PromptCorpus,
@@ -100,6 +101,16 @@ class BenchmarkHelpersMixin:
         if cache_bust is not None:
             return cache_bust.target
         return CacheBustTarget.NONE
+
+    def get_cache_bust_scope(self) -> CacheBustScope:
+        """Resolve the active dataset's agent-graph cache-bust sharing scope."""
+        from aiperf.common.enums import CacheBustScope
+
+        dataset = self.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        cache_bust = getattr(prompts, "cache_bust", None) if prompts else None
+        cache_bust = cache_bust or getattr(dataset, "cache_bust", None)
+        return getattr(cache_bust, "scope", CacheBustScope.TRACE)
 
     def get_prompt_corpus(self) -> PromptCorpus | None:
         """Resolve the active dataset's authored ``prompts.corpus``."""

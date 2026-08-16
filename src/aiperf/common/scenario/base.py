@@ -53,16 +53,20 @@ class ScenarioSpec(AIPerfBaseModel):
             "exceeds the cap)."
         )
     )
-    require_loader: str | tuple[str, ...] = Field(
+    require_loader: str | tuple[str, ...] | None = Field(
+        default=None,
         description=(
             "Required loader plugin name (e.g. 'weka_trace'), or a tuple of "
             "equivalent loader names. The detected loader must match any one "
             "of them — useful when several loader plugins produce byte-identical "
-            "data (e.g. file-based vs HF-hosted variants)."
-        )
+            "data (e.g. file-based vs HF-hosted variants). ``None`` skips the "
+            "loader check (use ``require_graph_format`` for graph-adapter workloads)."
+        ),
     )
-    min_benchmark_duration_seconds: int = Field(
-        gt=0, description="Floor on --benchmark-duration in seconds."
+    min_benchmark_duration_seconds: int | None = Field(
+        default=None,
+        gt=0,
+        description="Floor on --benchmark-duration in seconds. None disables the floor.",
     )
     default_benchmark_duration_seconds: int | None = Field(
         default=None,
@@ -136,6 +140,56 @@ class ScenarioSpec(AIPerfBaseModel):
             "When set, prompt.cache_bust.target must equal this value. "
             "Mismatch is rejected unless --unsafe-override is also set "
             "(which stamps submission_valid=false)."
+        ),
+    )
+    forbid_open_loop_replay: bool = Field(
+        default=False,
+        description=(
+            "When true, reject open-loop replay (the default pacing mode). "
+            "Open-loop pacing anchors each trace's start to a corpus-wide "
+            "schedule zero; when the corpus spans weeks or months (as the "
+            "Agent Trace Replay default set does), traces whose recorded start is far "
+            "ahead of the anchor sit parked and never dispatch. Pass "
+            "--no-open-loop-replay to satisfy this lock."
+        ),
+    )
+    require_server_token_count: bool = Field(
+        default=False,
+        description=(
+            "When true, require --use-server-token-count (auto-filled when "
+            "unset; violation on explicit false). Without this flag AIPerf "
+            "tokenises locally while Agent Trace Replay reads ISL/OSL from the server's "
+            "usage field, making token counts apples-to-oranges even when "
+            "request bodies are byte-identical."
+        ),
+    )
+    require_graph_format: str | None = Field(
+        default=None,
+        description=(
+            "When set, the dataset's `graph_format` field must equal this "
+            "value (checked as a string, e.g. 'mini_swe_agent_trace'). Violation "
+            "when the field is absent or has a different value. Unlike "
+            "`require_loader`, which checks `CustomDatasetType`, this checks "
+            "the graph-adapter path, which does not appear in `dataset_types`."
+        ),
+    )
+    require_execute_tools: bool = Field(
+        default=False,
+        description=(
+            "When true, require ``--graph-execute-tools`` (auto-filled when "
+            "unset; violation on explicit false). The caller may optionally "
+            "select a Docker sandbox with ``--graph-tool-image``; otherwise "
+            "commands execute in the host sandbox."
+        ),
+    )
+    require_emit_warmup: bool = Field(
+        default=False,
+        description=(
+            "When true, require ``--graph-emit-warmup`` (auto-filled when "
+            "unset; violation on explicit false). Agent Trace Replay's own playback "
+            "emits one per-recording warmup call before the real trajectory; "
+            "omitting it means the server's KV cache is cold on the first "
+            "real turn, understating throughput and overstating TTFT."
         ),
     )
 

@@ -1566,6 +1566,14 @@ class ParsedResponseRecord:
         """
         return [response for response in self.responses if response.data]
 
+    @cached_property
+    def has_usage_only_response(self) -> bool:
+        """Whether the server completed a request without a visible content chunk."""
+        return any(
+            response.data is None and response.usage is not None
+            for response in self.responses
+        )
+
     @property
     def has_error(self) -> bool:
         """Check if the response record has an error."""
@@ -1586,7 +1594,7 @@ class ParsedResponseRecord:
         """
         return (
             not self.has_error
-            and len(self.content_responses) > 0
+            and (len(self.content_responses) > 0 or self.has_usage_only_response)
             and 0 <= self.start_perf_ns < self.end_perf_ns < sys.maxsize
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )

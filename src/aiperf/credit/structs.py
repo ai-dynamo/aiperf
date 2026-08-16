@@ -152,6 +152,8 @@ class CreditContext(
             record would hang the RecordsManager completion barrier.
         request_latency_ns: Request latency in nanoseconds using records-pipeline
             semantics.
+        ttft_ns: Time to first meaningful output token in nanoseconds using the
+            same request start as ``request_latency_ns``.
         inter_token_latency_ns: Inter-token latency in nanoseconds using
             adaptive records-pipeline semantics.
         output_sequence_length: Output sequence length in tokens from usage
@@ -166,6 +168,7 @@ class CreditContext(
     error: str | ErrorDetails | None = None
     record_emitted: bool = False
     request_latency_ns: int | None = None
+    ttft_ns: int | None = None
     inter_token_latency_ns: float | None = None
     output_sequence_length: int | None = None
 

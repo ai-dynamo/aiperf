@@ -127,6 +127,7 @@ class _Credit:
     node_ordinal: int | None = None
     x_correlation_id: str = "x"
     turn_index: int = 0
+    output_sequence_length: int | None = None
 
 
 def test_unknown_trace_return_logs_warning_with_instance_and_ordinal(
@@ -137,7 +138,12 @@ def test_unknown_trace_return_logs_warning_with_instance_and_ordinal(
     strategy = _minimal_strategy(_cfg())
     with caplog.at_level(logging.WARNING):
         strategy._on_graph_return(
-            _Credit(trace_id="t-1#0.0", node_ordinal=7), error=None, cancelled=False
+            _Credit(trace_id="t-1#0.0", node_ordinal=7),
+            error=None,
+            cancelled=False,
+            osl=None,
+            request_latency_ns=None,
+            ttft_ns=None,
         )
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings, "an unknown-instance return must log at WARNING"
@@ -153,8 +159,48 @@ def test_none_trace_id_return_is_silent_noop(
     # Only an UNKNOWN graph instance id is anomalous enough to warn.
     strategy = _minimal_strategy(_cfg())
     with caplog.at_level(logging.WARNING):
-        strategy._on_graph_return(_Credit(trace_id=None), error=None, cancelled=False)
+        strategy._on_graph_return(
+            _Credit(trace_id=None),
+            error=None,
+            cancelled=False,
+            osl=None,
+            request_latency_ns=None,
+            ttft_ns=None,
+        )
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+def test_graph_return_callback_forwards_worker_timing_to_adapter() -> None:
+    """The graph-return timing values reach the owning dispatch adapter."""
+    strategy = _minimal_strategy(_cfg())
+    calls: list[tuple[object, ...]] = []
+
+    class _Adapter:
+        def resolve(
+            self,
+            credit: object,
+            error: str | None,
+            cancelled: bool,
+            *,
+            osl: int | None,
+            request_latency_ns: int | None,
+            ttft_ns: int | None,
+        ) -> None:
+            calls.append((credit, error, cancelled, osl, request_latency_ns, ttft_ns))
+
+    credit = _Credit(trace_id="t-1#0.0")
+    strategy._adapters[credit.trace_id] = _Adapter()
+
+    strategy._on_graph_return(
+        credit,
+        None,
+        False,
+        osl=7,
+        request_latency_ns=11,
+        ttft_ns=13,
+    )
+
+    assert calls == [(credit, None, False, 7, 11, 13)]
 
 
 # --- lane refusal terminates the recycle loop ---------------------------------

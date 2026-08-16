@@ -160,6 +160,11 @@ class TimingManager(BaseComponentService):
         parsed_graph = self._load_graph_sidecar()
         if parsed_graph is not None:
             self._advise_non_streaming_first_token_sources(parsed_graph)
+            # Corpus-dependent phases (graph WARMUP injection) can only be
+            # resolved once the built corpus is in hand: __init__ runs before
+            # the DatasetManager has broadcast anything. from_run is pure, so
+            # re-resolving is idempotent for runs that have no corpus warmup.
+            self.config = TimingConfig.from_run(self.run, parsed_graph=parsed_graph)
 
         endpoint = self.run.cfg.endpoint
         control_hooks = prepare_endpoint_control_hooks(endpoint)

@@ -15,6 +15,8 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
+import msgspec.structs
+
 from aiperf.common.enums import BaselineKind, CacheBustTarget, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
@@ -36,6 +38,7 @@ from aiperf.timing.strategies.core import (
     PhaseTeardownStrategyProtocol,
     RateSettableProtocol,
 )
+from aiperf.timing.strategies.graph_warmup import GraphWarmupKind
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -594,6 +597,24 @@ class PhaseRunner(TaskManagerMixin):
                 "the orchestrator's graph channel."
             )
         parsed_graph = channel.parsed_graph
+        # Per-phase corpus selection for corpus-supplied warmup (RECORDED kind).
+        # A corpus carrying warmup_traces runs them -- and only them -- in the
+        # WARMUP phase; every other phase sees only the profiled traces.
+        # warmup_traces is cleared on the phase's view so the strategy's corpus
+        # is unambiguous: whatever is in .traces is what this phase replays.
+        # For t*-snapshot warmup (BOUNDARY_SNAPSHOT) the corpus is untouched --
+        # rewrite_for_warmup derives the priming graph from the profiled traces.
+        warmup_kind: GraphWarmupKind | None = None
+        if self._config.phase == CreditPhase.WARMUP:
+            if parsed_graph.warmup_traces:
+                parsed_graph = msgspec.structs.replace(
+                    parsed_graph, traces=parsed_graph.warmup_traces, warmup_traces=[]
+                )
+                warmup_kind = GraphWarmupKind.RECORDED
+            else:
+                warmup_kind = GraphWarmupKind.BOUNDARY_SNAPSHOT
+        elif parsed_graph.warmup_traces:
+            parsed_graph = msgspec.structs.replace(parsed_graph, warmup_traces=[])
         # conversation_source / scheduler are deliberately NOT passed: graph runs
         # carry their state on the GraphPhaseChannel and self-schedule via the
         # executor's dataflow channels. stop_checker IS passed -- it gates
@@ -604,6 +625,7 @@ class PhaseRunner(TaskManagerMixin):
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
             parsed_graph=parsed_graph,
+            warmup_kind=warmup_kind,
             register_observer=self._callback_handler.set_graph_return_observer,
             register_first_token_observer=(
                 self._callback_handler.set_graph_first_token_observer
@@ -622,6 +644,8 @@ class PhaseRunner(TaskManagerMixin):
             replay_speedup=self._config.replay_speedup,
             open_loop_replay=self._config.open_loop_replay,
             open_loop_strict=self._config.open_loop_strict,
+            graph_tool_image=self._config.graph_tool_image,
+            graph_tool_persistent_session=self._config.graph_tool_persistent_session,
         )
 
     def _register_strategy_with_callback_handler(

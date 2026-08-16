@@ -434,6 +434,15 @@ def _first_dataset_dict(merged: dict[str, Any]) -> dict[str, Any] | None:
 # ``_converter_dataset._apply_trace_delay_flags``.
 _DATASET_TOP_LEVEL_OVERRIDES: tuple[tuple[str, str, tuple[DatasetType, ...]], ...] = (
     ("graph_format", "graph_format", (DatasetType.FILE,)),
+    ("graph_execute_tools", "graph_execute_tools", (DatasetType.FILE,)),
+    ("graph_tool_image", "graph_tool_image", (DatasetType.FILE,)),
+    (
+        "graph_tool_persistent_session",
+        "graph_tool_persistent_session",
+        (DatasetType.FILE,),
+    ),
+    ("graph_use_family_sampling", "graph_use_family_sampling", (DatasetType.FILE,)),
+    ("graph_emit_warmup", "graph_emit_warmup", (DatasetType.FILE,)),
     (
         "trace_idle_gap_cap_seconds",
         "trace_idle_gap_cap_seconds",

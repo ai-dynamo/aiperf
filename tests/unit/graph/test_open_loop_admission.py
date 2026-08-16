@@ -23,6 +23,7 @@ from aiperf.dataset.graph.models import (
     ParsedGraph,
     TraceRecord,
 )
+from aiperf.graph.executor import TraceResult
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.strategies import agent_graph_replay as agr
@@ -145,7 +146,7 @@ class _ConcurrencyProbe:
             def __init__(self, parsed: ParsedGraph, **kwargs: Any) -> None:
                 self._parsed = parsed
 
-            async def run(self, run_trace: Any) -> None:
+            async def run(self, run_trace: Any) -> TraceResult:
                 probe.active += 1
                 probe.peak = max(probe.peak, probe.active)
                 probe.started.append(getattr(run_trace, "id", "?"))
@@ -156,6 +157,10 @@ class _ConcurrencyProbe:
                         await asyncio.sleep(0)
                 finally:
                     probe.active -= 1
+                # The real executor always returns one, and the strategy folds
+                # its tool durations into the run totals. A stub returning None
+                # would make every trace look like an error.
+                return TraceResult(trace_id=getattr(run_trace, "id", "?"), channels={})
 
         return _FakeExecutor
 

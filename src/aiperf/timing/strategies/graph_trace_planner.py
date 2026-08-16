@@ -40,7 +40,7 @@ from aiperf.graph.scheduler import collapse_leading_start_offsets
 from aiperf.timing.agent_graph_source import AgentGraphConversationSource, GraphTrace
 from aiperf.timing.agent_graph_trace_view import parsed_for_trace
 from aiperf.timing.snapshot_chop import chop_trie_at_tstar
-from aiperf.timing.strategies.graph_warmup import rewrite_for_warmup
+from aiperf.timing.strategies.graph_warmup import GraphWarmupKind, rewrite_for_warmup
 
 if TYPE_CHECKING:
     from aiperf.dataset.graph.models import ParsedGraph, TraceRecord
@@ -407,7 +407,7 @@ class GraphTracePlanner:
         trace: TraceRecord,
         plan: GraphTrace | None,
         *,
-        is_warmup: bool,
+        warmup: GraphWarmupKind | None,
         burst_phase_starts: bool,
     ) -> tuple[ParsedGraph, TraceRecord]:
         """Reconstruct the per-trace graph + trace at this instance's t* disposition.
@@ -430,44 +430,49 @@ class GraphTracePlanner:
         DEFAULT full-replay configuration, which is the only configuration most
         runs use.
 
-        WARMUP: :func:`rewrite_for_warmup` -- the flat boundary-priming graph
-        (one boundary turn per chain live at t*, START-rooted, zero leading
-        offsets). ``t*<=0`` yields an EMPTY warmup graph so the instance
-        finalizes immediately (the ``timing.config`` auto-warmup contract).
+        WARMUP (BOUNDARY_SNAPSHOT): :func:`rewrite_for_warmup` -- the flat
+        boundary-priming graph (one boundary turn per chain live at t*,
+        START-rooted, zero leading offsets). ``t*<=0`` yields an EMPTY warmup
+        graph so the instance finalizes immediately (the ``timing.config``
+        auto-warmup contract).
+
+        WARMUP (RECORDED): the corpus authored this graph AS warmup
+        (``ParsedGraph.warmup_traces``). It is already exactly what must go on
+        the wire; ``rewrite_for_warmup`` is the SNAPSHOT transform (derive
+        priming turns from a profiled trace) and would correctly-but-uselessly
+        reduce it to nothing, so it dispatches verbatim. ``plan`` is ignored
+        by design -- a recorded warmup graph has no recorded timeline to resume
+        into.
 
         A non-trie graph at ``t*>0`` is a lowering bug (raises). Multi-graph
         workloads project onto each trace's OWN graph via ``parsed_for_trace``
         first (else a non-first trace runs the first file's topology).
 
-        ``is_warmup`` / ``burst_phase_starts`` are passed in rather than read
-        from a config: the planner is phase-agnostic, and the owning strategy is
-        the thing that knows which phase it is running.
+        ``warmup`` / ``burst_phase_starts`` are passed in rather than read
+        from a config: the planner is phase-agnostic, and the owning strategy
+        is the thing that knows which phase it is running.
         """
         parsed = parsed_for_trace(self._parsed, trace)
+        if warmup is GraphWarmupKind.RECORDED:
+            # Corpus-authored warmup graph: dispatch verbatim. burst_phase_starts
+            # collapses leading offsets for consistency with the other warmup arm.
+            return (
+                burst_collapse_leading_offsets(parsed) if burst_phase_starts else parsed
+            ), trace
         t_star_us = plan.t_star_us if plan is not None else 0
         if t_star_us <= 0:
-            if is_warmup:
-                # A t*=0 warmup graph is EMPTY, and a t*>0 one roots every
-                # boundary turn at START with no delay, so warmup carries no
-                # leading offset for burst to collapse either way.
+            if warmup is GraphWarmupKind.BOUNDARY_SNAPSHOT:
                 return rewrite_for_warmup(parsed, 0), trace
             if burst_phase_starts:
                 return burst_collapse_leading_offsets(parsed), trace
             return parsed, trace
-
-        # Trie graphs (the flat LlmNode + StaticEdge recorded-trace form) snapshot via a
-        # simple frontier chop -- there are no reducers / spawn / await / subgraph
-        # primitives to re-root, and each node's full pre-t* prompt prefix is
-        # preserved (the worker materializes the exact resume prompt). The
-        # executor anchors the re-rooted frontier offsets via the
-        # ``absolute_start_offsets=True`` already set on every instance.
         if not self.is_trie_graph(parsed):
             raise RuntimeError(
-                f"trace {trace.id!r}: t*={t_star_us} requires a trie-stamped graph "
-                "(metadata['trie'] on every LlmNode); every live producer lowers "
-                "onto the trie, so a non-trie parse reaching t*>0 is a lowering bug"
+                f"graph_at_t_star: t*={t_star_us:.0f}µs but graph has no trie metadata "
+                f"on any node -- this is a lowering bug, not a runtime error; "
+                f"trace={trace.id!r}"
             )
-        if is_warmup:
+        if warmup is GraphWarmupKind.BOUNDARY_SNAPSHOT:
             return rewrite_for_warmup(parsed, t_star_us), trace
         rewritten = chop_trie_at_tstar(parsed, t_star_us)
         if burst_phase_starts:

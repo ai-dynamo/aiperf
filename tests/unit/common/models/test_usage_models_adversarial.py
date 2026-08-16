@@ -854,6 +854,30 @@ def _record_with_response_usages(*usages) -> ParsedResponseRecord:
     )
 
 
+def test_usage_only_response_is_valid() -> None:
+    """A completed request may carry usage without a visible content chunk."""
+    request = RequestRecord(
+        conversation_id="test",
+        turn_index=0,
+        model_name="m",
+        start_perf_ns=100,
+        timestamp_ns=100,
+        end_perf_ns=200,
+    )
+    record = ParsedResponseRecord(
+        request=request,
+        responses=[
+            ParsedResponse(
+                perf_ns=200,
+                usage=Usage({"prompt_tokens": 10, "completion_tokens": 1}),
+            )
+        ],
+        token_counts=TokenCounts(input=10, output=1, reasoning=0),
+    )
+
+    assert record.valid
+
+
 class TestStreamingMetricEdgeCases:
     """Adversarial streaming behavior across mixed-shape chunks."""
 

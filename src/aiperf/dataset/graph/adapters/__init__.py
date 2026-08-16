@@ -7,9 +7,13 @@ adapter class is registered under the `graph_adapter` plugin category.
 """
 
 from aiperf.dataset.graph.adapters.dynamo.trace import DynamoTraceAdapter
+from aiperf.dataset.graph.adapters.mini_swe_agent_trace.recording import (
+    AgentTraceRecordingAdapter,
+)
 from aiperf.dataset.graph.adapters.protocols import GraphAdapterProtocol
 
 __all__ = [
     "DynamoTraceAdapter",
     "GraphAdapterProtocol",
+    "AgentTraceRecordingAdapter",
 ]

@@ -94,6 +94,11 @@ def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:
     _apply_inter_turn_delay_cap(run, spec, violations, applied)
     _apply_trace_idle_gap_cap(run, spec, violations, applied)
     _apply_system_idle_gap_cap(run, spec, violations, applied)
+    _apply_forbid_open_loop_replay(run, spec, violations, applied)
+    _apply_require_server_token_count(run, spec, violations, applied)
+    _apply_require_graph_format(run, spec, violations, applied)
+    _apply_require_execute_tools(run, spec, violations, applied)
+    _apply_require_emit_warmup(run, spec, violations, applied)
     _apply_random_seed(run, spec, applied)
 
     # Synthetic (CLI default when no --public-dataset/--input-file) under a
@@ -587,7 +592,10 @@ def _apply_duration(
 
     for phase in profiling_phases:
         duration = phase.duration or 0.0
-        if duration < spec.min_benchmark_duration_seconds:
+        if (
+            spec.min_benchmark_duration_seconds is not None
+            and duration < spec.min_benchmark_duration_seconds
+        ):
             violations.append(
                 ScenarioViolation(
                     flag="--benchmark-duration",
@@ -600,7 +608,7 @@ def _apply_duration(
                     ),
                 )
             )
-    if not any(
+    if spec.min_benchmark_duration_seconds is None or not any(
         (phase.duration or 0.0) < spec.min_benchmark_duration_seconds
         for phase in profiling_phases
     ):
@@ -788,6 +796,199 @@ def _apply_system_idle_gap_cap(
             )
     if valid:
         applied.append("system_idle_gap_cap")
+
+
+def _apply_forbid_open_loop_replay(
+    run: BenchmarkRun,
+    spec: ScenarioSpec,
+    violations: list[ScenarioViolation],
+    applied: list[str],
+) -> None:
+    """Reject open-loop replay when the spec forbids it.
+
+    Open-loop pacing anchors each trace's start to a corpus-wide schedule zero.
+    When the corpus spans weeks or months (as the Agent Trace Replay default set does),
+    most traces sit parked and never dispatch. Pass ``--no-open-loop-replay`` to
+    satisfy this lock.
+    """
+    if not spec.forbid_open_loop_replay:
+        return
+    dataset = run.cfg.get_default_dataset()
+    if not hasattr(dataset, "open_loop_replay"):
+        # Dataset type has no open-loop concept (e.g. synthetic); skip.
+        return
+    if not dataset.open_loop_replay:
+        applied.append("forbid_open_loop_replay")
+        return
+    violations.append(
+        ScenarioViolation(
+            flag="--open-loop-replay",
+            current_value=True,
+            required_value=False,
+            message=(
+                f"scenario {spec.name!r} forbids open-loop replay; pass "
+                "--no-open-loop-replay so traces fire relative to their own "
+                "prior turn rather than a corpus-wide anchor that parks most "
+                "traces at the start of a long run"
+            ),
+        )
+    )
+
+
+def _apply_require_server_token_count(
+    run: BenchmarkRun,
+    spec: ScenarioSpec,
+    violations: list[ScenarioViolation],
+    applied: list[str],
+) -> None:
+    """Require / auto-fill ``--use-server-token-count``.
+
+    Without this flag AIPerf tokenises locally while Agent Trace Replay reads ISL/OSL
+    from the server's ``usage`` field, making token counts apples-to-oranges
+    even when request bodies are byte-identical.
+    """
+    if not spec.require_server_token_count:
+        return
+    endpoint = run.cfg.endpoint
+    if endpoint.use_server_token_count:
+        applied.append("server_token_count")
+        return
+    explicit = "use_server_token_count" in getattr(endpoint, "model_fields_set", ())
+    if explicit:
+        violations.append(
+            ScenarioViolation(
+                flag="--use-server-token-count",
+                current_value=False,
+                required_value=True,
+                message=(
+                    f"scenario {spec.name!r} requires --use-server-token-count; "
+                    "without it AIPerf tokenises locally while Agent Trace Replay reads "
+                    "ISL/OSL from the server's usage field"
+                ),
+            )
+        )
+    else:
+        endpoint.use_server_token_count = True
+        _logger.info(
+            "Scenario %r: forcing --use-server-token-count=true (was unset).",
+            spec.name,
+        )
+        applied.append("server_token_count")
+
+
+def _apply_require_graph_format(
+    run: BenchmarkRun,
+    spec: ScenarioSpec,
+    violations: list[ScenarioViolation],
+    applied: list[str],
+) -> None:
+    """Validate that the dataset's ``graph_format`` matches the spec.
+
+    Unlike ``require_loader``, which checks ``CustomDatasetType`` populated by
+    the ``DatasetResolver``, graph adapters do not appear in ``dataset_types``
+    at all — they are resolved directly from ``FileDataset.graph_format``.
+    This check reads that field and compares its string form.
+    """
+    if spec.require_graph_format is None:
+        return
+    dataset = run.cfg.get_default_dataset()
+    raw = getattr(dataset, "graph_format", None)
+    actual = str(raw) if raw is not None else None
+    if actual == spec.require_graph_format:
+        applied.append("graph_format")
+        return
+    violations.append(
+        ScenarioViolation(
+            flag="--graph-format",
+            current_value=actual,
+            required_value=spec.require_graph_format,
+            message=(
+                f"scenario {spec.name!r} requires --graph-format="
+                f"{spec.require_graph_format}"
+            ),
+        )
+    )
+
+
+def _apply_require_execute_tools(
+    run: BenchmarkRun,
+    spec: ScenarioSpec,
+    violations: list[ScenarioViolation],
+    applied: list[str],
+) -> None:
+    """Require / auto-fill ``--graph-execute-tools``.
+
+    Without ``--graph-execute-tools`` the adapter substitutes a timing delay for
+    every tool step, so the benchmark never measures real tool latency. The caller
+    selects the sandbox backend with the optional ``--graph-tool-image``.
+    """
+    if not spec.require_execute_tools:
+        return
+    dataset = run.cfg.get_default_dataset()
+    execute_tools = getattr(dataset, "graph_execute_tools", None)
+    explicit_execute = "graph_execute_tools" in getattr(dataset, "model_fields_set", ())
+    if execute_tools:
+        applied.append("execute_tools")
+    elif explicit_execute:
+        violations.append(
+            ScenarioViolation(
+                flag="--graph-execute-tools",
+                current_value=False,
+                required_value=True,
+                message=(
+                    f"scenario {spec.name!r} requires --graph-execute-tools; "
+                    "without it tool steps replay as timing delays, not real execution"
+                ),
+            )
+        )
+    else:
+        dataset.graph_execute_tools = True
+        _logger.info(
+            "Scenario %r: forcing --graph-execute-tools=true (was unset).",
+            spec.name,
+        )
+        applied.append("execute_tools")
+
+
+def _apply_require_emit_warmup(
+    run: BenchmarkRun,
+    spec: ScenarioSpec,
+    violations: list[ScenarioViolation],
+    applied: list[str],
+) -> None:
+    """Require / auto-fill ``--graph-emit-warmup``.
+
+    Agent Trace Replay's own playback emits one per-recording warmup call before each
+    trajectory to prime the server's KV cache. Without it the first real turn
+    runs against a cold cache, inflating TTFT and understating throughput.
+    """
+    if not spec.require_emit_warmup:
+        return
+    dataset = run.cfg.get_default_dataset()
+    emit_warmup = getattr(dataset, "graph_emit_warmup", None)
+    explicit = "graph_emit_warmup" in getattr(dataset, "model_fields_set", ())
+    if emit_warmup:
+        applied.append("emit_warmup")
+    elif explicit:
+        violations.append(
+            ScenarioViolation(
+                flag="--graph-emit-warmup",
+                current_value=False,
+                required_value=True,
+                message=(
+                    f"scenario {spec.name!r} requires --graph-emit-warmup; "
+                    "Agent Trace Replay always emits a per-recording warmup call before "
+                    "the real trajectory to prime the server KV cache"
+                ),
+            )
+        )
+    else:
+        dataset.graph_emit_warmup = True
+        _logger.info(
+            "Scenario %r: forcing --graph-emit-warmup=true (was unset).",
+            spec.name,
+        )
+        applied.append("emit_warmup")
 
 
 def _apply_random_seed(

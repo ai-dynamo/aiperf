@@ -176,6 +176,61 @@ def build_trace_instance_marker(
     )
 
 
+def build_run_marker(benchmark_id: str, *, target: CacheBustTarget) -> str | None:
+    """Mint one cache-bust marker shared by every trace in one graph replay."""
+    return build_cache_bust_marker(benchmark_id, 0, 0, "__run__", target=target)
+
+
+def inject_marker_at_system_message(
+    messages: list[dict[str, Any]], marker: str | None, *, is_prefix: bool = True
+) -> None:
+    """Prepend (or append) ``marker`` to the first ``role == "system"`` message, in-place.
+
+    Implements the ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` targets for the graph path:
+    walk the wire ``messages`` forward, find the first system-role message, and
+    stamp the marker.  Plain-string content is modified directly; OpenAI multimodal
+    list content gets a leading/trailing ``{"type": "text", "text": marker.strip()}``
+    part.  Idempotent (re-stamping the same marker is a no-op).  No-op when
+    ``marker`` is falsy or no system-role message exists (first-user-message fallback
+    is the caller's responsibility).
+
+    Args:
+        messages: The materialized wire ``messages`` list (mutated in place).
+        marker: The rendered marker text, or ``None`` to stamp nothing.
+        is_prefix: True to prepend (``SYSTEM_PREFIX``), False to append (``SYSTEM_SUFFIX``).
+    """
+    if not marker:
+        return
+    for idx, msg in enumerate(messages):
+        if not (isinstance(msg, dict) and msg.get("role") == "system"):
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            if is_prefix and content.startswith(marker):
+                return
+            if not is_prefix and content.endswith(marker):
+                return
+            messages[idx] = {
+                **msg,
+                "content": (marker + content) if is_prefix else (content + marker),
+            }
+            return
+        if isinstance(content, list):
+            marker_part = {"type": "text", "text": marker.strip()}
+            if is_prefix and content and content[0] == marker_part:
+                return
+            if not is_prefix and content and content[-1] == marker_part:
+                return
+            messages[idx] = {
+                **msg,
+                "content": (
+                    [marker_part, *content] if is_prefix else [*content, marker_part]
+                ),
+            }
+            return
+        return
+
+
 def _content_has_marker_prefix(content: Any, marker: str) -> bool:
     """Whether ``content`` already begins with ``marker`` (idempotency guard).
 

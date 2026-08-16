@@ -20,6 +20,7 @@ Structure:
     Environment.ENDPOINT.*       - Endpoint wire-format settings
     Environment.GPU.*            - GPU telemetry collection
     Environment.GRAPH.*          - Graph-mode runtime tunables
+    Environment.GRAPH_TOOL.*     - Tool-execution sandbox tunables
     Environment.HTTP.*           - HTTP client socket and connection settings
     Environment.LOGGING.*        - Logging configuration
     Environment.METRICS.*        - Metrics collection and storage
@@ -919,6 +920,71 @@ class _GraphSettings(BaseSettings):
             "strategy emits a NOTICE advising `--benchmark-duration` (the bound) or "
             "Ctrl+C (graceful partial export). Set 0.0 to always advise; raise to "
             "silence the advisory for corpora with shorter waits."
+        ),
+    )
+
+
+class _GraphToolSettings(BaseSettings):
+    """Tool-execution sandbox tunables for `--graph-execute-tools`.
+
+    The sandbox runs a recorded trajectory's captured shell commands for real
+    on the machine under test. Every bound here is a wall-clock ceiling on a
+    real workload's command, so they are operator-tunable rather than hard
+    constants -- a recorded trajectory that installs a toolchain or runs a test
+    suite legitimately exceeds any default we pick.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_GRAPH_TOOL_", extra="ignore")
+
+    COMMAND_TIMEOUT: float = Field(
+        default=900.0,
+        gt=0,
+        description=(
+            "Per-command wall-clock ceiling (seconds) for a recorded tool "
+            "command, used when the ToolNode declares no `timeout_s` of its "
+            "own. A command that trips it is reported as timed out (returncode "
+            "-1) and its session is recycled, so the ceiling FABRICATES a "
+            "measurement rather than merely truncating one -- which is why the "
+            "default is generous. 15 minutes covers the long tail of real "
+            "recorded agent trajectories (dependency installs, compiles, full "
+            "test suites) while still bounding a command that has genuinely "
+            "wedged on input it will never get. Lower it in CI to fail fast; "
+            "raise it for trajectories whose slowest recorded step is longer."
+        ),
+    )
+    CONTAINER_STOP_TIMEOUT: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "Wall-clock bound (seconds) on the `docker rm -f` teardown of a "
+            "per-trace tool container. Teardown runs on the benchmark's event "
+            "loop, so a daemon wedged on container filesystem removal must not "
+            "stall trace completion; past this bound the removal subprocess is "
+            "killed and the container is left to OS/daemon cleanup. Raise it on "
+            "hosts with slow storage drivers where containers otherwise leak."
+        ),
+    )
+    SESSION_CLOSE_GRACE: float = Field(
+        default=1.0,
+        gt=0,
+        description=(
+            "Grace period (seconds) a closing sandbox session shell gets to "
+            "exit after its stdin is closed, before the whole session process "
+            "GROUP is killed. Only spans a shell draining its own exit; a "
+            "timed-out command's still-running child is killed with the group "
+            "either way, so raising this delays teardown rather than sparing "
+            "any process."
+        ),
+    )
+    CONTAINER_START_TIMEOUT: float = Field(
+        default=30.0,
+        gt=0,
+        description=(
+            "Wall-clock bound (seconds) on each `docker run` call when "
+            "pre-starting the container pool at phase setup time. The image "
+            "is already pulled at this point so the bound only covers layer "
+            "decompression and container init. Raise it on hosts with slow "
+            "storage or heavily overprovisioned container runtimes."
         ),
     )
 
@@ -2055,6 +2121,10 @@ class _Environment(BaseSettings):
     GRAPH: _GraphSettings = Field(
         default_factory=_GraphSettings,
         description="Graph-mode runtime tunables (async-dataflow guardrails and adapter behavior)",
+    )
+    GRAPH_TOOL: _GraphToolSettings = Field(
+        default_factory=_GraphToolSettings,
+        description="Tool-execution sandbox tunables for --graph-execute-tools",
     )
     HTTP: _HTTPSettings = Field(
         default_factory=_HTTPSettings,

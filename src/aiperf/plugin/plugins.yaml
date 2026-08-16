@@ -1342,6 +1342,13 @@ console_exporter:
       Console exporter for experimental metrics. Displays metrics under development
       or evaluation that may change in future releases. Not loaded by default.
 
+  graph_metrics:
+    class: aiperf.exporters.console_graph_metrics_exporter:ConsoleGraphMetricsExporter
+    description: |
+      Console exporter for agent-graph-replay trace timing breakdown. Displays
+      aggregate and per-trace wall / model / tool / sandbox-setup time with LLM
+      and tool call counts. Self-disables on non-graph runs.
+
   http_trace:
     class: aiperf.exporters.http_trace_console_exporter:HttpTraceConsoleExporter
     description: |
@@ -2544,6 +2551,14 @@ graph_adapter:
       Dynamo agent-trace v1 segmented JSONL.gz directories (or single .gz/.jsonl).
     metadata:
       detection_priority: 100
+  mini_swe_agent_trace:
+    class: aiperf.dataset.graph.adapters.mini_swe_agent_trace.recording:AgentTraceRecordingAdapter
+    description: |
+      Agent Trace Replay recordings in the Agent Trace Replay (mini-swe-agent recording 1.x)
+      format:
+      a single .json/.json.gz trajectory or a directory of them.
+    metadata:
+      detection_priority: 90
 
 # =============================================================================
 # ZMQ Proxies

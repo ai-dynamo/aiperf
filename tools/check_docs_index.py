@@ -45,7 +45,7 @@ ALLOWLIST = {
 # Path prefixes (relative to docs/) whose contents are intentionally excluded
 # from the Fern site. Used for working artifacts like implementation plans
 # and design specs that live alongside docs/ but are not user-facing.
-ALLOWLIST_PREFIXES = ("superpowers/",)
+ALLOWLIST_PREFIXES = ("superpowers/", "specs/")
 
 
 def get_indexed_paths(index_path: Path) -> set[str]:

@@ -45,6 +45,7 @@ from aiperf.timing.strategies.agent_graph_replay import (
     _EDGE_DELAY_FIELDS,
     AgentGraphReplayStrategy,
 )
+from aiperf.timing.strategies.graph_warmup import GraphWarmupKind
 
 # Comfortably above the 30s IDLE_GAP_NO_DURATION_WARN_SECONDS default.
 _LONG_S = 1200.0
@@ -97,12 +98,16 @@ def _advise(
     ``traces`` defaults to the whole parsed corpus, mirroring ``execute_phase``'s
     fallback when ``setup_phase`` selected nothing.
     """
+    warmup_kind = (
+        GraphWarmupKind.BOUNDARY_SNAPSHOT if phase == CreditPhase.WARMUP else None
+    )
     strategy = AgentGraphReplayStrategy(
         config=CreditPhaseConfig(
             phase=phase, timing_mode=TimingMode.AGENT_GRAPH, **phase_kwargs
         ),
         credit_issuer=_Issuer(),
         parsed_graph=parsed,
+        warmup_kind=warmup_kind,
         register_observer=lambda obs: None,
         register_first_token_observer=lambda obs: None,
         unregister_observer=lambda obs: None,

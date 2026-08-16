@@ -110,6 +110,27 @@ class _TraceContext:
     # first-token-anchored incoming edges await these before computing their
     # firing gate.
     node_first_token_events: dict[str, asyncio.Event] = field(default_factory=dict)
+    # Per-command tool durations, accumulated across the trace's tool steps.
+    # Kept separate from request latency: a tool step is not an endpoint request.
+    tool_durations_s: list[float] = field(default_factory=list)
+    # Per-LLM-call wall durations (dispatch start → response complete), one entry
+    # per LlmNode fired. Measured with perf_counter_ns so it includes asyncio
+    # scheduling overhead but excludes any recorded edge delay (edge delays fire
+    # in _prepare_node_inputs before _execute is called).
+    llm_durations_s: list[float] = field(default_factory=list)
+    # Worker request latency per LLM call. This uses the records-pipeline
+    # request boundary and is therefore the raw duration for Agent Trace Replay's OSL
+    # normalization, rather than graph scheduling wall time.
+    llm_request_latency_s: list[float | None] = field(default_factory=list)
+    # Time to first token for each LLM call. Parallel to llm_durations_s; None
+    # when the response completed without a first-token event.
+    llm_ttft_s: list[float | None] = field(default_factory=list)
+    # Recorded output-token count per LlmNode.expected.output_tokens (target OSL).
+    # Parallel to llm_durations_s; None when the node has no expected annotation.
+    llm_target_osl: list[int | None] = field(default_factory=list)
+    # Observed output-token count from credit.output_sequence_length (server reply).
+    # Parallel to llm_durations_s; None when the worker did not report OSL.
+    llm_observed_osl: list[int | None] = field(default_factory=list)
 
     def first_token_event(self, node_id: str) -> asyncio.Event:
         """Lazy per-node first-token latch; single-loop access needs no lock."""

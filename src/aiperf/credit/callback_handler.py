@@ -34,11 +34,13 @@ if TYPE_CHECKING:
     from aiperf.timing.session_tree import SessionTreeRegistry
     from aiperf.timing.strategies.core import TimingStrategyProtocol
 
-# A graph-return observer receives ``(credit, error, cancelled)`` for every
+# A graph-return observer receives terminal worker timing for every
 # agent-graph credit return, fired UNCONDITIONALLY (independent of phase-send
 # gating). ``AgentGraphReplayStrategy._on_graph_return`` is the production
 # implementation (routing to the owning ``CreditDispatchAdapter.resolve``).
-GraphReturnObserver = Callable[["Credit", "str | None", bool], None]
+GraphReturnObserver = Callable[
+    ["Credit", "str | None", bool, "int | None", "int | None", "int | None"], None
+]
 
 # A graph-first-token observer receives the ``FirstToken`` message for every
 # agent-graph credit's TTFT event (post-TTFT first-token anchoring), fired
@@ -426,7 +428,12 @@ class CreditCallbackHandler:
             # release, and the drain event, hanging the phase on its drain wait.
             try:
                 self._graph_return_observer(
-                    credit, credit_return.error, credit_return.cancelled
+                    credit,
+                    credit_return.error,
+                    credit_return.cancelled,
+                    osl=credit_return.output_sequence_length,
+                    request_latency_ns=credit_return.request_latency_ns,
+                    ttft_ns=credit_return.ttft_ns,
                 )
             except Exception as exc:
                 _logger.warning(

@@ -12,6 +12,7 @@ from pytest import param
 
 from aiperf.config.flags._converter_dataset import _resolve_entries
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.flags.converter import convert_cli_to_aiperf
 
 
 def _loadgen(**kwargs: object) -> dict:
@@ -82,6 +83,14 @@ def test_file_dataset_no_entry_source_returns_none(tmp_path: Path) -> None:
     """A file dataset with no entry source at all resolves to None (the loader's default applies)."""
     cli = _file_cli(tmp_path)
     assert _resolve_entries(cli) is None
+
+
+def test_graph_tool_persistent_session_reaches_file_dataset(tmp_path: Path) -> None:
+    cli = _file_cli(tmp_path, graph_tool_persistent_session=True)
+
+    dataset = convert_cli_to_aiperf(cli).benchmark.datasets[0]
+
+    assert dataset.graph_tool_persistent_session is True
 
 
 def test_request_count_does_not_backfill_graph_dataset_entries(

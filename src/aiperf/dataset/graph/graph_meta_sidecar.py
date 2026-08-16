@@ -27,6 +27,8 @@ from aiperf.dataset.graph.codecs import (
 from aiperf.dataset.graph.graph_path_catalog import build_graph_path_catalog
 from aiperf.dataset.graph.models import (
     GraphRecord,
+    LlmNode,
+    NodeUnion,
     ParsedGraph,
     TraceRecord,
 )
@@ -58,11 +60,18 @@ def _strip_graph_node_content(graph: GraphRecord) -> GraphRecord:
     node ids/types, edges, and ``arrival_offset_us`` are
     preserved verbatim -- everything the schedule plane and the prefix-cache metric
     actually consume.
+
+    Non-``LlmNode`` steps (``ToolNode``) have no ``prompt`` field at all, and
+    every node struct is ``forbid_unknown_fields``, so they are metadata-stripped
+    only. Their recorded commands are small and the schedule plane never reads
+    them, so nothing else needs clearing.
     """
 
-    def _strip(node):
+    def _strip(node: NodeUnion) -> NodeUnion:
         metadata = node.metadata or {}
         new_metadata = {**metadata, "trie": {}} if "trie" in metadata else metadata
+        if not isinstance(node, LlmNode):
+            return msgspec.structs.replace(node, metadata=new_metadata)
         return msgspec.structs.replace(node, prompt=[], metadata=new_metadata)
 
     return msgspec.structs.replace(
@@ -95,12 +104,18 @@ def strip_replay_text(graph: ParsedGraph) -> ParsedGraph:
     stripped: list[TraceRecord] = [
         msgspec.structs.replace(t, replay_outputs={}) for t in graph.traces
     ]
+    stripped_warmup: list[TraceRecord] = [
+        msgspec.structs.replace(t, replay_outputs={}) for t in graph.warmup_traces
+    ]
     if graph.segment_pool is None:
-        return msgspec.structs.replace(graph, traces=stripped)
+        return msgspec.structs.replace(
+            graph, traces=stripped, warmup_traces=stripped_warmup
+        )
 
     return msgspec.structs.replace(
         graph,
         traces=stripped,
+        warmup_traces=stripped_warmup,
         segment_pool=SegmentPool(),
         graph=_strip_graph_node_content(graph.graph),
         graphs={k: _strip_graph_node_content(g) for k, g in graph.graphs.items()},

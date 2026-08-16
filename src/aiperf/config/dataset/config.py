@@ -362,6 +362,73 @@ class FileDataset(BaseConfig):
         ),
     ] = None
 
+    graph_execute_tools: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Execute an Agent Trace Replay recording's captured tool calls "
+            "for real instead of replaying their recorded durations, so the "
+            "benchmark measures this host's tool latency rather than the "
+            "capture host's. Only honored by graph adapters that lower tool "
+            "nodes (`mini_swe_agent_trace`). Cannot be combined with "
+            "`open_loop_replay`, which paces arrival against a timeline that "
+            "already contains the recorded tool durations.",
+        ),
+    ] = False
+
+    graph_use_family_sampling: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Inject Agent Trace Replay's per-family wire sampling into replayed "
+            "nodes.  When True (default) the `mini_swe_agent_trace` adapter overlays "
+            "benchmark-family-specific params (e.g. `temperature=0.0, "
+            "parallel_tool_calls=True` for swebench) so that replayed bodies match "
+            "what the source playback puts on the wire.  Set to False to send "
+            "no family-default sampling (useful when matching a custom playback "
+            "script that applies different overrides).",
+        ),
+    ] = True
+
+    graph_emit_warmup: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Prepend a warmup LlmNode to each Agent Trace Replay recording's "
+            "graph.  When True, each recording starts with a single-message "
+            "'Reply with exactly: ok' call (max 8 tokens, same tools as the first "
+            "recorded call, same family sampling) before the first real model turn. "
+            "Mirrors the per-recording warmup that the source playback emits.",
+        ),
+    ] = False
+
+    graph_tool_image: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Container image in which `graph_execute_tools` commands "
+            "run. None (default) selects the LOCAL backend: a shell rooted at a "
+            "per-trace workspace under the run's artifact directory. A non-empty "
+            "image selects the DOCKER backend, one container per trace instance "
+            "with that workspace bind-mounted and networking disabled. Ignored "
+            "when `graph_execute_tools` is off.",
+        ),
+    ] = None
+
+    graph_tool_persistent_session: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Docker sandbox execution mode when `graph_tool_image` is "
+            "set. False (default): fresh `docker exec` per command, matching Agent "
+            "Trace Replay's model — container startup cost lands in `sandbox_setup_s` and "
+            "per-command overhead includes the Docker daemon roundtrip. True: a "
+            "single persistent `docker exec -i bash` session is kept open for the "
+            "lifetime of the trace; per-command overhead is negligible (~37ms "
+            "amortised). Ignored when no image is set.",
+        ),
+    ] = False
+
     sampling: Annotated[
         DatasetSamplingStrategy,
         Field(

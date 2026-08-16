@@ -241,6 +241,7 @@ class GraphSegmentUnifiedBackingStore:
         capture: bool = False,
         extra_headers: dict[str, str] | None = None,
         endpoint_extra_applied: bool = False,
+        own_output_cap: bool = False,
     ) -> None:
         """Write one node's manifest envelope.
 
@@ -253,9 +254,11 @@ class GraphSegmentUnifiedBackingStore:
         the request HEADERS, never the body. ``endpoint_extra_applied`` marks a
         node whose adapter already folded the run's ``--extra-inputs`` into
         ``dispatch_overrides`` at parse, so the worker must NOT re-merge
-        ``endpoint.extra`` (the adapter-owned values win). All four are OMITTED
-        when unset, so envelopes for header-less / flag-less corpora (weka,
-        static native, dynamo) stay byte-identical.
+        ``endpoint.extra`` (the adapter-owned values win). ``own_output_cap``
+        marks a node whose adapter stamped an explicit ``max_tokens`` that the
+        worker must not override (e.g. Agent Trace Replay warmup with corpus-authored 8).
+        All are OMITTED when unset, so envelopes for header-less / flag-less
+        corpora (weka, static native, dynamo) stay byte-identical.
         """
         envelope: dict = {
             "handles": list(handles),
@@ -270,6 +273,8 @@ class GraphSegmentUnifiedBackingStore:
             envelope["extra_headers"] = dict(extra_headers)
         if endpoint_extra_applied:
             envelope["endpoint_extra_applied"] = True
+        if own_output_cap:
+            envelope["own_output_cap"] = True
         self.add_node_manifest(trace_id, node_ordinal, orjson.dumps(envelope))
 
     def _compute_build_stats(self) -> GraphStoreBuildStats:

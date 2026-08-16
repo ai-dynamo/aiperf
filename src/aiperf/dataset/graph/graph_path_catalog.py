@@ -39,7 +39,7 @@ def build_catalog_context(parsed: ParsedGraph) -> CatalogContext:
 
 def build_graph_path_catalog(parsed: ParsedGraph) -> dict[str, dict[str, int]]:
     """Build ``{trace_id: {node_id: node_ordinal}}`` for every trace."""
-    return {trace.id: _catalog_for_trace(parsed, trace) for trace in parsed.traces}
+    return {trace.id: _catalog_for_trace(parsed, trace) for trace in parsed.all_traces}
 
 
 def _catalog_for_trace(parsed: ParsedGraph, trace: TraceRecord) -> dict[str, int]:

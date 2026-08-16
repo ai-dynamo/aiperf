@@ -920,6 +920,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
             request_latency_ns=credit_context.request_latency_ns,
+            ttft_ns=credit_context.ttft_ns,
             inter_token_latency_ns=credit_context.inter_token_latency_ns,
             output_sequence_length=credit_context.output_sequence_length,
             worker_id=self.service_id,
@@ -1013,6 +1014,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
                 request_latency_ns=credit_context.request_latency_ns,
+                ttft_ns=credit_context.ttft_ns,
                 inter_token_latency_ns=credit_context.inter_token_latency_ns,
                 output_sequence_length=credit_context.output_sequence_length,
                 worker_id=self.service_id,
@@ -1353,6 +1355,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit_context.request_latency_ns = self._request_latency_ns_for_record(
             record, content_perf_ns
         )
+        credit_context.ttft_ns = self._ttft_ns_for_content(record, content_perf_ns)
         credit_context.output_sequence_length = (
             self._output_sequence_length_for_responses(parsed_responses)
         )
@@ -1387,6 +1390,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if final_response_perf_ns < record.start_perf_ns:
             return None
         return final_response_perf_ns - record.start_perf_ns
+
+    def _ttft_ns_for_content(
+        self, record: RequestRecord, content_perf_ns: list[int]
+    ) -> int | None:
+        """Return the first meaningful-content latency used for Agent Trace Replay replay."""
+        if not content_perf_ns or content_perf_ns[0] < record.start_perf_ns:
+            return None
+        return content_perf_ns[0] - record.start_perf_ns
 
     def _output_sequence_length_for_responses(
         self, parsed_responses: list[ParsedResponse]
@@ -1639,11 +1650,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                             envelope.get("endpoint_extra_applied")
                         ),
                     )
+                    cache_bust_target = (
+                        CacheBustTarget.NONE
+                        if envelope.get("disable_cache_bust")
+                        else endpoint.cache_bust
+                    )
                     stamp_cache_bust_marker(
                         payload,
                         benchmark_id=self.run.benchmark_id,
                         trace_instance_id=credit.trace_id,
-                        target=endpoint.cache_bust,
+                        target=cache_bust_target,
+                        scope=endpoint.cache_bust_scope,
                     )
                     request_info = self._build_graph_request_info(
                         credit_context,
@@ -1711,6 +1728,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self._send_inference_result_message(record)
         if record.error is not None:
             credit_context.error = record.error
+        else:
+            self._populate_response_metrics(credit_context, record)
         return
 
     def _graph_capture_value(

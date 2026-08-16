@@ -43,6 +43,7 @@ class _FakeCredit:
     turn_index: int
     trace_id: str
     node_ordinal: int
+    output_sequence_length: int | None = None
 
 
 @dataclass
@@ -113,7 +114,7 @@ async def test_accepted_issue_mints_trajectory_corr_and_resolves() -> None:
         error=None,
         cancelled=False,
     )
-    assert isinstance(await task, str)
+    assert isinstance(await task, tuple)
 
 
 def test_refusal_error_is_a_dispatch_error_subclass() -> None:

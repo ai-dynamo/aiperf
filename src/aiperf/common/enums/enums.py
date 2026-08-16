@@ -247,6 +247,13 @@ class CacheBustTarget(CaseInsensitiveStrEnum):
     WARMUP_ISOLATION_FIRST_TURN = "warmup_isolation_first_turn"
 
 
+class CacheBustScope(CaseInsensitiveStrEnum):
+    """How broadly an agent-graph cache-bust marker is shared."""
+
+    TRACE = "trace"
+    RUN = "run"
+
+
 class PromptCorpus(CaseInsensitiveStrEnum):
     """Corpus used for synthetic prompt text generation."""
 

@@ -40,11 +40,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import statistics
 import uuid
 from collections import deque
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.clock import Clock, RealClock
@@ -55,16 +58,25 @@ from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.dataset.graph.models import (
     START_NODE_ID,
     StaticEdge,
+    ToolNode,
     resolve_trace_graph,
 )
 from aiperf.graph.credit_dispatch_adapter import (
     CreditDispatchAdapter,
     CreditIssueRefusedError,
 )
-from aiperf.graph.executor import TraceExecutor
+from aiperf.graph.executor import TraceExecutor, TraceResult
+from aiperf.graph.sandbox.protocols import ToolSandbox
+from aiperf.graph.sandbox.provider import (
+    DockerSandboxProvider,
+    LocalSandboxProvider,
+    SandboxProvider,
+)
+from aiperf.graph.tool_dispatch.sandbox_dispatcher import SandboxToolDispatcher
 from aiperf.timing.agent_graph_trace_view import parsed_for_trace
 from aiperf.timing.strategies.graph_trace_planner import GraphTracePlanner
 from aiperf.timing.strategies.graph_warmup import (
+    GraphWarmupKind,
     first_token_sources,
     rewrite_for_warmup,
 )
@@ -87,6 +99,138 @@ if TYPE_CHECKING:
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
 _logger = AIPerfLogger(__name__)
+
+# Per-trace-instance tool sandbox workspaces, rooted in the run's artifact dir.
+GRAPH_TOOL_WORKSPACE_DIRNAME = "graph-tool-workspaces"
+
+
+def _write_tool_time_artifact(
+    path: Path,
+    *,
+    durations: list[float],
+    traces: int,
+    backend: str,
+) -> None:
+    """Write per-run tool-time summary to a JSON artifact.
+
+    Called from ``AgentGraphReplayStrategy.report_tool_execution`` so the
+    headline measurement is available to analysis scripts without grepping
+    logs. Only written when ``artifact_dir`` is set and tool nodes ran.
+
+    The artifact name ``profile_export_graph_tool_time.json`` mirrors the
+    ``profile_export_*`` family already written by the exporter manager.
+    """
+    if not durations:
+        return
+    sorted_d = sorted(durations)
+    payload = {
+        "command_count": len(durations),
+        "trace_count": traces,
+        "backend": backend,
+        "total_s": sum(durations),
+        "mean_s": statistics.mean(durations),
+        "median_s": statistics.median(sorted_d),
+        "max_s": sorted_d[-1],
+        "durations_s": durations,
+    }
+    path.write_bytes(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
+
+
+_OSL_WARNING_THRESHOLD = 0.5  # observed < 50% of target triggers an OSL warning
+
+
+def _compute_normalized_model_s(
+    durations: list[float],
+    ttft_s: list[float | None],
+    target_osl: list[int | None],
+    observed_osl: list[int | None],
+) -> tuple[float | None, int]:
+    """Return (normalized_model_s, low_osl_call_count).
+
+    Matches Agent Trace Replay's per-call normalization:
+        observed_decode_tokens = max(observed_osl - 1, 1)
+        target_decode_tokens = max(target_osl - 1, 0)
+        raw_generation = max(raw_duration - ttft, 0)
+        normalized = raw_duration - raw_generation + (
+            raw_generation / observed_decode_tokens * target_decode_tokens
+        )
+
+    Returns None for normalized_model_s when no call has both target and
+    observed OSL plus TTFT. Calls with missing timing or OSL fall back to raw
+    duration.
+    """
+    if not durations or any(
+        len(series) != len(durations) for series in (ttft_s, target_osl, observed_osl)
+    ):
+        return None, 0
+    normalized_total = 0.0
+    has_any = False
+    low_osl = 0
+    for dur, ttft, tgt, obs in zip(
+        durations, ttft_s, target_osl, observed_osl, strict=True
+    ):
+        if ttft is not None and tgt is not None and obs:
+            has_any = True
+            raw_generation_s = max(dur - ttft, 0.0)
+            observed_decode_tokens = max(obs - 1, 1)
+            target_decode_tokens = max(tgt - 1, 0)
+            normalized_total += (
+                dur
+                - raw_generation_s
+                + (raw_generation_s / observed_decode_tokens * target_decode_tokens)
+            )
+            if obs < _OSL_WARNING_THRESHOLD * tgt:
+                low_osl += 1
+        else:
+            normalized_total += dur
+    return (normalized_total if has_any else None), low_osl
+
+
+def _write_trace_summary_artifact(
+    path: Path,
+    *,
+    summaries: list[dict],
+) -> None:
+    """Write per-trace wall-time breakdown to a JSON artifact.
+
+    Mirrors the Agent Trace Replay ``summary`` block:
+    ``total_s / model_s / tool_s / model_time_fraction / tool_time_fraction /
+    model_calls / tool_calls`` for each trace plus an aggregate section.
+    Fractions are in [0, 1], matching Agent Trace Replay's ``model_time_fraction`` field.
+    When OSL data is available, also includes ``normalized_model_s`` and
+    ``total_osl_warnings`` in the aggregate block.
+    """
+    if not summaries:
+        return
+    agg_total = sum(s["total_s"] for s in summaries)
+    agg_model = sum(s["model_s"] for s in summaries)
+    agg_tool = sum(s["tool_s"] for s in summaries)
+    agg_model_calls = sum(s["model_calls"] for s in summaries)
+    agg_tool_calls = sum(s["tool_calls"] for s in summaries)
+    norm_values = [
+        s["normalized_model_s"]
+        for s in summaries
+        if s.get("normalized_model_s") is not None
+    ]
+    agg_normalized = sum(norm_values) if norm_values else None
+    agg_osl_warnings = sum(s.get("low_osl_model_calls", 0) for s in summaries)
+    payload = {
+        "trace_count": len(summaries),
+        "aggregate": {
+            "total_s": agg_total,
+            "model_s": agg_model,
+            "tool_s": agg_tool,
+            "model_time_fraction": agg_model / agg_total if agg_total > 0 else 0.0,
+            "tool_time_fraction": agg_tool / agg_total if agg_total > 0 else 0.0,
+            "model_calls": agg_model_calls,
+            "tool_calls": agg_tool_calls,
+            "normalized_model_s": agg_normalized,
+            "total_osl_warnings": agg_osl_warnings,
+        },
+        "traces": summaries,
+    }
+    path.write_bytes(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
+
 
 # Every ``StaticEdge`` field the executor can turn into a firing gate
 # (``TraceExecutor._compute_firing_gate_us``). Kept as ONE list so a new gate
@@ -159,6 +303,9 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
         replay_speedup: float | None = None,
         open_loop_replay: bool = True,
         open_loop_strict: bool = False,
+        graph_tool_image: str | None = None,
+        graph_tool_persistent_session: bool = False,
+        warmup_kind: GraphWarmupKind | None = None,
         clock: Clock | None = None,
     ) -> None:
         """Initialize the graph trace runner.
@@ -223,6 +370,12 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
                 the dispatch duplication report: when lanes recycle (factor > 1)
                 with cache-bust OFF (``None`` / ``NONE``), clones collide on
                 identical prefixes, so the report warns; ON it stays quiet.
+            graph_tool_image: Resolved ``--graph-tool-image``. Selects the
+                backend for REAL tool execution: ``None``/empty runs each
+                trace's recorded commands in a local shell, a non-empty image
+                runs them in a per-trace container from that image. Read only
+                when the graph carries ``ToolNode`` steps, so a run without
+                ``--graph-execute-tools`` never touches a sandbox.
         """
         super().__init__(logger_name="AgentGraphReplayTiming")
         # Time source for BOTH replay pacing knobs this strategy owns: the
@@ -257,6 +410,39 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
         self._replay_speedup = replay_speedup or 1.0
         self._open_loop_replay = bool(open_loop_replay)
         self._open_loop_strict = bool(open_loop_strict)
+        # Tool-execution wiring. Scanned ONCE here rather than per instance: a
+        # graph either lowers ToolNodes (--graph-execute-tools) or it does not,
+        # and the answer decides whether a run ever touches a sandbox at all.
+        # Every graph is scanned, not just ``parsed.graph``, because a
+        # multi-graph workload resolves each trace to its own record.
+        self._graph_tool_image = (graph_tool_image or "").strip() or None
+        self._graph_tool_persistent_session = graph_tool_persistent_session
+        self._warmup_kind = warmup_kind
+        self._has_tool_nodes = any(
+            isinstance(node, ToolNode)
+            for graph in (parsed_graph.graph, *parsed_graph.graphs.values())
+            for node in graph.nodes.values()
+        )
+        # Per-trace-instance sandbox workspaces live under the run's artifacts so
+        # they are discoverable after the run and cleaned up with it, instead of
+        # accumulating in a temp dir nothing owns.
+        self._tool_workspace_root = (
+            (config.artifact_dir or Path.cwd()) / GRAPH_TOOL_WORKSPACE_DIRNAME
+            if self._has_tool_nodes
+            else None
+        )
+        self._sandbox_provider: SandboxProvider | None = self._build_sandbox_provider(
+            parsed_graph
+        )
+        # Accumulated per-command tool wall time, the headline measurement this
+        # mode exists to produce. Kept on the strategy because a TraceResult is
+        # otherwise discarded at the end of each instance.
+        self._tool_durations_s: list[float] = []
+        self._tool_traces = 0
+        # Per-trace breakdown records: {trace_id, total_s, model_s, tool_s,
+        # model_calls, tool_calls}. Accumulated across all completed instances;
+        # written to profile_export_graph_trace_summary.json at phase teardown.
+        self._trace_summaries: list[dict] = []
         self._schedule_zero_unix_ms = self._find_schedule_zero(parsed_graph)
         self._schedule_anchor: float | None = None
         # Corpus selected once in ``setup_phase`` and reused by ``execute_phase``
@@ -599,6 +785,11 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
         # recorded terminal request failures aborts the run before profiling
         # (see :meth:`report_warmup_failures`).
         self._is_warmup_phase = bool(phase == CreditPhase.WARMUP)
+        if self._is_warmup_phase != (self._warmup_kind is not None):
+            raise RuntimeError(
+                f"warmup state mismatch: _is_warmup_phase={self._is_warmup_phase} "
+                f"but warmup_kind={self._warmup_kind!r} -- this is a construction bug"
+            )
         self._warmup_failure_count = 0
         self._warmup_failure_samples: list[str] = []
         # Human-readable samples for the traces counted in ``_errored_traces``,
@@ -925,6 +1116,8 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
                 list(self._parsed.traces)
             )
             self._validate_recorded_starts(self._selected_traces)
+        if self._sandbox_provider is not None:
+            await self._sandbox_provider.setup()
         self._register_observer(self._on_graph_return)
         self._register_first_token_observer(self._on_graph_first_token)
 
@@ -1026,7 +1219,14 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
         )
 
     def _on_graph_return(
-        self, credit: Credit, error: str | None, cancelled: bool
+        self,
+        credit: Credit,
+        error: str | None,
+        cancelled: bool,
+        *,
+        osl: int | None,
+        request_latency_ns: int | None,
+        ttft_ns: int | None,
     ) -> None:
         """Route one graph credit return to its owning per-trace adapter.
 
@@ -1055,7 +1255,14 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
                 )
             )
             return
-        adapter.resolve(credit, error, cancelled)
+        adapter.resolve(
+            credit,
+            error,
+            cancelled,
+            osl=osl,
+            request_latency_ns=request_latency_ns,
+            ttft_ns=ttft_ns,
+        )
 
     def _on_graph_first_token(self, first_token: FirstToken) -> None:
         """Route one graph credit's first-token event to its owning adapter.
@@ -1367,7 +1574,7 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
           this release (both real stampers,
           ``interval_order.build_interval_edges`` and
           ``snapshot_chop._chop_edges``, write ``StaticEdge``s), and there is no
-          graph-IR authoring path either: ``graph_adapter`` registers only
+          agent-graph authoring path either: ``graph_adapter`` registers only
           ``dynamo_trace``. Scanned anyway because it is a decodable schema
           field and a firing gate the executor honors, so a future producer
           cannot make it invisible here;
@@ -1970,7 +2177,7 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
             parsed, run_trace = self._planner.graph_at_t_star(
                 trace,
                 plan,
-                is_warmup=self._is_warmup_phase,
+                warmup=self._warmup_kind,
                 burst_phase_starts=self._burst_phase_starts,
             )
             if not self._is_warmup_phase:
@@ -2005,6 +2212,7 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
             executor = TraceExecutor(
                 parsed,
                 credit_issuer=adapter,
+                tool_dispatcher=self._build_tool_dispatcher(instance_id, trace),
                 compress_edge_delays=False,
                 # Every live stream's frontier turn must fire at its ABSOLUTE
                 # offset from t*, not relative to when
@@ -2017,7 +2225,7 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
                 # start, which IS the run-start.
                 absolute_start_offsets=True,
             )
-            await executor.run(run_trace)
+            self._record_trace_timing(await executor.run(run_trace))
         except Exception as exc:
             refusal = _leaf_credit_refusal(exc)
             if refusal is not None:
@@ -2056,6 +2264,217 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
                 self._parent_done.add(instance_id)
                 self._release_adapter_if_idle(instance_id)
         return refused
+
+    def _build_tool_dispatcher(
+        self, instance_id: str, trace: TraceRecord
+    ) -> SandboxToolDispatcher | None:
+        """Build this instance's tool dispatcher, or ``None`` for a tool-free graph.
+
+        ONE dispatcher per trace instance because ``SandboxToolDispatcher``
+        holds a single sandbox and refuses two traces at once. The sandbox
+        itself is produced by the phase-level ``_sandbox_provider``, whose
+        ``setup()`` already ran before timing began (images pre-pulled,
+        pools warmed). Returns ``None`` when the graph carries no
+        ``ToolNode``, so a plain replay never constructs a sandbox.
+        """
+        if not self._has_tool_nodes:
+            return None
+
+        assert self._sandbox_provider is not None
+
+        def _factory(trace_id: str) -> ToolSandbox:
+            # `trace_id` is deliberately unused: the workspace is keyed by
+            # INSTANCE so two concurrent replays of the same template trace
+            # cannot collide.
+            del trace_id
+            return self._sandbox_provider.make_sandbox(instance_id, trace)  # type: ignore[union-attr]
+
+        return SandboxToolDispatcher(_factory)
+
+    def _build_sandbox_provider(
+        self, parsed_graph: ParsedGraph
+    ) -> SandboxProvider | None:
+        """Build the phase-level provider, or ``None`` for tool-free graphs.
+
+        Collects the full set of unique Docker images from the phase's traces
+        (per-trace override wins over global fallback) so ``DockerSandboxProvider``
+        can pre-pull all of them in one ``setup()`` call before timing starts.
+        Traces with no image (neither per-trace nor global) drive local execution
+        and don't contribute to the image set. The provider also keeps SWE-Bench
+        ``/testbed`` traces on per-trace containers so each starts from its image's
+        pristine checkout rather than a pooled trace's mutated filesystem.
+        """
+        if not self._has_tool_nodes:
+            return None
+
+        assert self._tool_workspace_root is not None
+
+        images: frozenset[str] = frozenset(
+            filter(
+                None,
+                (
+                    (trace.tool_sandbox.container if trace.tool_sandbox else None)
+                    or self._graph_tool_image
+                    for trace in parsed_graph.traces
+                ),
+            )
+        )
+
+        if images:
+            non_pooled_images = frozenset(
+                (trace.tool_sandbox.container or self._graph_tool_image)
+                for trace in parsed_graph.traces
+                if trace.tool_sandbox is not None
+                and trace.tool_sandbox.cwd == "/testbed"
+                and (trace.tool_sandbox.container or self._graph_tool_image) is not None
+            )
+            return DockerSandboxProvider(
+                images=images,
+                workspace_root=self._tool_workspace_root,
+                global_image=self._graph_tool_image,
+                persistent_session=self._graph_tool_persistent_session,
+                pool_size=self._config.concurrency,
+                non_pooled_images=non_pooled_images,
+            )
+        return LocalSandboxProvider(workspace_root=self._tool_workspace_root)
+
+    def _record_trace_timing(self, result: TraceResult) -> None:
+        """Fold one finished instance's timing data into the run totals.
+
+        Records per-trace breakdown (model time, tool time, sandbox setup time,
+        total wall time, call counts) into ``_trace_summaries`` for the JSON
+        artifact, and accumulates the flat tool-duration list for the existing
+        ``profile_export_graph_tool_time.json`` artifact.
+        """
+        model_s = sum(result.llm_durations_s)
+        tool_s = sum(result.tool_durations_s)
+        setup_s = result.sandbox_setup_s
+        total_s = result.trace_wall_s
+        model_calls = len(result.llm_durations_s)
+        tool_calls = len(result.tool_durations_s)
+        if len(result.llm_request_latency_s) == model_calls:
+            normalization_durations_s = [
+                request_latency_s
+                if request_latency_s is not None
+                else dispatch_duration_s
+                for dispatch_duration_s, request_latency_s in zip(
+                    result.llm_durations_s,
+                    result.llm_request_latency_s,
+                    strict=True,
+                )
+            ]
+            normalized_model_s, low_osl_calls = _compute_normalized_model_s(
+                normalization_durations_s,
+                result.llm_ttft_s,
+                result.llm_target_osl,
+                result.llm_observed_osl,
+            )
+        else:
+            normalized_model_s, low_osl_calls = None, 0
+        self._trace_summaries.append(
+            {
+                "trace_id": result.trace_id,
+                "total_s": total_s,
+                "model_s": model_s,
+                "tool_s": tool_s,
+                "sandbox_setup_s": setup_s,
+                "model_time_fraction": model_s / total_s if total_s > 0 else 0.0,
+                "tool_time_fraction": tool_s / total_s if total_s > 0 else 0.0,
+                "model_calls": model_calls,
+                "tool_calls": tool_calls,
+                "normalized_model_s": normalized_model_s,
+                "low_osl_model_calls": low_osl_calls,
+            }
+        )
+        if not result.tool_durations_s:
+            return
+        self._tool_durations_s.extend(result.tool_durations_s)
+        self._tool_traces += 1
+        count = len(result.tool_durations_s)
+        self.debug(
+            lambda tid=result.trace_id, n=count, t=tool_s: (
+                f"trace {tid!r} executed {n} tool command(s) in {t:.3f}s"
+            )
+        )
+
+    def report_tool_execution(self) -> None:
+        """Log this phase's aggregate tool wall time and write a JSON artifact.
+
+        Emitted at phase teardown. The aggregate is also written to
+        ``profile_export_graph_tool_time.json`` in ``artifact_dir`` so the
+        measurement survives outside the run log and is accessible to
+        analysis scripts without grepping.
+
+        Skipped for warmup phases to prevent a deferred warmup teardown from
+        clobbering the profiling phase's artifact (same file path).
+        """
+        if self._is_warmup_phase or not self._tool_durations_s:
+            return
+        backend = (
+            "docker:" + self._graph_tool_image if self._graph_tool_image else "local"
+        )
+        durations = sorted(self._tool_durations_s)
+        total = sum(durations)
+        mid = durations[len(durations) // 2]
+        self.info(
+            f"tool execution: {len(durations):,} commands across "
+            f"{self._tool_traces:,} traces, {total:.3f}s total, "
+            f"{total / len(durations):.3f}s mean, {mid:.3f}s median, "
+            f"{durations[-1]:.3f}s max "
+            f"(backend={backend})"
+        )
+        artifact_dir = getattr(self._config, "artifact_dir", None)
+        if artifact_dir is not None:
+            try:
+                _write_tool_time_artifact(
+                    Path(artifact_dir) / "profile_export_graph_tool_time.json",
+                    durations=list(self._tool_durations_s),
+                    traces=self._tool_traces,
+                    backend=backend,
+                )
+            except Exception as exc:
+                self.warning(
+                    lambda exc=exc: f"failed to write tool-time artifact: {exc!r}"
+                )
+
+    def report_trace_summary(self) -> None:
+        """Log per-trace wall-time breakdown and write a JSON artifact.
+
+        Emitted at phase teardown alongside ``report_tool_execution``. The
+        breakdown mirrors Agent Trace Replay's per-trace ``summary`` block:
+        total / model / tool wall time, fractions, and call counts.
+        Written to ``profile_export_graph_trace_summary.json``.
+
+        Skipped for warmup phases: warmup burst-replays only boundary turns at
+        zero edge delay, so its ``total_s`` ≈ ``model_s`` and the fractions are
+        semantically meaningless. Skipping also prevents a deferred warmup
+        teardown from clobbering the profiling phase's artifact.
+        """
+        if self._is_warmup_phase or not self._trace_summaries:
+            return
+        agg_total = sum(s["total_s"] for s in self._trace_summaries)
+        agg_model = sum(s["model_s"] for s in self._trace_summaries)
+        agg_tool = sum(s["tool_s"] for s in self._trace_summaries)
+        n = len(self._trace_summaries)
+        self.info(
+            f"trace summary: {n} trace(s), "
+            f"{agg_total:.3f}s total, "
+            f"{agg_model:.3f}s model ({agg_model / agg_total * 100:.1f}%), "
+            f"{agg_tool:.3f}s tool ({agg_tool / agg_total * 100:.1f}%)"
+            if agg_total > 0
+            else f"trace summary: {n} trace(s), 0.000s total"
+        )
+        artifact_dir = getattr(self._config, "artifact_dir", None)
+        if artifact_dir is not None:
+            try:
+                _write_trace_summary_artifact(
+                    Path(artifact_dir) / "profile_export_graph_trace_summary.json",
+                    summaries=self._trace_summaries,
+                )
+            except Exception as exc:
+                self.warning(
+                    lambda exc=exc: f"failed to write trace-summary artifact: {exc!r}"
+                )
 
     def _release_adapter_if_idle(self, instance_id: str) -> None:
         """Pop ``instance_id``'s adapter once its parent finished and it is idle.
@@ -2244,6 +2663,11 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
         live phase, so the slot is cleared only if OUR observer is still the
         one installed.
         """
+        # Before the sync teardown: the aggregate is the mode's headline
+        # measurement, so it must be reported even if a later teardown step
+        # raises.
+        self.report_tool_execution()
+        self.report_trace_summary()
         retained = list(self._adapters.values())
         self._adapters.clear()
         self._parent_done.clear()
@@ -2262,3 +2686,6 @@ class AgentGraphReplayStrategy(AIPerfLoggerMixin):
                 await self._credit_issuer.end_graph_trace(adapter.instance_id)
             except Exception as exc:
                 self.debug(lambda exc=exc: f"teardown trace-end failed: {exc!r}")
+        if self._sandbox_provider is not None:
+            with contextlib.suppress(Exception):
+                await self._sandbox_provider.teardown()

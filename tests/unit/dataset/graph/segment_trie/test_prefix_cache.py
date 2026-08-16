@@ -14,6 +14,7 @@ from aiperf.dataset.graph.adapters.dynamo.trace import from_dynamo_trace
 from aiperf.dataset.graph.models import (
     GraphRecord,
     LlmNode,
+    ToolNode,
     resolve_trace_graph,
 )
 from aiperf.dataset.graph.segment_trie.prefix_cache import (
@@ -310,3 +311,19 @@ class TestAdapterIntegration:
         assert by_trace, "per-trace prefix-cache map must not be empty"
         for counts in by_trace.values():
             assert all(0 <= h <= t for h, t in counts.values())
+
+    def test_tool_nodes_are_skipped_not_read(self) -> None:
+        """A ToolNode has no prefix-cache fields at all; extraction must skip it rather than AttributeError."""
+        graph = GraphRecord(
+            nodes={
+                "n0": LlmNode(
+                    prompt=["hi"],
+                    output="n0_out",
+                    theoretical_prefix_cache_hit_blocks=1,
+                    theoretical_prefix_cache_total_blocks=2,
+                ),
+                "t0": ToolNode(commands=["true"], output="t0_out"),
+            }
+        )
+
+        assert extract_prefix_cache_by_node(graph) == {"n0": [1, 2]}

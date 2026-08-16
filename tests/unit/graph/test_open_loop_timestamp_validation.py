@@ -23,10 +23,12 @@ from aiperf.dataset.graph.models import (
     ParsedGraph,
     TraceRecord,
 )
+from aiperf.graph.executor import TraceResult
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.strategies.agent_graph_replay import AgentGraphReplayStrategy
 from aiperf.timing.strategies.graph_trace_planner import GraphTracePlanner
+from aiperf.timing.strategies.graph_warmup import GraphWarmupKind
 
 
 class _Issuer:
@@ -94,6 +96,7 @@ def _strategy(
     *,
     open_loop: bool = True,
     phase: CreditPhase = CreditPhase.PROFILING,
+    warmup_kind: GraphWarmupKind | None = None,
     **phase_kwargs: Any,
 ) -> AgentGraphReplayStrategy:
     config = CreditPhaseConfig(
@@ -101,10 +104,15 @@ def _strategy(
         timing_mode=TimingMode.AGENT_GRAPH,
         **phase_kwargs,
     )
+    if warmup_kind is None:
+        warmup_kind = (
+            GraphWarmupKind.BOUNDARY_SNAPSHOT if phase == CreditPhase.WARMUP else None
+        )
     strategy = AgentGraphReplayStrategy(
         config=config,
         credit_issuer=_Issuer(),
         parsed_graph=parsed,
+        warmup_kind=warmup_kind,
         register_observer=lambda obs: None,
         register_first_token_observer=lambda obs: None,
         unregister_observer=lambda obs: None,
@@ -233,8 +241,9 @@ async def test_setup_selection_is_reused_by_execute_phase(monkeypatch) -> None:
     class _RecordingExecutor:
         def __init__(self, parsed: ParsedGraph, **kwargs: Any) -> None: ...
 
-        async def run(self, run_trace: Any) -> None:
+        async def run(self, run_trace: Any) -> TraceResult:
             ran.append(getattr(run_trace, "id", "?"))
+            return TraceResult(trace_id=getattr(run_trace, "id", "?"), channels={})
 
     monkeypatch.setattr(agr, "TraceExecutor", _RecordingExecutor)
     strategy._build_adapter = lambda trace_id, instance_id, **kw: object()  # type: ignore[method-assign]

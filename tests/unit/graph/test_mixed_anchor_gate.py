@@ -208,7 +208,7 @@ class _OrderedIssuer:
 
     async def dispatch(
         self, node: object, request: object, ctx: object, **kw: object
-    ) -> str:
+    ) -> tuple[str, int | None, float | None, float | None]:
         nid = request.node_id  # type: ignore[attr-defined]
         if nid == "c":
             await self.b_dispatched.wait()
@@ -216,7 +216,7 @@ class _OrderedIssuer:
                 await asyncio.sleep(0)
         if nid == "b":
             self.b_dispatched.set()
-        return f"ok::{nid}"
+        return f"ok::{nid}", None, None, None
 
 
 @pytest.mark.asyncio

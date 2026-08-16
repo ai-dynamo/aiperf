@@ -15,6 +15,7 @@ from aiperf.common.enums.baseline_enums import (
 from aiperf.common.enums.enums import (
     AIPerfLogLevel,
     AudioFormat,
+    CacheBustScope,
     CacheBustTarget,
     CommAddress,
     CommandResponseStatus,
@@ -101,6 +102,7 @@ __all__ = [
     "BasePydanticBackedStrEnum",
     "BasePydanticEnumInfo",
     "CacheBustTarget",
+    "CacheBustScope",
     "CaseInsensitiveStrEnum",
     "CommAddress",
     "CommandResponseStatus",

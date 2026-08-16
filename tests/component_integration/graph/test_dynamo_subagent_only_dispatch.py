@@ -43,7 +43,7 @@ def subagent_fixture(tmp_path: Path) -> Path:
 
 
 class _ScalarIssuer:
-    """Stub credit issuer returning the scalar placeholder ``CreditDispatchAdapter.dispatch`` really returns."""
+    """Stub credit issuer returning the graph dispatch result contract."""
 
     # That placeholder is `""`, the exact value that would unwind a list-reducer
     # channel if a placeholder write ever reached one.
@@ -51,9 +51,11 @@ class _ScalarIssuer:
     def __init__(self) -> None:
         self.n = 0
 
-    async def dispatch(self, node, request, ctx, **kw) -> str:
+    async def dispatch(
+        self, node, request, ctx, **kw
+    ) -> tuple[str, int | None, float | None, float | None]:
         self.n += 1
-        return ""
+        return "", None, None, None
 
 
 async def test_flat_parent_child_dispatches_through_executor(

@@ -91,18 +91,30 @@ async def _execute_llm(
         parent_node_id=producer_id,
     )
 
-    response = await self._credit_issuer.dispatch(
+    t_dispatch_us = self._loop_wall_us()
+    (
+        placeholder,
+        observed_osl,
+        request_latency_s,
+        ttft_s,
+    ) = await self._credit_issuer.dispatch(
         node,
         request,
         placement_ctx,
         first_token_cb=_make_first_token_stamp(ctx, producer_id, self._loop_wall_us),
     )
+    t_complete_us = self._loop_wall_us()
+    ctx.llm_durations_s.append((t_complete_us - t_dispatch_us) / 1_000_000)
+    ctx.llm_request_latency_s.append(request_latency_s)
+    ctx.llm_ttft_s.append(ttft_s)
+    ctx.llm_target_osl.append(node.expected.output_tokens if node.expected else None)
+    ctx.llm_observed_osl.append(observed_osl)
 
     # The credit path resolves a content-free placeholder string (content stays
     # worker-side). A messages-typed output channel needs a type-correct empty
     # instead: the channel's reducer runs over whatever is written, and
     # `add_messages` rejects non-list values.
-    value: Any = [] if channel_type is ChannelType.MESSAGES else response
+    value: Any = [] if channel_type is ChannelType.MESSAGES else placeholder
     writes: list[Write] = [Write(channel=node.output, value=value)]
     return NodeExecutionResult(writes=writes)
 

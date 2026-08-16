@@ -40,6 +40,7 @@ def merge_parsed_graphs(per_source: Iterable[ParsedGraph]) -> ParsedGraph:
     """
     seen_trace_ids: set[str] = set()
     merged_traces = []
+    merged_warmup_traces = []
     graphs: dict[str, GraphRecord] = {}
     merged_graph: GraphRecord | None = None
     # Segment trie: union every per-source pool's content-addressed
@@ -88,11 +89,22 @@ def merge_parsed_graphs(per_source: Iterable[ParsedGraph]) -> ParsedGraph:
             seen_trace_ids.add(trace.id)
             graphs[trace.id] = resolve_trace_graph(pg, trace)
             merged_traces.append(msgspec.structs.replace(trace, graph_ref=trace.id))
+        for trace in pg.warmup_traces:
+            if trace.id in seen_trace_ids:
+                raise GraphMergeError(
+                    f"duplicate warmup trace id across graph trace sources: {trace.id!r}"
+                )
+            seen_trace_ids.add(trace.id)
+            graphs[trace.id] = resolve_trace_graph(pg, trace)
+            merged_warmup_traces.append(
+                msgspec.structs.replace(trace, graph_ref=trace.id)
+            )
 
     if merged_graph is None or not merged_traces:
         raise GraphMergeError("graph merge produced zero ParsedGraph results")
 
     merged_traces.sort(key=lambda t: t.id)
+    merged_warmup_traces.sort(key=lambda t: t.id)
 
     merged_pool = (
         SegmentPool(_by_id=merged_segments) if merged_segments is not None else None
@@ -102,6 +114,7 @@ def merge_parsed_graphs(per_source: Iterable[ParsedGraph]) -> ParsedGraph:
         graph=merged_graph,
         graphs=graphs,
         traces=merged_traces,
+        warmup_traces=merged_warmup_traces,
         segment_pool=merged_pool,
     )
 

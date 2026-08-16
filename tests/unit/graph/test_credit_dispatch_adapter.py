@@ -44,6 +44,7 @@ class FakeCredit:
     turn_index: int
     trace_id: str
     node_ordinal: int
+    output_sequence_length: int | None = None
 
 
 class FalseIssuer:
@@ -139,17 +140,22 @@ async def test_dispatch_issues_credit_with_graph_addressing() -> None:
     assert turn.turn_index == 0
 
     adapter.resolve(_credit_for(turn), error=None, cancelled=False)
-    result = await task
-    assert isinstance(result, str)
+    result = await task  # type: ignore[assignment]
+    assert isinstance(result, tuple)
 
 
-async def test_dispatch_returns_placeholder_str_on_success() -> None:
-    """A resolved return completes the dispatch with the placeholder output string."""
+async def test_dispatch_returns_placeholder_and_osl_on_success() -> None:
+    """A resolved return completes dispatch with its placeholder and graph metrics."""
     issuer = FakeIssuer()
     adapter = _make_adapter(issuer, "t0", {"t0:0": 0})
     task = await _park(adapter, "t0:0")
     adapter.resolve(_credit_for(issuer.sent[0]), error=None, cancelled=False)
-    assert isinstance(await task, str)
+    result = await task
+    placeholder, observed_osl, request_latency_s, ttft_s = result
+    assert isinstance(placeholder, str)
+    assert observed_osl is None  # _credit_for does not set output_sequence_length
+    assert request_latency_s is None
+    assert ttft_s is None
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +193,7 @@ async def test_turns_carry_recorded_num_turns_and_root_corr() -> None:
 
     for turn, task in zip(issuer.sent, tasks, strict=True):
         adapter.resolve(_credit_for(turn), error=None, cancelled=False)
-        assert isinstance(await task, str)
+        assert isinstance(await task, tuple)
 
 
 async def test_unknown_runtime_scope_reads_non_final() -> None:
@@ -201,7 +207,7 @@ async def test_unknown_runtime_scope_reads_non_final() -> None:
     assert turn.is_final_turn is False
 
     adapter.resolve(_credit_for(turn), error=None, cancelled=False)
-    assert isinstance(await task, str)
+    assert isinstance(await task, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +238,7 @@ async def test_native_bare_node_ids_share_one_root_trajectory() -> None:
 
     for turn, task in zip(issuer.sent, tasks, strict=True):
         adapter.resolve(_credit_for(turn), error=None, cancelled=False)
-        assert isinstance(await task, str)
+        assert isinstance(await task, tuple)
 
 
 async def test_native_non_int_tail_id_uses_root_fallback() -> None:
@@ -248,7 +254,7 @@ async def test_native_non_int_tail_id_uses_root_fallback() -> None:
     assert turn.turn_index == 3  # catalog ordinal, NOT parsed from the id
 
     adapter.resolve(_credit_for(turn), error=None, cancelled=False)
-    assert isinstance(await task, str)
+    assert isinstance(await task, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -316,11 +322,11 @@ async def test_loop_refire_distinct_scopes_do_not_collide() -> None:
     adapter.resolve(_credit_for(issuer.sent[0]), error=None, cancelled=False)
     # First-resolved ordering: iteration 1 completes; iteration 2 stays parked
     # (its Future is unresolved, so it CANNOT have completed), NOT orphaned.
-    assert isinstance(await t1, str)
+    assert isinstance(await t1, tuple)
     assert not t2.done()
     assert adapter.inflight_count == 1
     adapter.resolve(_credit_for(issuer.sent[1]), error=None, cancelled=False)
-    assert isinstance(await t2, str)
+    assert isinstance(await t2, tuple)
 
 
 async def test_fork_branch_same_ordinal_does_not_collide() -> None:
@@ -336,8 +342,8 @@ async def test_fork_branch_same_ordinal_does_not_collide() -> None:
     assert adapter.inflight_count == 2
     adapter.resolve(_credit_for(issuer.sent[0]), error=None, cancelled=False)
     adapter.resolve(_credit_for(issuer.sent[1]), error=None, cancelled=False)
-    assert isinstance(await a, str)
-    assert isinstance(await b, str)
+    assert isinstance(await a, tuple)
+    assert isinstance(await b, tuple)
 
 
 async def test_duplicate_inflight_same_coordinate_raises() -> None:
@@ -350,7 +356,7 @@ async def test_duplicate_inflight_same_coordinate_raises() -> None:
     with pytest.raises(RuntimeError):
         await adapter.dispatch(FakeLlmNode(), _request("t0:0"), _ctx("t0", "t0:0"))
     adapter.resolve(_credit_for(issuer.sent[0]), error=None, cancelled=False)
-    assert isinstance(await first, str)
+    assert isinstance(await first, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +416,7 @@ async def test_on_drained_fires_when_last_waiter_resolves() -> None:
     assert drained == []  # not yet drained
 
     adapter.resolve(_credit_for(issuer.sent[0]), error=None, cancelled=False)
-    assert isinstance(await task, str)
+    assert isinstance(await task, tuple)
     assert drained == [adapter]  # fired exactly once, with self
     assert adapter.inflight_count == 0
 
@@ -437,8 +443,8 @@ async def test_on_drained_not_fired_while_another_dispatch_parked() -> None:
     assert adapter.inflight_count == 1
 
     adapter.resolve(_credit_for(issuer.sent[1]), error=None, cancelled=False)
-    assert isinstance(await t1, str)
-    assert isinstance(await t2, str)
+    assert isinstance(await t1, tuple)
+    assert isinstance(await t2, tuple)
     assert drained == [adapter]  # drained exactly once, when the set emptied
 
 

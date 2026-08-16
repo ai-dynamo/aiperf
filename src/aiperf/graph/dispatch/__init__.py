@@ -8,8 +8,10 @@ import time. The TraceExecutor calls `_import_dispatch_modules()` once at
 __init__ to trigger registration.
 
 Per-kind ownership:
-- llm.py   -> LlmNode (the sole dispatched kind; every live producer lowers
-              to LlmNode + StaticEdge)
+- llm.py   -> LlmNode (the dominant dispatched kind; every live LLM producer
+              lowers to LlmNode + StaticEdge)
+- tool.py  -> ToolNode (a recorded agent tool step; dispatched through the
+              executor's injected ToolDispatcher, never through the credit path)
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ def _import_dispatch_modules() -> None:
     # noqa: F401 — imports are for side effect.
     from aiperf.graph.dispatch import (  # noqa: F401
         llm,
+        tool,
     )
 
 

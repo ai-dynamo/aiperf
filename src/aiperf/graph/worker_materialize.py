@@ -24,11 +24,13 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import CacheBustScope, CacheBustTarget, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.timing.strategies.cache_bust import (
+    build_run_marker,
     build_trace_instance_marker,
     inject_marker_at_first_user_message,
+    inject_marker_at_system_message,
 )
 
 if TYPE_CHECKING:
@@ -235,7 +237,7 @@ def materialize_graph_request_unified(
     # bypassed for graph credits, so nothing else adds it.
     if default_model is not None:
         request.setdefault("model", default_model)
-    if phase == CreditPhase.WARMUP:
+    if phase == CreditPhase.WARMUP and not (envelope or {}).get("own_output_cap"):
         request.pop(_MODERN_TOKEN_FIELD, None)
         request[_LEGACY_TOKEN_FIELD] = Environment.GRAPH.WARMUP_MAX_OUTPUT_TOKENS
     return request
@@ -299,7 +301,7 @@ def materialize_graph_request_unified_bytes(
     # rejected for a missing ``model`` field.
     if default_model is not None:
         overrides.setdefault("model", default_model)
-    if phase == CreditPhase.WARMUP:
+    if phase == CreditPhase.WARMUP and not envelope.get("own_output_cap"):
         overrides.pop(_MODERN_TOKEN_FIELD, None)
         overrides[_LEGACY_TOKEN_FIELD] = Environment.GRAPH.WARMUP_MAX_OUTPUT_TOKENS
     apply_run_level_payload_options(
@@ -340,43 +342,57 @@ def stamp_cache_bust_marker(
     benchmark_id: str,
     trace_instance_id: str,
     target: CacheBustTarget,
+    scope: CacheBustScope = CacheBustScope.TRACE,
 ) -> None:
-    """Stamp the FIRST_TURN_PREFIX cache-bust marker on the wire payload.
+    """Stamp the cache-bust marker on the wire payload.
 
-    The marker is PER-TRACE-INSTANCE: every dispatch of one trace instance
-    (``credit.trace_id``, e.g. ``t-1::ab12`` -- including its nested/subagent
-    dispatches, which share the same ``trace_id``) carries the SAME marker, so
-    the instance's own conversation prefix stays consistent and prefix-caches
-    WITHIN the instance. Distinct instances get distinct markers (cross-instance
-    bust), and a recycled template (a fresh instance id like ``t-1::cd34``) mints a
-    fresh marker. Because the marker is deterministic from ``(benchmark_id,
-    trace_instance_id)``, the stateless worker needs no shared ledger to agree
-    across dispatches.
+    Two strategies, keyed by ``target``:
 
-    The marker is prepended to the first ``role == "user"`` message of the
-    materialized ``payload["messages"]`` -- the FIRST user turn only, idempotent,
-    in the ``[rid:<12hex>]\\n\\n`` prefix format of agentx's cache-bust path
-    (``inject_marker_at_first_user_message`` mirrors agentx
-    ``worker.py::_inject_marker_into_first_user_turn``).
+    **``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` — per-instance, system message.**
+    The marker is stable across all turns of one trace instance but distinct
+    for every other trace instance, preventing cross-trace KV-cache reuse.
+    Injected into the first ``role == "system"`` message.
 
-    No-op (payload byte-identical) when ``target`` is ``NONE`` -- the default --
-    so the verbatim-replay path is unchanged unless the run passes ``--cache-bust``.
+    **``FIRST_TURN_PREFIX`` / ``FIRST_TURN_SUFFIX`` — per-instance, first user message.**
+    Marker digests ``(benchmark_id, trace_instance_id)`` so every trace instance
+    gets a distinct marker (and a recycled template mints a fresh one), preventing
+    even within-run cross-instance sharing on the first user turn.  Injected into
+    the first ``role == "user"`` message.
+
+    No-op when ``target`` is ``NONE``.
 
     Args:
-        payload: The materialized request payload (mutated in place); its
-            ``messages`` list is the wire prefix.
-        benchmark_id: Run-scoped salt so two runs mint different markers.
-        trace_instance_id: The trace INSTANCE id (``credit.trace_id``); shared by
-            every dispatch of the instance, distinct per instance, fresh on recycle.
+        payload: The materialized request payload (mutated in place).
+        benchmark_id: Run-scoped salt.
+        trace_instance_id: Per-INSTANCE id (``credit.trace_id``).
         target: Cache-bust mode; ``NONE`` stamps nothing.
+        scope: Marker sharing scope for graph replay.
     """
     if target == CacheBustTarget.NONE:
         return
-    marker = build_trace_instance_marker(benchmark_id, trace_instance_id, target=target)
     messages = payload.get("messages")
-    if marker is None or not isinstance(messages, list):
+    if not isinstance(messages, list):
         return
-    inject_marker_at_first_user_message(messages, marker)
+    if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
+        marker = (
+            build_run_marker(benchmark_id, target=target)
+            if scope == CacheBustScope.RUN
+            else build_trace_instance_marker(
+                benchmark_id, trace_instance_id, target=target
+            )
+        )
+        if marker is None:
+            return
+        inject_marker_at_system_message(
+            messages, marker, is_prefix=(target == CacheBustTarget.SYSTEM_PREFIX)
+        )
+    else:
+        marker = build_trace_instance_marker(
+            benchmark_id, trace_instance_id, target=target
+        )
+        if marker is None:
+            return
+        inject_marker_at_first_user_message(messages, marker)
 
 
 def uniquify_dynamo_session_headers(
@@ -457,11 +473,13 @@ def apply_run_level_payload_options(
       SKIPPED when ``skip_endpoint_extra`` is set: an adapter that already folded
       the run's ``--extra-inputs`` into the node's ``dispatch_overrides`` at parse
       owns those keys, so re-merging here would clobber the adapter-owned values.
-    - ``stream_options.include_usage = True`` is forced when the FINAL stamped
-      ``stream`` is on AND ``endpoint.use_server_token_count`` is set, so
-      server-side token-count metrics still get usage on graph credits (it keys
-      on ``payload.get("stream")`` AFTER the stamp above). Any author-supplied
-      ``stream_options`` keys are preserved.
+    - ``stream_options.include_usage = True`` is forced whenever the FINAL
+      stamped ``stream`` is on (it keys on ``payload.get("stream")`` AFTER the
+      stamp above), regardless of ``endpoint.use_server_token_count``.  Graph
+      credits never go through client-side tokenization, so the server must
+      always report usage — we need ``completion_tokens`` for OSL normalization
+      even when the main-benchmark token-count path uses the client tokenizer.
+      Any author-supplied ``stream_options`` keys are preserved.
 
     Args:
         payload: The materialized request payload (mutated in place).
@@ -476,7 +494,7 @@ def apply_run_level_payload_options(
         for key, value in endpoint.extra or []:
             payload[key] = value
 
-    if payload.get("stream") and endpoint.use_server_token_count:
+    if payload.get("stream"):
         _ensure_include_usage(payload)
 
 

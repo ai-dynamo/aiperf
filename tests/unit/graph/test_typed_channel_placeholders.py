@@ -68,8 +68,8 @@ class _EchoIssuer:
 
     async def dispatch(
         self, node: Any, request: Any, ctx: Any, first_token_cb: Any = None
-    ) -> str:
-        return ""
+    ) -> tuple[str, int | None, float | None, float | None]:
+        return "", None, None, None
 
 
 class _FailFirstIssuer(_EchoIssuer):
@@ -77,10 +77,10 @@ class _FailFirstIssuer(_EchoIssuer):
 
     async def dispatch(
         self, node: Any, request: Any, ctx: Any, first_token_cb: Any = None
-    ) -> str:
+    ) -> tuple[str, int | None, float | None, float | None]:
         if request.node_id == "a":
             raise GraphDispatchError("simulated dispatch failure")
-        return ""
+        return "", None, None, None
 
 
 class _RefuseFirstIssuer(_EchoIssuer):
@@ -88,10 +88,10 @@ class _RefuseFirstIssuer(_EchoIssuer):
 
     async def dispatch(
         self, node: Any, request: Any, ctx: Any, first_token_cb: Any = None
-    ) -> str:
+    ) -> tuple[str, int | None, float | None, float | None]:
         if request.node_id == "a":
             raise CreditIssueRefusedError("refused by issuer stop gate")
-        return ""
+        return "", None, None, None
 
 
 @pytest.mark.parametrize(

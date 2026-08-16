@@ -102,3 +102,38 @@ def test_decode_wrong_element_type_reports_shape_and_remediation(
     assert "expected header dict and blob bytes" in message
     assert actual_type in message
     assert "rebuild the graph store" in message
+
+
+def test_strip_replay_text_survives_tool_nodes_when_a_pool_is_present() -> None:
+    """The pool-present strip path clears `LlmNode.prompt`; a ToolNode has no such field, so it must be metadata-stripped only."""
+    from aiperf.dataset.graph.graph_meta_sidecar import strip_replay_text
+    from aiperf.dataset.graph.models import LlmNode, ToolNode
+    from aiperf.dataset.graph.segment_trie.pool import SegmentPool
+
+    graph = GraphRecord(
+        nodes={
+            "n0": LlmNode(
+                prompt=["a very long prompt"],
+                output="n0_out",
+                metadata={"trie": {"prompt_segment_ids": ["s0"]}},
+            ),
+            "t0": ToolNode(
+                commands=["true"],
+                output="t0_out",
+                metadata={"trie": {"prompt_segment_ids": ["s1"]}},
+            ),
+        }
+    )
+    parsed = ParsedGraph(
+        graph=graph,
+        graphs={"t-1": graph},
+        traces=[TraceRecord(id="t-1")],
+        segment_pool=SegmentPool(),
+    )
+
+    stripped = strip_replay_text(parsed)
+
+    assert stripped.graph.nodes["n0"].prompt == []
+    tool = stripped.graph.nodes["t0"]
+    assert tool.commands == ["true"]
+    assert tool.metadata == {"trie": {}}

@@ -311,6 +311,16 @@
     ],
     [
       "C901",
+      "src/aiperf/dataset/graph/adapters/agent_trace/recording.py",
+      "_lower_recording"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/graph/merge.py",
+      "merge_parsed_graphs"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/graph/segment_trie/trie_content.py",
       "build_segment_trie"
     ],

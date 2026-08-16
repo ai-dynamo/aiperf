@@ -31,9 +31,9 @@ class _RecordingIssuer:
 
     async def dispatch(
         self, node: Any, request: Any, ctx: Any, first_token_cb: Any = None
-    ) -> str:
+    ) -> tuple[str, int | None, float | None, float | None]:
         self.node_ids.append(request.node_id)
-        return ""
+        return "", None, None, None
 
 
 @pytest.mark.asyncio

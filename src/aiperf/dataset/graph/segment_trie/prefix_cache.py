@@ -166,10 +166,17 @@ def extract_prefix_cache_by_node(
     reports on the wire, which is what the ``theoretical_prefix_cache``
     accumulator recovers from each record's ``x_correlation_id``. Returns ``{}``
     when no node was stamped (a non-trie graph, or a trace whose requests
-    carried no hash blocks).
+    carried no hash blocks). Non-``LlmNode`` steps (``ToolNode``) are skipped:
+    they issue no request, so they carry no counts.
     """
     out: dict[str, list[int]] = {}
     for node_id, node in top_graph.nodes.items():
+        # The counts are LlmNode-native fields. A graph may also carry ToolNode
+        # steps (Agent Trace Replay tool execution), which issue no request and therefore
+        # have no prefix-cache stamp at all -- reading the attribute off one
+        # would raise rather than yield "unstamped".
+        if not isinstance(node, LlmNode):
+            continue
         if (
             node.theoretical_prefix_cache_hit_blocks is None
             or node.theoretical_prefix_cache_total_blocks is None

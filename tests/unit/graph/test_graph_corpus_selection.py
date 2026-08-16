@@ -24,6 +24,7 @@ from aiperf.dataset.graph.models import (
     ParsedGraph,
     TraceRecord,
 )
+from aiperf.graph.executor import TraceResult
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.strategies import agent_graph_replay as agr
@@ -93,8 +94,9 @@ class _RecordingExecutor:
 
     def __init__(self, parsed: ParsedGraph, **kwargs: Any) -> None: ...
 
-    async def run(self, run_trace: Any) -> None:
+    async def run(self, run_trace: Any) -> TraceResult:
         type(self).ran.append(getattr(run_trace, "id", "?"))
+        return TraceResult(trace_id=getattr(run_trace, "id", "?"), channels={})
 
 
 def _traces(count: int) -> list[TraceRecord]:

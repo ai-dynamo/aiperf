@@ -85,6 +85,48 @@ class GraphParseContext:
     endpoint_extra: list[tuple[str, Any]] | None = None
     """Run ``--extra-inputs`` pairs folded into node overrides (dag_jsonl)."""
 
+    open_loop_replay: bool | None = None
+    """The run's RESOLVED open-loop replay setting (``--open-loop-replay``).
+
+    ``None`` = no trace-replay dataset on the run, so nothing told the adapter
+    how arrival is paced; ``True``/``False`` are the run's effective value.
+    Carried as a value rather than through :attr:`replay_only_knobs` because
+    that tuple is keyed on value-differs-from-default and open-loop replay
+    DEFAULTS TO TRUE -- the default-on case, which is the common one, would
+    never be named there, and a guard keyed on it could not fire at all.
+
+    Adapters whose semantics break under timeline pacing (Agent Trace Replay with real
+    tool execution: a host faster than the capture host gets held back to the
+    recorded schedule) read this and refuse."""
+
+    execute_tools: bool | None = None
+    """Whether the run asked for REAL tool execution (``--graph-execute-tools``).
+
+    ``None`` = unset, so a ctx-less parse keeps the adapter's own default (off).
+    This is the ONLY channel the flag can travel: the sole production parse
+    caller (``GraphStoreBuilder`` -> :func:`parse_graph_workload`) passes no
+    adapter kwargs, so an adapter-keyword-only setting is unreachable from
+    ``aiperf profile``."""
+
+    use_family_sampling: bool = True
+    """Whether to inject Agent Trace Replay's per-family wire sampling into replayed nodes.
+
+    ``True`` (default): apply the family-specific sampling table from
+    ``AGENT_TRACE_FAMILY_SAMPLING`` in the mini_swe_agent_trace adapter (e.g. ``temperature=0.0,
+    parallel_tool_calls=True`` for swebench).  ``False``: send no family-default
+    sampling, leaving nodes with only what the recording itself carries
+    (or ``--use-recorded-sampling``).  Controlled via
+    ``--[no-]graph-use-family-sampling``."""
+
+    emit_warmup: bool = False
+    """Whether to prepend a warmup LlmNode to each Agent Trace Replay recording's graph.
+
+    When ``True``, each recording graph starts with a single-message
+    ``"Reply with exactly: ok"`` call (max 8 tokens, same tools as the first
+    recorded call, same family sampling) before the first real model turn.
+    This mirrors the per-recording warmup Agent Trace Replay's own playback emits.
+    Controlled via ``--graph-emit-warmup``."""
+
     replay_only_knobs: tuple[str, ...] = ()
     """CLI flags the run set that only the linear trace replay loaders consume.
 

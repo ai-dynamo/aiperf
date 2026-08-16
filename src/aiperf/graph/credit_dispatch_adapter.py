@@ -256,13 +256,15 @@ class CreditDispatchAdapter:
         ctx: PlacementContext,
         first_token_cb: Callable[[], None] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> tuple[str, int | None, float | None, float | None]:
         """Issue a graph credit for ``node`` and await its correlated return.
 
         Tolerates and ignores extra keyword arguments from the LLM dispatch
-        path. Returns a placeholder ``str`` on a normal return; raises on
-        cancel / error / timeout so the executor coroutine unwinds rather than
-        hangs.
+        path. Returns ``(placeholder, observed_osl, request_latency_s,
+        ttft_s)`` on a normal return, where ``observed_osl`` is
+        ``credit_return.output_sequence_length`` (None when the worker did not
+        report it). Raises on cancel / error / timeout so the executor coroutine
+        unwinds rather than hangs.
 
         ``first_token_cb`` (optional): a zero-arg callable parked under this
         dispatch's waiter key and invoked AT MOST ONCE by :meth:`on_first_token`
@@ -287,7 +289,9 @@ class CreditDispatchAdapter:
         agent_depth, parent_correlation_id = self._dag_identity(node_id)
 
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[str] = loop.create_future()
+        fut: asyncio.Future[tuple[str, int | None, float | None, float | None]] = (
+            loop.create_future()
+        )
         self._waiters[key] = fut
         if first_token_cb is not None:
             self._first_token_cbs[key] = first_token_cb
@@ -336,7 +340,16 @@ class CreditDispatchAdapter:
             self._waiters.pop(key, None)
             self._first_token_cbs.pop(key, None)
 
-    def resolve(self, credit: Credit, error: str | None, cancelled: bool) -> None:
+    def resolve(
+        self,
+        credit: Credit,
+        error: str | None,
+        cancelled: bool,
+        *,
+        osl: int | None = None,
+        request_latency_ns: int | None = None,
+        ttft_ns: int | None = None,
+    ) -> None:
         """Resolve (or reject) the Future parked for ``credit``'s correlation key.
 
         Driven by ``CreditCallbackHandler``'s unconditional graph-return hook.
@@ -387,7 +400,16 @@ class CreditDispatchAdapter:
                     GraphDispatchError("graph dispatch cancelled by worker return")
                 )
             else:
-                fut.set_result(_PLACEHOLDER)
+                fut.set_result(
+                    (
+                        _PLACEHOLDER,
+                        osl,
+                        request_latency_ns / 1e9
+                        if request_latency_ns is not None
+                        else None,
+                        ttft_ns / 1e9 if ttft_ns is not None else None,
+                    )
+                )
         finally:
             if self._on_drained is not None and not self._waiters:
                 self._on_drained(self)

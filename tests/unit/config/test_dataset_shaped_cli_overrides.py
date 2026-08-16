@@ -69,6 +69,18 @@ def test_trace_idle_gap_cap_cli_flag_overlays_yaml_dataset(
     assert _dataset(cfg).trace_idle_gap_cap_seconds == 5.0
 
 
+def test_graph_tool_persistent_session_cli_flag_overlays_yaml_dataset(
+    yaml_config: pathlib.Path,
+) -> None:
+    user = CLIConfig(
+        **CLIConfig(graph_tool_persistent_session=True).model_dump(exclude_unset=True)
+    )
+
+    cfg = resolve_config(user, yaml_config)
+
+    assert _dataset(cfg).graph_tool_persistent_session is True
+
+
 def test_dataset_shaped_flags_unset_leave_yaml_untouched(
     yaml_config: pathlib.Path,
 ) -> None:

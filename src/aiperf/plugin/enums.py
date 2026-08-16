@@ -67,7 +67,7 @@ PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "Publi
 
 GraphAdapterTypeStr: TypeAlias = str
 GraphAdapterType = plugins.create_enum(PluginType.GRAPH_ADAPTER, "GraphAdapterType", module=__name__)
-"""Dynamic enum for graph adapter. Example: GraphAdapterType.DYNAMO_TRACE"""
+"""Dynamic enum for graph adapter. Example: GraphAdapterType.DYNAMO_TRACE, GraphAdapterType.MINI_SWE_AGENT_TRACE"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)

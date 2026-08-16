@@ -80,8 +80,13 @@ def _build_prompts(cli: CLIConfig) -> dict[str, Any]:
         prompts["block_size"] = cli.prompt_input_tokens_block_size
     if "prompt_batch_size" in s:
         prompts["batch_size"] = cli.prompt_batch_size
-    if "cache_bust" in s:
-        prompts["cache_bust"] = {"target": cli.cache_bust}
+    if "cache_bust" in s or "cache_bust_scope" in s:
+        cache_bust = {}
+        if "cache_bust" in s:
+            cache_bust["target"] = cli.cache_bust
+        if "cache_bust_scope" in s:
+            cache_bust["scope"] = cli.cache_bust_scope
+        prompts["cache_bust"] = cache_bust
     if "prompt_corpus" in s and cli.prompt_corpus is not None:
         prompts["corpus"] = cli.prompt_corpus
     return prompts
@@ -273,6 +278,11 @@ _VERBATIM_DATASET_FIELDS = (
     ("open_loop_strict", "open_loop_strict", False),
     ("omit_kv_hints", "omit_kv_hints", False),
     ("force_min_tokens", "force_min_tokens", False),
+    ("graph_execute_tools", "graph_execute_tools", False),
+    ("graph_tool_image", "graph_tool_image", False),
+    ("graph_tool_persistent_session", "graph_tool_persistent_session", False),
+    ("graph_use_family_sampling", "graph_use_family_sampling", False),
+    ("graph_emit_warmup", "graph_emit_warmup", False),
 )
 
 
@@ -1137,5 +1147,10 @@ def _apply_corpus_and_cache_bust(d: dict[str, Any], cli: CLIConfig) -> None:
             prompts = {}
             d["prompts"] = prompts
         prompts["corpus"] = cli.prompt_corpus
-    if "cache_bust" in s:
-        d["cache_bust"] = {"target": cli.cache_bust}
+    if "cache_bust" in s or "cache_bust_scope" in s:
+        cache_bust = {}
+        if "cache_bust" in s:
+            cache_bust["target"] = cli.cache_bust
+        if "cache_bust_scope" in s:
+            cache_bust["scope"] = cli.cache_bust_scope
+        d["cache_bust"] = cache_bust

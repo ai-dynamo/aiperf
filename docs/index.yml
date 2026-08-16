@@ -266,6 +266,8 @@ navigation:
       path: reference/graph-worker-materialization.md
     - page: Agent Graph Timestamp Replay Specification
       path: reference/graph-timestamp-replay-spec.md
+    - page: Agent Trace Replay
+      path: reference/graph-agent-trace-replay.md
     - page: Graph Runtime Troubleshooting
       path: reference/graph-runtime-troubleshooting.md
 

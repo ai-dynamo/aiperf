@@ -25,6 +25,7 @@ from aiperf.timing.strategies.graph_trace_planner import (
     GraphTracePlanner,
     seed_for_draw_pass,
 )
+from aiperf.timing.strategies.graph_warmup import GraphWarmupKind
 
 SEED = 42
 DYNAMO_TRACE = (
@@ -111,7 +112,7 @@ def test_zero_window_yields_identity_rewrite(parsed) -> None:
     trace = parsed.traces[0]
     plan = planner.plan_for_lane(trace, 0)
     run_parsed, run_trace = planner.graph_at_t_star(
-        trace, plan, is_warmup=False, burst_phase_starts=False
+        trace, plan, warmup=None, burst_phase_starts=False
     )
 
     assert run_trace is trace
@@ -170,10 +171,10 @@ def test_zero_window_burst_collapses_leading_start_offsets() -> None:
     plan = planner.plan_for_lane(trace, 0)
 
     plain, _ = planner.graph_at_t_star(
-        trace, plan, is_warmup=False, burst_phase_starts=False
+        trace, plan, warmup=None, burst_phase_starts=False
     )
     burst, _ = planner.graph_at_t_star(
-        trace, plan, is_warmup=False, burst_phase_starts=True
+        trace, plan, warmup=None, burst_phase_starts=True
     )
 
     # Guard: the graph must actually carry an offset, else this proves nothing.
@@ -198,7 +199,7 @@ def test_zero_window_without_burst_is_still_identity() -> None:
     run_parsed, _ = planner.graph_at_t_star(
         trace,
         planner.plan_for_lane(trace, 0),
-        is_warmup=False,
+        warmup=None,
         burst_phase_starts=False,
     )
 
@@ -210,7 +211,10 @@ def test_zero_window_warmup_graph_is_empty(parsed) -> None:
     planner = make_planner(parsed)
     trace = parsed.traces[0]
     run_parsed, _ = planner.graph_at_t_star(
-        trace, planner.plan_for_lane(trace, 0), is_warmup=True, burst_phase_starts=False
+        trace,
+        planner.plan_for_lane(trace, 0),
+        warmup=GraphWarmupKind.BOUNDARY_SNAPSHOT,
+        burst_phase_starts=False,
     )
 
     assert run_parsed.graph.nodes == {}

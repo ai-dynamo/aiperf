@@ -32,6 +32,7 @@ from aiperf.timing.request_cancellation import RequestCancellationConfig
 if TYPE_CHECKING:
     from aiperf.config.phases import PhaseConfig
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.dataset.graph.models import ParsedGraph
 
 
 _logger = AIPerfLogger(__name__)
@@ -151,12 +152,23 @@ class TimingConfig(AIPerfBaseModel):
     )
 
     @classmethod
-    def from_run(cls, run: BenchmarkRun) -> TimingConfig:
+    def from_run(
+        cls,
+        run: BenchmarkRun,
+        *,
+        parsed_graph: ParsedGraph | None = None,
+    ) -> TimingConfig:
         """Build ordered list of credit-phase configs from a ``BenchmarkRun``.
 
         Preserves the ordered ``cfg.phases`` list. Each executable phase gets
         stable identity metadata. AGENTIC_REPLAY replaces declared warmup phases
         with its synthesized trajectory warmup.
+
+        ``parsed_graph``, when supplied, is the built corpus the run will
+        actually replay. It is the ONLY source of truth for corpus-supplied
+        warmup: a call without it (the pre-configure construction in
+        ``TimingManager.__init__``) carries no corpus warmup phase and is
+        re-resolved once the sidecar lands.
         """
         cfg = run.cfg
 
@@ -238,6 +250,14 @@ class TimingConfig(AIPerfBaseModel):
                     if graph_file_ds
                     else _phase_field_default("open_loop_strict")
                 ),
+                "graph_tool_image": (
+                    graph_file_ds.graph_tool_image if graph_file_ds else None
+                ),
+                "graph_tool_persistent_session": (
+                    graph_file_ds.graph_tool_persistent_session
+                    if graph_file_ds
+                    else False
+                ),
             }
             # Explicit graph-incompatible phase choices take precedence over the
             # detection (same rule as --custom-dataset-type above): reject loudly
@@ -253,20 +273,23 @@ class TimingConfig(AIPerfBaseModel):
             if agentic_warmup is not None:
                 configs.append(agentic_warmup)
 
-        # Agentic parity (``_build_agentic_warmup_config``): a t*-snapshot graph
-        # run ALWAYS runs a WARMUP phase to prime each live chain's pre-t*
-        # boundary turn into the server KV cache, so the profiled (at/after-t*)
-        # turns measure a warm cache -- NOT a cold start. Inject the auto-warmup
-        # when the t* window is active (trajectory_start_max_ratio > 0) and the
-        # user supplied no explicit warmup phase. With t*=0 (full recorded replay)
-        # there is no pre-t* prefix to prime, so rewrite_for_warmup returns an
-        # empty graph and the phase finalizes immediately -- harmless -- but we
-        # still skip it to keep the full-replay phase list byte-identical (one
-        # PROFILING phase).
+        # Two independent reasons a graph run needs a WARMUP phase, both
+        # suppressed when the user supplied an explicit warmup phase:
+        #
+        # * t*-snapshot priming (BOUNDARY_SNAPSHOT): synthesized from the
+        #   profiled traces by rewrite_for_warmup; needs the t* window open.
+        # * corpus-supplied warmup (RECORDED): the adapter lowered real warmup
+        #   graphs into parsed_graph.warmup_traces (e.g. Agent Trace Replay). The corpus
+        #   -- not the flag -- is authoritative: a flag set on an adapter that
+        #   emits nothing would inject an empty phase, and a corpus that emits
+        #   warmup without the flag would silently profile it.
         if (
             is_graph
             and not graph_warmup_phases
-            and _graph_tstar_active(graph_fields.get("trajectory_start_max_ratio"))
+            and (
+                _graph_tstar_active(graph_fields.get("trajectory_start_max_ratio"))
+                or bool(parsed_graph is not None and parsed_graph.warmup_traces)
+            )
         ):
             auto = _build_graph_auto_warmup_config(
                 profiling_phases,
@@ -475,6 +498,20 @@ class CreditPhaseConfig(AIPerfBaseModel):
     open_loop_strict: bool = Field(
         default=False,
         description="Schedule graph nodes independently from recorded timestamps, ignoring graph dependencies.",
+    )
+    graph_tool_image: str | None = Field(
+        default=None,
+        description="Resolved `--graph-tool-image` for graph workloads, carried "
+        "from the file dataset so AgentGraphReplayStrategy can pick the tool "
+        "sandbox backend. None (and for non-graph phases) selects the LOCAL "
+        "backend; a non-empty image selects the Docker backend with that image. "
+        "Read only when the graph actually carries tool nodes.",
+    )
+    graph_tool_persistent_session: bool = Field(
+        default=False,
+        description="Resolved `--graph-tool-persistent-session`. False: fresh "
+        "docker exec per command (OL-matching). True: persistent bash session "
+        "inside the container. Carried from the file dataset.",
     )
     auto_offset_timestamps: bool = Field(
         default=InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET,
